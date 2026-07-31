@@ -1,0 +1,1 @@
+rd_("kstellar_xdr")

@@ -1,0 +1,1 @@
+/home/ubuntu/soroban-devkit/target/debug/sdkt-cli: /home/ubuntu/soroban-devkit/crates/sdkt-cli/src/main.rs /home/ubuntu/soroban-devkit/crates/sdkt-core/src/config.rs /home/ubuntu/soroban-devkit/crates/sdkt-core/src/lib.rs /home/ubuntu/soroban-devkit/crates/sdkt-xdr/src/lib.rs
