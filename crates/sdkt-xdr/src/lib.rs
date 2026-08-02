@@ -1,130 +1,178 @@
 //! XDR decoding engine for Stellar and Soroban structures.
 //!
-//! This module handles the conversion of raw Base64 or Hex encoded XDR payloads
-//! into standardized, human-readable JSON formats.
+//! Handles conversion of raw Base64, Hex, or raw-byte XDR payloads into
+//! standardized JSON formats (compact or pretty-printed).
+//!
+//! # Supported Types
+//!
+//! - `ScVal`
+//! - `TransactionEnvelope`
+//! - `TransactionResult`
+//! - `TransactionMeta`
+//! - `LedgerKey`
+//! - `LedgerEntry`
+//! - `ContractEvent` (auto + explicit)
+//!
+//! # Example
+//!
+//! ```rust
+//! use sdkt_xdr::decode;
+//!
+//! let b64 = "AAAAAQAAAAoAAAAA"; // ScVal::I32(1)
+//! let json = decode(b64, Some("scval"), sdkt_xdr::OutputFormat::Json).unwrap();
+//! println!("{}", json);
+//! ```
 
-use base64::engine::general_purpose::STANDARD as BASE64_STANDARD;
+use base64::engine::general_purpose::STANDARD;
 use base64::Engine;
 use serde_json::Value;
 use stellar_xdr::{
-    LedgerEntry, LedgerKey, Limits, ReadXdr, ScVal, TransactionEnvelope, TransactionMeta,
-    TransactionResult,
+    ContractEvent, LedgerEntry, LedgerKey, Limited, Limits, ReadXdr, ScVal, TransactionEnvelope,
+    TransactionMeta, TransactionResult,
 };
+use thiserror::Error;
 
-/// Error states encountered during decoding operations.
-#[derive(Debug, thiserror::Error)]
+/// Errors returned by the decoder.
+#[derive(Error, Debug)]
 pub enum DecodeError {
-    /// Provided string is not valid Base64 format.
-    #[error("Failed to decode Base64 content: {0}")]
+    #[error("Base64 decode failed: {0}")]
     Base64(#[from] base64::DecodeError),
-
-    /// Provided string is not valid Hex format.
-    #[error("Failed to decode Hex content: {0}")]
+    #[error("Hex decode failed: {0}")]
     Hex(#[from] hex::FromHexError),
-
-    /// Byte array could not be mapped to any valid Stellar/Soroban XDR schema.
-    #[error("Failed to parse XDR bytes for type {0}: {1}")]
+    #[error("XDR parse failed for type '{0}': {1}")]
     XdrParse(String, stellar_xdr::Error),
-
-    /// Auto-detection failed to find a matching XDR type variant.
-    #[error("Could not automatically determine XDR type for the given payload")]
-    TypeUnknown,
+    #[error("Unknown XDR type: {0}")]
+    TypeUnknown(String),
+    #[error("Invalid input: empty payload")]
+    EmptyPayload,
+    #[error("JSON serialization failed: {0}")]
+    Json(#[from] serde_json::Error),
 }
 
-/// Dynamic XDR decoding helper.
-pub struct XdrDecoder;
+/// Output formatting preference.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum OutputFormat {
+    Json,
+    #[default]
+    Pretty,
+}
 
-impl XdrDecoder {
-    /// Attempts to parse raw input string (detecting Base64 or Hex automatically)
-    /// and decodes it into a formatted JSON structure using a specified XDR type.
-    pub fn decode_to_json(input: &str, xdr_type: &str) -> Result<Value, DecodeError> {
-        let clean_input = input.trim();
-        let bytes = if let Ok(decoded) = hex::decode(clean_input) {
-            decoded
-        } else {
-            BASE64_STANDARD.decode(clean_input)?
-        };
+/// Decode a base64- or hex-encoded XDR payload to JSON.
+///
+/// `payload` is tried as base64 first; if that fails and the string is valid
+/// hex, it is decoded as hex. Raw-byte callers should use [`decode_bytes`].
+///
+/// # Arguments
+///
+/// * `payload`     – base64 or hex encoded string
+/// * `type_hint`   – explicit type (`"scval"`, etc.) or `None` for auto-detection
+/// * `format`      – [`OutputFormat::Json`] or [`OutputFormat::Pretty`]
+///
+/// # Returns
+///
+/// JSON string representation of the decoded XDR.
+///
+/// # Errors
+///
+/// Returns [`DecodeError`] if the input is invalid or the XDR cannot be parsed.
+pub fn decode(
+    payload: &str,
+    type_hint: Option<&str>,
+    format: OutputFormat,
+) -> Result<String, DecodeError> {
+    let raw = detect_and_decode(payload)?;
+    let value = decode_bytes(&raw, type_hint)?;
+    format_json(&value, format)
+}
 
-        Self::decode_bytes_to_json(&bytes, xdr_type)
+/// Decode raw bytes (no base64/hex pre-processing).
+pub fn decode_bytes(raw: &[u8], type_hint: Option<&str>) -> Result<Value, DecodeError> {
+    if raw.is_empty() {
+        return Err(DecodeError::EmptyPayload);
     }
 
-    /// Decodes raw binary bytes to JSON based on the designated XDR type string.
-    pub fn decode_bytes_to_json(bytes: &[u8], xdr_type: &str) -> Result<Value, DecodeError> {
-        let mut read_bytes = bytes;
+    let type_name = type_hint.unwrap_or("auto");
 
-        let json_val = match xdr_type.to_lowercase().replace('_', "").as_str() {
-            "transactionenvelope" => {
-                let mut limited = stellar_xdr::Limited::new(&mut read_bytes, Limits::none());
-                let parsed = TransactionEnvelope::read_xdr(&mut limited)
-                    .map_err(|e| DecodeError::XdrParse(xdr_type.to_string(), e))?;
-                serde_json::to_value(&parsed).map_err(|_| {
-                    DecodeError::XdrParse(xdr_type.to_string(), stellar_xdr::Error::Invalid)
-                })?
-            }
-            "transactionresult" => {
-                let mut limited = stellar_xdr::Limited::new(&mut read_bytes, Limits::none());
-                let parsed = TransactionResult::read_xdr(&mut limited)
-                    .map_err(|e| DecodeError::XdrParse(xdr_type.to_string(), e))?;
-                serde_json::to_value(&parsed).map_err(|_| {
-                    DecodeError::XdrParse(xdr_type.to_string(), stellar_xdr::Error::Invalid)
-                })?
-            }
-            "transactionmeta" => {
-                let mut limited = stellar_xdr::Limited::new(&mut read_bytes, Limits::none());
-                let parsed = TransactionMeta::read_xdr(&mut limited)
-                    .map_err(|e| DecodeError::XdrParse(xdr_type.to_string(), e))?;
-                serde_json::to_value(&parsed).map_err(|_| {
-                    DecodeError::XdrParse(xdr_type.to_string(), stellar_xdr::Error::Invalid)
-                })?
-            }
-            "scval" => {
-                let mut limited = stellar_xdr::Limited::new(&mut read_bytes, Limits::none());
-                let parsed = ScVal::read_xdr(&mut limited)
-                    .map_err(|e| DecodeError::XdrParse(xdr_type.to_string(), e))?;
-                serde_json::to_value(&parsed).map_err(|_| {
-                    DecodeError::XdrParse(xdr_type.to_string(), stellar_xdr::Error::Invalid)
-                })?
-            }
-            "ledgerkey" => {
-                let mut limited = stellar_xdr::Limited::new(&mut read_bytes, Limits::none());
-                let parsed = LedgerKey::read_xdr(&mut limited)
-                    .map_err(|e| DecodeError::XdrParse(xdr_type.to_string(), e))?;
-                serde_json::to_value(&parsed).map_err(|_| {
-                    DecodeError::XdrParse(xdr_type.to_string(), stellar_xdr::Error::Invalid)
-                })?
-            }
-            "ledgerentry" => {
-                let mut limited = stellar_xdr::Limited::new(&mut read_bytes, Limits::none());
-                let parsed = LedgerEntry::read_xdr(&mut limited)
-                    .map_err(|e| DecodeError::XdrParse(xdr_type.to_string(), e))?;
-                serde_json::to_value(&parsed).map_err(|_| {
-                    DecodeError::XdrParse(xdr_type.to_string(), stellar_xdr::Error::Invalid)
-                })?
-            }
-            _ => return Err(DecodeError::TypeUnknown),
-        };
+    match type_name.to_lowercase().as_str() {
+        "scval" => decode_single::<ScVal>(raw, "ScVal"),
+        "transactionenvelope" => decode_single::<TransactionEnvelope>(raw, "TransactionEnvelope"),
+        "transactionresult" => decode_single::<TransactionResult>(raw, "TransactionResult"),
+        "transactionmeta" => decode_single::<TransactionMeta>(raw, "TransactionMeta"),
+        "ledgerkey" => decode_single::<LedgerKey>(raw, "LedgerKey"),
+        "ledgerentry" => decode_single::<LedgerEntry>(raw, "LedgerEntry"),
+        "contractevent" => decode_single::<ContractEvent>(raw, "ContractEvent"),
+        "auto" => auto_detect(raw),
+        other => Err(DecodeError::TypeUnknown(other.to_string())),
+    }
+}
 
-        Ok(json_val)
+fn decode_single<T: ReadXdr + serde::Serialize>(
+    raw: &[u8],
+    name: &str,
+) -> Result<Value, DecodeError> {
+    let mut l = Limited::new(raw, Limits::none());
+    T::read_xdr(&mut l)
+        .map_err(|e| DecodeError::XdrParse(name.to_string(), e))
+        .and_then(|v| serde_json::to_value(&v).map_err(DecodeError::Json))
+}
+
+fn auto_detect(raw: &[u8]) -> Result<Value, DecodeError> {
+    if let Ok(v) = decode_single::<ScVal>(raw, "ScVal") {
+        return Ok(v);
+    }
+    if let Ok(v) = decode_single::<TransactionEnvelope>(raw, "TransactionEnvelope") {
+        return Ok(v);
+    }
+    if let Ok(v) = decode_single::<ContractEvent>(raw, "ContractEvent") {
+        return Ok(v);
+    }
+    Err(DecodeError::TypeUnknown(
+        "auto-detection failed for all known types".to_string(),
+    ))
+}
+
+fn detect_and_decode(payload: &str) -> Result<Vec<u8>, DecodeError> {
+    if payload.is_empty() {
+        return Err(DecodeError::EmptyPayload);
     }
 
-    /// Auto-detects the XDR type variant by executing quick trial decodes against common structures.
-    pub fn auto_decode(input: &str) -> Result<(String, Value), DecodeError> {
-        let candidates = [
-            "TransactionEnvelope",
-            "TransactionResult",
-            "TransactionMeta",
-            "ScVal",
-            "LedgerKey",
-            "LedgerEntry",
-        ];
+    let trimmed = payload.trim();
 
-        for &candidate in &candidates {
-            if let Ok(json_val) = Self::decode_to_json(input, candidate) {
-                return Ok((candidate.to_string(), json_val));
-            }
+    let base64_likely = !trimmed.is_empty()
+        && trimmed.len().is_multiple_of(4)
+        && trimmed
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == '+' || c == '/' || c == '=');
+
+    if base64_likely {
+        if let Ok(bytes) = STANDARD.decode(trimmed) {
+            return Ok(bytes);
         }
+    }
 
-        Err(DecodeError::TypeUnknown)
+    if trimmed.len().is_multiple_of(2) && trimmed.chars().all(|c| c.is_ascii_hexdigit()) {
+        if let Ok(bytes) = hex::decode(trimmed) {
+            return Ok(bytes);
+        }
+    }
+
+    if base64_likely {
+        Err(DecodeError::Base64(base64::DecodeError::InvalidLength(0)))
+    } else {
+        Err(DecodeError::Hex(hex::FromHexError::InvalidHexCharacter {
+            c: trimmed
+                .chars()
+                .find(|c| !c.is_ascii_hexdigit())
+                .unwrap_or('?'),
+            index: 0,
+        }))
+    }
+}
+
+pub fn format_json(value: &Value, format: OutputFormat) -> Result<String, DecodeError> {
+    match format {
+        OutputFormat::Json => Ok(serde_json::to_string(value)?),
+        OutputFormat::Pretty => Ok(serde_json::to_string_pretty(value)?),
     }
 }
 
@@ -134,26 +182,50 @@ mod tests {
 
     #[test]
     fn test_invalid_base64() {
-        let res = XdrDecoder::decode_to_json("!!!invalid!!!", "ScVal");
-        assert!(res.is_err());
+        // Non-base64, non-hex characters trigger hex error
+        let result = decode("!!! ???", None, OutputFormat::default());
+        assert!(matches!(result, Err(DecodeError::Hex(_))));
     }
 
     #[test]
     fn test_valid_scval_integer_base64() {
-        // ScVal for an i32 containing value 42
-        // Base64 envelope representation: AAAABgAAAAoAAAAq
-        let base64_payload = "AAAABgAAAAoAAAAq";
-        let res = XdrDecoder::decode_to_json(base64_payload, "ScVal").unwrap();
-
-        // Value 42 is represented as i32 under scVal enum
-        assert_eq!(res["i32"], 42);
+        // ScVal::I32(1): discriminant=4, payload=1
+        let payload = "AAAABAAAAAE=";
+        let json = decode(payload, Some("scval"), OutputFormat::Json).unwrap();
+        let v: Value = serde_json::from_str(&json).unwrap();
+        assert!(v.is_object());
+        assert_eq!(v["i32"], 1);
     }
 
     #[test]
     fn test_auto_decode_scval() {
-        let base64_payload = "AAAABgAAAAoAAAAq";
-        let (detected_type, json_val) = XdrDecoder::auto_decode(base64_payload).unwrap();
-        assert_eq!(detected_type, "ScVal");
-        assert_eq!(json_val["i32"], 42);
+        let payload = "AAAABAAAAAE=";
+        let json = decode(payload, None, OutputFormat::Json).unwrap();
+        let v: Value = serde_json::from_str(&json).unwrap();
+        assert!(v.is_object());
+        assert_eq!(v["i32"], 1);
+    }
+
+    #[test]
+    fn test_empty_payload() {
+        let result = decode("", None, OutputFormat::default());
+        assert!(matches!(result, Err(DecodeError::EmptyPayload)));
+    }
+
+    #[test]
+    fn test_unknown_type() {
+        // Valid XDR but unknown type name
+        let payload = "AAAABAAAAAE=";
+        let result = decode(payload, Some("nonexistent"), OutputFormat::default());
+        assert!(matches!(result, Err(DecodeError::TypeUnknown(_))));
+    }
+
+    #[test]
+    fn test_json_vs_pretty() {
+        let payload = "AAAABAAAAAE=";
+        let compact = decode(payload, Some("scval"), OutputFormat::Json).unwrap();
+        let pretty = decode(payload, Some("scval"), OutputFormat::Pretty).unwrap();
+        assert!(!compact.contains('\n'));
+        assert!(pretty.contains('\n'));
     }
 }

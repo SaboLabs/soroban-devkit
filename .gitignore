@@ -1,0 +1,23 @@
+# Binary
+/target
+**/*.rs.bk
+**/target/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Environment
+.env
+.sdkt.toml.local
+*.local
+
+# Cargo registry cache (optional, speeds up CI)
+Cargo.lock
