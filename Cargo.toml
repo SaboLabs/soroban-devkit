@@ -1,7 +1,8 @@
 [workspace]
-resolver = "2"
 members = [
     "crates/sdkt-core",
     "crates/sdkt-xdr",
-    "crates/sdkt-cli"
+    "crates/sdkt-cli",
+    "crates/sdkt-rpc",
 ]
+resolver = "2"

@@ -1,0 +1,15 @@
+[package]
+name = "sdkt-rpc"
+version = "0.2.0"
+edition = "2021"
+description = "Soroban RPC client for Soroban DevKit"
+license = "MIT OR Apache-2.0"
+
+[dependencies]
+sdkt-core = { path = "../sdkt-core" }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+thiserror = "2"
+reqwest = { version = "0.13", features = ["json"] }
+
+[dev-dependencies]

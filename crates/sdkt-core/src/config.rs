@@ -14,6 +14,9 @@ pub struct DevKitConfig {
     pub network: NetworkConfig,
     /// XDR decoder configurations.
     pub decode: DecodeConfig,
+    /// Storage inspection settings.
+    #[serde(default)]
+    pub storage: StorageConfig,
 }
 
 /// Soroban network connection settings.
@@ -34,6 +37,24 @@ pub struct DecodeConfig {
     pub allow_fallback_hex: bool,
 }
 
+/// Settings for Soroban storage inspection.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct StorageConfig {
+    /// Maximum number of storage entries to fetch per page.
+    pub max_entries: usize,
+    /// Number of days before TTL expiration to start warning.
+    pub ttl_warning_days: u32,
+}
+
+impl Default for StorageConfig {
+    fn default() -> Self {
+        Self {
+            max_entries: 200,
+            ttl_warning_days: 30,
+        }
+    }
+}
+
 impl Default for DevKitConfig {
     fn default() -> Self {
         Self {
@@ -45,6 +66,7 @@ impl Default for DevKitConfig {
                 max_depth: 32,
                 allow_fallback_hex: true,
             },
+            storage: StorageConfig::default(),
         }
     }
 }
@@ -79,6 +101,8 @@ mod tests {
         let default_config = DevKitConfig::default();
         assert_eq!(default_config.decode.max_depth, 32);
         assert!(default_config.decode.allow_fallback_hex);
+        assert_eq!(default_config.storage.max_entries, 200);
+        assert_eq!(default_config.storage.ttl_warning_days, 30);
     }
 
     #[test]
@@ -91,10 +115,31 @@ mod tests {
             [decode]
             max_depth = 16
             allow_fallback_hex = false
+
+            [storage]
+            max_entries = 100
+            ttl_warning_days = 7
         "#;
         let parsed = DevKitConfig::from_toml(toml_data).unwrap();
         assert_eq!(parsed.network.rpc_url, "http://localhost:8000");
         assert_eq!(parsed.decode.max_depth, 16);
         assert!(!parsed.decode.allow_fallback_hex);
+        assert_eq!(parsed.storage.max_entries, 100);
+        assert_eq!(parsed.storage.ttl_warning_days, 7);
+    }
+
+    #[test]
+    fn test_old_toml_without_storage() {
+        let toml_data = r#"
+            [network]
+            rpc_url = "http://localhost:8000"
+            passphrase = "Standalone Network"
+
+            [decode]
+            max_depth = 16
+            allow_fallback_hex = false
+        "#;
+        let parsed = DevKitConfig::from_toml(toml_data).unwrap();
+        assert_eq!(parsed.storage.max_entries, 200);
     }
 }
