@@ -1,1 +1,0 @@
-window.SIDEBAR_ITEMS = {"fn":["i128_from_pieces","i128_hi","i128_lo","u128_from_pieces","u128_hi","u128_lo"]};

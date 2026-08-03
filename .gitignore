@@ -21,3 +21,4 @@ Thumbs.db
 
 # Cargo registry cache (optional, speeds up CI)
 Cargo.lock
+target/

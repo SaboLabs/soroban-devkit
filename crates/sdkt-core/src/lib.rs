@@ -4,4 +4,4 @@
 //! for workspace-wide tools.
 
 pub mod config;
-pub use config::{DecodeConfig, DevKitConfig, NetworkConfig, StorageConfig};
+pub use config::{DecodeConfig, DevKitConfig, NetworkConfig, OutputFormat, StorageConfig};

@@ -3,33 +3,60 @@
 //! This module defines the global configuration structures and handles
 //! the loading of configs from files, environment variables, and CLI overrides.
 
+use std::str::FromStr;
+
 use serde::{Deserialize, Serialize};
+
+/// Output formatting for CLI and library JSON serialisation.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum OutputFormat {
+    /// Single-line compact JSON
+    Json,
+    /// Multi-line indented JSON
+    Pretty,
+}
+
+impl Default for OutputFormat {
+    fn default() -> Self {
+        Self::Pretty
+    }
+}
+
+impl std::str::FromStr for OutputFormat {
+    type Err = String;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s.to_ascii_lowercase().as_str() {
+            "json" => Ok(Self::Json),
+            "pretty" => Ok(Self::Pretty),
+            other => Err(format!("unknown format '{other}', expected 'json' or 'pretty'")),
+        }
+    }
+}
+
+impl FromStr for OutputFormat {
+    type Err = String;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s.to_ascii_lowercase().as_str() {
+            "json" => Ok(Self::Json),
+            "pretty" => Ok(Self::Pretty),
+            _ => Err(format!("invalid format: {s} (expected `json` or `pretty`)")),
+        }
+    }
+}
 use std::fs;
 use std::path::Path;
 
-/// High-level project-wide configuration.
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
-pub struct DevKitConfig {
-    /// Soroban network settings.
-    pub network: NetworkConfig,
-    /// XDR decoder configurations.
-    pub decode: DecodeConfig,
-    /// Storage inspection settings.
-    #[serde(default)]
-    pub storage: StorageConfig,
+/// Storage and TTL inspection preferences.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
+pub struct StorageConfig {
+    /// Max entries to fetch per page when listing contract state (0 = unlimited page cap hint)
+    pub max_entries: usize,
+    /// TTL warning threshold in days; entries below this light up CLI warnings
+    pub ttl_warning_days: u32,
 }
-
-/// Soroban network connection settings.
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
-pub struct NetworkConfig {
-    /// Target Soroban RPC URL.
-    pub rpc_url: String,
-    /// Core passphrase matching target network.
-    pub passphrase: String,
-}
-
-/// Settings modifying XDR decoding actions.
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct DecodeConfig {
     /// Limit max depth during nested XDR parsing.
     pub max_depth: usize,

@@ -1,14 +1,9 @@
-//! RPC-specific error types.
-//!
-//! [`RpcError`] aggregates transport, serialization, protocol, and contract
-//! errors into a single `thiserror` enum for ergonomic `?` propagation.
-
 use thiserror::Error;
 
-/// Errors that can occur during Soroban RPC interaction.
-#[derive(Debug, Error)]
+/// Errors from Soroban RPC operations.
+#[derive(Error, Debug)]
 pub enum RpcError {
-    /// HTTP transport failure (network, timeout, DNS, etc.)
+    /// HTTP transport failure.
     #[error("HTTP error: {0}")]
     Http(#[from] reqwest::Error),
 
@@ -16,14 +11,34 @@ pub enum RpcError {
     #[error("JSON error: {0}")]
     Json(#[from] serde_json::Error),
 
-    /// Raw JSON-RPC error message from the server.
+    /// JSON-RPC level error returned by the server.
     #[error("RPC error: {0}")]
     Rpc(String),
 
-    /// Contract not found at the given address.
+    /// Invalid request parameters (client-side guard).
+    #[error("invalid params: {0}")]
+    InvalidParams(String),
+
+    /// The requested contract was not found on-chain.
     #[error("contract not found")]
     ContractNotFound,
+
+    /// The requested ledger entry was not found.
+    #[error("entry not found")]
+    EntryNotFound,
 }
 
-/// Result alias for RPC operations.
-pub type Result<T> = std::result::Result<T, RpcError>;
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn rpc_error_display() {
+        let e = RpcError::Rpc("timeout".to_string());
+        assert_eq!(e.to_string(), "RPC error: timeout");
+        let e = RpcError::ContractNotFound;
+        assert_eq!(e.to_string(), "contract not found");
+        let e = RpcError::InvalidParams("empty key".to_string());
+        assert_eq!(e.to_string(), "invalid params: empty key");
+    }
+}
