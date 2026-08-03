@@ -27,8 +27,9 @@ use base64::engine::general_purpose::STANDARD;
 use base64::Engine;
 use serde_json::Value;
 use stellar_xdr::{
-    ContractEvent, LedgerEntry, LedgerKey, Limited, Limits, ReadXdr, ScVal, TransactionEnvelope,
-    TransactionMeta, TransactionResult,
+    ContractEvent, ContractExecutable, ContractId, Hash, LedgerEntry, LedgerEntryData, LedgerKey,
+    LedgerKeyContractData, Limited, Limits, ReadXdr, ScAddress, ScVal, TransactionEnvelope,
+    TransactionMeta, TransactionResult, WriteXdr,
 };
 use thiserror::Error;
 
@@ -41,12 +42,16 @@ pub enum DecodeError {
     Hex(#[from] hex::FromHexError),
     #[error("XDR parse failed for type '{0}': {1}")]
     XdrParse(String, stellar_xdr::Error),
+    #[error("XDR write failed: {0}")]
+    XdrWrite(stellar_xdr::Error),
     #[error("Unknown XDR type: {0}")]
     TypeUnknown(String),
     #[error("Invalid input: empty payload")]
     EmptyPayload,
     #[error("JSON serialization failed: {0}")]
     Json(#[from] serde_json::Error),
+    #[error("Extraction error: {0}")]
+    Extraction(String),
 }
 
 /// Output formatting preference.
@@ -55,6 +60,66 @@ pub enum OutputFormat {
     Json,
     #[default]
     Pretty,
+}
+
+/// Parameters for constructing a `LedgerKey`.
+pub enum LedgerKeyParams {
+    /// A contract's instance data key. Takes the contract ID as a hex string.
+    ContractData(String),
+}
+
+/// Encodes `LedgerKeyParams` into a Base64 XDR `LedgerKey`.
+pub fn encode_ledger_key(params: &LedgerKeyParams) -> Result<String, DecodeError> {
+    let key = match params {
+        LedgerKeyParams::ContractData(contract_id_hex) => {
+            let hash_bytes = hex::decode(contract_id_hex).map_err(DecodeError::Hex)?;
+            if hash_bytes.len() != 32 {
+                return Err(DecodeError::Extraction(
+                    "Contract ID must be 32 bytes".to_string(),
+                ));
+            }
+            let mut contract_id = [0u8; 32];
+            contract_id.copy_from_slice(&hash_bytes);
+
+            LedgerKey::ContractData(LedgerKeyContractData {
+                contract: ScAddress::Contract(ContractId(Hash(contract_id))),
+                key: ScVal::LedgerKeyContractInstance,
+                durability: stellar_xdr::ContractDataDurability::Persistent,
+            })
+        }
+    };
+
+    let mut buf = Vec::new();
+    let mut l = Limited::new(&mut buf, Limits::none());
+    key.write_xdr(&mut l).map_err(DecodeError::XdrWrite)?;
+    Ok(STANDARD.encode(&buf))
+}
+
+/// Extracts the WASM hash from a Base64 encoded `LedgerEntry`.
+/// Traverses: LedgerEntry -> LedgerEntryData::ContractData -> ScVal::ContractInstance -> ContractExecutable::Wasm -> Hash
+pub fn extract_wasm_hash(base64_ledger_entry: &str) -> Result<String, DecodeError> {
+    let raw = detect_and_decode(base64_ledger_entry)?;
+    let mut cursor = std::io::Cursor::new(&raw);
+    let mut l = Limited::new(&mut cursor, Limits::none());
+    let entry = LedgerEntry::read_xdr(&mut l)
+        .map_err(|e| DecodeError::XdrParse("LedgerEntry".to_string(), e))?;
+
+    let data = match entry.data {
+        LedgerEntryData::ContractData(d) => d,
+        _ => return Err(DecodeError::Extraction("Not a ContractData entry".into())),
+    };
+
+    let instance = match data.val {
+        ScVal::ContractInstance(i) => i,
+        _ => return Err(DecodeError::Extraction("Not a ContractInstance".into())),
+    };
+
+    let hash = match instance.executable {
+        ContractExecutable::Wasm(h) => h,
+        _ => return Err(DecodeError::Extraction("Not a Wasm executable".into())),
+    };
+
+    Ok(hex::encode(hash.0))
 }
 
 /// Decode a base64- or hex-encoded XDR payload to JSON.
@@ -110,7 +175,8 @@ fn decode_single<T: ReadXdr + serde::Serialize>(
     raw: &[u8],
     name: &str,
 ) -> Result<Value, DecodeError> {
-    let mut l = Limited::new(raw, Limits::none());
+    let mut cursor = std::io::Cursor::new(raw);
+    let mut l = Limited::new(&mut cursor, Limits::none());
     T::read_xdr(&mut l)
         .map_err(|e| DecodeError::XdrParse(name.to_string(), e))
         .and_then(|v| serde_json::to_value(&v).map_err(DecodeError::Json))
@@ -179,17 +245,20 @@ pub fn format_json(value: &Value, format: OutputFormat) -> Result<String, Decode
 #[cfg(test)]
 mod tests {
     use super::*;
+    use stellar_xdr::{
+        ContractDataDurability, ContractDataEntry, ContractExecutable, ExtensionPoint, Hash,
+        LedgerEntry, LedgerEntryData, LedgerEntryExt, LedgerKey, ScAddress, ScContractInstance,
+        ScVal, WriteXdr,
+    };
 
     #[test]
     fn test_invalid_base64() {
-        // Non-base64, non-hex characters trigger hex error
         let result = decode("!!! ???", None, OutputFormat::default());
         assert!(matches!(result, Err(DecodeError::Hex(_))));
     }
 
     #[test]
     fn test_valid_scval_integer_base64() {
-        // ScVal::I32(1): discriminant=4, payload=1
         let payload = "AAAABAAAAAE=";
         let json = decode(payload, Some("scval"), OutputFormat::Json).unwrap();
         let v: Value = serde_json::from_str(&json).unwrap();
@@ -214,7 +283,6 @@ mod tests {
 
     #[test]
     fn test_unknown_type() {
-        // Valid XDR but unknown type name
         let payload = "AAAABAAAAAE=";
         let result = decode(payload, Some("nonexistent"), OutputFormat::default());
         assert!(matches!(result, Err(DecodeError::TypeUnknown(_))));
@@ -227,5 +295,74 @@ mod tests {
         let pretty = decode(payload, Some("scval"), OutputFormat::Pretty).unwrap();
         assert!(!compact.contains('\n'));
         assert!(pretty.contains('\n'));
+    }
+
+    #[test]
+    fn test_encode_ledger_key() {
+        let contract_id = "0000000000000000000000000000000000000000000000000000000000000000";
+        let res =
+            encode_ledger_key(&LedgerKeyParams::ContractData(contract_id.to_string())).unwrap();
+        // Decode it back to verify it's a LedgerKey::ContractData with ScVal::LedgerKeyContractInstance
+        let decoded = detect_and_decode(&res).unwrap();
+        let mut cursor = std::io::Cursor::new(&decoded);
+        let mut l = Limited::new(&mut cursor, Limits::none());
+        let lk = LedgerKey::read_xdr(&mut l).unwrap();
+        match lk {
+            LedgerKey::ContractData(d) => {
+                assert_eq!(d.key, ScVal::LedgerKeyContractInstance);
+            }
+            _ => panic!("Expected ContractData"),
+        }
+    }
+
+    fn create_test_ledger_entry(executable: ContractExecutable) -> String {
+        let entry = LedgerEntry {
+            last_modified_ledger_seq: 1,
+            data: LedgerEntryData::ContractData(ContractDataEntry {
+                ext: ExtensionPoint::V0,
+                contract: ScAddress::Contract(ContractId(Hash([0; 32]))),
+                key: ScVal::LedgerKeyContractInstance,
+                durability: ContractDataDurability::Persistent,
+                val: ScVal::ContractInstance(ScContractInstance {
+                    executable,
+                    storage: None,
+                }),
+            }),
+            ext: LedgerEntryExt::V0,
+        };
+        let mut buf = Vec::new();
+        let mut cursor = std::io::Cursor::new(&mut buf);
+        let mut l = Limited::new(&mut cursor, Limits::none());
+        entry.write_xdr(&mut l).unwrap();
+        STANDARD.encode(&buf)
+    }
+
+    #[test]
+    fn test_extract_wasm_hash_valid() {
+        let hash = [1u8; 32];
+        let b64 = create_test_ledger_entry(ContractExecutable::Wasm(Hash(hash)));
+        let extracted = extract_wasm_hash(&b64).unwrap();
+        assert_eq!(extracted, hex::encode(hash));
+    }
+
+    #[test]
+    fn test_extract_wasm_hash_non_wasm() {
+        let b64 = create_test_ledger_entry(ContractExecutable::StellarAsset);
+        let err = extract_wasm_hash(&b64).unwrap_err();
+        assert!(matches!(err, DecodeError::Extraction(e) if e.contains("Not a Wasm")));
+    }
+
+    #[test]
+    fn test_extract_wasm_hash_non_ledger_entry() {
+        // Just an ScVal
+        let b64 = "AAAABAAAAAE=";
+        let err = extract_wasm_hash(b64).unwrap_err();
+        assert!(matches!(err, DecodeError::XdrParse(_, _)));
+    }
+
+    #[test]
+    fn test_extract_wasm_hash_malformed_base64() {
+        let err = extract_wasm_hash("invalid base64!!!").unwrap_err();
+        assert!(matches!(err, DecodeError::Hex(_))); // detect_and_decode falls back to Hex and fails there
     }
 }

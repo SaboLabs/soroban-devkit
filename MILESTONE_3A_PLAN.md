@@ -90,7 +90,7 @@ impl SorobanRpcClient {
 
 #### `storage.rs` — Storage inspection
 ```rust
-pub fn get_ttl_info(
+pub async fn get_ttl_info(
     client: &SorobanRpcClient, contract_id: &str
 ) -> Result<TtlInfo, RpcError>;
 
