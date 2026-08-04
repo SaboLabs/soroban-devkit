@@ -23,6 +23,11 @@
 //! println!("{}", json);
 //! ```
 
+pub mod builder;
+pub use builder::{
+    build_invoke_transaction, decode_account_id, decode_contract_id, InvokeTransactionParams,
+};
+
 use base64::engine::general_purpose::STANDARD;
 use base64::Engine;
 use serde_json::Value;

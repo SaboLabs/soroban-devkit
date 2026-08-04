@@ -7,6 +7,7 @@ use sdkt_rpc::{
 };
 use sdkt_storage::WasmCache;
 use sdkt_xdr::decode;
+use sdkt_xdr::{build_invoke_transaction, InvokeTransactionParams};
 use std::fs;
 use std::process;
 
@@ -147,6 +148,27 @@ enum TxAction {
         envelope: String,
         #[arg(short, long, default_value = "pretty")]
         format: String,
+    },
+    /// Build a transaction envelope XDR
+    Build {
+        #[arg(long)]
+        source: String,
+        #[arg(long)]
+        sequence: i64,
+        #[arg(long, default_value = "100")]
+        fee: u32,
+        #[arg(long)]
+        contract: String,
+        #[arg(long)]
+        function: String,
+        /// Optional arguments as base64 ScVal strings
+        #[arg(long)]
+        arg: Vec<String>,
+        #[arg(short, long, default_value = "pretty")]
+        format: String,
+        /// Optional file path to write the output envelope XDR
+        #[arg(short, long)]
+        output: Option<String>,
     },
 }
 
@@ -340,6 +362,51 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     }
                     Err(e) => {
                         eprintln!("Error simulating transaction: {}", e);
+                        process::exit(1);
+                    }
+                }
+            }
+            TxAction::Build {
+                source,
+                sequence,
+                fee,
+                contract,
+                function,
+                arg,
+                format,
+                output,
+            } => {
+                let fmt = parse_format_str(&format);
+                let params = InvokeTransactionParams {
+                    source_account: source.clone(),
+                    sequence,
+                    fee,
+                    contract_id: contract.clone(),
+                    function: function.clone(),
+                    args: arg.clone(),
+                };
+
+                match build_invoke_transaction(&params) {
+                    Ok(env) => {
+                        if let Some(ref path) = output {
+                            if let Err(e) = fs::write(path, &env) {
+                                eprintln!("Error writing to file: {}", e);
+                                process::exit(1);
+                            }
+                            if fmt != OutputFormat::Json {
+                                println!("Transaction envelope written to {}", path);
+                            }
+                        }
+
+                        if fmt == OutputFormat::Json {
+                            println!(r#"{{"envelope": "{}"}}"#, env);
+                        } else if output.is_none() {
+                            println!("Transaction Envelope (Base64):");
+                            println!("{}", env);
+                        }
+                    }
+                    Err(e) => {
+                        eprintln!("Error building transaction: {}", e);
                         process::exit(1);
                     }
                 }
