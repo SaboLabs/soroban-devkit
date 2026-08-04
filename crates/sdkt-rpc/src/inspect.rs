@@ -8,7 +8,26 @@ use serde::Serialize;
 pub struct ContractInspection {
     pub contract_id: String,
     pub wasm_hash: String,
+    pub wasm_size: Option<usize>,
+    pub storage_summary: StorageSummary,
+    pub ttl_info: Option<TtlInfoSummary>,
     pub storage_keys: Vec<StorageKeyInfo>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Default)]
+pub struct TtlInfoSummary {
+    pub minimum_ttl: u32,
+    pub maximum_ttl: u32,
+    pub average_ttl: u32,
+    pub expiring_entries_count: usize,
+    pub estimated_rent_cost: Option<u64>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Default)]
+pub struct StorageSummary {
+    pub instance_entries: usize,
+    pub persistent_entries: usize,
+    pub temporary_entries: usize,
 }
 
 /// Metadata about a storage key discovered in the contract.
@@ -43,6 +62,9 @@ pub async fn inspect_contract(
     Ok(ContractInspection {
         contract_id: contract_id.to_string(),
         wasm_hash,
+        wasm_size: None,
+        storage_summary: StorageSummary::default(),
+        ttl_info: None,
         storage_keys: Vec::new(),
     })
 }
