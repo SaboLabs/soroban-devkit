@@ -1,15 +1,16 @@
 use crate::client::SorobanRpcClient;
 use crate::error::RpcError;
+use serde::Serialize;
 
 /// Storage TTL info for a contract.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct TtlInfo {
     pub contract_id: String,
     pub entries: Vec<TtlEntry>,
 }
 
 /// A single storage entry with human-readable TTL information.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct TtlEntry {
     pub key: String,
     pub current_ttl: u32,

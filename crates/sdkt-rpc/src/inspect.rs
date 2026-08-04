@@ -1,9 +1,10 @@
 use crate::client::SorobanRpcClient;
 use crate::error::RpcError;
 use sdkt_xdr::{encode_ledger_key, extract_wasm_hash, LedgerKeyParams};
+use serde::Serialize;
 
 /// The result of a contract inspection.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct ContractInspection {
     pub contract_id: String,
     pub wasm_hash: String,
@@ -11,7 +12,7 @@ pub struct ContractInspection {
 }
 
 /// Metadata about a storage key discovered in the contract.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct StorageKeyInfo {
     pub key: String,
     pub key_type: String,

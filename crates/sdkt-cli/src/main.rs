@@ -1,10 +1,7 @@
-//! CLI entry point for the Soroban DevKit (sdkt).
-//!
-//! This binary provides subcommands for decoding XDR:
-//! - `decode`: Convert base64/hex XDR to human-readable JSON
-
 use clap::{Parser, Subcommand};
-use sdkt_xdr::{decode, OutputFormat};
+use sdkt_core::{DevKitConfig, OutputFormat};
+use sdkt_rpc::{get_ttl_info, inspect_contract, SorobanRpcClient};
+use sdkt_xdr::decode;
 use std::fs;
 use std::process;
 
@@ -22,25 +19,41 @@ struct Cli {
 enum Commands {
     /// Decode base64-encoded XDR to JSON
     Decode {
-        /// Base64-encoded XDR string (e.g., "AAAAA...")
         #[arg(value_name = "XDR")]
         payload: String,
-
-        /// XDR type to decode (auto-detected if omitted)
         #[arg(short, long, value_name = "TYPE")]
         r#type: Option<String>,
-
-        /// Output format: "json" (compact) or "pretty" (default)
         #[arg(short, long, value_name = "FORMAT", default_value = "pretty")]
         format: String,
-
-        /// Read input from file instead of argument
         #[arg(short = 'i', long, value_name = "FILE")]
         file: Option<String>,
     },
+    /// Inspect storage TTL for a contract
+    Storage {
+        #[command(subcommand)]
+        action: StorageAction,
+    },
+    /// Inspect a contract's ABI and storage
+    Inspect {
+        contract_id: String,
+        #[arg(short, long, default_value = "pretty")]
+        format: String,
+    },
 }
 
-fn parse_format(s: &str) -> OutputFormat {
+#[derive(Subcommand)]
+enum StorageAction {
+    Check {
+        contract_id: String,
+        #[arg(short, long, default_value = "pretty")]
+        format: String,
+    },
+    Estimate {
+        wasm: String,
+    },
+}
+
+fn parse_format_str(s: &str) -> OutputFormat {
     match s.to_lowercase().as_str() {
         "json" => OutputFormat::Json,
         "pretty" => OutputFormat::Pretty,
@@ -51,7 +64,8 @@ fn parse_format(s: &str) -> OutputFormat {
     }
 }
 
-fn main() -> Result<(), Box<dyn std::error::Error>> {
+#[tokio::main]
+async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let cli = Cli::parse();
 
     match cli.command {
@@ -67,9 +81,74 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 payload
             };
 
-            let fmt = parse_format(&format);
+            let fmt = parse_format_str(&format);
             let json = decode(&input, r#type.as_deref(), fmt)?;
             println!("{}", json);
+        }
+        Commands::Storage { action } => match action {
+            StorageAction::Check {
+                contract_id,
+                format,
+            } => {
+                let fmt = parse_format_str(&format);
+                let config = DevKitConfig::from_file(".sdkt.toml").unwrap_or_default();
+                let client = SorobanRpcClient::from_config(&config.network);
+
+                match get_ttl_info(&client, &contract_id).await {
+                    Ok(ttl_info) => {
+                        if fmt == OutputFormat::Json {
+                            let json_str = serde_json::to_string(&ttl_info)?;
+                            println!("{}", json_str);
+                        } else {
+                            println!("Storage Check for Contract ID: {}", contract_id);
+                            println!("Total Entries: {}", ttl_info.entries.len());
+                            for (i, entry) in ttl_info.entries.iter().enumerate() {
+                                println!("\nEntry #{}", i + 1);
+                                println!("  Key: {}", entry.key);
+                                println!("  Current TTL: {} ledgers", entry.current_ttl);
+                                println!("  Remaining: {}", entry.expiration_time);
+                                println!(
+                                    "  Est. Extension Cost: {} stroops",
+                                    entry.extension_cost_stroops
+                                );
+                            }
+                        }
+                    }
+                    Err(e) => {
+                        eprintln!("Error fetching storage TTL: {}", e);
+                        process::exit(1);
+                    }
+                }
+            }
+            StorageAction::Estimate { wasm } => {
+                println!("Storage Estimate for {} (Not yet implemented)", wasm);
+            }
+        },
+        Commands::Inspect {
+            contract_id,
+            format,
+        } => {
+            let fmt = parse_format_str(&format);
+            let config = DevKitConfig::from_file(".sdkt.toml").unwrap_or_default();
+            let client = SorobanRpcClient::from_config(&config.network);
+
+            match inspect_contract(&client, &contract_id).await {
+                Ok(inspection) => {
+                    if fmt == OutputFormat::Json {
+                        let json_str = serde_json::to_string(&inspection)?;
+                        println!("{}", json_str);
+                    } else {
+                        println!("Contract Inspection");
+                        println!("Contract ID: {}", inspection.contract_id);
+                        println!("WASM Hash: {}", inspection.wasm_hash);
+                        println!("Storage Keys: {}", inspection.storage_keys.len());
+                    }
+                }
+                Err(e) => {
+                    eprintln!("Error inspecting contract: {}", e);
+                    process::exit(1);
+                }
+            }
         }
     }
 

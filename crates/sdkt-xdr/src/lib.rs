@@ -26,6 +26,9 @@
 use base64::engine::general_purpose::STANDARD;
 use base64::Engine;
 use serde_json::Value;
+
+pub use sdkt_core::OutputFormat;
+
 use stellar_xdr::{
     ContractEvent, ContractExecutable, ContractId, Hash, LedgerEntry, LedgerEntryData, LedgerKey,
     LedgerKeyContractData, Limited, Limits, ReadXdr, ScAddress, ScVal, TransactionEnvelope,
@@ -52,14 +55,6 @@ pub enum DecodeError {
     Json(#[from] serde_json::Error),
     #[error("Extraction error: {0}")]
     Extraction(String),
-}
-
-/// Output formatting preference.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-pub enum OutputFormat {
-    Json,
-    #[default]
-    Pretty,
 }
 
 /// Parameters for constructing a `LedgerKey`.

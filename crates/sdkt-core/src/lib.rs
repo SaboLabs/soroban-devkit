@@ -1,7 +1,5 @@
-//! sdkt-core entry point.
-//!
-//! Provides the primary configuration structures and parsing logic
-//! for workspace-wide tools.
-
 pub mod config;
+pub mod format;
+
 pub use config::{DecodeConfig, DevKitConfig, NetworkConfig, StorageConfig};
+pub use format::OutputFormat;
