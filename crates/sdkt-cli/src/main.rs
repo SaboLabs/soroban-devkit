@@ -1,6 +1,8 @@
 use clap::{Parser, Subcommand};
 use sdkt_core::{DevKitConfig, OutputFormat};
-use sdkt_rpc::{get_ttl_info, inspect_contract, inspect_transaction, SorobanRpcClient};
+use sdkt_rpc::{
+    get_contract_events, get_ttl_info, inspect_contract, inspect_transaction, SorobanRpcClient,
+};
 use sdkt_xdr::decode;
 use std::fs;
 use std::process;
@@ -43,6 +45,12 @@ enum Commands {
     Tx {
         #[command(subcommand)]
         action: TxAction,
+    },
+    /// Event explorer
+    Events {
+        contract_id: String,
+        #[arg(short, long, default_value = "pretty")]
+        format: String,
     },
 }
 
@@ -177,6 +185,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                             println!("{}", json_str);
                         } else {
                             println!("Transaction:");
+                            println!();
                             println!("Hash: {}", tx_info.hash);
                             println!("Status: {}", tx_info.status.as_deref().unwrap_or("Unknown"));
                             println!(
@@ -204,6 +213,42 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 }
             }
         },
+        Commands::Events {
+            contract_id,
+            format,
+        } => {
+            let fmt = parse_format_str(&format);
+            let config = DevKitConfig::from_file(".sdkt.toml").unwrap_or_default();
+            let client = SorobanRpcClient::from_config(&config.network);
+
+            match get_contract_events(&client, &contract_id).await {
+                Ok(events) => {
+                    if fmt == OutputFormat::Json {
+                        let json_str = serde_json::to_string(&events)?;
+                        println!("{}", json_str);
+                    } else {
+                        println!("Contract Events:");
+                        if events.is_empty() {
+                            println!("No events found.");
+                        } else {
+                            for (i, ev) in events.iter().enumerate() {
+                                println!("\nEvent #{}", i + 1);
+                                println!(
+                                    "Ledger: {}",
+                                    ev.ledger.map_or("Unknown".to_string(), |v| v.to_string())
+                                );
+                                println!("Topics: {:?}", ev.topics);
+                                println!("Value: {}", ev.value.as_deref().unwrap_or("N/A"));
+                            }
+                        }
+                    }
+                }
+                Err(e) => {
+                    eprintln!("Error fetching events: {}", e);
+                    process::exit(1);
+                }
+            }
+        }
     }
 
     Ok(())
