@@ -16,6 +16,7 @@ pub mod fee;
 pub mod inspect;
 pub mod storage;
 pub mod transaction;
+pub mod wasm;
 
 pub use account::{inspect_account, AccountBalance, AccountInspection, AccountSigner};
 pub use client::SorobanRpcClient;
@@ -25,3 +26,4 @@ pub use fee::{estimate_dynamic_fee, get_fee_stats, FeeDistribution, FeeStats};
 pub use inspect::{inspect_contract, ContractInspection, StorageKeyInfo, TtlInfoSummary};
 pub use storage::{calculate_extension_cost, get_ttl_info, TtlEntry, TtlInfo};
 pub use transaction::{inspect_transaction, TransactionInspection};
+pub use wasm::get_wasm_metadata;

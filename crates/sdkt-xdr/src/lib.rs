@@ -31,8 +31,8 @@ pub use sdkt_core::OutputFormat;
 
 use stellar_xdr::{
     ContractEvent, ContractExecutable, ContractId, Hash, LedgerEntry, LedgerEntryData, LedgerKey,
-    LedgerKeyContractData, Limited, Limits, ReadXdr, ScAddress, ScVal, TransactionEnvelope,
-    TransactionMeta, TransactionResult, WriteXdr,
+    LedgerKeyContractCode, LedgerKeyContractData, Limited, Limits, ReadXdr, ScAddress, ScVal,
+    TransactionEnvelope, TransactionMeta, TransactionResult, WriteXdr,
 };
 use thiserror::Error;
 
@@ -61,6 +61,8 @@ pub enum DecodeError {
 pub enum LedgerKeyParams {
     /// A contract's instance data key. Takes the contract ID as a hex string.
     ContractData(String),
+    /// A contract's WASM code key. Takes the WASM hash as a hex string.
+    ContractCode(String),
 }
 
 /// Encodes `LedgerKeyParams` into a Base64 XDR `LedgerKey`.
@@ -80,6 +82,20 @@ pub fn encode_ledger_key(params: &LedgerKeyParams) -> Result<String, DecodeError
                 contract: ScAddress::Contract(ContractId(Hash(contract_id))),
                 key: ScVal::LedgerKeyContractInstance,
                 durability: stellar_xdr::ContractDataDurability::Persistent,
+            })
+        }
+        LedgerKeyParams::ContractCode(wasm_hash_hex) => {
+            let hash_bytes = hex::decode(wasm_hash_hex).map_err(DecodeError::Hex)?;
+            if hash_bytes.len() != 32 {
+                return Err(DecodeError::Extraction(
+                    "WASM hash must be 32 bytes".to_string(),
+                ));
+            }
+            let mut wasm_hash = [0u8; 32];
+            wasm_hash.copy_from_slice(&hash_bytes);
+
+            LedgerKey::ContractCode(LedgerKeyContractCode {
+                hash: Hash(wasm_hash),
             })
         }
     };
@@ -115,6 +131,22 @@ pub fn extract_wasm_hash(base64_ledger_entry: &str) -> Result<String, DecodeErro
     };
 
     Ok(hex::encode(hash.0))
+}
+
+/// Extracts the raw WASM bytecode from a Base64 encoded `LedgerEntry` containing a `ContractCode` entry.
+pub fn extract_wasm_bytecode(base64_ledger_entry: &str) -> Result<Vec<u8>, DecodeError> {
+    let raw = detect_and_decode(base64_ledger_entry)?;
+    let mut cursor = std::io::Cursor::new(&raw);
+    let mut l = Limited::new(&mut cursor, Limits::none());
+    let entry = LedgerEntry::read_xdr(&mut l)
+        .map_err(|e| DecodeError::XdrParse("LedgerEntry".to_string(), e))?;
+
+    let data = match entry.data {
+        LedgerEntryData::ContractCode(c) => c,
+        _ => return Err(DecodeError::Extraction("Not a ContractCode entry".into())),
+    };
+
+    Ok(data.code.to_vec())
 }
 
 /// Decode a base64- or hex-encoded XDR payload to JSON.
