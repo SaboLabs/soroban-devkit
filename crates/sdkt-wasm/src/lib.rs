@@ -3,12 +3,22 @@ use sha2::{Digest, Sha256};
 use thiserror::Error;
 use wasmparser::{Parser, Payload};
 
+pub mod spec;
+pub use spec::{
+    parse_contract_spec, ContractEvent, ContractFunction, ContractParameter, ContractSpec,
+    ContractType,
+};
+
 #[derive(Error, Debug)]
 pub enum WasmError {
     #[error("WASM parse error: {0}")]
     Parse(#[from] wasmparser::BinaryReaderError),
     #[error("Empty WASM bytes")]
     Empty,
+    #[error("No contractspecv0 section found")]
+    NoContractSpec,
+    #[error("XDR decode error in contract spec: {0}")]
+    SpecXdr(stellar_xdr::Error),
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
