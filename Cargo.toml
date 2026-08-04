@@ -4,6 +4,6 @@ members = [
     "crates/sdkt-xdr",
     "crates/sdkt-cli",
     "crates/sdkt-rpc",
-    "crates/sdkt-storage",
+    "crates/sdkt-storage", "crates/sdkt-wasm",
 ]
 resolver = "2"
