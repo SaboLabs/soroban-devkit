@@ -10,4 +10,8 @@ pub enum StorageError {
     InvalidContractId(String),
     #[error("Parsing error: {0}")]
     Parse(String),
+    #[error("IO error: {0}")]
+    Io(#[from] std::io::Error),
+    #[error("Corrupt cache data: {0}")]
+    CorruptCache(String),
 }
