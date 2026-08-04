@@ -1,7 +1,8 @@
 use clap::{Parser, Subcommand};
 use sdkt_core::{DevKitConfig, OutputFormat};
 use sdkt_rpc::{
-    get_contract_events, get_ttl_info, inspect_contract, inspect_transaction, SorobanRpcClient,
+    get_contract_events, get_ttl_info, inspect_account, inspect_contract, inspect_transaction,
+    SorobanRpcClient,
 };
 use sdkt_xdr::decode;
 use std::fs;
@@ -49,6 +50,12 @@ enum Commands {
     /// Event explorer
     Events {
         contract_id: String,
+        #[arg(short, long, default_value = "pretty")]
+        format: String,
+    },
+    /// Inspect an account's balances and signers
+    Account {
+        address: String,
         #[arg(short, long, default_value = "pretty")]
         format: String,
     },
@@ -245,6 +252,53 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 }
                 Err(e) => {
                     eprintln!("Error fetching events: {}", e);
+                    process::exit(1);
+                }
+            }
+        }
+        Commands::Account { address, format } => {
+            let fmt = parse_format_str(&format);
+            let config = DevKitConfig::from_file(".sdkt.toml").unwrap_or_default();
+            let client = SorobanRpcClient::from_config(&config.network);
+
+            match inspect_account(&client, &address).await {
+                Ok(account) => {
+                    if fmt == OutputFormat::Json {
+                        let json_str = serde_json::to_string(&account)?;
+                        println!("{}", json_str);
+                    } else {
+                        println!("Account:");
+                        println!();
+                        println!("Address: {}", account.address);
+                        println!(
+                            "Sequence: {}",
+                            account.sequence.as_deref().unwrap_or("Unknown")
+                        );
+                        println!("\nBalances:");
+                        if account.balances.is_empty() {
+                            println!("  (none)");
+                        } else {
+                            for b in account.balances {
+                                println!("  Asset: {}", b.asset_type);
+                                println!("  Balance: {}", b.balance);
+                            }
+                        }
+                        println!("\nSigners:");
+                        if account.signers.is_empty() {
+                            println!("  (none)");
+                        } else {
+                            for s in account.signers {
+                                println!("  Public Key: {}", s.public_key);
+                                println!(
+                                    "  Weight: {}",
+                                    s.weight.map_or("Unknown".to_string(), |w| w.to_string())
+                                );
+                            }
+                        }
+                    }
+                }
+                Err(e) => {
+                    eprintln!("Error inspecting account: {}", e);
                     process::exit(1);
                 }
             }

@@ -8,6 +8,7 @@
 //! - [`SorobanRpcClient`] — main client
 //! - [`RpcError`] — structured error types
 
+pub mod account;
 pub mod client;
 pub mod error;
 pub mod events;
@@ -15,6 +16,7 @@ pub mod inspect;
 pub mod storage;
 pub mod transaction;
 
+pub use account::{inspect_account, AccountBalance, AccountInspection, AccountSigner};
 pub use client::SorobanRpcClient;
 pub use error::RpcError;
 pub use events::{get_contract_events, ContractEvent};

@@ -61,5 +61,8 @@ All new commands will require integration tests simulating standard inputs.
 
 Unit tests inside `sdkt-rpc` will continue to use stubbed JSON-RPC responses for deterministic tests.
 
-## Recommended First Step
-Implement **Transaction Inspection** (`sdkt tx inspect`). It directly utilizes existing `sdkt-rpc` patterns and uses the existing `SorobanRpcClient` wrapper with minimal changes to XDR parsers, allowing a clean, safe step forward without large refactoring.
+## Status
+
+- [x] Transaction Inspection
+- [x] Event Explorer
+- [x] Account Inspection
