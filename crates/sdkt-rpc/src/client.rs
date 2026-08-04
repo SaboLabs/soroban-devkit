@@ -5,6 +5,7 @@
 use crate::error::RpcError;
 use sdkt_core::NetworkConfig;
 use serde::{Deserialize, Serialize};
+use std::time::Duration;
 
 /// Soroban RPC HTTP client.
 ///
@@ -19,15 +20,23 @@ pub struct SorobanRpcClient {
 impl SorobanRpcClient {
     /// Create a client from an explicit endpoint URL.
     ///
+    /// Configures a 15-second default timeout to prevent hanging requests.
+    ///
     /// # Example
     /// ```
     /// use sdkt_rpc::SorobanRpcClient;
     /// let client = SorobanRpcClient::new("https://soroban-testnet.stellar.org");
     /// ```
     pub fn new(endpoint: &str) -> Self {
+        let http_client = reqwest::Client::builder()
+            .timeout(Duration::from_secs(15))
+            .pool_idle_timeout(Duration::from_secs(60))
+            .build()
+            .unwrap_or_else(|_| reqwest::Client::new());
+
         Self {
             endpoint: endpoint.to_string(),
-            http_client: reqwest::Client::new(),
+            http_client,
         }
     }
 
@@ -41,7 +50,7 @@ impl SorobanRpcClient {
         &self.endpoint
     }
 
-    /// Helper for making JSON-RPC calls.
+    /// Helper for making JSON-RPC calls with basic timeout retry logic.
     pub async fn request<T: serde::de::DeserializeOwned>(
         &self,
         method: &str,
@@ -54,22 +63,46 @@ impl SorobanRpcClient {
             "params": params,
         });
 
-        let res = self
-            .http_client
-            .post(&self.endpoint)
-            .json(&payload)
-            .send()
-            .await?;
+        // Simple single-retry logic for network-level timeouts or transient failures
+        let mut attempt = 0;
+        let mut last_err = None;
 
-        let rpc_res: JsonRpcResponse<T> = res.json().await?;
+        while attempt < 2 {
+            match self
+                .http_client
+                .post(&self.endpoint)
+                .json(&payload)
+                .send()
+                .await
+            {
+                Ok(res) => {
+                    let rpc_res: JsonRpcResponse<T> = match res.json().await {
+                        Ok(json) => json,
+                        Err(e) => return Err(RpcError::Reqwest(e)),
+                    };
 
-        if let Some(error) = rpc_res.error {
-            return Err(RpcError::Rpc(error.message));
+                    if let Some(error) = rpc_res.error {
+                        return Err(RpcError::Rpc(error.message));
+                    }
+
+                    return rpc_res.result.ok_or_else(|| {
+                        RpcError::Rpc("Missing result in JSON-RPC response".to_string())
+                    });
+                }
+                Err(e) => {
+                    if e.is_timeout() || e.is_connect() {
+                        last_err = Some(e);
+                        attempt += 1;
+                        // short backoff
+                        tokio::time::sleep(Duration::from_millis(500)).await;
+                        continue;
+                    }
+                    return Err(RpcError::Reqwest(e));
+                }
+            }
         }
 
-        rpc_res
-            .result
-            .ok_or_else(|| RpcError::Rpc("Missing result in JSON-RPC response".to_string()))
+        Err(RpcError::Reqwest(last_err.unwrap()))
     }
 
     /// Check the health of the Soroban RPC node.

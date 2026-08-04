@@ -1,29 +1,21 @@
-//! RPC-specific error types.
-//!
-//! [`RpcError`] aggregates transport, serialization, protocol, and contract
-//! errors into a single `thiserror` enum for ergonomic `?` propagation.
-
 use thiserror::Error;
 
-/// Errors that can occur during Soroban RPC interaction.
+/// Core RPC error types for Soroban DevKit.
 #[derive(Debug, Error)]
 pub enum RpcError {
-    /// HTTP transport failure (network, timeout, DNS, etc.)
-    #[error("HTTP error: {0}")]
-    Http(#[from] reqwest::Error),
-
-    /// JSON serialization/deserialization failure.
-    #[error("JSON error: {0}")]
-    Json(#[from] serde_json::Error),
-
-    /// Raw JSON-RPC error message from the server.
+    /// An error originating from the JSON-RPC response (e.g. invalid arguments, internal error).
     #[error("RPC error: {0}")]
     Rpc(String),
-
-    /// Contract not found at the given address.
-    #[error("contract not found")]
+    /// An error related to network connectivity or HTTP protocol.
+    #[error("HTTP request error: {0}")]
+    Reqwest(#[from] reqwest::Error),
+    /// An error parsing or structuring JSON data.
+    #[error("JSON parsing error: {0}")]
+    Json(#[from] serde_json::Error),
+    /// Configuration or environment error.
+    #[error("Configuration error: {0}")]
+    Config(String),
+    /// Contract was not found on the network.
+    #[error("Contract not found on the network")]
     ContractNotFound,
 }
-
-/// Result alias for RPC operations.
-pub type Result<T> = std::result::Result<T, RpcError>;
