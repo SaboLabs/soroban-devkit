@@ -7,7 +7,7 @@ keywords = ["soroban", "stellar", "sdk", "toolkit", "blockchain"]
 categories = ["development-tools", "network-programming"]
 license = "MIT"
 name = "sdkt-cli"
-version = "0.1.0"
+version = "0.6.0-alpha"
 edition = "2021"
 
 [dependencies]
