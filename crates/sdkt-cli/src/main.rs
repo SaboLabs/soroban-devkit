@@ -164,6 +164,23 @@ enum TxAction {
         #[arg(short, long, default_value = "pretty")]
         format: String,
     },
+    /// Submit a transaction envelope to the network, optionally waiting
+    Submit {
+        /// Base64 XDR transaction envelope or path to a file containing it
+        #[arg(short, long)]
+        envelope: String,
+        /// Wait and poll until the transaction settles
+        #[arg(short, long)]
+        wait: bool,
+        /// Timeout in seconds while waiting
+        #[arg(short = 't', long, default_value = "60")]
+        timeout: u64,
+        /// Polling interval in seconds while waiting
+        #[arg(short, long, default_value = "2")]
+        interval: u64,
+        #[arg(short, long, default_value = "pretty")]
+        format: String,
+    },
     /// Build a transaction envelope XDR
     Build {
         #[arg(long)]
@@ -378,6 +395,53 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     Err(e) => {
                         eprintln!("Error simulating transaction: {}", e);
                         process::exit(1);
+                    }
+                }
+            }
+            TxAction::Submit {
+                envelope,
+                wait,
+                timeout,
+                interval,
+                format,
+            } => {
+                let fmt = parse_format_str(&format);
+                let config = DevKitConfig::from_file(".sdkt.toml").unwrap_or_default();
+                let client = SorobanRpcClient::from_config(&config.network);
+
+                use sdkt_rpc::{submit_and_wait, PollConfig};
+                use std::time::Duration;
+
+                let env_data = if fs::metadata(&envelope).is_ok() {
+                    fs::read_to_string(&envelope)?
+                } else {
+                    envelope.clone()
+                };
+
+                let poll_cfg = PollConfig {
+                    timeout: Duration::from_secs(timeout),
+                    interval: Duration::from_secs(interval),
+                };
+
+                match submit_and_wait(&client, &env_data, wait, &poll_cfg).await {
+                    Ok(res) => {
+                        if fmt == OutputFormat::Json {
+                            println!("{}", serde_json::to_string(&res)?);
+                        } else {
+                            println!("Submission Result:");
+                            println!("  Hash:   {}", res.hash);
+                            println!("  Status: {:?}", res.status);
+                            if let Some(ledger) = &res.latest_ledger {
+                                println!("  Ledger: {}", ledger);
+                            }
+                            if let Some(xdr) = &res.result_xdr {
+                                println!("  Result XDR: {}", xdr);
+                            }
+                        }
+                    }
+                    Err(e) => {
+                        eprintln!("Error submitting transaction: {}", e);
+                        std::process::exit(1);
                     }
                 }
             }
@@ -762,7 +826,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     } else {
                         println!("Identities:");
                         for id in list {
-                            let is_def = default_id.as_ref().map_or(false, |d| d.name == id.name);
+                            let is_def = default_id.as_ref().is_some_and(|d| d.name == id.name);
                             println!(
                                 "  {} {} ({})",
                                 if is_def { "*" } else { " " },

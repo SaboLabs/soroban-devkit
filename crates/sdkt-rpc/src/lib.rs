@@ -16,6 +16,7 @@ pub mod fee;
 pub mod inspect;
 pub mod simulate;
 pub mod storage;
+pub mod submission;
 pub mod transaction;
 pub mod wasm;
 
@@ -30,5 +31,10 @@ pub use simulate::{
     SimulateResponse, SimulateTransactionRequest,
 };
 pub use storage::{calculate_extension_cost, get_ttl_info, TtlEntry, TtlInfo};
+pub use submission::{
+    get_transaction_status, poll_transaction, send_transaction, submit_and_wait, PollConfig,
+    SendTransactionRequest, SendTransactionResponse, SubmissionResult, TransactionStatus,
+    TransactionStatusResponse,
+};
 pub use transaction::{inspect_transaction, TransactionInspection};
 pub use wasm::get_wasm_metadata;
