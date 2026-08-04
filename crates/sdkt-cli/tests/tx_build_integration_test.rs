@@ -23,6 +23,34 @@ fn test_cli_tx_build_success() {
 }
 
 #[test]
+fn test_cli_tx_build_typed_args() {
+    let mut cmd = Command::cargo_bin("sdkt-cli").unwrap();
+    let assert = cmd
+        .arg("tx")
+        .arg("build")
+        .arg("--source")
+        .arg(TEST_SOURCE)
+        .arg("--sequence")
+        .arg("1")
+        .arg("--contract")
+        .arg(TEST_CONTRACT)
+        .arg("--function")
+        .arg("transfer")
+        .arg("--arg")
+        .arg("u32:100")
+        .arg("--arg")
+        .arg("string:hello")
+        .arg("--arg")
+        .arg("bool:true")
+        .arg("--format")
+        .arg("json")
+        .assert();
+    assert
+        .success()
+        .stdout(predicates::str::contains(r#""envelope": "AAAA"#));
+}
+
+#[test]
 fn test_cli_tx_build_json() {
     let mut cmd = Command::cargo_bin("sdkt-cli").unwrap();
     let assert = cmd

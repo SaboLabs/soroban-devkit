@@ -1,8 +1,9 @@
 use stellar_strkey::Strkey;
 use stellar_xdr::{
-    Error as XdrError, Limits, Memo, MuxedAccount, Operation, Preconditions, SequenceNumber,
-    TimeBounds, Transaction, TransactionEnvelope, TransactionExt, TransactionV1Envelope, Uint256,
-    VecM, WriteXdr,
+    ContractId, Error as XdrError, Hash, HostFunction, InvokeContractArgs, InvokeHostFunctionOp,
+    Limits, Memo, MuxedAccount, Operation, OperationBody, Preconditions, ScAddress, ScSymbol,
+    SequenceNumber, TimeBounds, Transaction, TransactionEnvelope, TransactionExt,
+    TransactionV1Envelope, Uint256, VecM, WriteXdr,
 };
 use thiserror::Error;
 
@@ -99,6 +100,49 @@ impl TxBuilder {
         self
     }
 
+    /// Add an `InvokeHostFunction` operation for a smart-contract call.
+    ///
+    /// This is a convenience that wraps a [`HostFunction::InvokeContract`] op
+    /// without requiring the caller to hand-assemble the XDR [`Operation`].
+    ///
+    /// # Errors
+    ///
+    /// Returns [`BuilderError::InvalidOperation`] if the contract ID (`C...`)
+    /// or function name is invalid.
+    pub fn invoke_contract(
+        mut self,
+        contract_id: &str,
+        function: &str,
+        args: Vec<stellar_xdr::ScVal>,
+    ) -> Result<Self, BuilderError> {
+        let hash = decode_contract_id_direct(contract_id)
+            .map_err(|e| BuilderError::InvalidOperation(format!("contract ID: {e}")))?;
+
+        let sc_symbol: stellar_xdr::StringM<32> = function
+            .as_bytes()
+            .try_into()
+            .map_err(|_| BuilderError::InvalidOperation("function name too long".into()))?;
+        let function_name = ScSymbol(sc_symbol);
+
+        let args_vec: VecM<stellar_xdr::ScVal> = args
+            .try_into()
+            .map_err(|_| BuilderError::InvalidOperation("too many args".into()))?;
+
+        let op = Operation {
+            source_account: None,
+            body: OperationBody::InvokeHostFunction(InvokeHostFunctionOp {
+                host_function: HostFunction::InvokeContract(InvokeContractArgs {
+                    contract_address: ScAddress::Contract(ContractId(hash)),
+                    function_name,
+                    args: args_vec,
+                }),
+                auth: VecM::default(),
+            }),
+        };
+        self.operations.push(op);
+        Ok(self)
+    }
+
     /// Set ext to V1 with SorobanTransactionData (for host functions)
     pub fn set_ext(mut self, ext: TransactionExt) -> Self {
         self.ext = ext;
@@ -156,6 +200,14 @@ impl TxBuilder {
         let envelope = self.build()?;
         let b64 = envelope.to_xdr_base64(Limits::none())?;
         Ok(b64)
+    }
+}
+
+fn decode_contract_id_direct(contract_id: &str) -> Result<Hash, String> {
+    let key = Strkey::from_string(contract_id).map_err(|e| e.to_string())?;
+    match key {
+        Strkey::Contract(c) => Ok(Hash(c.0)),
+        _ => Err("Expected C... contract StrKey".into()),
     }
 }
 
@@ -227,5 +279,83 @@ mod tests {
             }
             _ => panic!("Expected Tx (V1)"),
         }
+    }
+
+    const TEST_CONTRACT: &str = "CAAQCAIBAEAQCAIBAEAQCAIBAEAQCAIBAEAQCAIBAEAQCAIBAEAQC526";
+
+    #[test]
+    fn test_builder_invoke_contract_success() {
+        let b64 = TxBuilder::new()
+            .source_account(TEST_SOURCE)
+            .unwrap()
+            .sequence_number(5)
+            .fee(200)
+            .invoke_contract(
+                TEST_CONTRACT,
+                "transfer",
+                vec![
+                    stellar_xdr::ScVal::U32(100),
+                    stellar_xdr::ScVal::String(stellar_xdr::ScString(
+                        "hello".as_bytes().to_vec().try_into().unwrap(),
+                    )),
+                    stellar_xdr::ScVal::Bool(true),
+                ],
+            )
+            .unwrap()
+            .build_base64()
+            .unwrap();
+        let envelope = TransactionEnvelope::from_xdr_base64(b64, Limits::none()).unwrap();
+        match envelope {
+            TransactionEnvelope::Tx(env) => {
+                assert_eq!(env.tx.operations.len(), 1);
+                match env.tx.operations.first().unwrap().body {
+                    OperationBody::InvokeHostFunction(ref op) => match op.host_function {
+                        stellar_xdr::HostFunction::InvokeContract(ref args) => {
+                            assert_eq!(args.function_name.to_utf8_string_lossy(), "transfer");
+                            assert_eq!(args.args.len(), 3);
+                        }
+                        _ => panic!("Expected InvokeContract"),
+                    },
+                    _ => panic!("Expected InvokeHostFunction operation"),
+                }
+            }
+            _ => panic!("Expected Tx (V1)"),
+        }
+    }
+
+    #[test]
+    fn test_builder_invoke_contract_empty_args() {
+        let b64 = TxBuilder::new()
+            .source_account(TEST_SOURCE)
+            .unwrap()
+            .sequence_number(1)
+            .invoke_contract(TEST_CONTRACT, "hello", vec![])
+            .unwrap()
+            .build_base64()
+            .unwrap();
+        let envelope = TransactionEnvelope::from_xdr_base64(b64, Limits::none()).unwrap();
+        match envelope {
+            TransactionEnvelope::Tx(env) => match env.tx.operations.first().unwrap().body {
+                OperationBody::InvokeHostFunction(ref op) => match op.host_function {
+                    stellar_xdr::HostFunction::InvokeContract(ref args) => {
+                        assert_eq!(args.function_name.to_utf8_string_lossy(), "hello");
+                        assert_eq!(args.args.len(), 0);
+                    }
+                    _ => panic!("Expected InvokeContract"),
+                },
+                _ => panic!("Expected InvokeHostFunction"),
+            },
+            _ => panic!("Expected Tx"),
+        }
+    }
+
+    #[test]
+    fn test_builder_invoke_contract_invalid_contract_id() {
+        let res = TxBuilder::new()
+            .source_account(TEST_SOURCE)
+            .unwrap()
+            .sequence_number(1)
+            .invoke_contract("GNOTACONTRACT", "hello", vec![]);
+        assert!(matches!(res, Err(BuilderError::InvalidOperation(_))));
     }
 }

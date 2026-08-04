@@ -193,7 +193,9 @@ enum TxAction {
         contract: String,
         #[arg(long)]
         function: String,
-        /// Optional arguments as base64 ScVal strings
+        /// Optional arguments: `type:value` (e.g. `u32:100`, `string:hello`,
+        /// `bool:true`, `bytes:0a0b`). Base64-encoded ScVal strings are also
+        /// accepted as-is (passthrough).
         #[arg(long)]
         arg: Vec<String>,
         #[arg(short, long, default_value = "pretty")]
@@ -468,13 +470,69 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     }
                 }
 
+                let mut parsed_args = Vec::new();
+                for a in arg.iter() {
+                    if let Some((t, v)) = a.split_once(':') {
+                        use sdkt_xdr::{scval_to_base64, IntoScVal};
+                        let b64 = match t.to_lowercase().as_str() {
+                            "u32" => {
+                                let n: u32 = v.parse().unwrap();
+                                scval_to_base64(&n.into_scval().unwrap()).unwrap()
+                            }
+                            "i32" => {
+                                let n: i32 = v.parse().unwrap();
+                                scval_to_base64(&n.into_scval().unwrap()).unwrap()
+                            }
+                            "u64" => {
+                                let n: u64 = v.parse().unwrap();
+                                scval_to_base64(&n.into_scval().unwrap()).unwrap()
+                            }
+                            "i64" => {
+                                let n: i64 = v.parse().unwrap();
+                                scval_to_base64(&n.into_scval().unwrap()).unwrap()
+                            }
+                            "u128" => {
+                                let n: u128 = v.parse().unwrap();
+                                scval_to_base64(&n.into_scval().unwrap()).unwrap()
+                            }
+                            "i128" => {
+                                let n: i128 = v.parse().unwrap();
+                                scval_to_base64(&n.into_scval().unwrap()).unwrap()
+                            }
+                            "bool" => {
+                                let b: bool = v.parse().unwrap();
+                                scval_to_base64(&b.into_scval().unwrap()).unwrap()
+                            }
+                            "string" => scval_to_base64(&v.into_scval().unwrap()).unwrap(),
+                            "bytes" => {
+                                let mut b = Vec::new();
+                                let s = v.trim();
+                                for i in (0..s.len()).step_by(2) {
+                                    let byte = u8::from_str_radix(&s[i..i + 2], 16).unwrap();
+                                    b.push(byte);
+                                }
+                                scval_to_base64(&b.into_scval().unwrap()).unwrap()
+                            }
+                            "address" => {
+                                use sdkt_xdr::Address;
+                                let addr = Address::from_strkey(v).unwrap();
+                                scval_to_base64(&addr.into_scval().unwrap()).unwrap()
+                            }
+                            _ => a.clone(), // Unknown type fallback to direct base64
+                        };
+                        parsed_args.push(b64);
+                    } else {
+                        parsed_args.push(a.clone());
+                    }
+                }
+
                 let params = InvokeTransactionParams {
                     source_account,
                     sequence,
                     fee,
                     contract_id: contract.clone(),
                     function: function.clone(),
-                    args: arg.clone(),
+                    args: parsed_args,
                 };
 
                 match build_invoke_transaction(&params) {
