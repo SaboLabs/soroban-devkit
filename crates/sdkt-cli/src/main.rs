@@ -1,4 +1,5 @@
 use clap::{Parser, Subcommand};
+use sdkt_core::fee::{FeeConfig, FeeEstimator, LedgerFeeSample, NetworkKind};
 use sdkt_core::{DevKitConfig, OutputFormat};
 use sdkt_rpc::{
     get_contract_events, get_ttl_info, inspect_account, inspect_contract, inspect_transaction,
@@ -56,6 +57,25 @@ enum Commands {
     /// Inspect an account's balances and signers
     Account {
         address: String,
+        #[arg(short, long, default_value = "pretty")]
+        format: String,
+    },
+    /// Estimate transaction fee from recent ledger base fees
+    Fee {
+        #[command(subcommand)]
+        action: FeeAction,
+    },
+}
+
+#[derive(Subcommand)]
+enum FeeAction {
+    Estimate {
+        /// Network: testnet, mainnet, standalone
+        #[arg(short, long, default_value = "testnet")]
+        network: String,
+        /// Comma-separated recent base fees in stroops (e.g. "100,120,110")
+        #[arg(short, long, value_name = "FEES")]
+        base_fees: String,
         #[arg(short, long, default_value = "pretty")]
         format: String,
     },
@@ -303,6 +323,56 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 }
             }
         }
+        Commands::Fee { action } => match action {
+            FeeAction::Estimate {
+                network,
+                base_fees,
+                format,
+            } => {
+                let fmt = parse_format_str(&format);
+                let network_kind = match network.parse::<NetworkKind>() {
+                    Ok(nk) => nk,
+                    Err(e) => {
+                        eprintln!("Invalid network: {}", e);
+                        std::process::exit(1);
+                    }
+                };
+                let samples: Result<Vec<LedgerFeeSample>, _> = base_fees
+                    .split(',')
+                    .map(|s| {
+                        s.trim()
+                            .parse::<u32>()
+                            .map(|base_fee| LedgerFeeSample { base_fee })
+                    })
+                    .collect();
+                let samples = match samples {
+                    Ok(s) => s,
+                    Err(_) => {
+                        eprintln!("Invalid base_fees. Must be comma-separated integers.");
+                        std::process::exit(1);
+                    }
+                };
+                let estimator = FeeEstimator::new(FeeConfig {
+                    network: network_kind,
+                    multiplier_override: None,
+                });
+                match estimator.estimate(&samples) {
+                    Ok((stroops, xlm)) => {
+                        if fmt == OutputFormat::Json {
+                            println!("{{\"stroops\":{},\"xlm\":\"{}\"}}", stroops, xlm);
+                        } else {
+                            println!("Fee Estimate ({}):", network_kind);
+                            println!("Stroops: {}", stroops);
+                            println!("XLM: {}", xlm);
+                        }
+                    }
+                    Err(e) => {
+                        eprintln!("Error estimating fee: {}", e);
+                        std::process::exit(1);
+                    }
+                }
+            }
+        },
     }
 
     Ok(())
