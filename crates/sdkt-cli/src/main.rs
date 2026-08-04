@@ -2,9 +2,10 @@ use clap::{Parser, Subcommand};
 use sdkt_core::fee::{FeeConfig, FeeEstimator, LedgerFeeSample, NetworkKind};
 use sdkt_core::{DevKitConfig, OutputFormat};
 use sdkt_rpc::{
-    estimate_dynamic_fee, get_contract_events, get_ttl_info, inspect_account, inspect_contract,
-    inspect_transaction, SorobanRpcClient,
+    estimate_dynamic_fee, get_contract_events, get_ttl_info, get_wasm_metadata, inspect_account,
+    inspect_contract, inspect_transaction, SorobanRpcClient,
 };
+use sdkt_storage::WasmCache;
 use sdkt_xdr::decode;
 use std::fs;
 use std::process;
@@ -64,6 +65,54 @@ enum Commands {
     Fee {
         #[command(subcommand)]
         action: FeeAction,
+    },
+    /// Manage WASM metadata and caching
+    Wasm {
+        #[command(subcommand)]
+        action: WasmAction,
+    },
+}
+
+#[derive(Subcommand)]
+enum WasmAction {
+    /// Inspect WASM metadata for a deployed contract
+    Metadata {
+        #[arg(short, long)]
+        contract: String,
+        #[arg(short, long, default_value = "testnet")]
+        network: String,
+        /// Force bypass the cache and fetch fresh from RPC
+        #[arg(long, default_value_t = false)]
+        refresh: bool,
+        #[arg(short, long, default_value = "pretty")]
+        format: String,
+    },
+    /// Manage the local WASM cache
+    Cache {
+        #[command(subcommand)]
+        action: CacheAction,
+    },
+}
+
+#[derive(Subcommand)]
+enum CacheAction {
+    /// Show stats about the cache (size, item count)
+    Info {
+        #[arg(short, long, default_value = "testnet")]
+        network: String,
+        #[arg(short, long, default_value = "pretty")]
+        format: String,
+    },
+    /// Remove a specific hash from the cache
+    Remove {
+        hash: String,
+        #[arg(short, long, default_value = "testnet")]
+        network: String,
+    },
+    /// Clear all items in the cache for the network
+    Clear {
+        #[arg(short, long, default_value = "testnet")]
+        network: String,
     },
 }
 
@@ -398,6 +447,147 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     }
                     println!("Stroops: {}", stroops);
                     println!("XLM: {}", xlm);
+                }
+            }
+        },
+        Commands::Wasm { action } => match action {
+            WasmAction::Metadata {
+                contract,
+                network,
+                refresh,
+                format,
+            } => {
+                let fmt = parse_format_str(&format);
+                let config = DevKitConfig::from_file(".sdkt.toml").unwrap_or_default();
+                let client = SorobanRpcClient::from_config(&config.network);
+
+                // Initialize cache
+                let cache = match WasmCache::new() {
+                    Ok(c) => c,
+                    Err(e) => {
+                        eprintln!("Warning: could not initialize cache: {}", e);
+                        WasmCache::with_dir(std::env::temp_dir().join("sdkt-fallback-cache"))
+                    }
+                };
+
+                // First, inspect the contract to get its WASM hash
+                let inspection = match inspect_contract(&client, &contract).await {
+                    Ok(ins) => ins,
+                    Err(e) => {
+                        eprintln!("Error inspecting contract {}: {}", contract, e);
+                        process::exit(1);
+                    }
+                };
+
+                let wasm_hash = &inspection.wasm_hash;
+
+                // Check cache if not forcing refresh
+                let mut metadata = None;
+                let mut cache_status = "Miss";
+
+                if !refresh {
+                    match cache.get(&network, wasm_hash) {
+                        Ok(Some(m)) => {
+                            metadata = Some(m);
+                            cache_status = "Hit";
+                        }
+                        Ok(None) => {} // normal miss
+                        Err(e) => {
+                            eprintln!("Warning: Cache read error: {}", e);
+                        }
+                    }
+                }
+
+                // If no metadata from cache, fetch it
+                let meta = if let Some(m) = metadata {
+                    m
+                } else {
+                    let fetched = match get_wasm_metadata(&client, wasm_hash).await {
+                        Ok(m) => m,
+                        Err(e) => {
+                            eprintln!("Error fetching WASM metadata: {}", e);
+                            process::exit(1);
+                        }
+                    };
+
+                    // Put into cache for future
+                    if let Err(e) = cache.put(&network, &fetched, &[]) {
+                        eprintln!("Warning: Failed to write to cache: {}", e);
+                    }
+
+                    fetched
+                };
+
+                if fmt == OutputFormat::Json {
+                    let json_str = serde_json::to_string(&meta)?;
+                    println!("{}", json_str);
+                } else {
+                    println!("WASM Metadata:");
+                    println!("Contract ID: {}", contract);
+                    println!("Network: {}", network);
+                    println!("WASM Hash: {}", meta.hash);
+                    println!("Cache Status: {}", cache_status);
+                    println!("Size: {} bytes", meta.size_bytes);
+                    println!("Exports: {}", meta.exports.len());
+                    println!("Imports: {}", meta.imports.len());
+                    println!("Custom Sections: {}", meta.custom_sections.len());
+                }
+            }
+            WasmAction::Cache { action } => {
+                let cache = WasmCache::new().unwrap_or_else(|_| {
+                    eprintln!("Could not initialize cache");
+                    process::exit(1);
+                });
+
+                match action {
+                    CacheAction::Info { network, format } => {
+                        let fmt = parse_format_str(&format);
+                        match cache.cache_info(&network) {
+                            Ok(info) => {
+                                if fmt == OutputFormat::Json {
+                                    // In a real app we'd derive Serialize for CacheInfo,
+                                    // but we can manually output JSON here or derive it in sdkt-storage
+                                    println!(
+                                        "{{\"network\":\"{}\",\"entry_count\":{},\"total_metadata_size_bytes\":{},\"total_wasm_size_bytes\":{}}}",
+                                        info.network,
+                                        info.entry_count,
+                                        info.total_metadata_size_bytes,
+                                        info.total_wasm_size_bytes
+                                    );
+                                } else {
+                                    println!("Cache Info for Network '{}':", info.network);
+                                    println!("Entries: {}", info.entry_count);
+                                    println!(
+                                        "Metadata Size: {} bytes",
+                                        info.total_metadata_size_bytes
+                                    );
+                                    println!("WASM Size: {} bytes", info.total_wasm_size_bytes);
+                                }
+                            }
+                            Err(e) => {
+                                eprintln!("Error getting cache info: {}", e);
+                                process::exit(1);
+                            }
+                        }
+                    }
+                    CacheAction::Remove { hash, network } => match cache.remove(&network, &hash) {
+                        Ok(_) => {
+                            println!("Removed {} from {} cache.", hash, network);
+                        }
+                        Err(e) => {
+                            eprintln!("Error removing cache entry: {}", e);
+                            process::exit(1);
+                        }
+                    },
+                    CacheAction::Clear { network } => match cache.clear(&network) {
+                        Ok(_) => {
+                            println!("Cleared all cache entries for {}.", network);
+                        }
+                        Err(e) => {
+                            eprintln!("Error clearing cache: {}", e);
+                            process::exit(1);
+                        }
+                    },
                 }
             }
         },
