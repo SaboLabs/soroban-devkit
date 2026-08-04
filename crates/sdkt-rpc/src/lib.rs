@@ -1,17 +1,21 @@
-//! # sdkt-rpc
+//! RPC module handles network requests.
 //!
-//! Soroban RPC client for the Soroban DevKit.
+//! Exposes clients and methods to query the Soroban RPC endpoint for contract
+//! inspection, XDR retrieval, and storage proofs.
 //!
-//! Provides HTTP + JSON-RPC interactions with Soroban RPC nodes.
+//! # Modules
 //!
-//! ## Public API
 //! - [`SorobanRpcClient`] — main client
 //! - [`RpcError`] — structured error types
+
 pub mod client;
 pub mod error;
 pub mod inspect;
 pub mod storage;
+pub mod transaction;
+
 pub use client::SorobanRpcClient;
 pub use error::RpcError;
 pub use inspect::{inspect_contract, ContractInspection, StorageKeyInfo, TtlInfoSummary};
 pub use storage::{calculate_extension_cost, get_ttl_info, TtlEntry, TtlInfo};
+pub use transaction::{inspect_transaction, TransactionInspection};

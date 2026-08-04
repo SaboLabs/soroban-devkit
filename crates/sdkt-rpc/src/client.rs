@@ -42,7 +42,7 @@ impl SorobanRpcClient {
     }
 
     /// Helper for making JSON-RPC calls.
-    async fn rpc_call<T: serde::de::DeserializeOwned>(
+    pub async fn request<T: serde::de::DeserializeOwned>(
         &self,
         method: &str,
         params: impl Serialize,
@@ -74,12 +74,12 @@ impl SorobanRpcClient {
 
     /// Check the health of the Soroban RPC node.
     pub async fn get_health(&self) -> Result<HealthCheck, RpcError> {
-        self.rpc_call("getHealth", ()).await
+        self.request("getHealth", ()).await
     }
 
     /// Get the latest ledger info from the Soroban RPC node.
     pub async fn get_ledger(&self) -> Result<LedgerInfo, RpcError> {
-        self.rpc_call("getLatestLedger", ()).await
+        self.request("getLatestLedger", ()).await
     }
 
     /// Get contract storage entries.
@@ -88,7 +88,7 @@ impl SorobanRpcClient {
         _contract_id: &str,
         keys: &[String],
     ) -> Result<StorageResponse, RpcError> {
-        self.rpc_call("getLedgerEntries", serde_json::json!([keys]))
+        self.request("getLedgerEntries", serde_json::json!([keys]))
             .await
     }
 }

@@ -1550,11 +1550,13 @@ dependencies = [
 name = "sdkt-rpc"
 version = "0.2.0"
 dependencies = [
+ "base64 0.23.0",
  "reqwest",
  "sdkt-core",
  "sdkt-xdr",
  "serde",
  "serde_json",
+ "stellar-xdr",
  "thiserror",
 ]
 

@@ -1,6 +1,6 @@
 use clap::{Parser, Subcommand};
 use sdkt_core::{DevKitConfig, OutputFormat};
-use sdkt_rpc::{get_ttl_info, inspect_contract, SorobanRpcClient};
+use sdkt_rpc::{get_ttl_info, inspect_contract, inspect_transaction, SorobanRpcClient};
 use sdkt_xdr::decode;
 use std::fs;
 use std::process;
@@ -36,6 +36,20 @@ enum Commands {
     /// Inspect a contract's ABI and storage
     Inspect {
         contract_id: String,
+        #[arg(short, long, default_value = "pretty")]
+        format: String,
+    },
+    /// Inspect a Soroban transaction
+    Tx {
+        #[command(subcommand)]
+        action: TxAction,
+    },
+}
+
+#[derive(Subcommand)]
+enum TxAction {
+    Inspect {
+        hash: String,
         #[arg(short, long, default_value = "pretty")]
         format: String,
     },
@@ -150,6 +164,46 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 }
             }
         }
+        Commands::Tx { action } => match action {
+            TxAction::Inspect { hash, format } => {
+                let fmt = parse_format_str(&format);
+                let config = DevKitConfig::from_file(".sdkt.toml").unwrap_or_default();
+                let client = SorobanRpcClient::from_config(&config.network);
+
+                match inspect_transaction(&client, &hash).await {
+                    Ok(tx_info) => {
+                        if fmt == OutputFormat::Json {
+                            let json_str = serde_json::to_string(&tx_info)?;
+                            println!("{}", json_str);
+                        } else {
+                            println!("Transaction:");
+                            println!("Hash: {}", tx_info.hash);
+                            println!("Status: {}", tx_info.status.as_deref().unwrap_or("Unknown"));
+                            println!(
+                                "Ledger: {}",
+                                tx_info.ledger.map_or("N/A".to_string(), |v| v.to_string())
+                            );
+                            println!(
+                                "Fee: {}",
+                                tx_info
+                                    .fee_charged
+                                    .map_or("N/A".to_string(), |v| v.to_string())
+                            );
+                            println!(
+                                "Operations: {}",
+                                tx_info
+                                    .operation_count
+                                    .map_or("N/A".to_string(), |v| v.to_string())
+                            );
+                        }
+                    }
+                    Err(e) => {
+                        eprintln!("Error inspecting transaction: {}", e);
+                        process::exit(1);
+                    }
+                }
+            }
+        },
     }
 
     Ok(())
