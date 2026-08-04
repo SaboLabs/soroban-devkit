@@ -1540,7 +1540,7 @@ dependencies = [
 
 [[package]]
 name = "sdkt-core"
-version = "0.1.0"
+version = "0.6.0-alpha"
 dependencies = [
  "serde",
  "toml",
@@ -1548,7 +1548,7 @@ dependencies = [
 
 [[package]]
 name = "sdkt-rpc"
-version = "0.2.0"
+version = "0.6.0-alpha"
 dependencies = [
  "base64 0.23.0",
  "reqwest",
@@ -1563,7 +1563,7 @@ dependencies = [
 
 [[package]]
 name = "sdkt-storage"
-version = "0.1.0"
+version = "0.6.0-alpha"
 dependencies = [
  "sdkt-rpc",
  "serde",
@@ -1573,7 +1573,7 @@ dependencies = [
 
 [[package]]
 name = "sdkt-xdr"
-version = "0.1.0"
+version = "0.6.0-alpha"
 dependencies = [
  "base64 0.23.0",
  "hex",

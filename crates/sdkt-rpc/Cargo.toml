@@ -1,13 +1,18 @@
 [package]
 name = "sdkt-rpc"
-version = "0.2.0"
+version = "0.6.0-alpha"
 edition = "2021"
-description = "Soroban RPC client for Soroban DevKit"
-license = "MIT OR Apache-2.0"
+description = "Soroban JSON-RPC client, endpoint configurations and network connectivity wrapper."
+repository = "https://github.com/naninu123/soroban-devkit"
+homepage = "https://github.com/naninu123/soroban-devkit"
+readme = "../../README.md"
+keywords = ["soroban", "stellar", "sdk", "toolkit", "blockchain"]
+categories = ["development-tools", "network-programming"]
+license = "MIT"
 
 [dependencies]
-sdkt-core = { path = "../sdkt-core" }
-sdkt-xdr = { path = "../sdkt-xdr" }
+sdkt-core = { version = "0.6.0-alpha", path = "../sdkt-core" }
+sdkt-xdr = { version = "0.6.0-alpha", path = "../sdkt-xdr" }
 stellar-xdr = { version = "28.0.0", features = ["std", "arbitrary", "serde"] }
 base64 = "0.23"
 serde = { version = "1", features = ["derive"] }

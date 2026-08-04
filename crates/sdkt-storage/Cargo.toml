@@ -1,12 +1,17 @@
 [package]
 name = "sdkt-storage"
-version = "0.1.0"
+version = "0.6.0-alpha"
 edition = "2021"
-description = "Soroban storage analysis for Soroban DevKit"
-license = "MIT OR Apache-2.0"
+description = "Storage monitoring utility and TTL extensions logic for Soroban contracts."
+repository = "https://github.com/naninu123/soroban-devkit"
+homepage = "https://github.com/naninu123/soroban-devkit"
+readme = "../../README.md"
+keywords = ["soroban", "stellar", "sdk", "toolkit", "blockchain"]
+categories = ["development-tools", "network-programming"]
+license = "MIT"
 
 [dependencies]
-sdkt-rpc = { path = "../sdkt-rpc" }
+sdkt-rpc = { version = "0.6.0-alpha", path = "../sdkt-rpc" }
 serde = { version = "1", features = ["derive"] }
 thiserror = "2"
 tokio = { version = "1", features = ["rt-multi-thread", "macros"] }
