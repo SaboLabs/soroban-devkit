@@ -72,6 +72,21 @@ enum Commands {
         #[command(subcommand)]
         action: WasmAction,
     },
+    /// Manage Soroban identities (keys)
+    Identity {
+        #[command(subcommand)]
+        action: IdentityAction,
+    },
+}
+
+#[derive(Subcommand)]
+enum IdentityAction {
+    Generate { name: String },
+    Import { name: String, secret: String },
+    List,
+    Show { name: String },
+    Delete { name: String },
+    Default { name: String },
 }
 
 #[derive(Subcommand)]
@@ -377,8 +392,20 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 output,
             } => {
                 let fmt = parse_format_str(&format);
+
+                // If source doesn't start with 'G' and isn't 56 chars, try to load it as an identity
+                let mut source_account = source.clone();
+                if !source_account.starts_with('G') || source_account.len() != 56 {
+                    use sdkt_storage::IdentityStore;
+                    if let Ok(store) = IdentityStore::new() {
+                        if let Ok(identity) = store.get(&source_account) {
+                            source_account = identity.public_key;
+                        }
+                    }
+                }
+
                 let params = InvokeTransactionParams {
-                    source_account: source.clone(),
+                    source_account,
                     sequence,
                     fee,
                     contract_id: contract.clone(),
@@ -711,6 +738,55 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 }
             }
         },
+        Commands::Identity { action } => {
+            use sdkt_storage::IdentityStore;
+            let store = IdentityStore::new()?;
+            match action {
+                IdentityAction::Generate { name } => {
+                    let identity = store.generate(&name)?;
+                    println!("Identity '{}' generated successfully.", identity.name);
+                    println!("Public Key: {}", identity.public_key);
+                }
+                IdentityAction::Import { name, secret } => {
+                    let identity = store.import(&name, &secret)?;
+                    println!("Identity '{}' imported successfully.", identity.name);
+                    println!("Public Key: {}", identity.public_key);
+                }
+                IdentityAction::List => {
+                    let mut list = store.list()?;
+                    list.sort_by(|a, b| a.name.cmp(&b.name));
+                    let default_id = store.get_default().ok();
+
+                    if list.is_empty() {
+                        println!("No identities found.");
+                    } else {
+                        println!("Identities:");
+                        for id in list {
+                            let is_def = default_id.as_ref().map_or(false, |d| d.name == id.name);
+                            println!(
+                                "  {} {} ({})",
+                                if is_def { "*" } else { " " },
+                                id.name,
+                                id.public_key
+                            );
+                        }
+                    }
+                }
+                IdentityAction::Show { name } => {
+                    let identity = store.get(&name)?;
+                    println!("Identity: {}", identity.name);
+                    println!("Public Key: {}", identity.public_key);
+                }
+                IdentityAction::Delete { name } => {
+                    store.remove(&name)?;
+                    println!("Identity '{}' removed.", name);
+                }
+                IdentityAction::Default { name } => {
+                    store.set_default(&name)?;
+                    println!("Identity '{}' set as default.", name);
+                }
+            }
+        }
     }
 
     Ok(())
