@@ -5,6 +5,21 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [v0.6.0-alpha] - 2026-08-04
+
+### Improved
+- **Production Readiness**: Hardened `sdkt-rpc` client timeout handling and mapping boundaries.
+- **RPC Resilience**: Added internal retry mechanisms to gracefully handle short-lived network interruptions.
+- **Documentation Quality**: Maximum structural rustdoc coverage across core workspace crates and updated README with benchmark planning.
+
+### Testing
+- Validation completed on workspace boundaries with Clippy strict policies.
+- CLI integration tests increased to cover transaction, storage, and account edge-cases.
+
+### Internal
+- Workspace DRY cleanups (unified generic `.request()` methods).
+- GitHub Actions workflow added to execute formatting and clippy automated checks.
+
 ## [v0.5.0-alpha] - 2026-08-04
 
 ### Added
