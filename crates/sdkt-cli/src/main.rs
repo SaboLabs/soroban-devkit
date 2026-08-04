@@ -3,7 +3,7 @@ use sdkt_core::fee::{FeeConfig, FeeEstimator, LedgerFeeSample, NetworkKind};
 use sdkt_core::{DevKitConfig, OutputFormat};
 use sdkt_rpc::{
     estimate_dynamic_fee, get_contract_events, get_ttl_info, get_wasm_metadata, inspect_account,
-    inspect_contract, inspect_transaction, SorobanRpcClient,
+    inspect_contract, inspect_transaction, simulate_transaction, SorobanRpcClient,
 };
 use sdkt_storage::WasmCache;
 use sdkt_xdr::decode;
@@ -137,6 +137,14 @@ enum FeeAction {
 enum TxAction {
     Inspect {
         hash: String,
+        #[arg(short, long, default_value = "pretty")]
+        format: String,
+    },
+    /// Simulate a transaction envelope without submitting it
+    Simulate {
+        /// Base64 XDR transaction envelope or path to a file containing it
+        #[arg(short, long)]
+        envelope: String,
         #[arg(short, long, default_value = "pretty")]
         format: String,
     },
@@ -287,6 +295,51 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     }
                     Err(e) => {
                         eprintln!("Error inspecting transaction: {}", e);
+                        process::exit(1);
+                    }
+                }
+            }
+            TxAction::Simulate { envelope, format } => {
+                let fmt = parse_format_str(&format);
+                let config = DevKitConfig::from_file(".sdkt.toml").unwrap_or_default();
+                let client = SorobanRpcClient::from_config(&config.network);
+
+                let env_data = if fs::metadata(&envelope).is_ok() {
+                    fs::read_to_string(&envelope)?
+                } else {
+                    envelope.clone()
+                };
+
+                match simulate_transaction(&client, &env_data).await {
+                    Ok(sim) => {
+                        if fmt == OutputFormat::Json {
+                            let json_str = serde_json::to_string(&sim)?;
+                            println!("{}", json_str);
+                        } else {
+                            println!("Simulation Result:");
+                            if let Some(err) = &sim.error {
+                                println!("  Status: FAILED");
+                                println!("  Error: {}", err);
+                            } else {
+                                println!("  Status: SUCCESS");
+                            }
+                            println!(
+                                "  Ledger: {}",
+                                sim.latest_ledger.as_deref().unwrap_or("N/A")
+                            );
+                            println!("  Min Resource Fee: {} stroops", sim.min_resource_fee);
+                            if let Some(cost) = &sim.cost {
+                                println!("  Cost:");
+                                println!("    CPU Instructions: {}", cost.cpu_insns);
+                                println!("    Memory Bytes: {}", cost.mem_bytes);
+                            }
+                            if !sim.events.is_empty() {
+                                println!("  Events: {} emitted", sim.events.len());
+                            }
+                        }
+                    }
+                    Err(e) => {
+                        eprintln!("Error simulating transaction: {}", e);
                         process::exit(1);
                     }
                 }
