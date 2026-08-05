@@ -5,6 +5,44 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [v1.1.0] - Unreleased (M18 — Plugin System Phase B: Dynamic Rule Loading)
+
+### Added
+- **Dynamic plugin loading** for `sdkt audit` (M18, Phase B). Native shared
+  libraries (`.so` / `.dylib` / `.dll`) exporting the C-ABI plugin symbols can
+  now be loaded at runtime via `sdkt audit <src> --rules <plugin.so>`, with no
+  rebuild of the CLI. Only `#[repr(C)]` flat data crosses the FFI; no Rust trait
+  objects cross the boundary (safe ABI).
+- `sdkt-audit` plugin ABI: `plugin_abi` module with `#[repr(C)]` types
+  (`SdktAuditFindingC`, `SdktAuditReportC`), `SDKT_AUDIT_ABI_MAJOR`/`MINOR`
+  versioning, and the C-ABI symbol contract (`sdkt_plugin_abi_version`,
+  `sdkt_plugin_id`, `sdkt_plugin_severity`, `sdkt_plugin_description`,
+  `sdkt_plugin_init`, `sdkt_plugin_check`, `sdkt_plugin_free`).
+- `sdkt-audit` gains `plugin_loader` (feature `plugins`): `PluginRule` (wraps a
+  loaded library as an `AuditRule`), `PluginLoadError` (Io / DlOpen / SymbolMissing
+  / AbiMismatch / InitFailed / Panic), ABI major-version gate, and
+  `load_and_register(path, source)`. Plugin panics are isolated via
+  `catch_unwind` so a bad plugin cannot crash the host.
+- `sdkt-audit-example-rule` gains a `plugins` feature producing a loadable
+  cdylib (`libsdkt_audit_example_rule`) exercising the dynamic path; the rlib
+  `register()` compiled-in path is unchanged.
+- CLI: `--rules` now accepts plugin artifacts (`.so`/`.dylib`/`.dll`) when built
+  with `--features plugins`; a clear error is emitted on a default (plugin-less)
+  build. Validates `--rules` paths before reading the source (preserves the
+  existing "does not exist" error contract).
+- Tests: `plugin_loader` unit tests (ABI pack/unpack, severity mapping, missing
+  file rejection) and a `sdkt-cli` integration test that builds the example
+  plugin and verifies dynamic rules fire alongside built-ins.
+
+### Changed
+- `sdkt-audit` exposes `scan_all_functions_str` (convenience for plugin authors).
+- No `AuditRule` public-API change. Default build is byte-for-byte identical to
+  v1.0.0 (M17) — the `plugins` feature is OFF by default.
+
+### Security
+- Dynamic plugins run **in-process**; only load plugins you trust / built
+  yourself. ABI major-version mismatch is rejected. See `SECURITY.md`.
+
 ## [v1.0.0] - 2026-08-05 — First Stable Release
 
 This is the first stable, semver `1.0.0` release. No new features beyond

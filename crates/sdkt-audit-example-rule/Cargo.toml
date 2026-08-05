@@ -13,3 +13,14 @@ categories = ["development-tools"]
 
 [dependencies]
 sdkt-audit = { version = "1.0.0", path = "../sdkt-audit" }
+
+[features]
+# Produce a loadable shared library exporting the C-ABI plugin symbols
+# (M18, Phase B). Off by default so the crate is just an rlib in normal use.
+plugins = ["sdkt-audit/plugins"]
+
+[lib]
+name = "sdkt_audit_example_rule"
+# Always build as an rlib (for the compiled-in `register()` path); when the
+# `plugins` feature is on, also build a cdylib loadable by `sdkt audit --rules`.
+crate-type = ["rlib", "cdylib"]

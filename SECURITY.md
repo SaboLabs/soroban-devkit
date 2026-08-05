@@ -31,3 +31,12 @@ This tool operates primarily offline for decoding purposes — it does not trans
 Secret management:
 - Do not commit private keys, mnemonics, or sensitive passphrases
 - Network configuration includes RPC URL / passphrase; use local development overrides or environment-aware configuration for production
+
+## Dynamic Plugins (M18, Phase B)
+
+`sdkt audit --rules <plugin.so>` can load native shared-library plugins at
+runtime. These execute **in-process** with the same privileges as `sdkt` itself
+— a malicious or buggy plugin can read process memory or crash the tool. Only
+load plugin artifacts you trust or have built yourself. The host rejects any
+plugin whose ABI major version differs from the running `sdkt-audit`. Plugin
+panics are isolated so they cannot crash the host, but they are not sandboxed.

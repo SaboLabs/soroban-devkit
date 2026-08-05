@@ -12,13 +12,17 @@
 
 pub mod audit;
 pub mod error;
+pub mod plugin_abi;
 pub mod registry;
 pub mod rules;
 pub mod types;
 
+#[cfg(feature = "plugins")]
+pub mod plugin_loader;
+
 pub use audit::{
     all_rules, audit_source, audit_source_with, audit_source_with_spec, scan_all_functions,
-    AuditContext, AuditRule, FnScan,
+    scan_all_functions_str, AuditContext, AuditRule, FnScan,
 };
 pub use error::AuditError;
 pub use registry::{
@@ -26,6 +30,9 @@ pub use registry::{
 };
 pub use rules::{Auth001, Auth002, Auth003, Move001};
 pub use types::{AuditReport, AuditSummary, Finding, Severity};
+
+#[cfg(feature = "plugins")]
+pub use plugin_loader::{load_and_register, PluginLoadError, PluginRule};
 
 /// Register a rule into the process-wide [`RuleRegistry`].
 ///

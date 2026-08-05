@@ -11,6 +11,11 @@ trait and registered into a process-wide [`RuleRegistry`](../../crates/sdkt-audi
 > as a dependency of the binary that consumes `sdkt-audit` (exactly as the
 > reference crate `sdkt-audit-example-rule` does).
 
+**Phase B (M18) — dynamic loading is now available.** A rule can also be shipped
+as a native shared library (`.so` / `.dylib` / `.dll`) and loaded at runtime with
+`sdkt audit <src> --rules <plugin.so>` — no CLI rebuild required. See
+[Dynamic plugins](#dynamic-plugins-phase-b) below.
+
 ## Architecture
 
 ```
@@ -101,6 +106,76 @@ my_rule_crate::register();
 
 The reference implementation `crates/sdkt-audit-example-rule` demonstrates this
 end-to-end (rule `EXAMPLE-001`).
+
+## Dynamic plugins (Phase B)
+
+A dynamic plugin is a native shared library exporting a fixed C-ABI. The host
+(`sdkt-audit`, feature `plugins`) loads it with `libloading`, checks the ABI
+major version, and wraps each plugin in a `PluginRule` implementing `AuditRule`.
+Only `#[repr(C)]` flat data crosses the FFI — **no Rust trait objects or `Box`
+cross the boundary**, and plugin-owned memory is freed inside the plugin.
+
+### C-ABI contract (stable)
+
+| Symbol | Signature | Purpose |
+|--------|-----------|---------|
+| `sdkt_plugin_abi_version` | `() -> u32` | Packed `(major<<16)|minor`; must match host major. |
+| `sdkt_plugin_id` | `() -> *const c_char` | Rule id, e.g. `EXAMPLE-001`. |
+| `sdkt_plugin_severity` | `() -> u32` | 0=critical, 1=warning, 2=info. |
+| `sdkt_plugin_description` | `() -> *const c_char` | Human-readable description. |
+| `sdkt_plugin_init` | `(*const c_char) -> c_int` | Cache the contract source; 0=ok. |
+| `sdkt_plugin_check` | `(*mut SdktAuditReportC) -> c_int` | Run the rule, write findings into the buffer. |
+| `sdkt_plugin_free` | `() -> ()` | Optional cleanup (host keeps the lib alive). |
+
+`SdktAuditReportC` is a fixed-capacity (`MAX_FINDINGS = 64`) `#[repr(C)]` buffer
+of `SdktAuditFindingC { rule_id, severity, message, location }` (all C strings).
+The host copies the strings into owned `String`s during the call.
+
+### Authoring a dynamic plugin
+
+The reference crate `sdkt-audit-example-rule` (feature `plugins`) builds a
+loadable `libsdkt_audit_example_rule.so` that exports these symbols. Its
+`sdkt_plugin_check` runs **only its own** `ExampleRule` (via the in-crate
+`AuditRule::check`) — never the global registry, to avoid re-entrant recursion.
+
+```toml
+# my-rule-crate/Cargo.toml
+[dependencies]
+sdkt-audit = { version = "1.0.0", path = "../sdkt-audit" }
+
+[features]
+plugins = ["sdkt-audit/plugins"]
+
+[lib]
+name = "my_rule"
+crate-type = ["rlib", "cdylib"]   # cdylib → loadable artifact
+```
+
+```rust
+// my-rule-crate/src/plugin_abi.rs  (only with feature `plugins`)
+use sdkt_audit::plugin_abi::*;
+
+static SOURCE: std::sync::OnceLock<String> = std::sync::OnceLock::new();
+
+#[no_mangle]
+pub unsafe extern "C" fn sdkt_plugin_abi_version() -> u32 { abi_version_pack() }
+#[no_mangle]
+pub unsafe extern "C" fn sdkt_plugin_id() -> *const std::os::raw::c_char { /* "MYRULE-001\0" */ }
+// ... severity / description / init / check / free as above
+```
+
+### Loading it
+
+```bash
+# Build the plugin (cdylib):
+cargo build -p my-rule-crate --features plugins
+# Load at audit time (CLI must also be built with --features plugins):
+sdkt audit contracts/token/src/lib.rs --rules target/debug/libmy_rule.so
+```
+
+> **Security:** dynamic plugins run in-process. Only load plugins you trust or
+> built yourself. A plugin whose ABI major version differs from the host is
+> rejected with a clear error.
 
 ## Testing a rule
 

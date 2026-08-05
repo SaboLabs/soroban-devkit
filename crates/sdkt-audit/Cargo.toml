@@ -13,5 +13,11 @@ syn = { version = "2", features = ["full", "visit"] }
 serde = { version = "1", features = ["derive"] }
 thiserror = "2"
 sdkt-wasm = { version = "1.0.0", path = "../sdkt-wasm" }
+libloading = { version = "0.8", optional = true }
+
+[features]
+# Native dynamic plugin loading (M18, Phase B). Off by default so the default
+# build stays free of libloading and crates.io publish is unaffected.
+plugins = ["dep:libloading"]
 
 [dev-dependencies]
