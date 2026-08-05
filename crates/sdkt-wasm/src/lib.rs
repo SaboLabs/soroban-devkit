@@ -3,7 +3,9 @@ use sha2::{Digest, Sha256};
 use thiserror::Error;
 use wasmparser::{Parser, Payload};
 
+pub mod abi_decode;
 pub mod spec;
+pub use abi_decode::{find_event_abi, find_type_abi, format_scval_abi, DecodedValue};
 pub use spec::{
     parse_contract_spec, ContractEvent, ContractFunction, ContractParameter, ContractSpec,
     ContractType,

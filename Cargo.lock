@@ -1901,6 +1901,7 @@ dependencies = [
  "base64 0.23.0",
  "hex",
  "sdkt-core",
+ "sdkt-wasm",
  "serde",
  "serde_json",
  "stellar-strkey 0.0.18",

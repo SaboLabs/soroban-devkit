@@ -438,3 +438,5 @@ mod tests {
         assert_eq!(estimate_xdr_size(&val), 8);
     }
 }
+
+pub mod abi_decode;
