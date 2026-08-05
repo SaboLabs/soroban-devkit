@@ -1240,78 +1240,64 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             let src = fs::read_to_string(&path)
                 .map_err(|e| format!("Failed to read source '{}': {}", path, e))?;
 
-            // Dynamic plugin loading (M18, Phase B). Only `.so`/`.dylib`/`.dll`
-            // artifacts are treated as loadable plugins; other paths keep the
-            // M17 semantics (validated above, no-op for execution).
-            #[cfg(feature = "plugins")]
-            {
-                let plugin_exts = ["so", "dylib", "dll"];
-                for r in &rules {
-                    let is_plugin = std::path::Path::new(r)
-                        .extension()
-                        .and_then(|e| e.to_str())
-                        .map(|e| plugin_exts.contains(&e.to_ascii_lowercase().as_str()))
-                        .unwrap_or(false);
-                    if is_plugin {
-                        if let Err(e) = sdkt_audit::load_and_register(std::path::Path::new(r), &src)
-                        {
-                            eprintln!("Error loading plugin '{}': {}", r, e);
-                            process::exit(1);
-                        }
-                    }
-                }
-            }
-            #[cfg(not(feature = "plugins"))]
-            {
-                let plugin_exts = ["so", "dylib", "dll"];
-                for r in &rules {
-                    let is_plugin = std::path::Path::new(r)
-                        .extension()
-                        .and_then(|e| e.to_str())
-                        .map(|e| plugin_exts.contains(&e.to_ascii_lowercase().as_str()))
-                        .unwrap_or(false);
-                    if is_plugin {
-                        eprintln!(
-                            "Error: '{}' is a native plugin artifact but this build was compiled \
-                             without the `plugins` feature. Rebuild with --features plugins.",
-                            r
-                        );
-                        process::exit(1);
-                    }
-                }
-            }
+            for r in &rules {
+                let path_r = std::path::Path::new(r);
 
-            // WebAssembly plugin loading (M19, Phase C).
-            #[cfg(feature = "wasm-plugins")]
-            {
-                for r in &rules {
-                    let is_wasm = std::path::Path::new(r)
-                        .extension()
-                        .and_then(|e| e.to_str())
-                        .map(|e| e.eq_ignore_ascii_case("wasm"))
-                        .unwrap_or(false);
-                    if is_wasm {
-                        if let Err(e) =
-                            sdkt_audit::load_and_register_wasm(std::path::Path::new(r), &src)
+                // Directories pass through as M17 no-ops (validated for existence above).
+                if path_r.is_dir() {
+                    continue;
+                }
+
+                let ext = path_r
+                    .extension()
+                    .and_then(|e| e.to_str())
+                    .map(|e| e.to_ascii_lowercase())
+                    .unwrap_or_default();
+
+                match ext.as_str() {
+                    "so" | "dylib" | "dll" => {
+                        #[cfg(feature = "plugins")]
                         {
-                            eprintln!("Error loading WASM plugin '{}': {}", r, e);
+                            if let Err(e) = sdkt_audit::load_and_register(path_r, &src) {
+                                eprintln!("Error loading native plugin '{}': {}", r, e);
+                                process::exit(1);
+                            }
+                        }
+                        #[cfg(not(feature = "plugins"))]
+                        {
+                            eprintln!(
+                                "Error: '{}' is a native plugin artifact but this build was compiled \
+                                 without the `plugins` feature. Rebuild with --features plugins.",
+                                r
+                            );
                             process::exit(1);
                         }
                     }
-                }
-            }
-            #[cfg(not(feature = "wasm-plugins"))]
-            {
-                for r in &rules {
-                    let is_wasm = std::path::Path::new(r)
-                        .extension()
-                        .and_then(|e| e.to_str())
-                        .map(|e| e.eq_ignore_ascii_case("wasm"))
-                        .unwrap_or(false);
-                    if is_wasm {
+                    "wasm" => {
+                        #[cfg(feature = "wasm-plugins")]
+                        {
+                            if let Err(e) = sdkt_audit::load_and_register_wasm(path_r, &src) {
+                                eprintln!("Error loading WASM plugin '{}': {}", r, e);
+                                process::exit(1);
+                            }
+                        }
+                        #[cfg(not(feature = "wasm-plugins"))]
+                        {
+                            eprintln!(
+                                "Error: '{}' is a WASM plugin artifact but this build was compiled \
+                                 without the `wasm-plugins` feature. Rebuild with --features wasm-plugins.",
+                                r
+                            );
+                            process::exit(1);
+                        }
+                    }
+                    "rs" => {
+                        // M17 semantic: source files passed in --rules are existence-validated
+                        // above but not loaded at runtime (built-in rules register themselves).
+                    }
+                    _ => {
                         eprintln!(
-                            "Error: '{}' is a WASM plugin artifact but this build was compiled \
-                             without the `wasm-plugins` feature. Rebuild with --features wasm-plugins.",
+                            "Error: Unsupported plugin format: {}\n\nSupported plugin formats:\n  .so\n  .dll\n  .dylib\n  .wasm",
                             r
                         );
                         process::exit(1);

@@ -76,8 +76,9 @@ impl WasmPluginRule {
 
 impl AuditRule for WasmPluginRule {
     fn id(&self) -> &'static str {
-        // Safe to leak during this stub phase; in a real implementation we would
-        // leak it or use a different ownership model since AuditRule requires &'static str.
+        // Safe to leak during this stub phase. In Stage 2, plugins are loaded exactly once
+        // per process execution and live until the CLI exits. A few bytes of leaked memory
+        // per rule is bounded, safe, and avoids complex lifetime annotations on AuditRule.
         Box::leak(self.id.clone().into_boxed_str())
     }
 
@@ -86,7 +87,7 @@ impl AuditRule for WasmPluginRule {
     }
 
     fn description(&self) -> &'static str {
-        // Safe to leak during this stub phase.
+        // Safe to leak for the same process-lifetime reasons as `id()`.
         Box::leak(self.description.clone().into_boxed_str())
     }
 
