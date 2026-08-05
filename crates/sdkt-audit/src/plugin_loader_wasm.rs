@@ -134,9 +134,9 @@ impl From<std::io::Error> for WasmPluginLoadError {
 /// requires `Send + Sync`, and Extism plugins hold raw pointers to the
 /// Wasmtime store which are not `Sync` on their own.
 pub struct WasmPluginRule {
-    id: String,
+    id: &'static str,
     severity: Severity,
-    description: String,
+    description: &'static str,
     // The compiled + instantiated plugin, ready to call.
     plugin: Mutex<extism::Plugin>,
 }
@@ -157,7 +157,8 @@ impl WasmPluginRule {
         // 2. Build a capability-free manifest. Extism's default denies all
         //    host capabilities (filesystem, network, environment variables),
         //    so we just need to supply the module bytes.
-        let manifest = extism::Manifest::new([extism::Wasm::data(wasm_bytes)]);
+        let manifest = extism::Manifest::new([extism::Wasm::data(wasm_bytes)])
+            .with_timeout(std::time::Duration::from_millis(15000));
 
         // 3. Instantiate. `with_wasi = true` is required because the plugin is compiled
         //    for `wasm32-wasip1` (to satisfy standard library dependencies like `getrandom`),
@@ -183,6 +184,7 @@ impl WasmPluginRule {
         let id: String = plugin
             .call::<(), String>("sdkt_plugin_id", ())
             .map_err(|_| WasmPluginLoadError::SymbolMissing("sdkt_plugin_id".into()))?;
+        let id_static = Box::leak(id.into_boxed_str());
 
         let severity_raw: i64 = plugin
             .call::<(), i64>("sdkt_plugin_severity", ())
@@ -198,11 +200,12 @@ impl WasmPluginRule {
         let description: String = plugin
             .call::<(), String>("sdkt_plugin_description", ())
             .map_err(|_| WasmPluginLoadError::SymbolMissing("sdkt_plugin_description".into()))?;
+        let description_static = Box::leak(description.into_boxed_str());
 
         Ok(WasmPluginRule {
-            id,
+            id: id_static,
             severity,
-            description,
+            description: description_static,
             plugin: Mutex::new(plugin),
         })
     }
@@ -210,11 +213,7 @@ impl WasmPluginRule {
 
 impl AuditRule for WasmPluginRule {
     fn id(&self) -> &'static str {
-        // Plugins are loaded exactly once per process execution and live until
-        // the CLI exits (plugin lifetime == process lifetime). Leaking a few
-        // bytes per rule is bounded, safe, and avoids adding generic lifetime
-        // parameters to the `AuditRule` trait.
-        Box::leak(self.id.clone().into_boxed_str())
+        self.id
     }
 
     fn severity(&self) -> Severity {
@@ -222,8 +221,7 @@ impl AuditRule for WasmPluginRule {
     }
 
     fn description(&self) -> &'static str {
-        // Same process-lifetime reasoning as `id()`.
-        Box::leak(self.description.clone().into_boxed_str())
+        self.description
     }
 
     fn check(&self, scans: &[FnScan], _ctx: &AuditContext, report: &mut AuditReport) {
@@ -235,7 +233,7 @@ impl AuditRule for WasmPluginRule {
                 // This is an internal failure (serialising our own types), not a
                 // plugin failure. Emit one finding so the operator knows.
                 report.findings.push(Finding {
-                    rule_id: self.id.clone(),
+                    rule_id: self.id.to_string(),
                     severity: Severity::Warning,
                     message: format!("internal: failed to serialise check input: {e}"),
                     location: None,
@@ -250,7 +248,7 @@ impl AuditRule for WasmPluginRule {
                 Ok(g) => g,
                 Err(_) => {
                     report.findings.push(Finding {
-                        rule_id: self.id.clone(),
+                        rule_id: self.id.to_string(),
                         severity: Severity::Warning,
                         message: "internal: wasm plugin mutex poisoned".into(),
                         location: None,
@@ -262,7 +260,7 @@ impl AuditRule for WasmPluginRule {
                 Ok(s) => s,
                 Err(e) => {
                     report.findings.push(Finding {
-                        rule_id: self.id.clone(),
+                        rule_id: self.id.to_string(),
                         severity: Severity::Warning,
                         message: format!("wasm plugin trap during check: {e}"),
                         location: None,
@@ -277,7 +275,7 @@ impl AuditRule for WasmPluginRule {
             Ok(v) => v,
             Err(e) => {
                 report.findings.push(Finding {
-                    rule_id: self.id.clone(),
+                    rule_id: self.id.to_string(),
                     severity: Severity::Warning,
                     message: format!("wasm plugin returned malformed JSON: {e}"),
                     location: None,
