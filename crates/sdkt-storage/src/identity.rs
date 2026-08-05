@@ -10,6 +10,7 @@ use rand::rngs::OsRng;
 use serde::{Deserialize, Serialize};
 use std::fs::{self, OpenOptions};
 use std::io::Write;
+#[cfg(unix)]
 use std::os::unix::fs::OpenOptionsExt;
 use std::path::{Path, PathBuf};
 use stellar_strkey::Strkey;
@@ -150,7 +151,15 @@ impl IdentityStore {
             fs::remove_file(&default_path).map_err(StorageError::Io)?;
         }
 
-        std::os::unix::fs::symlink(target_path, default_path).map_err(StorageError::Io)?;
+        #[cfg(unix)]
+        std::os::unix::fs::symlink(target_path, &default_path).map_err(StorageError::Io)?;
+
+        #[cfg(windows)]
+        std::os::windows::fs::symlink_file(target_path, &default_path).map_err(StorageError::Io)?;
+
+        #[cfg(not(any(unix, windows)))]
+        std::fs::copy(target_path, &default_path).map_err(StorageError::Io)?;
+
         Ok(())
     }
 
@@ -209,13 +218,13 @@ impl IdentityStore {
         );
 
         // Strict permissions 0600
-        let mut file = OpenOptions::new()
-            .write(true)
-            .create(true)
-            .truncate(true)
-            .mode(0o600)
-            .open(&path)
-            .map_err(StorageError::Io)?;
+        let mut opts = OpenOptions::new();
+        opts.write(true).create(true).truncate(true);
+
+        #[cfg(unix)]
+        opts.mode(0o600);
+
+        let mut file = opts.open(&path).map_err(StorageError::Io)?;
 
         file.write_all(toml_content.as_bytes())
             .map_err(StorageError::Io)?;
