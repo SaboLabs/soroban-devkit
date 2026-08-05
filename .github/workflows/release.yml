@@ -3,7 +3,7 @@ name: Release
 # Publishes prebuilt sdkt binaries and crates on a version tag (v*).
 # Mirrors the CI gates (fmt/clippy/test) before shipping.
 
-on:
+"on":
   push:
     tags:
       - "v*"
