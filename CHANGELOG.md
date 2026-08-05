@@ -5,6 +5,45 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [v1.0.0] - 2026-08-05 — First Stable Release
+
+This is the first stable, semver `1.0.0` release. No new features beyond
+M17; this milestone stabilizes the toolkit, unifies the version, and makes
+the release pipeline fully green end-to-end.
+
+### Added
+- Stable `1.0.0` release tag. The full feature set from M3A–M17 is now
+  considered stable: inspect/decode, storage TTL + analysis, ABI-aware
+  decoding, transaction simulate/submit/build, events, account, fee
+  estimate, WASM metadata/cache, offline ABI/WASM diff with upgrade-safety
+  verdict, static security audit (`sdkt audit`), keystore (`sdkt identity`),
+  project scaffolding (`sdkt init`), and deploy with optional
+  `--deny-breaking` guard.
+- Reusable GitHub composite Action (`.github/actions/sdkt`) for
+  `audit` / `upgrade-safety` CI gates.
+
+### Changed
+- Workspace version bumped `0.17.0-alpha` → `1.0.0` (single source of truth
+  in `[workspace.package]`). All crates and internal path-dependencies now
+  pin `1.0.0`.
+- `sdkt-audit-example-rule` is now publishable (was `publish = false`), so
+  `sdkt-cli`'s optional `plugins` feature resolves on crates.io. Added to the
+  release publish order before `sdkt-cli`.
+- `release.yml`: `CARGO_REGISTRY_TOKEN` guard moved from a job-level `if:`
+  (invalid — GitHub rejects `secrets` in `if:`) to a step-level `if:`.
+  Added `workflow_dispatch` for manual dry-run verification. Removed the
+  `--allow-dirty` flag from `cargo publish` so a dirty tree fails the release.
+- `sdkt-action-ci.yml`: push trigger generalized `feat/milestone-15` → `feat/*`.
+- Documentation refreshed: ROADMAP marks v1.0.0 released; `docs/ci-cd.md`
+  and the composite Action default to the `v1.0.0` tag.
+
+### Testing
+- `cargo fmt --all --check`, `cargo clippy --workspace --all-targets -- -D
+  warnings`, and `cargo test --workspace` all pass (219 tests, 0 failed).
+- `cargo publish --dry-run --workspace` packages all 8 crates cleanly.
+
+---
+
 ## [v0.17.0-alpha] - 2026-08-05 (Milestone 17 — Plugin System Phase A)
 
 ### Added (extensibility, no breaking changes)

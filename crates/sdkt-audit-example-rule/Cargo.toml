@@ -12,4 +12,4 @@ keywords = ["soroban", "stellar", "sdk", "toolkit", "audit"]
 categories = ["development-tools"]
 
 [dependencies]
-sdkt-audit = { version = "0.17.0-alpha", path = "../sdkt-audit" }
+sdkt-audit = { version = "1.0.0", path = "../sdkt-audit" }

@@ -1,7 +1,7 @@
 # Soroban DevKit (sdkt) — ROADMAP
 
 **Last updated:** 2026-08-05
-**Status:** Active development. `main` is the default branch. Latest merged work: Milestone 17 (Plugin System Phase A — Rule Registry, tagged `v0.17.0-alpha`). M16 (Release Engineering & Polish) and M17 (Plugin System Phase A) are merged to `main`.
+**Status:** Active development. `main` is the default branch. Latest merged work: Milestone 17 (Plugin System Phase A — Rule Registry, tagged `v0.17.0-alpha`). M16 (Release Engineering & Polish) and M17 (Plugin System Phase A) are merged to `main`. **v1.0.0 released** (tag `v1.0.0`, commit on `main`).
 
 This document is the single source of truth for milestone scope and sequencing.
 Individual milestone plans live under `docs/milestone-*-plan.md`; engineering

@@ -12,6 +12,6 @@ homepage.workspace = true
 syn = { version = "2", features = ["full", "visit"] }
 serde = { version = "1", features = ["derive"] }
 thiserror = "2"
-sdkt-wasm = { version = "0.17.0-alpha", path = "../sdkt-wasm" }
+sdkt-wasm = { version = "1.0.0", path = "../sdkt-wasm" }
 
 [dev-dependencies]

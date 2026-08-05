@@ -7,9 +7,9 @@ inputs:
     description: "Which check to run: 'audit' or 'upgrade-safety'."
     required: true
   sdkt-version:
-    description: "sdkt git tag to install (e.g. v0.15.0-alpha). Must be a published tag in naninu123/soroban-devkit."
+    description: "sdkt git tag to install (e.g. v1.0.0). Must be a published tag in naninu123/soroban-devkit."
     required: false
-    default: "v0.15.0-alpha"
+    default: "v1.0.0"
   target:
     description: "Source file (.rs) to audit (used with command=audit)."
     required: false
