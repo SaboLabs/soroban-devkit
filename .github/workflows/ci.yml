@@ -23,11 +23,20 @@ jobs:
         override: true
         components: rustfmt, clippy
 
+    - name: Add WASM target
+      run: rustup target add wasm32-wasip1
+
     - name: Check Formatting
       run: cargo fmt --all --check
 
-    - name: Lint with Clippy
+    - name: Lint (Default)
       run: cargo clippy --workspace --all-targets -- -D warnings
 
-    - name: Run Tests
+    - name: Lint (All Features)
+      run: cargo clippy --workspace --all-targets --all-features -- -D warnings
+
+    - name: Run Tests (Default)
       run: cargo test --workspace
+
+    - name: Run Tests (All Features)
+      run: cargo test -p sdkt-cli --test plugin_loading --all-features

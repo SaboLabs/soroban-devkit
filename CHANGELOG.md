@@ -5,30 +5,22 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [v1.1.0] - Unreleased (M18 — Plugin System Phase B: Dynamic Rule Loading)
+## [v1.1.0] - Unreleased
 
 ### Added
-- **Dynamic plugin loading** for `sdkt audit` (M18, Phase B). Native shared
+- **WebAssembly (WASM) plugin loading** for `sdkt audit` (M19, Phase C). Sandboxed, platform-independent `.wasm` plugins can now be loaded via `sdkt audit <src> --rules <plugin.wasm>`.
+- Extism runtime integration via the `wasm-plugins` feature (requires `wasm32-wasip1` target for plugin authors).
+- JSON-over-memory WASM ABI boundary ensuring memory safety and isolation.
+- **Native dynamic plugin loading** for `sdkt audit` (M18, Phase B). Native shared
   libraries (`.so` / `.dylib` / `.dll`) exporting the C-ABI plugin symbols can
-  now be loaded at runtime via `sdkt audit <src> --rules <plugin.so>`, with no
-  rebuild of the CLI. Only `#[repr(C)]` flat data crosses the FFI; no Rust trait
-  objects cross the boundary (safe ABI).
+  now be loaded at runtime via `sdkt audit <src> --rules <plugin.so>`.
 - `sdkt-audit` plugin ABI: `plugin_abi` module with `#[repr(C)]` types
   (`SdktAuditFindingC`, `SdktAuditReportC`), `SDKT_AUDIT_ABI_MAJOR`/`MINOR`
-  versioning, and the C-ABI symbol contract (`sdkt_plugin_abi_version`,
-  `sdkt_plugin_id`, `sdkt_plugin_severity`, `sdkt_plugin_description`,
-  `sdkt_plugin_init`, `sdkt_plugin_check`, `sdkt_plugin_free`).
-- `sdkt-audit` gains `plugin_loader` (feature `plugins`): `PluginRule` (wraps a
-  loaded library as an `AuditRule`), `PluginLoadError` (Io / DlOpen / SymbolMissing
-  / AbiMismatch / InitFailed / Panic), ABI major-version gate, and
-  `load_and_register(path, source)`. Plugin panics are isolated via
-  `catch_unwind` so a bad plugin cannot crash the host.
-- `sdkt-audit-example-rule` gains a `plugins` feature producing a loadable
-  cdylib (`libsdkt_audit_example_rule`) exercising the dynamic path; the rlib
-  `register()` compiled-in path is unchanged.
-- CLI: `--rules` now accepts plugin artifacts (`.so`/`.dylib`/`.dll`) when built
-  with `--features plugins`; a clear error is emitted on a default (plugin-less)
-  build. Validates `--rules` paths before reading the source (preserves the
+  versioning, and the C-ABI symbol contract.
+- `sdkt-audit-example-rule` gains `plugins` and `wasm-plugins` features producing loadable artifacts (`libsdkt_audit_example_rule` and `sdkt_audit_example_rule.wasm`).
+- CLI: `--rules` now accepts plugin artifacts (`.so`/`.dylib`/`.dll`/`.wasm`) when built
+  with `--features plugins` or `--features wasm-plugins`; a clear error is emitted on a default (plugin-less) build.
+  Validates `--rules` paths before reading the source (preserves the
   existing "does not exist" error contract).
 - Tests: `plugin_loader` unit tests (ABI pack/unpack, severity mapping, missing
   file rejection) and a `sdkt-cli` integration test that builds the example

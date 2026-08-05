@@ -1,20 +1,10 @@
 # Plugin Authoring — `sdkt-audit` Rules
 
-Milestone 17 (Phase A) turns `sdkt-audit` into an extensible platform. Rules are
-implemented as Rust types implementing the [`AuditRule`](../../crates/sdkt-audit/src/audit.rs)
-trait and registered into a process-wide [`RuleRegistry`](../../crates/sdkt-audit/src/registry.rs).
+The `sdkt-audit` static analysis engine supports three modes of extension:
 
-> **Phase A scope:** rules are compiled into the binary (workspace rule crates or
-> local source linked by the consumer). Dynamic/shared-library loading is **not**
-> part of Phase A — see the roadmap. The `--rules` CLI flag validates rule paths
-> and runs all *registered* rules; to actually contribute a rule, add your crate
-> as a dependency of the binary that consumes `sdkt-audit` (exactly as the
-> reference crate `sdkt-audit-example-rule` does).
-
-**Phase B (M18) — dynamic loading is now available.** A rule can also be shipped
-as a native shared library (`.so` / `.dylib` / `.dll`) and loaded at runtime with
-`sdkt audit <src> --rules <plugin.so>` — no CLI rebuild required. See
-[Dynamic plugins](#dynamic-plugins-phase-b) below.
+1. **Compiled-in Rules (M17, Phase A)** — Rules compiled directly into the binary.
+2. **Native Shared Libraries (M18, Phase B)** — Dynamically loaded native plugins (`.so` / `.dylib` / `.dll`). Fast but un-sandboxed. Requires the `plugins` feature flag.
+3. **WebAssembly Plugins (M19, Phase C)** — Dynamically loaded WASM plugins (`.wasm`). Sandboxed, cross-platform, safe. Requires the `wasm-plugins` feature flag.
 
 ## Architecture
 
@@ -43,7 +33,8 @@ as a native shared library (`.so` / `.dylib` / `.dll`) and loaded at runtime wit
 - **`AuditContext`** — optional `ContractSpec` for ABI cross-checks.
 - **`Finding`** — the unit a rule emits into the report.
 
-## Rule lifecycle
+---
+## Compiled-in Rules (Phase A)
 
 1. **Author** implements `AuditRule` and inspects `&[FnScan]` (per-function scan:
    bound locals, argument usage counts, `require_auth`/`invoke_contract` counts).

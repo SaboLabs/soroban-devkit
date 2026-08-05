@@ -48,7 +48,7 @@ Most commands are **offline**; only on-chain reads (`inspect`, `storage`,
 ## Installation
 
 ```bash
-# Build from source (recommended)
+# Build from source
 git clone https://github.com/naninu123/soroban-devkit
 cd soroban-devkit
 cargo install --path crates/sdkt-cli
@@ -56,6 +56,15 @@ cargo install --path crates/sdkt-cli
 # Verify
 sdkt --version
 ```
+
+### Extensibility & Plugins
+
+The `sdkt audit` static analysis engine supports third-party plugins.
+
+- **`wasm-plugins` (Recommended):** Build with `cargo install --path crates/sdkt-cli --features wasm-plugins` to load platform-independent, sandboxed `.wasm` plugins.
+- **`plugins`:** Build with `--features plugins` to load native shared libraries (`.so`, `.dylib`).
+
+See [`docs/plugin-authoring.md`](docs/plugin-authoring.md) for how to build or use custom rules.
 
 Full options (features, from crates.io, updating) are in
 [docs/installation.md](docs/installation.md).

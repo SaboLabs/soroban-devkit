@@ -56,12 +56,13 @@ depend on `sdkt-core` + `sdkt-xdr`. No networking in `sdkt-xdr`/`sdkt-core`.
 | **M16** | **Release Engineering & Polish** | Unified workspace version (`0.16.0-alpha`); Action install fix; `release.yml` (binaries + `cargo publish`); README/`docs/cli.md` rewrite; panic audit on user paths. ✅ Merged to `main`. | — |
 | **M17** | **Plugin System — Phase A (Rule Registry)** | `RuleRegistry` in `sdkt-audit`; built-ins register via registry; additive `--rules <path>` flag; plugin author API (`AuditRule`/`AuditContext`/`Finding`/`register_rule!`); example rule crate `sdkt-audit-example-rule`; `docs/plugin-authoring.md`. ✅ Merged to `main`. | — |
 | **M18** | **Plugin System — Phase B (Dynamic Rule Loading)** | Native shared-library plugins via `libloading` + C-ABI (`#[repr(C)]`) boundary; `sdkt audit --rules <plugin.so>` loads rules at runtime with no CLI rebuild; ABI major-version gate; plugin panics isolated. ✅ Merged to `main` (feature `plugins`, default OFF). | — |
+| **M19** | **Plugin System — Phase C (WASM Sandbox)** | Sandboxed `.wasm` plugins via `extism` + JSON-ABI boundary; `sdkt audit --rules <plugin.wasm>` loads rules safely across platforms; no filesystem/network access; no memory leaks. ✅ Merged to `main` (feature `wasm-plugins`, default OFF). | — |
 
 ### Remaining Roadmap
 
 | Milestone | Theme | Status | Dependencies |
 |-----------|-------|--------|--------------|
-| Post-1.0 | Mainnet-focused tooling, SCF grant alignment, **plugin system Phase C (WASM sandbox / registry)**, plugin marketplace | Backlog | M18 (Phase B) |
+| Post-1.0 | Mainnet-focused tooling, SCF grant alignment, plugin marketplace | Backlog | M19 (Phase C) |
 
 ---
 
