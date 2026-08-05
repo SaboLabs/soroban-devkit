@@ -1,7 +1,7 @@
 # Soroban DevKit (sdkt) — ROADMAP
 
 **Last updated:** 2026-08-05
-**Status:** Active development. `main` is the default branch. Latest merged work: Milestone 17 (Plugin System Phase A — Rule Registry, tagged `v0.17.0-alpha`). M16 (Release Engineering & Polish) and M17 (Plugin System Phase A) are merged to `main`. **v1.0.0 released** (tag `v1.0.0`, commit on `main`).
+**Status:** Active development. `main` is the default branch. All milestones through M17 (Plugin System Phase A) are merged to `main`, and **v1.0.0 is released** (tag `v1.0.0`). Recent merged work includes M16 (Release Engineering & Polish) and M17 (Plugin System Phase A — Rule Registry).
 
 This document is the single source of truth for milestone scope and sequencing.
 Individual milestone plans live under `docs/milestone-*-plan.md`; engineering
@@ -53,8 +53,8 @@ depend on `sdkt-core` + `sdkt-xdr`. No networking in `sdkt-xdr`/`sdkt-core`.
 | **M13** | **Gap C — Static Security Analysis (`sdkt audit`)** | New `sdkt-audit` crate; `AUTH-001/002/003`, `MOVE-001`; `sdkt audit <path>`. ✅ Merged to `main` (v0.13.0-alpha, #11). | — |
 | **M14** | **Upgrade Safety Guard (Candidate A)** | Reuse M12 `SpecDiff`: `UpgradeVerdict`; `sdkt diff --upgrade-safety`; optional `sdkt deploy --deny-breaking`. ✅ **Closed & tagged `v0.14.0-alpha`** (commit `dc31767`). | — |
 | **M15** | **CI/CD GitHub Action (`sdkt` composite Action)** | `.github/actions/sdkt/action.yml` wraps `sdkt audit` + `sdkt diff --upgrade-safety` for CI; `docs/ci-cd.md` + self-validating workflow. ✅ **Closed & tagged `v0.15.0-alpha`**. | — |
-| **M16** | **Release Engineering & Polish** | Unified workspace version (`0.16.0-alpha`); Action install fix; `release.yml` (binaries + `cargo publish`); README/`docs/cli.md` rewrite; panic audit on user paths. ✅ Implemented (commit on `feat/milestone-16`, pending merge). | — |
-| **M17** | **Plugin System — Phase A (Rule Registry)** | `RuleRegistry` in `sdkt-audit`; built-ins register via registry; additive `--rules <path>` flag; plugin author API (`AuditRule`/`AuditContext`/`Finding`/`register_rule!`); example rule crate `sdkt-audit-example-rule`; `docs/plugin-authoring.md`. ✅ Implemented on `feat/milestone-17`, pending merge. | — |
+| **M16** | **Release Engineering & Polish** | Unified workspace version (`0.16.0-alpha`); Action install fix; `release.yml` (binaries + `cargo publish`); README/`docs/cli.md` rewrite; panic audit on user paths. ✅ Merged to `main`. | — |
+| **M17** | **Plugin System — Phase A (Rule Registry)** | `RuleRegistry` in `sdkt-audit`; built-ins register via registry; additive `--rules <path>` flag; plugin author API (`AuditRule`/`AuditContext`/`Finding`/`register_rule!`); example rule crate `sdkt-audit-example-rule`; `docs/plugin-authoring.md`. ✅ Merged to `main`. | — |
 
 ### Remaining Roadmap
 
