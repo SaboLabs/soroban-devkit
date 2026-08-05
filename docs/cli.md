@@ -39,6 +39,11 @@ sdkt
 │   ├── metadata <contract>  [--network testnet] [--refresh] [--format]
 │   └── cache                 (info | remove | clear)
 │
+├── verify <contract-id>
+│   ├── --wasm <file.wasm>    (local artifact to compare; offline hashed)
+│   ├── --network <testnet>   (RPC network)
+│   └── --format <json|pretty>
+│
 ├── diff
 │   ├── --old-wasm <A>
 │   ├── --new-wasm <B>

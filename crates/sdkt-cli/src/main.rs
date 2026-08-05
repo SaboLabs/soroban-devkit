@@ -53,6 +53,21 @@ enum Commands {
         #[arg(long, value_name = "WASM")]
         abi: Option<String>,
     },
+    /// Verify a deployed contract matches a local WASM binary (M22)
+    Verify {
+        /// Stellar contract ID (C...)
+        #[arg(short, long, value_name = "CONTRACT_ID")]
+        contract: String,
+        /// Path to a local WASM file to compare against the on-chain code
+        #[arg(long, value_name = "WASM")]
+        wasm: Option<String>,
+        /// Network to fetch the on-chain contract from
+        #[arg(short, long, default_value = "testnet")]
+        network: String,
+        /// Output format
+        #[arg(short, long, default_value = "pretty")]
+        format: String,
+    },
     /// Inspect a Soroban transaction
     Tx {
         #[command(subcommand)]
@@ -308,6 +323,105 @@ enum StorageAction {
         #[arg(short, long, default_value = "pretty")]
         format: String,
     },
+}
+
+/// M22 — Contract verification report.
+///
+/// Serializes directly to the JSON schema defined in M22_PLAN.md §10.
+/// `local_wasm_hash` / `local_wasm_size_bytes` / `match` are `Option` so they
+/// serialize as `null` when no local WASM is supplied (OnChainOnly mode).
+#[derive(Debug, serde::Serialize)]
+struct VerificationReport {
+    contract_id: String,
+    network: String,
+    on_chain_wasm_hash: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    local_wasm_hash: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    local_wasm_size_bytes: Option<usize>,
+    #[serde(rename = "match", skip_serializing_if = "Option::is_none")]
+    matches: Option<bool>,
+    verification_status: String,
+    explanation: String,
+}
+
+/// Pure comparison logic for M22 (no I/O, fully testable).
+///
+/// Given the on-chain hash and an optional local `(hash, size)` pair, returns
+/// the `(match, status, explanation)` triple per M22_PLAN.md §10/§11.
+fn verification_outcome(
+    on_chain_hash: &str,
+    local: Option<(String, usize)>,
+) -> (Option<bool>, String, String) {
+    match local {
+        Some((ref lh, _size)) => {
+            if *lh == on_chain_hash {
+                (Some(true), "Verified".to_string(), String::new())
+            } else {
+                (
+                    Some(false),
+                    "Mismatch".to_string(),
+                    format!(
+                        "The deployed bytecode does NOT match the local file.\nOn-chain : {}\nLocal    : {}\nRebuild and redeploy, or confirm you are comparing the correct artifact.",
+                        on_chain_hash, lh
+                    ),
+                )
+            }
+        }
+        None => (
+            None,
+            "OnChainOnly".to_string(),
+            "No local WASM provided; reporting on-chain hash only.".to_string(),
+        ),
+    }
+}
+
+/// Orchestrates contract verification (M22).
+///
+/// Fetches the on-chain WASM hash via `sdkt-rpc::inspect_contract` (no bytecode
+/// download) and compares it against the offline local WASM hash from
+/// `sdkt-wasm::parse_metadata`. `local_wasm` is optional: when `None`, the
+/// report is `OnChainOnly` (no comparison verdict).
+async fn verify_contract(
+    client: &SorobanRpcClient,
+    contract_id: &str,
+    local_wasm: Option<&[u8]>,
+    network: &str,
+) -> Result<VerificationReport, String> {
+    // Hash the local WASM fully offline FIRST (fail fast on bad/missing files
+    // before touching the network), per M22_PLAN.md "Offline hashing".
+    let local_hash = match local_wasm {
+        Some(bytes) => {
+            let meta = sdkt_wasm::parse_metadata(bytes).map_err(|e| format!("{}", e))?;
+            Some((meta.hash, meta.size_bytes))
+        }
+        None => None,
+    };
+
+    // On-chain hash only — never download the bytecode.
+    let inspection = inspect_contract(client, contract_id)
+        .await
+        .map_err(|e| format!("{}", e))?;
+
+    let on_chain_hash = inspection.wasm_hash;
+
+    // Capture report fields from the (still-owned) local hash before the
+    // comparison consumes it.
+    let local_wasm_hash = local_hash.as_ref().map(|(h, _)| h.clone());
+    let local_wasm_size_bytes = local_hash.as_ref().map(|(_, s)| *s);
+
+    let (matches, status, explanation) = verification_outcome(&on_chain_hash, local_hash);
+
+    Ok(VerificationReport {
+        contract_id: contract_id.to_string(),
+        network: network.to_string(),
+        on_chain_wasm_hash: on_chain_hash,
+        local_wasm_hash,
+        local_wasm_size_bytes,
+        matches,
+        verification_status: status,
+        explanation,
+    })
 }
 
 fn parse_format_str(s: &str) -> OutputFormat {
@@ -584,6 +698,79 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 }
                 Err(e) => {
                     eprintln!("Error inspecting contract: {}", e);
+                    process::exit(1);
+                }
+            }
+        }
+        Commands::Verify {
+            contract,
+            wasm,
+            network,
+            format,
+        } => {
+            let fmt = parse_format_str(&format);
+            let config = DevKitConfig::from_file(".sdkt.toml").unwrap_or_default();
+            let client = SorobanRpcClient::from_config(&config.network);
+
+            // Read + hash the local WASM fully offline (no RPC).
+            let local_bytes = match wasm.as_ref() {
+                Some(path) => {
+                    let bytes = fs::read(path).unwrap_or_else(|e| {
+                        eprintln!("Error reading WASM file {}: {}", path, e);
+                        process::exit(1);
+                    });
+                    Some(bytes)
+                }
+                None => None,
+            };
+
+            match verify_contract(&client, &contract, local_bytes.as_deref(), &network).await {
+                Ok(report) => {
+                    if fmt == OutputFormat::Json {
+                        println!(
+                            "{}",
+                            serde_json::to_string_pretty(&report).unwrap_or_else(|e| {
+                                eprintln!("Error serializing report: {}", e);
+                                process::exit(1);
+                            })
+                        );
+                    } else {
+                        println!("Contract Verification Report");
+                        println!("============================");
+                        println!("Contract ID : {}", report.contract_id);
+                        println!("Network     : {}", report.network);
+                        println!("On-chain WASM: {}", report.on_chain_wasm_hash);
+                        if let (Some(lh), Some(sz)) =
+                            (&report.local_wasm_hash, &report.local_wasm_size_bytes)
+                        {
+                            println!("Local WASM   : {}   ({} bytes)", lh, sz);
+                        }
+                        let match_str = match report.matches {
+                            Some(true) => "YES".to_string(),
+                            Some(false) => "NO".to_string(),
+                            None => "N/A (no local WASM provided)".to_string(),
+                        };
+                        println!("Match        : {}", match_str);
+                        println!("Status       : {}", report.verification_status);
+                        if !report.explanation.is_empty() {
+                            println!();
+                            println!("{}", report.explanation);
+                        }
+                    }
+                }
+                Err(e) => {
+                    // Surface actionable messages per M22_PLAN.md §9.
+                    if let Some(path) = wasm.as_ref() {
+                        if e.contains("WASM parse error") {
+                            eprintln!("Error: {} is not valid WASM", path);
+                            process::exit(1);
+                        }
+                        if e.contains("Empty") {
+                            eprintln!("Error: {} is empty", path);
+                            process::exit(1);
+                        }
+                    }
+                    eprintln!("Error verifying contract: {}", e);
                     process::exit(1);
                 }
             }
@@ -1709,4 +1896,71 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
 
     Ok(())
+}
+
+#[cfg(test)]
+mod m22_tests {
+    use super::*;
+
+    #[test]
+    fn verification_outcome_verified() {
+        let (m, status, exp) = verification_outcome("abc123", Some(("abc123".to_string(), 4096)));
+        assert_eq!(m, Some(true));
+        assert_eq!(status, "Verified");
+        assert!(exp.is_empty());
+    }
+
+    #[test]
+    fn verification_outcome_mismatch() {
+        let (m, status, exp) = verification_outcome("abc123", Some(("def456".to_string(), 4096)));
+        assert_eq!(m, Some(false));
+        assert_eq!(status, "Mismatch");
+        assert!(exp.contains("abc123"));
+        assert!(exp.contains("def456"));
+    }
+
+    #[test]
+    fn verification_outcome_onchain_only() {
+        let (m, status, exp) = verification_outcome("abc123", None);
+        assert_eq!(m, None);
+        assert_eq!(status, "OnChainOnly");
+        assert!(exp.contains("No local WASM"));
+    }
+
+    #[test]
+    fn verification_report_json_schema() {
+        // Verified case
+        let r = VerificationReport {
+            contract_id: "CABCDEFG".to_string(),
+            network: "testnet".to_string(),
+            on_chain_wasm_hash: "abc123".to_string(),
+            local_wasm_hash: Some("abc123".to_string()),
+            local_wasm_size_bytes: Some(4096),
+            matches: Some(true),
+            verification_status: "Verified".to_string(),
+            explanation: String::new(),
+        };
+        let json = serde_json::to_string(&r).unwrap();
+        assert!(json.contains("\"contract_id\":\"CABCDEFG\""));
+        assert!(json.contains("\"on_chain_wasm_hash\":\"abc123\""));
+        assert!(json.contains("\"local_wasm_hash\":\"abc123\""));
+        assert!(json.contains("\"local_wasm_size_bytes\":4096"));
+        assert!(json.contains("\"match\":true"));
+        assert!(json.contains("\"verification_status\":\"Verified\""));
+
+        // OnChainOnly case — local fields must be absent (null/omitted)
+        let r2 = VerificationReport {
+            contract_id: "CABCDEFG".to_string(),
+            network: "testnet".to_string(),
+            on_chain_wasm_hash: "abc123".to_string(),
+            local_wasm_hash: None,
+            local_wasm_size_bytes: None,
+            matches: None,
+            verification_status: "OnChainOnly".to_string(),
+            explanation: "No local WASM provided; reporting on-chain hash only.".to_string(),
+        };
+        let json2 = serde_json::to_string(&r2).unwrap();
+        assert!(json2.contains("\"match\":null") || !json2.contains("\"match\""));
+        assert!(!json2.contains("\"local_wasm_hash\":\"abc123\""));
+    }
 }

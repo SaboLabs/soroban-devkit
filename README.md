@@ -38,7 +38,7 @@ Most commands are **offline**; only on-chain reads (`inspect`, `storage`,
 | Event explorer | `sdkt events` |
 | Account balances + signers | `sdkt account` |
 | Dynamic fee estimate | `sdkt fee estimate` |
-| WASM Operations | `sdkt wasm inspect`, `sdkt wasm metadata`, `sdkt wasm cache` |
+| WASM Operations | `sdkt wasm inspect`, `sdkt wasm metadata`, `sdkt wasm cache`, `sdkt verify` |
 | Offline WASM diff + upgrade-safety verdict | `sdkt diff --upgrade-safety` |
 | Static security audit | `sdkt audit` |
 | ED25519 keystore | `sdkt identity` |
@@ -109,6 +109,7 @@ sdkt audit contracts/token/src/lib.rs
 | `sdkt account <address>` | Account balances + signers (Horizon-enriched). |
 | `sdkt diff` | Offline comparison of WASM binaries and API surfaces. |
 | `sdkt wasm inspect <file>` | Inspect offline WASM metadata, sections, and specifications. |
+| `sdkt verify --contract <ID> [--wasm <file>] [--network <net>]` | Verify a deployed contract matches a local WASM (offline hash vs on-chain hash). |
 | `sdkt wasm metadata <contract>` | WASM metadata for a deployed contract (cached). |
 | `sdkt wasm cache` | Manage the WASM cache (`info` / `remove` / `clear`). |
 | `sdkt diff --old-wasm <A> --new-wasm <B>` | Offline ABI/function/event/type diff of two WASM files. Add `--upgrade-safety` for a breaking-change verdict. |

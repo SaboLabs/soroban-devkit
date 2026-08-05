@@ -2769,6 +2769,7 @@ dependencies = [
  "sdkt-storage",
  "sdkt-wasm",
  "sdkt-xdr",
+ "serde",
  "serde_json",
  "stellar-xdr",
  "tempfile",
