@@ -29,7 +29,13 @@ default = []
 # Links the reference example plugin rule into the binary. Off by default so
 # `sdkt audit` output is byte-for-byte identical to M16 unless explicitly built
 # with the plugin feature.
-plugins = ["sdkt-audit-example-rule"]
+plugins = ["sdkt-audit-example-rule", "sdkt-audit/plugins"]
+
+# WebAssembly plugin loading (M19, Phase C). Off by default.
+wasm-plugins = [
+    "sdkt-audit/wasm-plugins",
+    "sdkt-audit-example-rule/wasm-plugins",
+]
 
 [dev-dependencies]
 assert_cmd = "2.2.2"

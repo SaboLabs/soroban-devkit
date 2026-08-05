@@ -31,7 +31,7 @@ pub trait AuditRule {
 }
 
 /// Per-function scan result.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct FnScan {
     pub fn_name: String,
     pub require_auth: usize,

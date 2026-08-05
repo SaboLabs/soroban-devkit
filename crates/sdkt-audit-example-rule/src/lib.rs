@@ -9,6 +9,7 @@
 //! It is compiled in only when `sdkt-cli` is built with the `plugins` feature,
 //! so default builds behave exactly like M16. See `docs/plugin-authoring.md`.
 
+#[cfg(not(target_arch = "wasm32"))]
 use sdkt_audit::{
     register_rule, AuditContext, AuditReport, AuditRule, BoxedRule, Finding, FnScan, Severity,
 };
@@ -17,8 +18,10 @@ use sdkt_audit::{
 ///
 /// Deliberately contrived so it never interferes with real audits or the
 /// built-in rules' outputs.
+#[cfg(not(target_arch = "wasm32"))]
 pub struct ExampleRule;
 
+#[cfg(not(target_arch = "wasm32"))]
 impl AuditRule for ExampleRule {
     fn id(&self) -> &'static str {
         "EXAMPLE-001"
@@ -44,16 +47,21 @@ impl AuditRule for ExampleRule {
 }
 
 /// Register this plugin's rule into the global `sdkt-audit` registry.
+#[cfg(not(target_arch = "wasm32"))]
 pub fn register() {
     register_rule(Box::new(ExampleRule) as BoxedRule);
 }
 
 /// C-ABI exports for dynamic loading (M18, Phase B). Compiled only with the
 /// `plugins` feature — produces a loadable shared library artifact.
-#[cfg(feature = "plugins")]
+#[cfg(all(feature = "plugins", not(target_arch = "wasm32")))]
 mod plugin_abi;
 
-#[cfg(test)]
+/// WASM JSON-ABI exports for sandboxed dynamic loading (M19, Phase C).
+#[cfg(all(feature = "wasm-plugins", target_arch = "wasm32"))]
+mod plugin_abi_wasm;
+
+#[cfg(all(test, not(target_arch = "wasm32")))]
 mod tests {
     use super::*;
 

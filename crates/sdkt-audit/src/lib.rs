@@ -20,6 +20,11 @@ pub mod types;
 #[cfg(feature = "plugins")]
 pub mod plugin_loader;
 
+#[cfg(feature = "wasm-plugins")]
+pub mod plugin_abi_wasm;
+#[cfg(feature = "wasm-plugins")]
+pub mod plugin_loader_wasm;
+
 pub use audit::{
     all_rules, audit_source, audit_source_with, audit_source_with_spec, scan_all_functions,
     scan_all_functions_str, AuditContext, AuditRule, FnScan,
@@ -33,6 +38,9 @@ pub use types::{AuditReport, AuditSummary, Finding, Severity};
 
 #[cfg(feature = "plugins")]
 pub use plugin_loader::{load_and_register, PluginLoadError, PluginRule};
+
+#[cfg(feature = "wasm-plugins")]
+pub use plugin_loader_wasm::{load_and_register_wasm, WasmPluginLoadError, WasmPluginRule};
 
 /// Register a rule into the process-wide [`RuleRegistry`].
 ///

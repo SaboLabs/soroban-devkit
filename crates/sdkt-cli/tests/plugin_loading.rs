@@ -5,8 +5,6 @@
 //! built-in rules. Non-`plugins` builds skip this test (the behavior is covered
 //! by the default audit regression tests).
 
-#![cfg(feature = "plugins")]
-
 use std::process::Command;
 
 use assert_cmd::cargo::CommandCargoExt;
@@ -14,6 +12,7 @@ use assert_cmd::prelude::*;
 use predicates::prelude::*;
 
 /// Build the example plugin cdylib and return its path under `target/`.
+#[cfg(feature = "plugins")]
 fn build_example_plugin() -> std::path::PathBuf {
     let status = Command::new(env!("CARGO"))
         .args([
@@ -43,6 +42,7 @@ fn build_example_plugin() -> std::path::PathBuf {
     panic!("example plugin cdylib not found after build");
 }
 
+#[cfg(feature = "plugins")]
 #[test]
 fn dynamic_plugin_rule_fires() {
     let plugin = build_example_plugin();
@@ -59,6 +59,7 @@ fn dynamic_plugin_rule_fires() {
         .stdout(predicate::str::contains("sdkt_example_trigger_admin"));
 }
 
+#[cfg(feature = "plugins")]
 #[test]
 fn plugin_bounds_clamping_prevents_read_overflow() {
     let plugin = build_example_plugin();
@@ -147,9 +148,10 @@ fn plugin_bounds_clamping_prevents_read_overflow() {
         .success()
         // The example plugin itself halts at MAX_FINDINGS, but even if it didn't,
         // the host now clamps reads to 64.
-        .stdout(predicate::str::contains("Total: 64"));
+        .stdout(predicate::str::contains("(64 total)"));
 }
 
+#[cfg(feature = "plugins")]
 #[test]
 fn dynamic_plugin_coexists_with_builtins() {
     let plugin = build_example_plugin();
@@ -169,6 +171,64 @@ fn dynamic_plugin_coexists_with_builtins() {
         .stdout(predicate::str::contains("EXAMPLE-001"));
 }
 
+#[cfg(feature = "wasm-plugins")]
+fn build_example_wasm_plugin() -> std::path::PathBuf {
+    let status = Command::new(env!("CARGO"))
+        .args([
+            "build",
+            "-p",
+            "sdkt-audit-example-rule",
+            "--target",
+            "wasm32-wasip1",
+            "--features",
+            "wasm-plugins",
+        ])
+        .status()
+        .expect("failed to spawn cargo build for example WASM plugin");
+    assert!(status.success(), "example WASM plugin build failed");
+
+    let workspace_root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .unwrap()
+        .parent()
+        .unwrap();
+
+    let wasm_path = workspace_root.join("target/wasm32-wasip1/debug/sdkt_audit_example_rule.wasm");
+    assert!(
+        wasm_path.exists(),
+        "WASM plugin not found at {:?}",
+        wasm_path
+    );
+    wasm_path
+}
+
+#[cfg(feature = "wasm-plugins")]
+#[test]
+fn wasm_plugin_coexists_with_builtins() {
+    let wasm_path = build_example_wasm_plugin();
+    let mut cmd = Command::cargo_bin("sdkt-cli").unwrap();
+
+    // We create a temp file that triggers both AUTH-001 (builtin) and EXAMPLE-001 (wasm)
+    let tmp = tempfile::NamedTempFile::new().unwrap();
+    std::fs::write(
+        tmp.path(),
+        "pub fn sdkt_example_trigger_admin(who: Address) { /* no auth */ }\n",
+    )
+    .unwrap();
+
+    cmd.args([
+        "audit",
+        tmp.path().to_str().unwrap(),
+        "--rules",
+        wasm_path.to_str().unwrap(),
+    ]);
+    cmd.assert()
+        .success()
+        .stdout(predicate::str::contains("AUTH-001"))
+        .stdout(predicate::str::contains("EXAMPLE-001"))
+        .stdout(predicate::str::contains("sdkt_example_trigger_admin"));
+}
+
 #[test]
 fn plugin_without_feature_errors_clearly() {
     // Build the CLI WITHOUT the plugins feature and confirm a `.so` rule path
@@ -183,5 +243,9 @@ fn plugin_without_feature_errors_clearly() {
     assert!(
         guard.contains("without the `plugins` feature"),
         "default-build plugin guard message missing"
+    );
+    assert!(
+        guard.contains("without the `wasm-plugins` feature"),
+        "default-build wasm plugin guard message missing"
     );
 }

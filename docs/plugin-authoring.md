@@ -177,6 +177,70 @@ sdkt audit contracts/token/src/lib.rs --rules target/debug/libmy_rule.so
 > built yourself. A plugin whose ABI major version differs from the host is
 > rejected with a clear error.
 
+## WebAssembly Plugins (M19, Phase C)
+
+To distribute a rule across platforms without native compilation overhead on the host, build it as a WebAssembly (`.wasm`) module.
+
+WASM plugins run in a restricted Extism sandbox:
+- **No filesystem access** (explicitly denied by the host).
+- **No network access** (explicitly denied by the host).
+- **No environment variable leaks** (except minimal WASI stubs like `random_get`).
+- **Memory safety** at the FFI boundary (no raw pointer ownership ambiguities).
+
+### Building a WASM plugin
+
+Use the [`extism-pdk`](https://crates.io/crates/extism-pdk) to export the required functions.
+
+```bash
+rustup target add wasm32-wasip1
+cargo build --target wasm32-wasip1 --release
+# Produces target/wasm32-wasip1/release/your_rule.wasm
+```
+
+### WASM ABI Exports
+
+WASM plugins must export the following endpoints (use `#[plugin_fn]` from `extism_pdk`):
+
+1. `sdkt_plugin_abi_version() -> i64` (Return `1`)
+2. `sdkt_plugin_id() -> String` (Return e.g. "AUTH-005")
+3. `sdkt_plugin_severity() -> i64` (Return `0`=Critical, `1`=Warning, `2`=Info)
+4. `sdkt_plugin_description() -> String` (Return rule description)
+5. `sdkt_plugin_check(input: String) -> String` (Core evaluation)
+
+### JSON Schema
+
+Unlike the native C-ABI which passes raw structures, the WASM ABI exchanges data via JSON over Extism memory.
+
+**Input (`sdkt_plugin_check`):**
+```json
+{
+  "scans": [
+    {
+      "fn_name": "transfer",
+      "require_auth": 1,
+      "invoke_contract": 0,
+      "bound": [],
+      "usage": {}
+    }
+  ]
+}
+```
+
+**Output (`sdkt_plugin_check`):**
+Return a JSON array of findings:
+```json
+[
+  {
+    "rule_id": "AUTH-005",
+    "severity": 1,
+    "message": "Missing auth check before transfer",
+    "location": "transfer"
+  }
+]
+```
+Note: Findings returned are capped at 64 by the host.
+
+---
 ## Testing a rule
 
 Rules are pure functions over `&[FnScan]`. Unit-test `check` directly:
