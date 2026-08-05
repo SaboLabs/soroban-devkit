@@ -49,6 +49,22 @@ runs:
           cargo install --git https://github.com/naninu123/soroban-devkit --tag "${{ inputs.sdkt-version }}" sdkt-cli --locked
         fi
 
+        # cargo install places the binary as 'sdkt-cli' (the crate name). The
+        # documented invocations use 'sdkt', so expose the installed binary
+        # under that name on PATH. Install dir is ~/.cargo/bin on Linux/macOS
+        # and %USERPROFILE%\.cargo\bin on Windows.
+        INSTALL_DIR="${CARGO_HOME:-$HOME/.cargo}/bin"
+        if [ ! -f "$INSTALL_DIR/sdkt" ]; then
+          if [ -f "$INSTALL_DIR/sdkt-cli" ]; then
+            if [ "$RUNNER_OS" = "Windows" ]; then
+              cp "$INSTALL_DIR/sdkt-cli.exe" "$INSTALL_DIR/sdkt.exe"
+            else
+              ln -s "$INSTALL_DIR/sdkt-cli" "$INSTALL_DIR/sdkt"
+            fi
+          fi
+        fi
+        echo "$INSTALL_DIR" >> "$GITHUB_PATH"
+
     - name: Run sdkt audit
       if: ${{ inputs.command == 'audit' }}
       shell: bash
