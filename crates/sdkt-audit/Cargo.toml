@@ -11,9 +11,11 @@ homepage.workspace = true
 [dependencies]
 syn = { version = "2", features = ["full", "visit"] }
 serde = { version = "1", features = ["derive"] }
+serde_json = { version = "1", optional = true }
 thiserror = "2"
 sdkt-wasm = { version = "1.0.0", path = "../sdkt-wasm" }
 libloading = { version = "0.8", optional = true }
+extism = { version = "1.30.0", optional = true }
 
 [features]
 # Native dynamic plugin loading (M18, Phase B). Off by default so the default
@@ -21,6 +23,7 @@ libloading = { version = "0.8", optional = true }
 plugins = ["dep:libloading"]
 
 # WebAssembly plugin loading (M19, Phase C). Off by default.
-wasm-plugins = []
+wasm-plugins = ["dep:extism", "dep:serde_json"]
 
 [dev-dependencies]
+tempfile = "3"

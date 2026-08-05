@@ -12,12 +12,20 @@ keywords = ["soroban", "stellar", "sdk", "toolkit", "audit"]
 categories = ["development-tools"]
 
 [dependencies]
+extism-pdk = { version = "1.4.1", optional = true }
+serde = { version = "1", optional = true, features = ["derive"] }
+serde_json = { version = "1", optional = true }
+
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 sdkt-audit = { version = "1.0.0", path = "../sdkt-audit" }
 
 [features]
 # Produce a loadable shared library exporting the C-ABI plugin symbols
 # (M18, Phase B). Off by default so the crate is just an rlib in normal use.
 plugins = ["sdkt-audit/plugins"]
+
+# WebAssembly plugin loading (M19, Phase C). Off by default.
+wasm-plugins = ["dep:extism-pdk", "dep:serde", "dep:serde_json", "sdkt-audit/wasm-plugins"]
 
 [lib]
 name = "sdkt_audit_example_rule"
