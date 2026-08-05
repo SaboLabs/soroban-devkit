@@ -1341,10 +1341,15 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 }
             }
             WasmAction::Cache { action } => {
-                let cache = WasmCache::new().unwrap_or_else(|_| {
-                    eprintln!("Could not initialize cache");
-                    process::exit(1);
-                });
+                // Initialize cache; fall back to a temp dir if the OS cache
+                // directory cannot be resolved (e.g. fresh CI runner).
+                let cache = match WasmCache::new() {
+                    Ok(c) => c,
+                    Err(e) => {
+                        eprintln!("Warning: could not initialize cache: {}", e);
+                        WasmCache::with_dir(std::env::temp_dir().join("sdkt-fallback-cache"))
+                    }
+                };
 
                 match action {
                     CacheAction::Info { network, format } => {
