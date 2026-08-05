@@ -5,7 +5,7 @@
 
 This document is the single source of truth for milestone scope and sequencing.
 Individual milestone plans live under `docs/milestone-*-plan.md`; engineering
-design tickets live under `.hermes/issues/<version>/`.
+design tickets live under `.project/issues/<version>/`.
 
 ---
 
