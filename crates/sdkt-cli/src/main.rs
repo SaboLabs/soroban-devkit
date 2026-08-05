@@ -83,6 +83,17 @@ enum Commands {
         #[command(subcommand)]
         action: WasmAction,
     },
+    /// Offline diff of two contract WASM files (ABI/function/event/type changes)
+    Diff {
+        /// Path to the OLD (baseline) WASM file
+        #[arg(long, value_name = "WASM")]
+        old_wasm: String,
+        /// Path to the NEW (candidate) WASM file
+        #[arg(long, value_name = "WASM")]
+        new_wasm: String,
+        #[arg(short, long, default_value = "pretty")]
+        format: String,
+    },
     /// Manage Soroban identities (keys)
     Identity {
         #[command(subcommand)]
@@ -276,6 +287,22 @@ fn parse_format_str(s: &str) -> OutputFormat {
             process::exit(1);
         }
     }
+}
+
+/// Render a `ContractFunction`'s signature as `name(params) -> outputs`.
+fn sig_string(f: &sdkt_wasm::ContractFunction) -> String {
+    let params: Vec<String> = f
+        .parameters
+        .iter()
+        .map(|p| format!("{}: {}", p.name, p.type_.name))
+        .collect();
+    let outs: Vec<String> = f.outputs.iter().map(|o| o.name.clone()).collect();
+    let out = if outs.is_empty() {
+        "void".to_string()
+    } else {
+        outs.join(", ")
+    };
+    format!("{}({}) -> {}", f.name, params.join(", "), out)
 }
 
 #[tokio::main]
@@ -1035,6 +1062,93 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 }
             }
         },
+        Commands::Diff {
+            old_wasm,
+            new_wasm,
+            format,
+        } => {
+            let fmt = parse_format_str(&format);
+            let old_bytes = fs::read(&old_wasm)
+                .map_err(|e| format!("Failed to read OLD WASM '{}': {}", old_wasm, e))?;
+            let new_bytes = fs::read(&new_wasm)
+                .map_err(|e| format!("Failed to read NEW WASM '{}': {}", new_wasm, e))?;
+
+            match sdkt_wasm::diff_wasm(&old_bytes, &new_bytes) {
+                Ok(report) => {
+                    if fmt == OutputFormat::Json {
+                        println!("{}", serde_json::to_string(&report)?);
+                    } else {
+                        println!("Contract WASM Diff");
+                        println!(
+                            "  OLD: {} ({} bytes)",
+                            report.old.hash, report.old.size_bytes
+                        );
+                        println!(
+                            "  NEW: {} ({} bytes)",
+                            report.new.hash, report.new.size_bytes
+                        );
+                        println!();
+                        if report.is_identical() {
+                            println!("No ABI differences detected.");
+                        } else {
+                            if !report.added_functions.is_empty() {
+                                println!("Added functions ({}):", report.added_functions.len());
+                                for f in &report.added_functions {
+                                    println!("  + {} ({})", f.name, sig_string(f));
+                                }
+                            }
+                            if !report.removed_functions.is_empty() {
+                                println!("Removed functions ({}):", report.removed_functions.len());
+                                for f in &report.removed_functions {
+                                    println!("  - {} ({})", f.name, sig_string(f));
+                                }
+                            }
+                            if !report.changed_functions.is_empty() {
+                                println!(
+                                    "Changed signatures ({}):",
+                                    report.changed_functions.len()
+                                );
+                                for c in &report.changed_functions {
+                                    println!("  ~ {} :", c.name);
+                                    println!("      old: {}", sig_string(&c.old));
+                                    println!("      new: {}", sig_string(&c.new));
+                                }
+                            }
+                            if !report.added_events.is_empty() {
+                                println!("Added events ({}):", report.added_events.len());
+                                for e in &report.added_events {
+                                    println!("  + {}", e);
+                                }
+                            }
+                            if !report.removed_events.is_empty() {
+                                println!("Removed events ({}):", report.removed_events.len());
+                                for e in &report.removed_events {
+                                    println!("  - {}", e);
+                                }
+                            }
+                            if !report.added_types.is_empty() {
+                                println!("Added types ({}):", report.added_types.len());
+                                for t in &report.added_types {
+                                    println!("  + {}", t);
+                                }
+                            }
+                            if !report.removed_types.is_empty() {
+                                println!("Removed types ({}):", report.removed_types.len());
+                                for t in &report.removed_types {
+                                    println!("  - {}", t);
+                                }
+                            }
+                        }
+                        println!();
+                        println!("Total changes: {}", report.total_changes());
+                    }
+                }
+                Err(e) => {
+                    eprintln!("Error diffing WASM: {}", e);
+                    process::exit(1);
+                }
+            }
+        }
         Commands::Wasm { action } => match action {
             WasmAction::Metadata {
                 contract,
