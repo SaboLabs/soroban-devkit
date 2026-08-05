@@ -77,6 +77,20 @@ enum Commands {
         #[command(subcommand)]
         action: IdentityAction,
     },
+    /// Initialize a new Soroban contract project
+    Init {
+        /// Project name (directory)
+        name: String,
+        /// Generate only essential files
+        #[arg(long, default_value_t = false)]
+        minimal: bool,
+        /// Overwrite existing directory
+        #[arg(long, default_value_t = false)]
+        force: bool,
+        /// Output format (pretty or json)
+        #[arg(short, long, default_value = "pretty")]
+        format: String,
+    },
     /// Deploy a contract (Upload WASM + Instantiate)
     Deploy {
         #[arg(short, long)]
@@ -962,6 +976,52 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 IdentityAction::Default { name } => {
                     store.set_default(&name)?;
                     println!("Identity '{}' set as default.", name);
+                }
+            }
+        }
+        Commands::Init {
+            name,
+            minimal,
+            force,
+            format,
+        } => {
+            use sdkt_core::scaffold::{generate_project, ScaffoldConfig};
+
+            let fmt = parse_format_str(&format);
+            let scaffold_cfg = ScaffoldConfig {
+                name: name.clone(),
+                minimal,
+                force,
+            };
+
+            match generate_project(&scaffold_cfg) {
+                Ok(result) => {
+                    if fmt == OutputFormat::Json {
+                        let json = serde_json::json!({
+                            "status": "created",
+                            "project": name,
+                            "files": result.files_created,
+                        });
+                        println!("{}", serde_json::to_string(&json).unwrap());
+                    } else {
+                        println!("✓ Project '{}' created", name);
+                        for f in &result.files_created {
+                            println!("  ✓ {}", f);
+                        }
+                        println!("✓ Ready to build");
+                    }
+                }
+                Err(e) => {
+                    if fmt == OutputFormat::Json {
+                        let json = serde_json::json!({
+                            "status": "error",
+                            "message": e.to_string(),
+                        });
+                        println!("{}", serde_json::to_string(&json).unwrap());
+                    } else {
+                        eprintln!("Error: {}", e);
+                    }
+                    process::exit(1);
                 }
             }
         }
