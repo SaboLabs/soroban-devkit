@@ -5,11 +5,13 @@ use wasmparser::{Parser, Payload};
 
 pub mod abi_decode;
 pub mod spec;
+pub mod spec_diff;
 pub use abi_decode::{find_event_abi, find_type_abi, format_scval_abi, DecodedValue};
 pub use spec::{
     parse_contract_spec, ContractEvent, ContractFunction, ContractParameter, ContractSpec,
     ContractType,
 };
+pub use spec_diff::{diff_specs, diff_wasm, FunctionSignatureChange, SpecDiff, WasmSummary};
 
 #[derive(Error, Debug)]
 pub enum WasmError {

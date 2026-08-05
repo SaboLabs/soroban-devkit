@@ -157,9 +157,9 @@ This section supersedes the "What `sdkt` provides" promises above with **shipped
 
 ### Remaining unaddressed pillars
 
-1. **Gap C static analysis** — the sole original gap with zero code; targeted by M11.
-2. **Plugin system** — no external lint/rule loading yet; M11's `AuditRule` registry is the intended on-ramp (M13).
-3. **`StorageAnalyzer`** (M4) — struct exists in `sdkt-storage/src/analyzer.rs` but is not CLI-exposed or tested; deferred to M12.
+1. **Gap C static analysis** — the sole original gap with zero code; deferred (was a candidate for M11/M12, not selected).
+2. **Plugin system** — no external lint/rule loading yet; M13 planned.
+3. **Contract upgrade safety** — M12 shipped the *diff* half (`sdkt diff`); the *recommend-abort-on-breaking-change* guard for `sdkt deploy` remains (M14).
 
 ### Notable deltas vs original doc
 

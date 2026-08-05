@@ -345,7 +345,7 @@ fn _discriminant_name(kind: &ScSpecEntryKind) -> &'static str {
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
     use stellar_xdr::WriteXdr;
 
@@ -353,7 +353,7 @@ mod tests {
     const VALID_WASM: &[u8] = &[0x00, 0x61, 0x73, 0x6d, 0x01, 0x00, 0x00, 0x00];
 
     /// Encodes `ScSpecEntry` values into a `contractspecv0` custom section.
-    fn spec_section(entries: &[ScSpecEntry]) -> Vec<u8> {
+    pub(crate) fn spec_section(entries: &[ScSpecEntry]) -> Vec<u8> {
         // Build the custom section payload: name + encoded XDR entries.
         let mut section = Vec::new();
         section.push(CONTRACT_SPEC_V0.len() as u8);
@@ -380,11 +380,11 @@ mod tests {
         result
     }
 
-    fn symbol_e(s: &str) -> stellar_xdr::ScSymbol {
+    pub(crate) fn symbol_e(s: &str) -> stellar_xdr::ScSymbol {
         stellar_xdr::ScSymbol(s.to_string().try_into().unwrap())
     }
 
-    fn func_entry(name: &str, inputs: Vec<(String, ScSpecTypeDef)>) -> ScSpecEntry {
+    pub(crate) fn func_entry(name: &str, inputs: Vec<(String, ScSpecTypeDef)>) -> ScSpecEntry {
         use stellar_xdr::{ScSpecFunctionInputV0, ScSpecFunctionV0};
         ScSpecEntry::FunctionV0(ScSpecFunctionV0 {
             doc: "".try_into().unwrap(),
@@ -400,6 +400,28 @@ mod tests {
                 .try_into()
                 .unwrap(),
             outputs: vec![].try_into().unwrap(),
+        })
+    }
+
+    pub(crate) fn event_entry(name: &str) -> ScSpecEntry {
+        use stellar_xdr::ScSpecEventV0;
+        ScSpecEntry::EventV0(ScSpecEventV0 {
+            doc: "".try_into().unwrap(),
+            lib: "soroban_sdk".try_into().unwrap(),
+            name: symbol_e(name),
+            prefix_topics: vec![].try_into().unwrap(),
+            params: vec![].try_into().unwrap(),
+            data_format: stellar_xdr::ScSpecEventDataFormat::SingleValue,
+        })
+    }
+
+    pub(crate) fn udt_struct_entry(name: &str) -> ScSpecEntry {
+        use stellar_xdr::ScSpecUdtStructV0;
+        ScSpecEntry::UdtStructV0(ScSpecUdtStructV0 {
+            doc: "".try_into().unwrap(),
+            lib: "soroban_sdk".try_into().unwrap(),
+            name: name.try_into().unwrap(),
+            fields: vec![].try_into().unwrap(),
         })
     }
 

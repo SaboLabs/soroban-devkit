@@ -47,18 +47,14 @@ depend on `sdkt-core` + `sdkt-xdr`. No networking in `sdkt-xdr`/`sdkt-core`.
 | M8 | Mutability foundation | `sdkt tx simulate`, `sdkt tx submit`, `sdkt identity` (ED25519 keystore), `sdkt tx build` envelope builder, fee estimation | v0.8.0-alpha |
 | M9 | WASM tooling & caching | `sdkt wasm metadata`, `sdkt wasm cache`, `sdkt-wasm` crate, ContractSpec parser, deploy (`sdkt deploy`) + init (`sdkt init`) scaffolding | v0.9.0-alpha |
 | M10 | ABI-aware decoding (ENG-16) | `--abi <WASM>` on `events`/`inspect`/`storage check`; `decode_event_topics`; real event payload decoding | v0.10.0-alpha |
-
-### In Progress
-
-| Milestone | Theme | Notes |
-|-----------|-------|-------|
-| **M11** | **StorageAnalyzer completion (Proposal B)** | Finish `StorageAnalyzer` + `sdkt storage analyze` CLI. ✅ Implemented (commit on `feat/milestone-11`). | — |
+| M11 | StorageAnalyzer completion (Proposal B) | Finish `StorageAnalyzer` + `sdkt storage analyze` CLI. ✅ Merged to `main` (v0.11.0-alpha). | — |
+| **M12** | **Contract ABI/WASM Diff (Candidate C)** | `sdkt diff --old-wasm --new-wasm` offline comparison of functions/events/types. ✅ Implemented (commit on `feat/milestone-12`, pending merge). | — |
 
 ### Remaining Roadmap
 
 | Milestone | Theme | Status | Dependencies |
 |-----------|-------|--------|--------------|
-| M12 | `StorageAnalyzer` CLI exposure + storage categorization report | Designed (struct exists, unwired) | M11 (rule framework optional) |
+| M12 | Contract ABI/WASM diff (`sdkt diff`) | Designed (reuses `sdkt-wasm` parser) | M10 ABI, M9 WASM |
 | M13 | Plugin system (external `AuditRule` + lint plugins) | Planned (GAP_ANALYSIS pillar) | M11 rule registry |
 | M14 | Contract diff / upgrade safety analysis | Planned | M10 ABI, M11 audit |
 | M15 | CI/CD GitHub Action packaging (`sdkt` as a composite action) | Planned | M11 (audit in CI) |
