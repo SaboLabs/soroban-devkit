@@ -1253,10 +1253,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                         .map(|e| plugin_exts.contains(&e.to_ascii_lowercase().as_str()))
                         .unwrap_or(false);
                     if is_plugin {
-                        if let Err(e) = sdkt_audit::plugin_loader::load_and_register(
-                            std::path::Path::new(r),
-                            &src,
-                        ) {
+                        if let Err(e) = sdkt_audit::load_and_register(std::path::Path::new(r), &src)
+                        {
                             eprintln!("Error loading plugin '{}': {}", r, e);
                             process::exit(1);
                         }
@@ -1274,8 +1272,46 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                         .unwrap_or(false);
                     if is_plugin {
                         eprintln!(
-                            "Error: '{}' is a plugin artifact but this build was compiled \
+                            "Error: '{}' is a native plugin artifact but this build was compiled \
                              without the `plugins` feature. Rebuild with --features plugins.",
+                            r
+                        );
+                        process::exit(1);
+                    }
+                }
+            }
+
+            // WebAssembly plugin loading (M19, Phase C).
+            #[cfg(feature = "wasm-plugins")]
+            {
+                for r in &rules {
+                    let is_wasm = std::path::Path::new(r)
+                        .extension()
+                        .and_then(|e| e.to_str())
+                        .map(|e| e.eq_ignore_ascii_case("wasm"))
+                        .unwrap_or(false);
+                    if is_wasm {
+                        if let Err(e) =
+                            sdkt_audit::load_and_register_wasm(std::path::Path::new(r), &src)
+                        {
+                            eprintln!("Error loading WASM plugin '{}': {}", r, e);
+                            process::exit(1);
+                        }
+                    }
+                }
+            }
+            #[cfg(not(feature = "wasm-plugins"))]
+            {
+                for r in &rules {
+                    let is_wasm = std::path::Path::new(r)
+                        .extension()
+                        .and_then(|e| e.to_str())
+                        .map(|e| e.eq_ignore_ascii_case("wasm"))
+                        .unwrap_or(false);
+                    if is_wasm {
+                        eprintln!(
+                            "Error: '{}' is a WASM plugin artifact but this build was compiled \
+                             without the `wasm-plugins` feature. Rebuild with --features wasm-plugins.",
                             r
                         );
                         process::exit(1);

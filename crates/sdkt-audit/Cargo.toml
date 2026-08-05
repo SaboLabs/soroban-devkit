@@ -20,4 +20,7 @@ libloading = { version = "0.8", optional = true }
 # build stays free of libloading and crates.io publish is unaffected.
 plugins = ["dep:libloading"]
 
+# WebAssembly plugin loading (M19, Phase C). Off by default.
+wasm-plugins = []
+
 [dev-dependencies]

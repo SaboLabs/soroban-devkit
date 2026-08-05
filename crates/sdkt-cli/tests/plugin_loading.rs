@@ -147,7 +147,7 @@ fn plugin_bounds_clamping_prevents_read_overflow() {
         .success()
         // The example plugin itself halts at MAX_FINDINGS, but even if it didn't,
         // the host now clamps reads to 64.
-        .stdout(predicate::str::contains("Total: 64"));
+        .stdout(predicate::str::contains("(64 total)"));
 }
 
 #[test]
@@ -183,5 +183,9 @@ fn plugin_without_feature_errors_clearly() {
     assert!(
         guard.contains("without the `plugins` feature"),
         "default-build plugin guard message missing"
+    );
+    assert!(
+        guard.contains("without the `wasm-plugins` feature"),
+        "default-build wasm plugin guard message missing"
     );
 }
