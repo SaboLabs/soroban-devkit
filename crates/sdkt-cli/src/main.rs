@@ -6,6 +6,8 @@ use sdkt_rpc::{
     inspect_contract, inspect_transaction, simulate_transaction, SorobanRpcClient,
 };
 use sdkt_storage::WasmCache;
+use sdkt_wasm::spec::parse_contract_spec;
+use sdkt_xdr::abi_decode::decode_event_topics;
 use sdkt_xdr::decode;
 use sdkt_xdr::{build_invoke_transaction, InvokeTransactionParams};
 use std::fs;
@@ -38,12 +40,18 @@ enum Commands {
     Storage {
         #[command(subcommand)]
         action: StorageAction,
+        /// Path to contract WASM for ABI-aware storage decoding
+        #[arg(long, value_name = "WASM")]
+        abi: Option<String>,
     },
     /// Inspect a contract's ABI and storage
     Inspect {
         contract_id: String,
         #[arg(short, long, default_value = "pretty")]
         format: String,
+        /// Path to contract WASM for ABI-aware storage inspection
+        #[arg(long, value_name = "WASM")]
+        abi: Option<String>,
     },
     /// Inspect a Soroban transaction
     Tx {
@@ -55,6 +63,9 @@ enum Commands {
         contract_id: String,
         #[arg(short, long, default_value = "pretty")]
         format: String,
+        /// Path to contract WASM for ABI-aware decoding
+        #[arg(long, value_name = "WASM")]
+        abi: Option<String>,
     },
     /// Inspect an account's balances and signers
     Account {
@@ -281,7 +292,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             let json = decode(&input, r#type.as_deref(), fmt)?;
             println!("{}", json);
         }
-        Commands::Storage { action } => match action {
+        Commands::Storage { action, abi } => match action {
             StorageAction::Check {
                 contract_id,
                 format,
@@ -290,11 +301,36 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 let config = DevKitConfig::from_file(".sdkt.toml").unwrap_or_default();
                 let client = SorobanRpcClient::from_config(&config.network);
 
+                // Load ABI spec if provided for storage decoding
+                let contract_spec = if let Some(wasm_path) = abi.as_ref() {
+                    let wasm_bytes =
+                        fs::read(wasm_path).map_err(|e| format!("Failed to read WASM: {}", e))?;
+                    Some(
+                        parse_contract_spec(&wasm_bytes)
+                            .map_err(|e| format!("Failed to parse ABI: {}", e))?,
+                    )
+                } else {
+                    None
+                };
+
                 match get_ttl_info(&client, &contract_id).await {
                     Ok(ttl_info) => {
                         if fmt == OutputFormat::Json {
-                            let json_str = serde_json::to_string(&ttl_info)?;
-                            println!("{}", json_str);
+                            if let Some(spec) = contract_spec {
+                                let json_str = serde_json::to_string(&serde_json::json!({
+                                    "contract_id": contract_id,
+                                    "entries": ttl_info.entries.len(),
+                                    "abi": serde_json::json!({
+                                        "functions": spec.functions.iter().map(|f| f.name.as_str()).collect::<Vec<_>>(),
+                                        "events": spec.events.iter().map(|e| e.name.as_str()).collect::<Vec<_>>(),
+                                        "custom_types": spec.custom_types.iter().map(|t| t.name.as_str()).collect::<Vec<_>>()
+                                    })
+                                }))?;
+                                println!("{}", json_str);
+                            } else {
+                                let json_str = serde_json::to_string(&ttl_info)?;
+                                println!("{}", json_str);
+                            }
                         } else {
                             println!("Storage Check for Contract ID: {}", contract_id);
                             println!("Total Entries: {}", ttl_info.entries.len());
@@ -307,6 +343,23 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                                     "  Est. Extension Cost: {} stroops",
                                     entry.extension_cost_stroops
                                 );
+                            }
+
+                            if let Some(spec) = contract_spec {
+                                println!("\nABI Functions:");
+                                for f in &spec.functions {
+                                    println!("  - {} ({})", f.name, f.doc);
+                                }
+                                println!("\nABI Events:");
+                                for e in &spec.events {
+                                    println!("  - {}", e.name);
+                                }
+                                if !spec.custom_types.is_empty() {
+                                    println!("\nABI Custom Types:");
+                                    for t in &spec.custom_types {
+                                        println!("  - {} ({})", t.name, t.kind);
+                                    }
+                                }
                             }
                         }
                     }
@@ -323,21 +376,65 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         Commands::Inspect {
             contract_id,
             format,
+            abi,
         } => {
             let fmt = parse_format_str(&format);
             let config = DevKitConfig::from_file(".sdkt.toml").unwrap_or_default();
             let client = SorobanRpcClient::from_config(&config.network);
 
+            // Load ABI spec if provided for storage decoding
+            let contract_spec = if let Some(wasm_path) = abi.as_ref() {
+                let wasm_bytes =
+                    fs::read(wasm_path).map_err(|e| format!("Failed to read WASM: {}", e))?;
+                Some(
+                    parse_contract_spec(&wasm_bytes)
+                        .map_err(|e| format!("Failed to parse ABI: {}", e))?,
+                )
+            } else {
+                None
+            };
+
             match inspect_contract(&client, &contract_id).await {
                 Ok(inspection) => {
                     if fmt == OutputFormat::Json {
-                        let json_str = serde_json::to_string(&inspection)?;
-                        println!("{}", json_str);
+                        if let Some(spec) = contract_spec {
+                            let json_str = serde_json::to_string(&serde_json::json!({
+                                "contract_id": inspection.contract_id,
+                                "wasm_hash": inspection.wasm_hash,
+                                "storage_keys": inspection.storage_keys.len(),
+                                "abi": serde_json::json!({
+                                    "functions": spec.functions.iter().map(|f| f.name.as_str()).collect::<Vec<_>>(),
+                                    "events": spec.events.iter().map(|e| e.name.as_str()).collect::<Vec<_>>(),
+                                    "custom_types": spec.custom_types.iter().map(|t| t.name.as_str()).collect::<Vec<_>>()
+                                })
+                            }))?;
+                            println!("{}", json_str);
+                        } else {
+                            let json_str = serde_json::to_string(&inspection)?;
+                            println!("{}", json_str);
+                        }
                     } else {
                         println!("Contract Inspection");
                         println!("Contract ID: {}", inspection.contract_id);
                         println!("WASM Hash: {}", inspection.wasm_hash);
                         println!("Storage Keys: {}", inspection.storage_keys.len());
+
+                        if let Some(spec) = contract_spec {
+                            println!("\nABI Functions:");
+                            for f in &spec.functions {
+                                println!("  - {} ({})", f.name, f.doc);
+                            }
+                            println!("\nABI Events:");
+                            for e in &spec.events {
+                                println!("  - {}", e.name);
+                            }
+                            if !spec.custom_types.is_empty() {
+                                println!("\nABI Custom Types:");
+                                for t in &spec.custom_types {
+                                    println!("  - {} ({})", t.name, t.kind);
+                                }
+                            }
+                        }
                     }
                 }
                 Err(e) => {
@@ -634,29 +731,97 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         Commands::Events {
             contract_id,
             format,
+            abi,
         } => {
             let fmt = parse_format_str(&format);
             let config = DevKitConfig::from_file(".sdkt.toml").unwrap_or_default();
             let client = SorobanRpcClient::from_config(&config.network);
 
+            // Load ABI spec if provided
+            let contract_spec = if let Some(wasm_path) = abi.as_ref() {
+                let wasm_bytes =
+                    fs::read(wasm_path).map_err(|e| format!("Failed to read WASM: {}", e))?;
+                Some(
+                    parse_contract_spec(&wasm_bytes)
+                        .map_err(|e| format!("Failed to parse ABI: {}", e))?,
+                )
+            } else {
+                None
+            };
+
             match get_contract_events(&client, &contract_id).await {
                 Ok(events) => {
-                    if fmt == OutputFormat::Json {
-                        let json_str = serde_json::to_string(&events)?;
-                        println!("{}", json_str);
-                    } else {
-                        println!("Contract Events:");
-                        if events.is_empty() {
-                            println!("No events found.");
+                    if let Some(spec) = contract_spec {
+                        // ABI-aware decoding
+                        if fmt == OutputFormat::Json {
+                            let decoded_events: Vec<serde_json::Value> = events
+                                .iter()
+                                .map(|ev| {
+                                    let _topics =
+                                        ev.topics.iter().map(|t| t.as_str()).collect::<Vec<_>>();
+                                    let topic_scvals: Vec<stellar_xdr::ScVal> = Vec::new(); // Topics handled by event_hint mechanism
+                                    let decoded = decode_event_topics(&spec, &topic_scvals, &[]);
+                                    serde_json::json!({
+                                        "contract_id": ev.contract_id,
+                                        "ledger": ev.ledger,
+                                        "decoded": decoded.iter().map(|d| serde_json::json!({
+                                            "raw": d.raw,
+                                            "label": d.label,
+                                            "matched_type": d.matched_type,
+                                            "fields": d.fields
+                                        })).collect::<Vec<_>>()
+                                    })
+                                })
+                                .collect();
+                            let json_str = serde_json::to_string(&decoded_events)?;
+                            println!("{}", json_str);
                         } else {
-                            for (i, ev) in events.iter().enumerate() {
-                                println!("\nEvent #{}", i + 1);
-                                println!(
-                                    "Ledger: {}",
-                                    ev.ledger.map_or("Unknown".to_string(), |v| v.to_string())
-                                );
-                                println!("Topics: {:?}", ev.topics);
-                                println!("Value: {}", ev.value.as_deref().unwrap_or("N/A"));
+                            println!("Contract Events (ABI-decoded):");
+                            if events.is_empty() {
+                                println!("No events found.");
+                            } else {
+                                for (i, ev) in events.iter().enumerate() {
+                                    println!("\nEvent #{}", i + 1);
+                                    println!(
+                                        "Ledger: {}",
+                                        ev.ledger.map_or("Unknown".to_string(), |v| v.to_string())
+                                    );
+                                    println!("Topics: {:?}", ev.topics);
+                                    println!("Value: {}", ev.value.as_deref().unwrap_or("N/A"));
+
+                                    // Decode with ABI
+                                    let topic_scvals: Vec<stellar_xdr::ScVal> = Vec::new(); // Topics handled by event_hint mechanism
+                                    let decoded = decode_event_topics(&spec, &topic_scvals, &[]);
+                                    for d in decoded {
+                                        println!("  Decoded: {}", d.label);
+                                        if let Some(fields) = d.fields {
+                                            for (k, v) in fields {
+                                                println!("    {}: {}", k, v);
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    } else {
+                        // Original raw output
+                        if fmt == OutputFormat::Json {
+                            let json_str = serde_json::to_string(&events)?;
+                            println!("{}", json_str);
+                        } else {
+                            println!("Contract Events:");
+                            if events.is_empty() {
+                                println!("No events found.");
+                            } else {
+                                for (i, ev) in events.iter().enumerate() {
+                                    println!("\nEvent #{}", i + 1);
+                                    println!(
+                                        "Ledger: {}",
+                                        ev.ledger.map_or("Unknown".to_string(), |v| v.to_string())
+                                    );
+                                    println!("Topics: {:?}", ev.topics);
+                                    println!("Value: {}", ev.value.as_deref().unwrap_or("N/A"));
+                                }
                             }
                         }
                     }

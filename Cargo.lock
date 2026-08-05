@@ -1831,8 +1831,10 @@ dependencies = [
  "sdkt-core",
  "sdkt-rpc",
  "sdkt-storage",
+ "sdkt-wasm",
  "sdkt-xdr",
  "serde_json",
+ "stellar-xdr",
  "tempfile",
  "tokio",
 ]
