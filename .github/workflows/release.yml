@@ -31,12 +31,12 @@ jobs:
     steps:
       - uses: actions/checkout@v3
       - uses: dtolnay/rust-toolchain@stable
-      - name: Publish dry-run (dependency order)
-        run: |
-          for c in sdkt-core sdkt-xdr sdkt-wasm sdkt-rpc sdkt-storage sdkt-audit sdkt-cli; do
-            echo "== cargo publish --dry-run -p $c =="
-            cargo publish --dry-run -p "$c" 2>&1 | tail -5
-          done
+      - name: Publish dry-run (whole workspace)
+        # Validate packaging/uploadability of the entire workspace without
+        # contacting crates.io for unpublished sibling crates. Unlike a
+        # per-crate loop, this does not emit false-negative "no matching
+        # version" errors for siblings that are not yet published.
+        run: cargo publish --dry-run --workspace
 
   build-binaries:
     needs: validate
@@ -103,5 +103,5 @@ jobs:
         run: |
           for c in sdkt-core sdkt-xdr sdkt-wasm sdkt-rpc sdkt-storage sdkt-audit sdkt-cli; do
             echo "== cargo publish -p $c =="
-            cargo publish -p "$c" --allow-dirty 2>&1 | tail -5 || echo "($c already published or skipped)"
+            cargo publish -p "$c" --allow-dirty
           done
