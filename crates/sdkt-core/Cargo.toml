@@ -1,14 +1,15 @@
 [package]
+name = "sdkt-core"
 description = "Core types, configurations, and format handling for the Soroban DevKit toolkit."
-repository = "https://github.com/naninu123/soroban-devkit"
-homepage = "https://github.com/naninu123/soroban-devkit"
+authors.workspace = true
+license.workspace = true
+edition.workspace = true
+version.workspace = true
+repository.workspace = true
+homepage.workspace = true
 readme = "../../README.md"
 keywords = ["soroban", "stellar", "sdk", "toolkit", "blockchain"]
 categories = ["development-tools", "network-programming"]
-license = "MIT"
-name = "sdkt-core"
-version = "0.6.0-alpha"
-edition = "2021"
 
 [dependencies]
 serde = { version = "1.0", features = ["derive"] }
