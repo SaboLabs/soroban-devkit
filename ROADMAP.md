@@ -53,13 +53,15 @@ depend on `sdkt-core` + `sdkt-xdr`. No networking in `sdkt-xdr`/`sdkt-core`.
 | **M14** | **Upgrade Safety Guard (Candidate A)** | Reuse M12 `SpecDiff`: `UpgradeVerdict`; `sdkt diff --upgrade-safety`; optional `sdkt deploy --deny-breaking`. ✅ **Closed & tagged `v0.14.0-alpha`** (commit `dc31767`). | — |
 | **M15** | **CI/CD GitHub Action (`sdkt` composite Action)** | `.github/actions/sdkt/action.yml` wraps `sdkt audit` + `sdkt diff --upgrade-safety` for CI; `docs/ci-cd.md` + self-validating workflow. ✅ **Closed & tagged `v0.15.0-alpha`**. | — |
 | **M16** | **Release Engineering & Polish** | Unified workspace version (`0.16.0-alpha`); Action install fix; `release.yml` (binaries + `cargo publish`); README/`docs/cli.md` rewrite; panic audit on user paths. ✅ Implemented (commit on `feat/milestone-16`, pending merge). | — |
+| **M17** | **Plugin System — Phase A (Rule Registry)** | `RuleRegistry` in `sdkt-audit`; built-ins register via registry; additive `--rules <path>` flag; plugin author API (`AuditRule`/`AuditContext`/`Finding`/`register_rule!`); example rule crate `sdkt-audit-example-rule`; `docs/plugin-authoring.md`. ✅ Implemented on `feat/milestone-17`, pending merge. | — |
 
 ### Remaining Roadmap
 
 | Milestone | Theme | Status | Dependencies |
 |-----------|-------|--------|--------------|
 | M16 | Release Engineering & Polish | **Done** (workspace version unify, Action fix, release workflow, docs rewrite, panic audit) | — |
-| Post-1.0 | Mainnet-focused tooling, SCF grant alignment, plugin system | Backlog | — |
+| M17 | Plugin System — Phase A (Rule Registry) | **Done** (`RuleRegistry`, `--rules` flag, plugin author API, example rule crate, `docs/plugin-authoring.md`) | — |
+| Post-1.0 | Mainnet-focused tooling, SCF grant alignment, plugin system Phase B (dynamic loading), plugin registry/marketplace | Backlog | M17 (Phase A) |
 
 ---
 
@@ -72,7 +74,7 @@ depend on `sdkt-core` + `sdkt-xdr`. No networking in `sdkt-xdr`/`sdkt-core`.
 | Gap C — Static security analysis | ✅ **Closed (M13)** | M13: `sdkt-audit` crate, `AUTH-001/002/003` + `MOVE-001` rules, `sdkt audit` CLI |
 | Gap D — Local XDR decoder | ✅ Closed (M3A/M5) |
 | Gap E — ABI/interface viewer | ✅ Closed (M3B/M10) |
-| Plugin system | 🟡 Planned (post-M13) | Extensibility pillar; depends on a stable `AuditRule` trait (now provided by `sdkt-audit` in M13) |
+| Plugin system | 🟢 Phase A done (M17) — `RuleRegistry` + plugin author API + example rule crate; Phase B (dynamic loading) planned post-1.0 | Extensibility pillar; depends on a stable `AuditRule` trait (provided by `sdkt-audit` in M13) |
 
 ---
 

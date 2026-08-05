@@ -35,7 +35,7 @@ Requires Rust Edition 2021 (`rustup toolchain install stable`).
 | `sdkt wasm metadata <contract>` | WASM metadata for a deployed contract (cached). |
 | `sdkt wasm cache` | Manage the WASM cache (`info` / `remove` / `clear`). |
 | `sdkt diff --old-wasm <A> --new-wasm <B>` | Offline ABI/function/event/type diff of two WASM files. Add `--upgrade-safety` for a breaking-change verdict. |
-| `sdkt audit <path.rs>` | Static security analysis (AUTH-001/002/003, MOVE-001). `--disable <RULE_ID>` to skip a rule. |
+| `sdkt audit <path.rs>` | Static security analysis (AUTH-001/002/003, MOVE-001). `--disable <RULE_ID>` to skip a rule. `--rules <path>` (repeatable) to load external rule paths. |
 | `sdkt identity <generate|import|list|show|delete|default>` | ED25519 keystore management. |
 | `sdkt init <name>` | Scaffold a new Soroban project (`--minimal`, `--force`). |
 | `sdkt deploy --wasm <file> --salt <salt>` | Upload WASM + instantiate. Add `--deny-breaking --old-wasm <deployed.wasm>` to abort on a non-backwards-compatible upgrade. |

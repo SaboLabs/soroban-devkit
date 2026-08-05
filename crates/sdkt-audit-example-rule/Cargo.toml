@@ -1,0 +1,13 @@
+[package]
+name = "sdkt-audit-example-rule"
+description = "Example sdkt-audit plugin rule (reference/documentation only)."
+authors.workspace = true
+license.workspace = true
+edition.workspace = true
+version.workspace = true
+repository.workspace = true
+homepage.workspace = true
+publish = false
+
+[dependencies]
+sdkt-audit = { path = "../sdkt-audit" }

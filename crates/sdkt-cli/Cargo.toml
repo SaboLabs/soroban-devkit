@@ -13,15 +13,23 @@ categories = ["development-tools", "network-programming"]
 
 [dependencies]
 clap = { version = "4.6", features = ["derive"] }
-sdkt-core = { version = "0.16.0-alpha", path = "../sdkt-core" }
-sdkt-rpc = { version = "0.16.0-alpha", path = "../sdkt-rpc" }
-sdkt-storage = { version = "0.16.0-alpha", path = "../sdkt-storage" }
-sdkt-xdr = { version = "0.16.0-alpha", path = "../sdkt-xdr" }
-sdkt-wasm = { version = "0.16.0-alpha", path = "../sdkt-wasm" }
-sdkt-audit = { version = "0.16.0-alpha", path = "../sdkt-audit" }
+sdkt-core = { version = "0.17.0-alpha", path = "../sdkt-core" }
+sdkt-rpc = { version = "0.17.0-alpha", path = "../sdkt-rpc" }
+sdkt-storage = { version = "0.17.0-alpha", path = "../sdkt-storage" }
+sdkt-xdr = { version = "0.17.0-alpha", path = "../sdkt-xdr" }
+sdkt-wasm = { version = "0.17.0-alpha", path = "../sdkt-wasm" }
+sdkt-audit = { version = "0.17.0-alpha", path = "../sdkt-audit" }
+sdkt-audit-example-rule = { version = "0.17.0-alpha", path = "../sdkt-audit-example-rule", optional = true }
 stellar-xdr = { version = "28.0.0", features = ["std", "arbitrary", "serde"] }
 serde_json = "1.0"
 tokio = { version = "1", features = ["rt-multi-thread", "macros"] }
+
+[features]
+default = []
+# Links the reference example plugin rule into the binary. Off by default so
+# `sdkt audit` output is byte-for-byte identical to M16 unless explicitly built
+# with the plugin feature.
+plugins = ["sdkt-audit-example-rule"]
 
 [dev-dependencies]
 assert_cmd = "2.2.2"

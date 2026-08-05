@@ -47,9 +47,9 @@ sdkt
 │
 ├── audit <path.rs>
 │   ├── --format <json|pretty>
-│   └── --disable <RULE_ID>   (repeatable)
-│
-├── identity
+│   ├── --disable <RULE_ID>   (repeatable)
+│   └── --rules <PATH>        (repeatable; external rule paths)
+│├── identity
 │   ├── generate <name>
 │   ├── import <name> <secret>
 │   ├── list
