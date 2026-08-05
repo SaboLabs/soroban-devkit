@@ -1,20 +1,85 @@
 # Soroban DevKit (`sdkt`)
 
-`sdkt` is a unified, offline-capable toolkit for Stellar / Soroban development. It unifies contract inspection, XDR decoding, storage TTL analysis, ABI-aware decoding, static security analysis, WASM diffing, and an upgrade-safety verdict into a single CLI — instead of juggling 5+ separate tools.
+[![CI](https://github.com/naninu123/soroban-devkit/actions/workflows/ci.yml/badge.svg)](https://github.com/naninu123/soroban-devkit/actions/workflows/ci.yml)
+[![Release](https://img.shields.io/github/v/release/naninu123/soroban-devkit?label=release)](https://github.com/naninu123/soroban-devkit/releases)
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+
+`sdkt` is a unified, offline-capable toolkit for Stellar / Soroban
+development. It unifies contract inspection, XDR decoding, storage TTL
+analysis, ABI-aware decoding, static security analysis, WASM diffing, and an
+upgrade-safety verdict into a single CLI — instead of juggling 5+ separate
+tools.
+
+## Overview
+
+`sdkt` spans the full read-only **and** mutating contract lifecycle:
+
+- **Inspect & decode** — base64 XDR decoding, contract ABI + storage
+  inspection, event exploration.
+- **Analyze** — storage TTL / rent visibility, Instance / Persistent /
+  Temporary classification, offline ABI/function/event/type WASM diffing.
+- **Secure** — static analysis of contract source (`AUTH-001/002/003`,
+  `MOVE-001`) and an upgrade-safety verdict for safe contract upgrades.
+- **Build & ship** — typed transaction envelope builder, simulate, submit,
+  identity/keystore management, project scaffolding, and deploy with an
+  optional breaking-change guard.
+
+Most commands are **offline**; only on-chain reads (`inspect`, `storage`,
+`tx`, `events`, `account`, `fee`, `wasm metadata`) need an RPC endpoint.
+
+## Feature Highlights
+
+| Capability | Command |
+|------------|---------|
+| Decode base64 XDR (`ScVal`, `TransactionEnvelope`, `ContractEvent`) | `sdkt decode` |
+| Inspect contract ABI + storage | `sdkt inspect`, `sdkt storage check` |
+| Storage TTL / rent analysis | `sdkt storage analyze`, `sdkt storage estimate` |
+| Transaction inspect / simulate / submit / build | `sdkt tx *` |
+| Event explorer | `sdkt events` |
+| Account balances + signers | `sdkt account` |
+| Dynamic fee estimate | `sdkt fee estimate` |
+| WASM metadata + cache | `sdkt wasm metadata`, `sdkt wasm cache` |
+| Offline WASM diff + upgrade-safety verdict | `sdkt diff --upgrade-safety` |
+| Static security audit | `sdkt audit` |
+| ED25519 keystore | `sdkt identity` |
+| Project scaffolding | `sdkt init` |
+| Deploy (with `--deny-breaking` guard) | `sdkt deploy` |
 
 ## Installation
 
 ```bash
-# From crates.io (after the v1.0 release)
-cargo install sdkt-cli
-
-# Or build from source
+# Build from source (recommended)
 git clone https://github.com/naninu123/soroban-devkit
 cd soroban-devkit
 cargo install --path crates/sdkt-cli
+
+# Verify
+sdkt --version
 ```
 
-Requires Rust Edition 2021 (`rustup toolchain install stable`).
+Full options (features, from crates.io, updating) are in
+[docs/installation.md](docs/installation.md).
+
+## Getting Started
+
+New here? Start with [docs/getting-started.md](docs/getting-started.md) — it
+walks you through your first offline `diff` and `audit` in under five minutes.
+
+### Quick Start
+
+Offline ABI/WASM diff (no network needed):
+
+```bash
+sdkt diff \
+  --old-wasm crates/sdkt-cli/tests/fixtures/us_old.wasm \
+  --new-wasm crates/sdkt-cli/tests/fixtures/us_new.wasm
+```
+
+Static security audit of a contract:
+
+```bash
+sdkt audit contracts/token/src/lib.rs
+```
 
 ## Commands
 
@@ -29,35 +94,54 @@ Requires Rust Edition 2021 (`rustup toolchain install stable`).
 | `sdkt tx simulate <xdr>` | Offline pre-flight via `simulateTransaction`. |
 | `sdkt tx submit <xdr>` | Submit a transaction (with optional poll). |
 | `sdkt tx build` | Typed envelope builder. |
-| `sdkt events <contract-id>` | Emitled-contract event explorer (`--abi <wasm>`). |
+| `sdkt events <contract-id>` | Emitted-contract event explorer (`--abi <wasm>`). |
 | `sdkt account <address>` | Account balances + signers (Horizon-enriched). |
 | `sdkt fee estimate` | Dynamic fee estimate from recent ledger base fees. |
 | `sdkt wasm metadata <contract>` | WASM metadata for a deployed contract (cached). |
 | `sdkt wasm cache` | Manage the WASM cache (`info` / `remove` / `clear`). |
 | `sdkt diff --old-wasm <A> --new-wasm <B>` | Offline ABI/function/event/type diff of two WASM files. Add `--upgrade-safety` for a breaking-change verdict. |
 | `sdkt audit <path.rs>` | Static security analysis (AUTH-001/002/003, MOVE-001). `--disable <RULE_ID>` to skip a rule. `--rules <path>` (repeatable) to load external rule paths. |
-| `sdkt identity <generate|import|list|show|delete|default>` | ED25519 keystore management. |
+| `sdkt identity <generate\|import\|list\|show\|delete\|default>` | ED25519 keystore management. |
 | `sdkt init <name>` | Scaffold a new Soroban project (`--minimal`, `--force`). |
 | `sdkt deploy --wasm <file> --salt <salt>` | Upload WASM + instantiate. Add `--deny-breaking --old-wasm <deployed.wasm>` to abort on a non-backwards-compatible upgrade. |
 
 Most commands accept `--format json` for scripting / CI integration.
 
+## Common Workflows
+
+- **Audit every PR** — gate merges on `sdkt audit` (fails on `critical`). See
+  [docs/ci-cd.md](docs/ci-cd.md).
+- **Safe upgrades** — run `sdkt diff --upgrade-safety` in release CI to block
+  breaking contract changes.
+- **Local analysis** — `decode`, `diff`, and `audit` need no RPC; run them in
+  CI or locally without secrets.
+
+Copy-paste recipes for every subcommand are in
+[docs/examples.md](docs/examples.md).
+
 ## Upgrade Safety in CI
 
-`sdkt` ships a reusable GitHub composite Action. See [`docs/ci-cd.md`](docs/ci-cd.md) for copy-paste workflows (audit-on-PR, upgrade-safety-on-release).
+`sdkt` ships a reusable GitHub composite Action. See
+[docs/ci-cd.md](docs/ci-cd.md) for copy-paste workflows (audit-on-PR,
+upgrade-safety-on-release).
 
-## Development
+## Documentation
 
-```bash
-cargo fmt --all
-cargo clippy --workspace --all-targets -- -D warnings
-cargo test --workspace
-```
+- [docs/getting-started.md](docs/getting-started.md) — five-minute onboarding.
+- [docs/installation.md](docs/installation.md) — build / install / features.
+- [docs/examples.md](docs/examples.md) — command recipes & CI gating.
+- [docs/faq.md](docs/faq.md) — frequently asked questions.
+- [docs/cli.md](docs/cli.md) — full command reference.
+- [docs/ci-cd.md](docs/ci-cd.md) — CI/CD with the reusable Action.
+- [docs/plugin-authoring.md](docs/plugin-authoring.md) — write your own audit rules.
+- [ROADMAP.md](ROADMAP.md) · [CHANGELOG.md](CHANGELOG.md) · [GAP_ANALYSIS.md](GAP_ANALYSIS.md)
 
-## Testing
+## Contributing
 
-CLI integration tests use `assert_cmd` under `crates/sdkt-cli/tests/`. Run `cargo test --workspace`.
+See [CONTRIBUTING.md](CONTRIBUTING.md). All contributions are welcome — docs,
+tests, and small fixes are great first PRs. Please follow the
+[Code of Conduct](CODE_OF_CONDUCT.md).
 
-## Roadmap
+## License
 
-See [`ROADMAP.md`](ROADMAP.md) and the changelog in [`CHANGELOG.md`](CHANGELOG.md).
+[MIT](LICENSE).

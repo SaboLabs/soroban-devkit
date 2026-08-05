@@ -6,14 +6,14 @@ This document describes security practices and how to report vulnerabilities.
 
 Only the latest minor version is actively maintained. Security fixes are backported sparingly, prioritizing the latest stable release.
 
-| Version | Supported |
-| :------ | :-------- |
-| 0.1.x   | ✅        |
-| < 0.1   | ❌        |
+| Version | Supported          |
+| :------ | :----------------- |
+| 1.0.x   | :white_check_mark: |
+| < 1.0   | :x:                |
 
 ## Reporting a Vulnerability
 
-Report suspected security vulnerabilities by opening a **Private Security Advisory** on the project's GitHub repository (preferred) or by emailing the maintainer at [security email TBD in GitHub].
+Report suspected security vulnerabilities by opening a **Private Security Advisory** on the project's GitHub repository (preferred): https://github.com/naninu123/soroban-devkit/security/advisories/new. If you cannot use advisories, email the maintainer at security@naninu123.dev (set up a real forwarding address before relying on this).
 
 Include:
 - A concise description of the issue

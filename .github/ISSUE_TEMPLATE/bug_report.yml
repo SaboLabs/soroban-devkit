@@ -1,0 +1,61 @@
+name: Bug Report
+description: Report a reproducible defect in sdkt
+title: "[Bug]: "
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for taking the time to file a bug report. Please fill out the
+        sections below so we can reproduce and fix the issue quickly.
+  - type: textarea
+    id: summary
+    attributes:
+      label: Summary
+      description: A clear and concise description of what the bug is.
+    validations:
+      required: true
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: Steps to reproduce
+      description: Exact commands (and input) needed to reproduce the behavior.
+      placeholder: |
+        1. sdkt diff --old-wasm a.wasm --new-wasm b.wasm
+        2. ...
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior
+    validations:
+      required: true
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual behavior
+      description: What happened instead? Include the full error output.
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: sdkt version
+      description: Output of `sdkt --version` (or the git commit/tag you built from).
+    validations:
+      required: true
+  - type: input
+    id: rust
+    attributes:
+      label: Rust toolchain
+      description: Output of `rustc --version` and `cargo --version`.
+    validations:
+      required: false
+  - type: textarea
+    id: context
+    attributes:
+      label: Additional context
+      description: OS, network/contract details, or anything else relevant.
+    validations:
+      required: false
