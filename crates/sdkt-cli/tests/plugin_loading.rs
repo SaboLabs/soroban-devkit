@@ -5,10 +5,14 @@
 //! built-in rules. Non-`plugins` builds skip this test (the behavior is covered
 //! by the default audit regression tests).
 
+#[cfg(any(feature = "plugins", feature = "wasm-plugins"))]
 use std::process::Command;
 
+#[cfg(any(feature = "plugins", feature = "wasm-plugins"))]
 use assert_cmd::cargo::CommandCargoExt;
+#[cfg(any(feature = "plugins", feature = "wasm-plugins"))]
 use assert_cmd::prelude::*;
+#[cfg(any(feature = "plugins", feature = "wasm-plugins"))]
 use predicates::prelude::*;
 
 /// Build the example plugin cdylib and return its path under `target/`.
