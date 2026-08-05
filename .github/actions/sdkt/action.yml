@@ -35,7 +35,19 @@ runs:
 
     - name: Install sdkt
       shell: bash
-      run: cargo install --git https://github.com/naninu123/soroban-devkit --tag "${{ inputs.sdkt-version }}" sdkt-cli --locked
+      run: |
+        # When this Action runs inside the sdkt repository itself (e.g. during
+        # PR validation), the checked-out workspace already contains the CLI.
+        # Install from the local path instead of fetching a git tag — the tag
+        # may not exist on the remote yet. For external consumers, fall back to
+        # the published git tag. External behavior is unchanged.
+        if [ -f "crates/sdkt-cli/Cargo.toml" ]; then
+          echo "Detected sdkt workspace checkout — installing from local path."
+          cargo install --path crates/sdkt-cli --locked
+        else
+          echo "External consumer — installing from git tag ${{ inputs.sdkt-version }}."
+          cargo install --git https://github.com/naninu123/soroban-devkit --tag "${{ inputs.sdkt-version }}" sdkt-cli --locked
+        fi
 
     - name: Run sdkt audit
       if: ${{ inputs.command == 'audit' }}
