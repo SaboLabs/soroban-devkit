@@ -32,11 +32,20 @@ Secret management:
 - Do not commit private keys, mnemonics, or sensitive passphrases
 - Network configuration includes RPC URL / passphrase; use local development overrides or environment-aware configuration for production
 
-## Dynamic Plugins (M18, Phase B)
+## Plugin Security Model
 
-`sdkt audit --rules <plugin.so>` can load native shared-library plugins at
-runtime. These execute **in-process** with the same privileges as `sdkt` itself
-— a malicious or buggy plugin can read process memory or crash the tool. Only
-load plugin artifacts you trust or have built yourself. The host rejects any
-plugin whose ABI major version differs from the running `sdkt-audit`. Plugin
-panics are isolated so they cannot crash the host, but they are not sandboxed.
+The `sdkt audit` tool supports two distinct plugin architectures, each with different trust and capability constraints:
+
+### 1. WebAssembly Plugins (M19, Phase C)
+**Trust level required: Medium**
+- Loaded via `--rules <plugin.wasm>` (requires `wasm-plugins` build feature).
+- **Execution Model:** Plugins run inside a heavily restricted, capability-free Wasmtime sandbox (via Extism).
+- **Capabilities:** No filesystem access, no network access, no access to host environment variables.
+- **Limitations & DoS Vectors:** A fixed timeout (15 seconds) is strictly enforced to prevent algorithmic stalls (`loop {}`). The plugin's raw memory output bounds are currently unrestrained by the Extism configuration, meaning an intentionally hostile plugin could attempt to exhaust host memory (OOM) by returning gigabytes of raw JSON. This vector is considered acceptable for developer-run tooling, but plugins should still be sourced carefully.
+
+### 2. Native Shared Libraries (M18, Phase B)
+**Trust level required: High (Execution = Code Execution)**
+- Loaded via `--rules <plugin.so>` (requires `plugins` build feature).
+- **Execution Model:** Plugins execute natively **in-process** via C-ABI FFI (`libloading`).
+- **Capabilities:** Same privileges as the user running the CLI. A malicious plugin can read local SSH keys, execute arbitrary binaries, read process memory, or exfiltrate data.
+- **Limitations:** The host rejects any plugin whose ABI major version differs from the running `sdkt-audit`. Rust panics occurring within the native boundary are isolated (`catch_unwind`) and safely bubbled to the user without crashing the CLI process. However, segfaults (`SIGSEGV`) or raw C aborts will immediately kill the host process. Only load `.so`/`.dylib`/`.dll` artifacts you have explicitly compiled or definitively trust.
