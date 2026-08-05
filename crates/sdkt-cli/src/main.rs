@@ -773,50 +773,58 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 let mut parsed_args = Vec::new();
                 for a in arg.iter() {
                     if let Some((t, v)) = a.split_once(':') {
-                        use sdkt_xdr::{scval_to_base64, IntoScVal};
+                        use sdkt_xdr::{scval_to_base64, Address, IntoScVal};
                         let b64 = match t.to_lowercase().as_str() {
                             "u32" => {
-                                let n: u32 = v.parse().unwrap();
-                                scval_to_base64(&n.into_scval().unwrap()).unwrap()
+                                let n: u32 =
+                                    v.parse().map_err(|_| format!("invalid u32 value: {v}"))?;
+                                scval_to_base64(&n.into_scval()?)?
                             }
                             "i32" => {
-                                let n: i32 = v.parse().unwrap();
-                                scval_to_base64(&n.into_scval().unwrap()).unwrap()
+                                let n: i32 =
+                                    v.parse().map_err(|_| format!("invalid i32 value: {v}"))?;
+                                scval_to_base64(&n.into_scval()?)?
                             }
                             "u64" => {
-                                let n: u64 = v.parse().unwrap();
-                                scval_to_base64(&n.into_scval().unwrap()).unwrap()
+                                let n: u64 =
+                                    v.parse().map_err(|_| format!("invalid u64 value: {v}"))?;
+                                scval_to_base64(&n.into_scval()?)?
                             }
                             "i64" => {
-                                let n: i64 = v.parse().unwrap();
-                                scval_to_base64(&n.into_scval().unwrap()).unwrap()
+                                let n: i64 =
+                                    v.parse().map_err(|_| format!("invalid i64 value: {v}"))?;
+                                scval_to_base64(&n.into_scval()?)?
                             }
                             "u128" => {
-                                let n: u128 = v.parse().unwrap();
-                                scval_to_base64(&n.into_scval().unwrap()).unwrap()
+                                let n: u128 =
+                                    v.parse().map_err(|_| format!("invalid u128 value: {v}"))?;
+                                scval_to_base64(&n.into_scval()?)?
                             }
                             "i128" => {
-                                let n: i128 = v.parse().unwrap();
-                                scval_to_base64(&n.into_scval().unwrap()).unwrap()
+                                let n: i128 =
+                                    v.parse().map_err(|_| format!("invalid i128 value: {v}"))?;
+                                scval_to_base64(&n.into_scval()?)?
                             }
                             "bool" => {
-                                let b: bool = v.parse().unwrap();
-                                scval_to_base64(&b.into_scval().unwrap()).unwrap()
+                                let b: bool =
+                                    v.parse().map_err(|_| format!("invalid bool value: {v}"))?;
+                                scval_to_base64(&b.into_scval()?)?
                             }
-                            "string" => scval_to_base64(&v.into_scval().unwrap()).unwrap(),
+                            "string" => scval_to_base64(&v.into_scval()?)?,
                             "bytes" => {
                                 let mut b = Vec::new();
                                 let s = v.trim();
                                 for i in (0..s.len()).step_by(2) {
-                                    let byte = u8::from_str_radix(&s[i..i + 2], 16).unwrap();
+                                    let byte = u8::from_str_radix(&s[i..i + 2], 16)
+                                        .map_err(|_| format!("invalid hex byte in: {v}"))?;
                                     b.push(byte);
                                 }
-                                scval_to_base64(&b.into_scval().unwrap()).unwrap()
+                                scval_to_base64(&b.into_scval()?)?
                             }
                             "address" => {
-                                use sdkt_xdr::Address;
-                                let addr = Address::from_strkey(v).unwrap();
-                                scval_to_base64(&addr.into_scval().unwrap()).unwrap()
+                                let addr = Address::from_strkey(v)
+                                    .map_err(|_| format!("invalid Stellar address: {v}"))?;
+                                scval_to_base64(&addr.into_scval()?)?
                             }
                             _ => a.clone(), // Unknown type fallback to direct base64
                         };
@@ -1462,7 +1470,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                             "project": name,
                             "files": result.files_created,
                         });
-                        println!("{}", serde_json::to_string(&json).unwrap());
+                        println!("{}", serde_json::to_string(&json)?);
                     } else {
                         println!("✓ Project '{}' created", name);
                         for f in &result.files_created {
@@ -1477,7 +1485,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                             "status": "error",
                             "message": e.to_string(),
                         });
-                        println!("{}", serde_json::to_string(&json).unwrap());
+                        println!("{}", serde_json::to_string(&json)?);
                     } else {
                         eprintln!("Error: {}", e);
                     }
