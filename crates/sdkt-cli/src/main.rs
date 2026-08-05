@@ -94,6 +94,16 @@ enum Commands {
         #[arg(short, long, default_value = "pretty")]
         format: String,
     },
+    /// Static security analysis of a Soroban contract source file (Gap C)
+    Audit {
+        /// Path to the Rust source file (.rs) to analyze
+        path: String,
+        #[arg(short, long, default_value = "pretty")]
+        format: String,
+        /// Disable a rule by id (repeatable), e.g. --disable MOVE-001
+        #[arg(long, value_name = "RULE_ID", action = clap::ArgAction::Append)]
+        disable: Vec<String>,
+    },
     /// Manage Soroban identities (keys)
     Identity {
         #[command(subcommand)]
@@ -1145,6 +1155,49 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 }
                 Err(e) => {
                     eprintln!("Error diffing WASM: {}", e);
+                    process::exit(1);
+                }
+            }
+        }
+        Commands::Audit {
+            path,
+            format,
+            disable,
+        } => {
+            let fmt = parse_format_str(&format);
+            let src = fs::read_to_string(&path)
+                .map_err(|e| format!("Failed to read source '{}': {}", path, e))?;
+            let disabled_refs: Vec<&str> = disable.iter().map(String::as_str).collect();
+            match sdkt_audit::audit_source_with(&src, &disabled_refs) {
+                Ok(report) => {
+                    if fmt == OutputFormat::Json {
+                        println!("{}", serde_json::to_string(&report)?);
+                    } else {
+                        println!("Static Analysis Report: {}", path);
+                        println!(
+                            "Severity: {} critical, {} warning, {} info ({} total)",
+                            report.summary.critical,
+                            report.summary.warning,
+                            report.summary.info,
+                            report.summary.total
+                        );
+                        if report.is_clean() {
+                            println!("No issues found.");
+                        } else {
+                            println!();
+                            for f in &report.findings {
+                                let loc = f
+                                    .location
+                                    .as_ref()
+                                    .map(|l| format!(" [{}]", l))
+                                    .unwrap_or_default();
+                                println!("  [{}] {} {}: {}", f.severity, f.rule_id, loc, f.message);
+                            }
+                        }
+                    }
+                }
+                Err(e) => {
+                    eprintln!("Error auditing source: {}", e);
                     process::exit(1);
                 }
             }

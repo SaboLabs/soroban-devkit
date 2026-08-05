@@ -144,10 +144,10 @@ This section supersedes the "What `sdkt` provides" promises above with **shipped
 |--------------|-------|-----------|
 | **Gap A** — Unified CLI lifecycle | ✅ **Closed** | M3A–M10: `decode`, `storage`, `inspect`, `tx`, `events`, `account`, `fee`, `wasm`, `identity`, `init`, `deploy` all present |
 | **Gap B** — Storage rent visibility | ✅ **Closed** | M3A: `sdkt storage check` (TTL + extension cost), `storage estimate` |
-| **Gap C** — Static security analysis | 🟡 **Candidate (deferred)** | M11 shipped Proposal B (StorageAnalyzer), not Gap C. Audit remains unstarted; `docs/milestone-11-plan.md` is a candidate design only. |
+| **Gap C** — Static security analysis | ✅ **Closed (M13)** | M13 shipped `sdkt-audit` (new crate): `AUTH-001/002/003` + `MOVE-001` rules, `sdkt audit` CLI. `docs/milestone-11-plan.md` is retained as historical candidate context only. |
+| Plugin system | 🟡 **Planned (post-M13)** | M13's `sdkt-audit` `AuditRule` trait is now the natural on-ramp for external lint/rule plugins. |
 | **Gap D** — Local XDR decoder | ✅ **Closed** | M3A/M5: `sdkt decode` (ScVal / TransactionEnvelope / ContractEvent), offline |
 | **Gap E** — ABI / interface viewer | ✅ **Closed** | M3B + M10 (ENG-16): `sdkt inspect` + `--abi` ABI-aware decoding of events/storage |
-| Plugin system | 🟡 **Planned** | M13 — `AuditRule` trait in M11 is the foundation |
 
 ### Capabilities shipped beyond the original GAP_ANALYSIS scope
 
@@ -157,9 +157,9 @@ This section supersedes the "What `sdkt` provides" promises above with **shipped
 
 ### Remaining unaddressed pillars
 
-1. **Gap C static analysis** — the sole original gap with zero code; deferred (was a candidate for M11/M12, not selected).
-2. **Plugin system** — no external lint/rule loading yet; M13 planned.
-3. **Contract upgrade safety** — M12 shipped the *diff* half (`sdkt diff`); the *recommend-abort-on-breaking-change* guard for `sdkt deploy` remains (M14).
+1. **Plugin system** — no external lint/rule loading yet; M13's `sdkt-audit` `AuditRule` trait is now the natural foundation (planned post-M13).
+2. **Contract upgrade safety** — M12 shipped the *diff* half (`sdkt diff`); the *recommend-abort-on-breaking-change* guard for `sdkt deploy` remains (M14).
+3. **CI/CD Action packaging (M15)** — depends on audit-in-CI premise, now feasible since `sdkt audit` exists.
 
 ### Notable deltas vs original doc
 

@@ -5,5 +5,6 @@ members = [
     "crates/sdkt-cli",
     "crates/sdkt-rpc",
     "crates/sdkt-storage", "crates/sdkt-wasm",
+    "crates/sdkt-audit",
 ]
 resolver = "2"
