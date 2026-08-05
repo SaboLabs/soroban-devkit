@@ -1,17 +1,18 @@
 [package]
 name = "sdkt-wasm"
-version = "0.6.0-alpha"
-edition = "2021"
 description = "WASM binary metadata parser for Soroban DevKit — exports, imports, custom sections, and hashing."
-repository = "https://github.com/naninu123/soroban-devkit"
-homepage = "https://github.com/naninu123/soroban-devkit"
+authors.workspace = true
+license.workspace = true
+edition.workspace = true
+version.workspace = true
+repository.workspace = true
+homepage.workspace = true
 readme = "../../README.md"
 keywords = ["soroban", "stellar", "sdk", "toolkit", "wasm"]
 categories = ["development-tools", "wasm"]
-license = "MIT"
 
 [dependencies]
-sdkt-core = { version = "0.6.0-alpha", path = "../sdkt-core" }
+sdkt-core = { version = "0.16.0-alpha", path = "../sdkt-core" }
 wasmparser = "0.255"
 sha2 = "0.11"
 serde = { version = "1", features = ["derive"] }

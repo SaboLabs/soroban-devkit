@@ -5,6 +5,33 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [v0.16.0-alpha] - 2026-08-05 (Milestone 16 — Release Engineering & Polish)
+
+### Changed (release readiness, no new features)
+- **Unified workspace version** — added `[workspace.package]` as the single source of truth (`version = 0.16.0-alpha`, `edition`, `license`, `authors`, `repository`, `homepage`). All 7 crates inherit via `*.workspace = true`; internal path-dependencies pinned to the unified version. Removes the `0.6.0-alpha` vs `v0.15.0-alpha` drift.
+- **CI Action install fixed** — `action.yml` now installs `sdkt` from a real git tag (`cargo install --git ... --tag <sdkt-version>`, default `v0.15.0-alpha`) instead of a never-published crates.io version; swapped deprecated `actions-rs/toolchain` for `dtolnay/rust-toolchain@stable`. Inputs unchanged (backward compatible).
+- **Release workflow** — `.github/workflows/release.yml` on `v*` tags: fmt/clippy/test validation, `cargo publish --dry-run` per crate, cross-platform binary build (linux / macos intel+arm / windows) uploaded to a GitHub Release, and ordered `cargo publish` (needs `CARGO_REGISTRY_TOKEN`).
+- **`.gitignore`** — removed the contradictory `Cargo.lock` ignore (it is intentionally tracked; the Action installs with `--locked`).
+- **Docs** — `README.md` rewritten (real repo URL, all 13+ subcommands, install, CI link); `docs/cli.md` rewritten to the full current command tree.
+- **Panic audit** — replaced `unwrap()`/`expect()` on user-input execution paths (the `fee estimate` manual-arg parser and JSON-serialize `println!` sites) with `?`/`map_err` so malformed input returns a clean error instead of panicking. Internal invariants and test code untouched.
+
+## [v0.15.0-alpha] - 2026-08-05 (Milestone 15 — CI/CD GitHub Action)
+
+### Added
+- **Reusable GitHub composite Action** — `.github/actions/sdkt/action.yml` wraps existing `sdkt` capabilities for CI: `command: audit` runs `sdkt audit <target> --format json` and fails when findings meet `severity-threshold` (default `critical`, so `MOVE-001` warnings never break CI); `command: upgrade-safety` runs `sdkt diff --old-wasm <old> --new-wasm <new> --upgrade-safety --format json` and fails when `compatible == false`.
+- **Action self-validation workflow** — `.github/workflows/sdkt-action-ci.yml` exercises the composite Action against the committed WASM fixtures: a breaking diff (`us_old.wasm` → `us_new.wasm`) is asserted to fail, and an identical diff is asserted to pass.
+- **Documentation** — `docs/ci-cd.md` with copy-paste workflow examples (audit-on-PR, upgrade-safety-on-release, self-validation) plus install/threshold notes.
+- Packaging only: no new crate, no Rust changes, no breaking API changes. Reuses the M13 `sdkt audit` and M14 `sdkt diff --upgrade-safety` JSON contracts.
+
+## [v0.14.0-alpha] - 2026-08-05 (Milestone 14 — Upgrade Safety Guard)
+
+### Added
+- **`sdkt diff --upgrade-safety`** — transforms the M12 `SpecDiff` into an actionable `UpgradeVerdict`: `breaking_changes` (removed function, changed signature, removed event, removed type) vs `non_breaking_changes` (additions). Pretty + JSON via existing `--format`.
+- `sdkt-wasm`: `UpgradeVerdict`, `VerdictChange`, `ChangeKind`, `upgrade_safety()` / `upgrade_safety_wasm()` — all derived from the existing `diff_specs`/`SpecDiff` (no duplicated comparison logic).
+- **`sdkt deploy --deny-breaking --old-wasm <deployed.wasm>`** — optional deploy guard that aborts when the upgrade is not backwards-compatible. Off by default; existing `deploy` behavior unchanged when the flag is omitted.
+- 6 unit tests (`upgrade_safety`: removed fn, changed signature, removed event, removed type, additions-only, identical) + 5 `sdkt-cli` integration tests (pretty, JSON, `deploy --deny-breaking`).
+- Additive, backwards-compatible: new types + new flags only; no breaking API changes.
+
 ## [v0.13.0-alpha] - 2026-08-05 (Milestone 13 — Gap C: Static Security Analysis)
 
 ### Added
@@ -13,15 +40,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - 13 unit tests (per-rule positives/negatives, disable, clean, parse-error) + 6 `sdkt-cli` integration tests for `audit`.
 - Additive, backwards-compatible: new crate + new CLI subcommand; no breaking API changes; `sdkt-core` remains networking-free.
 
+## [v0.12.0-alpha] - 2026-08-05 (Milestone 12 — Contract ABI/WASM Diff, Candidate C)
 
-
-### Added (Candidate C: offline contract comparison)
+### Added
 - **`sdkt diff --old-wasm <A> --new-wasm <B>`** — offline comparison of two contract WASM binaries. Reports added/removed functions, changed function signatures, added/removed events, and added/removed custom types. Pretty + JSON via existing `OutputFormat`.
 - `sdkt-wasm`: new `spec_diff` module with `diff_wasm()` / `diff_specs()` and a serializable `SpecDiff` report (per-WASM SHA-256 hash + size context). Reuses the existing `parse_contract_spec` parser.
 - 7 unit tests (added/removed/changed functions, events, types, identical-spec, parse-error propagation) + 3 `sdkt-cli` integration tests for `diff`.
 - Additive, backwards-compatible: new module + re-exports; no breaking API changes; no new crates.
 
-
+## [v0.11.0-alpha] - 2026-08-05 (Milestone 11 — StorageAnalyzer, Proposal B)
 
 ### Added (Proposal B: finish `StorageAnalyzer`)
 - **`sdkt storage analyze <contract-id>`** — categorizes a contract's storage into Instance / Persistent / Temporary entries, with a TTL summary and per-entry detail. Pretty + JSON via existing `OutputFormat`.

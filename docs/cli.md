@@ -1,44 +1,80 @@
-# CLI Command Flow
+# CLI Command Reference
 
-The `sdkt-cli` crate uses `clap` (derive API) for command routing.
+The `sdkt-cli` crate uses `clap` (derive API) for command routing. Every command returns `Result<(), Box<dyn std::error::Error>>`; library errors (`RpcError`, `DecodeError`, `WasmError`) bubble up and are printed via `eprintln!` with a non-zero exit.
 
-## Current Command Structure
+## Command Tree
 
 ```text
 sdkt
-├── decode [payload]
-│   ├── --type <type>
+├── decode <xdr>
+│   ├── --type <ScVal|TransactionEnvelope|ContractEvent>
 │   ├── --format <json|pretty>
 │   └── --file <path>
 │
-├── storage
-│   ├── check <contract-id>
-│   │   └── --format <json|pretty>
-│   └── estimate <wasm-path>
+├── inspect <contract-id>
+│   ├── --format <json|pretty>
+│   └── --abi <wasm>            (ABI-aware storage decode)
 │
-└── inspect <contract-id>
-    └── --format <json|pretty>
-```
-
-## Planned Extensibility (Milestone 4+)
-
-To ensure the CLI remains clean, new domains are grouped as subcommands:
-
-```text
-sdkt
-├── account
-│   ├── balance <address>
-│   └── history <address>
+├── storage
+│   ├── check <contract-id>   [--abi <wasm>] [--format]
+│   ├── analyze <contract-id> [--format]
+│   └── estimate <wasm-path>  [--format]
 │
 ├── tx
+│   ├── inspect <hash>        [--format]
 │   ├── simulate <xdr>
-│   └── submit <xdr>
+│   ├── submit <xdr>
+│   └── build
 │
-└── events
-    └── listen <contract-id>
+├── events <contract-id>
+│   ├── --format <json|pretty>
+│   └── --abi <wasm>          (ABI-aware decode)
+│
+├── account <address>         [--format]
+│
+├── fee
+│   └── estimate              (manual value entry, type-prefixed)
+│
+├── wasm
+│   ├── metadata <contract>  [--network testnet] [--refresh] [--format]
+│   └── cache                 (info | remove | clear)
+│
+├── diff
+│   ├── --old-wasm <A>
+│   ├── --new-wasm <B>
+│   ├── --format <json|pretty>
+│   └── --upgrade-safety      (emit UpgradeVerdict)
+│
+├── audit <path.rs>
+│   ├── --format <json|pretty>
+│   └── --disable <RULE_ID>   (repeatable)
+│
+├── identity
+│   ├── generate <name>
+│   ├── import <name> <secret>
+│   ├── list
+│   ├── show <name>
+│   ├── delete <name>
+│   └── default <name>
+│
+├── init <name>              [--minimal] [--force] [--format]
+│
+└── deploy
+    ├── --wasm <file>
+    ├── --salt <salt>
+    ├── --format <json|pretty>
+    ├── --deny-breaking        (abort if not backwards-compatible)
+    └── --old-wasm <deployed>  (baseline, required by --deny-breaking)
 ```
 
+## Notes
+
+- `--format json` is supported on all read-style commands and on `diff`, `audit`, `deploy`, `init` for scripting / CI.
+- `diff --upgrade-safety` and `deploy --deny-breaking` implement the Milestone 14 Upgrade Safety Guard (see `ROADMAP.md`).
+- `audit` implements the Milestone 13 static-analysis rules (AUTH-001/002/003, MOVE-001).
+
 ## Error Handling
+
 1. All subcommands return `Result<(), Box<dyn std::error::Error>>`.
-2. Library-level errors (`RpcError`, `DecodeError`) are bubbled up to the CLI.
-3. The CLI uses `eprintln!` to print human-readable errors and calls `std::process::exit(1)` on fatal errors to ensure proper bash piping behavior.
+2. Library-level errors (`RpcError`, `DecodeError`, `WasmError`) are bubbled up to the CLI.
+3. The CLI uses `eprintln!` to print human-readable errors and exits non-zero on fatal errors to ensure correct bash piping behavior.

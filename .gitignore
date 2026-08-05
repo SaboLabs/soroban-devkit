@@ -23,5 +23,6 @@ Thumbs.db
 *.local
 
 # Cargo registry cache (optional, speeds up CI)
-Cargo.lock
+# NOTE: Cargo.lock is intentionally tracked (not ignored) — the CI Action
+# installs with `cargo install --locked`, which requires it in the tree.
 .hermes/

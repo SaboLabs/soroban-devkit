@@ -8,3 +8,12 @@ members = [
     "crates/sdkt-audit",
 ]
 resolver = "2"
+
+[workspace.package]
+version = "0.16.0-alpha"
+edition = "2021"
+license = "MIT"
+authors = ["naninu123"]
+repository = "https://github.com/naninu123/soroban-devkit"
+homepage = "https://github.com/naninu123/soroban-devkit"
+description = "Soroban DevKit (sdkt) — unified Stellar/Soroban developer toolkit"

@@ -1,21 +1,22 @@
 [package]
 name = "sdkt-storage"
-version = "0.6.0-alpha"
-edition = "2021"
 description = "Storage monitoring utility and TTL extensions logic for Soroban contracts."
-repository = "https://github.com/naninu123/soroban-devkit"
-homepage = "https://github.com/naninu123/soroban-devkit"
+authors.workspace = true
+license.workspace = true
+edition.workspace = true
+version.workspace = true
+repository.workspace = true
+homepage.workspace = true
 readme = "../../README.md"
 keywords = ["soroban", "stellar", "sdk", "toolkit", "blockchain"]
 categories = ["development-tools", "network-programming"]
-license = "MIT"
 
 [dependencies]
 directories = "5.0.1"
 ed25519-dalek = { version = "2.1.0", features = ["rand_core"] }
 rand = "0.8"
-sdkt-rpc = { version = "0.6.0-alpha", path = "../sdkt-rpc" }
-sdkt-wasm = { version = "0.6.0-alpha", path = "../sdkt-wasm" }
+sdkt-rpc = { version = "0.16.0-alpha", path = "../sdkt-rpc" }
+sdkt-wasm = { version = "0.16.0-alpha", path = "../sdkt-wasm" }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 stellar-strkey = "0.0.18"

@@ -93,6 +93,9 @@ enum Commands {
         new_wasm: String,
         #[arg(short, long, default_value = "pretty")]
         format: String,
+        /// Emit an upgrade-safety verdict (breaking vs non-breaking changes)
+        #[arg(long, default_value_t = false)]
+        upgrade_safety: bool,
     },
     /// Static security analysis of a Soroban contract source file (Gap C)
     Audit {
@@ -131,6 +134,13 @@ enum Commands {
         salt: String,
         #[arg(short, long, default_value = "pretty")]
         format: String,
+        /// Abort deployment if the upgrade is not backwards-compatible.
+        /// Requires --old-wasm (the currently deployed WASM) to be supplied.
+        #[arg(long, default_value_t = false)]
+        deny_breaking: bool,
+        /// Path to the currently deployed (baseline) WASM, used with --deny-breaking.
+        #[arg(long, value_name = "WASM")]
+        old_wasm: Option<String>,
     },
 }
 
@@ -313,6 +323,32 @@ fn sig_string(f: &sdkt_wasm::ContractFunction) -> String {
         outs.join(", ")
     };
     format!("{}({}) -> {}", f.name, params.join(", "), out)
+}
+
+/// Pretty-print an upgrade-safety verdict (used by `sdkt diff --upgrade-safety`).
+fn print_upgrade_verdict(v: &sdkt_wasm::UpgradeVerdict) {
+    println!("Upgrade Safety");
+    println!("==============");
+    println!();
+    println!("Compatible: {}", if v.compatible { "YES" } else { "NO" });
+    println!();
+    println!("Breaking:");
+    if v.breaking_changes.is_empty() {
+        println!("  (none)");
+    } else {
+        for c in &v.breaking_changes {
+            println!("  - {}", c.label());
+        }
+    }
+    println!();
+    println!("Non-breaking:");
+    if v.non_breaking_changes.is_empty() {
+        println!("  (none)");
+    } else {
+        for c in &v.non_breaking_changes {
+            println!("  - {}", c.label());
+        }
+    }
 }
 
 #[tokio::main]
@@ -737,50 +773,58 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 let mut parsed_args = Vec::new();
                 for a in arg.iter() {
                     if let Some((t, v)) = a.split_once(':') {
-                        use sdkt_xdr::{scval_to_base64, IntoScVal};
+                        use sdkt_xdr::{scval_to_base64, Address, IntoScVal};
                         let b64 = match t.to_lowercase().as_str() {
                             "u32" => {
-                                let n: u32 = v.parse().unwrap();
-                                scval_to_base64(&n.into_scval().unwrap()).unwrap()
+                                let n: u32 =
+                                    v.parse().map_err(|_| format!("invalid u32 value: {v}"))?;
+                                scval_to_base64(&n.into_scval()?)?
                             }
                             "i32" => {
-                                let n: i32 = v.parse().unwrap();
-                                scval_to_base64(&n.into_scval().unwrap()).unwrap()
+                                let n: i32 =
+                                    v.parse().map_err(|_| format!("invalid i32 value: {v}"))?;
+                                scval_to_base64(&n.into_scval()?)?
                             }
                             "u64" => {
-                                let n: u64 = v.parse().unwrap();
-                                scval_to_base64(&n.into_scval().unwrap()).unwrap()
+                                let n: u64 =
+                                    v.parse().map_err(|_| format!("invalid u64 value: {v}"))?;
+                                scval_to_base64(&n.into_scval()?)?
                             }
                             "i64" => {
-                                let n: i64 = v.parse().unwrap();
-                                scval_to_base64(&n.into_scval().unwrap()).unwrap()
+                                let n: i64 =
+                                    v.parse().map_err(|_| format!("invalid i64 value: {v}"))?;
+                                scval_to_base64(&n.into_scval()?)?
                             }
                             "u128" => {
-                                let n: u128 = v.parse().unwrap();
-                                scval_to_base64(&n.into_scval().unwrap()).unwrap()
+                                let n: u128 =
+                                    v.parse().map_err(|_| format!("invalid u128 value: {v}"))?;
+                                scval_to_base64(&n.into_scval()?)?
                             }
                             "i128" => {
-                                let n: i128 = v.parse().unwrap();
-                                scval_to_base64(&n.into_scval().unwrap()).unwrap()
+                                let n: i128 =
+                                    v.parse().map_err(|_| format!("invalid i128 value: {v}"))?;
+                                scval_to_base64(&n.into_scval()?)?
                             }
                             "bool" => {
-                                let b: bool = v.parse().unwrap();
-                                scval_to_base64(&b.into_scval().unwrap()).unwrap()
+                                let b: bool =
+                                    v.parse().map_err(|_| format!("invalid bool value: {v}"))?;
+                                scval_to_base64(&b.into_scval()?)?
                             }
-                            "string" => scval_to_base64(&v.into_scval().unwrap()).unwrap(),
+                            "string" => scval_to_base64(&v.into_scval()?)?,
                             "bytes" => {
                                 let mut b = Vec::new();
                                 let s = v.trim();
                                 for i in (0..s.len()).step_by(2) {
-                                    let byte = u8::from_str_radix(&s[i..i + 2], 16).unwrap();
+                                    let byte = u8::from_str_radix(&s[i..i + 2], 16)
+                                        .map_err(|_| format!("invalid hex byte in: {v}"))?;
                                     b.push(byte);
                                 }
-                                scval_to_base64(&b.into_scval().unwrap()).unwrap()
+                                scval_to_base64(&b.into_scval()?)?
                             }
                             "address" => {
-                                use sdkt_xdr::Address;
-                                let addr = Address::from_strkey(v).unwrap();
-                                scval_to_base64(&addr.into_scval().unwrap()).unwrap()
+                                let addr = Address::from_strkey(v)
+                                    .map_err(|_| format!("invalid Stellar address: {v}"))?;
+                                scval_to_base64(&addr.into_scval()?)?
                             }
                             _ => a.clone(), // Unknown type fallback to direct base64
                         };
@@ -1076,6 +1120,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             old_wasm,
             new_wasm,
             format,
+            upgrade_safety,
         } => {
             let fmt = parse_format_str(&format);
             let old_bytes = fs::read(&old_wasm)
@@ -1085,6 +1130,16 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
             match sdkt_wasm::diff_wasm(&old_bytes, &new_bytes) {
                 Ok(report) => {
+                    if upgrade_safety {
+                        // Upgrade-safety verdict mode: reuse the diff, classify.
+                        let verdict = sdkt_wasm::UpgradeVerdict::from_diff(&report);
+                        if fmt == OutputFormat::Json {
+                            println!("{}", serde_json::to_string(&verdict)?);
+                        } else {
+                            print_upgrade_verdict(&verdict);
+                        }
+                        return Ok(());
+                    }
                     if fmt == OutputFormat::Json {
                         println!("{}", serde_json::to_string(&report)?);
                     } else {
@@ -1286,10 +1341,15 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 }
             }
             WasmAction::Cache { action } => {
-                let cache = WasmCache::new().unwrap_or_else(|_| {
-                    eprintln!("Could not initialize cache");
-                    process::exit(1);
-                });
+                // Initialize cache; fall back to a temp dir if the OS cache
+                // directory cannot be resolved (e.g. fresh CI runner).
+                let cache = match WasmCache::new() {
+                    Ok(c) => c,
+                    Err(e) => {
+                        eprintln!("Warning: could not initialize cache: {}", e);
+                        WasmCache::with_dir(std::env::temp_dir().join("sdkt-fallback-cache"))
+                    }
+                };
 
                 match action {
                     CacheAction::Info { network, format } => {
@@ -1415,7 +1475,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                             "project": name,
                             "files": result.files_created,
                         });
-                        println!("{}", serde_json::to_string(&json).unwrap());
+                        println!("{}", serde_json::to_string(&json)?);
                     } else {
                         println!("✓ Project '{}' created", name);
                         for f in &result.files_created {
@@ -1430,7 +1490,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                             "status": "error",
                             "message": e.to_string(),
                         });
-                        println!("{}", serde_json::to_string(&json).unwrap());
+                        println!("{}", serde_json::to_string(&json)?);
                     } else {
                         eprintln!("Error: {}", e);
                     }
@@ -1438,8 +1498,42 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 }
             }
         }
-        Commands::Deploy { wasm, salt, format } => {
+        Commands::Deploy {
+            wasm,
+            salt,
+            format,
+            deny_breaking,
+            old_wasm,
+        } => {
             let fmt = parse_format_str(&format);
+
+            // Optional deploy guard: abort on a backwards-incompatible upgrade.
+            if deny_breaking {
+                let baseline = old_wasm.ok_or_else(|| {
+                    "The --deny-breaking flag requires --old-wasm <deployed.wasm> (the currently deployed contract)".to_string()
+                })?;
+                let old_bytes = fs::read(&baseline)
+                    .map_err(|e| format!("Failed to read OLD WASM '{}': {}", baseline, e))?;
+                let new_bytes = fs::read(&wasm)
+                    .map_err(|e| format!("Failed to read NEW WASM '{}': {}", wasm, e))?;
+                match sdkt_wasm::upgrade_safety_wasm(&old_bytes, &new_bytes) {
+                    Ok(verdict) => {
+                        if !verdict.compatible {
+                            eprintln!("Deployment aborted: upgrade is NOT backwards-compatible.");
+                            print_upgrade_verdict(&verdict);
+                            process::exit(1);
+                        }
+                        eprintln!(
+                            "Upgrade-safety check passed: deployment is backwards-compatible."
+                        );
+                    }
+                    Err(e) => {
+                        eprintln!("Upgrade-safety check failed to compute verdict: {}", e);
+                        process::exit(1);
+                    }
+                }
+            }
+
             use sdkt_rpc::deploy_contract;
             let config = DevKitConfig::from_file(".sdkt.toml").unwrap_or_default();
             let client = SorobanRpcClient::from_config(&config.network);

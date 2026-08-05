@@ -158,8 +158,8 @@ This section supersedes the "What `sdkt` provides" promises above with **shipped
 ### Remaining unaddressed pillars
 
 1. **Plugin system** — no external lint/rule loading yet; M13's `sdkt-audit` `AuditRule` trait is now the natural foundation (planned post-M13).
-2. **Contract upgrade safety** — M12 shipped the *diff* half (`sdkt diff`); the *recommend-abort-on-breaking-change* guard for `sdkt deploy` remains (M14).
-3. **CI/CD Action packaging (M15)** — depends on audit-in-CI premise, now feasible since `sdkt audit` exists.
+2. **Contract upgrade safety** — M12 shipped the *diff* half (`sdkt diff`); M14 completed the *recommend-abort-on-breaking-change* guard (`sdkt diff --upgrade-safety` + `sdkt deploy --deny-breaking`). ✅ Done.
+3. **CI/CD Action packaging (M15)** — ✅ **Done**: `.github/actions/sdkt/action.yml` wraps `sdkt audit` + `sdkt diff --upgrade-safety` for CI, with `docs/ci-cd.md` and a self-validating workflow. Closes the "Enables CI/CD pipelines" promise from GAP_ANALYSIS §4.
 
 ### Notable deltas vs original doc
 
@@ -167,4 +167,4 @@ This section supersedes the "What `sdkt` provides" promises above with **shipped
 - "Interactive CLI menu" for `inspect` (Gap E) was scoped down to structured pretty/JSON output; no interactive TUI was built.
 - Horiz/account graph enrichment shipped in M7, extending Gap A's account inspection beyond the original plan.
 
-**Conclusion:** 4 of 5 original gaps are closed; Gap C is the active frontier. `sdkt` now spans the full read-only + mutating lifecycle and is production-hardened (M6 CI/clippy gates).
+**Conclusion:** All 5 original gaps (A–E) are now closed; Gap C was completed in M13, the upgrade-safety guard in M14, and the CI/CD packaging promise in M15. Remaining work is the plugin system (post-M15), mainnet/SCF alignment (post-1.0). `sdkt` now spans the full read-only + mutating lifecycle, is production-hardened (M6 CI/clippy gates), and is usable directly in developer pipelines via its GitHub composite Action.

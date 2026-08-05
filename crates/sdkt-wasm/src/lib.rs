@@ -11,7 +11,10 @@ pub use spec::{
     parse_contract_spec, ContractEvent, ContractFunction, ContractParameter, ContractSpec,
     ContractType,
 };
-pub use spec_diff::{diff_specs, diff_wasm, FunctionSignatureChange, SpecDiff, WasmSummary};
+pub use spec_diff::{
+    diff_specs, diff_wasm, upgrade_safety, upgrade_safety_wasm, ChangeKind,
+    FunctionSignatureChange, SpecDiff, UpgradeVerdict, VerdictChange, WasmSummary,
+};
 
 #[derive(Error, Debug)]
 pub enum WasmError {
