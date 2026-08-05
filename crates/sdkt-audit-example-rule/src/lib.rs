@@ -48,6 +48,11 @@ pub fn register() {
     register_rule(Box::new(ExampleRule) as BoxedRule);
 }
 
+/// C-ABI exports for dynamic loading (M18, Phase B). Compiled only with the
+/// `plugins` feature — produces a loadable shared library artifact.
+#[cfg(feature = "plugins")]
+mod plugin_abi;
+
 #[cfg(test)]
 mod tests {
     use super::*;

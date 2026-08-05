@@ -219,6 +219,14 @@ fn fn_scan(sig: &syn::Signature, block: &syn::Block) -> FnScan {
     scan
 }
 
+/// Scan source directly from a `&str` (parsing errors yield `None`).
+/// Convenience wrapper around [`scan_all_functions`] for plugin authors who
+/// receive raw source rather than an already-parsed AST.
+pub fn scan_all_functions_str(src: &str) -> Option<Vec<FnScan>> {
+    let ast = syn::parse_file(src).ok()?;
+    Some(scan_all_functions(&ast))
+}
+
 /// All built-in rules.
 pub fn all_rules() -> Vec<Box<dyn AuditRule>> {
     vec![

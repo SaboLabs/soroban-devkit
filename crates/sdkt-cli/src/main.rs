@@ -1226,6 +1226,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             rules,
         } => {
             let fmt = parse_format_str(&format);
+
             // Validate any --rules paths up front (Phase A: rule code must be
             // compiled into the binary; this flag validates the provided paths
             // and runs all registered rules, built-ins plus any linked plugins).
@@ -1235,13 +1236,58 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     process::exit(1);
                 }
             }
+
+            let src = fs::read_to_string(&path)
+                .map_err(|e| format!("Failed to read source '{}': {}", path, e))?;
+
+            // Dynamic plugin loading (M18, Phase B). Only `.so`/`.dylib`/`.dll`
+            // artifacts are treated as loadable plugins; other paths keep the
+            // M17 semantics (validated above, no-op for execution).
+            #[cfg(feature = "plugins")]
+            {
+                let plugin_exts = ["so", "dylib", "dll"];
+                for r in &rules {
+                    let is_plugin = std::path::Path::new(r)
+                        .extension()
+                        .and_then(|e| e.to_str())
+                        .map(|e| plugin_exts.contains(&e.to_ascii_lowercase().as_str()))
+                        .unwrap_or(false);
+                    if is_plugin {
+                        if let Err(e) = sdkt_audit::plugin_loader::load_and_register(
+                            std::path::Path::new(r),
+                            &src,
+                        ) {
+                            eprintln!("Error loading plugin '{}': {}", r, e);
+                            process::exit(1);
+                        }
+                    }
+                }
+            }
+            #[cfg(not(feature = "plugins"))]
+            {
+                let plugin_exts = ["so", "dylib", "dll"];
+                for r in &rules {
+                    let is_plugin = std::path::Path::new(r)
+                        .extension()
+                        .and_then(|e| e.to_str())
+                        .map(|e| plugin_exts.contains(&e.to_ascii_lowercase().as_str()))
+                        .unwrap_or(false);
+                    if is_plugin {
+                        eprintln!(
+                            "Error: '{}' is a plugin artifact but this build was compiled \
+                             without the `plugins` feature. Rebuild with --features plugins.",
+                            r
+                        );
+                        process::exit(1);
+                    }
+                }
+            }
+
             // When the `plugins` feature is enabled, link the reference example
             // rule into the registry. Off by default → M16-identical behavior.
             #[cfg(feature = "plugins")]
             sdkt_audit_example_rule::register();
 
-            let src = fs::read_to_string(&path)
-                .map_err(|e| format!("Failed to read source '{}': {}", path, e))?;
             let disabled_refs: Vec<&str> = disable.iter().map(String::as_str).collect();
             match sdkt_audit::audit_source_with(&src, &disabled_refs) {
                 Ok(report) => {
