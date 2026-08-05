@@ -96,7 +96,7 @@ jobs:
         env:
           CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
         run: |
-          for c in sdkt-core sdkt-xdr sdkt-wasm sdkt-rpc sdkt-storage sdkt-audit sdkt-cli; do
+          for c in sdkt-core sdkt-xdr sdkt-wasm sdkt-rpc sdkt-storage sdkt-audit sdkt-audit-example-rule sdkt-cli; do
             echo "== cargo publish -p $c =="
             cargo publish -p "$c"
           done

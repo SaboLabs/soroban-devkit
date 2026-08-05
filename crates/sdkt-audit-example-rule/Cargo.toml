@@ -7,7 +7,9 @@ edition.workspace = true
 version.workspace = true
 repository.workspace = true
 homepage.workspace = true
-publish = false
+readme = "../../README.md"
+keywords = ["soroban", "stellar", "sdk", "toolkit", "audit"]
+categories = ["development-tools"]
 
 [dependencies]
-sdkt-audit = { path = "../sdkt-audit" }
+sdkt-audit = { version = "0.17.0-alpha", path = "../sdkt-audit" }
