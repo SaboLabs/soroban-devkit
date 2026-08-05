@@ -5,6 +5,23 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [v0.17.0-alpha] - 2026-08-05 (Milestone 17 — Plugin System Phase A)
+
+### Added (extensibility, no breaking changes)
+- **`RuleRegistry`** in `sdkt-audit`: `register_rule`, `register_builtin_rules`, `registered_rules`, `run_all`. Built-in rules (AUTH-001/002/003, MOVE-001) now register through the registry instead of a hardcoded list; finding order and IDs unchanged.
+- **Plugin author API**: stable `AuditRule`, `AuditContext`, `Finding`, plus a `register_rule!` macro and process-wide `register_rule()` for external/plugin rules.
+- **`sdkt audit --rules <PATH>`** (repeatable, additive): validates external rule paths and runs all registered rules. Omitted → behavior identical to M16. (Phase A: external rules must be compiled into the binary; dynamic loading is Phase B.)
+- **Example plugin crate** `sdkt-audit-example-rule` (rule `EXAMPLE-001`) demonstrating the authoring workflow; linked only when `sdkt-cli` is built with the `plugins` feature (off by default).
+- **`docs/plugin-authoring.md`**: architecture, rule lifecycle, authoring, registration, and testing guidance.
+
+### Changed
+- Workspace version bumped `0.16.0-alpha` → `0.17.0-alpha` (single source of truth).
+
+### Testing
+- Added unit tests (registry registration, duplicate de-duplication, ordering, builtin count) and integration tests (registry executes built-ins + external rules, `--rules` accepted/validated, example rule fires under the `plugins` feature). All prior 205 tests preserved.
+
+---
+
 ## [v0.16.0-alpha] - 2026-08-05 (Milestone 16 — Release Engineering & Polish)
 
 ### Changed (release readiness, no new features)

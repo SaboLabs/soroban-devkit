@@ -236,12 +236,9 @@ fn run_rules(
 ) -> Result<AuditReport, AuditError> {
     let scans = scan_all_functions(ast);
     let mut report = AuditReport::default();
-    for rule in all_rules() {
-        if disabled.contains(&rule.id()) {
-            continue;
-        }
-        rule.check(&scans, ctx, &mut report);
-    }
+    // Execute rules through the registry (built-ins + any linked plugins),
+    // preserving registration order so output stays identical to M16.
+    crate::registry::run_registered(&scans, ctx, disabled, &mut report);
     Ok(report)
 }
 

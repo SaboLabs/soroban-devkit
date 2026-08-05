@@ -106,6 +106,11 @@ enum Commands {
         /// Disable a rule by id (repeatable), e.g. --disable MOVE-001
         #[arg(long, value_name = "RULE_ID", action = clap::ArgAction::Append)]
         disable: Vec<String>,
+        /// Path to an external rule crate or local rule source directory to load.
+        /// Repeatable. (Phase A: the rule must be compiled into the binary; this
+        /// flag validates the path and runs the registered rules.)
+        #[arg(long, value_name = "PATH", action = clap::ArgAction::Append)]
+        rules: Vec<String>,
     },
     /// Manage Soroban identities (keys)
     Identity {
@@ -1218,8 +1223,23 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             path,
             format,
             disable,
+            rules,
         } => {
             let fmt = parse_format_str(&format);
+            // Validate any --rules paths up front (Phase A: rule code must be
+            // compiled into the binary; this flag validates the provided paths
+            // and runs all registered rules, built-ins plus any linked plugins).
+            for r in &rules {
+                if !std::path::Path::new(r).exists() {
+                    eprintln!("Error: rule path '{}' does not exist", r);
+                    process::exit(1);
+                }
+            }
+            // When the `plugins` feature is enabled, link the reference example
+            // rule into the registry. Off by default → M16-identical behavior.
+            #[cfg(feature = "plugins")]
+            sdkt_audit_example_rule::register();
+
             let src = fs::read_to_string(&path)
                 .map_err(|e| format!("Failed to read source '{}': {}", path, e))?;
             let disabled_refs: Vec<&str> = disable.iter().map(String::as_str).collect();

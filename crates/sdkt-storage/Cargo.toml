@@ -15,8 +15,8 @@ categories = ["development-tools", "network-programming"]
 directories = "5.0.1"
 ed25519-dalek = { version = "2.1.0", features = ["rand_core"] }
 rand = "0.8"
-sdkt-rpc = { version = "0.16.0-alpha", path = "../sdkt-rpc" }
-sdkt-wasm = { version = "0.16.0-alpha", path = "../sdkt-wasm" }
+sdkt-rpc = { version = "0.17.0-alpha", path = "../sdkt-rpc" }
+sdkt-wasm = { version = "0.17.0-alpha", path = "../sdkt-wasm" }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 stellar-strkey = "0.0.18"

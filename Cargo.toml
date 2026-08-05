@@ -6,11 +6,12 @@ members = [
     "crates/sdkt-rpc",
     "crates/sdkt-storage", "crates/sdkt-wasm",
     "crates/sdkt-audit",
+    "crates/sdkt-audit-example-rule",
 ]
 resolver = "2"
 
 [workspace.package]
-version = "0.16.0-alpha"
+version = "0.17.0-alpha"
 edition = "2021"
 license = "MIT"
 authors = ["naninu123"]

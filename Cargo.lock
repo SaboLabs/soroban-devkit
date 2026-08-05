@@ -1823,7 +1823,7 @@ dependencies = [
 
 [[package]]
 name = "sdkt-audit"
-version = "0.16.0-alpha"
+version = "0.17.0-alpha"
 dependencies = [
  "sdkt-wasm",
  "serde",
@@ -1832,13 +1832,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "sdkt-audit-example-rule"
+version = "0.17.0-alpha"
+dependencies = [
+ "sdkt-audit",
+]
+
+[[package]]
 name = "sdkt-cli"
-version = "0.16.0-alpha"
+version = "0.17.0-alpha"
 dependencies = [
  "assert_cmd",
  "clap",
  "predicates",
  "sdkt-audit",
+ "sdkt-audit-example-rule",
  "sdkt-core",
  "sdkt-rpc",
  "sdkt-storage",
@@ -1852,7 +1860,7 @@ dependencies = [
 
 [[package]]
 name = "sdkt-core"
-version = "0.16.0-alpha"
+version = "0.17.0-alpha"
 dependencies = [
  "serde",
  "stellar-strkey 0.0.8",
@@ -1863,7 +1871,7 @@ dependencies = [
 
 [[package]]
 name = "sdkt-rpc"
-version = "0.16.0-alpha"
+version = "0.17.0-alpha"
 dependencies = [
  "base64 0.23.0",
  "reqwest",
@@ -1879,7 +1887,7 @@ dependencies = [
 
 [[package]]
 name = "sdkt-storage"
-version = "0.16.0-alpha"
+version = "0.17.0-alpha"
 dependencies = [
  "base64 0.23.0",
  "directories",
@@ -1898,7 +1906,7 @@ dependencies = [
 
 [[package]]
 name = "sdkt-wasm"
-version = "0.16.0-alpha"
+version = "0.17.0-alpha"
 dependencies = [
  "hex",
  "sdkt-core",
@@ -1911,7 +1919,7 @@ dependencies = [
 
 [[package]]
 name = "sdkt-xdr"
-version = "0.16.0-alpha"
+version = "0.17.0-alpha"
 dependencies = [
  "base64 0.23.0",
  "hex",
