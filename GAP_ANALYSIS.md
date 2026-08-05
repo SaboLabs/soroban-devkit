@@ -131,3 +131,40 @@ Soroban DevKit (`sdkt`) does not duplicate existing tools — it **augments** th
 The gaps identified above are real production pain points. `sdkt` addresses them with a modular, extensible, and well-documented architecture that will grow with the ecosystem.
 
 **Approved for implementation.**
+
+---
+
+## 7. Status Update — Post-Milestone 10 (2026-08-05)
+
+This section supersedes the "What `sdkt` provides" promises above with **shipped reality**. The market gap analysis (Sections 1–6) remains valid; the implementation has caught up substantially.
+
+### Gap Closure (current)
+
+| Original Gap | State | Shipped In |
+|--------------|-------|-----------|
+| **Gap A** — Unified CLI lifecycle | ✅ **Closed** | M3A–M10: `decode`, `storage`, `inspect`, `tx`, `events`, `account`, `fee`, `wasm`, `identity`, `init`, `deploy` all present |
+| **Gap B** — Storage rent visibility | ✅ **Closed** | M3A: `sdkt storage check` (TTL + extension cost), `storage estimate` |
+| **Gap C** — Static security analysis | 🟡 **Candidate (M11)** | Three proposals pending; `docs/milestone-11-plan.md` explores the audit option but scope is NOT approved |
+| **Gap D** — Local XDR decoder | ✅ **Closed** | M3A/M5: `sdkt decode` (ScVal / TransactionEnvelope / ContractEvent), offline |
+| **Gap E** — ABI / interface viewer | ✅ **Closed** | M3B + M10 (ENG-16): `sdkt inspect` + `--abi` ABI-aware decoding of events/storage |
+| Plugin system | 🟡 **Planned** | M13 — `AuditRule` trait in M11 is the foundation |
+
+### Capabilities shipped beyond the original GAP_ANALYSIS scope
+
+- **Mutability foundation (M8):** `sdkt tx simulate`, `sdkt tx submit` (with polling), `sdkt tx build` envelope builder, `sdkt identity` ED25519 keystore.
+- **WASM tooling (M9):** `sdkt wasm metadata` / `sdkt wasm cache`, `sdkt-wasm` crate with `ContractSpec` parser, `sdkt deploy` + `sdkt init` scaffolding.
+- **ABI-aware decoding (M10 / ENG-16):** real base64 XDR event topic/value decoding via `decode_event_topics`.
+
+### Remaining unaddressed pillars
+
+1. **Gap C static analysis** — the sole original gap with zero code; targeted by M11.
+2. **Plugin system** — no external lint/rule loading yet; M11's `AuditRule` registry is the intended on-ramp (M13).
+3. **`StorageAnalyzer`** (M4) — struct exists in `sdkt-storage/src/analyzer.rs` but is not CLI-exposed or tested; deferred to M12.
+
+### Notable deltas vs original doc
+
+- The GAP_ANALYSIS originally described `sdkt audit` as using `syn` AST to flag move violations and missing auth — this is now the concrete M11 design (`docs/milestone-11-plan.md`).
+- "Interactive CLI menu" for `inspect` (Gap E) was scoped down to structured pretty/JSON output; no interactive TUI was built.
+- Horiz/account graph enrichment shipped in M7, extending Gap A's account inspection beyond the original plan.
+
+**Conclusion:** 4 of 5 original gaps are closed; Gap C is the active frontier. `sdkt` now spans the full read-only + mutating lifecycle and is production-hardened (M6 CI/clippy gates).
