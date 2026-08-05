@@ -258,6 +258,13 @@ enum StorageAction {
     Estimate {
         wasm: String,
     },
+    /// Analyze a contract's storage layout (Instance/Persistent/Temporary
+    /// categorization, TTL summary, and per-entry detail).
+    Analyze {
+        contract_id: String,
+        #[arg(short, long, default_value = "pretty")]
+        format: String,
+    },
 }
 
 fn parse_format_str(s: &str) -> OutputFormat {
@@ -371,6 +378,59 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             }
             StorageAction::Estimate { wasm } => {
                 println!("Storage Estimate for {} (Not yet implemented)", wasm);
+            }
+            StorageAction::Analyze {
+                contract_id,
+                format,
+            } => {
+                let fmt = parse_format_str(&format);
+                let config = DevKitConfig::from_file(".sdkt.toml").unwrap_or_default();
+                let client = SorobanRpcClient::from_config(&config.network);
+                let analyzer = sdkt_storage::StorageAnalyzer::new(client);
+
+                match analyzer.inspect_contract_storage(&contract_id).await {
+                    Ok(report) => {
+                        if fmt == OutputFormat::Json {
+                            println!("{}", serde_json::to_string(&report)?);
+                        } else {
+                            println!("Storage Analysis for Contract: {}", report.contract_id);
+                            println!("Total Entries: {}", report.total_entries);
+                            println!("  Instance:    {}", report.instance_entries);
+                            println!("  Persistent: {}", report.persistent_entries);
+                            println!("  Temporary:   {}", report.temporary_entries);
+                            if report.other_entries > 0 {
+                                println!("  Other:      {}", report.other_entries);
+                            }
+                            if let Some(summary) = &report.ttl_summary {
+                                println!("\nTTL Summary:");
+                                println!("  Min TTL:        {}", summary.minimum_ttl);
+                                println!("  Max TTL:        {}", summary.maximum_ttl);
+                                println!("  Average TTL:    {}", summary.average_ttl);
+                                println!("  Expiring Soon:  {}", summary.expiring_entries_count);
+                                if let Some(cost) = summary.estimated_rent_cost {
+                                    println!("  Est. Rent Cost: {} stroops", cost);
+                                }
+                            }
+                            if !report.entries.is_empty() {
+                                println!("\nEntries:");
+                                for (i, entry) in report.entries.iter().enumerate() {
+                                    println!(
+                                        "  #{:<3} [{}] ttl={} (~{}d) cost={} stroops",
+                                        i + 1,
+                                        entry.class.label(),
+                                        entry.current_ttl,
+                                        entry.days_remaining,
+                                        entry.extension_cost_stroops
+                                    );
+                                }
+                            }
+                        }
+                    }
+                    Err(e) => {
+                        eprintln!("Error analyzing storage: {}", e);
+                        process::exit(1);
+                    }
+                }
             }
         },
         Commands::Inspect {
