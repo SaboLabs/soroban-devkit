@@ -24,7 +24,7 @@ jobs:
         uses: ./.github/actions/sdkt
         with:
           command: upgrade-safety
-          sdkt-version: v0.14.0-alpha
+          sdkt-version: v0.15.0-alpha
           old-wasm: crates/sdkt-cli/tests/fixtures/us_old.wasm
           new-wasm: crates/sdkt-cli/tests/fixtures/us_new.wasm
 
@@ -44,7 +44,7 @@ jobs:
         uses: ./.github/actions/sdkt
         with:
           command: upgrade-safety
-          sdkt-version: v0.14.0-alpha
+          sdkt-version: v0.15.0-alpha
           old-wasm: crates/sdkt-cli/tests/fixtures/us_old.wasm
           new-wasm: crates/sdkt-cli/tests/fixtures/us_old.wasm
 
