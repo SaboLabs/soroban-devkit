@@ -7,7 +7,7 @@
 
 use std::ffi::{CStr, CString};
 use std::os::raw::c_char;
-use std::sync::OnceLock;
+use std::sync::Mutex;
 
 use sdkt_audit::plugin_abi::{
     abi_version_pack, SdktAuditFindingC, SdktAuditReportC, MAX_FINDINGS, SEVERITY_INFO,
@@ -16,8 +16,12 @@ use sdkt_audit::{AuditReport, AuditRule};
 
 use crate::ExampleRule;
 
-/// Source to analyze, set once via [`sdkt_plugin_init`].
-static SOURCE: OnceLock<String> = OnceLock::new();
+/// Source to analyze, refreshed on every [`sdkt_plugin_init`] call (F3).
+///
+/// `Mutex<Option<String>>` instead of `OnceLock` so the plugin always operates
+/// on the source supplied for the *current* audit execution, not a stale value
+/// from a previous run.
+static SOURCE: Mutex<Option<String>> = Mutex::new(None);
 
 /// Plugin ABI version (must match the host's `SDKT_AUDIT_ABI_MAJOR`).
 ///
@@ -68,7 +72,8 @@ pub unsafe extern "C" fn sdkt_plugin_init(src: *const c_char) -> i32 {
     }
     match CStr::from_ptr(src).to_str() {
         Ok(s) => {
-            if SOURCE.set(s.to_string()).is_ok() {
+            if let Ok(mut lock) = SOURCE.lock() {
+                *lock = Some(s.to_string());
                 0
             } else {
                 1
@@ -84,56 +89,71 @@ pub unsafe extern "C" fn sdkt_plugin_init(src: *const c_char) -> i32 {
 /// `report` must point to a valid, mutable `SdktAuditReportC`.
 #[no_mangle]
 pub unsafe extern "C" fn sdkt_plugin_check(report: *mut SdktAuditReportC) -> i32 {
-    if report.is_null() {
-        return 1;
-    }
-    let src = match SOURCE.get() {
-        Some(s) => s,
-        None => return 2,
-    };
-    // Run ONLY this plugin's own rule (via the in-crate `ExampleRule`), never the
-    // global registry, to avoid re-entrant recursion when the host invokes this
-    // symbol during an `audit_source_with` run.
-    let scans = match sdkt_audit::scan_all_functions_str(src) {
-        Some(s) => s,
-        None => return 3,
-    };
-    let ctx = sdkt_audit::AuditContext { spec: None };
-    let mut local = AuditReport::default();
-    ExampleRule.check(&scans, &ctx, &mut local);
-
-    let out = &mut *report;
-    out.count = 0;
-    for f in local.findings {
-        if out.count >= MAX_FINDINGS {
-            break;
+    // F2 fixed: Handle internal panics gracefully inside the plugin.
+    // Host catch_unwind is UB over FFI.
+    let res = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        if report.is_null() {
+            return 1;
         }
-        let rule_id = match CString::new(f.rule_id) {
-            Ok(c) => c,
-            Err(_) => continue,
+
+        // Extract source, releasing the lock quickly
+        let src = {
+            let lock = match SOURCE.lock() {
+                Ok(l) => l,
+                Err(_) => return 2, // poisoned
+            };
+            match &*lock {
+                Some(s) => s.clone(),
+                None => return 2,
+            }
         };
-        let message = match CString::new(f.message) {
-            Ok(c) => c,
-            Err(_) => continue,
+
+        // Run ONLY this plugin's own rule (via the in-crate `ExampleRule`), never the
+        // global registry, to avoid re-entrant recursion when the host invokes this
+        // symbol during an `audit_source_with` run.
+        let scans = match sdkt_audit::scan_all_functions_str(&src) {
+            Some(s) => s,
+            None => return 3,
         };
-        let location = f
-            .location
-            .as_ref()
-            .and_then(|l| CString::new(l.clone()).ok());
-        let slot: &mut SdktAuditFindingC = &mut out.findings[out.count];
-        slot.rule_id = rule_id.into_raw() as *const c_char;
-        slot.severity = match f.severity {
-            sdkt_audit::Severity::Critical => 0,
-            sdkt_audit::Severity::Info => 2,
-            sdkt_audit::Severity::Warning => 1,
-        };
-        slot.message = message.into_raw() as *const c_char;
-        slot.location = location
-            .map(|c| c.into_raw() as *const c_char)
-            .unwrap_or(std::ptr::null());
-        out.count += 1;
-    }
-    0
+        let ctx = sdkt_audit::AuditContext { spec: None };
+        let mut local = AuditReport::default();
+        ExampleRule.check(&scans, &ctx, &mut local);
+
+        let out = unsafe { &mut *report };
+        out.count = 0;
+        for f in local.findings {
+            if out.count >= MAX_FINDINGS {
+                break;
+            }
+            let rule_id = match CString::new(f.rule_id) {
+                Ok(c) => c,
+                Err(_) => continue,
+            };
+            let message = match CString::new(f.message) {
+                Ok(c) => c,
+                Err(_) => continue,
+            };
+            let location = f
+                .location
+                .as_ref()
+                .and_then(|l| CString::new(l.clone()).ok());
+            let slot: &mut SdktAuditFindingC = &mut out.findings[out.count];
+            slot.rule_id = rule_id.into_raw() as *const c_char;
+            slot.severity = match f.severity {
+                sdkt_audit::Severity::Critical => 0,
+                sdkt_audit::Severity::Info => 2,
+                sdkt_audit::Severity::Warning => 1,
+            };
+            slot.message = message.into_raw() as *const c_char;
+            slot.location = location
+                .map(|c| c.into_raw() as *const c_char)
+                .unwrap_or(std::ptr::null());
+            out.count += 1;
+        }
+        0
+    }));
+
+    res.unwrap_or(4)
 }
 
 /// Optional cleanup (no-op: `SOURCE` is dropped at process exit).

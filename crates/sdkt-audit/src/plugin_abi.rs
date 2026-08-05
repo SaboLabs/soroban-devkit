@@ -10,7 +10,12 @@ use std::os::raw::{c_char, c_int};
 /// Plugin ABI major version. BREAKING changes bump this; the host rejects any
 /// plugin whose major does not match.
 pub const SDKT_AUDIT_ABI_MAJOR: u32 = 1;
-/// Plugin ABI minor version. Additive changes bump this.
+/// Plugin ABI minor version. Additive/backward-compatible changes bump this.
+///
+/// The host DOES NOT reject plugins with a lower minor (older plugin, newer host).
+/// Plugins with a higher minor (newer plugin, older host) may expose symbols the
+/// host does not call — that is safe. Only a major-version mismatch causes a
+/// load failure.
 pub const SDKT_AUDIT_ABI_MINOR: u32 = 0;
 
 /// Pack `(major, minor)` into the single `u32` returned by
