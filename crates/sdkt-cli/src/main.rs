@@ -752,15 +752,25 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             match get_contract_events(&client, &contract_id).await {
                 Ok(events) => {
                     if let Some(spec) = contract_spec {
-                        // ABI-aware decoding
+                        // ABI-aware decoding: topics[0] is the event symbol,
+                        // remaining topics + the data value carry the payload.
                         if fmt == OutputFormat::Json {
                             let decoded_events: Vec<serde_json::Value> = events
                                 .iter()
                                 .map(|ev| {
-                                    let _topics =
-                                        ev.topics.iter().map(|t| t.as_str()).collect::<Vec<_>>();
-                                    let topic_scvals: Vec<stellar_xdr::ScVal> = Vec::new(); // Topics handled by event_hint mechanism
-                                    let decoded = decode_event_topics(&spec, &topic_scvals, &[]);
+                                    let topic_scvals: Vec<stellar_xdr::ScVal> = ev
+                                        .topics
+                                        .iter()
+                                        .filter_map(|t| sdkt_xdr::scval_from_base64(t))
+                                        .collect();
+                                    let data_scvals: Vec<stellar_xdr::ScVal> = ev
+                                        .value
+                                        .as_deref()
+                                        .and_then(sdkt_xdr::scval_from_base64)
+                                        .into_iter()
+                                        .collect();
+                                    let decoded =
+                                        decode_event_topics(&spec, &topic_scvals, &data_scvals);
                                     serde_json::json!({
                                         "contract_id": ev.contract_id,
                                         "ledger": ev.ledger,
@@ -789,9 +799,20 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                                     println!("Topics: {:?}", ev.topics);
                                     println!("Value: {}", ev.value.as_deref().unwrap_or("N/A"));
 
-                                    // Decode with ABI
-                                    let topic_scvals: Vec<stellar_xdr::ScVal> = Vec::new(); // Topics handled by event_hint mechanism
-                                    let decoded = decode_event_topics(&spec, &topic_scvals, &[]);
+                                    // Decode with ABI using the real topics/value
+                                    let topic_scvals: Vec<stellar_xdr::ScVal> = ev
+                                        .topics
+                                        .iter()
+                                        .filter_map(|t| sdkt_xdr::scval_from_base64(t))
+                                        .collect();
+                                    let data_scvals: Vec<stellar_xdr::ScVal> = ev
+                                        .value
+                                        .as_deref()
+                                        .and_then(sdkt_xdr::scval_from_base64)
+                                        .into_iter()
+                                        .collect();
+                                    let decoded =
+                                        decode_event_topics(&spec, &topic_scvals, &data_scvals);
                                     for d in decoded {
                                         println!("  Decoded: {}", d.label);
                                         if let Some(fields) = d.fields {

@@ -1,5 +1,4 @@
 use assert_cmd::Command;
-use predicates::prelude::*;
 
 #[test]
 fn test_events_abi_flag_exists() {

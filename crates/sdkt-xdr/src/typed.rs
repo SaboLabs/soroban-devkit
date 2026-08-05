@@ -7,7 +7,7 @@
 //! Conversion is lossless for all supported types; out-of-range numeric
 //! truncation is rejected at the scalar boundary (see [`FromScVal`]).
 
-use stellar_xdr::{Int128Parts, ScAddress, ScBytes, ScString, ScVal, UInt128Parts};
+use stellar_xdr::{Int128Parts, ReadXdr, ScAddress, ScBytes, ScString, ScVal, UInt128Parts};
 
 /// Error produced when a Rust value cannot be represented as a [`ScVal`] or
 /// back.
@@ -280,6 +280,21 @@ pub fn scval_to_base64(v: &ScVal) -> Result<String, ScValError> {
     let mut limited = stellar_xdr::Limited::new(&mut buf, stellar_xdr::Limits::none());
     v.write_xdr(&mut limited).map_err(|_| ScValError::TooLong)?;
     Ok(base64::engine::general_purpose::STANDARD.encode(&buf))
+}
+
+/// Decode a base64-encoded XDR [`ScVal`] back into the typed representation.
+///
+/// Returns `None` when the input is empty or not valid base64 XDR `ScVal`
+/// bytes (e.g. an unrelated topic payload) so callers can fall back to the
+/// raw string instead of erroring out mid-stream.
+pub fn scval_from_base64(raw: &str) -> Option<ScVal> {
+    use base64::Engine;
+    let buf = base64::engine::general_purpose::STANDARD
+        .decode(raw.trim())
+        .ok()?;
+    let mut cursor = std::io::Cursor::new(buf);
+    let mut limited = stellar_xdr::Limited::new(&mut cursor, stellar_xdr::Limits::none());
+    stellar_xdr::ScVal::read_xdr(&mut limited).ok()
 }
 
 /// Estimate serialized XDR size for a generic serializable object.

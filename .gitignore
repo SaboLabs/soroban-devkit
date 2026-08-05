@@ -3,6 +3,9 @@
 **/*.rs.bk
 **/target/
 
+# Stray compiled artifacts
+/gen_keys
+
 # IDE
 .idea/
 .vscode/

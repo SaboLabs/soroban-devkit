@@ -29,8 +29,8 @@ pub use builder::{
     build_invoke_transaction, decode_account_id, decode_contract_id, InvokeTransactionParams,
 };
 pub use typed::{
-    decode_scvals, decode_scvals_ref, encode_scvals, scval_to_base64, Address, FromScVal,
-    IntoScVal, ScValError,
+    decode_scvals, decode_scvals_ref, encode_scvals, scval_from_base64, scval_to_base64, Address,
+    FromScVal, IntoScVal, ScValError,
 };
 
 use base64::engine::general_purpose::STANDARD;
