@@ -52,7 +52,7 @@ depend on `sdkt-core` + `sdkt-xdr`. No networking in `sdkt-xdr`/`sdkt-core`.
 
 | Milestone | Theme | Notes |
 |-----------|-------|-------|
-| **M11** | **TBD — scope pending approval** | 3 candidate proposals prepared (static analysis / storage analyzer / plugin system). No code until approved. | — |
+| **M11** | **StorageAnalyzer completion (Proposal B)** | Finish `StorageAnalyzer` + `sdkt storage analyze` CLI. ✅ Implemented (commit on `feat/milestone-11`). | — |
 
 ### Remaining Roadmap
 

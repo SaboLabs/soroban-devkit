@@ -144,7 +144,7 @@ This section supersedes the "What `sdkt` provides" promises above with **shipped
 |--------------|-------|-----------|
 | **Gap A** — Unified CLI lifecycle | ✅ **Closed** | M3A–M10: `decode`, `storage`, `inspect`, `tx`, `events`, `account`, `fee`, `wasm`, `identity`, `init`, `deploy` all present |
 | **Gap B** — Storage rent visibility | ✅ **Closed** | M3A: `sdkt storage check` (TTL + extension cost), `storage estimate` |
-| **Gap C** — Static security analysis | 🟡 **Candidate (M11)** | Three proposals pending; `docs/milestone-11-plan.md` explores the audit option but scope is NOT approved |
+| **Gap C** — Static security analysis | 🟡 **Candidate (deferred)** | M11 shipped Proposal B (StorageAnalyzer), not Gap C. Audit remains unstarted; `docs/milestone-11-plan.md` is a candidate design only. |
 | **Gap D** — Local XDR decoder | ✅ **Closed** | M3A/M5: `sdkt decode` (ScVal / TransactionEnvelope / ContractEvent), offline |
 | **Gap E** — ABI / interface viewer | ✅ **Closed** | M3B + M10 (ENG-16): `sdkt inspect` + `--abi` ABI-aware decoding of events/storage |
 | Plugin system | 🟡 **Planned** | M13 — `AuditRule` trait in M11 is the foundation |

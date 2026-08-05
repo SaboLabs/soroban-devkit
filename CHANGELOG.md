@@ -5,22 +5,17 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [v0.11.0-alpha] - Milestone 11 (SCOPE PENDING APPROVAL)
+## [v0.11.0-alpha] - 2026-08-05 (Milestone 11 — IMPLEMENTED, MERGED to main)
 
-> Status: **No official M11 specification, ROADMAP entry, or ENG design doc exists yet.**
-> Three candidate proposals are under review (static analysis / storage analyzer / plugin system).
-> Implementation will not begin until scope is explicitly approved. This section will be
-> rewritten to match the chosen proposal.
+### Added (Proposal B: finish `StorageAnalyzer`)
+- **`sdkt storage analyze <contract-id>`** — categorizes a contract's storage into Instance / Persistent / Temporary entries, with a TTL summary and per-entry detail. Pretty + JSON via existing `OutputFormat`.
+- `sdkt-storage`: real Instance/Persistent/Temporary classification by decoding the XDR `LedgerKey` (`StorageClass`); `StorageEntry` per-entry detail added to `StorageReport`.
+- 5 unit tests (classification round-trips for instance/persistent/temporary/invalid) + 3 `sdkt-cli` integration tests for `storage analyze`.
+- Additive, backwards-compatible: `StorageReport` gains `total_entries`, `other_entries`, `entries` (serde-defaulted) — no breaking changes.
 
-### Candidate scope A — Gap C: Static Security Analysis (`sdkt audit`)
-- New `sdkt-audit` crate + `sdkt audit <target>` subcommand.
-- Rule set: `AUTH-001/002/003`, `MOVE-001`; `AuditRule` trait + `--disable`.
-
-### Candidate scope B — M4: StorageAnalyzer report
-- Finish the existing (unwired) `StorageAnalyzer` in `sdkt-storage`; expose `sdkt storage analyze`.
-
-### Candidate scope C — Plugin / extensibility framework
-- External rule/command plugins via a registry (GAP_ANALYSIS plugin pillar).
+> Note: M11 was scoped to Proposal B only (per operator approval). `sdkt-audit` (Gap C)
+> and the plugin framework (M13) were explicitly excluded. See `docs/milestone-11-plan.md`
+> for the (unapproved) audit candidate design.
 
 ## [v0.10.0-alpha] - 2026-08-05 (Milestone 10 / ENG-16 — MERGED to main)
 
