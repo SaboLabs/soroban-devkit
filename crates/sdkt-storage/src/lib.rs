@@ -8,4 +8,4 @@ pub use analyzer::StorageAnalyzer;
 pub use cache::{CacheInfo, WasmCache};
 pub use error::StorageError;
 pub use identity::{Identity, IdentityStore};
-pub use types::StorageReport;
+pub use types::{StorageClass, StorageEntry, StorageReport, TtlInfoSummary};

@@ -1870,6 +1870,7 @@ dependencies = [
 name = "sdkt-storage"
 version = "0.6.0-alpha"
 dependencies = [
+ "base64 0.23.0",
  "directories",
  "ed25519-dalek",
  "rand 0.8.7",
@@ -1878,6 +1879,7 @@ dependencies = [
  "serde",
  "serde_json",
  "stellar-strkey 0.0.18",
+ "stellar-xdr",
  "tempfile",
  "thiserror 2.0.19",
  "tokio",
