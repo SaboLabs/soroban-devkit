@@ -57,6 +57,8 @@ depend on `sdkt-core` + `sdkt-xdr`. No networking in `sdkt-xdr`/`sdkt-core`.
 | **M17** | **Plugin System — Phase A (Rule Registry)** | `RuleRegistry` in `sdkt-audit`; built-ins register via registry; additive `--rules <path>` flag; plugin author API (`AuditRule`/`AuditContext`/`Finding`/`register_rule!`); example rule crate `sdkt-audit-example-rule`; `docs/plugin-authoring.md`. ✅ Merged to `main`. | — |
 | **M18** | **Plugin System — Phase B (Dynamic Rule Loading)** | Native shared-library plugins via `libloading` + C-ABI (`#[repr(C)]`) boundary; `sdkt audit --rules <plugin.so>` loads rules at runtime with no CLI rebuild; ABI major-version gate; plugin panics isolated. ✅ Merged to `main` (feature `plugins`, default OFF). | — |
 | **M19** | **Plugin System — Phase C (WASM Sandbox)** | Sandboxed `.wasm` plugins via `extism` + JSON-ABI boundary; `sdkt audit --rules <plugin.wasm>` loads rules safely across platforms; no filesystem/network access; no memory leaks. ✅ Merged to `main` (feature `wasm-plugins`, default OFF). | — |
+| **M20** | **Stability & Release Engineering** | 1.88.0 MSRV bump, CI hardening, `sdkt-storage` Windows compatibility, dependency compaction. ✅ Merged to `main`. | — |
+| **M21** | **Contract Inspector (Offline)** | `sdkt wasm inspect <file.wasm>` CLI command to view contract metadata, custom sections, exported functions, and contract specs offline. ✅ Merged to `main`. | — |
 
 ### Remaining Roadmap
 

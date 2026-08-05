@@ -161,6 +161,13 @@ enum IdentityAction {
 
 #[derive(Subcommand)]
 enum WasmAction {
+    /// Inspect a local WASM contract file offline
+    Inspect {
+        /// Path to the WASM file to inspect
+        file: String,
+        #[arg(short, long, default_value = "pretty")]
+        format: String,
+    },
     /// Inspect WASM metadata for a deployed contract
     Metadata {
         #[arg(short, long)]
@@ -1346,6 +1353,64 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             }
         }
         Commands::Wasm { action } => match action {
+            WasmAction::Inspect { file, format } => {
+                let fmt = parse_format_str(&format);
+
+                let wasm_bytes = fs::read(&file).unwrap_or_else(|e| {
+                    eprintln!("Error reading WASM file {}: {}", file, e);
+                    process::exit(1);
+                });
+
+                let metadata = sdkt_wasm::parse_metadata(&wasm_bytes).unwrap_or_else(|e| {
+                    eprintln!("Error parsing WASM metadata: {}", e);
+                    process::exit(1);
+                });
+
+                // Attempt to parse contract spec, but it's optional
+                let spec = parse_contract_spec(&wasm_bytes).ok();
+
+                if fmt == OutputFormat::Json {
+                    let json = serde_json::json!({
+                        "file": file,
+                        "metadata": metadata,
+                        "spec": spec,
+                    });
+                    println!("{}", serde_json::to_string_pretty(&json).unwrap());
+                } else {
+                    println!("WASM Inspection Report: {}", file);
+                    println!("========================================");
+                    println!("Size: {} bytes", metadata.size_bytes);
+                    println!("SHA-256 Hash: {}", metadata.hash);
+                    println!("Version: {}", metadata.version);
+
+                    println!("\nCustom Sections ({}):", metadata.custom_sections.len());
+                    for section in &metadata.custom_sections {
+                        println!("  - {}", section);
+                    }
+
+                    println!("\nExported Functions ({}):", metadata.exports.len());
+                    for export in &metadata.exports {
+                        println!("  - {} [{}]", export.name, export.kind);
+                    }
+
+                    if let Some(spec) = spec {
+                        println!("\nContract Spec Available: Yes");
+                        println!("  Functions: {}", spec.functions.len());
+                        for f in &spec.functions {
+                            println!(
+                                "    - fn {}({}) -> {}",
+                                f.name,
+                                f.parameters.len(),
+                                f.outputs.len()
+                            );
+                        }
+                        println!("  Custom Types: {}", spec.custom_types.len());
+                        println!("  Events: {}", spec.events.len());
+                    } else {
+                        println!("\nContract Spec Available: No");
+                    }
+                }
+            }
             WasmAction::Metadata {
                 contract,
                 network,

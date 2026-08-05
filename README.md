@@ -38,7 +38,7 @@ Most commands are **offline**; only on-chain reads (`inspect`, `storage`,
 | Event explorer | `sdkt events` |
 | Account balances + signers | `sdkt account` |
 | Dynamic fee estimate | `sdkt fee estimate` |
-| WASM metadata + cache | `sdkt wasm metadata`, `sdkt wasm cache` |
+| WASM Operations | `sdkt wasm inspect`, `sdkt wasm metadata`, `sdkt wasm cache` |
 | Offline WASM diff + upgrade-safety verdict | `sdkt diff --upgrade-safety` |
 | Static security audit | `sdkt audit` |
 | ED25519 keystore | `sdkt identity` |
@@ -107,7 +107,8 @@ sdkt audit contracts/token/src/lib.rs
 | `sdkt tx build` | Typed envelope builder. |
 | `sdkt events <contract-id>` | Emitted-contract event explorer (`--abi <wasm>`). |
 | `sdkt account <address>` | Account balances + signers (Horizon-enriched). |
-| `sdkt fee estimate` | Dynamic fee estimate from recent ledger base fees. |
+| `sdkt diff` | Offline comparison of WASM binaries and API surfaces. |
+| `sdkt wasm inspect <file>` | Inspect offline WASM metadata, sections, and specifications. |
 | `sdkt wasm metadata <contract>` | WASM metadata for a deployed contract (cached). |
 | `sdkt wasm cache` | Manage the WASM cache (`info` / `remove` / `clear`). |
 | `sdkt diff --old-wasm <A> --new-wasm <B>` | Offline ABI/function/event/type diff of two WASM files. Add `--upgrade-safety` for a breaking-change verdict. |

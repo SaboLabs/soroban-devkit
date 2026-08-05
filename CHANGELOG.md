@@ -8,6 +8,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [v1.1.0] - Unreleased
 
 ### Added
+- **Soroban Contract Inspector** (M21). Added `sdkt wasm inspect <file.wasm>` command to view contract metadata, custom sections, exported functions, and contract specifications (if present in the WASM) completely offline.
 - **WebAssembly (WASM) plugin loading** for `sdkt audit` (M19, Phase C). Sandboxed, platform-independent `.wasm` plugins can now be loaded via `sdkt audit <src> --rules <plugin.wasm>`.
 - Extism runtime integration via the `wasm-plugins` feature (requires `wasm32-wasip1` target for plugin authors).
 - JSON-over-memory WASM ABI boundary ensuring memory safety and isolation.
