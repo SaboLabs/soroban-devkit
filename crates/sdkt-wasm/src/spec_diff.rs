@@ -192,6 +192,166 @@ fn diff_set(old: &[String], new: &[String], added: &mut Vec<String>, removed: &m
     }
 }
 
+/// Kind of ABI delta observed during an upgrade-safety check.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ChangeKind {
+    RemovedFunction,
+    ChangedSignature,
+    RemovedEvent,
+    RemovedType,
+    AddedFunction,
+    AddedEvent,
+    AddedType,
+}
+
+/// A single classified delta, used for both breaking and non-breaking lists.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct VerdictChange {
+    pub kind: ChangeKind,
+    /// Item name (function/event/type). Functions are stored bare; the
+    /// human label adds `()` for call-style rendering.
+    pub name: String,
+    /// Optional human-readable detail (e.g. old/new signature for a change).
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub detail: String,
+}
+
+impl VerdictChange {
+    /// Human-readable `Kind: name()` label for pretty output.
+    pub fn label(&self) -> String {
+        let kind = match self.kind {
+            ChangeKind::RemovedFunction => "Removed function",
+            ChangeKind::ChangedSignature => "Changed signature",
+            ChangeKind::RemovedEvent => "Removed event",
+            ChangeKind::RemovedType => "Removed type",
+            ChangeKind::AddedFunction => "Added function",
+            ChangeKind::AddedEvent => "Added event",
+            ChangeKind::AddedType => "Added type",
+        };
+        match self.kind {
+            ChangeKind::RemovedFunction
+            | ChangeKind::AddedFunction
+            | ChangeKind::ChangedSignature => {
+                format!("{}: {}()", kind, self.name)
+            }
+            _ => format!("{}: {}", kind, self.name),
+        }
+    }
+}
+
+/// An actionable upgrade-safety verdict derived from a [`SpecDiff`].
+///
+/// `compatible` is `false` when any *breaking* change is present (removed
+/// function, changed signature, removed event, removed type). Additions are
+/// non-breaking and recorded separately.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
+pub struct UpgradeVerdict {
+    pub compatible: bool,
+    pub breaking_changes: Vec<VerdictChange>,
+    pub non_breaking_changes: Vec<VerdictChange>,
+}
+
+impl UpgradeVerdict {
+    /// Classify a [`SpecDiff`] into an upgrade-safety verdict.
+    ///
+    /// This deliberately reuses the existing diff output; no comparison logic
+    /// is duplicated.
+    pub fn from_diff(diff: &SpecDiff) -> Self {
+        let mut breaking = Vec::new();
+        let mut non_breaking = Vec::new();
+
+        for f in &diff.removed_functions {
+            breaking.push(VerdictChange {
+                kind: ChangeKind::RemovedFunction,
+                name: f.name.clone(),
+                detail: String::new(),
+            });
+        }
+        for c in &diff.changed_functions {
+            breaking.push(VerdictChange {
+                kind: ChangeKind::ChangedSignature,
+                name: c.name.clone(),
+                detail: format!("old: {}\n      new: {}", sig_of(&c.old), sig_of(&c.new)),
+            });
+        }
+        for e in &diff.removed_events {
+            breaking.push(VerdictChange {
+                kind: ChangeKind::RemovedEvent,
+                name: e.clone(),
+                detail: String::new(),
+            });
+        }
+        for t in &diff.removed_types {
+            breaking.push(VerdictChange {
+                kind: ChangeKind::RemovedType,
+                name: t.clone(),
+                detail: String::new(),
+            });
+        }
+        for f in &diff.added_functions {
+            non_breaking.push(VerdictChange {
+                kind: ChangeKind::AddedFunction,
+                name: f.name.clone(),
+                detail: String::new(),
+            });
+        }
+        for e in &diff.added_events {
+            non_breaking.push(VerdictChange {
+                kind: ChangeKind::AddedEvent,
+                name: e.clone(),
+                detail: String::new(),
+            });
+        }
+        for t in &diff.added_types {
+            non_breaking.push(VerdictChange {
+                kind: ChangeKind::AddedType,
+                name: t.clone(),
+                detail: String::new(),
+            });
+        }
+
+        let compatible = breaking.is_empty();
+        Self {
+            compatible,
+            breaking_changes: breaking,
+            non_breaking_changes: non_breaking,
+        }
+    }
+}
+
+/// Build a `name(params) -> outputs` signature string for a function.
+fn sig_of(f: &ContractFunction) -> String {
+    let params = f
+        .parameters
+        .iter()
+        .map(|p| p.type_.name.clone())
+        .collect::<Vec<_>>()
+        .join(", ");
+    let outputs = f
+        .outputs
+        .iter()
+        .map(|o| o.name.clone())
+        .collect::<Vec<_>>()
+        .join(", ");
+    format!("{}({}) -> ({})", f.name, params, outputs)
+}
+
+/// Compute an upgrade-safety verdict from two already-parsed [`ContractSpec`]s.
+///
+/// Reuses [`diff_specs`] (no duplicated comparison logic).
+pub fn upgrade_safety(old: &ContractSpec, new: &ContractSpec) -> UpgradeVerdict {
+    let diff =
+        diff_specs(old, new, WasmSummary::default(), WasmSummary::default()).unwrap_or_default();
+    UpgradeVerdict::from_diff(&diff)
+}
+
+/// Compute an upgrade-safety verdict directly from two raw WASM binaries.
+pub fn upgrade_safety_wasm(old_raw: &[u8], new_raw: &[u8]) -> Result<UpgradeVerdict, WasmError> {
+    let diff = diff_wasm(old_raw, new_raw)?;
+    Ok(UpgradeVerdict::from_diff(&diff))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -273,5 +433,86 @@ mod tests {
         let new = spec_section(&[func_entry("a", vec![])]);
         let err = diff_wasm(&old, &new);
         assert!(matches!(err, Err(WasmError::NoContractSpec)));
+    }
+
+    // ---- Upgrade-safety verdict tests (reuse diff_specs, no new comparison) ----
+
+    #[test]
+    fn verdict_flags_removed_function_breaking() {
+        let old = spec_section(&[func_entry("a", vec![]), func_entry("b", vec![])]);
+        let new = spec_section(&[func_entry("a", vec![])]);
+        let v = upgrade_safety_wasm(&old, &new).unwrap();
+        assert!(!v.compatible);
+        assert_eq!(v.breaking_changes.len(), 1);
+        assert_eq!(v.breaking_changes[0].kind, ChangeKind::RemovedFunction);
+        assert_eq!(v.breaking_changes[0].name, "b");
+    }
+
+    #[test]
+    fn verdict_flags_changed_signature_breaking() {
+        let old = spec_section(&[func_entry("f", vec![("x".into(), ScSpecTypeDef::U32)])]);
+        let new = spec_section(&[func_entry("f", vec![("x".into(), ScSpecTypeDef::U64)])]);
+        let v = upgrade_safety_wasm(&old, &new).unwrap();
+        assert!(!v.compatible);
+        assert_eq!(v.breaking_changes.len(), 1);
+        assert_eq!(v.breaking_changes[0].kind, ChangeKind::ChangedSignature);
+        assert_eq!(v.breaking_changes[0].name, "f");
+    }
+
+    #[test]
+    fn verdict_flags_removed_event_breaking() {
+        use crate::spec::tests::event_entry;
+        let old = spec_section(&[event_entry("Transfer")]);
+        let new = spec_section(&[]);
+        let v = upgrade_safety_wasm(&old, &new).unwrap();
+        assert!(!v.compatible);
+        assert_eq!(v.breaking_changes.len(), 1);
+        assert_eq!(v.breaking_changes[0].kind, ChangeKind::RemovedEvent);
+        assert_eq!(v.breaking_changes[0].name, "Transfer");
+    }
+
+    #[test]
+    fn verdict_flags_removed_type_breaking() {
+        use crate::spec::tests::udt_struct_entry;
+        let old = spec_section(&[udt_struct_entry("Point")]);
+        let new = spec_section(&[]);
+        let v = upgrade_safety_wasm(&old, &new).unwrap();
+        assert!(!v.compatible);
+        assert_eq!(v.breaking_changes.len(), 1);
+        assert_eq!(v.breaking_changes[0].kind, ChangeKind::RemovedType);
+        assert_eq!(v.breaking_changes[0].name, "Point");
+    }
+
+    #[test]
+    fn verdict_only_additions_is_compatible() {
+        let old = spec_section(&[func_entry("a", vec![])]);
+        let new = spec_section(&[
+            func_entry("a", vec![]),
+            func_entry("b", vec![("x".into(), ScSpecTypeDef::U32)]),
+        ]);
+        use crate::spec::tests::event_entry;
+        let old2 = spec_section(&[func_entry("a", vec![])]);
+        let new2 = spec_section(&[func_entry("a", vec![]), event_entry("Mint")]);
+        let _ = (old, new); // silence unused
+        let v = upgrade_safety_wasm(&old2, &new2).unwrap();
+        assert!(v.compatible);
+        assert!(v.breaking_changes.is_empty());
+        assert!(!v.non_breaking_changes.is_empty());
+        assert!(v
+            .non_breaking_changes
+            .iter()
+            .any(|c| c.kind == ChangeKind::AddedEvent && c.name == "Mint"));
+    }
+
+    #[test]
+    fn verdict_identical_is_compatible() {
+        let wasm = spec_section(&[func_entry(
+            "greet",
+            vec![("name".into(), ScSpecTypeDef::String)],
+        )]);
+        let v = upgrade_safety_wasm(&wasm, &wasm).unwrap();
+        assert!(v.compatible);
+        assert!(v.breaking_changes.is_empty());
+        assert!(v.non_breaking_changes.is_empty());
     }
 }
