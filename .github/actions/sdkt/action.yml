@@ -1,0 +1,97 @@
+name: "Soroban DevKit (sdkt) Action"
+description: "Run sdkt capabilities in CI: static security audit (sdkt audit) and contract upgrade-safety check (sdkt diff --upgrade-safety)."
+author: "naninu123"
+
+inputs:
+  command:
+    description: "Which check to run: 'audit' or 'upgrade-safety'."
+    required: true
+  sdkt-version:
+    description: "Pinned sdkt version to install (e.g. 0.14.0-alpha)."
+    required: false
+    default: "0.14.0-alpha"
+  target:
+    description: "Source file (.rs) to audit (used with command=audit)."
+    required: false
+    default: ""
+  old-wasm:
+    description: "Baseline (currently deployed) WASM (used with command=upgrade-safety)."
+    required: false
+    default: ""
+  new-wasm:
+    description: "Candidate (new) WASM (used with command=upgrade-safety)."
+    required: false
+    default: ""
+  severity-threshold:
+    description: "Minimum severity that fails the audit. One of: critical, warning, info. Default: critical (MOVE-001 warnings never fail CI)."
+    required: false
+    default: "critical"
+
+runs:
+  using: "composite"
+  steps:
+    - name: Install Rust toolchain
+      uses: actions-rs/toolchain@v1
+      with:
+        profile: minimal
+        toolchain: stable
+        override: true
+
+    - name: Install sdkt
+      shell: bash
+      run: cargo install sdkt-cli --version "${{ inputs.sdkt-version }}" --locked
+
+    - name: Run sdkt audit
+      if: ${{ inputs.command == 'audit' }}
+      shell: bash
+      env:
+        SDKT_TARGET: ${{ inputs.target }}
+        SDKT_THRESHOLD: ${{ inputs.severity-threshold }}
+      run: |
+        set -euo pipefail
+        if [ -z "$SDKT_TARGET" ]; then
+          echo "::error::audit command requires 'target' (path to a .rs source file)"
+          exit 1
+        fi
+        echo "Running: sdkt audit $SDKT_TARGET --format json"
+        OUT=$(sdkt audit "$SDKT_TARGET" --format json)
+        echo "$OUT"
+        CRIT=$(echo "$OUT" | jq '.summary.critical')
+        WARN=$(echo "$OUT" | jq '.summary.warning')
+        INFO=$(echo "$OUT" | jq '.summary.info')
+        echo "Findings -> critical=$CRIT warning=$WARN info=$INFO (threshold=$SDKT_THRESHOLD)"
+        FAIL=0
+        case "$SDKT_THRESHOLD" in
+          critical) [ "${CRIT:-0}" -gt 0 ] && FAIL=1 ;;
+          warning)  [ "${CRIT:-0}" -gt 0 ] || [ "${WARN:-0}" -gt 0 ] && FAIL=1 ;;
+          info)     [ "${CRIT:-0}" -gt 0 ] || [ "${WARN:-0}" -gt 0 ] || [ "${INFO:-0}" -gt 0 ] && FAIL=1 ;;
+          *) echo "::error::invalid severity-threshold '$SDKT_THRESHOLD'"; exit 1 ;;
+        esac
+        if [ "$FAIL" -eq 1 ]; then
+          echo "::error::sdkt audit found findings at or above threshold '$SDKT_THRESHOLD'"
+          exit 1
+        fi
+        echo "sdkt audit passed (nothing at or above threshold '$SDKT_THRESHOLD')."
+
+    - name: Run sdkt upgrade-safety
+      if: ${{ inputs.command == 'upgrade-safety' }}
+      shell: bash
+      env:
+        SDKT_OLD: ${{ inputs.old-wasm }}
+        SDKT_NEW: ${{ inputs.new-wasm }}
+      run: |
+        set -euo pipefail
+        if [ -z "$SDKT_OLD" ] || [ -z "$SDKT_NEW" ]; then
+          echo "::error::upgrade-safety command requires both 'old-wasm' and 'new-wasm'"
+          exit 1
+        fi
+        echo "Running: sdkt diff --old-wasm $SDKT_OLD --new-wasm $SDKT_NEW --upgrade-safety --format json"
+        OUT=$(sdkt diff --old-wasm "$SDKT_OLD" --new-wasm "$SDKT_NEW" --upgrade-safety --format json)
+        echo "$OUT"
+        COMPAT=$(echo "$OUT" | jq '.compatible')
+        echo "Upgrade verdict compatible=$COMPAT"
+        if [ "$COMPAT" != "true" ]; then
+          echo "::error::upgrade is NOT backwards-compatible (breaking changes detected)"
+          exit 1
+        fi
+        echo "sdkt upgrade-safety passed (upgrade is backwards-compatible)."

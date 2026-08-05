@@ -1,0 +1,58 @@
+name: sdkt Action CI
+
+# Validates the reusable composite Action (.github/actions/sdkt/action.yml)
+# against the committed WASM fixtures. This is packaging validation only —
+# no Rust is rebuilt; it installs the pinned sdkt binary and runs the Action.
+
+on:
+  push:
+    branches: [ "feat/milestone-15" ]
+  pull_request:
+    branches: [ "main" ]
+
+jobs:
+  validate-action:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+
+      # Breaking upgrade: us_old.wasm -> us_new.wasm is NOT backwards-compatible.
+      # The upgrade-safety mode MUST fail this step.
+      - name: Upgrade-safety should FAIL on breaking change
+        id: breaking
+        continue-on-error: true
+        uses: ./.github/actions/sdkt
+        with:
+          command: upgrade-safety
+          sdkt-version: 0.14.0-alpha
+          old-wasm: crates/sdkt-cli/tests/fixtures/us_old.wasm
+          new-wasm: crates/sdkt-cli/tests/fixtures/us_new.wasm
+
+      - name: Assert breaking upgrade was detected (step failed as expected)
+        shell: bash
+        run: |
+          if [ "${{ steps.breaking.outcome }}" != "failure" ]; then
+            echo "::error::expected upgrade-safety to FAIL on a breaking change, but outcome was '${{ steps.breaking.outcome }}'"
+            exit 1
+          fi
+          echo "OK: breaking upgrade correctly failed."
+
+      # Compatible upgrade: us_old.wasm -> us_old.wasm is identical (compatible).
+      # The upgrade-safety mode MUST pass this step.
+      - name: Upgrade-safety should PASS on compatible (identical) upgrade
+        id: compatible
+        uses: ./.github/actions/sdkt
+        with:
+          command: upgrade-safety
+          sdkt-version: 0.14.0-alpha
+          old-wasm: crates/sdkt-cli/tests/fixtures/us_old.wasm
+          new-wasm: crates/sdkt-cli/tests/fixtures/us_old.wasm
+
+      - name: Assert compatible upgrade passed
+        shell: bash
+        run: |
+          if [ "${{ steps.compatible.outcome }}" != "success" ]; then
+            echo "::error::expected upgrade-safety to PASS on a compatible upgrade, but outcome was '${{ steps.compatible.outcome }}'"
+            exit 1
+          fi
+          echo "OK: compatible upgrade correctly passed."
