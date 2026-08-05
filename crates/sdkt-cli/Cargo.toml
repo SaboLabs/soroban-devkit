@@ -32,7 +32,10 @@ default = []
 plugins = ["sdkt-audit-example-rule", "sdkt-audit/plugins"]
 
 # WebAssembly plugin loading (M19, Phase C). Off by default.
-wasm-plugins = ["sdkt-audit/wasm-plugins"]
+wasm-plugins = [
+    "sdkt-audit/wasm-plugins",
+    "sdkt-audit-example-rule/wasm-plugins",
+]
 
 [dev-dependencies]
 assert_cmd = "2.2.2"
