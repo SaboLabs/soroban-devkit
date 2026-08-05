@@ -1822,12 +1822,23 @@ dependencies = [
 ]
 
 [[package]]
+name = "sdkt-audit"
+version = "0.6.0-alpha"
+dependencies = [
+ "sdkt-wasm",
+ "serde",
+ "syn 2.0.119",
+ "thiserror 2.0.19",
+]
+
+[[package]]
 name = "sdkt-cli"
 version = "0.6.0-alpha"
 dependencies = [
  "assert_cmd",
  "clap",
  "predicates",
+ "sdkt-audit",
  "sdkt-core",
  "sdkt-rpc",
  "sdkt-storage",

@@ -1,0 +1,14 @@
+[package]
+name = "sdkt-audit"
+version = "0.6.0-alpha"
+edition = "2021"
+license = "MIT"
+description = "Static security analysis for Soroban contracts (Gap C)."
+
+[dependencies]
+syn = { version = "2", features = ["full", "visit"] }
+serde = { version = "1", features = ["derive"] }
+thiserror = "2"
+sdkt-wasm = { version = "0.6.0-alpha", path = "../sdkt-wasm" }
+
+[dev-dependencies]

@@ -1,7 +1,7 @@
 # Soroban DevKit (sdkt) — ROADMAP
 
 **Last updated:** 2026-08-05
-**Status:** Active development. `main` is the default branch. Latest merged work: Milestone 10 (ENG-16 ABI-aware decoding).
+**Status:** Active development. `main` is the default branch. Latest merged work: Milestone 12 (Contract ABI/WASM Diff). M13 (Gap C static analysis) implemented on `feat/milestone-13`, pending merge.
 
 This document is the single source of truth for milestone scope and sequencing.
 Individual milestone plans live under `docs/milestone-*-plan.md`; engineering
@@ -48,15 +48,15 @@ depend on `sdkt-core` + `sdkt-xdr`. No networking in `sdkt-xdr`/`sdkt-core`.
 | M9 | WASM tooling & caching | `sdkt wasm metadata`, `sdkt wasm cache`, `sdkt-wasm` crate, ContractSpec parser, deploy (`sdkt deploy`) + init (`sdkt init`) scaffolding | v0.9.0-alpha |
 | M10 | ABI-aware decoding (ENG-16) | `--abi <WASM>` on `events`/`inspect`/`storage check`; `decode_event_topics`; real event payload decoding | v0.10.0-alpha |
 | M11 | StorageAnalyzer completion (Proposal B) | Finish `StorageAnalyzer` + `sdkt storage analyze` CLI. ✅ Merged to `main` (v0.11.0-alpha). | — |
-| **M12** | **Contract ABI/WASM Diff (Candidate C)** | `sdkt diff --old-wasm --new-wasm` offline comparison of functions/events/types. ✅ Implemented (commit on `feat/milestone-12`, pending merge). | — |
+| **M12** | **Contract ABI/WASM Diff (Candidate C)** | `sdkt diff --old-wasm --new-wasm` offline comparison. ✅ Merged to `main` (v0.12.0-alpha, #10). | — |
+| **M13** | **Gap C — Static Security Analysis (`sdkt audit`)** | New `sdkt-audit` crate; `AUTH-001/002/003`, `MOVE-001`; `sdkt audit <path>`. ✅ Implemented (commit on `feat/milestone-13`, pending merge). | — |
 
 ### Remaining Roadmap
 
 | Milestone | Theme | Status | Dependencies |
 |-----------|-------|--------|--------------|
-| M12 | Contract ABI/WASM diff (`sdkt diff`) | Designed (reuses `sdkt-wasm` parser) | M10 ABI, M9 WASM |
-| M13 | Plugin system (external `AuditRule` + lint plugins) | Planned (GAP_ANALYSIS pillar) | M11 rule registry |
-| M14 | Contract diff / upgrade safety analysis | Planned | M10 ABI, M11 audit |
+| M13 | Gap C — Static security analysis (`sdkt audit`) | **Done** (new `sdkt-audit` crate, M13) | — |
+| M14 | Contract diff / upgrade safety analysis | Planned | M10 ABI, M12 diff |
 | M15 | CI/CD GitHub Action packaging (`sdkt` as a composite action) | Planned | M11 (audit in CI) |
 | Post-1.0 | Mainnet-focused tooling, SCF grant alignment | Backlog | — |
 
@@ -68,10 +68,10 @@ depend on `sdkt-core` + `sdkt-xdr`. No networking in `sdkt-xdr`/`sdkt-core`.
 |--------------|-------|
 | Gap A — Unified CLI lifecycle | ✅ Closed (M3A–M10) |
 | Gap B — Storage rent visibility | ✅ Closed (M3A) |
-| Gap C — Static security analysis | 🟡 In progress (M11) |
+| Gap C — Static security analysis | ✅ **Closed (M13)** | M13: `sdkt-audit` crate, `AUTH-001/002/003` + `MOVE-001` rules, `sdkt audit` CLI |
 | Gap D — Local XDR decoder | ✅ Closed (M3A/M5) |
 | Gap E — ABI/interface viewer | ✅ Closed (M3B/M10) |
-| Plugin system | 🟡 Planned (M13) |
+| Plugin system | 🟡 Planned (post-M13) | Extensibility pillar; depends on a stable `AuditRule` trait (now provided by `sdkt-audit` in M13) |
 
 ---
 
