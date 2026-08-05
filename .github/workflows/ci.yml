@@ -70,7 +70,7 @@ jobs:
     - name: Set up Rust (MSRV)
       uses: dtolnay/rust-toolchain@master
       with:
-        toolchain: "1.85.0"
+        toolchain: "1.88.0"
 
     - uses: Swatinem/rust-cache@v2
 

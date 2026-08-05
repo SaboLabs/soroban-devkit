@@ -7,7 +7,7 @@
 ```bash
 rustup toolchain install stable
 rustup default stable
-cargo --version   # >= 1.85.0 required
+cargo --version   # >= 1.88.0 required
 ```
 
 ## Option A — Build from source (recommended)
