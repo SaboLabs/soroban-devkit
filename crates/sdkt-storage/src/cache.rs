@@ -148,15 +148,18 @@ impl WasmCache {
     }
 
     /// Retrieves usage statistics for a specific network.
+    /// A missing cache directory is treated as an empty cache (zero entries).
     pub fn cache_info(&self, network: &str) -> Result<CacheInfo, StorageError> {
-        let net_dir = self.network_dir(network)?;
+        // Compute the network path WITHOUT forcing directory creation, so the
+        // command succeeds even when the cache directory does not yet exist.
+        let net_dir = self.base_dir.join("wasm").join(network);
 
         let mut entry_count = 0;
         let mut total_metadata_size_bytes = 0;
         let mut total_wasm_size_bytes = 0;
 
         if net_dir.exists() {
-            for entry in fs::read_dir(net_dir).map_err(StorageError::Io)? {
+            for entry in fs::read_dir(&net_dir).map_err(StorageError::Io)? {
                 let entry = entry.map_err(StorageError::Io)?;
                 let meta = entry.metadata().map_err(StorageError::Io)?;
                 let name = entry.file_name().to_string_lossy().to_string();
