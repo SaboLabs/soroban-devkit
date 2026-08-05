@@ -282,6 +282,14 @@ pub fn scval_to_base64(v: &ScVal) -> Result<String, ScValError> {
     Ok(base64::engine::general_purpose::STANDARD.encode(&buf))
 }
 
+/// Estimate serialized XDR size for a generic serializable object.
+pub fn estimate_xdr_size<T: stellar_xdr::WriteXdr>(val: &T) -> Result<usize, ScValError> {
+    let mut buf = Vec::new();
+    let mut l = stellar_xdr::Limited::new(&mut buf, stellar_xdr::Limits::none());
+    val.write_xdr(&mut l).map_err(|_| ScValError::TooLong)?;
+    Ok(buf.len())
+}
+
 /// Decode a list of `ScVal`s back into typed values.
 pub fn decode_scvals<T, I>(vals: I) -> Result<Vec<T>, ScValError>
 where

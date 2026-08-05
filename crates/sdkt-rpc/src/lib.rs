@@ -10,6 +10,7 @@
 
 pub mod account;
 pub mod client;
+pub mod deploy;
 pub mod error;
 pub mod events;
 pub mod fee;
@@ -22,6 +23,7 @@ pub mod wasm;
 
 pub use account::{inspect_account, AccountBalance, AccountInspection, AccountSigner};
 pub use client::SorobanRpcClient;
+pub use deploy::{deploy_contract, format_json, format_pretty, DeployResult};
 pub use error::RpcError;
 pub use events::{get_contract_events, ContractEvent};
 pub use fee::{estimate_dynamic_fee, get_fee_stats, FeeDistribution, FeeStats};

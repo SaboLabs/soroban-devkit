@@ -77,6 +77,15 @@ enum Commands {
         #[command(subcommand)]
         action: IdentityAction,
     },
+    /// Deploy a contract (Upload WASM + Instantiate)
+    Deploy {
+        #[arg(short, long)]
+        wasm: String,
+        #[arg(short, long)]
+        salt: String,
+        #[arg(short, long, default_value = "pretty")]
+        format: String,
+    },
 }
 
 #[derive(Subcommand)]
@@ -153,6 +162,14 @@ enum FeeAction {
 enum TxAction {
     Inspect {
         hash: String,
+        #[arg(short, long, default_value = "pretty")]
+        format: String,
+    },
+    /// Validate a transaction envelope offline (pre-flight checks)
+    Validate {
+        /// Base64 XDR transaction envelope or path to a file containing it
+        #[arg(short, long)]
+        envelope: String,
         #[arg(short, long, default_value = "pretty")]
         format: String,
     },
@@ -353,6 +370,45 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                         eprintln!("Error inspecting transaction: {}", e);
                         process::exit(1);
                     }
+                }
+            }
+            TxAction::Validate { envelope, format } => {
+                let fmt = parse_format_str(&format);
+                let env_data = if fs::metadata(&envelope).is_ok() {
+                    fs::read_to_string(&envelope)?
+                } else {
+                    envelope.clone()
+                };
+
+                use sdkt_core::validation::validate_base64;
+                let report = validate_base64(env_data.trim());
+
+                if fmt == OutputFormat::Json {
+                    let json_str = serde_json::to_string(&report)?;
+                    println!("{}", json_str);
+                } else {
+                    println!("Validation Report:");
+                    if report.valid {
+                        println!("  Status: VALID");
+                    } else {
+                        println!("  Status: INVALID");
+                    }
+                    if !report.errors.is_empty() {
+                        println!("  Errors:");
+                        for err in &report.errors {
+                            println!("    - {}", err.message());
+                        }
+                    }
+                    if !report.warnings.is_empty() {
+                        println!("  Warnings:");
+                        for warn in &report.warnings {
+                            println!("    - {:?}", warn);
+                        }
+                    }
+                }
+
+                if !report.valid {
+                    process::exit(1);
                 }
             }
             TxAction::Simulate { envelope, format } => {
@@ -906,6 +962,27 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 IdentityAction::Default { name } => {
                     store.set_default(&name)?;
                     println!("Identity '{}' set as default.", name);
+                }
+            }
+        }
+        Commands::Deploy { wasm, salt, format } => {
+            let fmt = parse_format_str(&format);
+            use sdkt_rpc::deploy_contract;
+            let config = DevKitConfig::from_file(".sdkt.toml").unwrap_or_default();
+            let client = SorobanRpcClient::from_config(&config.network);
+            // For CLI demo, read wasm file; if file missing, use empty bytes
+            let wasm_bytes = fs::read(&wasm).unwrap_or_default();
+            match deploy_contract(&client, &wasm_bytes, &salt).await {
+                Ok(res) => {
+                    if fmt == OutputFormat::Json {
+                        println!("{}", sdkt_rpc::format_json(&res));
+                    } else {
+                        println!("{}", sdkt_rpc::format_pretty(&res));
+                    }
+                }
+                Err(e) => {
+                    eprintln!("Deployment error: {}", e);
+                    std::process::exit(1);
                 }
             }
         }

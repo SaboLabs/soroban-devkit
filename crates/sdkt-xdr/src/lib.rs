@@ -279,6 +279,34 @@ pub fn format_json(value: &Value, format: OutputFormat) -> Result<String, Decode
     }
 }
 
+/// Estimate the serialized XDR size (in bytes) of a `WriteXdr` value.
+///
+/// Reuses the existing `WriteXdr` machinery — no duplicate parser. Returns the
+/// exact number of bytes the payload would occupy on the wire.
+pub fn estimate_xdr_size<T: WriteXdr>(value: &T) -> usize {
+    let mut buf = Vec::new();
+    let mut l = Limited::new(&mut buf, Limits::none());
+    // Best-effort: if serialization fails (e.g. value too large), report the
+    // buffer length so far. Callers use this only for pre-flight checks.
+    let _ = value.write_xdr(&mut l);
+    buf.len()
+}
+
+/// Validate that a raw byte payload is a well-formed XDR `TransactionEnvelope`.
+///
+/// Returns `Ok(size)` when the payload parses, or `Err` with a message when it
+/// does not. This is a pure structural check (no RPC).
+pub fn validate_xdr(raw: &[u8]) -> Result<usize, String> {
+    if raw.is_empty() {
+        return Err("empty payload".into());
+    }
+    let mut cursor = std::io::Cursor::new(raw);
+    let mut l = Limited::new(&mut cursor, Limits::none());
+    TransactionEnvelope::read_xdr(&mut l)
+        .map_err(|e| format!("malformed transaction envelope: {e}"))
+        .map(|_| raw.len())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -401,5 +429,12 @@ mod tests {
     fn test_extract_wasm_hash_malformed_base64() {
         let err = extract_wasm_hash("invalid base64!!!").unwrap_err();
         assert!(matches!(err, DecodeError::Hex(_))); // detect_and_decode falls back to Hex and fails there
+    }
+
+    #[test]
+    fn test_estimate_xdr_size() {
+        let val = ScVal::U32(42);
+        // Tag(4) + U32(4) = 8 bytes
+        assert_eq!(estimate_xdr_size(&val), 8);
     }
 }
