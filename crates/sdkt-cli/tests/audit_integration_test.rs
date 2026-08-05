@@ -34,6 +34,17 @@ fn audit_missing_file_errors() {
 }
 
 #[test]
+fn audit_invalid_rust_source_errors() {
+    let dir = TempDir::new().unwrap();
+    let path = write_fixture(&dir, "bad_syntax.rs", "fn { not rust code ");
+    sdkt()
+        .args(["audit", path.to_str().unwrap()])
+        .assert()
+        .failure()
+        .stderr(predicates::str::contains("source parse error"));
+}
+
+#[test]
 fn audit_flags_privileged_without_auth() {
     let dir = TempDir::new().unwrap();
     let path = write_fixture(

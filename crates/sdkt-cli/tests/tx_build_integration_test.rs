@@ -51,6 +51,26 @@ fn test_cli_tx_build_typed_args() {
 }
 
 #[test]
+fn test_cli_tx_build_invalid_arg_format() {
+    let mut cmd = Command::cargo_bin("sdkt-cli").unwrap();
+    let assert = cmd
+        .arg("tx")
+        .arg("build")
+        .arg("--source")
+        .arg(TEST_SOURCE)
+        .arg("--sequence")
+        .arg("1")
+        .arg("--contract")
+        .arg(TEST_CONTRACT)
+        .arg("--function")
+        .arg("transfer")
+        .arg("--arg")
+        .arg("unknown_type:100")
+        .assert();
+    assert.failure();
+}
+
+#[test]
 fn test_cli_tx_build_json() {
     let mut cmd = Command::cargo_bin("sdkt-cli").unwrap();
     let assert = cmd

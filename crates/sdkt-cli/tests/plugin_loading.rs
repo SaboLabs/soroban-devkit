@@ -171,6 +171,28 @@ fn dynamic_plugin_coexists_with_builtins() {
         .stdout(predicate::str::contains("EXAMPLE-001"));
 }
 
+#[cfg(feature = "plugins")]
+#[test]
+fn native_plugin_invalid_so_errors() {
+    let mut cmd = Command::cargo_bin("sdkt-cli").unwrap();
+    let tmp = tempfile::Builder::new().suffix(".so").tempfile().unwrap();
+    std::fs::write(tmp.path(), b"not an so file").unwrap();
+
+    let src = "pub fn foo() {}";
+    let src_tmp = tempfile::Builder::new().suffix(".rs").tempfile().unwrap();
+    std::fs::write(src_tmp.path(), src).unwrap();
+
+    cmd.args([
+        "audit",
+        src_tmp.path().to_str().unwrap(),
+        "--rules",
+        tmp.path().to_str().unwrap(),
+    ])
+    .assert()
+    .failure()
+    .stderr(predicates::str::contains("failed to load plugin"));
+}
+
 #[cfg(feature = "wasm-plugins")]
 fn build_example_wasm_plugin() -> std::path::PathBuf {
     let status = Command::new(env!("CARGO"))

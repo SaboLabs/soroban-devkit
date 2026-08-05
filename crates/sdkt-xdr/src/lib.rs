@@ -323,6 +323,13 @@ mod tests {
     }
 
     #[test]
+    fn test_valid_base64_but_invalid_xdr() {
+        // Base64 for "hello world" which is not valid XDR
+        let result = decode("aGVsbG8gd29ybGQ=", None, OutputFormat::default());
+        assert!(matches!(result, Err(DecodeError::TypeUnknown(_))));
+    }
+
+    #[test]
     fn test_valid_scval_integer_base64() {
         let payload = "AAAABAAAAAE=";
         let json = decode(payload, Some("scval"), OutputFormat::Json).unwrap();

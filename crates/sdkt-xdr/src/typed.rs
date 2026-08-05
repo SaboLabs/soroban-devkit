@@ -337,6 +337,13 @@ mod tests {
     fn integer_roundtrip() {
         assert_eq!(42u32.into_scval().unwrap(), ScVal::U32(42));
         assert_eq!((-7i32).into_scval().unwrap(), ScVal::I32(-7));
+
+        // Bounds
+        assert_eq!(u32::MAX.into_scval().unwrap(), ScVal::U32(u32::MAX));
+        assert_eq!(u32::MIN.into_scval().unwrap(), ScVal::U32(u32::MIN));
+        assert_eq!(i32::MAX.into_scval().unwrap(), ScVal::I32(i32::MAX));
+        assert_eq!(i32::MIN.into_scval().unwrap(), ScVal::I32(i32::MIN));
+
         assert_eq!(
             9_000_000_000u64.into_scval().unwrap(),
             ScVal::U64(9_000_000_000)
