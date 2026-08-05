@@ -7,9 +7,9 @@ inputs:
     description: "Which check to run: 'audit' or 'upgrade-safety'."
     required: true
   sdkt-version:
-    description: "Pinned sdkt version to install (e.g. 0.14.0-alpha)."
+    description: "sdkt git tag to install (e.g. v0.15.0-alpha). Must be a published tag in naninu123/soroban-devkit."
     required: false
-    default: "0.14.0-alpha"
+    default: "v0.15.0-alpha"
   target:
     description: "Source file (.rs) to audit (used with command=audit)."
     required: false
@@ -31,15 +31,11 @@ runs:
   using: "composite"
   steps:
     - name: Install Rust toolchain
-      uses: actions-rs/toolchain@v1
-      with:
-        profile: minimal
-        toolchain: stable
-        override: true
+      uses: dtolnay/rust-toolchain@stable
 
     - name: Install sdkt
       shell: bash
-      run: cargo install sdkt-cli --version "${{ inputs.sdkt-version }}" --locked
+      run: cargo install --git https://github.com/naninu123/soroban-devkit --tag "${{ inputs.sdkt-version }}" sdkt-cli --locked
 
     - name: Run sdkt audit
       if: ${{ inputs.command == 'audit' }}
