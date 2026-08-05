@@ -167,4 +167,4 @@ This section supersedes the "What `sdkt` provides" promises above with **shipped
 - "Interactive CLI menu" for `inspect` (Gap E) was scoped down to structured pretty/JSON output; no interactive TUI was built.
 - Horiz/account graph enrichment shipped in M7, extending Gap A's account inspection beyond the original plan.
 
-**Conclusion:** All 5 original gaps (A–E) are now closed; Gap C was completed in M13, the upgrade-safety guard in M14, and the CI/CD packaging promise in M15. Remaining work is the plugin system (post-M15), mainnet/SCF alignment (post-1.0). `sdkt` now spans the full read-only + mutating lifecycle, is production-hardened (M6 CI/clippy gates), and is usable directly in developer pipelines via its GitHub composite Action.
+**Conclusion:** All 5 original gaps (A–E) are now closed; Gap C was completed in M13, the upgrade-safety guard in M14, and the CI/CD packaging promise in M15. Remaining work is the plugin system (post-M17), mainnet/SCF alignment (post-1.0). `sdkt` now spans the full read-only + mutating lifecycle, is production-hardened (M6 CI/clippy gates), and is usable directly in developer pipelines via its GitHub composite Action.

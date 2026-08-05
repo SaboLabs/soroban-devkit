@@ -14,7 +14,7 @@ mode, and fails the step when the check does not pass.
 | Input | Required | Default | Meaning |
 |-------|----------|---------|---------|
 | `command` | yes | — | `audit` or `upgrade-safety` |
-| `sdkt-version` | no | `0.14.0-alpha` | Pinned `sdkt` version to install |
+| `sdkt-version` | no | `v0.17.0-alpha` | Pinned `sdkt` git tag to install |
 | `target` | for `audit` | `""` | Path to the `.rs` source to audit |
 | `old-wasm` | for `upgrade-safety` | `""` | Baseline (currently deployed) WASM |
 | `new-wasm` | for `upgrade-safety` | `""` | Candidate (new) WASM |
@@ -43,7 +43,7 @@ jobs:
         uses: naninu123/soroban-devkit/.github/actions/sdkt@main
         with:
           command: audit
-          sdkt-version: 0.14.0-alpha
+          sdkt-version: v0.17.0-alpha
           target: contracts/token/src/lib.rs
           severity-threshold: critical
 ```
@@ -70,7 +70,7 @@ jobs:
         uses: naninu123/soroban-devkit/.github/actions/sdkt@main
         with:
           command: upgrade-safety
-          sdkt-version: 0.14.0-alpha
+          sdkt-version: v0.17.0-alpha
           old-wasm: builds/current.wasm
           new-wasm: builds/candidate.wasm
 ```
@@ -84,9 +84,11 @@ asserted to **fail**, and an **identical** diff is asserted to **pass**.
 
 ## Notes
 
-- The Action installs `sdkt` via `cargo install sdkt-cli --version <pin>`.
-  For faster, reproducible CI, pin to a released version and consider a
-  prebuilt-binary install mode (future optimization).
+- The Action installs `sdkt` from a pinned git tag via
+  `cargo install --git https://github.com/naninu123/soroban-devkit --tag <sdkt-version> sdkt-cli --locked`
+  (or, when run inside the sdkt workspace itself, from the local path). For
+  faster, reproducible CI, pin to a released tag and consider a prebuilt-binary
+  install mode (future optimization).
 - `upgrade-safety` requires the **baseline** WASM to be supplied explicitly
   (`old-wasm`); it does not fetch the on-chain deployed contract. Provide your
   previously-deployed `.wasm` as the baseline artifact.

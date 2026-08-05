@@ -6,7 +6,7 @@ name: sdkt Action CI
 
 on:
   push:
-    branches: [ "feat/milestone-15" ]
+    branches: [ "feat/*" ]
   pull_request:
     branches: [ "main" ]
 

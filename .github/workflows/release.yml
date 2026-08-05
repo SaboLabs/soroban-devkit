@@ -97,5 +97,5 @@ jobs:
         run: |
           for c in sdkt-core sdkt-xdr sdkt-wasm sdkt-rpc sdkt-storage sdkt-audit sdkt-cli; do
             echo "== cargo publish -p $c =="
-            cargo publish -p "$c" --allow-dirty
+            cargo publish -p "$c"
           done

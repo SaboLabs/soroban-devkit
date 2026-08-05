@@ -1,7 +1,7 @@
 # Soroban DevKit (sdkt) — ROADMAP
 
 **Last updated:** 2026-08-05
-**Status:** Active development. `main` is the default branch. Latest merged work: Milestone 15 (CI/CD GitHub Action, tagged `v0.15.0-alpha`). M16 (Release Engineering & Polish) implemented on `feat/milestone-16`, pending merge.
+**Status:** Active development. `main` is the default branch. Latest merged work: Milestone 17 (Plugin System Phase A — Rule Registry, tagged `v0.17.0-alpha`). M16 (Release Engineering & Polish) and M17 (Plugin System Phase A) are merged to `main`.
 
 This document is the single source of truth for milestone scope and sequencing.
 Individual milestone plans live under `docs/milestone-*-plan.md`; engineering
@@ -27,6 +27,7 @@ sdkt-xdr      → XDR decode/encode, ScVal <-> Rust, ABI-aware decoding
 sdkt-rpc      → Soroban RPC client, storage/inspect/tx/events/account/sim/submit
 sdkt-storage  → WASM cache, identity/keystore, storage analysis (StorageAnalyzer)
 sdkt-wasm     → ContractSpec parser, ABI type lookup, WASM metadata
+sdkt-audit    → Static security analysis (AUTH-001/002/003, MOVE-001), RuleRegistry, plugin author API
 ```
 
 Dependency rule: `sdkt-core` depends on nothing internal; everything else may
@@ -59,8 +60,6 @@ depend on `sdkt-core` + `sdkt-xdr`. No networking in `sdkt-xdr`/`sdkt-core`.
 
 | Milestone | Theme | Status | Dependencies |
 |-----------|-------|--------|--------------|
-| M16 | Release Engineering & Polish | **Done** (workspace version unify, Action fix, release workflow, docs rewrite, panic audit) | — |
-| M17 | Plugin System — Phase A (Rule Registry) | **Done** (`RuleRegistry`, `--rules` flag, plugin author API, example rule crate, `docs/plugin-authoring.md`) | — |
 | Post-1.0 | Mainnet-focused tooling, SCF grant alignment, plugin system Phase B (dynamic loading), plugin registry/marketplace | Backlog | M17 (Phase A) |
 
 ---

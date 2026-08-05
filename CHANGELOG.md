@@ -18,7 +18,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Workspace version bumped `0.16.0-alpha` → `0.17.0-alpha` (single source of truth).
 
 ### Testing
-- Added unit tests (registry registration, duplicate de-duplication, ordering, builtin count) and integration tests (registry executes built-ins + external rules, `--rules` accepted/validated, example rule fires under the `plugins` feature). All prior 205 tests preserved.
+- Added unit tests (registry registration, duplicate de-duplication, ordering, builtin count) and integration tests (registry executes built-ins + external rules, `--rules` accepted/validated, example rule fires under the `plugins` feature). All prior 219 tests preserved.
 
 ---
 
