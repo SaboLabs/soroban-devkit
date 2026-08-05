@@ -3,6 +3,9 @@
 **/*.rs.bk
 **/target/
 
+# Stray compiled artifacts
+/gen_keys
+
 # IDE
 .idea/
 .vscode/
@@ -21,3 +24,4 @@ Thumbs.db
 
 # Cargo registry cache (optional, speeds up CI)
 Cargo.lock
+.hermes/
