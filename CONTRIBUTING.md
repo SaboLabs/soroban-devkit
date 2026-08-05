@@ -26,14 +26,17 @@ how we review changes, and how releases are produced.
    ```bash
    cargo test --workspace
    ```
-## Supply Chain & Dependencies
+## Supply Chain, MSRV & Dependencies
 
 `sdkt` relies on `Cargo.lock` being checked into source control at the workspace root to ensure strictly reproducible builds. 
 
+- **MSRV Policy:** The Minimum Supported Rust Version (MSRV) must not be increased without strict dependency or security justification. If a bump is completely unavoidable, contributors must:
+  - Document the required update in `CHANGELOG.md` and `README.md`.
+  - Bump `rust-version` in `Cargo.toml`.
+  - Update the `msrv` job configuration in `.github/workflows/ci.yml`.
+  - Explain precisely why the bump was necessary in the pull request description.
 - **Adding Dependencies:** When adding a new library to `Cargo.toml`, ensure that the dependency is genuinely necessary (check if standard library solutions exist first). Use optional dependencies and features extensively to prevent artifact bloat.
 - **Pinning & Updating:** Our `Cargo.lock` is pinned manually and updated holistically during specific maintenance phases. Do not run `cargo update` indiscriminately in PRs unrelated to dependency updates.
-- **MSRV:** The Minimum Supported Rust Version is declared in the root `Cargo.toml`. Your PR must compile strictly against this version.
-
 8. **Open a pull request** against `main` from your branch.
 
 ## Testing Instructions

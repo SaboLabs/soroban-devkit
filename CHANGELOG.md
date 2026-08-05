@@ -27,6 +27,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   plugin and verifies dynamic rules fire alongside built-ins.
 
 ### Changed
+- **MSRV increased to `1.88.0`**. Required by transitive dependencies (`darling@0.23.x` via `serde_with`, and `stellar-strkey@0.0.18`), not by internal project code.
 - `sdkt-audit` exposes `scan_all_functions_str` (convenience for plugin authors).
 - No `AuditRule` public-API change. Default build is byte-for-byte identical to
   v1.0.0 (M17) — the `plugins` feature is OFF by default.

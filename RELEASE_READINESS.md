@@ -8,7 +8,7 @@
   - `sdkt-xdr` (XDR decoding engine — base64/hex → JSON)
   - `sdkt-cli` (CLI binary — `sdkt decode` subcommand)
 - **Rust edition**: 2021
-- **MSRV**: Not pinned (requires a recent stable compiler that supports edition 2021)
+- **MSRV**: Pinned to 1.88.0 in workspace configuration.
 
 ## Features Implemented
 
@@ -114,7 +114,7 @@ The following items are deferred to future milestones and were **not** completed
 - GitHub Actions CI pipeline — planned for Phase 4
 - Docker image for containerized runs — planned for Phase 4
 - Cargo publish for `sdkt-cli` crate — post-readiness
-- MSRV pinning and CI matrix testing
+- MSRV pinning to 1.88.0 and CI matrix testing enabled.
 
 ## Next Milestone (Phase 2 — Storage & Inspection)
 

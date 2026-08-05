@@ -47,6 +47,8 @@ Most commands are **offline**; only on-chain reads (`inspect`, `storage`,
 
 ## Installation
 
+**Prerequisites:** Rust `1.88.0` or higher is required.
+
 ```bash
 # Build from source
 git clone https://github.com/naninu123/soroban-devkit
