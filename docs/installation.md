@@ -7,7 +7,7 @@
 ```bash
 rustup toolchain install stable
 rustup default stable
-cargo --version   # >= 1.80 recommended
+cargo --version   # >= 1.85.0 required
 ```
 
 ## Option A — Build from source (recommended)
@@ -43,14 +43,15 @@ cargo install sdkt-cli
 
 ## Features
 
-`sdkt-cli` has one optional feature:
+`sdkt-cli` has the following optional features:
 
-| Feature   | Default | Effect                                                              |
-|-----------|---------|---------------------------------------------------------------------|
-| `plugins` | off     | Links the reference example audit rule (`sdkt-audit-example-rule`). Without it, `sdkt audit` output is identical to the default build. |
+| Feature | Default | Effect |
+|---|---|---|
+| `wasm-plugins` | off | Loads cross-platform, sandboxed `.wasm` plugins via `extism` for `sdkt audit`. |
+| `plugins` | off | Loads native shared-library plugins (`.so`/`.dylib`/`.dll`) via C-ABI for `sdkt audit`. |
 
 ```bash
-cargo install --path crates/sdkt-cli --features plugins
+cargo install --path crates/sdkt-cli --features wasm-plugins
 ```
 
 ## Updating
