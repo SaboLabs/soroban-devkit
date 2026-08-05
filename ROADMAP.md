@@ -1,7 +1,7 @@
 # Soroban DevKit (sdkt) — ROADMAP
 
 **Last updated:** 2026-08-05
-**Status:** Active development. `main` is the default branch. Latest merged work: Milestone 14 (Upgrade Safety Guard, tagged `v0.14.0-alpha`). M15 (CI/CD GitHub Action) implemented on `feat/milestone-15`, pending merge.
+**Status:** Active development. `main` is the default branch. Latest merged work: Milestone 15 (CI/CD GitHub Action, tagged `v0.15.0-alpha`). M16 (Release Engineering & Polish) implemented on `feat/milestone-16`, pending merge.
 
 This document is the single source of truth for milestone scope and sequencing.
 Individual milestone plans live under `docs/milestone-*-plan.md`; engineering
@@ -51,14 +51,15 @@ depend on `sdkt-core` + `sdkt-xdr`. No networking in `sdkt-xdr`/`sdkt-core`.
 | **M12** | **Contract ABI/WASM Diff (Candidate C)** | `sdkt diff --old-wasm --new-wasm` offline comparison. ✅ Merged to `main` (v0.12.0-alpha, #10). | — |
 | **M13** | **Gap C — Static Security Analysis (`sdkt audit`)** | New `sdkt-audit` crate; `AUTH-001/002/003`, `MOVE-001`; `sdkt audit <path>`. ✅ Merged to `main` (v0.13.0-alpha, #11). | — |
 | **M14** | **Upgrade Safety Guard (Candidate A)** | Reuse M12 `SpecDiff`: `UpgradeVerdict`; `sdkt diff --upgrade-safety`; optional `sdkt deploy --deny-breaking`. ✅ **Closed & tagged `v0.14.0-alpha`** (commit `dc31767`). | — |
-| **M15** | **CI/CD GitHub Action (`sdkt` composite Action)** | `.github/actions/sdkt/action.yml` wraps `sdkt audit` + `sdkt diff --upgrade-safety` for CI; `docs/ci-cd.md` + self-validating workflow. ✅ Implemented (commit on `feat/milestone-15`, pending merge). | — |
+| **M15** | **CI/CD GitHub Action (`sdkt` composite Action)** | `.github/actions/sdkt/action.yml` wraps `sdkt audit` + `sdkt diff --upgrade-safety` for CI; `docs/ci-cd.md` + self-validating workflow. ✅ **Closed & tagged `v0.15.0-alpha`**. | — |
+| **M16** | **Release Engineering & Polish** | Unified workspace version (`0.16.0-alpha`); Action install fix; `release.yml` (binaries + `cargo publish`); README/`docs/cli.md` rewrite; panic audit on user paths. ✅ Implemented (commit on `feat/milestone-16`, pending merge). | — |
 
 ### Remaining Roadmap
 
 | Milestone | Theme | Status | Dependencies |
 |-----------|-------|--------|--------------|
-| M15 | CI/CD GitHub Action (`sdkt` as a composite action) | **Done** (`.github/actions/sdkt`, `docs/ci-cd.md`, self-validating workflow) | M13 (audit in CI), M14 (upgrade-safety in CI) |
-| Post-1.0 | Mainnet-focused tooling, SCF grant alignment | Backlog | — |
+| M16 | Release Engineering & Polish | **Done** (workspace version unify, Action fix, release workflow, docs rewrite, panic audit) | — |
+| Post-1.0 | Mainnet-focused tooling, SCF grant alignment, plugin system | Backlog | — |
 
 ---
 

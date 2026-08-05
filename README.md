@@ -1,84 +1,53 @@
 # Soroban DevKit (`sdkt`)
 
-Soroban DevKit is a unified toolkit for Stellar/Soroban development, providing utilities for inspecting contracts, decoding XDR, analyzing storage TTLs, and introspecting network state (transactions, events, and accounts).
-
-## Project Overview
-`sdkt` serves as the swiss army knife for Soroban developers, unifying otherwise disconnected tools into a single robust CLI. It communicates natively via Soroban RPC and handles XDR decoding transparently.
+`sdkt` is a unified, offline-capable toolkit for Stellar / Soroban development. It unifies contract inspection, XDR decoding, storage TTL analysis, ABI-aware decoding, static security analysis, WASM diffing, and an upgrade-safety verdict into a single CLI — instead of juggling 5+ separate tools.
 
 ## Installation
 
-Ensure you have Rust installed (Edition 2021 required), then build from source:
-
 ```bash
-git clone https://github.com/yourusername/soroban-devkit
+# From crates.io (after the v1.0 release)
+cargo install sdkt-cli
+
+# Or build from source
+git clone https://github.com/naninu123/soroban-devkit
 cd soroban-devkit
 cargo install --path crates/sdkt-cli
 ```
 
-## Quick Start
-Check a smart contract's raw storage limits:
-```bash
-sdkt inspect CCVVW7N4R3KNY72QJQKQY3T753C2H34E6XJIVJQOQSQE3C3M3U72QJQK
-```
+Requires Rust Edition 2021 (`rustup toolchain install stable`).
 
-## CLI Commands
+## Commands
 
-### 1. XDR Decoding
-Decode a payload into pretty output:
-```bash
-sdkt decode "AAAAAwAAAAE=" --type ScVal --format pretty
-```
+| Command | Purpose |
+|---------|---------|
+| `sdkt decode <xdr>` | Decode base64 XDR (`--type ScVal|TransactionEnvelope|ContractEvent`, `--file` for file input). |
+| `sdkt inspect <contract-id>` | Inspect a contract's ABI and storage (`--abi <wasm>` for ABI-aware decode). |
+| `sdkt storage check <contract-id>` | Storage TTL / rent visibility (`--abi <wasm>`). |
+| `sdkt storage analyze <contract-id>` | Classify Instance / Persistent / Temporary storage entries + TTL summary. |
+| `sdkt storage estimate <wasm-path>` | Estimate storage cost for a WASM. |
+| `sdkt tx inspect <hash>` | Transaction status / ledger inclusion. |
+| `sdkt tx simulate <xdr>` | Offline pre-flight via `simulateTransaction`. |
+| `sdkt tx submit <xdr>` | Submit a transaction (with optional poll). |
+| `sdkt tx build` | Typed envelope builder. |
+| `sdkt events <contract-id>` | Emitled-contract event explorer (`--abi <wasm>`). |
+| `sdkt account <address>` | Account balances + signers (Horizon-enriched). |
+| `sdkt fee estimate` | Dynamic fee estimate from recent ledger base fees. |
+| `sdkt wasm metadata <contract>` | WASM metadata for a deployed contract (cached). |
+| `sdkt wasm cache` | Manage the WASM cache (`info` / `remove` / `clear`). |
+| `sdkt diff --old-wasm <A> --new-wasm <B>` | Offline ABI/function/event/type diff of two WASM files. Add `--upgrade-safety` for a breaking-change verdict. |
+| `sdkt audit <path.rs>` | Static security analysis (AUTH-001/002/003, MOVE-001). `--disable <RULE_ID>` to skip a rule. |
+| `sdkt identity <generate|import|list|show|delete|default>` | ED25519 keystore management. |
+| `sdkt init <name>` | Scaffold a new Soroban project (`--minimal`, `--force`). |
+| `sdkt deploy --wasm <file> --salt <salt>` | Upload WASM + instantiate. Add `--deny-breaking --old-wasm <deployed.wasm>` to abort on a non-backwards-compatible upgrade. |
 
-### 2. Contract Inspection
-Inspect contract details (returns WASM hash and storage entries count):
-```bash
-sdkt inspect CCVVW7N4R3KNY72QJQKQY3T753C2H34E6XJIVJQOQSQE3C3M3U72QJQK
-```
+Most commands accept `--format json` for scripting / CI integration.
 
-### 3. Storage TTL Check
-Check remaining storage TTL ledgers for a given contract:
-```bash
-sdkt storage check CCVVW7N4R3KNY72QJQKQY3T753C2H34E6XJIVJQOQSQE3C3M3U72QJQK --format json
-```
+## Upgrade Safety in CI
 
-### 4. Transaction Inspection
-View detailed network transaction status:
-```bash
-sdkt tx inspect <TRANSACTION_HASH>
-```
-
-### 5. Event Explorer
-Filter and view emitted contract events for auditing:
-```bash
-sdkt events <CONTRACT_ID>
-```
-
-### 6. Account Inspection
-Quick diagnostic of a Stellar network account:
-```bash
-sdkt account <ADDRESS>
-```
-
-## JSON Output Example
-Most commands support `--format json` for integration into CI or scripts:
-```json
-{
-  "address": "GXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX",
-  "sequence": null,
-  "balances": [],
-  "signers": []
-}
-```
-
-## Workspace Structure
-The project is split into independent workspace crates:
-- `sdkt-cli`: The command line interface.
-- `sdkt-core`: Common configurations and output formats.
-- `sdkt-rpc`: Soroban RPC integration layer.
-- `sdkt-storage`: Storage analysis routines.
-- `sdkt-xdr`: XDR encoding/decoding utilities based on stellar-xdr.
+`sdkt` ships a reusable GitHub composite Action. See [`docs/ci-cd.md`](docs/ci-cd.md) for copy-paste workflows (audit-on-PR, upgrade-safety-on-release).
 
 ## Development
+
 ```bash
 cargo fmt --all
 cargo clippy --workspace --all-targets -- -D warnings
@@ -86,9 +55,9 @@ cargo test --workspace
 ```
 
 ## Testing
-We utilize `assert_cmd` for CLI integration tests stored under `crates/sdkt-cli/tests/`. Run them via `cargo test --workspace`.
+
+CLI integration tests use `assert_cmd` under `crates/sdkt-cli/tests/`. Run `cargo test --workspace`.
 
 ## Roadmap
-- Improve robust parsing of raw ContractEvent XDR values.
-- Integrate full Horizon endpoints for richer Account metadata.
-- Implement storage estimate commands.
+
+See [`ROADMAP.md`](ROADMAP.md) and the changelog in [`CHANGELOG.md`](CHANGELOG.md).
