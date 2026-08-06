@@ -50,9 +50,9 @@ graph TD
 ## RPC Interaction Flow
 
 1. **CLI Routing**: `sdkt-cli` parses arguments and loads `.sdkt.toml` via `sdkt-core`.
-2. **Client Init**: `SorobanRpcClient::from_config(&config.network)` is initialized.
+2. **Client Init**: `SorobanRpcClient::from_config(&config.network)` is initialized, bootstrapping a persistent `reqwest` connection pool.
 3. **RPC Execution**: `sdkt-cli` calls a high-level function like `sdkt_rpc::inspect_contract()`.
 4. **Encoding**: `sdkt-rpc` uses `sdkt-xdr` to encode the necessary `LedgerKey`s.
-5. **Network**: `sdkt-rpc` performs the HTTP POST using `reqwest`.
+5. **Network**: `sdkt-rpc` performs the HTTP POST utilizing the pooled client.
 6. **Decoding**: `sdkt-rpc` uses `sdkt-xdr` to parse the returned XDR payload into domain types.
 7. **Output**: `sdkt-cli` matches the result and formats it using `sdkt_core::OutputFormat`.

@@ -20,7 +20,7 @@ pub struct SorobanRpcClient {
 impl SorobanRpcClient {
     /// Create a client from an explicit endpoint URL.
     ///
-    /// Configures a 15-second default timeout to prevent hanging requests.
+    /// Configures a 15-second default timeout and basic connection pooling.
     ///
     /// # Example
     /// ```
@@ -28,8 +28,26 @@ impl SorobanRpcClient {
     /// let client = SorobanRpcClient::new("https://soroban-testnet.stellar.org");
     /// ```
     pub fn new(endpoint: &str) -> Self {
-        let http_client = reqwest::Client::builder()
-            .timeout(Duration::from_secs(15))
+        Self::with_options(endpoint, Some(15), Some(100))
+    }
+
+    /// Create a client with explicit pool and timeout settings.
+    pub fn with_options(
+        endpoint: &str,
+        timeout_secs: Option<u64>,
+        pool_max_idle: Option<usize>,
+    ) -> Self {
+        let mut builder = reqwest::Client::builder();
+
+        if let Some(secs) = timeout_secs {
+            builder = builder.timeout(Duration::from_secs(secs));
+        }
+
+        if let Some(max_idle) = pool_max_idle {
+            builder = builder.pool_max_idle_per_host(max_idle);
+        }
+
+        let http_client = builder
             .pool_idle_timeout(Duration::from_secs(60))
             .build()
             .unwrap_or_else(|_| reqwest::Client::new());
@@ -42,7 +60,11 @@ impl SorobanRpcClient {
 
     /// Create a client from [`NetworkConfig`].
     pub fn from_config(config: &NetworkConfig) -> Self {
-        Self::new(&config.rpc_url)
+        Self::with_options(
+            &config.rpc_url,
+            config.timeout_secs,
+            config.pool_max_idle_per_host,
+        )
     }
 
     /// Return the configured endpoint URL.
@@ -189,6 +211,8 @@ mod tests {
         let cfg = NetworkConfig {
             rpc_url: "https://custom.example.com".to_string(),
             passphrase: "test".to_string(),
+            timeout_secs: None,
+            pool_max_idle_per_host: None,
         };
         let c = SorobanRpcClient::from_config(&cfg);
         assert_eq!(c.endpoint(), "https://custom.example.com");
