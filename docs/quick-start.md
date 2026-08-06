@@ -18,17 +18,24 @@ Choose **one** of the following.
 
 **A. GitHub Release binary (no Rust toolchain required):**
 
-```bash
-VERSION=$(curl -fsSL https://api.github.com/repos/naninu123/soroban-devkit/releases/latest \
-  | grep -oE '"tag_name": *"[^"]+"' | head -1 | cut -d'"' -f4)
-curl -fsSL -o sdkt.tar.gz \
-  "https://github.com/naninu123/soroban-devkit/releases/download/${VERSION}/sdkt-x86_64-unknown-linux-gnu.tar.gz"
-tar -xzf sdkt.tar.gz
-sudo mv sdkt /usr/local/bin/
-```
+1. Open the [Releases](https://github.com/naninu123/soroban-devkit/releases)
+   page and download the asset for your platform:
 
-> Use `sdkt-x86_64-apple-darwin.tar.gz` for macOS Intel, or
-> `sdkt-aarch64-apple-darwin.tar.gz` for macOS Apple Silicon.
+   | Platform | Asset |
+   |----------|-------|
+   | Linux (x86_64) | `sdkt-x86_64-unknown-linux-gnu.tar.gz` |
+   | macOS (Intel) | `sdkt-x86_64-apple-darwin.tar.gz` |
+   | macOS (Apple Silicon) | `sdkt-aarch64-apple-darwin.tar.gz` |
+
+2. Extract and run:
+
+   ```bash
+   tar -xzf sdkt-<your-platform>.tar.gz
+   chmod +x sdkt
+   ./sdkt --version
+   # Optional: make it available system-wide
+   sudo mv sdkt /usr/local/bin/
+   ```
 
 **B. Build from source (requires Rust 1.88.0+):**
 

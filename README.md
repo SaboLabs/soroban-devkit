@@ -46,36 +46,33 @@ then run your first command.
 
 ### 1. Install
 
-**Option A — GitHub Release binary (fastest, no Rust toolchain needed):**
+**Option A — GitHub Release binary (no Rust toolchain needed):**
 
-Download the asset matching your platform from the
-[Releases](https://github.com/naninu123/soroban-devkit/releases) page. Asset
-names follow `sdkt-<target>.tar.gz` (each includes the `sdkt` binary and a
-`sdkt.sha256` checksum).
+1. Open the [Releases](https://github.com/naninu123/soroban-devkit/releases)
+   page and download the asset for your platform:
 
-```bash
-# Example: Linux x86_64
-VERSION=$(curl -fsSL https://api.github.com/repos/naninu123/soroban-devkit/releases/latest | grep -oE '"tag_name": *"[^"]+"' | head -1 | cut -d'"' -f4)
-curl -fsSL -o sdkt.tar.gz "https://github.com/naninu123/soroban-devkit/releases/download/${VERSION}/sdkt-x86_64-unknown-linux-gnu.tar.gz"
-tar -xzf sdkt.tar.gz
-./sdkt --version
-# (optional) make it available system-wide:
-sudo mv sdkt /usr/local/bin/
-```
+   | Platform | Asset |
+   |----------|-------|
+   | Linux (x86_64) | `sdkt-x86_64-unknown-linux-gnu.tar.gz` |
+   | macOS (Intel) | `sdkt-x86_64-apple-darwin.tar.gz` |
+   | macOS (Apple Silicon) | `sdkt-aarch64-apple-darwin.tar.gz` |
 
-> Other targets: `x86_64-apple-darwin` (macOS Intel) and
-> `aarch64-apple-darwin` (macOS Apple Silicon). Replace the filename in the
-> `curl` command accordingly.
+2. Extract and run:
 
-**Option B — Build from source (requires Rust):**
+   ```bash
+   tar -xzf sdkt-<your-platform>.tar.gz
+   chmod +x sdkt
+   ./sdkt --version
+   # Optional: make it available system-wide
+   sudo mv sdkt /usr/local/bin/
+   ```
 
-**Prerequisites:** Rust `1.88.0` or higher.
+**Option B — Build from source (requires Rust 1.88.0+):**
 
 ```bash
 git clone https://github.com/naninu123/soroban-devkit
 cd soroban-devkit
 cargo install --path crates/sdkt-cli
-
 # Verify
 sdkt --version
 ```
@@ -86,8 +83,7 @@ sdkt --version
 sdkt --help
 ```
 
-This prints every available command and subcommand. Everything from here is
-offline unless explicitly noted.
+Prints every command and subcommand. All commands are offline unless noted.
 
 ### 3. A real first action (offline)
 
@@ -97,9 +93,9 @@ Inspect a compiled contract WASM:
 sdkt wasm inspect crates/sdkt-cli/tests/fixtures/us_old.wasm
 ```
 
-Or, for a guided walkthrough, continue to
+For a guided walkthrough, continue to
 [docs/quick-start.md](docs/quick-start.md) — a step-by-step first-time guide
-that covers inspect, audit, and upgrade-safety diff.
+covering inspect, audit, and upgrade-safety diff.
 
 ## Installation (details)
 
