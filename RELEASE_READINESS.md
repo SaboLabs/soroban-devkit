@@ -107,20 +107,17 @@ Note: Git status is NOT clean — build artifacts and lockfile are modified. All
 
 The following items are deferred to future milestones and were **not** completed in Phase 1:
 
-- Storage TTL inspection (`sdkt storage check`, `sdkt storage estimate`) — planned for Phase 2
-- Static security audit (`sdkt audit` with `syn` AST linting) — planned for Phase 3
-- Contract inspection (`sdkt inspect` with WASM section reading + storage display) — planned for Phase 2
-- Plugin architecture — planned for Phase 5
-- GitHub Actions CI pipeline — planned for Phase 4
 - Docker image for containerized runs — planned for Phase 4
-- Cargo publish for `sdkt-cli` crate — post-readiness
-- MSRV pinning to 1.88.0 and CI matrix testing enabled.
+## GitHub Actions CI Pipeline
+
+- `ci.yml` — Runs Rust `fmt`, `clippy`, and `test` workflows across Ubuntu, macOS, and Windows matrices.
+- `release.yml` — Orchestrates cargo publishing and GitHub release asset packaging.
 
 ## Next Milestone (Phase 2 — Storage & Inspection)
 
 Phase 2 targets two core lifecycle tools that are missing from the Stellar/Soroban ecosystem:
 
 1. **Storage rent visibility** — `sdkt storage check <contract-id>` returns TTL timeline and extension cost, preventing silent contract expiration.
-2. **Contract inspection** — `sdkt inspect <contract-id>` reads WASM custom sections and current on-chain storage state with an interactive CLI menu.
+2. **Contract inspection** — `sdkt inspect <contract-id>` reads WASM custom sections and current on-chain storage state.
 
 Both will be implemented as new subcommands in `sdkt-cli`, backed by RPC calls against the configured network. Unit tests and integration points will be added to each crate as appropriate.

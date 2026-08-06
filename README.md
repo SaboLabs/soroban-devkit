@@ -4,28 +4,21 @@
 [![Release](https://img.shields.io/github/v/release/naninu123/soroban-devkit?label=release)](https://github.com/naninu123/soroban-devkit/releases)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
-`sdkt` is a unified, offline-capable toolkit for Stellar / Soroban
-development. It unifies contract inspection, XDR decoding, storage TTL
-analysis, ABI-aware decoding, static security analysis, WASM diffing, and an
-upgrade-safety verdict into a single CLI — instead of juggling 5+ separate
-tools.
+`sdkt` is a unified, offline-capable toolkit for Stellar / Soroban development. It consolidates the fragmented developer lifecycle—contract inspection, XDR decoding, storage TTL analysis, static security analysis, WASM diffing, and multi-contract deployment orchestration—into a single, production-grade CLI.
 
-## Overview
+## The Problem
+Developing on Soroban often requires context-switching across multiple CLI tools and manual RPC scripts to securely build, audit, and deploy contracts. `sdkt` solves this by providing a unified interface that emphasizes **offline-first** analysis, **upgrade safety**, and **production deployment orchestration**.
+
+## Capabilities
 
 `sdkt` spans the full read-only **and** mutating contract lifecycle:
 
-- **Inspect & decode** — base64 XDR decoding, contract ABI + storage
-  inspection, event exploration.
-- **Analyze** — storage TTL / rent visibility, Instance / Persistent /
-  Temporary classification, offline ABI/function/event/type WASM diffing.
-- **Secure** — static analysis of contract source (`AUTH-001/002/003`,
-  `MOVE-001`) and an upgrade-safety verdict for safe contract upgrades.
-- **Build & ship** — typed transaction envelope builder, simulate, submit,
-  identity/keystore management, project scaffolding, and deploy with an
-  optional breaking-change guard.
+- **Inspect & decode** — base64 XDR decoding, contract ABI + storage inspection, event exploration.
+- **Analyze** — storage TTL / rent visibility, Instance / Persistent / Temporary classification, offline ABI/function/event/type WASM diffing.
+- **Secure** — static analysis of contract source (`AUTH-001/002/003`, `MOVE-001`) and an upgrade-safety verdict for safe contract upgrades.
+- **Build & ship** — typed transaction envelope builder, simulate, submit, identity/keystore management, multi-contract workspace topological deployments, and upgrade breaking-change guards.
 
-Most commands are **offline**; only on-chain reads (`inspect`, `storage`,
-`tx`, `events`, `account`, `fee`, `wasm metadata`) need an RPC endpoint.
+Most commands are **offline**; only on-chain reads (`inspect`, `storage`, `tx`, `events`, `account`, `fee`, `wasm metadata`) need an RPC endpoint.
 
 ## Feature Highlights
 
@@ -109,14 +102,14 @@ sdkt audit contracts/token/src/lib.rs
 | `sdkt events <contract-id>` | Emitted-contract event explorer (`--abi <wasm>`). |
 | `sdkt account <address>` | Account balances + signers (Horizon-enriched). |
 | `sdkt diff` | Offline comparison of WASM binaries and API surfaces. |
+| `sdkt diff --old-wasm <A> --new-wasm <B>` | Offline ABI/function/event/type diff of two WASM files. Add `--upgrade-safety` for a breaking-change verdict. |
 | `sdkt build` | Compile workspace rust contracts into optimized WASMs. |
 | `sdkt project deploy` | Deploy multi-contract workspace orchestrating topological dependency sorting. |
-| `sdkt wasm inspect <file>` | Inspect offline WASM metadata, sections, and specifications. |
 | `sdkt verify --contract <ID> [--wasm <file>] [--network <net>]` | Verify a deployed contract matches a local WASM (offline hash vs on-chain hash). |
 | `sdkt health --contract <ID> [--wasm <file>] [--network <net>]` | Unified read-only contract posture report (WASM, storage, TTL, health verdict). |
+| `sdkt wasm inspect <file>` | Inspect offline WASM metadata, sections, and specifications. |
 | `sdkt wasm metadata <contract>` | WASM metadata for a deployed contract (cached). |
 | `sdkt wasm cache` | Manage the WASM cache (`info` / `remove` / `clear`). |
-| `sdkt diff --old-wasm <A> --new-wasm <B>` | Offline ABI/function/event/type diff of two WASM files. Add `--upgrade-safety` for a breaking-change verdict. |
 | `sdkt audit <path.rs>` | Static security analysis (AUTH-001/002/003, MOVE-001). `--disable <RULE_ID>` to skip a rule. `--rules <path>` (repeatable) to load external rule paths. |
 | `sdkt identity <generate\|import\|list\|show\|delete\|default>` | ED25519 keystore management. |
 | `sdkt init <name>` | Scaffold a new Soroban project (`--minimal`, `--force`). |

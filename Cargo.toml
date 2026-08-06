@@ -18,4 +18,6 @@ license = "MIT"
 authors = ["naninu123"]
 repository = "https://github.com/naninu123/soroban-devkit"
 homepage = "https://github.com/naninu123/soroban-devkit"
-description = "Soroban DevKit (sdkt) — unified Stellar/Soroban developer toolkit"
+description = "Unified offline-capable toolkit and CLI for Stellar / Soroban development"
+keywords = ["stellar", "soroban", "blockchain", "web3", "cli"]
+categories = ["command-line-utilities", "development-tools"]

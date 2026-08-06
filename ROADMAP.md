@@ -63,11 +63,14 @@ depend on `sdkt-core` + `sdkt-xdr`. No networking in `sdkt-xdr`/`sdkt-core`.
 | **M23** | **Contract Health Report** | `sdkt health --contract <ID> [--wasm <file>] [--network <net>]` aggregates on-chain WASM hash + storage/TTL posture into one read-only report with a `healthy`/`at_risk`/`critical` verdict. ✅ Merged to `main`. | — |
 | **M24** | **Workspace & Build Orchestration** | Support for `sdkt build` (compiles all artifacts) and `sdkt project deploy` (topological dependency sorting and multi-contract orchestrated deployment) using `.sdkt.toml` workspace configs. ✅ Merged to `main`. | — |
 
+| **M25** | **RPC Connection Pooling** | Persistent HTTP pooling for performance during orchestrated deployments. ✅ Merged to `main` (ENG-01). | — |
+| **M26** | **Transaction Simulation Enhancements** | `sdkt tx simulate` enhanced with `restorePreamble` and granular `stateChanges`. ✅ Merged to `main` (ENG-03). | — |
+
 ### Remaining Roadmap
 
 | Milestone | Theme | Status | Dependencies |
 |-----------|-------|--------|--------------|
-| Post-1.1 | Mainnet-focused tooling, SCF grant alignment, plugin marketplace | Backlog | M19 (Phase C) |
+| Post-2.0 | Mainnet-focused tooling, SCF grant alignment, plugin marketplace | Backlog | M19 (Phase C) |
 
 ---
 
