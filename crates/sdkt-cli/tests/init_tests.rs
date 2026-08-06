@@ -1,6 +1,7 @@
 use assert_cmd::Command;
 use predicates::prelude::*;
 use std::fs;
+use std::process::Command as StdCommand;
 use tempfile::TempDir;
 
 fn sdkt() -> Command {
@@ -102,6 +103,33 @@ fn init_generated_cargo_toml_valid() {
     assert!(cargo.contains("soroban-sdk"));
     assert!(cargo.contains("[lib]"));
     assert!(cargo.contains("cdylib"));
+}
+
+#[test]
+fn init_generated_project_compiles_successfully() {
+    // This is an integration test protecting M31 (Regression Protection).
+    // It verifies that the generated `Cargo.toml` dependency graph
+    // (specifically `soroban-sdk`) actually resolves and compiles cleanly
+    // without triggering downstream transitive failures (e.g. ethnum transmute aborts).
+
+    let tmp = TempDir::new().unwrap();
+    let project = tmp.path().join("build_proj");
+
+    sdkt()
+        .args(["init", project.to_str().unwrap(), "--minimal"])
+        .assert()
+        .success();
+
+    // Verify it builds using standard cargo check. We check rather than build
+    // to keep the test suite execution time low, but `check` is sufficient
+    // to catch trait constraint or transmute failures in the dependency graph.
+
+    let status = StdCommand::new("cargo")
+        .arg("check")
+        .current_dir(&project)
+        .status()
+        .expect("cargo check failed to execute");
+    assert!(status.success(), "Scaffolded project failed to compile");
 }
 
 #[test]

@@ -59,10 +59,10 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-soroban-sdk = "20.5.0"
+soroban-sdk = "21.0.0"
 
 [dev-dependencies]
-soroban-sdk = {{ version = "20.5.0", features = ["testutils"] }}
+soroban-sdk = {{ version = "21.0.0", features = ["testutils"] }}
 
 [lib]
 crate-type = ["cdylib"]
