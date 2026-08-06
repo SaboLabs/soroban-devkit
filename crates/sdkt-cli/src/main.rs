@@ -68,6 +68,21 @@ enum Commands {
         #[arg(short, long, default_value = "pretty")]
         format: String,
     },
+    /// Unified read-only contract posture report (M23)
+    Health {
+        /// Stellar contract ID (C...)
+        #[arg(short, long, value_name = "CONTRACT_ID")]
+        contract: String,
+        /// Optional local WASM to verify against the on-chain hash
+        #[arg(long, value_name = "WASM")]
+        wasm: Option<String>,
+        /// Network label for the report
+        #[arg(short, long, default_value = "testnet")]
+        network: String,
+        /// Output format
+        #[arg(short, long, default_value = "pretty")]
+        format: String,
+    },
     /// Inspect a Soroban transaction
     Tx {
         #[command(subcommand)]
@@ -343,6 +358,177 @@ struct VerificationReport {
     matches: Option<bool>,
     verification_status: String,
     explanation: String,
+}
+
+/// M23 — Contract health / posture report.
+///
+/// Aggregates the existing read-only surfaces (`inspect_contract` +
+/// `StorageAnalyzer`) plus optional M22 verification into one report.
+/// Serializes to the JSON schema in M23_PLAN.md §12.
+#[derive(Debug, serde::Serialize)]
+struct ContractHealthReport {
+    contract_id: String,
+    network: String,
+    /// "healthy" | "at_risk" | "critical" (snake_case for stable parsing)
+    health: String,
+    /// bool when --wasm supplied, null otherwise
+    #[serde(rename = "verified", skip_serializing_if = "Option::is_none")]
+    verified: Option<bool>,
+    on_chain_wasm_hash: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    local_wasm_hash: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    local_wasm_size_bytes: Option<usize>,
+    storage: HealthStorage,
+    /// Human-readable verdict reasons (empty when healthy)
+    #[serde(default)]
+    reasons: Vec<String>,
+}
+
+/// Storage subsection of [`ContractHealthReport`] (mirrors `StorageReport`
+/// field names; omits `total_size_bytes`/`entries` per M23_PLAN.md §12).
+#[derive(Debug, serde::Serialize)]
+struct HealthStorage {
+    total_entries: usize,
+    instance_entries: usize,
+    persistent_entries: usize,
+    temporary_entries: usize,
+    other_entries: usize,
+    ttl: Option<HealthTtl>,
+}
+
+#[derive(Debug, serde::Serialize)]
+struct HealthTtl {
+    minimum_ttl: u32,
+    maximum_ttl: u32,
+    average_ttl: u32,
+    expiring_entries_count: usize,
+    estimated_rent_cost: Option<u64>,
+}
+
+/// M23 — Pure health-verdict derivation (no I/O, fully testable).
+///
+/// Rules (transparent, per M23_PLAN.md §10):
+/// - `verified == Some(false)` → Critical (deployed != built).
+/// - else `expiring_soon > 0`   → AtRisk (entries near TTL expiry).
+/// - else `total_entries == 0`  → AtRisk (empty contract).
+/// - else                        → Healthy.
+fn derive_verdict(
+    verified: Option<bool>,
+    expiring_soon: usize,
+    total_entries: usize,
+) -> (String, Vec<String>) {
+    let mut reasons: Vec<String> = Vec::new();
+
+    if verified == Some(false) {
+        reasons.push(
+            "On-chain WASM does NOT match the supplied local file. Rebuild and redeploy, \
+or confirm you are comparing the correct artifact."
+                .to_string(),
+        );
+        return ("critical".to_string(), reasons);
+    }
+
+    if expiring_soon > 0 {
+        reasons.push(format!(
+            "{} storage entr{} expiring soon (< 30 days).",
+            expiring_soon,
+            if expiring_soon == 1 {
+                "y is"
+            } else {
+                "ies are"
+            }
+        ));
+    }
+
+    if total_entries == 0 {
+        reasons.push("Contract has no storage entries (unusual for a live contract).".to_string());
+    }
+
+    if !reasons.is_empty() {
+        return ("at_risk".to_string(), reasons);
+    }
+
+    ("healthy".to_string(), reasons)
+}
+
+/// Orchestrates the M23 contract health report (read-only).
+///
+/// - Offline-hashes `--wasm` first (fail-fast) when supplied.
+/// - Fetches on-chain WASM hash via `sdkt-rpc::inspect_contract` (no bytecode download).
+/// - Fetches storage posture via `sdkt-storage::StorageAnalyzer` (no new RPC).
+/// - Reuses M22 `verification_outcome` for the local-vs-onchain comparison.
+async fn contract_health(
+    client: &SorobanRpcClient,
+    contract_id: &str,
+    local_wasm: Option<&[u8]>,
+    network: &str,
+) -> Result<ContractHealthReport, String> {
+    // Optional local WASM — hashed fully offline FIRST (fail fast).
+    let local_hash = match local_wasm {
+        Some(bytes) => {
+            let meta = sdkt_wasm::parse_metadata(bytes).map_err(|e| format!("{}", e))?;
+            Some((meta.hash, meta.size_bytes))
+        }
+        None => None,
+    };
+
+    // On-chain WASM hash only (read-only, existing RPC).
+    let inspection = inspect_contract(client, contract_id)
+        .await
+        .map_err(|e| match e {
+            sdkt_rpc::RpcError::ContractNotFound => {
+                format!("contract {} not found on {}", contract_id, network)
+            }
+            other => format!("{}", other),
+        })?;
+    let on_chain_hash = inspection.wasm_hash;
+
+    // Storage posture (read-only, existing RPC via StorageAnalyzer).
+    let storage_report = sdkt_storage::StorageAnalyzer::new(client.clone())
+        .inspect_contract_storage(contract_id)
+        .await
+        .map_err(|e| format!("{}", e))?;
+
+    // Optional M22-style verification (reuse existing helper, no duplicate logic).
+    let verified = local_hash
+        .as_ref()
+        .and_then(|(h, s)| verification_outcome(&on_chain_hash, Some((h.clone(), *s))).0);
+
+    let expiring_soon = storage_report
+        .ttl_summary
+        .as_ref()
+        .map(|t| t.expiring_entries_count)
+        .unwrap_or(0);
+
+    let (health, reasons) = derive_verdict(verified, expiring_soon, storage_report.total_entries);
+
+    let ttl = storage_report.ttl_summary.as_ref().map(|t| HealthTtl {
+        minimum_ttl: t.minimum_ttl,
+        maximum_ttl: t.maximum_ttl,
+        average_ttl: t.average_ttl,
+        expiring_entries_count: t.expiring_entries_count,
+        estimated_rent_cost: t.estimated_rent_cost,
+    });
+
+    Ok(ContractHealthReport {
+        contract_id: contract_id.to_string(),
+        network: network.to_string(),
+        health,
+        verified,
+        on_chain_wasm_hash: on_chain_hash,
+        local_wasm_hash: local_hash.as_ref().map(|(h, _)| h.clone()),
+        local_wasm_size_bytes: local_hash.as_ref().map(|(_, s)| *s),
+        storage: HealthStorage {
+            total_entries: storage_report.total_entries,
+            instance_entries: storage_report.instance_entries,
+            persistent_entries: storage_report.persistent_entries,
+            temporary_entries: storage_report.temporary_entries,
+            other_entries: storage_report.other_entries,
+            ttl,
+        },
+        reasons,
+    })
 }
 
 /// Pure comparison logic for M22 (no I/O, fully testable).
@@ -771,6 +957,113 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                         }
                     }
                     eprintln!("Error verifying contract: {}", e);
+                    process::exit(1);
+                }
+            }
+        }
+        Commands::Health {
+            contract,
+            wasm,
+            network,
+            format,
+        } => {
+            let fmt = parse_format_str(&format);
+            let config = DevKitConfig::from_file(".sdkt.toml").unwrap_or_default();
+            let client = SorobanRpcClient::from_config(&config.network);
+
+            // Read + hash the local WASM fully offline (no RPC).
+            let local_bytes = match wasm.as_ref() {
+                Some(path) => {
+                    let bytes = fs::read(path).unwrap_or_else(|e| {
+                        eprintln!("Error reading WASM file {}: {}", path, e);
+                        process::exit(1);
+                    });
+                    Some(bytes)
+                }
+                None => None,
+            };
+
+            match contract_health(&client, &contract, local_bytes.as_deref(), &network).await {
+                Ok(report) => {
+                    if fmt == OutputFormat::Json {
+                        println!(
+                            "{}",
+                            serde_json::to_string_pretty(&report).unwrap_or_else(|e| {
+                                eprintln!("Error serializing report: {}", e);
+                                process::exit(1);
+                            })
+                        );
+                    } else {
+                        println!("Contract Health Report");
+                        println!("=======================");
+                        println!("Contract ID : {}", report.contract_id);
+                        println!("Network     : {}", report.network);
+                        println!("Health      : {}", report.health.to_uppercase());
+                        if let Some(v) = report.verified {
+                            let local_str = report.local_wasm_hash.as_deref().unwrap_or("");
+                            println!(
+                                "On-chain WASM : {} (verified against local: {})",
+                                report.on_chain_wasm_hash,
+                                if v { "YES" } else { "NO — MISMATCH" }
+                            );
+                            if !local_str.is_empty() {
+                                println!("Local WASM   : {}", local_str);
+                            }
+                        } else {
+                            println!("On-chain WASM : {}", report.on_chain_wasm_hash);
+                        }
+                        println!("Storage:");
+                        println!("  Total Entries: {}", report.storage.total_entries);
+                        println!("    Instance:    {}", report.storage.instance_entries);
+                        println!("    Persistent: {}", report.storage.persistent_entries);
+                        println!("    Temporary:   {}", report.storage.temporary_entries);
+                        if report.storage.other_entries > 0 {
+                            println!("    Other:      {}", report.storage.other_entries);
+                        }
+                        if let Some(ttl) = &report.storage.ttl {
+                            println!("TTL:");
+                            println!("  Min TTL:       {}", ttl.minimum_ttl);
+                            println!("  Max TTL:       {}", ttl.maximum_ttl);
+                            println!("  Average TTL:   {}", ttl.average_ttl);
+                            println!("  Expiring Soon: {}", ttl.expiring_entries_count);
+                            if let Some(cost) = ttl.estimated_rent_cost {
+                                println!("  Est. Rent Cost: {} stroops", cost);
+                            }
+                        }
+                        if !report.reasons.is_empty() {
+                            println!();
+                            println!("Verdict: {}", report.reasons.join(" "));
+                        } else {
+                            println!();
+                            let verified_note = match report.verified {
+                                Some(true) => "WASM verified, ",
+                                Some(false) => "MISMATCH; ",
+                                None => "No local WASM supplied; verification skipped. ",
+                            };
+                            println!(
+                                "Verdict: Contract posture is healthy. {}no entries expiring soon.",
+                                verified_note
+                            );
+                        }
+                    }
+                }
+                Err(e) => {
+                    // Surface actionable messages per M23_PLAN.md §11.
+                    if let Some(path) = wasm.as_ref() {
+                        if e.contains("WASM parse error") {
+                            eprintln!("Error: {} is not valid WASM", path);
+                            process::exit(1);
+                        }
+                        if e.contains("Empty") {
+                            eprintln!("Error: {} is empty", path);
+                            process::exit(1);
+                        }
+                    }
+                    if e.contains("not found on") {
+                        eprintln!("Error: contract {} not found on {}", contract, network);
+                        process::exit(1);
+                    }
+                    eprintln!("Error fetching contract: {}", e);
                     process::exit(1);
                 }
             }
@@ -1962,5 +2255,106 @@ mod m22_tests {
         let json2 = serde_json::to_string(&r2).unwrap();
         assert!(json2.contains("\"match\":null") || !json2.contains("\"match\""));
         assert!(!json2.contains("\"local_wasm_hash\":\"abc123\""));
+    }
+}
+
+#[cfg(test)]
+mod m23_tests {
+    use super::*;
+
+    #[test]
+    fn derive_verdict_healthy() {
+        let (h, reasons) = derive_verdict(Some(true), 0, 12);
+        assert_eq!(h, "healthy");
+        assert!(reasons.is_empty());
+    }
+
+    #[test]
+    fn derive_verdict_at_risk_expiring() {
+        let (h, reasons) = derive_verdict(Some(true), 2, 12);
+        assert_eq!(h, "at_risk");
+        assert!(reasons.iter().any(|r| r.contains("2 storage entries")));
+    }
+
+    #[test]
+    fn derive_verdict_critical_mismatch() {
+        // Mismatch wins over TTL, regardless of expiring count.
+        let (h, reasons) = derive_verdict(Some(false), 5, 12);
+        assert_eq!(h, "critical");
+        assert!(reasons.iter().any(|r| r.contains("does NOT match")));
+    }
+
+    #[test]
+    fn derive_verdict_at_risk_empty() {
+        let (h, reasons) = derive_verdict(None, 0, 0);
+        assert_eq!(h, "at_risk");
+        assert!(reasons.iter().any(|r| r.contains("no storage entries")));
+    }
+
+    #[test]
+    fn derive_verdict_onchain_only_healthy() {
+        // No --wasm supplied (verified == None), nothing expiring → healthy.
+        let (h, reasons) = derive_verdict(None, 0, 7);
+        assert_eq!(h, "healthy");
+        assert!(reasons.is_empty());
+    }
+
+    #[test]
+    fn health_report_json_schema() {
+        // Healthy with --wasm verified
+        let r = ContractHealthReport {
+            contract_id: "CABCDEFG".to_string(),
+            network: "testnet".to_string(),
+            health: "healthy".to_string(),
+            verified: Some(true),
+            on_chain_wasm_hash: "abc123".to_string(),
+            local_wasm_hash: Some("abc123".to_string()),
+            local_wasm_size_bytes: Some(4096),
+            storage: HealthStorage {
+                total_entries: 12,
+                instance_entries: 1,
+                persistent_entries: 9,
+                temporary_entries: 2,
+                other_entries: 0,
+                ttl: Some(HealthTtl {
+                    minimum_ttl: 518400,
+                    maximum_ttl: 518400,
+                    average_ttl: 518400,
+                    expiring_entries_count: 0,
+                    estimated_rent_cost: Some(240000),
+                }),
+            },
+            reasons: vec![],
+        };
+        let json = serde_json::to_string(&r).unwrap();
+        assert!(json.contains("\"health\":\"healthy\""));
+        assert!(json.contains("\"verified\":true"));
+        assert!(json.contains("\"on_chain_wasm_hash\":\"abc123\""));
+        assert!(json.contains("\"storage\""));
+        assert!(json.contains("\"total_entries\":12"));
+        assert!(json.contains("\"ttl\""));
+        assert!(json.contains("\"expiring_entries_count\":0"));
+
+        // OnChainOnly (no --wasm) → verified/local fields null/omitted
+        let r2 = ContractHealthReport {
+            contract_id: "CABCDEFG".to_string(),
+            network: "testnet".to_string(),
+            health: "healthy".to_string(),
+            verified: None,
+            on_chain_wasm_hash: "abc123".to_string(),
+            local_wasm_hash: None,
+            local_wasm_size_bytes: None,
+            storage: HealthStorage {
+                total_entries: 7,
+                instance_entries: 1,
+                persistent_entries: 5,
+                temporary_entries: 1,
+                other_entries: 0,
+                ttl: None,
+            },
+            reasons: vec![],
+        };
+        let json2 = serde_json::to_string(&r2).unwrap();
+        assert!(json2.contains("\"verified\":null") || !json2.contains("\"verified\""));
     }
 }

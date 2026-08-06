@@ -60,6 +60,7 @@ depend on `sdkt-core` + `sdkt-xdr`. No networking in `sdkt-xdr`/`sdkt-core`.
 | **M20** | **Stability & Release Engineering** | 1.88.0 MSRV bump, CI hardening, `sdkt-storage` Windows compatibility, dependency compaction. ✅ Merged to `main`. | — |
 | **M21** | **Contract Inspector (Offline)** | `sdkt wasm inspect <file.wasm>` CLI command to view contract metadata, custom sections, exported functions, and contract specs offline. ✅ Merged to `main`. | — |
 | **M22** | **Contract Verification** | `sdkt verify --contract <ID> [--wasm <file>] [--network <net>]` confirms a deployed contract's on-chain WASM hash matches a local artifact (offline hash vs read-only RPC fetch). ✅ Merged to `main`. | — |
+| **M23** | **Contract Health Report** | `sdkt health --contract <ID> [--wasm <file>] [--network <net>]` aggregates on-chain WASM hash + storage/TTL posture into one read-only report with a `healthy`/`at_risk`/`critical` verdict. ✅ Merged to `main`. | — |
 
 ### Remaining Roadmap
 

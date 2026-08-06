@@ -44,6 +44,11 @@ sdkt
 │   ├── --network <testnet>   (RPC network)
 │   └── --format <json|pretty>
 │
+├── health <contract-id>
+│   ├── --wasm <file.wasm>    (optional local artifact to verify against)
+│   ├── --network <testnet>   (RPC network / report label)
+│   └── --format <json|pretty>
+│
 ├── diff
 │   ├── --old-wasm <A>
 │   ├── --new-wasm <B>
