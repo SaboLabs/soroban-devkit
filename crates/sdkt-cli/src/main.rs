@@ -1195,6 +1195,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                                 sim.latest_ledger.as_deref().unwrap_or("N/A")
                             );
                             println!("  Min Resource Fee: {} stroops", sim.min_resource_fee);
+                            
+                            if let Some(preamble) = &sim.restore_preamble {
+                                println!("  Restore Preamble Required:");
+                                println!("    Min Resource Fee: {} stroops", preamble.min_resource_fee);
+                                println!("    Transaction Data: ({} bytes)", preamble.transaction_data.len());
+                            }
+                            
                             if let Some(cost) = &sim.cost {
                                 println!("  Cost:");
                                 println!("    CPU Instructions: {}", cost.cpu_insns);
@@ -1202,6 +1209,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                             }
                             if !sim.events.is_empty() {
                                 println!("  Events: {} emitted", sim.events.len());
+                            }
+                            if !sim.state_changes.is_empty() {
+                                println!("  State Changes: {} entries modified", sim.state_changes.len());
+                            }
+                            if !sim.results.is_empty() {
+                                println!("  Operations: {} results", sim.results.len());
                             }
                         }
                     }

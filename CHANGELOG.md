@@ -8,6 +8,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **Transaction Simulation Enhancements (ENG-03):** Improved `sdkt tx simulate` to deserialize and display modern RPC metadata:
+  - Added support for `restorePreamble` (surfaced when expired state restoration is required).
+  - Added support for `stateChanges` tracking.
+  - Enhanced human-readable CLI formatting to display these new fields along with operation counts. Backward compatibility with older RPC payloads is fully preserved.
 - **RPC Connection Pooling (ENG-01):** Replaced one-off HTTP clients with a single persistent, internally pooled `reqwest::Client` in `SorobanRpcClient`. This significantly improves performance during multi-contract orchestrated deployments (`sdkt project deploy`) by preventing socket exhaustion. Introduced configurable `timeout_secs` and `pool_max_idle_per_host` in `NetworkConfig`.
 
 ## [v2.0.0] - 2026-08-06
