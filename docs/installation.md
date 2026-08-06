@@ -23,8 +23,8 @@ This installs the `sdkt` binary into `~/.cargo/bin` (make sure it's on `PATH`).
 To install a debug build into the local `target/` dir instead:
 
 ```bash
-cargo build --bin sdkt-cli
-# run via: ./target/debug/sdkt-cli --help
+cargo build --bin sdkt
+# run via: ./target/debug/sdkt --help
 ```
 
 ## Option B — From crates.io (when published)

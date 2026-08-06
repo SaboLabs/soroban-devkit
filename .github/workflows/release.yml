@@ -57,11 +57,11 @@ jobs:
         with:
           targets: ${{ matrix.target }}
       - name: Build release binary
-        run: cargo build --release --target ${{ matrix.target }} --bin sdkt-cli
+        run: cargo build --release --target ${{ matrix.target }} --bin sdkt
       - name: Package (unix)
         run: |
-          BIN=target/${{ matrix.target }}/release/sdkt-cli
-          tar -czf "sdkt-${{ matrix.target }}.tar.gz" -C "target/${{ matrix.target }}/release" sdkt-cli
+          BIN=target/${{ matrix.target }}/release/sdkt
+          tar -czf "sdkt-${{ matrix.target }}.tar.gz" -C "target/${{ matrix.target }}/release" sdkt
       - name: Upload artifact
         uses: actions/upload-artifact@v5
         with:
