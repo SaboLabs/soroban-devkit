@@ -75,6 +75,8 @@ jobs:
         else
           echo "shellcheck not installed; skipping (bash -n passed)"
         fi
+    - name: Offline self-test (checksum standalone plus embedded fallback)
+      run: bash install.sh --selftest
 
   msrv:
     runs-on: ubuntu-latest

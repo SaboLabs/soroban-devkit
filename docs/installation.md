@@ -20,6 +20,12 @@ The script:
 - **verifies the checksum before extracting/running anything**,
 - installs the binary and prints `PATH` guidance if needed.
 
+Checksum flow: the script prefers the standalone `sdkt-<target>.sha256`
+release asset. If that asset is missing from a release, it falls back to the
+embedded `sdkt.sha256` inside the tarball (every release tarball ships it).
+Verification is never skipped — if no checksum can be obtained, the install
+aborts.
+
 Custom install directory:
 
 ```bash
