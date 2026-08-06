@@ -41,8 +41,8 @@ Most commands are **offline**; only on-chain reads (`inspect`, `storage`, `tx`, 
 
 ## Quick Start
 
-Get `sdkt` running in under five minutes. Pick one install method, verify,
-then run your first command.
+Running `sdkt` takes under five minutes. Pick an install method, verify, then
+run your first command.
 
 ### 1. Install
 
@@ -60,7 +60,7 @@ then run your first command.
 2. Extract and run:
 
    ```bash
-   tar -xzf sdkt-<your-platform>.tar.gz
+   tar -xzf sdkt-x86_64-unknown-linux-gnu.tar.gz   # Linux x86_64
    chmod +x sdkt
    ./sdkt --version
    # Optional: make it available system-wide
@@ -73,29 +73,52 @@ then run your first command.
 git clone https://github.com/naninu123/soroban-devkit
 cd soroban-devkit
 cargo install --path crates/sdkt-cli
-# Verify
 sdkt --version
 ```
 
-### 2. Your first useful command
+### 2. Verify and explore
 
 ```bash
+sdkt --version
+# sdkt 2.0.0
+
 sdkt --help
+# Commands:
+#   decode    Decode base64-encoded XDR to JSON
+#   wasm      Manage WASM metadata and caching
+#   diff      Offline diff of two contract WASM files
+#   audit     Static security analysis of a Soroban contract source file
+#   init      Initialize a new Soroban contract project
+#   deploy    Deploy a contract (Upload WASM + Instantiate)
+#   ... (run `sdkt --help` to see all)
 ```
 
-Prints every command and subcommand. All commands are offline unless noted.
+A successful `sdkt --version` means the binary is installed and on your `PATH`.
 
-### 3. A real first action (offline)
+### 3. Your first command (offline)
 
-Inspect a compiled contract WASM:
+Inspect a compiled contract WASM that ships with the repo:
 
 ```bash
 sdkt wasm inspect crates/sdkt-cli/tests/fixtures/us_old.wasm
 ```
 
-For a guided walkthrough, continue to
-[docs/quick-start.md](docs/quick-start.md) — a step-by-step first-time guide
-covering inspect, audit, and upgrade-safety diff.
+Then follow the guided walkthrough in
+[docs/quick-start.md](docs/quick-start.md) — it covers inspect, audit, and
+upgrade-safety diff step by step.
+
+## Use Cases
+
+- **Inspect Soroban WASM** — read ABI, functions, events, and metadata from any
+  compiled contract, offline (`sdkt wasm inspect`).
+- **Compare contract upgrades safely** — diff two WASM files and get a
+  breaking-change verdict before deploying (`sdkt diff --upgrade-safety`).
+- **Audit contracts offline** — static security analysis of contract source with
+  no network or secrets (`sdkt audit`).
+- **Scaffold new projects** — generate a ready-to-build Soroban contract
+  (`sdkt init`).
+- **Deploy with upgrade protection** — upload and instantiate, aborting on a
+  non-backwards-compatible upgrade (`sdkt deploy --deny-breaking`).
 
 ## Installation (details)
 
@@ -111,13 +134,6 @@ The `sdkt audit` static analysis engine supports third-party plugins.
 - **`plugins`:** Build with `--features plugins` to load native shared libraries (`.so`, `.dylib`).
 
 See [`docs/plugin-authoring.md`](docs/plugin-authoring.md) for how to build or use custom rules.
-
-## Getting Started
-
-New here? Start with [docs/quick-start.md](docs/quick-start.md) for the
-five-minute first-time walkthrough, then
-[docs/getting-started.md](docs/getting-started.md) for deeper offline `diff`
-and `audit` examples.
 
 ## Commands
 
@@ -170,14 +186,20 @@ upgrade-safety-on-release).
 
 ## Documentation
 
-- [docs/getting-started.md](docs/getting-started.md) — five-minute onboarding.
-- [docs/installation.md](docs/installation.md) — build / install / features.
+- [docs/quick-start.md](docs/quick-start.md) — five-minute first-time walkthrough.
+- [docs/getting-started.md](docs/getting-started.md) — deeper offline `diff` and `audit` examples.
 - [docs/examples.md](docs/examples.md) — command recipes & CI gating.
-- [docs/faq.md](docs/faq.md) — frequently asked questions.
-- [docs/cli.md](docs/cli.md) — full command reference.
+- [docs/installation.md](docs/installation.md) — build / install / features.
+- [docs/compatibility.md](docs/compatibility.md) — real-world contract compatibility matrix.
 - [docs/ci-cd.md](docs/ci-cd.md) — CI/CD with the reusable Action.
-- [docs/plugin-authoring.md](docs/plugin-authoring.md) — write your own audit rules.
-- [ROADMAP.md](ROADMAP.md) · [CHANGELOG.md](CHANGELOG.md) · [GAP_ANALYSIS.md](GAP_ANALYSIS.md)
+- [SECURITY.md](SECURITY.md) — supported versions and vulnerability reporting.
+- [CONTRIBUTING.md](CONTRIBUTING.md) — how to contribute.
+
+Additional references: [docs/cli.md](docs/cli.md) (full command reference),
+[docs/faq.md](docs/faq.md) (FAQ),
+[docs/plugin-authoring.md](docs/plugin-authoring.md) (write your own audit
+rules), and [ROADMAP.md](ROADMAP.md) · [CHANGELOG.md](CHANGELOG.md) ·
+[GAP_ANALYSIS.md](GAP_ANALYSIS.md).
 
 ## Contributing
 
