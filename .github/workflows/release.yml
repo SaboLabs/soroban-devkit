@@ -104,6 +104,18 @@ jobs:
           tar -czf "sdkt-${{ matrix.target }}.tar.gz" \
             -C "target/${{ matrix.target }}/release" sdkt sdkt.sha256
 
+      - name: Verify tarball contents
+        run: |
+          # Regression guard: the release tarball MUST contain both the binary
+          # and its checksum (sdkt + sdkt.sha256), per M38 / README.
+          echo "Contents of sdkt-${{ matrix.target }}.tar.gz:"
+          tar -tzf "sdkt-${{ matrix.target }}.tar.gz"
+          tar -tzf "sdkt-${{ matrix.target }}.tar.gz" | grep -qx sdkt \
+            || { echo "FAIL: sdkt binary missing from tarball"; exit 1; }
+          tar -tzf "sdkt-${{ matrix.target }}.tar.gz" | grep -qx sdkt.sha256 \
+            || { echo "FAIL: sdkt.sha256 missing from tarball"; exit 1; }
+          echo "OK: tarball contains sdkt and sdkt.sha256"
+
       - name: Upload artifact
         uses: actions/upload-artifact@v7
         with:
