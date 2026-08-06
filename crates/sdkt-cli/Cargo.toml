@@ -1,5 +1,5 @@
 [package]
-name = "sdkt"
+name = "sdkt-cli"
 description = "Command Line Interface (CLI) application combining core Soroban DevKit components."
 authors.workspace = true
 license.workspace = true
@@ -9,7 +9,7 @@ version.workspace = true
 repository.workspace = true
 homepage.workspace = true
 readme = "../../README.md"
-documentation = "https://docs.rs/sdkt"
+documentation = "https://docs.rs/sdkt-cli"
 keywords = ["soroban", "stellar", "sdk", "toolkit", "blockchain"]
 categories = ["development-tools", "network-programming"]
 

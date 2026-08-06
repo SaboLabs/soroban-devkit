@@ -2732,27 +2732,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "sdkt"
-version = "2.0.0"
-dependencies = [
- "assert_cmd",
- "clap",
- "predicates",
- "sdkt-audit",
- "sdkt-audit-example-rule",
- "sdkt-core",
- "sdkt-rpc",
- "sdkt-storage",
- "sdkt-wasm",
- "sdkt-xdr",
- "serde",
- "serde_json",
- "stellar-xdr",
- "tempfile",
- "tokio",
-]
-
-[[package]]
 name = "sdkt-audit"
 version = "2.0.0"
 dependencies = [
@@ -2774,6 +2753,27 @@ dependencies = [
  "sdkt-audit",
  "serde",
  "serde_json",
+]
+
+[[package]]
+name = "sdkt-cli"
+version = "2.0.0"
+dependencies = [
+ "assert_cmd",
+ "clap",
+ "predicates",
+ "sdkt-audit",
+ "sdkt-audit-example-rule",
+ "sdkt-core",
+ "sdkt-rpc",
+ "sdkt-storage",
+ "sdkt-wasm",
+ "sdkt-xdr",
+ "serde",
+ "serde_json",
+ "stellar-xdr",
+ "tempfile",
+ "tokio",
 ]
 
 [[package]]
