@@ -5,7 +5,12 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [v2.0.0] - Unreleased
+## [Unreleased]
+
+### Added
+- **RPC Connection Pooling (ENG-01):** Replaced one-off HTTP clients with a single persistent, internally pooled `reqwest::Client` in `SorobanRpcClient`. This significantly improves performance during multi-contract orchestrated deployments (`sdkt project deploy`) by preventing socket exhaustion. Introduced configurable `timeout_secs` and `pool_max_idle_per_host` in `NetworkConfig`.
+
+## [v2.0.0] - 2026-08-06
 
 ### Changed
 - **BREAKING: CLI Rename.** The executable binary has been officially renamed from `sdkt-cli` to `sdkt`.

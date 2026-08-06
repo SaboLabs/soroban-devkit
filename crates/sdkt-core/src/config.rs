@@ -41,6 +41,10 @@ pub struct NetworkConfig {
     pub rpc_url: String,
     /// Core passphrase matching target network.
     pub passphrase: String,
+    /// Optional timeout for RPC requests in seconds (default: 15).
+    pub timeout_secs: Option<u64>,
+    /// Optional maximum concurrent connections in the pool (default: 100).
+    pub pool_max_idle_per_host: Option<usize>,
 }
 
 /// Settings modifying XDR decoding actions.
@@ -84,6 +88,8 @@ impl Default for NetworkConfig {
         Self {
             rpc_url: "https://soroban-testnet.stellar.org".to_string(),
             passphrase: "Test SDF Network ; September 2015".to_string(),
+            timeout_secs: Some(15),
+            pool_max_idle_per_host: Some(100),
         }
     }
 }
