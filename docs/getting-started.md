@@ -18,8 +18,8 @@ cargo install --path crates/sdkt-cli
 sdkt --version
 ```
 
-> The `sdkt` binary is the `sdkt-cli` crate. After `cargo install` the command
-> is named `sdkt` (a symlink is created on PATH).
+> The `sdkt` binary is built by the `sdkt-cli` crate. After `cargo install` the command
+> is named `sdkt` on your PATH.
 
 ## 2. Your first command — offline ABI/WASM diff
 

@@ -30,15 +30,15 @@ cargo build --bin sdkt
 ## Option B — From crates.io (when published)
 
 ```bash
-cargo install sdkt-cli
+cargo install sdkt
 ```
 
-> The crate is published on the `v1.0.0` tag and later. If `cargo install
-> sdkt-cli` reports "no matching package", build from source (Option A) or
+> The crate is published on the `v2.0.0` tag and later. If `cargo install
+> sdkt` reports "no matching package", build from source (Option A) or
 > pin a released tag:
 >
 > ```bash
-> cargo install --git https://github.com/naninu123/soroban-devkit --tag v1.0.0 sdkt-cli --locked
+> cargo install --git https://github.com/naninu123/soroban-devkit --tag v2.0.0 sdkt-cli --locked
 > ```
 
 ## Features

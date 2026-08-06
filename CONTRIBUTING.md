@@ -52,8 +52,8 @@ how we review changes, and how releases are produced.
 - Before claiming a CLI change is done, run the **actual binary** against a
   real fixture in both formats:
   ```bash
-  cargo run -q --bin sdkt-cli -- diff --old-wasm a.wasm --new-wasm b.wasm --format pretty
-  cargo run -q --bin sdkt-cli -- diff --old-wasm a.wasm --new-wasm b.wasm --format json
+  cargo run -q --bin sdkt -- diff --old-wasm a.wasm --new-wasm b.wasm --format pretty
+  cargo run -q --bin sdkt -- diff --old-wasm a.wasm --new-wasm b.wasm --format json
   ```
 
 ## Pull Request Process
