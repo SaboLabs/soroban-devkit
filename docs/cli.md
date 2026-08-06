@@ -22,7 +22,7 @@ sdkt
 │
 ├── tx
 │   ├── inspect <hash>        [--format]
-│   ├── simulate <xdr>
+│   ├── simulate <xdr>        [--format] (surfaces restore preambles, costs, state changes)
 │   ├── submit <xdr>
 │   └── build
 │
