@@ -62,45 +62,56 @@ jobs:
         run: |
           BIN=target/${{ matrix.target }}/release/sdkt
           chmod +x "$BIN"
-          
-          # Native platforms only: Verify binary starts and version reports correctly
-          if [[ "${{ matrix.target }}" == "x86_64-unknown-linux-gnu" && "${{ matrix.os }}" == "ubuntu-latest" ]] || \
-             [[ "${{ matrix.target }}" == "x86_64-apple-darwin" && "${{ matrix.os }}" == "macos-latest" ]] || \
-             [[ "${{ matrix.target }}" == "aarch64-apple-darwin" && "${{ matrix.os }}" == "macos-latest" && "$(uname -m)" == "arm64" ]]; then
-            echo "Running smoke test on native architecture..."
-            VERSION=$("$BIN" --version)
-            echo "Version reported: $VERSION"
-            
-            # Simple offline command test
-            "$BIN" help
+
+          # Native platforms: verify the binary actually runs offline commands.
+          if [[ "${{ matrix.target }}" == "x86_64-unknown-linux-gnu" && "${{ matrix.os }}" == "ubuntu-latest" ]]; then
+            RUN="$BIN"
+          elif [[ "${{ matrix.target }}" == "aarch64-apple-darwin" && "$(uname -m)" == "arm64" ]]; then
+            RUN="$BIN"
+          elif [[ "${{ matrix.target }}" == "x86_64-apple-darwin" && "${{ matrix.os }}" == "macos-latest" ]]; then
+            # Cross-compiled on an arm64 runner; run under Rosetta if available.
+            RUN="arch -x86_64 $BIN"
           else
             echo "Skipping execution smoke test on cross-compiled target."
+            RUN=""
           fi
-          
+
+          if [[ -n "$RUN" ]]; then
+            echo "Running smoke test on native architecture..."
+            VERSION=$($RUN --version)
+            echo "Version reported: $VERSION"
+            $RUN help
+            # Real offline command against repo fixtures — proves the shipped
+            # binary is functional, not just that it starts.
+            $RUN wasm inspect crates/sdkt-cli/tests/fixtures/us_old.wasm
+          fi
+
       - name: Generate Checksums
         run: |
           BIN=target/${{ matrix.target }}/release/sdkt
           cd target/${{ matrix.target }}/release
-          
           if command -v shasum &> /dev/null; then
             shasum -a 256 sdkt > sdkt.sha256
           else
             sha256sum sdkt > sdkt.sha256
           fi
+          # Standalone per-target checksum asset for release verification.
+          cp sdkt.sha256 "sdkt-${{ matrix.target }}.sha256"
           cd -
-          
-      - name: Package (unix)
+
+      - name: Package (tar.gz)
         run: |
-          BIN=target/${{ matrix.target }}/release/sdkt
-          tar -czf "sdkt-${{ matrix.target }}.tar.gz" -C "target/${{ matrix.target }}/release" sdkt sdkt.sha256
+          tar -czf "sdkt-${{ matrix.target }}.tar.gz" \
+            -C "target/${{ matrix.target }}/release" sdkt sdkt.sha256
+
       - name: Upload artifact
         uses: actions/upload-artifact@v7
         with:
           name: sdkt-${{ matrix.target }}
           path: |
             sdkt-${{ matrix.target }}.tar.gz
-            sdkt-${{ matrix.target }}.zip
-          if-no-files-found: ignore
+            sdkt-${{ matrix.target }}.sha256
+          if-no-files-not-found: error
 
   github-release:
     needs: build-binaries
@@ -113,7 +124,9 @@ jobs:
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v3
         with:
-          files: artifacts/*
+          files: |
+            artifacts/sdkt-*.tar.gz
+            artifacts/sdkt-*.sha256
           generate_release_notes: true
 
   publish-crates:
