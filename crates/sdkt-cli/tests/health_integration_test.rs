@@ -5,14 +5,14 @@ const MINIMAL_WASM: &[u8] = &[0x00, 0x61, 0x73, 0x6d, 0x01, 0x00, 0x00, 0x00];
 
 #[test]
 fn test_cli_health_missing_contract_arg() {
-    let mut cmd = Command::cargo_bin("sdkt-cli").unwrap();
+    let mut cmd = Command::cargo_bin("sdkt").unwrap();
     let assert = cmd.arg("health").assert();
     assert.failure();
 }
 
 #[test]
 fn test_cli_health_invalid_format_arg() {
-    let mut cmd = Command::cargo_bin("sdkt-cli").unwrap();
+    let mut cmd = Command::cargo_bin("sdkt").unwrap();
     let assert = cmd
         .arg("health")
         .arg("--contract")
@@ -27,7 +27,7 @@ fn test_cli_health_invalid_format_arg() {
 
 #[test]
 fn test_cli_health_missing_wasm_file() {
-    let mut cmd = Command::cargo_bin("sdkt-cli").unwrap();
+    let mut cmd = Command::cargo_bin("sdkt").unwrap();
     let assert = cmd
         .arg("health")
         .arg("--contract")
@@ -45,7 +45,7 @@ fn test_cli_health_invalid_wasm() {
     let tmp = tempfile::NamedTempFile::new().unwrap();
     std::fs::write(tmp.path(), b"not a wasm file").unwrap();
 
-    let mut cmd = Command::cargo_bin("sdkt-cli").unwrap();
+    let mut cmd = Command::cargo_bin("sdkt").unwrap();
     let assert = cmd
         .arg("health")
         .arg("--contract")
@@ -65,7 +65,7 @@ fn test_cli_health_json_format_accepted() {
     let tmp = tempfile::NamedTempFile::new().unwrap();
     std::fs::write(tmp.path(), b"not a wasm file").unwrap();
 
-    let mut cmd = Command::cargo_bin("sdkt-cli").unwrap();
+    let mut cmd = Command::cargo_bin("sdkt").unwrap();
     let assert = cmd
         .arg("health")
         .arg("--contract")
@@ -88,7 +88,7 @@ fn test_cli_health_onchain_error_path() {
     let tmp = tempfile::NamedTempFile::new().unwrap();
     std::fs::write(tmp.path(), MINIMAL_WASM).unwrap();
 
-    let mut cmd = Command::cargo_bin("sdkt-cli").unwrap();
+    let mut cmd = Command::cargo_bin("sdkt").unwrap();
     let assert = cmd
         .arg("health")
         .arg("--contract")

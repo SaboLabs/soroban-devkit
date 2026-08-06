@@ -3,7 +3,7 @@ use predicates::prelude::*;
 
 #[test]
 fn test_cli_fee_estimate_testnet() {
-    let mut cmd = Command::cargo_bin("sdkt-cli").unwrap();
+    let mut cmd = Command::cargo_bin("sdkt").unwrap();
     cmd.arg("fee")
         .arg("estimate")
         .arg("--network")
@@ -22,7 +22,7 @@ fn test_cli_fee_estimate_testnet() {
 
 #[test]
 fn test_cli_fee_estimate_mainnet_json() {
-    let mut cmd = Command::cargo_bin("sdkt-cli").unwrap();
+    let mut cmd = Command::cargo_bin("sdkt").unwrap();
     cmd.arg("fee")
         .arg("estimate")
         .arg("--network")
@@ -39,7 +39,7 @@ fn test_cli_fee_estimate_mainnet_json() {
 
 #[test]
 fn test_cli_fee_estimate_invalid_fees() {
-    let mut cmd = Command::cargo_bin("sdkt-cli").unwrap();
+    let mut cmd = Command::cargo_bin("sdkt").unwrap();
     cmd.arg("fee")
         .arg("estimate")
         .arg("--base-fees")
@@ -52,7 +52,7 @@ fn test_cli_fee_estimate_invalid_fees() {
 
 #[test]
 fn test_cli_fee_estimate_unknown_network() {
-    let mut cmd = Command::cargo_bin("sdkt-cli").unwrap();
+    let mut cmd = Command::cargo_bin("sdkt").unwrap();
     cmd.arg("fee")
         .arg("estimate")
         .arg("--network")

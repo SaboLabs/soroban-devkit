@@ -1,7 +1,7 @@
 use assert_cmd::Command;
 
 fn sdkt() -> Command {
-    Command::cargo_bin("sdkt-cli").unwrap()
+    Command::cargo_bin("sdkt").unwrap()
 }
 
 #[test]

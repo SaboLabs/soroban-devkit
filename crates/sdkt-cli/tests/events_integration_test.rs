@@ -3,7 +3,7 @@ use predicates::prelude::*;
 
 #[test]
 fn test_events_format_json() {
-    let mut cmd = Command::cargo_bin("sdkt-cli").unwrap();
+    let mut cmd = Command::cargo_bin("sdkt").unwrap();
     cmd.arg("events")
         .arg("CCVVW7N4R3KNY72QJQKQY3T753C2H34E6XJIVJQOQSQE3C3M3U72QJQK")
         .arg("--format")
@@ -16,7 +16,7 @@ fn test_events_format_json() {
 
 #[test]
 fn test_events_invalid_format() {
-    let mut cmd = Command::cargo_bin("sdkt-cli").unwrap();
+    let mut cmd = Command::cargo_bin("sdkt").unwrap();
     cmd.arg("events")
         .arg("CCVVW7N4R3KNY72QJQKQY3T753C2H34E6XJIVJQOQSQE3C3M3U72QJQK")
         .arg("--format")

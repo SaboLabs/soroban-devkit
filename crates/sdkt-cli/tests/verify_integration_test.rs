@@ -6,14 +6,14 @@ const MINIMAL_WASM: &[u8] = &[0x00, 0x61, 0x73, 0x6d, 0x01, 0x00, 0x00, 0x00];
 #[test]
 fn test_cli_verify_missing_contract_arg() {
     // `--contract` is required by clap → failure without touching RPC.
-    let mut cmd = Command::cargo_bin("sdkt-cli").unwrap();
+    let mut cmd = Command::cargo_bin("sdkt").unwrap();
     let assert = cmd.arg("verify").assert();
     assert.failure();
 }
 
 #[test]
 fn test_cli_verify_invalid_format_arg() {
-    let mut cmd = Command::cargo_bin("sdkt-cli").unwrap();
+    let mut cmd = Command::cargo_bin("sdkt").unwrap();
     let assert = cmd
         .arg("verify")
         .arg("--contract")
@@ -29,7 +29,7 @@ fn test_cli_verify_invalid_format_arg() {
 #[test]
 fn test_cli_verify_missing_wasm_file() {
     // Missing local file must fail offline with a clear message (no RPC).
-    let mut cmd = Command::cargo_bin("sdkt-cli").unwrap();
+    let mut cmd = Command::cargo_bin("sdkt").unwrap();
     let assert = cmd
         .arg("verify")
         .arg("--contract")
@@ -48,7 +48,7 @@ fn test_cli_verify_invalid_wasm() {
     let tmp = tempfile::NamedTempFile::new().unwrap();
     std::fs::write(tmp.path(), b"not a wasm file").unwrap();
 
-    let mut cmd = Command::cargo_bin("sdkt-cli").unwrap();
+    let mut cmd = Command::cargo_bin("sdkt").unwrap();
     let assert = cmd
         .arg("verify")
         .arg("--contract")
@@ -68,7 +68,7 @@ fn test_cli_verify_json_format_accepted() {
     let tmp = tempfile::NamedTempFile::new().unwrap();
     std::fs::write(tmp.path(), b"not a wasm file").unwrap();
 
-    let mut cmd = Command::cargo_bin("sdkt-cli").unwrap();
+    let mut cmd = Command::cargo_bin("sdkt").unwrap();
     let assert = cmd
         .arg("verify")
         .arg("--contract")
@@ -91,7 +91,7 @@ fn test_cli_verify_onchain_error_path() {
     let tmp = tempfile::NamedTempFile::new().unwrap();
     std::fs::write(tmp.path(), MINIMAL_WASM).unwrap();
 
-    let mut cmd = Command::cargo_bin("sdkt-cli").unwrap();
+    let mut cmd = Command::cargo_bin("sdkt").unwrap();
     let assert = cmd
         .arg("verify")
         .arg("--contract")

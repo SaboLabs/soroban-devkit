@@ -2,7 +2,7 @@ use assert_cmd::Command;
 
 #[test]
 fn test_cli_wasm_cache_info_default() {
-    let mut cmd = Command::cargo_bin("sdkt-cli").unwrap();
+    let mut cmd = Command::cargo_bin("sdkt").unwrap();
     let assert = cmd.arg("wasm").arg("cache").arg("info").assert();
     assert
         .success()
@@ -11,7 +11,7 @@ fn test_cli_wasm_cache_info_default() {
 
 #[test]
 fn test_cli_wasm_cache_info_json() {
-    let mut cmd = Command::cargo_bin("sdkt-cli").unwrap();
+    let mut cmd = Command::cargo_bin("sdkt").unwrap();
     let assert = cmd
         .arg("wasm")
         .arg("cache")
@@ -26,7 +26,7 @@ fn test_cli_wasm_cache_info_json() {
 
 #[test]
 fn test_cli_wasm_cache_clear() {
-    let mut cmd = Command::cargo_bin("sdkt-cli").unwrap();
+    let mut cmd = Command::cargo_bin("sdkt").unwrap();
     let assert = cmd
         .arg("wasm")
         .arg("cache")
@@ -41,7 +41,7 @@ fn test_cli_wasm_cache_clear() {
 
 #[test]
 fn test_cli_wasm_cache_remove() {
-    let mut cmd = Command::cargo_bin("sdkt-cli").unwrap();
+    let mut cmd = Command::cargo_bin("sdkt").unwrap();
     let assert = cmd
         .arg("wasm")
         .arg("cache")
@@ -55,7 +55,7 @@ fn test_cli_wasm_cache_remove() {
 
 #[test]
 fn test_cli_wasm_inspect_missing_file() {
-    let mut cmd = Command::cargo_bin("sdkt-cli").unwrap();
+    let mut cmd = Command::cargo_bin("sdkt").unwrap();
     let assert = cmd
         .arg("wasm")
         .arg("inspect")
@@ -71,7 +71,7 @@ fn test_cli_wasm_inspect_invalid_wasm() {
     let tmp = tempfile::NamedTempFile::new().unwrap();
     std::fs::write(tmp.path(), b"invalid wasm data").unwrap();
 
-    let mut cmd = Command::cargo_bin("sdkt-cli").unwrap();
+    let mut cmd = Command::cargo_bin("sdkt").unwrap();
     let assert = cmd.arg("wasm").arg("inspect").arg(tmp.path()).assert();
     assert
         .failure()
@@ -84,7 +84,7 @@ fn test_cli_wasm_inspect_valid_empty_wasm() {
     // A minimal valid WASM binary (magic + version 1)
     std::fs::write(tmp.path(), [0x00, 0x61, 0x73, 0x6d, 0x01, 0x00, 0x00, 0x00]).unwrap();
 
-    let mut cmd = Command::cargo_bin("sdkt-cli").unwrap();
+    let mut cmd = Command::cargo_bin("sdkt").unwrap();
     let assert = cmd.arg("wasm").arg("inspect").arg(tmp.path()).assert();
     assert
         .success()
@@ -98,7 +98,7 @@ fn test_cli_wasm_inspect_json() {
     let tmp = tempfile::NamedTempFile::new().unwrap();
     std::fs::write(tmp.path(), [0x00, 0x61, 0x73, 0x6d, 0x01, 0x00, 0x00, 0x00]).unwrap();
 
-    let mut cmd = Command::cargo_bin("sdkt-cli").unwrap();
+    let mut cmd = Command::cargo_bin("sdkt").unwrap();
     let assert = cmd
         .arg("wasm")
         .arg("inspect")
@@ -112,7 +112,7 @@ fn test_cli_wasm_inspect_json() {
 }
 #[test]
 fn test_cli_wasm_metadata_missing_contract() {
-    let mut cmd = Command::cargo_bin("sdkt-cli").unwrap();
+    let mut cmd = Command::cargo_bin("sdkt").unwrap();
     let assert = cmd
         .arg("wasm")
         .arg("metadata")

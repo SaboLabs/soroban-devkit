@@ -2,7 +2,7 @@ use assert_cmd::Command;
 
 #[test]
 fn test_cli_tx_simulate_empty_envelope() {
-    let mut cmd = Command::cargo_bin("sdkt-cli").unwrap();
+    let mut cmd = Command::cargo_bin("sdkt").unwrap();
     let assert = cmd
         .arg("tx")
         .arg("simulate")
@@ -16,7 +16,7 @@ fn test_cli_tx_simulate_empty_envelope() {
 
 #[test]
 fn test_cli_tx_simulate_invalid_envelope() {
-    let mut cmd = Command::cargo_bin("sdkt-cli").unwrap();
+    let mut cmd = Command::cargo_bin("sdkt").unwrap();
     let assert = cmd
         .arg("tx")
         .arg("simulate")

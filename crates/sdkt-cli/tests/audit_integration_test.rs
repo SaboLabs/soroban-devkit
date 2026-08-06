@@ -3,7 +3,7 @@ use std::io::Write;
 use tempfile::TempDir;
 
 fn sdkt() -> Command {
-    Command::cargo_bin("sdkt-cli").unwrap()
+    Command::cargo_bin("sdkt").unwrap()
 }
 
 /// Write `content` to `<dir>/contract.rs` and return the path.
@@ -146,7 +146,7 @@ fn audit_example_plugin_rule_fires_with_plugins_feature() {
         "trigger.rs",
         "pub fn sdkt_example_trigger(admin: Address) { require_auth(); }\n",
     );
-    let out = Command::new(env!("CARGO_BIN_EXE_sdkt-cli"))
+    let out = Command::new(env!("CARGO_BIN_EXE_sdkt"))
         .args([
             "audit",
             path.to_str().unwrap(),

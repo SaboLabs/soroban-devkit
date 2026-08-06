@@ -1,7 +1,7 @@
 use assert_cmd::Command;
 
 fn sdkt() -> Command {
-    Command::cargo_bin("sdkt-cli").unwrap()
+    Command::cargo_bin("sdkt").unwrap()
 }
 
 /// `sdkt storage analyze <id>` should reject an empty contract id with a

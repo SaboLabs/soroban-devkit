@@ -3,7 +3,7 @@ use predicates::prelude::*;
 use predicates::str::contains;
 
 fn sdkt() -> Command {
-    Command::cargo_bin("sdkt-cli").unwrap()
+    Command::cargo_bin("sdkt").unwrap()
 }
 
 fn fixture(name: &str) -> String {

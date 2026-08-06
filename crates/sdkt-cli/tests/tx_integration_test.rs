@@ -3,7 +3,7 @@ use predicates::prelude::*;
 
 #[test]
 fn test_tx_inspect_format_json() {
-    let mut cmd = Command::cargo_bin("sdkt-cli").unwrap();
+    let mut cmd = Command::cargo_bin("sdkt").unwrap();
     cmd.arg("tx")
         .arg("inspect")
         // Just checking command structure and error propagation, not a real hash if offline
@@ -18,7 +18,7 @@ fn test_tx_inspect_format_json() {
 
 #[test]
 fn test_tx_inspect_invalid_format() {
-    let mut cmd = Command::cargo_bin("sdkt-cli").unwrap();
+    let mut cmd = Command::cargo_bin("sdkt").unwrap();
     cmd.arg("tx")
         .arg("inspect")
         .arg("0000000000000000000000000000000000000000000000000000000000000000")

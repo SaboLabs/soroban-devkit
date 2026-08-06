@@ -3,7 +3,7 @@ use predicates::prelude::*;
 
 #[test]
 fn test_account_format_json() {
-    let mut cmd = Command::cargo_bin("sdkt-cli").unwrap();
+    let mut cmd = Command::cargo_bin("sdkt").unwrap();
     cmd.arg("account")
         .arg("GXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX")
         .arg("--format")
@@ -16,7 +16,7 @@ fn test_account_format_json() {
 
 #[test]
 fn test_account_invalid_format() {
-    let mut cmd = Command::cargo_bin("sdkt-cli").unwrap();
+    let mut cmd = Command::cargo_bin("sdkt").unwrap();
     cmd.arg("account")
         .arg("GXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX")
         .arg("--format")

@@ -52,7 +52,7 @@ fn dynamic_plugin_rule_fires() {
     let plugin = build_example_plugin();
     let src = "pub fn sdkt_example_trigger_admin() {}";
 
-    let mut cmd = Command::cargo_bin("sdkt-cli").unwrap();
+    let mut cmd = Command::cargo_bin("sdkt").unwrap();
     let tmp = tempfile::Builder::new().suffix(".rs").tempfile().unwrap();
     std::fs::write(tmp.path(), src).unwrap();
     cmd.arg("audit").arg(tmp.path()).arg("--rules").arg(&plugin);
@@ -143,7 +143,7 @@ fn plugin_bounds_clamping_prevents_read_overflow() {
         pub fn sdkt_example_trigger_70() {}
     ";
 
-    let mut cmd = Command::cargo_bin("sdkt-cli").unwrap();
+    let mut cmd = Command::cargo_bin("sdkt").unwrap();
     let tmp = tempfile::Builder::new().suffix(".rs").tempfile().unwrap();
     std::fs::write(tmp.path(), src).unwrap();
     cmd.arg("audit").arg(tmp.path()).arg("--rules").arg(&plugin);
@@ -166,7 +166,7 @@ fn dynamic_plugin_coexists_with_builtins() {
     let tmp = tempfile::Builder::new().suffix(".rs").tempfile().unwrap();
     std::fs::write(tmp.path(), src).unwrap();
 
-    let mut cmd = Command::cargo_bin("sdkt-cli").unwrap();
+    let mut cmd = Command::cargo_bin("sdkt").unwrap();
     cmd.arg("audit").arg(tmp.path()).arg("--rules").arg(&plugin);
 
     cmd.assert()
@@ -178,7 +178,7 @@ fn dynamic_plugin_coexists_with_builtins() {
 #[cfg(feature = "plugins")]
 #[test]
 fn native_plugin_invalid_so_errors() {
-    let mut cmd = Command::cargo_bin("sdkt-cli").unwrap();
+    let mut cmd = Command::cargo_bin("sdkt").unwrap();
     let tmp = tempfile::Builder::new().suffix(".so").tempfile().unwrap();
     std::fs::write(tmp.path(), b"not an so file").unwrap();
 
@@ -232,7 +232,7 @@ fn build_example_wasm_plugin() -> std::path::PathBuf {
 #[test]
 fn wasm_plugin_coexists_with_builtins() {
     let wasm_path = build_example_wasm_plugin();
-    let mut cmd = Command::cargo_bin("sdkt-cli").unwrap();
+    let mut cmd = Command::cargo_bin("sdkt").unwrap();
 
     // We create a temp file that triggers both AUTH-001 (builtin) and EXAMPLE-001 (wasm)
     let tmp = tempfile::NamedTempFile::new().unwrap();

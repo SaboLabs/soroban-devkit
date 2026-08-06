@@ -6,7 +6,7 @@ const TEST_CONTRACT: &str = "CAAQCAIBAEAQCAIBAEAQCAIBAEAQCAIBAEAQCAIBAEAQCAIBAEA
 
 #[test]
 fn test_cli_tx_build_success() {
-    let mut cmd = Command::cargo_bin("sdkt-cli").unwrap();
+    let mut cmd = Command::cargo_bin("sdkt").unwrap();
     let assert = cmd
         .arg("tx")
         .arg("build")
@@ -24,7 +24,7 @@ fn test_cli_tx_build_success() {
 
 #[test]
 fn test_cli_tx_build_typed_args() {
-    let mut cmd = Command::cargo_bin("sdkt-cli").unwrap();
+    let mut cmd = Command::cargo_bin("sdkt").unwrap();
     let assert = cmd
         .arg("tx")
         .arg("build")
@@ -52,7 +52,7 @@ fn test_cli_tx_build_typed_args() {
 
 #[test]
 fn test_cli_tx_build_invalid_arg_format() {
-    let mut cmd = Command::cargo_bin("sdkt-cli").unwrap();
+    let mut cmd = Command::cargo_bin("sdkt").unwrap();
     let assert = cmd
         .arg("tx")
         .arg("build")
@@ -72,7 +72,7 @@ fn test_cli_tx_build_invalid_arg_format() {
 
 #[test]
 fn test_cli_tx_build_json() {
-    let mut cmd = Command::cargo_bin("sdkt-cli").unwrap();
+    let mut cmd = Command::cargo_bin("sdkt").unwrap();
     let assert = cmd
         .arg("tx")
         .arg("build")
@@ -94,7 +94,7 @@ fn test_cli_tx_build_json() {
 
 #[test]
 fn test_cli_tx_build_invalid_source() {
-    let mut cmd = Command::cargo_bin("sdkt-cli").unwrap();
+    let mut cmd = Command::cargo_bin("sdkt").unwrap();
     let assert = cmd
         .arg("tx")
         .arg("build")
@@ -115,7 +115,7 @@ fn test_cli_tx_build_invalid_source() {
 #[test]
 fn test_cli_tx_build_output_file() {
     let temp = NamedTempFile::new().unwrap();
-    let mut cmd = Command::cargo_bin("sdkt-cli").unwrap();
+    let mut cmd = Command::cargo_bin("sdkt").unwrap();
     let assert = cmd
         .arg("tx")
         .arg("build")

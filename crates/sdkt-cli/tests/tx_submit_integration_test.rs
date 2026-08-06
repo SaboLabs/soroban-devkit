@@ -11,7 +11,7 @@ const ENVELOPE: &str =
 #[test]
 fn test_cli_submit_invalid_envelope_rejects() {
     // An obviously invalid base64 envelope should fail locally without a broadcast.
-    let mut cmd = Command::cargo_bin("sdkt-cli").unwrap();
+    let mut cmd = Command::cargo_bin("sdkt").unwrap();
     let assert = cmd
         .arg("tx")
         .arg("submit")
@@ -30,7 +30,7 @@ fn test_cli_submit_json_output_format() {
     let env_path = dir.path().join("tx.xdr");
     fs::write(&env_path, ENVELOPE).unwrap();
 
-    let mut cmd = Command::cargo_bin("sdkt-cli").unwrap();
+    let mut cmd = Command::cargo_bin("sdkt").unwrap();
     let assert = cmd
         .arg("tx")
         .arg("submit")
