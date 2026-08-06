@@ -39,12 +39,39 @@ Most commands are **offline**; only on-chain reads (`inspect`, `storage`, `tx`, 
 | Project scaffolding | `sdkt init` |
 | Deploy (with `--deny-breaking` guard) | `sdkt deploy` |
 
-## Installation
+## Quick Start
 
-**Prerequisites:** Rust `1.88.0` or higher is required.
+Get `sdkt` running in under five minutes. Pick one install method, verify,
+then run your first command.
+
+### 1. Install
+
+**Option A — GitHub Release binary (fastest, no Rust toolchain needed):**
+
+Download the asset matching your platform from the
+[Releases](https://github.com/naninu123/soroban-devkit/releases) page. Asset
+names follow `sdkt-<target>.tar.gz` (each includes the `sdkt` binary and a
+`sdkt.sha256` checksum).
 
 ```bash
-# Build from source
+# Example: Linux x86_64
+VERSION=$(curl -fsSL https://api.github.com/repos/naninu123/soroban-devkit/releases/latest | grep -oE '"tag_name": *"[^"]+"' | head -1 | cut -d'"' -f4)
+curl -fsSL -o sdkt.tar.gz "https://github.com/naninu123/soroban-devkit/releases/download/${VERSION}/sdkt-x86_64-unknown-linux-gnu.tar.gz"
+tar -xzf sdkt.tar.gz
+./sdkt --version
+# (optional) make it available system-wide:
+sudo mv sdkt /usr/local/bin/
+```
+
+> Other targets: `x86_64-apple-darwin` (macOS Intel) and
+> `aarch64-apple-darwin` (macOS Apple Silicon). Replace the filename in the
+> `curl` command accordingly.
+
+**Option B — Build from source (requires Rust):**
+
+**Prerequisites:** Rust `1.88.0` or higher.
+
+```bash
 git clone https://github.com/naninu123/soroban-devkit
 cd soroban-devkit
 cargo install --path crates/sdkt-cli
@@ -52,6 +79,33 @@ cargo install --path crates/sdkt-cli
 # Verify
 sdkt --version
 ```
+
+### 2. Your first useful command
+
+```bash
+sdkt --help
+```
+
+This prints every available command and subcommand. Everything from here is
+offline unless explicitly noted.
+
+### 3. A real first action (offline)
+
+Inspect a compiled contract WASM:
+
+```bash
+sdkt wasm inspect crates/sdkt-cli/tests/fixtures/us_old.wasm
+```
+
+Or, for a guided walkthrough, continue to
+[docs/quick-start.md](docs/quick-start.md) — a step-by-step first-time guide
+that covers inspect, audit, and upgrade-safety diff.
+
+## Installation (details)
+
+Full options — including the `wasm-plugins` / `plugins` feature flags,
+installing from crates.io, and updating — are in
+[docs/installation.md](docs/installation.md).
 
 ### Extensibility & Plugins
 
@@ -62,29 +116,12 @@ The `sdkt audit` static analysis engine supports third-party plugins.
 
 See [`docs/plugin-authoring.md`](docs/plugin-authoring.md) for how to build or use custom rules.
 
-Full options (features, from crates.io, updating) are in
-[docs/installation.md](docs/installation.md).
-
 ## Getting Started
 
-New here? Start with [docs/getting-started.md](docs/getting-started.md) — it
-walks you through your first offline `diff` and `audit` in under five minutes.
-
-### Quick Start
-
-Offline ABI/WASM diff (no network needed):
-
-```bash
-sdkt diff \
-  --old-wasm crates/sdkt-cli/tests/fixtures/us_old.wasm \
-  --new-wasm crates/sdkt-cli/tests/fixtures/us_new.wasm
-```
-
-Static security audit of a contract:
-
-```bash
-sdkt audit contracts/token/src/lib.rs
-```
+New here? Start with [docs/quick-start.md](docs/quick-start.md) for the
+five-minute first-time walkthrough, then
+[docs/getting-started.md](docs/getting-started.md) for deeper offline `diff`
+and `audit` examples.
 
 ## Commands
 
