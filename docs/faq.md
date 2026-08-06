@@ -10,9 +10,13 @@ Only the commands that read on-chain state (`inspect`, `storage`,
 `tx inspect`, `events`, `account`, `fee estimate`, `wasm metadata`) need an
 RPC endpoint. `decode`, `diff`, and `audit` are fully offline.
 
-### Why is the binary called `sdkt` but the crate `sdkt-cli`?
-The published/installed binary is `sdkt` (the `sdkt-cli` crate builds it). The
-workspace has many crates; `sdkt-cli` is just the frontend.
+### Why is the crate named `sdkt`?
+
+The published crate and the installed binary share the same name, `sdkt`.
+The workspace contains other library crates (`sdkt-core`, `sdkt-wasm`,
+`sdkt-audit`, …) that `sdkt` depends on; `sdkt` is the frontend crate that
+builds the `sdkt` binary. Install it with `cargo install sdkt` (from crates.io)
+or `cargo install --path crates/sdkt-cli` (from a clone).
 
 ### `sdkt audit` found `AUTH-003` on my `initialize` — is that a false positive?
 Maybe. `AUTH-003` fires when an `initialize`-style function has no

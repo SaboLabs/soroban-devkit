@@ -27,7 +27,7 @@ cargo build --bin sdkt
 # run via: ./target/debug/sdkt --help
 ```
 
-## Option B — From crates.io (when published)
+## Option B — From crates.io
 
 ```bash
 cargo install sdkt
@@ -38,12 +38,12 @@ cargo install sdkt
 > pin a released tag:
 >
 > ```bash
-> cargo install --git https://github.com/naninu123/soroban-devkit --tag v2.0.0 sdkt-cli --locked
+> cargo install --git https://github.com/naninu123/soroban-devkit --tag v2.0.0 sdkt --locked
 > ```
 
 ## Features
 
-`sdkt-cli` has the following optional features:
+`sdkt` has the following optional features:
 
 | Feature | Default | Effect |
 |---|---|---|

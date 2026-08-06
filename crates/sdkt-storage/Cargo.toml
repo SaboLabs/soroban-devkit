@@ -4,10 +4,12 @@ description = "Storage monitoring utility and TTL extensions logic for Soroban c
 authors.workspace = true
 license.workspace = true
 edition.workspace = true
+rust-version.workspace = true
 version.workspace = true
 repository.workspace = true
 homepage.workspace = true
 readme = "../../README.md"
+documentation = "https://docs.rs/sdkt-storage"
 keywords = ["soroban", "stellar", "sdk", "toolkit", "blockchain"]
 categories = ["development-tools", "network-programming"]
 

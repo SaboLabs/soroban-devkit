@@ -4,10 +4,12 @@ description = "WASM binary metadata parser for Soroban DevKit — exports, impor
 authors.workspace = true
 license.workspace = true
 edition.workspace = true
+rust-version.workspace = true
 version.workspace = true
 repository.workspace = true
 homepage.workspace = true
 readme = "../../README.md"
+documentation = "https://docs.rs/sdkt-wasm"
 keywords = ["soroban", "stellar", "sdk", "toolkit", "wasm"]
 categories = ["development-tools", "wasm"]
 

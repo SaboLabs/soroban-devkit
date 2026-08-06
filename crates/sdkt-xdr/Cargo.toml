@@ -4,10 +4,12 @@ description = "XDR encoding and decoding pipelines customized for Soroban smart 
 authors.workspace = true
 license.workspace = true
 edition.workspace = true
+rust-version.workspace = true
 version.workspace = true
 repository.workspace = true
 homepage.workspace = true
 readme = "../../README.md"
+documentation = "https://docs.rs/sdkt-xdr"
 keywords = ["soroban", "stellar", "sdk", "toolkit", "blockchain"]
 categories = ["development-tools", "network-programming"]
 

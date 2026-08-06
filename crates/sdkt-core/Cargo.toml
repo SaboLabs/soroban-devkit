@@ -4,10 +4,12 @@ description = "Core types, configurations, and format handling for the Soroban D
 authors.workspace = true
 license.workspace = true
 edition.workspace = true
+rust-version.workspace = true
 version.workspace = true
 repository.workspace = true
 homepage.workspace = true
 readme = "../../README.md"
+documentation = "https://docs.rs/sdkt-core"
 keywords = ["soroban", "stellar", "sdk", "toolkit", "blockchain"]
 categories = ["development-tools", "network-programming"]
 

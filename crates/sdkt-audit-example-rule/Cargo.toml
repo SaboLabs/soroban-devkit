@@ -4,10 +4,12 @@ description = "Example sdkt-audit plugin rule (reference/documentation only)."
 authors.workspace = true
 license.workspace = true
 edition.workspace = true
+rust-version.workspace = true
 version.workspace = true
 repository.workspace = true
 homepage.workspace = true
 readme = "../../README.md"
+documentation = "https://docs.rs/sdkt-audit-example-rule"
 keywords = ["soroban", "stellar", "sdk", "toolkit", "audit"]
 categories = ["development-tools"]
 
