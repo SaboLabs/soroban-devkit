@@ -56,7 +56,7 @@ sdkt --version
 Expected output (version may be newer):
 
 ```
-sdkt 2.0.0
+sdkt 2.1.1
 ```
 
 Then confirm the CLI is responsive:

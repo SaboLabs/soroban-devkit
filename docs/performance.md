@@ -12,7 +12,7 @@ offline `sdkt` commands so future releases can detect regressions.
 | Memory | 3.7 GiB total |
 | OS | Linux (Ubuntu) |
 | Rust | rustc 1.97.1 (stable) |
-| sdkt | 2.0.0 (release build) |
+| sdkt | 2.1.1 (release build) |
 | Benchmark date | 2026-08-06 |
 
 > Reported numbers were captured on the project VPS. Absolute values will vary
@@ -71,7 +71,7 @@ Audit target: `token/src/lib.rs` (8 source files) and `liquidity_pool/src/lib.rs
 
 ## Baseline results
 
-First pass (RUNS=7, pinned to 1 core), sdkt 2.0.0:
+First pass (RUNS=7, pinned to 1 core), sdkt 2.1.1:
 
 | Command | wall min | wall median | wall avg | peak RSS (median) |
 |---------|:-------:|:----------:|:-------:|:-----------------:|

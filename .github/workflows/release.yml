@@ -39,8 +39,31 @@ jobs:
         # version" errors for siblings that are not yet published.
         run: cargo publish --dry-run --workspace
 
+  version-check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - name: Tag vs Cargo version
+        run: |
+          # Release must be cut from a vX.Y.Z tag.
+          TAG="${{ github.ref_name }}"
+          echo "Release tag: $TAG"
+          case "$TAG" in
+            v[0-9]*.[0-9]*.[0-9]*) TAG_VER="${TAG#v}" ;;
+            *) echo "error: ref '$TAG' is not a vX.Y.Z tag" >&2; exit 1 ;;
+          esac
+          # Cargo workspace version (single source of truth).
+          CARGO_VER="$(grep -m1 '^version = ' Cargo.toml | sed -E 's/version = "([^"]+)".*/\1/')"
+          echo "Cargo workspace version: $CARGO_VER"
+          if [[ "$TAG_VER" != "$CARGO_VER" ]]; then
+            echo "error: git tag ($TAG_VER) != Cargo version ($CARGO_VER)" >&2
+            echo "Fix: bump Cargo.toml version to match the tag, or retag." >&2
+            exit 1
+          fi
+          echo "OK: tag $TAG matches Cargo version $CARGO_VER"
+
   build-binaries:
-    needs: validate
+    needs: [validate, version-check]
     strategy:
       matrix:
         include:
@@ -80,6 +103,18 @@ jobs:
             echo "Running smoke test on native architecture..."
             VERSION=$($RUN --version)
             echo "Version reported: $VERSION"
+
+            # Guardrail: the built binary MUST report the release tag version.
+            TAG_VER="${{ github.ref_name }}"
+            TAG_VER="${TAG_VER#v}"
+            BIN_VER="$(echo "$VERSION" | awk '{print $2}')"
+            if [[ "$BIN_VER" != "$TAG_VER" ]]; then
+              echo "error: binary version '$BIN_VER' != release tag '$TAG_VER'" >&2
+              echo "The package version was not bumped to match the tag." >&2
+              exit 1
+            fi
+            echo "OK: binary version $BIN_VER matches tag $TAG_VER"
+
             $RUN help
             # Real offline command against repo fixtures — proves the shipped
             # binary is functional, not just that it starts.
@@ -142,7 +177,7 @@ jobs:
           generate_release_notes: true
 
   publish-crates:
-    needs: validate
+    needs: [validate, version-check]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7

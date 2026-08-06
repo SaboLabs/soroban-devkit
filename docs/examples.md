@@ -108,7 +108,7 @@ jobs:
       - uses: naninu123/soroban-devkit/.github/actions/sdkt@main
         with:
           command: audit
-          sdkt-version: v2.0.0
+          sdkt-version: v2.1.1
           target: contracts/token/src/lib.rs
           severity-threshold: critical
 ```
@@ -129,7 +129,7 @@ jobs:
       - uses: naninu123/soroban-devkit/.github/actions/sdkt@main
         with:
           command: upgrade-safety
-          sdkt-version: v2.0.0
+          sdkt-version: v2.1.1
           old-wasm: builds/current.wasm
           new-wasm: builds/candidate.wasm
 ```

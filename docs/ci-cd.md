@@ -14,7 +14,7 @@ mode, and fails the step when the check does not pass.
 | Input | Required | Default | Meaning |
 |-------|----------|---------|---------|
 | `command` | yes | — | `audit` or `upgrade-safety` |
-| `sdkt-version` | no | `v2.0.0` | Pinned `sdkt` git tag to install |
+| `sdkt-version` | no | `v2.1.1` | Pinned `sdkt` git tag to install |
 | `target` | for `audit` | `""` | Path to the `.rs` source to audit |
 | `old-wasm` | for `upgrade-safety` | `""` | Baseline (currently deployed) WASM |
 | `new-wasm` | for `upgrade-safety` | `""` | Candidate (new) WASM |
@@ -43,7 +43,7 @@ jobs:
         uses: naninu123/soroban-devkit/.github/actions/sdkt@main
         with:
           command: audit
-          sdkt-version: v2.0.0
+          sdkt-version: v2.1.1
           target: contracts/token/src/lib.rs
           severity-threshold: critical
 ```
@@ -70,7 +70,7 @@ jobs:
         uses: naninu123/soroban-devkit/.github/actions/sdkt@main
         with:
           command: upgrade-safety
-          sdkt-version: v2.0.0
+          sdkt-version: v2.1.1
           old-wasm: builds/current.wasm
           new-wasm: builds/candidate.wasm
 ```

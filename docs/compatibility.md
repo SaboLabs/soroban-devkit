@@ -1,7 +1,7 @@
 # Compatibility Matrix — Real-World Soroban Projects (M33)
 
 Validated: 2026-08-06
-sdkt version: **2.0.0** (`sdkt --version` → 2.0.0)
+sdkt version: **2.1.1** (`sdkt --version` → 2.1.1)
 Toolchain: rustc 1.97.1, target `wasm32v1-none`
 
 ## Purpose

@@ -36,7 +36,7 @@ SDKT_INSTALL_DIR=/usr/local/bin curl -fsSL \
 Pin a specific version:
 
 ```bash
-SDKT_VERSION=v2.0.0 curl -fsSL \
+SDKT_VERSION=v2.1.1 curl -fsSL \
   https://raw.githubusercontent.com/naninu123/soroban-devkit/main/install.sh | bash
 ```
 
@@ -83,12 +83,12 @@ cargo build --bin sdkt
 cargo install sdkt-cli
 ```
 
-> The crate is published on the `v2.0.0` tag and later. If `cargo install
+> The crate is published on the `v2.1.1` tag and later. If `cargo install
 > sdkt-cli` reports "no matching package", build from source (Option B) or
 > pin a released tag:
 >
 > ```bash
-> cargo install --git https://github.com/naninu123/soroban-devkit --tag v2.0.0 sdkt-cli --locked
+> cargo install --git https://github.com/naninu123/soroban-devkit --tag v2.1.1 sdkt-cli --locked
 > ```
 
 ## Features
