@@ -105,7 +105,7 @@ jobs:
       - uses: naninu123/soroban-devkit/.github/actions/sdkt@main
         with:
           command: audit
-          sdkt-version: v1.0.0
+          sdkt-version: v2.0.0
           target: contracts/token/src/lib.rs
           severity-threshold: critical
 ```
