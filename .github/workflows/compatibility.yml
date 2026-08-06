@@ -1,0 +1,95 @@
+name: Compatibility (Real-World Soroban)
+
+# M34: Automated real-world compatibility validation (extends M33).
+# Clones the official stellar/soroban-examples tree (shallow, read-only),
+# builds a representative subset of example contracts to WASM, and runs sdkt
+# offline commands against the real artifacts + sources. Fails immediately if
+# any sdkt command exits non-zero (catches panics / parse regressions on real
+# contracts). The upstream repo is never modified; everything runs in a temp
+# workspace under runner.temp.
+
+on:
+  push:
+    branches: ["main"]
+  pull_request:
+    branches: ["main"]
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  compatibility:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout sdkt
+        uses: actions/checkout@v7
+
+      - name: Set up Rust (with wasm32v1-none)
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32v1-none
+
+      # Cache sdkt workspace build
+      - name: Cache sdkt build
+        uses: Swatinem/rust-cache@v2
+
+      - name: Build sdkt (debug)
+        run: cargo build --bin sdkt
+
+      # Clone upstream examples read-only into a temp workspace
+      - name: Clone stellar/soroban-examples (shallow)
+        run: |
+          git clone --depth 1 \
+            https://github.com/stellar/soroban-examples \
+            "${{ runner.temp }}/soroban-examples"
+
+      # Cache example contract dependency graph (separate workspace)
+      - name: Cache example build
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: "${{ runner.temp }}/soroban-examples -> target"
+
+      - name: Build example contracts to WASM
+        working-directory: ${{ runner.temp }}/soroban-examples
+        run: |
+          set -euo pipefail
+          for c in token atomic_swap liquidity_pool timelock single_offer; do
+            echo "::group::build $c"
+            (cd "$c" && cargo build --target wasm32v1-none --release)
+            echo "::endgroup::"
+          done
+
+      - name: Validate sdkt against real contracts
+        run: |
+          set -euo pipefail
+          SDKT="${{ github.workspace }}/target/debug/sdkt"
+          EX="${{ runner.temp }}/soroban-examples"
+          CONTRACTS=(token atomic_swap liquidity_pool timelock single_offer)
+
+          for c in "${CONTRACTS[@]}"; do
+            WASM=$(ls "$EX/$c/target/wasm32v1-none/release/"*.wasm | head -1)
+            SRC="$EX/$c/src/lib.rs"
+            echo "::group::validate $c"
+            echo "--- sdkt wasm inspect $c ---"
+            "$SDKT" wasm inspect "$WASM" \
+              || { echo "FAIL: wasm inspect $c"; exit 1; }
+            echo "--- sdkt diff --upgrade-safety (self) $c ---"
+            "$SDKT" diff --old-wasm "$WASM" --new-wasm "$WASM" --upgrade-safety \
+              || { echo "FAIL: diff --upgrade-safety $c"; exit 1; }
+            echo "--- sdkt audit $c ---"
+            "$SDKT" audit "$SRC" \
+              || { echo "FAIL: audit $c"; exit 1; }
+            echo "::endgroup::"
+          done
+
+          # Cross-contract upgrade-safety sanity check on two distinct real
+          # contracts (token vs liquidity_pool) — must not crash and must
+          # report a breaking change rather than error out.
+          echo "::group::cross-contract diff (token vs liquidity_pool)"
+          TOKEN=$(ls "$EX/token/target/wasm32v1-none/release/"*.wasm | head -1)
+          LP=$(ls "$EX/liquidity_pool/target/wasm32v1-none/release/"*.wasm | head -1)
+          "$SDKT" diff --old-wasm "$TOKEN" --new-wasm "$LP" --upgrade-safety \
+            || { echo "FAIL: cross-contract diff"; exit 1; }
+          echo "::endgroup::"
+
+          echo "All compatibility checks passed."
