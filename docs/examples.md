@@ -94,6 +94,9 @@ sdkt deploy --wasm new.wasm --salt <SALT> --deny-breaking --old-wasm deployed.wa
 Gate a PR on the static audit and a release on upgrade-safety. See
 [ci-cd.md](ci-cd.md) for the full workflows.
 
+### Audit on PR Workflow
+Ensure privileged functions have authentication barriers:
+
 ```yaml
 # .github/workflows/sdkt-audit.yml
 on: [pull_request]
@@ -101,11 +104,32 @@ jobs:
   audit:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v3
+      - uses: actions/checkout@v4
       - uses: naninu123/soroban-devkit/.github/actions/sdkt@main
         with:
           command: audit
           sdkt-version: v2.0.0
           target: contracts/token/src/lib.rs
           severity-threshold: critical
+```
+
+### Upgrade-Safety Workflow
+Ensure the newly built `.wasm` is completely backward-compatible with what is currently on-chain:
+
+```yaml
+# .github/workflows/sdkt-upgrade-safety.yml
+on:
+  release:
+    types: [published]
+jobs:
+  upgrade-safety:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: naninu123/soroban-devkit/.github/actions/sdkt@main
+        with:
+          command: upgrade-safety
+          sdkt-version: v2.0.0
+          old-wasm: builds/current.wasm
+          new-wasm: builds/candidate.wasm
 ```

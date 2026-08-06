@@ -8,8 +8,8 @@ Only the latest minor version is actively maintained. Security fixes are backpor
 
 | Version | Supported          |
 | :------ | :----------------- |
-| 1.0.x   | :white_check_mark: |
-| < 1.0   | :x:                |
+| 2.x.x   | :white_check_mark: |
+| < 2.0   | :x:                |
 
 ## Reporting a Vulnerability
 
@@ -26,7 +26,9 @@ Do not include exploit code in public issues. Publicly disclosing active exploit
 
 ## Data Handling Notes
 
-This tool operates primarily offline for decoding purposes — it does not transmit payloads unless explicitly configured to do so (e.g., a future `sdkt inspect` feature using RPC URLs). Payloads provided on the command line or in files are decoded and printed, not sent over the network by default.
+This tool operates both offline (decoding, auditing, diffing, building) and online (inspecting, storage TTL checks, transaction submission, multi-contract deployments).
+
+Network interactions are strictly opt-in and bound to the explicit `sdkt` commands invoked (e.g. `sdkt project deploy`, `sdkt tx submit`, `sdkt storage check`). The `sdkt-rpc` crate explicitly utilizes connection pooling (M25) to manage load, but payloads provided to offline commands (`decode`, `audit`, `diff`, `build`) never leave your machine.
 
 Secret management:
 - Do not commit private keys, mnemonics, or sensitive passphrases

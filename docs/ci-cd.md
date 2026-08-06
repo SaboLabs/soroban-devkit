@@ -38,7 +38,7 @@ jobs:
   audit:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v3
+      - uses: actions/checkout@v4
       - name: Static security audit
         uses: naninu123/soroban-devkit/.github/actions/sdkt@main
         with:
@@ -65,7 +65,7 @@ jobs:
   upgrade-safety:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v3
+      - uses: actions/checkout@v4
       - name: Check upgrade compatibility
         uses: naninu123/soroban-devkit/.github/actions/sdkt@main
         with:

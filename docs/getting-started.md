@@ -73,7 +73,15 @@ unauthenticated `invoke_contract`, unguarded `initialize`) and `MOVE-001`
 sdkt audit contract/src/lib.rs --disable MOVE-001
 ```
 
-## 4. Where to go next
+# When to use `sdkt`?
+
+`sdkt` is built to consolidate disjointed Soroban scripts into one professional interface. You should use `sdkt` if:
+1. You are actively building and deploying multi-contract Soroban workspaces and need topological dependency sorting (`sdkt project deploy`).
+2. You need to decode base64 XDR payloads, inspect deployed contract ABI, or fetch raw event streams without hunting for RPC JSON payloads (`sdkt decode`, `sdkt inspect`).
+3. You want offline, pre-flight security checks integrated into your workflow (`sdkt audit`, `sdkt diff --upgrade-safety`).
+4. You need to calculate exact storage extension fees and TTL horizons before your deployed instances expire (`sdkt storage analyze`).
+
+**For comprehensive examples across all capabilities, view the recipes inside [docs/examples.md](docs/examples.md).**
 
 - [examples.md](examples.md) — copy-paste recipes for every subcommand.
 - [installation.md](installation.md) — build options, features, updating.
