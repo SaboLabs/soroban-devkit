@@ -11,6 +11,10 @@ readme = "../../README.md"
 keywords = ["soroban", "stellar", "sdk", "toolkit", "blockchain"]
 categories = ["development-tools", "network-programming"]
 
+[[bin]]
+name = "sdkt"
+path = "src/main.rs"
+
 [dependencies]
 clap = { version = "4.6", features = ["derive"] }
 sdkt-core = { version = "1.0.0", path = "../sdkt-core" }

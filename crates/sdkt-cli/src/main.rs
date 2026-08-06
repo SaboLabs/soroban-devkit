@@ -17,7 +17,7 @@ use std::process;
 #[derive(Parser)]
 #[command(name = "sdkt")]
 #[command(about = "Soroban DevKit — unified toolkit for Stellar/Soroban development")]
-#[command(version = "0.1.0")]
+#[command(version = env!("CARGO_PKG_VERSION"))]
 struct Cli {
     #[command(subcommand)]
     command: Commands,
