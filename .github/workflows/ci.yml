@@ -61,6 +61,21 @@ jobs:
       if: matrix.os == 'ubuntu-latest'
       run: cargo test -p sdkt-cli --test plugin_loading --all-features
 
+  install-script:
+    name: install-script validation
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v7
+    - name: Syntax check (no network)
+      run: bash -n install.sh
+    - name: ShellCheck (if available)
+      run: |
+        if command -v shellcheck >/dev/null 2>&1; then
+          shellcheck install.sh
+        else
+          echo "shellcheck not installed; skipping (bash -n passed)"
+        fi
+
   msrv:
     runs-on: ubuntu-latest
     steps:

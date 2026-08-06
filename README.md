@@ -46,7 +46,16 @@ run your first command.
 
 ### 1. Install
 
-**Option A — GitHub Release binary (no Rust toolchain needed):**
+**Recommended — install.sh (no Rust toolchain needed):**
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/naninu123/soroban-devkit/main/install.sh | bash
+```
+
+The script detects your OS/arch, downloads the matching release binary,
+verifies its SHA-256 checksum, and installs `sdkt` to `~/.local/bin/sdkt`.
+
+**Option A — Manual GitHub Release download:**
 
 1. Open the [Releases](https://github.com/naninu123/soroban-devkit/releases)
    page and download the latest release for your platform:
