@@ -5,22 +5,13 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [v1.0.0] - Unreleased
-
-### Added
-- **Workspace Build & Multi-Contract Deployment Orchestration** (M24).
-  - Added `sdkt build` to compile configured rust contracts into optimized WASM artifacts offline.
-  - Added `sdkt project deploy` to manage multi-contract deployments. It reads a `[contracts]` block from `.sdkt.toml`, dynamically resolves `deploy_after` rules using topological sort (Kahn's algorithm), and deterministically deploys artifacts in dependency order.
-  - Added `std::collections::HashMap<String, ContractConfig>` to `DevKitConfig` safely preserving backward compatibility with older configuration files.
-- **Contract Health Report** (M23). Added `sdkt health --contract <ID> [--wasm <file>] [--network <net>] [--format json|pretty]` — a read-only aggregator that composes `sdkt-rpc::inspect_contract` (on-chain WASM hash) and `sdkt-storage::StorageAnalyzer` (storage classification + TTL) into one posture report, optionally folding in M22 verification when `--wasm` is supplied. Emits a derived `healthy` / `at_risk` / `critical` verdict with machine-readable JSON. No new RPC, no new crate.
-- **Contract Verification** (M22). Added `sdkt verify --contract <ID> [--wasm <file>] [--network <net>] [--format json]` to confirm a deployed contract's on-chain WASM hash matches a local artifact. Local WASM is hashed fully offline via `sdkt-wasm`; the on-chain hash is fetched read-only through `sdkt-rpc::inspect_contract` (no bytecode download). Reports `Verified`, `Mismatch`, or `OnChainOnly` with machine-readable JSON.
-- **Soroban Contract Inspector** (M21). Added `sdkt wasm inspect <file.wasm>` command to view contract metadata, custom sections, exported functions, and contract specifications (if present in the WASM) completely offline.
+## [v2.0.0] - Unreleased
 
 ### Changed
-- **CLI Rename:** The CLI binary has been officially renamed from `sdkt-cli` to `sdkt` via Cargo `[[bin]]` configuration.
-  - Commands and integration tests now natively expect the executable `sdkt`.
-  - Removed outdated CI/CD shell hacks previously responsible for symlinking the binary.
-  - End-users and tools using `cargo install` will now receive the executable precisely named `sdkt`.
+- **BREAKING: CLI Rename.** The executable binary has been officially renamed from `sdkt-cli` to `sdkt`.
+  - Automation scripts, alias configurations, and CI pipelines explicitly expecting `sdkt-cli` must be updated.
+  - End-users running `cargo install` will now receive an executable named `sdkt`.
+  - Documentation and CI references updated appropriately.
 - **WebAssembly (WASM) plugin loading** for `sdkt audit` (M19, Phase C). Sandboxed, platform-independent `.wasm` plugins can now be loaded via `sdkt audit <src> --rules <plugin.wasm>`.
 - Extism runtime integration via the `wasm-plugins` feature (requires `wasm32-wasip1` target for plugin authors).
 - JSON-over-memory WASM ABI boundary ensuring memory safety and isolation.
