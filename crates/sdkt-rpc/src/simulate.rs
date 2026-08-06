@@ -32,6 +32,14 @@ pub struct SimulateCost {
     pub mem_bytes: String,
 }
 
+/// Additional metadata provided by some RPC nodes for transactions.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct SimulateRestorePreamble {
+    pub min_resource_fee: String,
+    pub transaction_data: String,
+}
+
 /// Full response from the `simulateTransaction` endpoint.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
@@ -42,6 +50,9 @@ pub struct SimulateResponse {
     /// Minimum resource fee in stroops.
     #[serde(default)]
     pub min_resource_fee: String,
+    /// State restoration preamble data if the transaction requires expired state restoration.
+    #[serde(default)]
+    pub restore_preamble: Option<SimulateRestorePreamble>,
     /// Per-operation results (present for host-function invocation transactions).
     #[serde(default)]
     pub results: Vec<SimulateOperationResult>,
@@ -54,6 +65,9 @@ pub struct SimulateResponse {
     /// Diagnostic events emitted during simulation.
     #[serde(default)]
     pub events: Vec<serde_json::Value>,
+    /// State changes emitted during simulation.
+    #[serde(default)]
+    pub state_changes: Vec<serde_json::Value>,
     /// Optional simulation error (e.g. host function failure). A populated
     /// `error` field indicates the simulation did not fully succeed.
     #[serde(default)]
@@ -108,16 +122,24 @@ mod tests {
         let raw = r#"{
             "transactionData": "AAAAAdata",
             "minResourceFee": "1000",
+            "restorePreamble": {
+                "minResourceFee": "500",
+                "transactionData": "AAAABdata"
+            },
             "results": [
                 {"auth": ["AAAAauth1"], "xdr": "AAAAxdr1"}
             ],
             "cost": {"cpuInsns": "5000", "memBytes": "2048"},
             "latestLedger": "12345",
-            "events": [{"type": "diagnostic"}]
+            "events": [{"type": "diagnostic"}],
+            "stateChanges": [{"type": "ledgerEntry"}]
         }"#;
         let response: SimulateResponse = serde_json::from_str(raw).unwrap();
         assert_eq!(response.transaction_data, "AAAAAdata");
         assert_eq!(response.min_resource_fee, "1000");
+        let restore = response.restore_preamble.unwrap();
+        assert_eq!(restore.min_resource_fee, "500");
+        assert_eq!(restore.transaction_data, "AAAABdata");
         assert_eq!(response.results.len(), 1);
         assert_eq!(response.results[0].auth, vec!["AAAAauth1".to_string()]);
         assert_eq!(response.results[0].xdr, "AAAAxdr1");
@@ -125,6 +147,8 @@ mod tests {
         assert_eq!(cost.cpu_insns, "5000");
         assert_eq!(cost.mem_bytes, "2048");
         assert_eq!(response.latest_ledger, Some("12345".to_string()));
+        assert_eq!(response.events.len(), 1);
+        assert_eq!(response.state_changes.len(), 1);
         assert_eq!(response.error, None);
     }
 
@@ -134,9 +158,11 @@ mod tests {
         let raw = r#"{"transactionData": "AAAAAdata"}"#;
         let response: SimulateResponse = serde_json::from_str(raw).unwrap();
         assert_eq!(response.min_resource_fee, "");
+        assert!(response.restore_preamble.is_none());
         assert!(response.results.is_empty());
         assert!(response.cost.is_none());
         assert!(response.events.is_empty());
+        assert!(response.state_changes.is_empty());
         assert_eq!(response.error, None);
     }
 
