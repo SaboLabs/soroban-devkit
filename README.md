@@ -49,7 +49,7 @@ run your first command.
 **Option A — GitHub Release binary (no Rust toolchain needed):**
 
 1. Open the [Releases](https://github.com/naninu123/soroban-devkit/releases)
-   page and download the asset for your platform:
+   page and download the latest release for your platform:
 
    | Platform | Asset |
    |----------|-------|
@@ -80,7 +80,7 @@ sdkt --version
 
 ```bash
 sdkt --version
-# sdkt 2.0.0
+# sdkt <version>
 
 sdkt --help
 # Commands:
