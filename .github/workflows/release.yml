@@ -58,10 +58,41 @@ jobs:
           targets: ${{ matrix.target }}
       - name: Build release binary
         run: cargo build --release --target ${{ matrix.target }} --bin sdkt
+      - name: Smoke test binary
+        run: |
+          BIN=target/${{ matrix.target }}/release/sdkt
+          chmod +x "$BIN"
+          
+          # Native platforms only: Verify binary starts and version reports correctly
+          if [[ "${{ matrix.target }}" == "x86_64-unknown-linux-gnu" && "${{ matrix.os }}" == "ubuntu-latest" ]] || \
+             [[ "${{ matrix.target }}" == "x86_64-apple-darwin" && "${{ matrix.os }}" == "macos-latest" ]] || \
+             [[ "${{ matrix.target }}" == "aarch64-apple-darwin" && "${{ matrix.os }}" == "macos-latest" && "$(uname -m)" == "arm64" ]]; then
+            echo "Running smoke test on native architecture..."
+            VERSION=$("$BIN" --version)
+            echo "Version reported: $VERSION"
+            
+            # Simple offline command test
+            "$BIN" help
+          else
+            echo "Skipping execution smoke test on cross-compiled target."
+          fi
+          
+      - name: Generate Checksums
+        run: |
+          BIN=target/${{ matrix.target }}/release/sdkt
+          cd target/${{ matrix.target }}/release
+          
+          if command -v shasum &> /dev/null; then
+            shasum -a 256 sdkt > sdkt.sha256
+          else
+            sha256sum sdkt > sdkt.sha256
+          fi
+          cd -
+          
       - name: Package (unix)
         run: |
           BIN=target/${{ matrix.target }}/release/sdkt
-          tar -czf "sdkt-${{ matrix.target }}.tar.gz" -C "target/${{ matrix.target }}/release" sdkt
+          tar -czf "sdkt-${{ matrix.target }}.tar.gz" -C "target/${{ matrix.target }}/release" sdkt sdkt.sha256
       - name: Upload artifact
         uses: actions/upload-artifact@v7
         with:

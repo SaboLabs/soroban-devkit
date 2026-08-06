@@ -94,14 +94,18 @@ Note: Git status is NOT clean — build artifacts and lockfile are modified. All
 
 ## Release Checklist
 
-- [x] Build passes
-- [x] Tests pass
-- [x] Clippy clean
-- [x] Formatting clean
-- [x] Documentation complete
-- [x] License present
-- [x] Git initialized
-- [x] Issues fixed (assert macro typo, redundant license files)
+The repository adheres to semantic versioning (SemVer). Before tagging a new release, verify the following:
+
+- [ ] **Dependencies updated:** Cargo workspace lockfile (`Cargo.lock`) is clean and `cargo update` has been run if needed.
+- [ ] **MSRV verified:** `cargo check` passes on the pinned MSRV (`1.88.0`).
+- [ ] **Lint and Tests:** `cargo fmt --check`, `clippy -D warnings`, and `cargo test --workspace` all pass cleanly locally.
+- [ ] **Changelog updated:** The `CHANGELOG.md` file has the `[Unreleased]` block renamed to `[vX.Y.Z] - YYYY-MM-DD`.
+- [ ] **Versions bumped:** Workspace members in all `Cargo.toml` files are bumped to the new version `X.Y.Z` (internal path dependencies updated).
+- [ ] **Release Readiness Notes:** The `RELEASE_READINESS.md` file reflects the active milestone closures.
+- [ ] **Smoke Test Passing:** The `.github/workflows/release.yml` native execution smoke tests succeeded in the previous dry-run or will succeed upon tagging.
+
+**Execution:**
+When the checklist is complete, tag the commit (`git tag vX.Y.Z`) and push. The `release.yml` GitHub action will compile, smoke-test, checksum, and deploy the binaries to the GitHub Release page, followed by sequential crates.io publishing.
 
 ## Remaining Work
 
