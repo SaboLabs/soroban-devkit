@@ -177,6 +177,13 @@ enum Commands {
         #[arg(long, value_name = "WASM")]
         old_wasm: Option<String>,
     },
+    /// Compile Rust contracts into WASM artifacts
+    Build,
+    /// Manage multi-contract projects
+    Project {
+        #[command(subcommand)]
+        action: ProjectCommand,
+    },
 }
 
 #[derive(Subcommand)]
@@ -296,7 +303,7 @@ enum TxAction {
         #[arg(short, long, default_value = "pretty")]
         format: String,
     },
-    /// Build a transaction envelope XDR
+    /// Build a Soroban transaction envelope XDR
     Build {
         #[arg(long)]
         source: String,
@@ -318,6 +325,18 @@ enum TxAction {
         /// Optional file path to write the output envelope XDR
         #[arg(short, long)]
         output: Option<String>,
+    },
+}
+
+#[derive(Subcommand)]
+enum ProjectCommand {
+    /// Deploy all contracts defined in the workspace
+    Deploy {
+        /// Optional deployment salt base
+        #[arg(short, long, default_value = "deploy")]
+        salt: String,
+        #[arg(short, long, default_value = "pretty")]
+        format: String,
     },
 }
 
@@ -2186,6 +2205,91 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 }
             }
         }
+        Commands::Build => {
+            let config = DevKitConfig::from_file(".sdkt.toml").unwrap_or_default();
+            match sdkt_core::build::build_workspace(&config) {
+                Ok(results) => {
+                    println!("✓ Workspace built successfully");
+                    for res in results {
+                        println!("  ✓ {} -> {}", res.alias, res.wasm_artifact.display());
+                    }
+                }
+                Err(e) => {
+                    eprintln!("Error building workspace: {}", e);
+                    std::process::exit(1);
+                }
+            }
+        }
+        Commands::Project { action } => match action {
+            ProjectCommand::Deploy { salt, format } => {
+                let fmt = parse_format_str(&format);
+                let config = DevKitConfig::from_file(".sdkt.toml").unwrap_or_default();
+                let client = SorobanRpcClient::from_config(&config.network);
+
+                match sdkt_core::project::resolve_project(&config) {
+                    Ok(resolved) => {
+                        if fmt != OutputFormat::Json {
+                            println!(
+                                "✓ Project dependency graph resolved. Deploying {} contract(s).",
+                                resolved.len()
+                            );
+                        }
+
+                        let mut results = std::collections::HashMap::new();
+
+                        for contract in resolved {
+                            if fmt != OutputFormat::Json {
+                                println!(
+                                    "  Deploying alias '{}' from '{}'...",
+                                    contract.alias,
+                                    contract.wasm_artifact.display()
+                                );
+                            }
+
+                            // Use alias + base salt to keep deployments unique per contract
+                            let contract_salt = format!("{}_{}", salt, contract.alias);
+                            let wasm_bytes =
+                                fs::read(&contract.wasm_artifact).unwrap_or_else(|e| {
+                                    eprintln!(
+                                        "Failed to read WASM for '{}': {}",
+                                        contract.alias, e
+                                    );
+                                    std::process::exit(1);
+                                });
+
+                            match sdkt_rpc::deploy_contract(&client, &wasm_bytes, &contract_salt)
+                                .await
+                            {
+                                Ok(res) => {
+                                    if fmt != OutputFormat::Json {
+                                        println!("    ✓ Contract ID: {}", res.contract_id);
+                                    }
+                                    results.insert(contract.alias, res.contract_id);
+                                }
+                                Err(e) => {
+                                    eprintln!("Deployment failed for '{}': {}", contract.alias, e);
+                                    std::process::exit(1);
+                                }
+                            }
+                        }
+
+                        if fmt == OutputFormat::Json {
+                            let json = serde_json::json!({
+                                "status": "success",
+                                "contracts_deployed": results,
+                            });
+                            println!("{}", serde_json::to_string(&json).unwrap());
+                        } else {
+                            println!("✓ Project deployment complete.");
+                        }
+                    }
+                    Err(e) => {
+                        eprintln!("Error resolving project: {}", e);
+                        std::process::exit(1);
+                    }
+                }
+            }
+        },
     }
 
     Ok(())

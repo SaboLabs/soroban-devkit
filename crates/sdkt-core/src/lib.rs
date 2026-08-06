@@ -1,6 +1,8 @@
+pub mod build;
 pub mod config;
 pub mod fee;
 pub mod format;
+pub mod project;
 pub mod scaffold;
 pub mod tx_builder;
 pub mod validation;

@@ -38,6 +38,7 @@ Most commands are **offline**; only on-chain reads (`inspect`, `storage`,
 | Event explorer | `sdkt events` |
 | Account balances + signers | `sdkt account` |
 | Dynamic fee estimate | `sdkt fee estimate` |
+| Multi-contract Orchestration | `sdkt build`, `sdkt project deploy` |
 | WASM Operations | `sdkt wasm inspect`, `sdkt wasm metadata`, `sdkt wasm cache`, `sdkt verify`, `sdkt health` |
 | Offline WASM diff + upgrade-safety verdict | `sdkt diff --upgrade-safety` |
 | Static security audit | `sdkt audit` |
@@ -108,6 +109,8 @@ sdkt audit contracts/token/src/lib.rs
 | `sdkt events <contract-id>` | Emitted-contract event explorer (`--abi <wasm>`). |
 | `sdkt account <address>` | Account balances + signers (Horizon-enriched). |
 | `sdkt diff` | Offline comparison of WASM binaries and API surfaces. |
+| `sdkt build` | Compile workspace rust contracts into optimized WASMs. |
+| `sdkt project deploy` | Deploy multi-contract workspace orchestrating topological dependency sorting. |
 | `sdkt wasm inspect <file>` | Inspect offline WASM metadata, sections, and specifications. |
 | `sdkt verify --contract <ID> [--wasm <file>] [--network <net>]` | Verify a deployed contract matches a local WASM (offline hash vs on-chain hash). |
 | `sdkt health --contract <ID> [--wasm <file>] [--network <net>]` | Unified read-only contract posture report (WASM, storage, TTL, health verdict). |

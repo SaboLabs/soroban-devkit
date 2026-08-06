@@ -8,15 +8,30 @@ use std::fs;
 use std::path::Path;
 
 /// High-level project-wide configuration.
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
 pub struct DevKitConfig {
     /// Soroban network settings.
+    #[serde(default)]
     pub network: NetworkConfig,
     /// XDR decoder configurations.
+    #[serde(default)]
     pub decode: DecodeConfig,
     /// Storage inspection settings.
     #[serde(default)]
     pub storage: StorageConfig,
+    /// Workspace contract configuration mapping.
+    #[serde(default)]
+    pub contracts: std::collections::HashMap<String, ContractConfig>,
+}
+
+/// Settings for a specific contract in a workspace.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct ContractConfig {
+    /// Path to the contract source directory (where Cargo.toml resides).
+    pub path: String,
+    /// Optional list of contract aliases that must be deployed before this one.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub deploy_after: Vec<String>,
 }
 
 /// Soroban network connection settings.
@@ -55,18 +70,20 @@ impl Default for StorageConfig {
     }
 }
 
-impl Default for DevKitConfig {
+impl Default for DecodeConfig {
     fn default() -> Self {
         Self {
-            network: NetworkConfig {
-                rpc_url: "https://soroban-testnet.stellar.org".to_string(),
-                passphrase: "Test SDF Network ; September 2015".to_string(),
-            },
-            decode: DecodeConfig {
-                max_depth: 32,
-                allow_fallback_hex: true,
-            },
-            storage: StorageConfig::default(),
+            max_depth: 32,
+            allow_fallback_hex: true,
+        }
+    }
+}
+
+impl Default for NetworkConfig {
+    fn default() -> Self {
+        Self {
+            rpc_url: "https://soroban-testnet.stellar.org".to_string(),
+            passphrase: "Test SDF Network ; September 2015".to_string(),
         }
     }
 }
