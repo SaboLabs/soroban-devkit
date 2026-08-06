@@ -16,7 +16,7 @@ categories = ["development-tools", "wasm"]
 [dependencies]
 sdkt-core = { version = "2.0.0", path = "../sdkt-core" }
 wasmparser = "0.255"
-sha2 = "0.10"
+sha2 = "0.11"
 serde = { version = "1", features = ["derive"] }
 thiserror = "2"
 hex = "0.4.3"
