@@ -3,13 +3,12 @@ use tempfile::tempdir;
 
 /// Redirect the keystore for a subprocess to an isolated temp dir.
 ///
-/// `IdentityStore::new()` resolves its location via `ProjectDirs`, which on
-/// Linux honors `XDG_CONFIG_HOME`. Setting it per-command (rather than a
-/// process-global `env::set_var("HOME", ...)`) keeps the test hermetic and
-/// avoids cross-test interference under parallel `cargo test --workspace`.
+/// Uses `SDKT_IDENTITY_DIR` (checked first by `IdentityStore::new()`) rather
+/// than platform-specific vars like `XDG_CONFIG_HOME` / `APPDATA` / `HOME`.
+/// This keeps the test hermetic and cross-platform on Linux, macOS, and Windows.
 fn sdkt(dir: &std::path::Path) -> Command {
     let mut cmd = Command::cargo_bin("sdkt").unwrap();
-    cmd.env("XDG_CONFIG_HOME", dir);
+    cmd.env("SDKT_IDENTITY_DIR", dir.join("identity"));
     cmd
 }
 

@@ -1,8 +1,8 @@
 //! Integration tests for `sdkt tx sign` (M27 / PR2).
 //!
 //! These exercise the full CLI binary against an isolated identity keystore
-//! (via a temporary `XDG_CONFIG_HOME`) so they never touch the developer's
-//! real identities.
+//! (via a temporary `SDKT_IDENTITY_DIR`) so they never touch the developer's
+//! real identities. Works cross-platform (Linux, macOS, Windows).
 
 use std::io::Write;
 use std::process::Command;
@@ -11,7 +11,7 @@ use std::process::Command;
 fn build_unsigned(dir: &std::path::Path) -> std::path::PathBuf {
     let unsigned = dir.join("unsigned.xdr");
     let out = Command::new(env!("CARGO_BIN_EXE_sdkt"))
-        .env("XDG_CONFIG_HOME", dir)
+        .env("SDKT_IDENTITY_DIR", dir)
         .args([
             "tx",
             "build",
@@ -38,7 +38,7 @@ fn build_unsigned(dir: &std::path::Path) -> std::path::PathBuf {
 
 fn gen_identity(dir: &std::path::Path, name: &str) {
     let out = Command::new(env!("CARGO_BIN_EXE_sdkt"))
-        .env("XDG_CONFIG_HOME", dir)
+        .env("SDKT_IDENTITY_DIR", dir)
         .args(["identity", "generate", name])
         .output()
         .expect("failed to run sdkt identity generate");
@@ -51,7 +51,7 @@ fn gen_identity(dir: &std::path::Path, name: &str) {
 
 fn run_sign(dir: &std::path::Path, args: &[&str]) -> (bool, String, String) {
     let out = Command::new(env!("CARGO_BIN_EXE_sdkt"))
-        .env("XDG_CONFIG_HOME", dir)
+        .env("SDKT_IDENTITY_DIR", dir)
         .args(["tx", "sign"])
         .args(args)
         .output()
