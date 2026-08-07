@@ -126,6 +126,18 @@ is preserved. Milestones **M16–M27** were merged to `main` across the
 | M9 | WASM tooling & caching | `sdkt wasm metadata`, `sdkt wasm cache`, `sdkt-wasm` crate, ContractSpec parser, `sdkt deploy` + `sdkt init` scaffolding | v0.9.0-alpha |
 | M24 | Workspace & Build Orchestration | `sdkt build` (compiles artifacts) and `sdkt project deploy` (topological sorting, `.sdkt.toml` workspaces) | main |
 
+### Package Manager & Distribution
+
+| Milestone | Theme | Highlights | Release |
+|-----------|-------|-----------|---------|
+| M35.0 | Local package manifest foundation | `.sdkt.toml` `[package]` + `[dependencies]` (local `path` only); `sdkt package validate` offline | main |
+| M35.1 | Git dependency sources | `git` deps (`tag`/`branch`/`rev`); `sdkt package fetch` into `.sdkt-cache`; `DependencyFetcher` trait | main |
+| M35.2 | Lock dependency resolution & reproducible verification | `sdkt.lock` records resolved commit/integrity; `verify_dependencies` + `sdkt lock verify` cover deps | main |
+| M36.0 | Package update & synchronization | `sdkt package update` (`--check`/`--dry-run`/`--format`); closes `validate → fetch → update → verify` | main |
+| M37 | Dependency Version Resolution | Semver `version` constraints on deps; `VersionResolver` picks best satisfying tag/commit; `--check` reports constraint state | main (scheduled) |
+| M38 | Packaging & Publishing Workflow | `sdkt package pack` (offline bundle of manifest+lock+cache); `sdkt package publish --dry-run` readiness check | main (scheduled) |
+| M39 | Release Polish & SCF Readiness | `Dockerfile` distribution, mainnet-safety guards, SCF positioning doc, `RELEASE_READINESS.md` refresh, opt-in `--version` provenance | main (scheduled) |
+
 ### RPC & Simulation
 
 | Milestone | Theme | Highlights | Release |
@@ -143,8 +155,8 @@ is preserved. Milestones **M16–M27** were merged to `main` across the
 
 **Where is this project today?**
 
-- **Completed milestones:** 27 — M3A, M3B, M5, M6, M7, M8, M9, M10, M11, M12, M13, M14, M15, M16, M17, M18, M19, M20, M21, M22, M23, M24, M25, M26, M27, M28, M29.
-- **Active milestone:** None in progress. The latest merged work is M29 (network profile integration, shipped in `v2.4.0`); mainline development now tracks the Post-2.0 direction in §6.
+- **Completed milestones:** 31 — M3A, M3B, M5, M6, M7, M8, M9, M10, M11, M12, M13, M14, M15, M16, M17, M18, M19, M20, M21, M22, M23, M24, M25, M26, M27, M28, M29, M35.0, M35.1, M35.2, M36.0.
+- **Active milestone:** None in progress. The latest merged work is M36.0 (package update & synchronization, shipped to `main`). The next three milestones — **M37 (Dependency Version Resolution)**, **M38 (Packaging & Publishing Workflow)**, and **M39 (Release Polish & SCF Readiness)** — are officially scheduled (see §4 "Package Manager & Distribution"); they are documented in `docs/milestone-37-plan.md`, `docs/milestone-38-plan.md`, and `docs/milestone-39-plan.md` and await implementation on their respective `feat/milestone-NN` branches.
 - **Current release:** `v2.4.0` (tagged). Prior tagged releases: `v2.3.0`, `v2.2.0`, `v2.1.1`, `v2.1.0`, `v2.0.0`.
 - **Repository health:** Healthy. 8 crates, all quality gates enforced in CI (`cargo fmt`, `cargo clippy --workspace --all-targets -- -D warnings` default + all-features, `cargo test --workspace`).
 - **CI status:** Green. Workflows: `ci.yml` (fmt/clippy/test on Ubuntu/macOS/Windows + MSRV + install-script validation), `release.yml` (tag-gated cross-platform binaries, checksums, crates.io publish), `compatibility.yml` (real-world `stellar/soroban-examples` validation), `sdkt-action-ci.yml` (self-validates the reusable Action).
@@ -153,32 +165,32 @@ is preserved. Milestones **M16–M27** were merged to `main` across the
 
 ## 6. Next Priorities
 
-No new milestones are defined here — the items below reflect the existing
-Post-2.0 direction already recorded in `RELEASE_READINESS.md` and
-`CHANGELOG.md`. They are tracked as backlog, not yet scheduled.
+The package-manager line is now fully scheduled through M39:
 
-### High Priority
+- **M37 — Dependency Version Resolution.** Semver `version` constraints on dependencies; a pure
+  `VersionResolver` selects the best satisfying tag/commit; `sdkt package update --check` reports
+  constraint state. Builds on M36.0. Plan: `docs/milestone-37-plan.md`.
+- **M38 — Packaging & Publishing Workflow.** `sdkt package pack` bundles manifest + lock + cached
+  checkouts into a portable, offline-runnable artifact; `sdkt package publish --dry-run` validates
+  publish-readiness (manifest + lock + cache + integrity). Builds on M35.2/M36.0. Plan:
+  `docs/milestone-38-plan.md`.
+- **M39 — Release Polish & SCF Readiness.** Containerized distribution (`Dockerfile`), mainnet-safety
+  guards on RPC commands, SCF grant positioning doc, `RELEASE_READINESS.md` refresh, and opt-in
+  `--version` provenance. Polish/alignment only — no new command surface. Plan:
+  `docs/milestone-39-plan.md`.
 
-- **Mainnet-focused tooling** — capabilities oriented toward production mainnet
-  usage (Post-2.0 theme).
-- **Containerized distribution** — a Docker image for reproducible, portable
-  runs (listed as planned in `RELEASE_READINESS.md`).
+### Future Work (unscheduled backlog)
 
-### Future Work
+The following remain tracked as backlog, not yet assigned milestone IDs:
 
-- **Plugin ecosystem** — tooling and conventions for sharing/consuming
-  third-party audit rules (native + WASM) built on M17–M19.
-- **SCF grant alignment** — positioning `sdkt` for Stellar Community Fund
-  grant tracks (Post-2.0 theme).
-- **Developer productivity** — continuing the DX investments started in M7/M20
-  (faster feedback, better errors, smoother onboarding).
-
-### Long-Term Vision
-
-- **Plugin marketplace** — a managed catalog of community audit rules,
-  extending the M17–M19 plugin foundation into a shared ecosystem.
-- **Broader Soroban ecosystem integration** — deeper compatibility and
-  first-class support for the contracts developers actually deploy.
+- **Plugin ecosystem / marketplace** — tooling and conventions for sharing/consuming third-party audit
+  rules (native + WASM) built on M17–M19.
+- **Broader Soroban ecosystem integration** — deeper compatibility and first-class support for the
+  contracts developers actually deploy.
+- **Developer productivity** — continuing the DX investments started in M7/M20 (faster feedback, better
+  errors, smoother onboarding).
+- **Hosted package registry** — a remote index/server that the `DependencyFetcher` trait (M35.1) can
+  target; explicitly deferred past M38.
 
 ---
 
