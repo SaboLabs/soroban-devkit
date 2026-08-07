@@ -7,12 +7,32 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Planned
+- Post-2.0 mainnet-focused tooling, SCF grant alignment, and a plugin marketplace.
+
+## [v2.1.1] - 2026-08-06
+
+### Fixed
+- **Release consistency hardening.** Aligned the workspace version (`[workspace.package].version`) and every crate's pinned version to `2.1.1`. Fixed a packaging drift where `Cargo.lock` still pinned crates to `2.0.0` after the workspace version was bumped.
+- Added CI guardrails in `release.yml` so a release tag must exactly match the Cargo workspace version, and the built binary's reported version must match the tag (catches version-drift regressions before publish).
+- `docs/*`: refreshed version references and benchmark dates to `2.1.1`.
+
+## [v2.1.0] - 2026-08-06
+
 ### Added
 - **Transaction Simulation Enhancements (ENG-03):** Improved `sdkt tx simulate` to deserialize and display modern RPC metadata:
   - Added support for `restorePreamble` (surfaced when expired state restoration is required).
   - Added support for `stateChanges` tracking.
   - Enhanced human-readable CLI formatting to display these new fields along with operation counts. Backward compatibility with older RPC payloads is fully preserved.
 - **RPC Connection Pooling (ENG-01):** Replaced one-off HTTP clients with a single persistent, internally pooled `reqwest::Client` in `SorobanRpcClient`. This significantly improves performance during multi-contract orchestrated deployments (`sdkt project deploy`) by preventing socket exhaustion. Introduced configurable `timeout_secs` and `pool_max_idle_per_host` in `NetworkConfig`.
+- **Offline command benchmark suite (M35):** `scripts/bench_offline.sh` plus a documented regression baseline (`docs/performance.md`).
+- **Real-world Soroban compatibility matrix + workflow (M33/M34):** `docs/compatibility.md` validates `sdkt` against official `stellar/soroban-examples` contracts; `.github/workflows/compatibility.yml` clones the examples read-only, builds a representative subset to WASM, and runs `sdkt` offline commands against the real artifacts (fails on any non-zero exit).
+- **Project scaffolding hardening (M31/M32):** generated project `Cargo.toml` resolves cleanly and pins `soroban-sdk` to `21.0.0` for fresh builds.
+- **Release hardening (M28):** release smoke tests and SHA-256 checksums; GitHub Release distribution of binaries + checksums (M38); tarball-content regression guard (M38); `install.sh` checksum fallback for missing standalone `.sha256` assets (M39).
+- **Adoption / docs (M30/M36/M39):** expanded usage examples and security guidelines, mature OSS onboarding polish, and improved public install experience.
+
+### Changed
+- Workspace version bumped `2.0.0` → `2.1.0`.
 
 ## [v2.0.0] - 2026-08-06
 

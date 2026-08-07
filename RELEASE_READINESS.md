@@ -1,127 +1,144 @@
-# Soroban DevKit – Phase 1 Release Readiness Report
+# Soroban DevKit (`sdkt`) — Release Readiness
 
-## Workspace
+**Version:** `2.1.1` (workspace-wide, single source of truth in `[workspace.package]`)
+**Rust edition:** 2021
+**MSRV:** `1.88.0` (pinned)
+**License:** MIT
+**Repository:** https://github.com/naninu123/soroban-devkit
+**Default branch:** `main`
 
-- **Workspace layout**: Cargo virtual workspace (`Cargo.toml` in repo root)
-- **Crates**:
-  - `sdkt-core` (config engine — network + decode settings)
-  - `sdkt-xdr` (XDR decoding engine — base64/hex → JSON)
-  - `sdkt-cli` (CLI binary — `sdkt decode` subcommand)
-- **Rust edition**: 2021
-- **MSRV**: Pinned to 1.88.0 in workspace configuration.
+This document is the release-readiness snapshot for the current milestone closure.
+It is updated whenever a new release tag is cut. It complements `CHANGELOG.md`
+(which records *what changed*) with the *current state* of the workspace.
 
-## Features Implemented
+---
 
-### sdkt-core
-- `DevKitConfig` struct with `NetworkConfig` and `DecodeConfig`
-- Default config targeting Soroban testnet
-- TOML parsing (`DevKitConfig::from_toml`, `DevKitConfig::from_file`)
-- Unit tests for default config and valid TOML parsing
+## Workspace layout
 
-### sdkt-xdr
-- `decode()` function: base64/hex string → JSON string
-- `decode_bytes()`: raw `&[u8]` → `serde_json::Value`
-- Supported types: `ScVal`, `TransactionEnvelope`, `TransactionResult`, `TransactionMeta`, `LedgerKey`, `LedgerEntry`, `ContractEvent`
-- Auto-detection across all known types
-- `OutputFormat::Json` (compact) and `OutputFormat::Pretty` (default, indented)
-- `DecodeError` enum with variants for Base64, Hex, XDR parse, Unknown type, Invalid input, and JSON serialization failures
-- Unit tests covering empty payload, invalid base64 input, valid ScVal decoding, auto-detection, type hints, and JSON/Pretty format difference
-- Doc test verifying the `decode()` function example
+`sdkt` is a Cargo virtual workspace. The binary `sdkt` is produced by `sdkt-cli`;
+all logic lives in focused, dependency-bounded crates.
 
-### sdkt-cli
-- `sdkt decode` subcommand via Clap v4 derive macros
-- Inline argument input
-- File input (`-i/--file <FILE>`)
-- Type hint override (`--type`)
-- Output format selection (`--format json|pretty`, default `pretty`)
-- Pretty error propagation via `Box<dyn std::error::Error>`
+| Crate | Role |
+|-------|------|
+| `sdkt-cli` | User-facing CLI (clap + tokio). Routes commands, formats output. Builds the `sdkt` binary. |
+| `sdkt-core` | `DevKitConfig`, `NetworkConfig`, `OutputFormat`, validation. No I/O, no networking. |
+| `sdkt-xdr` | XDR decode/encode (`ScVal`, `TransactionEnvelope`, `ContractEvent`, …), ABI-aware decoding. No networking. |
+| `sdkt-rpc` | `SorobanRpcClient` (persistent pooled `reqwest`), inspect/tx/events/account/sim/submit, Horizon enrichment. |
+| `sdkt-storage` | WASM cache, ED25519 identity/keystore, `StorageAnalyzer` (Instance/Persistent/Temporary TTL). |
+| `sdkt-wasm` | `ContractSpec` parser, ABI type lookup, WASM metadata, offline diff, `UpgradeVerdict`. |
+| `sdkt-audit` | Static security analysis (`AUTH-001/002/003`, `MOVE-001`), `RuleRegistry`, plugin author API. |
+| `sdkt-audit-example-rule` | Reference plugin crate (rule `EXAMPLE-001`); loadable as `.so` / `.dylib` / `.wasm`. |
 
-## Issues Fixed During Phase 1
+### Dependency graph
 
-| # | Issue | File | Resolution |
-|---|-------|------|------------|
-| 1 | `assert` used as statement instead of macro | `crates/sdkt-xdr/src/lib.rs` line 228 | Changed `assert(...)` to `assert!(!compact.contains('\n'))` |
-| 2 | Redundant license files committed | `LICENSE-MIT`, `LICENSE-APACHE` | Deleted via `git rm --cached` |
-| 3 | Missing baseline documentation | Root files | Created README.md, CHANGELOG.md, CONTRIBUTING.md, SECURITY.md, CODE_OF_CONDUCT.md, LICENSE, .gitignore |
+```
+sdkt-core  ──► (nothing internal)
+sdkt-xdr   ──► sdkt-core, sdkt-wasm
+sdkt-wasm  ──► sdkt-core
+sdkt-rpc   ──► sdkt-core, sdkt-xdr, sdkt-wasm
+sdkt-storage ──► sdkt-rpc, sdkt-wasm
+sdkt-audit ──► sdkt-wasm
+sdkt-audit-example-rule ──► sdkt-audit
+sdkt-cli   ──► sdkt-core, sdkt-rpc, sdkt-storage, sdkt-xdr, sdkt-wasm, sdkt-audit, sdkt-audit-example-rule
+```
 
-## Quality Checks
+Rule: `sdkt-core` and `sdkt-xdr` perform no networking; everything may depend on them.
+
+---
+
+## Capabilities (shipped)
+
+- **Inspect & decode** — base64 XDR decoding, contract ABI + storage inspection, event exploration.
+- **Analyze** — storage TTL / rent visibility, Instance / Persistent / Temporary classification, offline ABI/function/event/type WASM diffing.
+- **Secure** — static analysis of contract source (`AUTH-001/002/003`, `MOVE-001`) and an upgrade-safety verdict for safe contract upgrades.
+- **Build & ship** — typed transaction envelope builder, simulate, submit, ED25519 keystore, multi-contract workspace topological deployments, and upgrade breaking-change guards.
+- **Verify & health** — confirm a deployed contract's on-chain WASM hash matches a local artifact; aggregate posture reports with a `healthy`/`at_risk`/`critical` verdict.
+
+Most commands are **offline**; only on-chain reads (`inspect`, `storage`, `tx`, `events`, `account`, `fee`, `wasm metadata`, `verify`, `health`) need an RPC endpoint.
+
+---
+
+## Quality gates
+
+All checks below are mandatory for every PR and for every release tag
+(`v*`) via `.github/workflows/ci.yml` and `release.yml`. The numbers reflect
+the latest run on `main` at version `2.1.1`.
 
 | Check | Command | Result |
 |-------|---------|--------|
-| Formatting | `cargo fmt --check` | Clean (no changes needed) |
-| Linting | `cargo clippy --workspace -- -D warnings` | Zero warnings, zero errors |
-| Build (test profile) | `cargo build` | Finished successfully |
-| Tests | `cargo test --workspace` | 9 tests passed, 0 failures |
-| Doc tests | Included in test run | 1 doc test passed |
+| Formatting | `cargo fmt --all --check` | Clean |
+| Lint (default) | `cargo clippy --workspace --all-targets -- -D warnings` | Zero warnings |
+| Lint (all features) | `cargo clippy --workspace --all-targets --all-features -- -D warnings` | Zero warnings |
+| Tests | `cargo test --workspace` | 195 passed, 0 failed, 1 ignored |
+| MSRV | `cargo check` on pinned `1.88.0` | Passes |
+| Install script | `bash -n install.sh` + `bash install.sh --selftest` | Passes |
 
-Test Summary:
+CI additionally runs on Ubuntu / macOS / Windows matrices, an `install-script`
+validation job, and a real-world Soroban compatibility workflow
+(`.github/workflows/compatibility.yml`) that builds `stellar/soroban-examples`
+contracts and runs `sdkt` against them.
 
-| Crate | Unit tests | Doc tests | Failures |
-|-------|------------|-----------|----------|
-| sdkt-cli | 0 | 0 | 0 |
-| sdkt-core | 2 | 0 | 0 |
-| sdkt-xdr | 6 | 1 | 0 |
-| **Total** | **8** | **1** | **0** |
+---
 
-Clippy Summary:
+## Release process
 
-- Warnings: 0
-- Errors: 0
-- Status: Clean
+1. Bump `[workspace.package].version` in the root `Cargo.toml` **and** every
+   crate's pinned `version` (internal path-dependencies inherit via
+   `*.workspace = true`; the publish-order crates also set their own version).
+   `cargo metadata` must report the new version for all `sdkt-*` packages
+   (run `cargo metadata --no-deps` to confirm; regenerate `Cargo.lock` if it
+   still pins an older version — `Cargo.lock` is tracked intentionally).
+2. Update `CHANGELOG.md`: rename `[Unreleased]`'s shipping section to
+   `[vX.Y.Z] - YYYY-MM-DD`, and add a fresh `[Unreleased] > ### Planned`
+   block.
+3. Run the local gates (`fmt`, `clippy -D warnings` default + all-features,
+   `test --workspace`). All must be green.
+4. Tag exactly matching the workspace version: `git tag vX.Y.Z` and push.
+   `release.yml` enforces **tag == `[workspace.package].version`** and
+   **built binary version == tag** before any publish.
+5. The release workflow builds cross-platform binaries (Linux x86_64,
+   macOS x86_64 + aarch64), smoke-tests them offline, generates SHA-256
+   checksums, publishes the GitHub Release assets, and sequentially
+   `cargo publish`es the 8 crates in dependency order (gated on
+   `CARGO_REGISTRY_TOKEN`).
 
-## Documentation
+### Publish order (dependency-first)
 
-| File | Present |
+```
+sdkt-core → sdkt-xdr → sdkt-wasm → sdkt-rpc → sdkt-storage → sdkt-audit → sdkt-audit-example-rule → sdkt-cli
+```
+
+### Guardrails
+
+- The `sdkt-cli` package must keep the binary name `sdkt` (forbidden to rename
+  to `sdkt-cli` for `cargo install` — use `cargo install --path crates/sdkt-cli`).
+- Release binaries must report the tag version; mismatches fail the workflow.
+- `cargo publish` runs without `--allow-dirty`; a dirty tree fails the release.
+
+---
+
+## Documentation map
+
+| File | Purpose |
 |------|---------|
-| README.md | Yes |
-| CHANGELOG.md | Yes |
-| CONTRIBUTING.md | Yes |
-| SECURITY.md | Yes |
-| CODE_OF_CONDUCT.md | Yes |
-| LICENSE | Yes (MIT) |
-| .gitignore | Yes |
-| GAP_ANALYSIS.md | Pre-existing (retained) |
+| `README.md` | Project landing page, install, quick start, command table. |
+| `ROADMAP.md` | Milestone scope/sequencing (single source of truth). |
+| `CHANGELOG.md` | User-facing change history (Keep a Changelog). |
+| `docs/quick-start.md` | Five-minute first-run walkthrough. |
+| `docs/getting-started.md` + `docs/examples.md` | Deeper examples & CI gating recipes. |
+| `docs/installation.md` | Build/install options, feature flags. |
+| `docs/cli.md` | Full command reference. |
+| `docs/architecture.md` | Crate layout & dependency flow. |
+| `docs/compatibility.md` | Real-world contract compatibility matrix. |
+| `docs/ci-cd.md` | CI/CD with the reusable composite Action. |
+| `docs/plugin-authoring.md` | Extend `sdkt audit` with custom rules. |
+| `docs/performance.md` | Offline benchmark baseline. |
+| `SECURITY.md` | Supported versions & vulnerability reporting. |
+| `CONTRIBUTING.md` | How to contribute. |
+| `CODE_OF_CONDUCT.md` | Community standards. |
 
-## Git Status
+## Remaining work (deferred)
 
-- **Current branch**: `main`
-- **Staged (new)**: `.gitignore`, `CHANGELOG.md`, `CODE_OF_CONDUCT.md`, `CONTRIBUTING.md`, `LICENSE`, `README.md`, `SECURITY.md`
-- **Staged (deleted)**: `LICENSE-APACHE`, `LICENSE-MIT` (removed as duplicates)
-- **Modified (source + build artifacts)**: `Cargo.lock`, `crates/sdkt-cli/Cargo.toml`, `crates/sdkt-cli/src/main.rs`, `crates/sdkt-xdr/src/lib.rs`, `target/debug/sdkt-cli` plus many `target/debug/incremental/` files (will be ignored in future once `.gitignore` includes `/target`)
-- **Untracked**: Numerous `target/debug/.fingerprint/` and `target/debug/deps/` entries (build output — covered by `.gitignore`)
-
-Note: Git status is NOT clean — build artifacts and lockfile are modified. All intentional documentation and license files are staged and ready.
-
-## Release Checklist
-
-The repository adheres to semantic versioning (SemVer). Before tagging a new release, verify the following:
-
-- [ ] **Dependencies updated:** Cargo workspace lockfile (`Cargo.lock`) is clean and `cargo update` has been run if needed.
-- [ ] **MSRV verified:** `cargo check` passes on the pinned MSRV (`1.88.0`).
-- [ ] **Lint and Tests:** `cargo fmt --check`, `clippy -D warnings`, and `cargo test --workspace` all pass cleanly locally.
-- [ ] **Changelog updated:** The `CHANGELOG.md` file has the `[Unreleased]` block renamed to `[vX.Y.Z] - YYYY-MM-DD`.
-- [ ] **Versions bumped:** Workspace members in all `Cargo.toml` files are bumped to the new version `X.Y.Z` (internal path dependencies updated).
-- [ ] **Release Readiness Notes:** The `RELEASE_READINESS.md` file reflects the active milestone closures.
-- [ ] **Smoke Test Passing:** The `.github/workflows/release.yml` native execution smoke tests succeeded in the previous dry-run or will succeed upon tagging.
-
-**Execution:**
-When the checklist is complete, tag the commit (`git tag vX.Y.Z`) and push. The `release.yml` GitHub action will compile, smoke-test, checksum, and deploy the binaries to the GitHub Release page, followed by sequential crates.io publishing.
-
-## Remaining Work
-
-The following items are deferred to future milestones and were **not** completed in Phase 1:
-
-- Docker image for containerized runs — planned for Phase 4
-## GitHub Actions CI Pipeline
-
-- `ci.yml` — Runs Rust `fmt`, `clippy`, and `test` workflows across Ubuntu, macOS, and Windows matrices.
-- `release.yml` — Orchestrates cargo publishing and GitHub release asset packaging.
-
-## Next Milestone (Phase 2 — Storage & Inspection)
-
-Phase 2 targets two core lifecycle tools that are missing from the Stellar/Soroban ecosystem:
-
-1. **Storage rent visibility** — `sdkt storage check <contract-id>` returns TTL timeline and extension cost, preventing silent contract expiration.
-2. **Contract inspection** — `sdkt inspect <contract-id>` reads WASM custom sections and current on-chain storage state.
-
-Both will be implemented as new subcommands in `sdkt-cli`, backed by RPC calls against the configured network. Unit tests and integration points will be added to each crate as appropriate.
+- Docker image for containerized runs (planned).
+- Mainnet-focused tooling, SCF grant alignment, and a plugin marketplace
+  (tracked under "Post-2.0" in `ROADMAP.md`).

@@ -120,11 +120,27 @@ This is the same information a frontend or integrator would need to call it.
 ## Step 4 — Run an offline audit
 
 `sdkt audit` performs static security analysis on contract **Rust source**,
-catching common mistakes before deployment. Point it at a contract's
-`src/lib.rs`.
+catching common mistakes before deployment. Point it at any contract's
+`src/lib.rs`. The example below audits a tiny throwaway contract written to a
+temporary file — no repository fixture is required.
 
 ```bash
-sdkt audit crates/sdkt-cli/tests/fixtures/empty_contract.rs
+cat > /tmp/example_contract.rs <<'EOF'
+#![no_std]
+use soroban_sdk::{contract, contractimpl, Address};
+
+#[contract]
+pub struct Token;
+
+#[contractimpl]
+impl Token {
+    pub fn transfer(_from: Address, _to: Address, _amount: u64) {
+        // NOTE: intentionally missing require_auth() — sdkt audit will flag this
+    }
+}
+EOF
+
+sdkt audit /tmp/example_contract.rs
 ```
 
 Interpreting the output:

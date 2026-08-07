@@ -1,7 +1,7 @@
 # Soroban DevKit (sdkt) — ROADMAP
 
-**Last updated:** 2026-08-05
-**Status:** Active development. `main` is the default branch. All milestones through M17 (Plugin System Phase A) are merged to `main`, and **v1.0.0 is released** (tag `v1.0.0`). Recent merged work includes M16 (Release Engineering & Polish) and M17 (Plugin System Phase A — Rule Registry).
+**Last updated:** 2026-08-06
+**Status:** Active development. `main` is the default branch. All milestones through M26 are merged to `main`. **v2.1.1 is the current release** (tag `v2.1.1`); prior releases `v2.0.0` and `v2.1.0` are also tagged. Recent merged work includes M25 (RPC connection pooling, ENG-01), M26 (transaction simulation enhancements, ENG-03), and the v2.0.0 → v2.1.1 release-engineering hardening (M28–M39).
 
 This document is the single source of truth for milestone scope and sequencing.
 Individual milestone plans live under `docs/milestone-*-plan.md`; engineering
@@ -28,6 +28,7 @@ sdkt-rpc      → Soroban RPC client, storage/inspect/tx/events/account/sim/subm
 sdkt-storage  → WASM cache, identity/keystore, storage analysis (StorageAnalyzer)
 sdkt-wasm     → ContractSpec parser, ABI type lookup, WASM metadata
 sdkt-audit    → Static security analysis (AUTH-001/002/003, MOVE-001), RuleRegistry, plugin author API
+sdkt-audit-example-rule → Reference plugin crate (rule EXAMPLE-001); loadable as .so/.dylib/.wasm
 ```
 
 Dependency rule: `sdkt-core` depends on nothing internal; everything else may

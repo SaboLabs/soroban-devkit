@@ -36,6 +36,7 @@ sdkt
 │   └── estimate              (manual value entry, type-prefixed)
 │
 ├── wasm
+│   ├── inspect <file.wasm>  Offline inspection of a local WASM file (sections, exports, spec)
 │   ├── metadata <contract>  [--network testnet] [--refresh] [--format]
 │   └── cache                 (info | remove | clear)
 │
@@ -59,7 +60,7 @@ sdkt
 │   ├── --format <json|pretty>
 │   ├── --disable <RULE_ID>   (repeatable)
 │   └── --rules <PATH>        (repeatable; external rule paths)
-│├── identity
+├── identity
 │   ├── generate <name>
 │   ├── import <name> <secret>
 │   ├── list
@@ -68,6 +69,12 @@ sdkt
 │   └── default <name>
 │
 ├── init <name>              [--minimal] [--force] [--format]
+│
+├── build                     Compile Rust contracts in the workspace into WASM artifacts
+│
+├── project
+│   └── deploy                Deploy all contracts defined in the workspace (.sdkt.toml),
+│                             applying topological dependency sorting
 │
 └── deploy
     ├── --wasm <file>
