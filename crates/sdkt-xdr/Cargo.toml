@@ -22,6 +22,6 @@ ed25519-dalek = { version = "2.1.0", features = ["rand_core"] }
 sha2 = "0.10"
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
-sdkt-core = { version = "2.2.1", path = "../sdkt-core" }
+sdkt-core = { version = "2.3.0", path = "../sdkt-core" }
 stellar-strkey = "0.0.18"
-sdkt-wasm = { version = "2.2.1", path = "../sdkt-wasm" }
+sdkt-wasm = { version = "2.3.0", path = "../sdkt-wasm" }
