@@ -10,6 +10,47 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Planned
 - Post-2.0 mainnet-focused tooling, SCF grant alignment, and a plugin marketplace.
 
+## [v2.4.0] - 2026-08-07
+
+### Added
+- **Network Profiles (M28.1 / M28.2 / M29).** Named network profiles let you
+  save RPC URL + network passphrase once and reference them from any RPC
+  command, instead of repeating full endpoints.
+
+  - **M28.1 — Network Profile Storage (`sdkt-storage`):** new `NetworkStore`
+    (honors `SDKT_NETWORK_DIR`) and `NetworkProfile` types with `add` / `get` /
+    `list` / `remove` / `exists`. Stored as JSON under the project config dir
+    (`~/.config/sdkt/networks`, overridable via `SDKT_NETWORK_DIR`). Validation
+    rejects empty names, path separators in names, and empty RPC URLs.
+  - **M28.2 — Network Profile CLI (`sdkt network`):** `sdkt network add |
+    list | show | remove` manage profiles; `show --format json` for scripting.
+    Additive, no breaking changes to existing commands.
+  - **M29 — Network Profile Integration:** every RPC command now accepts
+    `--network-profile <NAME>` plus explicit `--rpc-url <URL>` and
+    `--network-passphrase <PASSPHRASE>` override flags. Resolution precedence
+    (highest wins): explicit `--rpc-url` / `--network-passphrase` >
+    `--network-profile` > `.sdkt.toml` `[network]` > `NetworkConfig::default()`.
+    Commands covered: `inspect`, `verify`, `health`, `storage`, `events`,
+    `account`, `tx`, `fee`, `wasm`, `deploy`, `project deploy`. Commands without
+    the flag behave exactly as before. `tx sign` is excluded (offline signing).
+
+### Changed
+- Documentation: `docs/cli.md`, `README.md`, and `docs/examples.md` document the
+  `sdkt network` command and the `--network-profile` / `--rpc-url` /
+  `--network-passphrase` flags and their precedence.
+
+### Testing
+- Pure precedence logic covered by unit tests (`resolver_tests`) in `sdkt-cli`
+  (flags > profile > built-in defaults). Integration tests under
+  `crates/sdkt-cli/tests/network_cli.rs` cover the `sdkt network` management
+  surface and a deterministic profile-not-found path; all tests are CI-safe
+  (no live RPC, no internet, no machine-specific config).
+
+> Note: the release-engineering items historically labelled "M28 / M38 / M39"
+> in the v2.2.0 entry are distinct from the Network Profiles milestone line
+> (M28.1 / M28.2 / M29) introduced here. Numbers overlapped; the network work
+> is the canonical M28/M29 going forward.
+
 ## [v2.2.0] - 2026-08-07
 
 ### Added

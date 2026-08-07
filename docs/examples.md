@@ -124,6 +124,27 @@ sdkt network remove testnet
 sdkt network show testnet --format json
 ```
 
+### Using a profile with RPC commands
+
+Once a profile exists, reference it from any RPC command instead of repeating
+the full endpoint:
+
+```bash
+# Inspect / explore using the saved profile
+sdkt inspect <CONTRACT_ID> --network-profile testnet
+sdkt account <ADDRESS> --network-profile testnet
+sdkt events <CONTRACT_ID> --network-profile testnet
+
+# Override the profile inline when needed
+sdkt inspect <CONTRACT_ID> --network-profile testnet \
+  --rpc-url https://my-custom-rpc.example \
+  --network-passphrase "Custom Network ; 2024"
+```
+
+Precedence (highest wins): explicit `--rpc-url` / `--network-passphrase` >
+`--network-profile` > `.sdkt.toml` `[network]` > built-in testnet default.
+Commands without these flags behave exactly as before.
+
 ### Deploy
 
 ```bash

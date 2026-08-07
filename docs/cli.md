@@ -71,7 +71,13 @@ sdkt
 │   └── default <name>
 │
 ├── init <name>              [--minimal] [--force] [--format]
-│
+
+├── network
+│   ├── add <name>           [--rpc-url <URL>] [--passphrase <PASS>] [--friendbot <URL>] [--description <TEXT>]
+│   ├── list
+│   ├── show <name>          [--format json|pretty]
+│   └── remove <name>
+
 ├── build                     Compile Rust contracts in the workspace into WASM artifacts
 │
 ├── project
@@ -85,6 +91,30 @@ sdkt
     ├── --deny-breaking        (abort if not backwards-compatible)
     └── --old-wasm <deployed>  (baseline, required by --deny-breaking)
 ```
+
+## Network Profiles
+
+Every RPC command (`inspect`, `verify`, `health`, `storage`, `events`, `account`,
+`tx`, `fee`, `wasm`, `deploy`, `project deploy`) accepts the same three optional
+flags for selecting / overriding the network endpoint:
+
+| Flag | Meaning |
+|------|---------|
+| `--network-profile <NAME>` | Use a saved profile (see `sdkt network`). Loads its RPC URL + passphrase. |
+| `--rpc-url <URL>` | Explicit RPC endpoint; overrides the profile and `.sdkt.toml`. |
+| `--network-passphrase <PASSPHRASE>` | Explicit network passphrase; overrides the profile and `.sdkt.toml`. |
+
+**Resolution precedence (highest wins):**
+
+```
+explicit --rpc-url / --network-passphrase
+        > --network-profile <NAME>
+                > .sdkt.toml [network]
+                        > NetworkConfig::default()   (testnet)
+```
+
+`tx sign` is excluded — it is offline signing and takes only `--network` for the
+signature hash. Commands invoked without these flags behave exactly as before.
 
 ## Notes
 

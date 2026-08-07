@@ -173,9 +173,33 @@ See [`docs/plugin-authoring.md`](docs/plugin-authoring.md) for how to build or u
 | `sdkt wasm cache` | Manage the WASM cache (`info` / `remove` / `clear`). |
 | `sdkt audit <path.rs>` | Static security analysis (AUTH-001/002/003, MOVE-001). `--disable <RULE_ID>` to skip a rule. `--rules <path>` (repeatable) to load external rule paths. |
 | `sdkt identity <generate\|import\|list\|show\|delete\|default>` | ED25519 keystore management. |
-| `sdkt network <add\|list\|show\|remove>` | Named network profiles (RPC URL + passphrase). |
+| `sdkt network <add\|list\|show\|remove>` | Named network profiles (RPC URL + passphrase). Combine with `--network-profile <NAME>` on any RPC command to avoid repeating endpoints; `--rpc-url` / `--network-passphrase` override. |
 | `sdkt init <name>` | Scaffold a new Soroban project (`--minimal`, `--force`). |
 | `sdkt deploy --wasm <file> --salt <salt>` | Upload WASM + instantiate. Add `--deny-breaking --old-wasm <deployed.wasm>` to abort on a non-backwards-compatible upgrade. |
+
+### Network profiles
+
+Save an RPC endpoint once and reference it from any RPC command instead of
+repeating full URLs:
+
+```bash
+# Save a profile
+sdkt network add testnet \
+  --rpc-url https://soroban-testnet.stellar.org \
+  --passphrase "Test SDF Network ; September 2015"
+
+# Use it (any RPC command)
+sdkt inspect <CONTRACT_ID> --network-profile testnet
+sdkt account <ADDRESS> --network-profile testnet
+```
+
+Every RPC command (`inspect`, `verify`, `health`, `storage`, `events`, `account`,
+`tx`, `fee`, `wasm`, `deploy`, `project deploy`) also accepts explicit
+`--rpc-url <URL>` and `--network-passphrase <PASSPHRASE>` override flags.
+**Precedence (highest wins):** explicit `--rpc-url` / `--network-passphrase` >
+`--network-profile` > `.sdkt.toml` `[network]` > built-in testnet default.
+Commands without these flags behave exactly as before. (`tx sign` is offline and
+excluded.) See [docs/cli.md](docs/cli.md) and [docs/examples.md](docs/examples.md).
 
 Most commands accept `--format json` for scripting / CI integration.
 
