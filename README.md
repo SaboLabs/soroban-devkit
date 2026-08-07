@@ -199,6 +199,7 @@ See [`docs/plugin-authoring.md`](docs/plugin-authoring.md) for how to build or u
 | `sdkt lock show` | Print the current `sdkt.lock` contents. |
 | `sdkt package validate` | Validate the local package manifest (`[package]` metadata + local/git `[dependencies]` graph). Offline; never touches the network or a registry. |
 | `sdkt package fetch [--force]` | Fetch declared dependencies into `.sdkt-cache` (local path passthrough; git clone/checkout). Never builds. `--force` updates existing checkouts. |
+| `sdkt package update [--check] [--dry-run] [--format pretty\|json]` | Synchronize dependencies: refresh git deps to the latest available commit, rewrite `sdkt.lock`. `rev` stays pinned; `tag`/`branch` update on drift. `--check` reports only; `--dry-run` previews without touching cache/lock. |
 
 ### Multi-contract dependency graphs
 

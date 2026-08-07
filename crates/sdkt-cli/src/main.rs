@@ -713,6 +713,20 @@ enum PackageCommand {
         #[arg(long)]
         force: bool,
     },
+    /// Synchronize dependencies with what is available upstream and refresh the
+    /// lock. `rev` deps stay pinned; `tag`/`branch` deps update when the remote
+    /// commit changed. Use `--check` to report only, `--dry-run` to preview
+    /// changes without touching the cache or lock.
+    Update {
+        #[arg(short, long, default_value = "pretty")]
+        format: String,
+        /// Only report available updates; do not fetch or rewrite the lock.
+        #[arg(long)]
+        check: bool,
+        /// Compute and preview changes; do not modify the cache or lock.
+        #[arg(long)]
+        dry_run: bool,
+    },
 }
 
 #[derive(Subcommand)]
@@ -3102,52 +3116,16 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 // update the lock in place (preserving contract artifacts) when
                 // one already exists; otherwise we generate a fresh lock.
                 {
-                    use sdkt_core::lock::{DependencyLock, LockFile};
+                    use sdkt_core::lock::LockFile;
                     let mut lock = sdkt_core::lock::read_lock(base).unwrap_or_else(|_| LockFile {
                         version: sdkt_core::lock::LOCK_VERSION,
                         deploy_order: vec![],
                         contracts: vec![],
                         dependencies: vec![],
                     });
-                    let mut deps_lock: Vec<DependencyLock> = Vec::with_capacity(fetched.len());
-                    for o in &fetched {
-                        let dep = config
-                            .dependencies
-                            .get(&o.name)
-                            .cloned()
-                            .unwrap_or_default();
-                        let (source, original_source, git_url, resolved_reference) =
-                            if dep.git.is_some() {
-                                (
-                                    "git".to_string(),
-                                    dep.git.clone().unwrap_or_default(),
-                                    dep.git.clone().unwrap_or_default(),
-                                    dep.tag
-                                        .clone()
-                                        .or_else(|| dep.branch.clone())
-                                        .or_else(|| dep.rev.clone())
-                                        .unwrap_or_default(),
-                                )
-                            } else {
-                                let resolved = base
-                                    .join(dep.path.clone().unwrap_or_default())
-                                    .to_string_lossy()
-                                    .to_string();
-                                ("local".to_string(), resolved, String::new(), String::new())
-                            };
-                        let integrity = sdkt_core::lock::compute_dependency_integrity(base, &dep);
-                        deps_lock.push(DependencyLock {
-                            name: o.name.clone(),
-                            source,
-                            original_source,
-                            git_url,
-                            resolved_reference,
-                            commit_sha: o.resolved_rev.clone(),
-                            cache_location: o.local_path.display().to_string(),
-                            integrity,
-                        });
-                    }
-                    lock.dependencies = deps_lock;
+                    // Single source of truth shared with `sdkt package update`.
+                    lock.dependencies =
+                        sdkt_core::lock::lock_dependencies_resolved(base, &config, &fetched);
                     if let Err(e) = sdkt_core::lock::write_lock(base, &lock) {
                         eprintln!("Warning: could not write sdkt.lock: {}", e);
                     }
@@ -3184,6 +3162,149 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                         }))
                         .unwrap()
                     );
+                }
+            }
+            PackageCommand::Update {
+                format,
+                check,
+                dry_run,
+            } => {
+                let fmt = parse_format_str(&format);
+                let config = load_config();
+                let base = Path::new(".");
+
+                // Build the update plan (read-only: resolves available commits via
+                // git ls-remote; never fetches, never writes the lock).
+                let plan = match sdkt_core::sync::plan_updates(base, &config) {
+                    Ok(p) => p,
+                    Err(e) => {
+                        eprintln!("Error: {}", e);
+                        std::process::exit(1);
+                    }
+                };
+
+                if fmt == OutputFormat::Json {
+                    println!(
+                        "{}",
+                        serde_json::to_string_pretty(&serde_json::json!({
+                            "checked": plan.checked,
+                            "updated": plan.updated,
+                            "unchanged": plan.unchanged,
+                            "changes": plan.changes.iter().map(|c| serde_json::json!({
+                                "name": c.name,
+                                "source": c.source,
+                                "status": format!("{:?}", c.status),
+                                "old_commit": c.old_commit,
+                                "new_commit": c.new_commit,
+                                "detail": c.detail,
+                            })).collect::<Vec<_>>(),
+                        }))
+                        .unwrap()
+                    );
+                } else if check {
+                    // --check: report available updates only; exit 0 (errors are
+                    // listed, but a non-zero exit is reserved for hard failures
+                    // which already surfaced above via process::exit).
+                    println!("Checking dependencies...");
+                    let mut available = 0;
+                    for c in &plan.changes {
+                        match c.status {
+                            sdkt_core::sync::UpdateStatus::Updated => {
+                                available += 1;
+                                println!("↑ {} has an update", c.name);
+                            }
+                            sdkt_core::sync::UpdateStatus::Pinned => {
+                                println!("✓ {} pinned (rev)", c.name);
+                            }
+                            sdkt_core::sync::UpdateStatus::Error => {
+                                println!("✗ {} error: {}", c.name, c.detail);
+                            }
+                            _ => {
+                                println!("✓ {} unchanged", c.name);
+                            }
+                        }
+                    }
+                    if available > 0 {
+                        println!(
+                            "{} update(s) available. Run `sdkt package update`.",
+                            available
+                        );
+                    } else {
+                        println!("All dependencies up to date.");
+                    }
+                } else if dry_run {
+                    // --dry-run: preview the changes without modifying anything.
+                    let mut would = 0;
+                    println!("Would update:");
+                    for c in &plan.changes {
+                        if c.status == sdkt_core::sync::UpdateStatus::Updated {
+                            would += 1;
+                            let old = &c.old_commit;
+                            let new = &c.new_commit;
+                            println!("  {}", c.name);
+                            println!(
+                                "    old commit: {}",
+                                if old.is_empty() {
+                                    "(none)".to_string()
+                                } else {
+                                    old.chars().take(12).collect()
+                                }
+                            );
+                            println!(
+                                "    new commit: {}",
+                                if new.is_empty() {
+                                    "(none)".to_string()
+                                } else {
+                                    new.chars().take(12).collect()
+                                }
+                            );
+                        } else if c.status == sdkt_core::sync::UpdateStatus::Pinned {
+                            println!("  {} (pinned, skip)", c.name);
+                        } else if c.status == sdkt_core::sync::UpdateStatus::Error {
+                            println!("  {} (error: {})", c.name, c.detail);
+                        } else {
+                            println!("  {} (unchanged)", c.name);
+                        }
+                    }
+                    if would > 0 {
+                        println!("Lock would change.");
+                    } else {
+                        println!("Nothing to change.");
+                    }
+                } else {
+                    // Real apply: refresh cache + rewrite lock (the plan is already
+                    // computed; apply_updates performs the actual fetch).
+                    let report = match sdkt_core::sync::apply_updates(base, &config) {
+                        Ok((r, _lock)) => r,
+                        Err(e) => {
+                            eprintln!("Error updating dependencies: {}", e);
+                            std::process::exit(1);
+                        }
+                    };
+                    println!("Checking dependencies...");
+                    for c in &report.changes {
+                        match c.status {
+                            sdkt_core::sync::UpdateStatus::Updated => {
+                                println!("↑ {} updated", c.name);
+                            }
+                            sdkt_core::sync::UpdateStatus::Pinned => {
+                                println!("✓ {} pinned (rev)", c.name);
+                            }
+                            sdkt_core::sync::UpdateStatus::Error => {
+                                println!("✗ {} error: {}", c.name, c.detail);
+                            }
+                            _ => {
+                                println!("✓ {} unchanged", c.name);
+                            }
+                        }
+                    }
+                    if report.updated > 0 {
+                        println!("Updated:");
+                        println!("{} dependency", report.updated);
+                        println!("Lock refreshed.");
+                    } else {
+                        println!("Nothing to update.");
+                    }
                 }
             }
         },

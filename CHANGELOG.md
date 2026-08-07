@@ -92,6 +92,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   new CLI integration tests cover `lock verify` dependency reporting and
   `package fetch` writing reproducible lock entries.
 
+- **Package update & synchronization (M36.0).** New `sdkt package update`
+  closes the package loop (`validate → fetch → update → verify`). It resolves
+  each git dependency's currently available commit via `git ls-remote`
+  (offline for local URLs; contacts only the declared git remote when a
+  network ref is required), then refreshes `tag`/`branch` deps to the latest
+  commit, updates the cache, and rewrites `sdkt.lock` (`commit_sha`,
+  `resolved_reference`, `cache_location`, `integrity`) — preserving contract
+  artifacts, hashes, and deploy order. `rev` deps are reported `pinned` and
+  never updated; local `path` deps are reported `unchanged`. Flags:
+  `--check` (report-only, exits 0), `--dry-run` (preview, touches nothing),
+  `--format pretty|json` (JSON emits `checked`/`updated`/`unchanged`/`changes`).
+  Clear, non-panicking errors for missing cache, git unavailable, invalid
+  manifest, missing lock, detached branch, unknown reference, and network
+  failure. Reuses `GitFetcher`, `git_cache_key`, `lock_dependencies`,
+  `verify_dependencies`, and the existing cache/lock infrastructure — no new
+  dependency-graph, topo-sort, validation, hashing, or git-cache code. New
+  unit tests cover branch/tag/rev update, dry-run, check mode, JSON output,
+  lock refresh, unchanged dep, update-after-fetch, missing cache, and invalid
+  reference; new CLI integration tests cover `package update`, `--check`,
+  `--dry-run`, `--format json`, and offline local-path behavior.
+
 ### Planned
 - Post-2.0 mainnet-focused tooling, SCF grant alignment, and a plugin marketplace.
 

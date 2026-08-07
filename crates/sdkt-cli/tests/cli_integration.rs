@@ -885,3 +885,367 @@ fn package_fetch_writes_locked_dependencies() {
     let _ = std::fs::remove_dir_all(&tmp);
     let _ = std::fs::remove_dir_all(&src);
 }
+
+// ---------------------------------------------------------------------------
+// M36.0 — Package update & synchronization (offline, local git remotes).
+// `sdkt package update` resolves available commits via git ls-remote against
+// the declared git URL (a local repo here, no network), refreshes the cache,
+// and rewrites sdkt.lock. `--check` reports; `--dry-run` previews; both are
+// read-only. `rev` stays pinned; `tag`/`branch` update on drift.
+// ---------------------------------------------------------------------------
+
+/// Build a local "remote" repo with an initial commit tagged v1.0.0, then
+/// advance HEAD (and move the tag) so an `update` has something to pull.
+/// Build a local "remote" repo with an initial commit tagged v1.0.0. The tag
+/// stays at v1 until a test calls `advance_repo` (moves HEAD + re-tags), so
+/// `fetch` records the OLD commit and a later `update` has something to pull.
+fn make_advancing_repo() -> (std::path::PathBuf, String, String) {
+    let dir = std::env::temp_dir().join(format!(
+        "sdkt-it-sync-remote-{}",
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos()
+    ));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let run = |args: &[&str]| {
+        let o = std::process::Command::new("git")
+            .current_dir(&dir)
+            .args(args)
+            .output()
+            .expect("git available");
+        assert!(
+            o.status.success(),
+            "git {:?} failed: {}",
+            args,
+            String::from_utf8_lossy(&o.stderr)
+        );
+    };
+    run(&["init", "-q"]);
+    run(&["config", "user.email", "t@sdkt.local"]);
+    run(&["config", "user.name", "sdkt test"]);
+    std::fs::write(dir.join("lib.rs"), "pub fn answer() -> u32 { 42 }\n").unwrap();
+    run(&["add", "."]);
+    run(&["commit", "-q", "-m", "initial"]);
+    run(&["tag", "v1.0.0"]);
+    let v1 = {
+        let o = std::process::Command::new("git")
+            .current_dir(&dir)
+            .args(["rev-parse", "v1.0.0"])
+            .output()
+            .unwrap();
+        String::from_utf8_lossy(&o.stdout).trim().to_string()
+    };
+    // A SECOND commit exists in the repo (HEAD) but is NOT yet tagged, so the
+    // declared `tag = "v1.0.0"` still resolves to v1. Advancing re-tags to it.
+    std::fs::write(dir.join("lib.rs"), "pub fn answer() -> u32 { 43 }\n").unwrap();
+    run(&["add", "."]);
+    run(&["commit", "-q", "-m", "second"]);
+    let v2 = {
+        let o = std::process::Command::new("git")
+            .current_dir(&dir)
+            .args(["rev-parse", "HEAD"])
+            .output()
+            .unwrap();
+        String::from_utf8_lossy(&o.stdout).trim().to_string()
+    };
+    (dir, v1, v2)
+}
+
+/// Move the remote's `v1.0.0` tag to its current HEAD, simulating an upstream
+/// release. After this, `sdkt package update` should pull the new commit.
+fn advance_repo(src: &std::path::Path) {
+    let o = std::process::Command::new("git")
+        .current_dir(src)
+        .args(["tag", "-f", "v1.0.0"])
+        .output()
+        .expect("git available");
+    assert!(o.status.success(), "advance tag failed");
+}
+
+#[test]
+fn package_update_refreshes_lock() {
+    let (src, v1, v2) = make_advancing_repo();
+    let url = src.to_string_lossy().replace('\\', "\\\\");
+    let tmp = std::env::temp_dir().join(format!(
+        "sdkt-it-m360-update-{}",
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos()
+    ));
+    let _ = std::fs::remove_dir_all(&tmp);
+    write_manifest(
+        &tmp,
+        &format!(
+            "[package]\nname = \"my-app\"\nversion = \"0.1.0\"\n\n[dependencies.math]\ngit = \"{}\"\ntag = \"v1.0.0\"\n",
+            url
+        ),
+    );
+
+    // 1) fetch records the OLD (v1) commit in the lock.
+    Command::cargo_bin("sdkt")
+        .expect("sdkt binary built")
+        .current_dir(&tmp)
+        .arg("package")
+        .arg("fetch")
+        .assert()
+        .success();
+    advance_repo(&src);
+    let lock1 = std::fs::read_to_string(tmp.join("sdkt.lock")).unwrap();
+    assert!(
+        lock1.contains(&v1[..12]),
+        "lock should record old commit: {}",
+        lock1
+    );
+
+    // 2) update pulls the NEW commit and rewrites the lock.
+    Command::cargo_bin("sdkt")
+        .expect("sdkt binary built")
+        .current_dir(&tmp)
+        .arg("package")
+        .arg("update")
+        .assert()
+        .success();
+    let lock2 = std::fs::read_to_string(tmp.join("sdkt.lock")).unwrap();
+    assert!(
+        lock2.contains(&v2[..12]),
+        "lock should record new commit: {}",
+        lock2
+    );
+    assert!(
+        !lock2.contains(&v1[..12]) || lock2.matches(&v1[..12]).count() <= 1,
+        "old commit should be replaced"
+    );
+
+    // 3) a second update is a no-op (already current).
+    let out = Command::cargo_bin("sdkt")
+        .expect("sdkt binary built")
+        .current_dir(&tmp)
+        .arg("package")
+        .arg("update")
+        .output()
+        .unwrap();
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(
+        stdout.to_lowercase().contains("up to date")
+            || stdout.to_lowercase().contains("nothing to update"),
+        "second update should report no changes: {}",
+        stdout
+    );
+
+    let _ = std::fs::remove_dir_all(&tmp);
+    let _ = std::fs::remove_dir_all(&src);
+}
+
+#[test]
+fn package_update_check_is_readonly() {
+    let (src, _v1, _v2) = make_advancing_repo();
+    let url = src.to_string_lossy().replace('\\', "\\\\");
+    let tmp = std::env::temp_dir().join(format!(
+        "sdkt-it-m360-check-{}",
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos()
+    ));
+    let _ = std::fs::remove_dir_all(&tmp);
+    write_manifest(
+        &tmp,
+        &format!(
+            "[package]\nname = \"my-app\"\nversion = \"0.1.0\"\n\n[dependencies.math]\ngit = \"{}\"\ntag = \"v1.0.0\"\n",
+            url
+        ),
+    );
+    Command::cargo_bin("sdkt")
+        .expect("sdkt binary built")
+        .current_dir(&tmp)
+        .arg("package")
+        .arg("fetch")
+        .assert()
+        .success();
+
+    let lock_before = std::fs::read_to_string(tmp.join("sdkt.lock")).unwrap();
+    advance_repo(&src);
+    let out = Command::cargo_bin("sdkt")
+        .expect("sdkt binary built")
+        .current_dir(&tmp)
+        .args(["package", "update", "--check"])
+        .output()
+        .unwrap();
+    assert!(out.status.success(), "check mode exits 0");
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(
+        stdout.to_lowercase().contains("update") || stdout.to_lowercase().contains("available"),
+        "check should report an available update: {}",
+        stdout
+    );
+    // Lock must be unchanged after --check.
+    let lock_after = std::fs::read_to_string(tmp.join("sdkt.lock")).unwrap();
+    assert_eq!(lock_before, lock_after, "--check must not rewrite the lock");
+
+    let _ = std::fs::remove_dir_all(&tmp);
+    let _ = std::fs::remove_dir_all(&src);
+}
+
+#[test]
+fn package_update_dry_run_is_readonly() {
+    let (src, _v1, _v2) = make_advancing_repo();
+    let url = src.to_string_lossy().replace('\\', "\\\\");
+    let tmp = std::env::temp_dir().join(format!(
+        "sdkt-it-m360-dryrun-{}",
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos()
+    ));
+    let _ = std::fs::remove_dir_all(&tmp);
+    write_manifest(
+        &tmp,
+        &format!(
+            "[package]\nname = \"my-app\"\nversion = \"0.1.0\"\n\n[dependencies.math]\ngit = \"{}\"\ntag = \"v1.0.0\"\n",
+            url
+        ),
+    );
+    Command::cargo_bin("sdkt")
+        .expect("sdkt binary built")
+        .current_dir(&tmp)
+        .arg("package")
+        .arg("fetch")
+        .assert()
+        .success();
+
+    let lock_before = std::fs::read_to_string(tmp.join("sdkt.lock")).unwrap();
+    advance_repo(&src);
+    let out = Command::cargo_bin("sdkt")
+        .expect("sdkt binary built")
+        .current_dir(&tmp)
+        .args(["package", "update", "--dry-run"])
+        .output()
+        .unwrap();
+    assert!(out.status.success());
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(
+        stdout.to_lowercase().contains("would")
+            || stdout.to_lowercase().contains("lock would change"),
+        "dry-run should preview changes: {}",
+        stdout
+    );
+    let lock_after = std::fs::read_to_string(tmp.join("sdkt.lock")).unwrap();
+    assert_eq!(
+        lock_before, lock_after,
+        "--dry-run must not rewrite the lock"
+    );
+
+    let _ = std::fs::remove_dir_all(&tmp);
+    let _ = std::fs::remove_dir_all(&src);
+}
+
+#[test]
+fn package_update_json_reports_counts() {
+    let (src, _v1, _v2) = make_advancing_repo();
+    let url = src.to_string_lossy().replace('\\', "\\\\");
+    let tmp = std::env::temp_dir().join(format!(
+        "sdkt-it-m360-json-{}",
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos()
+    ));
+    let _ = std::fs::remove_dir_all(&tmp);
+    write_manifest(
+        &tmp,
+        &format!(
+            "[package]\nname = \"my-app\"\nversion = \"0.1.0\"\n\n[dependencies.math]\ngit = \"{}\"\ntag = \"v1.0.0\"\n",
+            url
+        ),
+    );
+    Command::cargo_bin("sdkt")
+        .expect("sdkt binary built")
+        .current_dir(&tmp)
+        .arg("package")
+        .arg("fetch")
+        .assert()
+        .success();
+
+    advance_repo(&src);
+    let out = Command::cargo_bin("sdkt")
+        .expect("sdkt binary built")
+        .current_dir(&tmp)
+        .args(["package", "update", "--format", "json"])
+        .output()
+        .unwrap();
+    assert!(out.status.success());
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    // JSON must carry the summary counters and at least one change entry.
+    assert!(
+        stdout.contains("\"checked\""),
+        "json missing checked: {}",
+        stdout
+    );
+    assert!(
+        stdout.contains("\"updated\""),
+        "json missing updated: {}",
+        stdout
+    );
+    assert!(
+        stdout.contains("\"changes\""),
+        "json missing changes: {}",
+        stdout
+    );
+    // The lock should have been refreshed (apply mode, not check/dry-run).
+    let lock = std::fs::read_to_string(tmp.join("sdkt.lock")).unwrap();
+    assert!(
+        lock.contains("commit_sha"),
+        "lock should be refreshed: {}",
+        lock
+    );
+
+    let _ = std::fs::remove_dir_all(&tmp);
+    let _ = std::fs::remove_dir_all(&src);
+}
+
+#[test]
+fn package_update_offline_local_path_unchanged() {
+    // A local path dependency has no remote; update must report it unchanged
+    // and stay fully offline.
+    let tmp = std::env::temp_dir().join(format!(
+        "sdkt-it-m360-local-{}",
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos()
+    ));
+    let _ = std::fs::remove_dir_all(&tmp);
+    std::fs::create_dir_all(tmp.join("libs/math")).unwrap();
+    write_manifest(
+        &tmp,
+        "[package]\nname = \"my-app\"\nversion = \"0.1.0\"\n\n[dependencies.math]\npath = \"libs/math\"\n",
+    );
+
+    // Fetch first so a lock exists (path deps are recorded unchanged).
+    Command::cargo_bin("sdkt")
+        .expect("sdkt binary built")
+        .current_dir(&tmp)
+        .arg("package")
+        .arg("fetch")
+        .assert()
+        .success();
+
+    let out = Command::cargo_bin("sdkt")
+        .expect("sdkt binary built")
+        .current_dir(&tmp)
+        .args(["package", "update"])
+        .output()
+        .unwrap();
+    assert!(out.status.success(), "local-path update succeeds offline");
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(
+        stdout.to_lowercase().contains("unchanged") || stdout.to_lowercase().contains("up to date"),
+        "local path dep should be reported unchanged: {}",
+        stdout
+    );
+
+    let _ = std::fs::remove_dir_all(&tmp);
+}

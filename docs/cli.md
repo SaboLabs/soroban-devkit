@@ -91,8 +91,38 @@ sdkt
 ├── package                   Validate local package manifests (M35.0)
 │   ├── validate              Offline-validate `[package]` metadata + local `[dependencies]`
 │                             path graph (no network/registry; git/* sources rejected)
-│   └── fetch                 Fetch deps into `.sdkt-cache` (M35.1): local path passthrough,
+│   ├── fetch                 Fetch deps into `.sdkt-cache` (M35.1): local path passthrough,
 │                             git clone/checkout. `--force` updates. Never builds.
+│   └── update                Synchronize deps (M36.0): refresh git deps to latest available
+│                             commit and rewrite `sdkt.lock`. `rev` pinned; `tag`/`branch`
+│                             update on drift. `--check` reports; `--dry-run` previews.
+
+### Synchronizing dependencies (M36.0)
+
+`sdkt package update` closes the package loop: `validate → fetch → update → verify`.
+
+It resolves each git dependency's **currently available** commit via `git ls-remote`
+against its declared URL (no checkout, no clone in `--check`/`--dry-run`), then:
+
+- **`rev`** — immutable and already pinned; never updated. Reported as `pinned (rev)`.
+- **`tag`** — resolves the tag's current commit; if it differs from the lock, the
+  cache is refreshed and the lock is rewritten.
+- **`branch`** — fetches the latest branch head, updates the cache, and rewrites the
+  lock.
+- **local `path`** — no remote; reported `unchanged`.
+
+Flags:
+
+- `--check` — report available updates only; **does not** fetch or rewrite the lock;
+  exits 0 (non-zero is reserved for hard errors like a missing lock or invalid manifest).
+- `--dry-run` — compute everything and preview what would change; the cache and lock
+  are left untouched.
+- `--format pretty|json` — `json` emits `{"checked","updated","unchanged","changes":[...]}`.
+
+On success the lock records the new `commit_sha`, `resolved_reference`, `cache_location`,
+and `integrity` for git deps — contract entries, artifact hashes, and deploy order are
+preserved. Clear errors are produced for: missing cache, git unavailable, invalid
+manifest, missing lock, detached branch, unknown reference, and network failure.
 
 ├── project
 │   └── deploy                Deploy all contracts defined in the workspace (.sdkt.toml),

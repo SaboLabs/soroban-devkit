@@ -285,6 +285,71 @@ pub fn lock_dependencies(
     out
 }
 
+/// Rebuild [`DependencyLock`] entries from a set of already-resolved
+/// [`FetchOutcome`]s, recording the resolved commit, cache location, and an
+/// offline integrity hash for each.
+///
+/// This is the single source of truth used by both `sdkt package fetch` and
+/// `sdkt package update` when writing dependency entries into `sdkt.lock`, so
+/// the two never drift. Local `path` deps in `config` that have no
+/// corresponding outcome keep their manifest-derived `original_source` (their
+/// `commit_sha`/`cache_location`/`integrity` stay empty). Git deps take the
+/// commit SHA and on-disk path from the matching outcome.
+pub fn lock_dependencies_resolved(
+    base_dir: &Path,
+    config: &DevKitConfig,
+    fetched: &[crate::fetch::FetchOutcome],
+) -> Vec<DependencyLock> {
+    let mut out = Vec::with_capacity(config.dependencies.len());
+    for (name, dep) in &config.dependencies {
+        if let Some(outcome) = fetched.iter().find(|o| o.name == *name) {
+            let (source, original_source, git_url, resolved_reference) = if dep.git.is_some() {
+                (
+                    "git".to_string(),
+                    dep.git.clone().unwrap_or_default(),
+                    dep.git.clone().unwrap_or_default(),
+                    dep.tag
+                        .clone()
+                        .or_else(|| dep.branch.clone())
+                        .or_else(|| dep.rev.clone())
+                        .unwrap_or_default(),
+                )
+            } else {
+                let resolved = base_dir
+                    .join(dep.path.clone().unwrap_or_default())
+                    .to_string_lossy()
+                    .to_string();
+                ("local".to_string(), resolved, String::new(), String::new())
+            };
+            let integrity = compute_dependency_integrity(base_dir, dep);
+            out.push(DependencyLock {
+                name: name.clone(),
+                source,
+                original_source,
+                git_url,
+                resolved_reference,
+                commit_sha: outcome.resolved_rev.clone(),
+                cache_location: outcome.local_path.display().to_string(),
+                integrity,
+            });
+        } else {
+            // No fetched outcome (e.g. a local path dep, or an unchanged git dep
+            // whose lock entry is preserved separately). Fall back to the pure
+            // manifest-derived record so the entry still exists in the lock.
+            out.push(
+                lock_dependencies(base_dir, &config.dependencies)
+                    .into_iter()
+                    .find(|d| d.name == *name)
+                    .unwrap_or_else(|| DependencyLock {
+                        name: name.clone(),
+                        ..Default::default()
+                    }),
+            );
+        }
+    }
+    out
+}
+
 /// Read a [`LockFile`] and return its locked dependencies (empty if none).
 pub fn locked_dependencies(lock: &LockFile) -> &[DependencyLock] {
     &lock.dependencies

@@ -257,9 +257,25 @@ impl DependencyFetcher for GitFetcher {
             }
         }
 
-        // Clone or update.
+        // Clone or update. When `force` is set we use explicit refspecs so a
+        // moved tag (the core M36.0 update scenario) is actually pulled: a
+        // plain `git fetch` refuses to overwrite a local lightweight tag, so we
+        // pass `+refs/tags/*:refs/tags/*` to force the update; branches use the
+        // normal `origin/<branch>` remote-tracking mapping.
         let (workdir, clone_args) = if existing {
-            (checkout.clone(), vec!["fetch".to_string()])
+            let workdir = checkout.clone();
+            let args = if force {
+                vec![
+                    "fetch".to_string(),
+                    "--force".to_string(),
+                    url.clone(),
+                    "+refs/heads/*:refs/remotes/origin/*".to_string(),
+                    "+refs/tags/*:refs/tags/*".to_string(),
+                ]
+            } else {
+                vec!["fetch".to_string()]
+            };
+            (workdir, args)
         } else {
             (
                 parent,
