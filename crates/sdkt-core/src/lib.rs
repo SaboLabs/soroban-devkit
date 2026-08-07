@@ -2,6 +2,7 @@ pub mod build;
 pub mod config;
 pub mod fee;
 pub mod format;
+pub mod lock;
 pub mod project;
 pub mod scaffold;
 pub mod tx_builder;

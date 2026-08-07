@@ -17,6 +17,7 @@ use sdkt_xdr::{
 };
 use std::fs;
 use std::io::{self, Write};
+use std::path::Path;
 use std::process;
 
 /// Reusable network-resolution flags shared by every command that talks to a
@@ -429,6 +430,11 @@ enum Commands {
     },
     /// Compile Rust contracts into WASM artifacts
     Build,
+    /// Generate or inspect the project lock file (`sdkt.lock`)
+    Lock {
+        #[command(subcommand)]
+        action: LockCommand,
+    },
     /// Manage multi-contract projects
     Project {
         #[command(subcommand)]
@@ -657,6 +663,27 @@ enum ProjectCommand {
         /// Optional deployment salt base
         #[arg(short, long, default_value = "deploy")]
         salt: String,
+        #[arg(short, long, default_value = "pretty")]
+        format: String,
+    },
+}
+
+#[derive(Subcommand)]
+enum LockCommand {
+    /// Generate `sdkt.lock` from the current build artifacts (next to
+    /// `.sdkt.toml`). Requires `sdkt build` to have run first.
+    Generate {
+        #[arg(short, long, default_value = "pretty")]
+        format: String,
+    },
+    /// Verify the lock file against the current on-disk artifacts.
+    /// Advisory: reports drift but never fails the build.
+    Verify {
+        #[arg(short, long, default_value = "pretty")]
+        format: String,
+    },
+    /// Print the contents of `sdkt.lock` if present.
+    Show {
         #[arg(short, long, default_value = "pretty")]
         format: String,
     },
@@ -2805,10 +2832,117 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 }
             }
         }
+        Commands::Lock { action } => match action {
+            LockCommand::Generate { format } => {
+                let fmt = parse_format_str(&format);
+                let config = DevKitConfig::from_file(".sdkt.toml").unwrap_or_default();
+                match sdkt_core::lock::generate_lock(Path::new("."), &config) {
+                    Ok(lock) => match sdkt_core::lock::write_lock(Path::new("."), &lock) {
+                        Ok(path) => {
+                            if fmt != OutputFormat::Json {
+                                println!("✓ Wrote {}", path.display());
+                                println!("{}", sdkt_core::lock::lock_to_toml(&lock).unwrap());
+                            } else {
+                                println!(
+                                    "{}",
+                                    serde_json::to_string_pretty(&serde_json::json!({
+                                        "lock_file": path.display().to_string(),
+                                        "version": lock.version,
+                                        "deploy_order": lock.deploy_order,
+                                        "contracts": lock.contracts,
+                                    }))
+                                    .unwrap()
+                                );
+                            }
+                        }
+                        Err(e) => {
+                            eprintln!("Error generating lock: {}", e);
+                            std::process::exit(1);
+                        }
+                    },
+                    Err(e) => {
+                        eprintln!("Error generating lock: {}", e);
+                        std::process::exit(1);
+                    }
+                }
+            }
+            LockCommand::Verify { format } => {
+                let fmt = parse_format_str(&format);
+                let config = DevKitConfig::from_file(".sdkt.toml").unwrap_or_default();
+                let report = sdkt_core::lock::verify_lock(Path::new("."), &config);
+                if fmt != OutputFormat::Json {
+                    if report.present {
+                        if report.consistent {
+                            println!("✓ sdkt.lock is consistent with current artifacts");
+                        } else {
+                            if !report.mismatched.is_empty() {
+                                println!(
+                                    "⚠ sdkt.lock drift — artifact hash changed for: {}",
+                                    report.mismatched.join(", ")
+                                );
+                            }
+                            if !report.missing_in_lock.is_empty() {
+                                println!(
+                                    "⚠ sdkt.lock missing entries for: {}",
+                                    report.missing_in_lock.join(", ")
+                                );
+                            }
+                        }
+                    } else {
+                        println!("⚠ No sdkt.lock found; run `sdkt build` to generate one");
+                    }
+                } else {
+                    println!(
+                        "{}",
+                        serde_json::to_string_pretty(&serde_json::json!({
+                            "present": report.present,
+                            "consistent": report.consistent,
+                            "mismatched": report.mismatched,
+                            "missing_in_lock": report.missing_in_lock,
+                        }))
+                        .unwrap()
+                    );
+                }
+            }
+            LockCommand::Show { format } => {
+                let fmt = parse_format_str(&format);
+                match sdkt_core::lock::read_lock(Path::new(".")) {
+                    Ok(lock) => {
+                        if fmt != OutputFormat::Json {
+                            println!("{}", sdkt_core::lock::lock_to_toml(&lock).unwrap());
+                        } else {
+                            println!(
+                                "{}",
+                                serde_json::to_string_pretty(&serde_json::json!({
+                                    "version": lock.version,
+                                    "deploy_order": lock.deploy_order,
+                                    "contracts": lock.contracts,
+                                }))
+                                .unwrap()
+                            );
+                        }
+                    }
+                    Err(e) => {
+                        eprintln!("Error reading lock: {}", e);
+                        std::process::exit(1);
+                    }
+                }
+            }
+        },
         Commands::Project { action, net } => match action {
             ProjectCommand::Deploy { salt, format } => {
                 let fmt = parse_format_str(&format);
                 let config = DevKitConfig::from_file(".sdkt.toml").unwrap_or_default();
+
+                // M34.1 — advisory lock check. If an `sdkt.lock` exists, warn
+                // (non-fatally) when it has drifted from the current artifacts.
+                // This never blocks deployment; it simply surfaces a stale-lock
+                // signal so operators can re-run `sdkt build` if needed.
+                let lock_report = sdkt_core::lock::verify_lock(Path::new("."), &config);
+                if lock_report.present && !lock_report.consistent && fmt != OutputFormat::Json {
+                    eprintln!("⚠ Warning: sdkt.lock is stale — run `sdkt build` to refresh it.");
+                }
+
                 let client = resolve_rpc_client(
                     net.rpc_url.clone(),
                     net.network_passphrase.clone(),

@@ -2791,6 +2791,7 @@ name = "sdkt-core"
 version = "2.4.0"
 dependencies = [
  "serde",
+ "sha2",
  "stellar-strkey 0.0.18",
  "stellar-xdr",
  "thiserror 2.0.19",

@@ -79,7 +79,12 @@ sdkt
 │   └── remove <name>
 
 ├── build                     Compile Rust contracts in the workspace into WASM artifacts
-│
+
+├── lock                      Generate or inspect `sdkt.lock` (M34.1)
+│   ├── generate              Write `sdkt.lock` from current build artifacts (run `sdkt build` first)
+│   ├── verify                Verify `sdkt.lock` against on-disk artifacts (advisory, non-fatal)
+│   └── show                  Print `sdkt.lock` contents
+
 ├── project
 │   └── deploy                Deploy all contracts defined in the workspace (.sdkt.toml),
 │                             applying topological dependency sorting

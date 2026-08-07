@@ -239,3 +239,138 @@ fn completions_broken_pipe_exits_successfully() {
         output.status.code()
     );
 }
+
+// ---------------------------------------------------------------------------
+// M34.1 — `sdkt.lock` generation / inspection (offline, hermetic).
+// ---------------------------------------------------------------------------
+
+/// Build a temp project: `.sdkt.toml` + two contract dirs each with a fake
+/// `target/wasm32-unknown-unknown/release/<name>.wasm`. Returns the temp root.
+fn make_lock_fixture(root: &std::path::Path, token_bytes: &[u8], router_bytes: &[u8]) {
+    std::fs::create_dir_all(root).unwrap();
+    std::fs::write(
+        root.join(".sdkt.toml"),
+        r#"
+[contracts.token]
+path = "contracts/token"
+deploy_after = []
+
+[contracts.router]
+path = "contracts/router"
+deploy_after = ["token"]
+"#,
+    )
+    .unwrap();
+
+    for (name, bytes) in [("token", token_bytes), ("router", router_bytes)] {
+        let wasm_dir = root
+            .join("contracts")
+            .join(name)
+            .join("target")
+            .join("wasm32-unknown-unknown")
+            .join("release");
+        std::fs::create_dir_all(&wasm_dir).unwrap();
+        std::fs::write(wasm_dir.join(format!("{}.wasm", name)), bytes).unwrap();
+    }
+}
+
+#[test]
+fn lock_generate_writes_sdkt_lock() {
+    let tmp = std::env::temp_dir().join(format!(
+        "sdkt-it-lock-gen-{}",
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos()
+    ));
+    let _ = std::fs::remove_dir_all(&tmp);
+    make_lock_fixture(&tmp, b"token-bytes", b"router-bytes");
+
+    let mut cmd = Command::cargo_bin("sdkt").expect("sdkt binary built");
+    cmd.current_dir(&tmp).arg("lock").arg("generate");
+    let assert = cmd.assert().success();
+    let out = String::from_utf8_lossy(&assert.get_output().stdout);
+    // token (no deps) is deployed before router.
+    assert!(out.contains("token"));
+    assert!(out.contains("router"));
+    assert!(out.contains("sha256"));
+
+    // The lock file now exists on disk.
+    assert!(
+        tmp.join("sdkt.lock").exists(),
+        "sdkt.lock should have been written"
+    );
+
+    // `lock show` prints the same lock contents.
+    let mut show = Command::cargo_bin("sdkt").expect("sdkt binary built");
+    show.current_dir(&tmp).arg("lock").arg("show");
+    let assert = show.assert().success();
+    let out = String::from_utf8_lossy(&assert.get_output().stdout);
+    assert!(out.contains("deploy_order"));
+
+    // `lock verify` reports consistency (no drift).
+    let mut verify = Command::cargo_bin("sdkt").expect("sdkt binary built");
+    verify.current_dir(&tmp).arg("lock").arg("verify");
+    let assert = verify.assert().success();
+    let out = String::from_utf8_lossy(&assert.get_output().stdout);
+    assert!(out.contains("consistent") || out.contains("✓"));
+
+    let _ = std::fs::remove_dir_all(&tmp);
+}
+
+#[test]
+fn lock_verify_detects_drift() {
+    let tmp = std::env::temp_dir().join(format!(
+        "sdkt-it-lock-drift-{}",
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos()
+    ));
+    let _ = std::fs::remove_dir_all(&tmp);
+    make_lock_fixture(&tmp, b"token-bytes", b"router-bytes");
+
+    // Generate the lock first.
+    let mut gen = Command::cargo_bin("sdkt").expect("sdkt binary built");
+    gen.current_dir(&tmp)
+        .arg("lock")
+        .arg("generate")
+        .assert()
+        .success();
+
+    // Now tamper with the token artifact.
+    let token_wasm = tmp
+        .join("contracts/token")
+        .join("target/wasm32-unknown-unknown/release/token.wasm");
+    std::fs::write(&token_wasm, b"tampered-token-bytes").unwrap();
+
+    let mut verify = Command::cargo_bin("sdkt").expect("sdkt binary built");
+    verify.current_dir(&tmp).arg("lock").arg("verify");
+    let assert = verify.assert().success();
+    let out = String::from_utf8_lossy(&assert.get_output().stdout);
+    // Advisory: drift is reported, but the command still exits 0 (non-fatal).
+    assert!(out.contains("drift") || out.contains("stale"));
+
+    let _ = std::fs::remove_dir_all(&tmp);
+}
+
+#[test]
+fn lock_verify_without_lock_is_non_fatal() {
+    let tmp = std::env::temp_dir().join(format!(
+        "sdkt-it-lock-none-{}",
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos()
+    ));
+    let _ = std::fs::remove_dir_all(&tmp);
+    make_lock_fixture(&tmp, b"token-bytes", b"router-bytes");
+    // No `sdkt build` / `sdkt lock generate` run → no sdkt.lock.
+
+    let mut verify = Command::cargo_bin("sdkt").expect("sdkt binary built");
+    verify.current_dir(&tmp).arg("lock").arg("verify");
+    // Must exit 0 (backward compatible): a missing lock is acceptable.
+    verify.assert().success();
+
+    let _ = std::fs::remove_dir_all(&tmp);
+}

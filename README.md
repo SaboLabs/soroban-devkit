@@ -193,6 +193,10 @@ See [`docs/plugin-authoring.md`](docs/plugin-authoring.md) for how to build or u
 | `sdkt identity <generate\|import\|list\|show\|delete\|default>` | ED25519 keystore management. |
 | `sdkt network <add\|list\|show\|remove>` | Named network profiles (RPC URL + passphrase). Combine with `--network-profile <NAME>` on any RPC command to avoid repeating endpoints; `--rpc-url` / `--network-passphrase` override. |
 | `sdkt init <name>` | Scaffold a new Soroban project (`--minimal`, `--force`). |
+| `sdkt build` | Compile workspace Rust contracts into optimized WASMs. |
+| `sdkt lock generate` | Write `sdkt.lock` recording each built artifact's SHA-256 + deploy order (after `sdkt build`). |
+| `sdkt lock verify` | Check `sdkt.lock` against current artifacts (advisory; never fails the build). |
+| `sdkt lock show` | Print the current `sdkt.lock` contents. |
 | `sdkt deploy --wasm <file> --salt <salt>` | Upload WASM + instantiate. Add `--deny-breaking --old-wasm <deployed.wasm>` to abort on a non-backwards-compatible upgrade. |
 
 ### Network profiles

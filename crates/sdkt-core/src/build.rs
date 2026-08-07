@@ -107,6 +107,22 @@ pub fn build_workspace(config: &DevKitConfig) -> Result<Vec<BuildResult>, BuildE
         });
     }
 
+    // M34.1 — generate `sdkt.lock` next to `.sdkt.toml` recording every built
+    // artifact's SHA-256 and the deterministic deploy order. Advisory only:
+    // if lock generation fails (e.g. an artifact vanished between build and
+    // hashing), surface a warning but do not fail the build.
+    if let Ok(lock) = crate::lock::generate_lock(Path::new("."), config) {
+        match crate::lock::write_lock(Path::new("."), &lock) {
+            Ok(path) => {
+                if let Ok(toml) = crate::lock::lock_to_toml(&lock) {
+                    println!("✓ Wrote {}", path.display());
+                    println!("{}", toml);
+                }
+            }
+            Err(e) => eprintln!("Warning: could not write sdkt.lock: {}", e),
+        }
+    }
+
     Ok(results)
 }
 
