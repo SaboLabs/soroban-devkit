@@ -796,3 +796,92 @@ fn package_fetch_git_dependency_offline() {
     let _ = std::fs::remove_dir_all(&tmp);
     let _ = std::fs::remove_dir_all(&src);
 }
+
+#[test]
+fn lock_verify_reports_dependency_mismatch() {
+    // Offline: a manifest with a local path dependency whose path is missing
+    // from disk must be reported by `sdkt lock verify` (M35.2).
+    let tmp = std::env::temp_dir().join(format!(
+        "sdkt-it-m352-verify-{}",
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos()
+    ));
+    let _ = std::fs::remove_dir_all(&tmp);
+    // Claim a dependency path that does NOT exist on disk.
+    write_manifest(
+        &tmp,
+        "[package]\nname = \"my-app\"\nversion = \"0.1.0\"\n\n[dependencies.math]\npath = \"libs/math\"\n",
+    );
+
+    let mut cmd = Command::cargo_bin("sdkt").expect("sdkt binary built");
+    cmd.current_dir(&tmp).arg("lock").arg("verify");
+    let assert = cmd.assert().success();
+    let out = String::from_utf8_lossy(&assert.get_output().stdout);
+    // Dependency drift must be surfaced (no sdkt.lock yet => unverified, or the
+    // path-missing condition once a lock is written). Either way the verify
+    // command must not panic and must mention dependencies.
+    assert!(
+        out.to_lowercase().contains("dependenc"),
+        "lock verify should report dependency status: {}",
+        out
+    );
+
+    let _ = std::fs::remove_dir_all(&tmp);
+}
+
+#[test]
+fn package_fetch_writes_locked_dependencies() {
+    // Offline: fetch a local git dependency; the run must record a
+    // reproducible sdkt.lock with the resolved commit + cache location.
+    let src = make_local_git_repo();
+    let url = src.to_string_lossy().replace('\\', "\\\\");
+    let tmp = std::env::temp_dir().join(format!(
+        "sdkt-it-m352-fetchlock-{}",
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos()
+    ));
+    let _ = std::fs::remove_dir_all(&tmp);
+    write_manifest(
+        &tmp,
+        &format!(
+            "[package]\nname = \"my-app\"\nversion = \"0.1.0\"\n\n[dependencies.math]\ngit = \"{}\"\ntag = \"v1.0.0\"\n",
+            url
+        ),
+    );
+
+    let mut cmd = Command::cargo_bin("sdkt").expect("sdkt binary built");
+    cmd.current_dir(&tmp).arg("package").arg("fetch");
+    cmd.assert().success();
+
+    // sdkt.lock must now exist and record the dependency with a commit + cache.
+    let lock_path = tmp.join("sdkt.lock");
+    assert!(lock_path.exists(), "sdkt.lock should be written by fetch");
+    let content = std::fs::read_to_string(&lock_path).unwrap();
+    assert!(
+        content.contains("[[dependencies]]"),
+        "lock should record a dependencies array: {}",
+        content
+    );
+    assert!(
+        content.contains("name = \"math\""),
+        "lock should record dependency name 'math': {}",
+        content
+    );
+    assert!(
+        content.contains("commit_sha"),
+        "lock should record resolved commit_sha: {}",
+        content
+    );
+    assert!(
+        content.contains("cache_location"),
+        "lock should record cache_location: {}",
+        content
+    );
+
+    let _ = std::fs::remove_dir_all(&tmp);
+    let _ = std::fs::remove_dir_all(&src);
+}

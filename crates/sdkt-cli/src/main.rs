@@ -2911,8 +2911,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             LockCommand::Verify { format } => {
                 let fmt = parse_format_str(&format);
                 let config = load_config();
-                let report = sdkt_core::lock::verify_lock(Path::new("."), &config);
+                let base = Path::new(".");
+                let report = sdkt_core::lock::verify_lock(base, &config);
+                let dep_report = sdkt_core::lock::verify_dependencies(base, &config);
                 if fmt != OutputFormat::Json {
+                    // --- Contract artifact verification (existing behavior) ---
                     if report.present {
                         if report.consistent {
                             println!("✓ sdkt.lock is consistent with current artifacts");
@@ -2933,6 +2936,28 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     } else {
                         println!("⚠ No sdkt.lock found; run `sdkt build` to generate one");
                     }
+
+                    // --- Package dependency verification (M35.2) ---
+                    if dep_report.present {
+                        if dep_report.consistent {
+                            println!("✓ package dependencies verified");
+                        } else {
+                            for m in &dep_report.mismatches {
+                                println!(
+                                    "⚠ dependency '{}' drift ({:?}): {}",
+                                    m.name, m.kind, m.detail
+                                );
+                            }
+                        }
+                    } else if !config.dependencies.is_empty() {
+                        println!("⚠ No sdkt.lock present; package dependencies unverified");
+                        for m in &dep_report.mismatches {
+                            println!(
+                                "⚠ dependency '{}' not locked ({:?}): {}",
+                                m.name, m.kind, m.detail
+                            );
+                        }
+                    }
                 } else {
                     println!(
                         "{}",
@@ -2941,6 +2966,16 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                             "consistent": report.consistent,
                             "mismatched": report.mismatched,
                             "missing_in_lock": report.missing_in_lock,
+                            "dependencies": {
+                                "present": dep_report.present,
+                                "consistent": dep_report.consistent,
+                                "checked": dep_report.checked,
+                                "mismatches": dep_report.mismatches.iter().map(|m| serde_json::json!({
+                                    "name": m.name,
+                                    "kind": format!("{:?}", m.kind),
+                                    "detail": m.detail,
+                                })).collect::<Vec<_>>(),
+                            },
                         }))
                         .unwrap()
                     );
@@ -3059,6 +3094,62 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                             eprintln!("Failed to fetch '{}': {}", name, e);
                             std::process::exit(1);
                         }
+                    }
+                }
+
+                // M35.2 — record resolved dependency state into sdkt.lock so
+                // `sdkt lock verify` can enforce reproducibility offline. We
+                // update the lock in place (preserving contract artifacts) when
+                // one already exists; otherwise we generate a fresh lock.
+                {
+                    use sdkt_core::lock::{DependencyLock, LockFile};
+                    let mut lock = sdkt_core::lock::read_lock(base).unwrap_or_else(|_| LockFile {
+                        version: sdkt_core::lock::LOCK_VERSION,
+                        deploy_order: vec![],
+                        contracts: vec![],
+                        dependencies: vec![],
+                    });
+                    let mut deps_lock: Vec<DependencyLock> = Vec::with_capacity(fetched.len());
+                    for o in &fetched {
+                        let dep = config
+                            .dependencies
+                            .get(&o.name)
+                            .cloned()
+                            .unwrap_or_default();
+                        let (source, original_source, git_url, resolved_reference) =
+                            if dep.git.is_some() {
+                                (
+                                    "git".to_string(),
+                                    dep.git.clone().unwrap_or_default(),
+                                    dep.git.clone().unwrap_or_default(),
+                                    dep.tag
+                                        .clone()
+                                        .or_else(|| dep.branch.clone())
+                                        .or_else(|| dep.rev.clone())
+                                        .unwrap_or_default(),
+                                )
+                            } else {
+                                let resolved = base
+                                    .join(dep.path.clone().unwrap_or_default())
+                                    .to_string_lossy()
+                                    .to_string();
+                                ("local".to_string(), resolved, String::new(), String::new())
+                            };
+                        let integrity = sdkt_core::lock::compute_dependency_integrity(base, &dep);
+                        deps_lock.push(DependencyLock {
+                            name: o.name.clone(),
+                            source,
+                            original_source,
+                            git_url,
+                            resolved_reference,
+                            commit_sha: o.resolved_rev.clone(),
+                            cache_location: o.local_path.display().to_string(),
+                            integrity,
+                        });
+                    }
+                    lock.dependencies = deps_lock;
+                    if let Err(e) = sdkt_core::lock::write_lock(base, &lock) {
+                        eprintln!("Warning: could not write sdkt.lock: {}", e);
                     }
                 }
 

@@ -67,6 +67,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   New unit tests cover parser/validation/lock serialization and fetch using
   on-the-fly local git repos (no network); new CLI integration tests cover
   validate-accept, validate-reject, and offline fetch end-to-end.
+- **Lock dependency resolution & reproducible verification (M35.2).**
+  `sdkt.lock` dependency entries now record the full resolved state for
+  reproducibility: `name`, `source` (`local`/`git`), `original_source` (the
+  resolved path or git URL), `git_url`, the requested `resolved_reference`
+  (`tag`/`branch`/`rev`), the `commit_sha` resolved at fetch time, the on-disk
+  `cache_location`, and an `integrity` hash (`sha256:<hex>` of the cached git
+  tree or the local directory tree, computed offline). `sdkt package fetch`
+  writes these fields into `sdkt.lock` (updating it in place when one already
+  exists, preserving contract artifacts). New `verify_dependencies` reports a
+  structured [`DepVerifyReport`] instead of panicking: it confirms the lock
+  matches the manifest (source + reference), local `path` deps still exist,
+  and cached git checkouts resolve to the locked commit. `sdkt lock verify`
+  now verifies package dependencies **in addition to** contract artifacts —
+  printing `✓ package dependencies verified` when consistent, or listing
+  every drift (missing-in-lock, source-changed, reference-changed,
+  path-missing, cache-missing, commit-mismatch, integrity-mismatch,
+  not-in-manifest). Fully offline and advisory (never blocks the build). No
+  registry, no network, no new dependency-graph or validation code — it reuses
+  the existing [`crate::package::validate_dependencies`] and the
+  `GitFetcher`/`git_cache_key` infrastructure. New unit tests cover
+  dependency lock round-trip (incl. new fields), consistent verification, path
+  missing, source/reference drift, not-in-manifest, and git cache-mismatch;
+  new CLI integration tests cover `lock verify` dependency reporting and
+  `package fetch` writing reproducible lock entries.
 
 ### Planned
 - Post-2.0 mainnet-focused tooling, SCF grant alignment, and a plugin marketplace.

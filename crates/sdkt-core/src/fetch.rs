@@ -26,7 +26,7 @@ use std::process::Command;
 /// spawn even though git is installed. To stay robust we fall back to a set of
 /// well-known absolute locations when a `PATH` lookup does not produce a runnable
 /// binary. The first candidate that reports a version is used.
-fn git_bin() -> String {
+pub fn git_bin() -> String {
     for candidate in [
         "git".to_string(),
         "/usr/bin/git".to_string(),
@@ -127,7 +127,7 @@ pub trait DependencyFetcher {
 ///
 /// Derived from the URL + reference so two deps with the same source/ref share
 /// a cache entry. Not cryptographic — uniqueness only needs to be stable.
-fn git_cache_key(dep: &Dependency) -> String {
+pub fn git_cache_key(dep: &Dependency) -> String {
     let url = dep.git.clone().unwrap_or_default();
     let reference = dep
         .tag

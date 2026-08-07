@@ -195,7 +195,7 @@ See [`docs/plugin-authoring.md`](docs/plugin-authoring.md) for how to build or u
 | `sdkt init <name>` | Scaffold a new Soroban project (`--minimal`, `--force`). |
 | `sdkt build` | Compile workspace Rust contracts into optimized WASMs. |
 | `sdkt lock generate` | Write `sdkt.lock` recording each built artifact's SHA-256 + deploy order (after `sdkt build`). |
-| `sdkt lock verify` | Check `sdkt.lock` against current on-disk artifacts (advisory; never fails the build). |
+| `sdkt lock verify` | Verify `sdkt.lock` against current on-disk artifacts **and** package dependencies (lock matches manifest, git commits, path existence). Advisory; never fails the build. Prints `✓ lock file verified` / `✓ package dependencies verified` or lists drift. |
 | `sdkt lock show` | Print the current `sdkt.lock` contents. |
 | `sdkt package validate` | Validate the local package manifest (`[package]` metadata + local/git `[dependencies]` graph). Offline; never touches the network or a registry. |
 | `sdkt package fetch [--force]` | Fetch declared dependencies into `.sdkt-cache` (local path passthrough; git clone/checkout). Never builds. `--force` updates existing checkouts. |

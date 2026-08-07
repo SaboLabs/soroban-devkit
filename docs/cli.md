@@ -80,9 +80,12 @@ sdkt
 
 ├── build                     Compile Rust contracts in the workspace into WASM artifacts
 
-├── lock                      Generate or inspect `sdkt.lock` (M34.1)
+├── lock                      Generate or inspect `sdkt.lock` (M34.1, M35.2)
 │   ├── generate              Write `sdkt.lock` from current build artifacts (run `sdkt build` first)
-│   ├── verify                Verify `sdkt.lock` against on-disk artifacts (advisory, non-fatal)
+│   ├── verify                Verify `sdkt.lock` against on-disk contract artifacts AND package
+│   │                         dependencies (lock matches manifest, git commits, path existence).
+│   │                         Advisory and non-fatal: prints `✓ lock file verified` /
+│   │                         `✓ package dependencies verified` or lists every drift.
 │   └── show                  Print `sdkt.lock` contents
 
 ├── package                   Validate local package manifests (M35.0)
