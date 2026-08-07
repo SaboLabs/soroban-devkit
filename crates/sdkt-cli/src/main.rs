@@ -9,7 +9,10 @@ use sdkt_storage::WasmCache;
 use sdkt_wasm::spec::parse_contract_spec;
 use sdkt_xdr::abi_decode::decode_event_topics;
 use sdkt_xdr::decode;
-use sdkt_xdr::{build_invoke_transaction, InvokeTransactionParams};
+use sdkt_xdr::{
+    build_invoke_transaction, sign_transaction, Ed25519Signer, InvokeTransactionParams, Network,
+    SigningError, SigningOptions,
+};
 use std::fs;
 use std::process;
 
@@ -328,6 +331,24 @@ enum TxAction {
         #[arg(short, long)]
         output: Option<String>,
     },
+    /// Sign a transaction envelope using a local identity (M27 / PR2)
+    Sign {
+        /// Input: base64 XDR envelope, or a path to a file containing it
+        #[arg(short, long, value_name = "INPUT")]
+        input: String,
+        /// Output file to write the signed base64 envelope. Prints to stdout if omitted.
+        #[arg(short, long, value_name = "OUTPUT")]
+        output: Option<String>,
+        /// Identity name to sign with. Defaults to "default".
+        #[arg(short = 'I', long, default_value = "default")]
+        identity: String,
+        /// Network: testnet | mainnet | futurenet | custom:<passphrase>
+        #[arg(short, long, default_value = "testnet")]
+        network: String,
+        /// Output format
+        #[arg(short, long, default_value = "pretty")]
+        format: String,
+    },
 }
 
 #[derive(Subcommand)]
@@ -640,6 +661,31 @@ fn parse_format_str(s: &str) -> OutputFormat {
             process::exit(1);
         }
     }
+}
+
+/// Resolve a `--input` value to envelope text.
+///
+/// Filesystem rules (matching the rest of the `tx` subcommands):
+/// - If the path exists, read it as a file.
+/// - If it does not exist but looks like a (missing) path, report a clear
+///   "invalid file" error instead of silently mis-parsing it as base64.
+/// - Otherwise treat the value as an inline base64 string.
+fn resolve_tx_input(input: &str) -> Result<String, String> {
+    if fs::metadata(input).is_ok() {
+        return fs::read_to_string(input)
+            .map_err(|e| format!("invalid file '{}': cannot read ({})", input, e));
+    }
+    let looks_like_path = input.contains('/')
+        || input.contains('\\')
+        || input.ends_with(".xdr")
+        || input.ends_with(".txt");
+    if looks_like_path {
+        return Err(format!(
+            "invalid file '{}': no such file or directory",
+            input
+        ));
+    }
+    Ok(input.to_string())
 }
 
 /// Render a `ContractFunction`'s signature as `name(params) -> outputs`.
@@ -1401,6 +1447,99 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     }
                     Err(e) => {
                         eprintln!("Error building transaction: {}", e);
+                        process::exit(1);
+                    }
+                }
+            }
+            TxAction::Sign {
+                input,
+                output,
+                identity,
+                network,
+                format,
+            } => {
+                let fmt = parse_format_str(&format);
+
+                // --- Network resolution (strict; reject unknown labels) ---
+                let network = match network.trim().to_ascii_lowercase().as_str() {
+                    "testnet" => Network::Testnet,
+                    "mainnet" => Network::Mainnet,
+                    "futurenet" => Network::Futurenet,
+                    other if other.starts_with("custom:") => Network::parse(other),
+                    _ => {
+                        eprintln!(
+                            "Error: invalid network '{}' (expected testnet|mainnet|futurenet|custom:<passphrase>)",
+                            network
+                        );
+                        process::exit(1);
+                    }
+                };
+
+                // --- Input resolution (file or inline base64) ---
+                let env_data = match resolve_tx_input(&input) {
+                    Ok(s) => s,
+                    Err(e) => {
+                        eprintln!("Error: {}", e);
+                        process::exit(1);
+                    }
+                };
+
+                // --- Identity resolution (keystore) ---
+                if identity.trim().is_empty() {
+                    eprintln!("Error: missing identity (use --identity <name>)");
+                    process::exit(1);
+                }
+                use sdkt_storage::IdentityStore;
+                let store = match IdentityStore::new() {
+                    Ok(s) => s,
+                    Err(e) => {
+                        eprintln!("Error: cannot open identity store: {}", e);
+                        process::exit(1);
+                    }
+                };
+                let signing_key = match store.load_signing_key(&identity) {
+                    Ok(k) => k,
+                    Err(_) => {
+                        eprintln!("Error: unknown identity '{}'", identity);
+                        process::exit(1);
+                    }
+                };
+                let signer = Ed25519Signer::from_seed(&signing_key.to_bytes());
+
+                let opts = SigningOptions::with(network);
+                match sign_transaction(env_data.trim(), &signer, &opts) {
+                    Ok(signed) => {
+                        if let Some(path) = &output {
+                            if let Err(e) = fs::write(path, &signed) {
+                                eprintln!("Error: cannot write output to '{}': {}", path, e);
+                                process::exit(1);
+                            }
+                            if fmt != OutputFormat::Json {
+                                println!("Signed transaction envelope written to {}", path);
+                            }
+                        }
+                        if fmt == OutputFormat::Json {
+                            println!(r#"{{"envelope": "{}"}}"#, signed);
+                        } else if output.is_none() {
+                            println!("Signed Transaction Envelope (Base64):");
+                            println!("{}", signed);
+                        }
+                    }
+                    Err(e) => {
+                        let msg = match e {
+                            SigningError::Base64(_) => "invalid base64 input".to_string(),
+                            SigningError::Xdr(_) => {
+                                "invalid envelope: does not parse as a transaction envelope"
+                                    .to_string()
+                            }
+                            SigningError::EmptyEnvelope => {
+                                "invalid envelope: input is empty".to_string()
+                            }
+                            SigningError::InvalidKeyLength(_)
+                            | SigningError::InvalidSecretKey(_)
+                            | SigningError::Sign(_) => "internal signing error".to_string(),
+                        };
+                        eprintln!("Error signing transaction: {}", msg);
                         process::exit(1);
                     }
                 }
