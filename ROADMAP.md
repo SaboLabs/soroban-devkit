@@ -1,7 +1,7 @@
-# Soroban DevKit (sdkt) — ROADMAP
+# Soroban DevKit (`sdkt`) — Roadmap
 
-**Last updated:** 2026-08-06
-**Status:** Active development. `main` is the default branch. All milestones through M26 are merged to `main`. **v2.1.1 is the current release** (tag `v2.1.1`); prior releases `v2.0.0` and `v2.1.0` are also tagged. Recent merged work includes M25 (RPC connection pooling, ENG-01), M26 (transaction simulation enhancements, ENG-03), and the v2.0.0 → v2.1.1 release-engineering hardening (M28–M39).
+**Last updated:** 2026-08-07
+**Status:** Active development · default branch `main` · current release **v2.1.1**
 
 This document is the single source of truth for milestone scope and sequencing.
 Individual milestone plans live under `docs/milestone-*-plan.md`; engineering
@@ -9,88 +9,195 @@ design tickets live under `.project/issues/<version>/`.
 
 ---
 
-## Vision
+## 1. Executive Summary
 
-`sdkt` is a modular, offline-capable Rust toolkit that unifies the Soroban
-developer lifecycle: inspect, decode, analyze, build, simulate, and submit —
-without fragmenting across 5+ separate CLIs. See `GAP_ANALYSIS.md` for the
-original market gap justification.
+`sdkt` is a unified, offline-capable CLI and Rust toolkit for Stellar / Soroban
+development — it consolidates the fragmented contract lifecycle (decode,
+inspect, analyze, build, simulate, submit, audit, deploy) into one
+production-grade binary.
 
----
+| | |
+|---|---|
+| **Current release** | `v2.1.1` (tags `v2.0.0`, `v2.1.0` also published) |
+| **Repository status** | Active · all milestones through **M26** merged to `main` |
+| **Crates** | 8 (`sdkt-cli` + 7 supporting crates) |
+| **Completed milestones** | 24 (M3A, M3B, M5–M26) |
+| **Current focus** | Post-2.0 direction — mainnet tooling, plugin ecosystem, SCF alignment (see §6) |
+| **Original gap analysis** | [`GAP_ANALYSIS.md`](GAP_ANALYSIS.md) — market-gap justification |
 
-## Crate Layout (current)
-
-```
-sdkt-cli      → user-facing CLI (clap + tokio), routes to crates, formats output
-sdkt-core     → DevKitConfig, NetworkConfig, OutputFormat (no I/O, no networking)
-sdkt-xdr      → XDR decode/encode, ScVal <-> Rust, ABI-aware decoding
-sdkt-rpc      → Soroban RPC client, storage/inspect/tx/events/account/sim/submit
-sdkt-storage  → WASM cache, identity/keystore, storage analysis (StorageAnalyzer)
-sdkt-wasm     → ContractSpec parser, ABI type lookup, WASM metadata
-sdkt-audit    → Static security analysis (AUTH-001/002/003, MOVE-001), RuleRegistry, plugin author API
-sdkt-audit-example-rule → Reference plugin crate (rule EXAMPLE-001); loadable as .so/.dylib/.wasm
-```
-
-Dependency rule: `sdkt-core` depends on nothing internal; everything else may
-depend on `sdkt-core` + `sdkt-xdr`. No networking in `sdkt-xdr`/`sdkt-core`.
+A new contributor should be able to understand the project from this summary
+alone: a mature, test-covered Soroban toolchain with a clear path toward
+mainnet readiness and an extensible plugin architecture.
 
 ---
 
-## Milestone Status
+## 2. Vision
 
-### Completed
+`sdkt` unifies the Soroban developer lifecycle — inspect, decode, analyze,
+build, simulate, and submit — into one modular, offline-capable Rust toolkit,
+instead of juggling 5+ separate CLIs. See [`GAP_ANALYSIS.md`](GAP_ANALYSIS.md)
+for the original market-gap justification.
+
+---
+
+## 3. Current Architecture
+
+The workspace is a Cargo virtual workspace. The `sdkt` binary is produced by
+`sdkt-cli`; all logic lives in focused, dependency-bounded crates.
+
+| Crate | Purpose | Key Responsibilities |
+|-------|---------|----------------------|
+| `sdkt-core` | Global configuration & shared types | `DevKitConfig`, `NetworkConfig`, `OutputFormat`, `ValidationError`. No I/O, no networking. |
+| `sdkt-xdr` | XDR decode / encode & payload manipulation | `decode()`, `encode_ledger_key()`, `extract_wasm_hash()`, `decode_event_topics()`, typed builder helpers. No networking, no I/O. |
+| `sdkt-wasm` | Contract WASM inspection & offline analysis | `ContractSpec` parser, `WasmModule` inspector, `SpecDiff`, `UpgradeVerdict`. Offline only. |
+| `sdkt-rpc` | Soroban RPC client & on-chain aggregation | `SorobanRpcClient` (persistent pooled `reqwest`), `TtlInfo`, `ContractInspection`; `simulate` / `submission` / `builder` modules. **The only network-I/O crate.** |
+| `sdkt-storage` | Storage analysis, WASM caching, keystore | `StorageAnalyzer`, `StorageReport`, `WasmCache`, `IdentityStore` (ED25519, `~/.sdkt/identities`). |
+| `sdkt-audit` | Offline static security analysis | `Severity`, `Finding`, `AuditReport`, `AuditRule`, `RuleRegistry`, `register_rule!`; built-in rules `AUTH-001/002/003`, `MOVE-001`; plugin author API. |
+| `sdkt-audit-example-rule` | Reference plugin crate | Rule `EXAMPLE-001`; produces `libsdkt_audit_example_rule` (native) and `sdkt_audit_example_rule.wasm` behind the `plugins` / `wasm-plugins` features. |
+| `sdkt-cli` | User-facing CLI | `Cli`, `Commands`; routes arguments to crates and formats output (pretty + `--format json`). Builds the `sdkt` binary. |
+
+**Dependency rules**
+
+- `sdkt-core` depends on no other workspace crate and performs no networking.
+- `sdkt-xdr` and `sdkt-wasm` are offline / networking-free.
+- `sdkt-rpc` is the sole network boundary (besides `sdkt-storage`'s keystore disk writes).
+- Everything may depend on `sdkt-core`; `sdkt-cli` orchestrates the rest.
+
+---
+
+## 4. Development Progress
+
+Milestones are grouped by theme. Numbering is unchanged; all historical scope
+is preserved. Milestones **M16–M26** were merged to `main` across the
+`v1.0.0` → `v2.1.1` release line.
+
+### Foundation
 
 | Milestone | Theme | Highlights | Release |
 |-----------|-------|-----------|---------|
 | M3A / M3B | Storage & Inspect foundation | `sdkt storage check`, `sdkt inspect`, `sdkt-rpc` crate, `OutputFormat` canonicalized in `sdkt-core` | v0.4.0-alpha |
 | M5 | Network introspection | `sdkt tx inspect`, `sdkt events`, `sdkt account`, generic RPC `request()` | v0.5.0-alpha |
 | M6 | Production hardening | RPC retry/timeout, clippy strict, GitHub Actions CI, docs/rustdoc coverage | v0.6.0-alpha |
+
+### Developer Experience
+
+| Milestone | Theme | Highlights | Release |
+|-----------|-------|-----------|---------|
 | M7 | Horizon account enrichment + ScVal pretty UI | Account graph via Horizon REST; human-readable ScVal pretty printing in CLI | v0.7.0-alpha |
-| M8 | Mutability foundation | `sdkt tx simulate`, `sdkt tx submit`, `sdkt identity` (ED25519 keystore), `sdkt tx build` envelope builder, fee estimation | v0.8.0-alpha |
-| M9 | WASM tooling & caching | `sdkt wasm metadata`, `sdkt wasm cache`, `sdkt-wasm` crate, ContractSpec parser, deploy (`sdkt deploy`) + init (`sdkt init`) scaffolding | v0.9.0-alpha |
+
+### Storage & Inspection
+
+| Milestone | Theme | Highlights | Release |
+|-----------|-------|-----------|---------|
 | M10 | ABI-aware decoding (ENG-16) | `--abi <WASM>` on `events`/`inspect`/`storage check`; `decode_event_topics`; real event payload decoding | v0.10.0-alpha |
-| M11 | StorageAnalyzer completion (Proposal B) | Finish `StorageAnalyzer` + `sdkt storage analyze` CLI. ✅ Merged to `main` (v0.11.0-alpha). | — |
-| **M12** | **Contract ABI/WASM Diff (Candidate C)** | `sdkt diff --old-wasm --new-wasm` offline comparison. ✅ Merged to `main` (v0.12.0-alpha, #10). | — |
-| **M13** | **Gap C — Static Security Analysis (`sdkt audit`)** | New `sdkt-audit` crate; `AUTH-001/002/003`, `MOVE-001`; `sdkt audit <path>`. ✅ Merged to `main` (v0.13.0-alpha, #11). | — |
-| **M14** | **Upgrade Safety Guard (Candidate A)** | Reuse M12 `SpecDiff`: `UpgradeVerdict`; `sdkt diff --upgrade-safety`; optional `sdkt deploy --deny-breaking`. ✅ **Closed & tagged `v0.14.0-alpha`** (commit `dc31767`). | — |
-| **M15** | **CI/CD GitHub Action (`sdkt` composite Action)** | `.github/actions/sdkt/action.yml` wraps `sdkt audit` + `sdkt diff --upgrade-safety` for CI; `docs/ci-cd.md` + self-validating workflow. ✅ **Closed & tagged `v0.15.0-alpha`**. | — |
-| **M16** | **Release Engineering & Polish** | Unified workspace version (`0.16.0-alpha`); Action install fix; `release.yml` (binaries + `cargo publish`); README/`docs/cli.md` rewrite; panic audit on user paths. ✅ Merged to `main`. | — |
-| **M17** | **Plugin System — Phase A (Rule Registry)** | `RuleRegistry` in `sdkt-audit`; built-ins register via registry; additive `--rules <path>` flag; plugin author API (`AuditRule`/`AuditContext`/`Finding`/`register_rule!`); example rule crate `sdkt-audit-example-rule`; `docs/plugin-authoring.md`. ✅ Merged to `main`. | — |
-| **M18** | **Plugin System — Phase B (Dynamic Rule Loading)** | Native shared-library plugins via `libloading` + C-ABI (`#[repr(C)]`) boundary; `sdkt audit --rules <plugin.so>` loads rules at runtime with no CLI rebuild; ABI major-version gate; plugin panics isolated. ✅ Merged to `main` (feature `plugins`, default OFF). | — |
-| **M19** | **Plugin System — Phase C (WASM Sandbox)** | Sandboxed `.wasm` plugins via `extism` + JSON-ABI boundary; `sdkt audit --rules <plugin.wasm>` loads rules safely across platforms; no filesystem/network access; no memory leaks. ✅ Merged to `main` (feature `wasm-plugins`, default OFF). | — |
-| **M20** | **Stability & Release Engineering** | 1.88.0 MSRV bump, CI hardening, `sdkt-storage` Windows compatibility, dependency compaction. ✅ Merged to `main`. | — |
-| **M21** | **Contract Inspector (Offline)** | `sdkt wasm inspect <file.wasm>` CLI command to view contract metadata, custom sections, exported functions, and contract specs offline. ✅ Merged to `main`. | — |
-| **M22** | **Contract Verification** | `sdkt verify --contract <ID> [--wasm <file>] [--network <net>]` confirms a deployed contract's on-chain WASM hash matches a local artifact (offline hash vs read-only RPC fetch). ✅ Merged to `main`. | — |
-| **M23** | **Contract Health Report** | `sdkt health --contract <ID> [--wasm <file>] [--network <net>]` aggregates on-chain WASM hash + storage/TTL posture into one read-only report with a `healthy`/`at_risk`/`critical` verdict. ✅ Merged to `main`. | — |
-| **M24** | **Workspace & Build Orchestration** | Support for `sdkt build` (compiles all artifacts) and `sdkt project deploy` (topological dependency sorting and multi-contract orchestrated deployment) using `.sdkt.toml` workspace configs. ✅ Merged to `main`. | — |
+| M11 | StorageAnalyzer completion (Proposal B) | Finish `StorageAnalyzer` + `sdkt storage analyze` CLI | v0.11.0-alpha |
+| M21 | Contract Inspector (Offline) | `sdkt wasm inspect <file.wasm>` — metadata, custom sections, exports, specs offline | main |
+| M22 | Contract Verification | `sdkt verify` — confirms a deployed contract's on-chain WASM hash matches a local artifact | main |
+| M23 | Contract Health Report | `sdkt health` — aggregates WASM hash + storage/TTL posture into a `healthy`/`at_risk`/`critical` verdict | main |
 
-| **M25** | **RPC Connection Pooling** | Persistent HTTP pooling for performance during orchestrated deployments. ✅ Merged to `main` (ENG-01). | — |
-| **M26** | **Transaction Simulation Enhancements** | `sdkt tx simulate` enhanced with `restorePreamble` and granular `stateChanges`. ✅ Merged to `main` (ENG-03). | — |
+### Security & Analysis
 
-### Remaining Roadmap
+| Milestone | Theme | Highlights | Release |
+|-----------|-------|-----------|---------|
+| M12 | Contract ABI/WASM Diff (Candidate C) | `sdkt diff --old-wasm --new-wasm` offline comparison | v0.12.0-alpha |
+| M13 | Gap C — Static Security Analysis (`sdkt audit`) | New `sdkt-audit` crate; `AUTH-001/002/003`, `MOVE-001`; `sdkt audit <path>` | v0.13.0-alpha |
+| M14 | Upgrade Safety Guard (Candidate A) | `UpgradeVerdict`; `sdkt diff --upgrade-safety`; `sdkt deploy --deny-breaking` | v0.14.0-alpha |
 
-| Milestone | Theme | Status | Dependencies |
-|-----------|-------|--------|--------------|
-| Post-2.0 | Mainnet-focused tooling, SCF grant alignment, plugin marketplace | Backlog | M19 (Phase C) |
+### Plugin System
+
+| Milestone | Theme | Highlights | Release |
+|-----------|-------|-----------|---------|
+| M17 | Plugin System — Phase A (Rule Registry) | `RuleRegistry` in `sdkt-audit`; additive `--rules <path>`; plugin author API; example rule crate; `docs/plugin-authoring.md` | main |
+| M18 | Plugin System — Phase B (Dynamic Rule Loading) | Native `.so`/`.dylib`/`.dll` plugins via `libloading` + C-ABI; `sdkt audit --rules <plugin.so>`; ABI major-version gate (feature `plugins`, default OFF) | main |
+| M19 | Plugin System — Phase C (WASM Sandbox) | Sandboxed `.wasm` plugins via `extism` + JSON-ABI; `sdkt audit --rules <plugin.wasm>`; no FS/network (feature `wasm-plugins`, default OFF) | main |
+
+### Release Engineering
+
+| Milestone | Theme | Highlights | Release |
+|-----------|-------|-----------|---------|
+| M15 | CI/CD GitHub Action (`sdkt` composite Action) | `.github/actions/sdkt/action.yml` wraps `sdkt audit` + `sdkt diff --upgrade-safety`; `docs/ci-cd.md` + self-validating workflow | v0.15.0-alpha |
+| M16 | Release Engineering & Polish | Unified workspace version (`0.16.0-alpha`); Action install fix; `release.yml`; README/`docs/cli.md` rewrite; panic audit on user paths | v0.16.0-alpha |
+| M20 | Stability & Release Engineering | 1.88.0 MSRV bump, CI hardening, `sdkt-storage` Windows compatibility, dependency compaction | main |
+
+### Workspace / Build
+
+| Milestone | Theme | Highlights | Release |
+|-----------|-------|-----------|---------|
+| M9 | WASM tooling & caching | `sdkt wasm metadata`, `sdkt wasm cache`, `sdkt-wasm` crate, ContractSpec parser, `sdkt deploy` + `sdkt init` scaffolding | v0.9.0-alpha |
+| M24 | Workspace & Build Orchestration | `sdkt build` (compiles artifacts) and `sdkt project deploy` (topological sorting, `.sdkt.toml` workspaces) | main |
+
+### RPC & Simulation
+
+| Milestone | Theme | Highlights | Release |
+|-----------|-------|-----------|---------|
+| M8 | Mutability foundation | `sdkt tx simulate`, `sdkt tx submit`, `sdkt identity` (ED25519 keystore), `sdkt tx build` envelope builder, fee estimation | v0.8.0-alpha |
+| M25 | RPC Connection Pooling (ENG-01) | Persistent pooled `reqwest::Client` in `SorobanRpcClient`; configurable `timeout_secs` / `pool_max_idle_per_host` | main |
+| M26 | Transaction Simulation Enhancements (ENG-03) | `sdkt tx simulate` surfaces `restorePreamble` and granular `stateChanges` | main |
 
 ---
 
-## Gap Closure Matrix (vs GAP_ANALYSIS.md)
+## 5. Current Status
+
+**Where is this project today?**
+
+- **Completed milestones:** 24 — M3A, M3B, M5, M6, M7, M8, M9, M10, M11, M12, M13, M14, M15, M16, M17, M18, M19, M20, M21, M22, M23, M24, M25, M26.
+- **Active milestone:** None in progress. The latest merged work is M26 (shipped in `v2.1.1`); mainline development now tracks the Post-2.0 direction in §6.
+- **Current release:** `v2.1.1` (tagged). Prior tagged releases: `v2.0.0`, `v2.1.0`.
+- **Repository health:** Healthy. 8 crates, all quality gates enforced in CI (`cargo fmt`, `cargo clippy --workspace --all-targets -- -D warnings` default + all-features, `cargo test --workspace`).
+- **CI status:** Green. Workflows: `ci.yml` (fmt/clippy/test on Ubuntu/macOS/Windows + MSRV + install-script validation), `release.yml` (tag-gated cross-platform binaries, checksums, crates.io publish), `compatibility.yml` (real-world `stellar/soroban-examples` validation), `sdkt-action-ci.yml` (self-validates the reusable Action).
+
+---
+
+## 6. Next Priorities
+
+No new milestones are defined here — the items below reflect the existing
+Post-2.0 direction already recorded in `RELEASE_READINESS.md` and
+`CHANGELOG.md`. They are tracked as backlog, not yet scheduled.
+
+### High Priority
+
+- **Mainnet-focused tooling** — capabilities oriented toward production mainnet
+  usage (Post-2.0 theme).
+- **Containerized distribution** — a Docker image for reproducible, portable
+  runs (listed as planned in `RELEASE_READINESS.md`).
+
+### Future Work
+
+- **Plugin ecosystem** — tooling and conventions for sharing/consuming
+  third-party audit rules (native + WASM) built on M17–M19.
+- **SCF grant alignment** — positioning `sdkt` for Stellar Community Fund
+  grant tracks (Post-2.0 theme).
+- **Developer productivity** — continuing the DX investments started in M7/M20
+  (faster feedback, better errors, smoother onboarding).
+
+### Long-Term Vision
+
+- **Plugin marketplace** — a managed catalog of community audit rules,
+  extending the M17–M19 plugin foundation into a shared ecosystem.
+- **Broader Soroban ecosystem integration** — deeper compatibility and
+  first-class support for the contracts developers actually deploy.
+
+---
+
+## 7. Gap Closure Matrix
+
+Status of the original gaps identified in `GAP_ANALYSIS.md`. Every row reflects
+the actual repository state (all Plugin System phases are merged).
 
 | Original Gap | State |
 |--------------|-------|
 | Gap A — Unified CLI lifecycle | ✅ Closed (M3A–M10) |
 | Gap B — Storage rent visibility | ✅ Closed (M3A) |
-| Gap C — Static security analysis | ✅ **Closed (M13)** | M13: `sdkt-audit` crate, `AUTH-001/002/003` + `MOVE-001` rules, `sdkt audit` CLI |
+| Gap C — Static security analysis | ✅ **Closed (M13)** — `sdkt-audit` crate, `AUTH-001/002/003` + `MOVE-001` rules, `sdkt audit` CLI |
 | Gap D — Local XDR decoder | ✅ Closed (M3A/M5) |
 | Gap E — ABI/interface viewer | ✅ Closed (M3B/M10) |
-| Plugin system | 🟢 Phase A done (M17) — `RuleRegistry` + plugin author API + example rule crate; Phase B (dynamic loading) planned post-1.0 | Extensibility pillar; depends on a stable `AuditRule` trait (provided by `sdkt-audit` in M13) |
+| Plugin system | ✅ **Closed (M17–M19)** — Phase A (`RuleRegistry` + plugin author API + example rule crate), Phase B (dynamic native `.so`/`.dylib`/`.dll` loading), and Phase C (sandboxed `.wasm` plugins via `extism`) are all merged to `main`. Extensibility pillar; built on the stable `AuditRule` trait from M13. |
 
 ---
 
-## Sequencing Principles
+## 8. Development Principles
 
-1. Read-only features ship before mutating ones (honored: M3A–M7 read-only, M8+ mutating).
-2. Each milestone = one new crate or one major CLI surface, keeping compile times and review scope bounded.
-3. `cargo fmt` + `cargo clippy --workspace --all-targets -- -D warnings` + `cargo test --workspace` are mandatory gates for every PR.
-4. Default branch is `main`; PRs target `main` from `feat/milestone-NN`.
+1. **Read-only before mutating** — read-only features ship first (M3A–M7), mutating features follow (M8+).
+2. **One surface per milestone** — each milestone adds one new crate or one major CLI surface, keeping compile times and review scope bounded.
+3. **Mandatory quality gates** — `cargo fmt` + `cargo clippy --workspace --all-targets -- -D warnings` + `cargo test --workspace` are required for every PR.
+4. **Branch discipline** — default branch is `main`; PRs target `main` from `feat/milestone-NN`.
