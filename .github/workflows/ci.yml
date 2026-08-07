@@ -72,12 +72,22 @@ jobs:
     - name: Set up Rust
       uses: dtolnay/rust-toolchain@stable
 
+    - name: Install cargo-audit
+      # Best-effort install; if the registry/network is unavailable the audit
+      # step is skipped rather than failing the overall CI run.
+      continue-on-error: true
+      run: cargo install cargo-audit --locked
+
     - name: cargo audit (advisory DB best-effort)
-      # rustsec/audit-check downloads the advisory DB; on DB/network issues it
-      # is allowed to fail without failing the overall CI run.
-      uses: rustsec/audit-check@v2
-      with:
-        token: ${{ secrets.GITHUB_TOKEN }}
+      # Best-effort supply-chain audit. Replaces rustsec/audit-check@v2, which
+      # posts a check run via the Checks API and fails with
+      # "Resource not accessible by integration" when the job token lacks
+      # `checks: write`. Running `cargo audit` directly needs no extra
+      # permissions; `continue-on-error: true` on the step (and the job) keeps
+      # advisory findings visible but non-fatal to the overall CI run.
+      if: success()
+      continue-on-error: true
+      run: cargo audit
 
   install-script:
     name: install-script validation
