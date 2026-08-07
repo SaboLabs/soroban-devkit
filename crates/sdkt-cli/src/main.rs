@@ -435,6 +435,11 @@ enum Commands {
         #[command(subcommand)]
         action: LockCommand,
     },
+    /// Validate and inspect local package manifests (M35.0)
+    Package {
+        #[command(subcommand)]
+        action: PackageCommand,
+    },
     /// Manage multi-contract projects
     Project {
         #[command(subcommand)]
@@ -684,6 +689,16 @@ enum LockCommand {
     },
     /// Print the contents of `sdkt.lock` if present.
     Show {
+        #[arg(short, long, default_value = "pretty")]
+        format: String,
+    },
+}
+
+#[derive(Subcommand)]
+enum PackageCommand {
+    /// Validate the local package manifest (metadata + dependency graph).
+    /// Offline: never performs network or registry operations.
+    Validate {
         #[arg(short, long, default_value = "pretty")]
         format: String,
     },
@@ -2940,6 +2955,53 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     }
                     Err(e) => {
                         eprintln!("Error reading lock: {}", e);
+                        std::process::exit(1);
+                    }
+                }
+            }
+        },
+        Commands::Package { action } => match action {
+            PackageCommand::Validate { format } => {
+                let fmt = parse_format_str(&format);
+                let config = load_config();
+                let base = Path::new(".");
+                let result = sdkt_core::package::validate_manifest(base, &config);
+                if let Some(pkg) = &config.package {
+                    if fmt != OutputFormat::Json {
+                        println!("Package: {}", pkg.name.as_deref().unwrap_or("(unnamed)"));
+                        println!("Version: {}", pkg.version.as_deref().unwrap_or("(none)"));
+                        if let Some(d) = &pkg.description {
+                            println!("Description: {}", d);
+                        }
+                        println!("Dependencies: {}", config.dependencies.len());
+                    }
+                } else if fmt != OutputFormat::Json {
+                    println!("No [package] section present.");
+                }
+                match result {
+                    Ok(()) => {
+                        if fmt != OutputFormat::Json {
+                            println!("Package manifest is valid");
+                        } else {
+                            println!(
+                                "{}",
+                                serde_json::to_string_pretty(&serde_json::json!({ "valid": true }))
+                                    .unwrap()
+                            );
+                        }
+                    }
+                    Err(e) => {
+                        if fmt != OutputFormat::Json {
+                            eprintln!("Package validation failed: {}", e);
+                        } else {
+                            println!(
+                                "{}",
+                                serde_json::to_string_pretty(
+                                    &serde_json::json!({ "valid": false, "error": e.to_string() })
+                                )
+                                .unwrap()
+                            );
+                        }
                         std::process::exit(1);
                     }
                 }

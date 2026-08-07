@@ -493,3 +493,153 @@ fn build_rejects_duplicate_contract_name() {
     );
     let _ = std::fs::remove_dir_all(&tmp);
 }
+
+// ---------------------------------------------------------------------------
+// M35.0 — local package manifest validation (offline, hermetic).
+// `sdkt package validate` checks `[package]` metadata and the local
+// `[dependencies]` graph, never touching the network.
+// ---------------------------------------------------------------------------
+
+fn write_manifest(root: &std::path::Path, body: &str) {
+    std::fs::create_dir_all(root).unwrap();
+    std::fs::write(root.join(".sdkt.toml"), body).unwrap();
+}
+
+#[test]
+fn package_validate_accepts_valid_manifest() {
+    let tmp = std::env::temp_dir().join(format!(
+        "sdkt-it-m350-valid-{}",
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos()
+    ));
+    let _ = std::fs::remove_dir_all(&tmp);
+    std::fs::create_dir_all(tmp.join("math")).unwrap();
+    std::fs::create_dir_all(tmp.join("auth")).unwrap();
+    write_manifest(
+        &tmp,
+        "[package]\nname = \"my-token\"\nversion = \"0.1.0\"\ndescription = \"Example Soroban token\"\n\n[dependencies.math]\npath = \"math\"\n\n[dependencies.auth]\npath = \"auth\"\n",
+    );
+
+    let mut cmd = Command::cargo_bin("sdkt").expect("sdkt binary built");
+    cmd.current_dir(&tmp).arg("package").arg("validate");
+    let assert = cmd.assert().success();
+    let out = String::from_utf8_lossy(&assert.get_output().stdout);
+    assert!(
+        out.to_lowercase().contains("valid"),
+        "valid manifest should report valid: {}",
+        out
+    );
+    let _ = std::fs::remove_dir_all(&tmp);
+}
+
+#[test]
+fn package_validate_rejects_missing_version() {
+    let tmp = std::env::temp_dir().join(format!(
+        "sdkt-it-m350-nover-{}",
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos()
+    ));
+    let _ = std::fs::remove_dir_all(&tmp);
+    write_manifest(
+        &tmp,
+        "[package]\nname = \"my-token\"\n\n[dependencies.math]\npath = \"math\"\n",
+    );
+
+    let mut cmd = Command::cargo_bin("sdkt").expect("sdkt binary built");
+    cmd.current_dir(&tmp).arg("package").arg("validate");
+    let assert = cmd.assert().failure();
+    let out = String::from_utf8_lossy(&assert.get_output().stderr);
+    assert!(
+        out.to_lowercase().contains("version"),
+        "missing version must be reported: {}",
+        out
+    );
+    let _ = std::fs::remove_dir_all(&tmp);
+}
+
+#[test]
+fn package_validate_rejects_missing_path() {
+    let tmp = std::env::temp_dir().join(format!(
+        "sdkt-it-m350-nopath-{}",
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos()
+    ));
+    let _ = std::fs::remove_dir_all(&tmp);
+    write_manifest(
+        &tmp,
+        "[package]\nname = \"my-token\"\nversion = \"0.1.0\"\n\n[dependencies.math]\n\n[dependencies.auth]\npath = \"auth\"\n",
+    );
+    // `math` dependency has no `path` -> unsupported/missing source.
+
+    let mut cmd = Command::cargo_bin("sdkt").expect("sdkt binary built");
+    cmd.current_dir(&tmp).arg("package").arg("validate");
+    let assert = cmd.assert().failure();
+    let out = String::from_utf8_lossy(&assert.get_output().stderr);
+    assert!(
+        out.to_lowercase().contains("path"),
+        "missing dependency path must be reported: {}",
+        out
+    );
+    let _ = std::fs::remove_dir_all(&tmp);
+}
+
+#[test]
+fn package_validate_rejects_git_dependency_at_parse() {
+    let tmp = std::env::temp_dir().join(format!(
+        "sdkt-it-m350-git-{}",
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos()
+    ));
+    let _ = std::fs::remove_dir_all(&tmp);
+    write_manifest(
+        &tmp,
+        "[package]\nname = \"my-token\"\nversion = \"0.1.0\"\n\n[dependencies.math]\ngit = \"https://github.com/example/math\"\n",
+    );
+
+    let mut cmd = Command::cargo_bin("sdkt").expect("sdkt binary built");
+    cmd.current_dir(&tmp).arg("package").arg("validate");
+    let assert = cmd.assert().failure();
+    let out = String::from_utf8_lossy(&assert.get_output().stderr);
+    assert!(
+        !out.is_empty(),
+        "git dependency must be rejected (parse error): {}",
+        out
+    );
+    let _ = std::fs::remove_dir_all(&tmp);
+}
+
+#[test]
+fn package_validate_rejects_self_dependency() {
+    let tmp = std::env::temp_dir().join(format!(
+        "sdkt-it-m350-self-{}",
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos()
+    ));
+    let _ = std::fs::remove_dir_all(&tmp);
+    std::fs::create_dir_all(tmp.join("my-token")).unwrap();
+    write_manifest(
+        &tmp,
+        "[package]\nname = \"my-token\"\nversion = \"0.1.0\"\n\n[dependencies.my-token]\npath = \"my-token\"\n",
+    );
+
+    let mut cmd = Command::cargo_bin("sdkt").expect("sdkt binary built");
+    cmd.current_dir(&tmp).arg("package").arg("validate");
+    let assert = cmd.assert().failure();
+    let out = String::from_utf8_lossy(&assert.get_output().stderr);
+    assert!(
+        out.to_lowercase().contains("self"),
+        "self-dependency must be reported: {}",
+        out
+    );
+    let _ = std::fs::remove_dir_all(&tmp);
+}

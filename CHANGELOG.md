@@ -35,6 +35,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   of silently defaulting to an empty config). New unit tests cover each invalid
   case plus deterministic ordering; new CLI integration tests assert `sdkt build`
   fails fast on invalid graphs.
+- **Local package manifest foundation (M35.0).** Foundation for a future
+  package registry with **no** network or remote-registry functionality.
+  `.sdkt.toml` now accepts a `[package]` section (`name`, `version`,
+  optional `description`) and a `[dependencies]` table of **local path-only**
+  references (`path = "..."`). New `sdkt package validate` validates the
+  manifest offline: required `name`/`version` (semver-shaped), local-path-only
+  dependencies (non-path sources like `git` are rejected at parse time via
+  `deny_unknown_fields`), no self-dependency, existing `path` directories, and
+  an acyclic dependency graph. The dependency-graph cycle/duplicate/self checks
+  reuse the same Kahn's topological-sort core as contract deploy-order
+  resolution (`sdkt_core::package::topo_sort`). Fully backward compatible, no
+  breaking CLI changes, no version bump/tag/publish, no external services. New
+  unit tests cover every validation error; new CLI integration tests cover valid
+  and invalid manifests end-to-end.
 
 ### Planned
 - Post-2.0 mainnet-focused tooling, SCF grant alignment, and a plugin marketplace.

@@ -1,4 +1,5 @@
 use crate::config::DevKitConfig;
+use crate::package::topo_sort;
 use std::collections::HashMap;
 use std::fmt;
 use std::path::{Path, PathBuf};
@@ -61,29 +62,30 @@ pub struct ResolvedContract {
 }
 
 /// Resolves the deployment order based on the merged `deploy_after` +
-/// `depends_on` dependency rules using a topological sort (Kahn's algorithm).
-/// Returns the ordered list of contract aliases to deploy.
+/// `depends_on` dependency rules.
 ///
-/// This is the single source of truth for dependency-graph resolution. It
-/// validates the graph and returns a clear [`ProjectError`] on any problem:
-/// self-dependency, duplicate dependency, unknown dependency, or a cycle.
-/// Every consumer (build, deploy, lock generation) calls this, so they all
-/// share the same validated, deterministic ordering.
+/// Graph validation (self-dependency, duplicate dependency, unknown
+/// dependency) runs first, then the deterministic ordering and cycle detection
+/// are delegated to the shared Kahn's-algorithm core [`topo_sort`] (also used by
+/// package manifest validation). This keeps a single topological-sort
+/// implementation across the crate.
+///
+/// Returns the ordered list of contract aliases to deploy. Every consumer
+/// (build, deploy, lock generation) calls this, so they all share the same
+/// validated, deterministic ordering.
 pub fn resolve_deploy_order(config: &DevKitConfig) -> Result<Vec<String>, ProjectError> {
     if config.contracts.is_empty() {
         return Err(ProjectError::MissingConfig);
     }
 
-    let mut in_degree: HashMap<String, usize> = HashMap::new();
-    let mut adj_list: HashMap<String, Vec<String>> = HashMap::new();
-
-    // Initialize tracking structures
+    // Build the dependency graph (alias -> the contracts it depends on),
+    // validating as we go. The shared topo_sort detects cycles; the other
+    // graph errors are checked here so the original error messages are kept.
+    let mut graph: HashMap<String, Vec<String>> = HashMap::new();
     for alias in config.contracts.keys() {
-        in_degree.insert(alias.clone(), 0);
-        adj_list.insert(alias.clone(), Vec::new());
+        graph.entry(alias.clone()).or_default();
     }
 
-    // Build the graph, validating as we go.
     for (alias, contract_cfg) in &config.contracts {
         // Merge both dependency spellings (M34.2: `depends_on` canonical,
         // `deploy_after` legacy). De-duplicate so a contract listed twice
@@ -108,64 +110,20 @@ pub fn resolve_deploy_order(config: &DevKitConfig) -> Result<Vec<String>, Projec
             merged.push(dep.clone());
         }
 
-        // `dep` must be deployed before `alias`. So edge is dep -> alias.
-        for dep in &merged {
-            adj_list.get_mut(dep).unwrap().push(alias.clone());
-            *in_degree.get_mut(alias).unwrap() += 1;
-        }
+        // Record `alias` depends on each `dep`.
+        graph.get_mut(alias).unwrap().extend(merged);
     }
 
-    // Kahn's algorithm for topological sort
-    let mut queue: Vec<String> = Vec::new();
-    // Enqueue nodes with no dependencies (in-degree 0)
-    for (alias, &degree) in &in_degree {
-        if degree == 0 {
-            queue.push(alias.clone());
-        }
-    }
-
-    // Sort queue initially to ensure deterministic ordering for nodes at the same tier
-    queue.sort();
-
-    let mut ordered = Vec::new();
-
-    while !queue.is_empty() {
-        // Sort queue at each step to maintain strict deterministic output regardless of HashMap iteration order.
-        queue.sort();
-        let current = queue.remove(0);
-        ordered.push(current.clone());
-
-        if let Some(neighbors) = adj_list.get(&current) {
-            for neighbor in neighbors {
-                if let Some(degree) = in_degree.get_mut(neighbor) {
-                    *degree -= 1;
-                    if *degree == 0 {
-                        queue.push(neighbor.clone());
-                    }
-                }
-            }
-        }
-    }
-
-    if ordered.len() != config.contracts.len() {
-        // We have a cycle. Find one of the nodes that couldn't be resolved.
-        for (alias, &degree) in &in_degree {
-            if degree > 0 {
-                return Err(ProjectError::CircularDependency(alias.clone()));
-            }
-        }
-        return Err(ProjectError::CircularDependency("Unknown".to_string()));
-    }
-
-    Ok(ordered)
+    // Delegate cycle detection + deterministic ordering to the shared core.
+    topo_sort(&graph).map_err(ProjectError::CircularDependency)
 }
 
 /// Validate the dependency graph without resolving a concrete deploy order.
 ///
-/// Convenience wrapper that reuses [`resolve_deploy_order`] (the single
-/// topological-sort implementation) and discards the ordering. Returns a clear
-/// error for any invalid graph (self-dependency, duplicate dependency, unknown
-/// dependency, or cycle).
+/// Convenience wrapper that reuses [`resolve_deploy_order`] (which delegates
+/// cycle detection to the shared [`crate::package::topo_sort`]) and discards the
+/// ordering. Returns a clear error for any invalid graph (self-dependency,
+/// duplicate dependency, unknown dependency, or cycle).
 pub fn validate_project(config: &DevKitConfig) -> Result<(), ProjectError> {
     resolve_deploy_order(config).map(|_| ())
 }

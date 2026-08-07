@@ -22,6 +22,14 @@ pub struct DevKitConfig {
     /// Workspace contract configuration mapping.
     #[serde(default)]
     pub contracts: std::collections::HashMap<String, ContractConfig>,
+    /// Optional package manifest metadata (M35.0). Present when this project
+    /// is itself a publishable package.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub package: Option<PackageConfig>,
+    /// Local path-only package dependencies (M35.0). Keys are package names;
+    /// values are local path references. No git/HTTP/registry sources.
+    #[serde(default, skip_serializing_if = "std::collections::HashMap::is_empty")]
+    pub dependencies: std::collections::HashMap<String, LocalDependency>,
 }
 
 /// Settings for a specific contract in a workspace.
@@ -38,6 +46,38 @@ pub struct ContractConfig {
     /// `deploy_after`; listed here for explicit package-dependency graphs.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub depends_on: Vec<String>,
+}
+
+/// Package manifest metadata (M35.0).
+///
+/// Optional `[package]` section that marks a project as a reusable,
+/// publishable package. All fields are optional at parse time so that a
+/// partial/invalid manifest still deserializes; `validate_package` enforces
+/// the required fields (name, version) and version format with clear errors.
+/// Unknown fields are allowed (forward-compatible with future manifest keys
+/// such as `authors`, `license`, `repository`).
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
+pub struct PackageConfig {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub version: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
+}
+
+/// A single local package dependency (M35.0).
+///
+/// Only path-based local dependencies are supported. `deny_unknown_fields`
+/// rejects `git`, `version`, `registry`, or any remote-style key at parse time,
+/// enforcing the "local path only, no network, no registry" constraint before
+/// any validation logic runs.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
+#[serde(deny_unknown_fields)]
+pub struct LocalDependency {
+    /// Relative path (from the depending manifest) to the local package root.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub path: Option<String>,
 }
 
 /// Soroban network connection settings.

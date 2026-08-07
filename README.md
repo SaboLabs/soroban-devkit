@@ -197,6 +197,7 @@ See [`docs/plugin-authoring.md`](docs/plugin-authoring.md) for how to build or u
 | `sdkt lock generate` | Write `sdkt.lock` recording each built artifact's SHA-256 + deploy order (after `sdkt build`). |
 | `sdkt lock verify` | Check `sdkt.lock` against current on-disk artifacts (advisory; never fails the build). |
 | `sdkt lock show` | Print the current `sdkt.lock` contents. |
+| `sdkt package validate` | Validate the local package manifest (`[package]` metadata + local `[dependencies]` graph). Offline; never touches the network or a registry. |
 
 ### Multi-contract dependency graphs
 
@@ -227,8 +228,44 @@ rejected up front with a clear error:
 - **Circular dependency** — a cycle such as `a → b → a`.
 - **Duplicate contract name** — two `[contracts.<alias>]` tables (TOML parse
   error, surfaced instead of silently defaulting to an empty config).
-| `sdkt deploy --wasm <file> --salt <salt>` | Upload WASM + instantiate. Add `--deny-breaking --old-wasm <deployed.wasm>` to abort on a non-backwards-compatible upgrade. |
 
+### Local package manifests (M35.0)
+
+`sdkt package validate` lays the groundwork for a future package registry
+**without** introducing any network or remote-registry functionality. It checks
+a local package manifest declared in `.sdkt.toml`:
+
+```toml
+[package]
+name = "my-token"
+version = "0.1.0"
+description = "Example Soroban token"
+
+[dependencies.math]
+path = "../math"
+
+[dependencies.auth]
+path = "./auth"
+```
+
+Validation rules (all offline — never performs network or registry I/O):
+
+- `[package]` must have a `name` and a `version`.
+- `version` must be a valid `MAJOR.MINOR.PATCH` shape (with optional
+  pre-release/build metadata), matching the common semver form.
+- `[dependencies.*]` entries support **local path references only**. A `path`
+  is required; any other source key (e.g. `git`, `registry`) is rejected at
+  parse time via `deny_unknown_fields`.
+- No self-dependency (a dependency key equal to the package `name`).
+- The referenced `path` must resolve to an existing directory.
+- The dependency graph is checked for cycles (reusing the same topological-sort
+  core as contract deploy-order resolution).
+
+`sdkt package validate` exits non-zero on the first failure and prints a clear
+message; with `--format json` it emits `{"valid": true}` or
+`{"valid": false, "error": "..."}`.
+
+| `sdkt deploy --wasm <file> --salt <salt>` | Upload WASM + instantiate. Add `--deny-breaking --old-wasm <deployed.wasm>` to abort on a non-backwards-compatible upgrade. |
 ### Network profiles
 
 Save an RPC endpoint once and reference it from any RPC command instead of

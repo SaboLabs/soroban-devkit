@@ -313,6 +313,7 @@ mod tests {
             decode: DecodeConfig::default(),
             storage: StorageConfig::default(),
             contracts,
+            ..Default::default()
         }
     }
 

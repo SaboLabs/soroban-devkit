@@ -85,6 +85,10 @@ sdkt
 │   ├── verify                Verify `sdkt.lock` against on-disk artifacts (advisory, non-fatal)
 │   └── show                  Print `sdkt.lock` contents
 
+├── package                   Validate local package manifests (M35.0)
+│   └── validate              Offline-validate `[package]` metadata + local `[dependencies]`
+│                             path graph (no network/registry; git/* sources rejected)
+
 ├── project
 │   └── deploy                Deploy all contracts defined in the workspace (.sdkt.toml),
 │                             applying topological dependency sorting
