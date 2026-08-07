@@ -182,6 +182,22 @@ impl IdentityStore {
         self.get(name)
     }
 
+    /// Load the signing key (`ed25519_dalek::SigningKey`) for a named identity.
+    ///
+    /// This is the keystore integration point used by transaction signing:
+    /// the caller extracts the 32-byte seed via `signing_key.to_bytes()` and
+    /// passes it to `sdkt_xdr::Ed25519Signer::from_seed`. The secret material
+    /// is never exposed as a string; only the in-memory `SigningKey` is
+    /// returned, and only for the duration the caller holds it.
+    ///
+    /// # Errors
+    /// Returns [`StorageError`] if the identity does not exist or its secret
+    /// cannot be loaded.
+    pub fn load_signing_key(&self, name: &str) -> Result<SigningKey, StorageError> {
+        let path = self.dir.join(format!("{}.toml", name));
+        self.load_key(&path)
+    }
+
     // --- Private Helpers ---
 
     fn ensure_name_valid(&self, name: &str) -> Result<(), StorageError> {

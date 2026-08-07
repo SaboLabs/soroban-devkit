@@ -2840,11 +2840,13 @@ name = "sdkt-xdr"
 version = "2.1.1"
 dependencies = [
  "base64",
+ "ed25519-dalek",
  "hex",
  "sdkt-core",
  "sdkt-wasm",
  "serde",
  "serde_json",
+ "sha2",
  "stellar-strkey 0.0.18",
  "stellar-xdr",
  "thiserror 2.0.19",

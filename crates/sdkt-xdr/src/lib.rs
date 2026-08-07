@@ -24,9 +24,14 @@
 //! ```
 
 pub mod builder;
+pub mod sign;
 pub mod typed;
 pub use builder::{
     build_invoke_transaction, decode_account_id, decode_contract_id, InvokeTransactionParams,
+};
+pub use sign::{
+    sign_envelope_with, sign_transaction, verify_signature, Ed25519Signer, Network, Signer,
+    SigningError, SigningOptions,
 };
 pub use typed::{
     decode_scvals, decode_scvals_ref, encode_scvals, scval_from_base64, scval_to_base64, Address,
