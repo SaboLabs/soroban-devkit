@@ -1,11 +1,12 @@
-use clap::{Parser, Subcommand};
+use clap::{Args, Parser, Subcommand};
 use sdkt_core::fee::{FeeConfig, FeeEstimator, LedgerFeeSample, NetworkKind};
-use sdkt_core::{DevKitConfig, OutputFormat};
+use sdkt_core::{DevKitConfig, NetworkConfig, OutputFormat};
 use sdkt_rpc::{
     estimate_dynamic_fee, get_contract_events, get_ttl_info, get_wasm_metadata, inspect_account,
     inspect_contract, inspect_transaction, simulate_transaction, SorobanRpcClient,
 };
 use sdkt_storage::WasmCache;
+use sdkt_storage::{NetworkProfile, NetworkStore};
 use sdkt_wasm::spec::parse_contract_spec;
 use sdkt_xdr::abi_decode::decode_event_topics;
 use sdkt_xdr::decode;
@@ -15,6 +16,195 @@ use sdkt_xdr::{
 };
 use std::fs;
 use std::process;
+
+/// Reusable network-resolution flags shared by every command that talks to a
+/// Soroban/Stellar RPC endpoint.
+///
+/// Flattened into those commands via `#[command(flatten)]` so the resolution
+/// semantics stay identical everywhere (no copy/paste).
+#[derive(Args, Clone, Debug, Default)]
+struct NetworkArgs {
+    /// Use a saved network profile (see `sdkt network add`) for the RPC URL and
+    /// network passphrase. Overrides .sdkt.toml defaults.
+    #[arg(long, value_name = "NAME")]
+    network_profile: Option<String>,
+    /// Explicit RPC endpoint URL. Overrides any profile and .sdkt.toml value.
+    #[arg(long, value_name = "URL")]
+    rpc_url: Option<String>,
+    /// Explicit network passphrase. Overrides any profile and .sdkt.toml value.
+    #[arg(long, value_name = "PASSPHRASE")]
+    network_passphrase: Option<String>,
+}
+/// Apply resolution precedence onto a base [`NetworkConfig`].
+///
+/// Pure function (no I/O, no network) — this is the single source of truth for
+/// M29 precedence and is unit-tested directly.
+///
+/// Priority (highest wins):
+/// 1. explicit `rpc_url` / `network_passphrase`,
+/// 2. a resolved `profile` (loaded from `--network-profile`),
+/// 3. the `base` config (`.sdkt.toml`, then `NetworkConfig::default()`).
+fn apply_profile_overrides(
+    base: NetworkConfig,
+    profile: Option<NetworkProfile>,
+    rpc_url: Option<String>,
+    network_passphrase: Option<String>,
+) -> NetworkConfig {
+    let mut cfg = base;
+
+    if let Some(p) = profile {
+        cfg.rpc_url = p.rpc_url;
+        cfg.passphrase = p.network_passphrase;
+    }
+
+    if let Some(url) = rpc_url {
+        cfg.rpc_url = url;
+    }
+    if let Some(p) = network_passphrase {
+        cfg.passphrase = p;
+    }
+
+    cfg
+}
+
+/// Resolve the effective [`NetworkConfig`] from explicit CLI overrides, an
+/// optional named profile, and built-in defaults.
+///
+/// Resolution priority (highest wins):
+/// 1. explicit `--rpc-url` / `--network-passphrase` CLI flags,
+/// 2. `--network-profile <NAME>` (loaded from `sdkt_storage::NetworkStore`),
+/// 3. built-in defaults: `.sdkt.toml` `[network]`, then `NetworkConfig::default()`.
+///
+/// Explicit flags always override values loaded from a profile, and a profile
+/// always overrides the built-in defaults.
+fn resolve_network_config(
+    rpc_url: Option<String>,
+    network_passphrase: Option<String>,
+    network_profile: Option<String>,
+) -> Result<NetworkConfig, String> {
+    let base = DevKitConfig::from_file(".sdkt.toml")
+        .ok()
+        .map(|c| c.network)
+        .unwrap_or_default();
+
+    let profile = if let Some(name) = network_profile {
+        let store = NetworkStore::new().map_err(|e| format!("cannot open network store: {}", e))?;
+        let profile = store
+            .get(&name)
+            .map_err(|e| format!("network profile '{}' not found: {}", name, e))?;
+        Some(profile)
+    } else {
+        None
+    };
+
+    Ok(apply_profile_overrides(
+        base,
+        profile,
+        rpc_url,
+        network_passphrase,
+    ))
+}
+
+/// Build a [`SorobanRpcClient`] from the resolved network configuration,
+/// exiting with a clear error message if resolution fails.
+fn resolve_rpc_client(
+    rpc_url: Option<String>,
+    network_passphrase: Option<String>,
+    network_profile: Option<String>,
+) -> SorobanRpcClient {
+    match resolve_network_config(rpc_url, network_passphrase, network_profile) {
+        Ok(cfg) => SorobanRpcClient::from_config(&cfg),
+        Err(e) => {
+            eprintln!("Error: {}", e);
+            process::exit(1);
+        }
+    }
+}
+
+#[cfg(test)]
+mod resolver_tests {
+    use super::*;
+
+    fn base_testnet() -> NetworkConfig {
+        NetworkConfig {
+            rpc_url: "https://soroban-testnet.stellar.org".to_string(),
+            passphrase: "Test SDF Network ; September 2015".to_string(),
+            timeout_secs: Some(15),
+            pool_max_idle_per_host: Some(100),
+        }
+    }
+
+    fn profile(name: &str, url: &str, pass: &str) -> NetworkProfile {
+        NetworkProfile::new(name, url, pass)
+    }
+
+    #[test]
+    fn built_in_default_when_nothing_set() {
+        let cfg = apply_profile_overrides(base_testnet(), None, None, None);
+        assert_eq!(cfg.rpc_url, "https://soroban-testnet.stellar.org");
+        assert_eq!(cfg.passphrase, "Test SDF Network ; September 2015");
+    }
+
+    #[test]
+    fn profile_overrides_built_in_default() {
+        let p = profile("local", "http://127.0.0.1:8000", "Standalone");
+        let cfg = apply_profile_overrides(base_testnet(), Some(p), None, None);
+        assert_eq!(cfg.rpc_url, "http://127.0.0.1:8000");
+        assert_eq!(cfg.passphrase, "Standalone");
+    }
+
+    #[test]
+    fn rpc_url_flag_overrides_profile() {
+        let p = profile("local", "http://127.0.0.1:8000", "Standalone");
+        let cfg = apply_profile_overrides(
+            base_testnet(),
+            Some(p),
+            Some("http://override.example".to_string()),
+            None,
+        );
+        assert_eq!(cfg.rpc_url, "http://override.example");
+        // passphrase comes from the profile when no passphrase flag is given
+        assert_eq!(cfg.passphrase, "Standalone");
+    }
+
+    #[test]
+    fn passphrase_flag_overrides_profile() {
+        let p = profile("local", "http://127.0.0.1:8000", "Standalone");
+        let cfg = apply_profile_overrides(
+            base_testnet(),
+            Some(p),
+            None,
+            Some("Override Passphrase".to_string()),
+        );
+        assert_eq!(cfg.rpc_url, "http://127.0.0.1:8000");
+        assert_eq!(cfg.passphrase, "Override Passphrase");
+    }
+
+    #[test]
+    fn explicit_flags_win_over_profile_both() {
+        let p = profile("local", "http://127.0.0.1:8000", "Standalone");
+        let cfg = apply_profile_overrides(
+            base_testnet(),
+            Some(p),
+            Some("http://rpc.example".to_string()),
+            Some("RPC Passphrase".to_string()),
+        );
+        assert_eq!(cfg.rpc_url, "http://rpc.example");
+        assert_eq!(cfg.passphrase, "RPC Passphrase");
+    }
+
+    #[test]
+    fn rpc_url_flag_without_profile_overrides_built_in() {
+        let cfg = apply_profile_overrides(
+            base_testnet(),
+            None,
+            Some("http://flag.example".to_string()),
+            None,
+        );
+        assert_eq!(cfg.rpc_url, "http://flag.example");
+        assert_eq!(cfg.passphrase, "Test SDF Network ; September 2015");
+    }
+}
 
 /// Soroban DevKit — unified toolkit for Stellar/Soroban development.
 #[derive(Parser)]
@@ -48,6 +238,8 @@ enum Commands {
         /// Path to contract WASM for ABI-aware storage decoding
         #[arg(long, value_name = "WASM")]
         abi: Option<String>,
+        #[command(flatten)]
+        net: NetworkArgs,
     },
     /// Inspect a contract's ABI and storage
     Inspect {
@@ -57,6 +249,8 @@ enum Commands {
         /// Path to contract WASM for ABI-aware storage inspection
         #[arg(long, value_name = "WASM")]
         abi: Option<String>,
+        #[command(flatten)]
+        net: NetworkArgs,
     },
     /// Verify a deployed contract matches a local WASM binary (M22)
     Verify {
@@ -72,6 +266,8 @@ enum Commands {
         /// Output format
         #[arg(short, long, default_value = "pretty")]
         format: String,
+        #[command(flatten)]
+        net: NetworkArgs,
     },
     /// Unified read-only contract posture report (M23)
     Health {
@@ -87,11 +283,15 @@ enum Commands {
         /// Output format
         #[arg(short, long, default_value = "pretty")]
         format: String,
+        #[command(flatten)]
+        net: NetworkArgs,
     },
     /// Inspect a Soroban transaction
     Tx {
         #[command(subcommand)]
         action: TxAction,
+        #[command(flatten)]
+        net: NetworkArgs,
     },
     /// Event explorer
     Events {
@@ -101,22 +301,30 @@ enum Commands {
         /// Path to contract WASM for ABI-aware decoding
         #[arg(long, value_name = "WASM")]
         abi: Option<String>,
+        #[command(flatten)]
+        net: NetworkArgs,
     },
     /// Inspect an account's balances and signers
     Account {
         address: String,
         #[arg(short, long, default_value = "pretty")]
         format: String,
+        #[command(flatten)]
+        net: NetworkArgs,
     },
     /// Estimate transaction fee from recent ledger base fees
     Fee {
         #[command(subcommand)]
         action: FeeAction,
+        #[command(flatten)]
+        net: NetworkArgs,
     },
     /// Manage WASM metadata and caching
     Wasm {
         #[command(subcommand)]
         action: WasmAction,
+        #[command(flatten)]
+        net: NetworkArgs,
     },
     /// Offline diff of two contract WASM files (ABI/function/event/type changes)
     Diff {
@@ -186,6 +394,8 @@ enum Commands {
         /// Path to the currently deployed (baseline) WASM, used with --deny-breaking.
         #[arg(long, value_name = "WASM")]
         old_wasm: Option<String>,
+        #[command(flatten)]
+        net: NetworkArgs,
     },
     /// Compile Rust contracts into WASM artifacts
     Build,
@@ -193,6 +403,8 @@ enum Commands {
     Project {
         #[command(subcommand)]
         action: ProjectCommand,
+        #[command(flatten)]
+        net: NetworkArgs,
     },
 }
 
@@ -804,14 +1016,17 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             let json = decode(&input, r#type.as_deref(), fmt)?;
             println!("{}", json);
         }
-        Commands::Storage { action, abi } => match action {
+        Commands::Storage { action, abi, net } => match action {
             StorageAction::Check {
                 contract_id,
                 format,
             } => {
                 let fmt = parse_format_str(&format);
-                let config = DevKitConfig::from_file(".sdkt.toml").unwrap_or_default();
-                let client = SorobanRpcClient::from_config(&config.network);
+                let client = resolve_rpc_client(
+                    net.rpc_url.clone(),
+                    net.network_passphrase.clone(),
+                    net.network_profile.clone(),
+                );
 
                 // Load ABI spec if provided for storage decoding
                 let contract_spec = if let Some(wasm_path) = abi.as_ref() {
@@ -889,8 +1104,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 format,
             } => {
                 let fmt = parse_format_str(&format);
-                let config = DevKitConfig::from_file(".sdkt.toml").unwrap_or_default();
-                let client = SorobanRpcClient::from_config(&config.network);
+                let client = resolve_rpc_client(
+                    net.rpc_url.clone(),
+                    net.network_passphrase.clone(),
+                    net.network_profile.clone(),
+                );
                 let analyzer = sdkt_storage::StorageAnalyzer::new(client);
 
                 match analyzer.inspect_contract_storage(&contract_id).await {
@@ -942,10 +1160,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             contract_id,
             format,
             abi,
+            net,
         } => {
             let fmt = parse_format_str(&format);
-            let config = DevKitConfig::from_file(".sdkt.toml").unwrap_or_default();
-            let client = SorobanRpcClient::from_config(&config.network);
+            let client = resolve_rpc_client(
+                net.rpc_url.clone(),
+                net.network_passphrase.clone(),
+                net.network_profile.clone(),
+            );
 
             // Load ABI spec if provided for storage decoding
             let contract_spec = if let Some(wasm_path) = abi.as_ref() {
@@ -1013,10 +1235,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             wasm,
             network,
             format,
+            net,
         } => {
             let fmt = parse_format_str(&format);
-            let config = DevKitConfig::from_file(".sdkt.toml").unwrap_or_default();
-            let client = SorobanRpcClient::from_config(&config.network);
+            let client = resolve_rpc_client(
+                net.rpc_url.clone(),
+                net.network_passphrase.clone(),
+                net.network_profile.clone(),
+            );
 
             // Read + hash the local WASM fully offline (no RPC).
             let local_bytes = match wasm.as_ref() {
@@ -1086,10 +1312,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             wasm,
             network,
             format,
+            net,
         } => {
             let fmt = parse_format_str(&format);
-            let config = DevKitConfig::from_file(".sdkt.toml").unwrap_or_default();
-            let client = SorobanRpcClient::from_config(&config.network);
+            let client = resolve_rpc_client(
+                net.rpc_url.clone(),
+                net.network_passphrase.clone(),
+                net.network_profile.clone(),
+            );
 
             // Read + hash the local WASM fully offline (no RPC).
             let local_bytes = match wasm.as_ref() {
@@ -1188,11 +1418,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 }
             }
         }
-        Commands::Tx { action } => match action {
+        Commands::Tx { action, net } => match action {
             TxAction::Inspect { hash, format } => {
                 let fmt = parse_format_str(&format);
-                let config = DevKitConfig::from_file(".sdkt.toml").unwrap_or_default();
-                let client = SorobanRpcClient::from_config(&config.network);
+                let client = resolve_rpc_client(
+                    net.rpc_url.clone(),
+                    net.network_passphrase.clone(),
+                    net.network_profile.clone(),
+                );
 
                 match inspect_transaction(&client, &hash).await {
                     Ok(tx_info) => {
@@ -1269,8 +1502,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             }
             TxAction::Simulate { envelope, format } => {
                 let fmt = parse_format_str(&format);
-                let config = DevKitConfig::from_file(".sdkt.toml").unwrap_or_default();
-                let client = SorobanRpcClient::from_config(&config.network);
+                let client = resolve_rpc_client(
+                    net.rpc_url.clone(),
+                    net.network_passphrase.clone(),
+                    net.network_profile.clone(),
+                );
 
                 let env_data = if fs::metadata(&envelope).is_ok() {
                     fs::read_to_string(&envelope)?
@@ -1342,8 +1578,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 format,
             } => {
                 let fmt = parse_format_str(&format);
-                let config = DevKitConfig::from_file(".sdkt.toml").unwrap_or_default();
-                let client = SorobanRpcClient::from_config(&config.network);
+                let client = resolve_rpc_client(
+                    net.rpc_url.clone(),
+                    net.network_passphrase.clone(),
+                    net.network_profile.clone(),
+                );
 
                 use sdkt_rpc::{submit_and_wait, PollConfig};
                 use std::time::Duration;
@@ -1600,10 +1839,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             contract_id,
             format,
             abi,
+            net,
         } => {
             let fmt = parse_format_str(&format);
-            let config = DevKitConfig::from_file(".sdkt.toml").unwrap_or_default();
-            let client = SorobanRpcClient::from_config(&config.network);
+            let client = resolve_rpc_client(
+                net.rpc_url.clone(),
+                net.network_passphrase.clone(),
+                net.network_profile.clone(),
+            );
 
             // Load ABI spec if provided
             let contract_spec = if let Some(wasm_path) = abi.as_ref() {
@@ -1721,10 +1964,17 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 }
             }
         }
-        Commands::Account { address, format } => {
+        Commands::Account {
+            address,
+            format,
+            net,
+        } => {
             let fmt = parse_format_str(&format);
-            let config = DevKitConfig::from_file(".sdkt.toml").unwrap_or_default();
-            let client = SorobanRpcClient::from_config(&config.network);
+            let client = resolve_rpc_client(
+                net.rpc_url.clone(),
+                net.network_passphrase.clone(),
+                net.network_profile.clone(),
+            );
 
             match inspect_account(&client, &address).await {
                 Ok(account) => {
@@ -1768,7 +2018,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 }
             }
         }
-        Commands::Fee { action } => match action {
+        Commands::Fee { action, net } => match action {
             FeeAction::Estimate {
                 network,
                 base_fees,
@@ -1789,8 +2039,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 };
 
                 let (stroops, xlm) = if rpc {
-                    let config = DevKitConfig::from_file(".sdkt.toml").unwrap_or_default();
-                    let client = SorobanRpcClient::from_config(&config.network);
+                    let client = resolve_rpc_client(
+                        net.rpc_url.clone(),
+                        net.network_passphrase.clone(),
+                        net.network_profile.clone(),
+                    );
                     match estimate_dynamic_fee(&client, fee_config).await {
                         Ok(result) => result,
                         Err(e) => {
@@ -2067,7 +2320,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 }
             }
         }
-        Commands::Wasm { action } => match action {
+        Commands::Wasm { action, net } => match action {
             WasmAction::Inspect { file, format } => {
                 let fmt = parse_format_str(&format);
 
@@ -2133,8 +2386,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 format,
             } => {
                 let fmt = parse_format_str(&format);
-                let config = DevKitConfig::from_file(".sdkt.toml").unwrap_or_default();
-                let client = SorobanRpcClient::from_config(&config.network);
+                let client = resolve_rpc_client(
+                    net.rpc_url.clone(),
+                    net.network_passphrase.clone(),
+                    net.network_profile.clone(),
+                );
 
                 // Initialize cache
                 let cache = match WasmCache::new() {
@@ -2445,6 +2701,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             format,
             deny_breaking,
             old_wasm,
+            net,
         } => {
             let fmt = parse_format_str(&format);
 
@@ -2476,8 +2733,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             }
 
             use sdkt_rpc::deploy_contract;
-            let config = DevKitConfig::from_file(".sdkt.toml").unwrap_or_default();
-            let client = SorobanRpcClient::from_config(&config.network);
+            let client = resolve_rpc_client(
+                net.rpc_url.clone(),
+                net.network_passphrase.clone(),
+                net.network_profile.clone(),
+            );
             // For CLI demo, read wasm file; if file missing, use empty bytes
             let wasm_bytes = fs::read(&wasm).unwrap_or_default();
             match deploy_contract(&client, &wasm_bytes, &salt).await {
@@ -2509,11 +2769,15 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 }
             }
         }
-        Commands::Project { action } => match action {
+        Commands::Project { action, net } => match action {
             ProjectCommand::Deploy { salt, format } => {
                 let fmt = parse_format_str(&format);
                 let config = DevKitConfig::from_file(".sdkt.toml").unwrap_or_default();
-                let client = SorobanRpcClient::from_config(&config.network);
+                let client = resolve_rpc_client(
+                    net.rpc_url.clone(),
+                    net.network_passphrase.clone(),
+                    net.network_profile.clone(),
+                );
 
                 match sdkt_core::project::resolve_project(&config) {
                     Ok(resolved) => {
