@@ -687,7 +687,7 @@ fn make_local_git_repo() -> std::path::PathBuf {
 #[test]
 fn package_validate_accepts_git_dependency() {
     let src = make_local_git_repo();
-    let url = src.to_string_lossy().to_string();
+    let url = src.to_string_lossy().replace('\\', "\\\\");
     let tmp = std::env::temp_dir().join(format!(
         "sdkt-it-m351-valid-{}",
         std::time::SystemTime::now()
@@ -720,7 +720,7 @@ fn package_validate_accepts_git_dependency() {
 #[test]
 fn package_validate_rejects_git_without_ref() {
     let src = make_local_git_repo();
-    let url = src.to_string_lossy().to_string();
+    let url = src.to_string_lossy().replace('\\', "\\\\");
     let tmp = std::env::temp_dir().join(format!(
         "sdkt-it-m351-noref-{}",
         std::time::SystemTime::now()
@@ -753,7 +753,7 @@ fn package_validate_rejects_git_without_ref() {
 #[test]
 fn package_fetch_git_dependency_offline() {
     let src = make_local_git_repo();
-    let url = src.to_string_lossy().to_string();
+    let url = src.to_string_lossy().replace('\\', "\\\\");
     let tmp = std::env::temp_dir().join(format!(
         "sdkt-it-m351-fetch-{}",
         std::time::SystemTime::now()

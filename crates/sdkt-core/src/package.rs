@@ -344,8 +344,10 @@ pub fn validate_dependencies(base_dir: &Path, config: &DevKitConfig) -> Result<(
 /// Accepted forms:
 /// * SCP-like `git@host:org/repo` (no scheme),
 /// * URL forms with scheme `https`, `http`, `git`, or `ssh`,
-/// * Local repository paths (`/abs/path`, `./rel`, `../rel`, `~/path`), which
-///   `git clone` accepts directly and are used by offline/hermetic tests.
+/// * Local repository paths (an absolute path on the current platform, e.g.
+///   `/abs/path` on Unix or `C:\abs\path` on Windows, plus `./rel`, `../rel`,
+///   `~/path`), which `git clone` accepts directly and are used by
+///   offline/hermetic tests.
 ///
 /// The URL/reference must be non-empty. A bare host with no scheme and no path
 /// separator (e.g. `github.com/org/repo` without a scheme) is rejected as an
@@ -381,9 +383,13 @@ pub fn validate_git_url(url: &str) -> Result<(), PackageError> {
         return Ok(());
     }
 
-    // Local path form: absolute, relative, or home-anchored. `git clone`
-    // accepts these directly. Reject bare hosts with no path separator.
-    if trimmed.starts_with('/') || trimmed.starts_with('.') || trimmed.starts_with('~') {
+    // Local path form: an absolute filesystem path (platform-native, e.g.
+    // `/abs/path` on Unix or `C:\abs\path` on Windows), or a relative /
+    // home-anchored path (`./rel`, `../rel`, `~/path`). `git clone` accepts
+    // these directly. Reject bare hosts with no scheme and no path anchor
+    // (e.g. `github.com/org/repo` without a scheme), which `git` would not
+    // interpret as a local repository.
+    if Path::new(trimmed).is_absolute() || trimmed.starts_with('.') || trimmed.starts_with('~') {
         return Ok(());
     }
 
