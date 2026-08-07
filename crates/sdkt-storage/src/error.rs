@@ -12,6 +12,10 @@ pub enum StorageError {
     Parse(String),
     #[error("IO error: {0}")]
     Io(#[from] std::io::Error),
+    #[error("Not found: {0}")]
+    NotFound(String),
     #[error("Corrupt cache data: {0}")]
     CorruptCache(String),
+    #[error("Config error: {0}")]
+    ConfigError(String),
 }
