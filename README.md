@@ -195,8 +195,38 @@ See [`docs/plugin-authoring.md`](docs/plugin-authoring.md) for how to build or u
 | `sdkt init <name>` | Scaffold a new Soroban project (`--minimal`, `--force`). |
 | `sdkt build` | Compile workspace Rust contracts into optimized WASMs. |
 | `sdkt lock generate` | Write `sdkt.lock` recording each built artifact's SHA-256 + deploy order (after `sdkt build`). |
-| `sdkt lock verify` | Check `sdkt.lock` against current artifacts (advisory; never fails the build). |
+| `sdkt lock verify` | Check `sdkt.lock` against current on-disk artifacts (advisory; never fails the build). |
 | `sdkt lock show` | Print the current `sdkt.lock` contents. |
+
+### Multi-contract dependency graphs
+
+A `.sdkt.toml` workspace declares contracts under `[contracts.<alias>]`. Each
+contract may declare dependencies using either the canonical `depends_on`
+(M34.2) or the legacy `deploy_after` field — both are merged during
+resolution:
+
+```toml
+[contracts.token]
+path = "contracts/token"
+
+[contracts.router]
+path = "contracts/router"
+depends_on = ["token"]
+```
+
+`sdkt build`, `sdkt project deploy`, and `sdkt lock generate` all resolve the
+same dependency graph via a single topological sort (Kahn's algorithm), so the
+deploy order is deterministic and identical across commands. Invalid graphs are
+rejected up front with a clear error:
+
+- **Unknown dependency** — a `depends_on`/`deploy_after` entry that is not a
+  defined `[contracts.*]`.
+- **Self-dependency** — a contract that lists itself as a dependency.
+- **Duplicate dependency** — the same dependency declared more than once
+  (e.g. in both `depends_on` and `deploy_after`).
+- **Circular dependency** — a cycle such as `a → b → a`.
+- **Duplicate contract name** — two `[contracts.<alias>]` tables (TOML parse
+  error, surfaced instead of silently defaulting to an empty config).
 | `sdkt deploy --wasm <file> --salt <salt>` | Upload WASM + instantiate. Add `--deny-breaking --old-wasm <deployed.wasm>` to abort on a non-backwards-compatible upgrade. |
 
 ### Network profiles

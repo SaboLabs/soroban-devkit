@@ -89,6 +89,12 @@ sdkt
 │   └── deploy                Deploy all contracts defined in the workspace (.sdkt.toml),
 │                             applying topological dependency sorting
 │
+│   Contracts declare dependencies via `depends_on` (canonical, M34.2) or the
+│   legacy `deploy_after` field in `[contracts.<alias>]`; both are merged. Build,
+│   deploy, and `sdkt lock generate` share one resolver, so order is deterministic.
+│   Invalid graphs (unknown/self/duplicate dependency, cycle, duplicate name)
+│   fail fast with a clear error.
+│
 └── deploy
     ├── --wasm <file>
     ├── --salt <salt>

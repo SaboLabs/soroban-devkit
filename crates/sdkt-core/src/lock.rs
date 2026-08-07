@@ -350,6 +350,7 @@ mod tests {
             ContractConfig {
                 path: "contracts/token".to_string(),
                 deploy_after: vec![],
+                depends_on: vec![],
             },
         );
         map.insert(
@@ -357,6 +358,7 @@ mod tests {
             ContractConfig {
                 path: "contracts/router".to_string(),
                 deploy_after: vec!["token".to_string()],
+                depends_on: vec![],
             },
         );
         let config = config_with(map);
@@ -407,6 +409,7 @@ mod tests {
             ContractConfig {
                 path: "contracts/token".to_string(),
                 deploy_after: vec![],
+                depends_on: vec![],
             },
         );
         let config = config_with(map);
@@ -432,6 +435,7 @@ mod tests {
             ContractConfig {
                 path: "contracts/token".to_string(),
                 deploy_after: vec![],
+                depends_on: vec![],
             },
         );
         let config = config_with(map);
@@ -472,6 +476,7 @@ mod tests {
             ContractConfig {
                 path: "contracts/token".to_string(),
                 deploy_after: vec![],
+                depends_on: vec![],
             },
         );
         let config = config_with(map);

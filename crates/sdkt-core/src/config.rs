@@ -30,8 +30,14 @@ pub struct ContractConfig {
     /// Path to the contract source directory (where Cargo.toml resides).
     pub path: String,
     /// Optional list of contract aliases that must be deployed before this one.
+    /// (`deploy_after` is the original spelling; `depends_on` is the canonical
+    /// M34.2 field. Both are accepted and merged during resolution.)
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub deploy_after: Vec<String>,
+    /// Canonical M34.2 dependency declaration. Semantically identical to
+    /// `deploy_after`; listed here for explicit package-dependency graphs.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub depends_on: Vec<String>,
 }
 
 /// Soroban network connection settings.
@@ -103,6 +109,10 @@ impl DevKitConfig {
     /// Loads configuration from a specific file path.
     ///
     /// If the file does not exist, it falls back to the default configuration.
+    /// A present-but-unparseable file (e.g. a duplicate contract name or
+    /// malformed TOML) returns the underlying parse error so callers can
+    /// surface a clear, human-readable message instead of silently falling
+    /// back to an empty config.
     pub fn from_file<P: AsRef<Path>>(path: P) -> Result<Self, Box<dyn std::error::Error>> {
         let path = path.as_ref();
         if path.exists() {
@@ -164,5 +174,48 @@ mod tests {
         "#;
         let parsed = DevKitConfig::from_toml(toml_data).unwrap();
         assert_eq!(parsed.storage.max_entries, 200);
+    }
+
+    #[test]
+    fn test_duplicate_contract_name_rejected() {
+        // Duplicate `[contracts.token]` tables are a duplicate-name error.
+        // toml rejects duplicate keys, so parsing must fail (the CLI then
+        // surfaces a clear "duplicate key" message instead of silently
+        // defaulting to an empty config).
+        let toml_data = r#"
+            [contracts.token]
+            path = "contracts/token"
+
+            [contracts.token]
+            path = "contracts/token2"
+        "#;
+        let parsed = DevKitConfig::from_toml(toml_data);
+        assert!(
+            parsed.is_err(),
+            "duplicate contract name must fail to parse"
+        );
+    }
+
+    #[test]
+    fn test_depends_on_field_parses() {
+        let toml_data = r#"
+            [contracts.token]
+            path = "contracts/token"
+
+            [contracts.router]
+            path = "contracts/router"
+            depends_on = ["token"]
+        "#;
+        let parsed = DevKitConfig::from_toml(toml_data).unwrap();
+        assert_eq!(
+            parsed.contracts.get("router").unwrap().depends_on,
+            vec!["token".to_string()]
+        );
+        assert!(parsed
+            .contracts
+            .get("router")
+            .unwrap()
+            .deploy_after
+            .is_empty());
     }
 }

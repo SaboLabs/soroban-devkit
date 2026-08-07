@@ -23,6 +23,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Runnable crate doc examples (M32).** Added `///` doc examples to
   `sdkt_storage::NetworkProfile` and `sdkt_wasm::parse_metadata` so docs.rs
   renders verified, executable examples.
+- **Contract dependency graph resolution (M34.2).** `.sdkt.toml` now supports an
+  explicit `depends_on` field per `[contracts.<alias>]` (legacy `deploy_after`
+  remains accepted and is merged with it). A single topological sort
+  (`resolve_deploy_order`) is the source of truth shared by `sdkt build`,
+  `sdkt project deploy`, and `sdkt lock generate`, giving deterministic,
+  identical ordering across all three. The resolver validates the graph and
+  returns clear, human-readable errors for: unknown dependency, self-dependency,
+  duplicate dependency (same dep declared more than once), circular dependency,
+  and duplicate contract name (TOML parse error now surfaced via `sdkt` instead
+  of silently defaulting to an empty config). New unit tests cover each invalid
+  case plus deterministic ordering; new CLI integration tests assert `sdkt build`
+  fails fast on invalid graphs.
 
 ### Planned
 - Post-2.0 mainnet-focused tooling, SCF grant alignment, and a plugin marketplace.

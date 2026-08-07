@@ -989,6 +989,22 @@ fn parse_format_str(s: &str) -> OutputFormat {
     }
 }
 
+/// Load `.sdkt.toml` from the current directory.
+///
+/// A missing file yields the default config (so commands like `sdkt lock
+/// verify` still run meaningfully). A present-but-unparseable file (e.g. a
+/// duplicate contract name or malformed TOML) is a hard error surfaced with a
+/// clear message, rather than silently falling back to an empty config.
+fn load_config() -> DevKitConfig {
+    match DevKitConfig::from_file(".sdkt.toml") {
+        Ok(c) => c,
+        Err(e) => {
+            eprintln!("Error loading .sdkt.toml: {}", e);
+            process::exit(1);
+        }
+    }
+}
+
 /// Resolve a `--input` value to envelope text.
 ///
 /// Filesystem rules (matching the rest of the `tx` subcommands):
@@ -2818,7 +2834,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             }
         }
         Commands::Build => {
-            let config = DevKitConfig::from_file(".sdkt.toml").unwrap_or_default();
+            let config = load_config();
             match sdkt_core::build::build_workspace(&config) {
                 Ok(results) => {
                     println!("✓ Workspace built successfully");
@@ -2835,7 +2851,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         Commands::Lock { action } => match action {
             LockCommand::Generate { format } => {
                 let fmt = parse_format_str(&format);
-                let config = DevKitConfig::from_file(".sdkt.toml").unwrap_or_default();
+                let config = load_config();
                 match sdkt_core::lock::generate_lock(Path::new("."), &config) {
                     Ok(lock) => match sdkt_core::lock::write_lock(Path::new("."), &lock) {
                         Ok(path) => {
@@ -2868,7 +2884,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             }
             LockCommand::Verify { format } => {
                 let fmt = parse_format_str(&format);
-                let config = DevKitConfig::from_file(".sdkt.toml").unwrap_or_default();
+                let config = load_config();
                 let report = sdkt_core::lock::verify_lock(Path::new("."), &config);
                 if fmt != OutputFormat::Json {
                     if report.present {
@@ -2932,7 +2948,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         Commands::Project { action, net } => match action {
             ProjectCommand::Deploy { salt, format } => {
                 let fmt = parse_format_str(&format);
-                let config = DevKitConfig::from_file(".sdkt.toml").unwrap_or_default();
+                let config = load_config();
 
                 // M34.1 — advisory lock check. If an `sdkt.lock` exists, warn
                 // (non-fatally) when it has drifted from the current artifacts.

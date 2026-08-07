@@ -9,6 +9,7 @@ pub enum BuildError {
     PathNotFound(String),
     CargoFailed { path: String, stderr: String },
     ArtifactNotFound(String),
+    InvalidProject(String),
 }
 
 impl fmt::Display for BuildError {
@@ -21,6 +22,9 @@ impl fmt::Display for BuildError {
             }
             BuildError::ArtifactNotFound(path) => {
                 write!(f, "Expected WASM artifact not found at: {}", path)
+            }
+            BuildError::InvalidProject(msg) => {
+                write!(f, "Invalid project dependency graph: {}", msg)
             }
         }
     }
@@ -40,14 +44,28 @@ pub struct BuildResult {
 ///
 /// For each contract, it navigates to the configured `path` and runs:
 /// `cargo build --target wasm32-unknown-unknown --release`
+///
+/// The build proceeds in the dependency-resolved deploy order produced by
+/// [`crate::project::resolve_deploy_order`], so a malformed graph
+/// (unknown/self/duplicate dependency or a cycle) is rejected up front with a
+/// clear error before any `cargo` invocation.
 pub fn build_workspace(config: &DevKitConfig) -> Result<Vec<BuildResult>, BuildError> {
     if config.contracts.is_empty() {
         return Err(BuildError::MissingConfig);
     }
 
+    // M34.2 — validate + order via the single shared resolver. This ensures
+    // build, deploy, and lock generation all use the same resolved graph.
+    let ordered = crate::project::resolve_deploy_order(config)
+        .map_err(|e| BuildError::InvalidProject(e.to_string()))?;
+
     let mut results = Vec::new();
 
-    for (alias, contract_cfg) in &config.contracts {
+    for alias in &ordered {
+        let contract_cfg = config
+            .contracts
+            .get(alias)
+            .expect("alias from resolved order");
         let path = Path::new(&contract_cfg.path);
 
         if !path.exists() || !path.is_dir() {
@@ -148,6 +166,7 @@ mod tests {
             ContractConfig {
                 path: "does_not_exist_xyz".to_string(),
                 deploy_after: vec![],
+                depends_on: vec![],
             },
         );
         config.contracts = contracts;

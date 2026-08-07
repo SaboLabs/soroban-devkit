@@ -374,3 +374,122 @@ fn lock_verify_without_lock_is_non_fatal() {
 
     let _ = std::fs::remove_dir_all(&tmp);
 }
+
+// ---------------------------------------------------------------------------
+// M34.2 — invalid project dependency graphs (offline, hermetic).
+// `sdkt build` validates the graph up front, so a bad graph fails fast with a
+// clear, non-zero-exit error (no cargo invocation, no silent default).
+// ---------------------------------------------------------------------------
+
+fn write_sdkt_toml(root: &std::path::Path, body: &str) {
+    std::fs::create_dir_all(root).unwrap();
+    std::fs::write(root.join(".sdkt.toml"), body).unwrap();
+}
+
+#[test]
+fn build_rejects_unknown_dependency() {
+    let tmp = std::env::temp_dir().join(format!(
+        "sdkt-it-m342-unknown-{}",
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos()
+    ));
+    let _ = std::fs::remove_dir_all(&tmp);
+    write_sdkt_toml(
+        &tmp,
+        "[contracts.router]\npath = \"contracts/router\"\ndepends_on = [\"ghost\"]\n",
+    );
+
+    let mut cmd = Command::cargo_bin("sdkt").expect("sdkt binary built");
+    cmd.current_dir(&tmp).arg("build");
+    let assert = cmd.assert().failure();
+    let out = String::from_utf8_lossy(&assert.get_output().stderr);
+    assert!(
+        out.contains("ghost"),
+        "error should name the unknown dependency: {}",
+        out
+    );
+    let _ = std::fs::remove_dir_all(&tmp);
+}
+
+#[test]
+fn build_rejects_self_dependency() {
+    let tmp = std::env::temp_dir().join(format!(
+        "sdkt-it-m342-self-{}",
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos()
+    ));
+    let _ = std::fs::remove_dir_all(&tmp);
+    write_sdkt_toml(
+        &tmp,
+        "[contracts.token]\npath = \"contracts/token\"\ndepends_on = [\"token\"]\n",
+    );
+
+    let mut cmd = Command::cargo_bin("sdkt").expect("sdkt binary built");
+    cmd.current_dir(&tmp).arg("build");
+    let assert = cmd.assert().failure();
+    let out = String::from_utf8_lossy(&assert.get_output().stderr);
+    assert!(
+        out.to_lowercase().contains("self"),
+        "error should report self-dependency: {}",
+        out
+    );
+    let _ = std::fs::remove_dir_all(&tmp);
+}
+
+#[test]
+fn build_rejects_circular_dependency() {
+    let tmp = std::env::temp_dir().join(format!(
+        "sdkt-it-m342-cycle-{}",
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos()
+    ));
+    let _ = std::fs::remove_dir_all(&tmp);
+    write_sdkt_toml(
+        &tmp,
+        "[contracts.a]\npath = \"contracts/a\"\ndepends_on = [\"b\"]\n\n[contracts.b]\npath = \"contracts/b\"\ndepends_on = [\"a\"]\n",
+    );
+
+    let mut cmd = Command::cargo_bin("sdkt").expect("sdkt binary built");
+    cmd.current_dir(&tmp).arg("build");
+    let assert = cmd.assert().failure();
+    let out = String::from_utf8_lossy(&assert.get_output().stderr);
+    assert!(
+        out.to_lowercase().contains("circular"),
+        "error should report circular dependency: {}",
+        out
+    );
+    let _ = std::fs::remove_dir_all(&tmp);
+}
+
+#[test]
+fn build_rejects_duplicate_contract_name() {
+    let tmp = std::env::temp_dir().join(format!(
+        "sdkt-it-m342-dupname-{}",
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos()
+    ));
+    let _ = std::fs::remove_dir_all(&tmp);
+    write_sdkt_toml(
+        &tmp,
+        "[contracts.token]\npath = \"contracts/token\"\n\n[contracts.token]\npath = \"contracts/token2\"\n",
+    );
+
+    let mut cmd = Command::cargo_bin("sdkt").expect("sdkt binary built");
+    cmd.current_dir(&tmp).arg("build");
+    let assert = cmd.assert().failure();
+    let out = String::from_utf8_lossy(&assert.get_output().stderr);
+    assert!(
+        !out.is_empty(),
+        "duplicate contract name must produce a load error: {}",
+        out
+    );
+    let _ = std::fs::remove_dir_all(&tmp);
+}
