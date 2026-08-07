@@ -350,6 +350,19 @@ mod tests {
     use std::collections::HashMap;
     use std::io::Write;
 
+    fn git_cmd(dir: &Path) -> Command {
+        let mut c = Command::new("git");
+        c.current_dir(dir)
+            // Treat the temp checkout as safe so git operations succeed even on
+            // CI runners (Windows/macOS) where the temp directory ownership can
+            // trip git's "dubious ownership" protection. Applied per-command via
+            // env (no global git-config mutation, no side effects).
+            .env("GIT_CONFIG_COUNT", "1")
+            .env("GIT_CONFIG_KEY_0", "safe.directory")
+            .env("GIT_CONFIG_VALUE_0", "*");
+        c
+    }
+
     fn make_git_repo() -> PathBuf {
         let dir = std::env::temp_dir().join(format!(
             "sdkt-fetch-src-{}",
@@ -361,25 +374,20 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
         let run = |args: &[&str]| {
-            let o = Command::new("git")
-                .current_dir(&dir)
-                .args(args)
-                .output()
-                .expect("git available");
-            assert!(
-                o.status.success(),
-                "git {:?} failed: {}",
-                args,
-                String::from_utf8_lossy(&o.stderr)
-            );
+            let o = git_cmd(&dir).args(args).output().expect("git available");
+            if !o.status.success() {
+                panic!(
+                    "git {:?} failed (exit {:?}):\n--- stdout ---\n{}\n--- stderr ---\n{}",
+                    args,
+                    o.status.code(),
+                    String::from_utf8_lossy(&o.stdout),
+                    String::from_utf8_lossy(&o.stderr)
+                );
+            }
         };
         run(&["init", "-q"]);
         run(&["config", "user.email", "test@sdkt.local"]);
         run(&["config", "user.name", "sdkt test"]);
-        // Mark the temp checkout as safe so commits work even on Windows CI,
-        // where git's "dubious ownership" protection otherwise blocks writes
-        // inside a shared/runner-owned temp directory.
-        run(&["config", "safe.directory", "*"]);
         // v1.0.0 tag on first commit.
         let f = dir.join("lib.rs");
         let mut fh = std::fs::File::create(&f).unwrap();
@@ -466,11 +474,7 @@ mod tests {
         let _dep = cfg.dependencies.get("dep").unwrap();
         // Determine the second-commit SHA by rev-parsing origin/HEAD equiv.
         let rev = {
-            let o = Command::new("git")
-                .current_dir(&src)
-                .args(["rev-parse", "HEAD"])
-                .output()
-                .unwrap();
+            let o = git_cmd(&src).args(["rev-parse", "HEAD"]).output().unwrap();
             String::from_utf8_lossy(&o.stdout).trim().to_string()
         };
         let cfg2 = config_with_git(&url, None, None, Some(&rev));

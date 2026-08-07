@@ -1,0 +1,1281 @@
+test (windows-latest)	Run Tests (Default)	﻿2026-08-07T16:35:47.8216056Z ##[group]Run cargo test --workspace
+test (windows-latest)	Run Tests (Default)	2026-08-07T16:35:47.8216646Z ^[[36;1mcargo test --workspace^[[0m
+test (windows-latest)	Run Tests (Default)	2026-08-07T16:35:47.8289887Z shell: C:\Program Files\PowerShell\7\pwsh.EXE -command ". '{0}'"
+test (windows-latest)	Run Tests (Default)	2026-08-07T16:35:47.8290483Z env:
+test (windows-latest)	Run Tests (Default)	2026-08-07T16:35:47.8290834Z   CARGO_TERM_COLOR: always
+test (windows-latest)	Run Tests (Default)	2026-08-07T16:35:47.8291299Z   CARGO_HOME: C:\Users\runneradmin\.cargo
+test (windows-latest)	Run Tests (Default)	2026-08-07T16:35:47.8291803Z   CARGO_INCREMENTAL: 0
+test (windows-latest)	Run Tests (Default)	2026-08-07T16:35:47.8292224Z   CACHE_ON_FAILURE: false
+test (windows-latest)	Run Tests (Default)	2026-08-07T16:35:47.8292834Z ##[endgroup]
+test (windows-latest)	Run Tests (Default)	2026-08-07T16:35:49.3570045Z ^[[1m^[[92m    Updating^[[0m crates.io index
+test (windows-latest)	Run Tests (Default)	2026-08-07T16:36:10.1305216Z ^[[1m^[[92m   Compiling^[[0m sdkt-core v2.4.0 (D:\a\soroban-devkit\soroban-devkit\crates\sdkt-core)
+test (windows-latest)	Run Tests (Default)	2026-08-07T16:36:32.4774541Z ^[[1m^[[92m   Compiling^[[0m sdkt-wasm v2.4.0 (D:\a\soroban-devkit\soroban-devkit\crates\sdkt-wasm)
+test (windows-latest)	Run Tests (Default)	2026-08-07T16:36:35.9410814Z ^[[1m^[[92m   Compiling^[[0m sdkt-xdr v2.4.0 (D:\a\soroban-devkit\soroban-devkit\crates\sdkt-xdr)
+test (windows-latest)	Run Tests (Default)	2026-08-07T16:36:36.2256569Z ^[[1m^[[92m   Compiling^[[0m sdkt-audit v2.4.0 (D:\a\soroban-devkit\soroban-devkit\crates\sdkt-audit)
+test (windows-latest)	Run Tests (Default)	2026-08-07T16:36:37.5804393Z ^[[1m^[[92m   Compiling^[[0m sdkt-rpc v2.4.0 (D:\a\soroban-devkit\soroban-devkit\crates\sdkt-rpc)
+test (windows-latest)	Run Tests (Default)	2026-08-07T16:36:38.0974864Z ^[[1m^[[92m   Compiling^[[0m sdkt-audit-example-rule v2.4.0 (D:\a\soroban-devkit\soroban-devkit\crates\sdkt-audit-example-rule)
+test (windows-latest)	Run Tests (Default)	2026-08-07T16:36:41.0965806Z ^[[1m^[[92m   Compiling^[[0m sdkt-storage v2.4.0 (D:\a\soroban-devkit\soroban-devkit\crates\sdkt-storage)
+test (windows-latest)	Run Tests (Default)	2026-08-07T16:36:42.3726840Z ^[[1m^[[92m   Compiling^[[0m sdkt-cli v2.4.0 (D:\a\soroban-devkit\soroban-devkit\crates\sdkt-cli)
+test (windows-latest)	Run Tests (Default)	2026-08-07T16:36:59.9010935Z ^[[1m^[[92m    Finished^[[0m `test` profile [unoptimized + debuginfo] target(s) in 1m 11s
+test (windows-latest)	Run Tests (Default)	2026-08-07T16:36:59.9392069Z ^[[1m^[[92m     Running^[[0m unittests src\lib.rs (target\debug\deps\sdkt_audit-98c2379e92648f96.exe)
+test (windows-latest)	Run Tests (Default)	2026-08-07T16:36:59.9512289Z 
+test (windows-latest)	Run Tests (Default)	2026-08-07T16:36:59.9513092Z running 19 tests
+test (windows-latest)	Run Tests (Default)	2026-08-07T16:36:59.9543525Z test audit::tests::auth001_fires_on_privileged_without_auth ... ok
+test (windows-latest)	Run Tests (Default)	2026-08-07T16:36:59.9544720Z test audit::tests::auth001_silent_when_auth_present ... ok
+test (windows-latest)	Run Tests (Default)	2026-08-07T16:36:59.9545619Z test audit::tests::auth001_negative_on_normal_fn ... ok
+test (windows-latest)	Run Tests (Default)	2026-08-07T16:36:59.9546452Z test audit::tests::auth001_disabled_is_silent ... ok
+test (windows-latest)	Run Tests (Default)	2026-08-07T16:36:59.9549901Z test audit::tests::auth002_fires_on_invoke_without_auth ... ok
+test (windows-latest)	Run Tests (Default)	2026-08-07T16:36:59.9552982Z test audit::tests::auth003_fires_on_unguarded_initialize ... ok
+test (windows-latest)	Run Tests (Default)	2026-08-07T16:36:59.9555559Z test audit::tests::auth003_silent_when_initialize_has_auth ... ok
+test (windows-latest)	Run Tests (Default)	2026-08-07T16:36:59.9556731Z test audit::tests::auth002_silent_when_auth_present ... ok
+test (windows-latest)	Run Tests (Default)	2026-08-07T16:36:59.9557640Z test audit::tests::clean_source_reports_no_findings ... ok
+test (windows-latest)	Run Tests (Default)	2026-08-07T16:36:59.9558259Z test audit::tests::move001_silent_on_single_use ... ok
+test (windows-latest)	Run Tests (Default)	2026-08-07T16:36:59.9558850Z test audit::tests::move001_fires_on_double_arg_use ... ok
+test (windows-latest)	Run Tests (Default)	2026-08-07T16:36:59.9560245Z test audit::tests::parse_error_is_reported ... ok
+test (windows-latest)	Run Tests (Default)	2026-08-07T16:36:59.9560825Z test audit::tests::rules_implement_trait ... ok
+test (windows-latest)	Run Tests (Default)	2026-08-07T16:36:59.9561399Z test registry::tests::builtin_registration_count ... ok
+test (windows-latest)	Run Tests (Default)	2026-08-07T16:36:59.9562115Z test registry::tests::duplicate_registration_is_ignored ... ok
+test (windows-latest)	Run Tests (Default)	2026-08-07T16:36:59.9562695Z test registry::tests::ordering_preserved ... ok
+test (windows-latest)	Run Tests (Default)	2026-08-07T16:36:59.9563227Z test registry::tests::register_adds_rule ... ok
+test (windows-latest)	Run Tests (Default)	2026-08-07T16:36:59.9563764Z test registry::tests::run_all_executes_every_rule ... ok
+test (windows-latest)	Run Tests (Default)	2026-08-07T16:36:59.9564321Z test registry::tests::run_all_respects_disabled ... ok
+test (windows-latest)	Run Tests (Default)	2026-08-07T16:36:59.9564883Z 
+test (windows-latest)	Run Tests (Default)	2026-08-07T16:36:59.9565655Z test result: ok. 19 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test (windows-latest)	Run Tests (Default)	2026-08-07T16:36:59.9567041Z 
+test (windows-latest)	Run Tests (Default)	2026-08-07T16:36:59.9581086Z ^[[1m^[[92m     Running^[[0m tests\registry_integration_test.rs (target\debug\deps\registry_integration_test-5108f836c04019d2.exe)
+test (windows-latest)	Run Tests (Default)	2026-08-07T16:36:59.9676440Z 
+test (windows-latest)	Run Tests (Default)	2026-08-07T16:36:59.9676735Z running 4 tests
+test (windows-latest)	Run Tests (Default)	2026-08-07T16:36:59.9683031Z test registry_respects_disabled_in_run_all ... ok
+test (windows-latest)	Run Tests (Default)	2026-08-07T16:36:59.9699339Z test disable_still_suppresses_builtin ... ok
+test (windows-latest)	Run Tests (Default)	2026-08-07T16:36:59.9700153Z test registry_executes_builtins_and_external_rule ... ok
+test (windows-latest)	Run Tests (Default)	2026-08-07T16:36:59.9700781Z test builtins_unchanged_through_registry ... ok
+test (windows-latest)	Run Tests (Default)	2026-08-07T16:36:59.9701207Z 
+test (windows-latest)	Run Tests (Default)	2026-08-07T16:36:59.9701587Z test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test (windows-latest)	Run Tests (Default)	2026-08-07T16:36:59.9702134Z 
+test (windows-latest)	Run Tests (Default)	2026-08-07T16:36:59.9717151Z ^[[1m^[[92m     Running^[[0m unittests src\lib.rs (target\debug\deps\sdkt_audit_example_rule-50c688d6f7d86058.exe)
+test (windows-latest)	Run Tests (Default)	2026-08-07T16:36:59.9805448Z 
+test (windows-latest)	Run Tests (Default)	2026-08-07T16:36:59.9806082Z running 2 tests
+test (windows-latest)	Run Tests (Default)	2026-08-07T16:36:59.9809962Z test tests::example_rule_fires_on_trigger_function ... ok
+test (windows-latest)	Run Tests (Default)	2026-08-07T16:36:59.9810533Z test tests::example_rule_silent_on_normal_function ... ok
+test (windows-latest)	Run Tests (Default)	2026-08-07T16:36:59.9811210Z 
+test (windows-latest)	Run Tests (Default)	2026-08-07T16:36:59.9811433Z test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test (windows-latest)	Run Tests (Default)	2026-08-07T16:36:59.9811764Z 
+test (windows-latest)	Run Tests (Default)	2026-08-07T16:36:59.9824961Z ^[[1m^[[92m     Running^[[0m unittests src\main.rs (target\debug\deps\sdkt-59b837e96e9c7e09.exe)
+test (windows-latest)	Run Tests (Default)	2026-08-07T16:36:59.9907291Z 
+test (windows-latest)	Run Tests (Default)	2026-08-07T16:36:59.9907728Z running 16 tests
+test (windows-latest)	Run Tests (Default)	2026-08-07T16:36:59.9912859Z test m22_tests::verification_outcome_verified ... ok
+test (windows-latest)	Run Tests (Default)	2026-08-07T16:36:59.9913547Z test m22_tests::verification_outcome_mismatch ... ok
+test (windows-latest)	Run Tests (Default)	2026-08-07T16:36:59.9914771Z test m22_tests::verification_outcome_onchain_only ... ok
+test (windows-latest)	Run Tests (Default)	2026-08-07T16:36:59.9916298Z test m22_tests::verification_report_json_schema ... ok
+test (windows-latest)	Run Tests (Default)	2026-08-07T16:36:59.9917026Z test m23_tests::derive_verdict_at_risk_empty ... ok
+test (windows-latest)	Run Tests (Default)	2026-08-07T16:36:59.9917609Z test m23_tests::derive_verdict_at_risk_expiring ... ok
+test (windows-latest)	Run Tests (Default)	2026-08-07T16:36:59.9918199Z test m23_tests::derive_verdict_critical_mismatch ... ok
+test (windows-latest)	Run Tests (Default)	2026-08-07T16:36:59.9918761Z test m23_tests::derive_verdict_healthy ... ok
+test (windows-latest)	Run Tests (Default)	2026-08-07T16:36:59.9919720Z test m23_tests::derive_verdict_onchain_only_healthy ... ok
+test (windows-latest)	Run Tests (Default)	2026-08-07T16:36:59.9920696Z test resolver_tests::built_in_default_when_nothing_set ... ok
+test (windows-latest)	Run Tests (Default)	2026-08-07T16:36:59.9921819Z test resolver_tests::explicit_flags_win_over_profile_both ... ok
+test (windows-latest)	Run Tests (Default)	2026-08-07T16:36:59.9923279Z test m23_tests::health_report_json_schema ... ok
+test (windows-latest)	Run Tests (Default)	2026-08-07T16:36:59.9923807Z test resolver_tests::passphrase_flag_overrides_profile ... ok
+test (windows-latest)	Run Tests (Default)	2026-08-07T16:36:59.9925282Z test resolver_tests::profile_overrides_built_in_default ... ok
+test (windows-latest)	Run Tests (Default)	2026-08-07T16:36:59.9925917Z test resolver_tests::rpc_url_flag_overrides_profile ... ok
+test (windows-latest)	Run Tests (Default)	2026-08-07T16:36:59.9926361Z test resolver_tests::rpc_url_flag_without_profile_overrides_built_in ... ok
+test (windows-latest)	Run Tests (Default)	2026-08-07T16:36:59.9926647Z 
+test (windows-latest)	Run Tests (Default)	2026-08-07T16:36:59.9926875Z test result: ok. 16 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test (windows-latest)	Run Tests (Default)	2026-08-07T16:36:59.9927379Z 
+test (windows-latest)	Run Tests (Default)	2026-08-07T16:36:59.9941049Z ^[[1m^[[92m     Running^[[0m tests\abi_decode_integration_test.rs (target\debug\deps\abi_decode_integration_test-f185fd0617ea55e5.exe)
+test (windows-latest)	Run Tests (Default)	2026-08-07T16:37:00.0025160Z 
+test (windows-latest)	Run Tests (Default)	2026-08-07T16:37:00.0025496Z running 2 tests
+test (windows-latest)	Run Tests (Default)	2026-08-07T16:37:00.0285733Z test test_events_abi_flag_exists ... ok
+test (windows-latest)	Run Tests (Default)	2026-08-07T16:37:00.0288888Z test test_inspect_abi_flag_exists ... ok
+test (windows-latest)	Run Tests (Default)	2026-08-07T16:37:00.0289237Z 
+test (windows-latest)	Run Tests (Default)	2026-08-07T16:37:00.0290253Z test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.03s
+test (windows-latest)	Run Tests (Default)	2026-08-07T16:37:00.0290887Z 
+test (windows-latest)	Run Tests (Default)	2026-08-07T16:37:00.0305607Z ^[[1m^[[92m     Running^[[0m tests\account_integration_test.rs (target\debug\deps\account_integration_test-17cce2412cb0444c.exe)
+test (windows-latest)	Run Tests (Default)	2026-08-07T16:37:00.0390030Z 
+test (windows-latest)	Run Tests (Default)	2026-08-07T16:37:00.0390388Z running 2 tests
+test (windows-latest)	Run Tests (Default)	2026-08-07T16:37:00.0548456Z test test_account_invalid_format ... ok
+test (windows-latest)	Run Tests (Default)	2026-08-07T16:37:00.0553972Z test test_account_format_json ... ok
+test (windows-latest)	Run Tests (Default)	2026-08-07T16:37:00.0554335Z 
+test (windows-latest)	Run Tests (Default)	2026-08-07T16:37:00.0555505Z test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.02s
+test (windows-latest)	Run Tests (Default)	2026-08-07T16:37:00.0555946Z 
+test (windows-latest)	Run Tests (Default)	2026-08-07T16:37:00.0570236Z ^[[1m^[[92m     Running^[[0m tests\audit_integration_test.rs (target\debug\deps\audit_integration_test-79e5aa5c488dfd46.exe)
+test (windows-latest)	Run Tests (Default)	2026-08-07T16:37:00.0652448Z 
+test (windows-latest)	Run Tests (Default)	2026-08-07T16:37:00.0652846Z running 9 tests
+test (windows-latest)	Run Tests (Default)	2026-08-07T16:37:00.0842427Z test audit_help_documents_gap_c ... ok
+test (windows-latest)	Run Tests (Default)	2026-08-07T16:37:00.0875566Z test audit_disable_rule_suppresses_finding ... ok
+test (windows-latest)	Run Tests (Default)	2026-08-07T16:37:00.0892217Z test audit_flags_privileged_without_auth ... ok
+test (windows-latest)	Run Tests (Default)	2026-08-07T16:37:00.0894726Z test audit_clean_source_reports_no_issues ... ok
+test (windows-latest)	Run Tests (Default)	2026-08-07T16:37:00.1030025Z test audit_invalid_rust_source_errors ... ok
+test (windows-latest)	Run Tests (Default)	2026-08-07T16:37:00.1070757Z test audit_json_output_is_valid_report ... ok
+test (windows-latest)	Run Tests (Default)	2026-08-07T16:37:00.1071613Z test audit_missing_file_errors ... ok
+test (windows-latest)	Run Tests (Default)	2026-08-07T16:37:00.1109344Z test audit_rules_flag_accepted_and_default_unchanged ... ok
+test (windows-latest)	Run Tests (Default)	2026-08-07T16:37:00.1173690Z test audit_rules_missing_path_errors ... ok
+test (windows-latest)	Run Tests (Default)	2026-08-07T16:37:00.1174056Z 
+test (windows-latest)	Run Tests (Default)	2026-08-07T16:37:00.1174748Z test result: ok. 9 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.05s
+test (windows-latest)	Run Tests (Default)	2026-08-07T16:37:00.1176003Z 
+test (windows-latest)	Run Tests (Default)	2026-08-07T16:37:00.1194246Z ^[[1m^[[92m     Running^[[0m tests\cli_integration.rs (target\debug\deps\cli_integration-0d23be0d05dc9d56.exe)
+test (windows-latest)	Run Tests (Default)	2026-08-07T16:37:00.1276857Z 
+test (windows-latest)	Run Tests (Default)	2026-08-07T16:37:00.1277213Z running 27 tests
+test (windows-latest)	Run Tests (Default)	2026-08-07T16:37:00.1489555Z test build_rejects_self_dependency ... ok
+test (windows-latest)	Run Tests (Default)	2026-08-07T16:37:00.1491456Z test build_rejects_circular_dependency ... ok
+test (windows-latest)	Run Tests (Default)	2026-08-07T16:37:00.1522789Z test build_rejects_unknown_dependency ... ok
+test (windows-latest)	Run Tests (Default)	2026-08-07T16:37:00.1524250Z test build_rejects_duplicate_contract_name ... ok
+test (windows-latest)	Run Tests (Default)	2026-08-07T16:37:00.1731532Z test completions_rejects_unknown_shell ... ok
+test (windows-latest)	Run Tests (Default)	2026-08-07T16:37:00.1747254Z test completions_fish_emits_script ... ok
+test (windows-latest)	Run Tests (Default)	2026-08-07T16:37:00.1751066Z test completions_bash_emits_script ... ok
+test (windows-latest)	Run Tests (Default)	2026-08-07T16:37:00.1780372Z test completions_powershell_emits_script ... ok
+test (windows-latest)	Run Tests (Default)	2026-08-07T16:37:00.1941652Z test help_lists_all_top_level_commands ... ok
+test (windows-latest)	Run Tests (Default)	2026-08-07T16:37:00.1951565Z test invalid_top_level_subcommand_fails ... ok
+test (windows-latest)	Run Tests (Default)	2026-08-07T16:37:00.2002222Z test completions_zsh_emits_script ... ok
+test (windows-latest)	Run Tests (Default)	2026-08-07T16:37:00.2164135Z test network_add_rejects_missing_required_args ... ok
+test (windows-latest)	Run Tests (Default)	2026-08-07T16:37:00.2188493Z test lock_verify_without_lock_is_non_fatal ... ok
+test (windows-latest)	Run Tests (Default)	2026-08-07T16:37:00.2414774Z test network_list_empty_is_valid_json_array ... ok
+test (windows-latest)	Run Tests (Default)	2026-08-07T16:37:00.2420646Z test lock_verify_detects_drift ... ok
+test (windows-latest)	Run Tests (Default)	2026-08-07T16:37:00.2567785Z test lock_generate_writes_sdkt_lock ... ok
+test (windows-latest)	Run Tests (Default)	2026-08-07T16:37:00.2593233Z test offline_command_help_does_not_require_network ... ok
+test (windows-latest)	Run Tests (Default)	2026-08-07T16:37:00.2800230Z test package_validate_accepts_valid_manifest ... ok
+test (windows-latest)	Run Tests (Default)	2026-08-07T16:37:00.2991930Z test package_validate_rejects_git_dependency_at_parse ... ok
+test (windows-latest)	Run Tests (Default)	2026-08-07T16:37:00.3122973Z test network_add_then_list_then_show_then_remove_json ... ok
+test (windows-latest)	Run Tests (Default)	2026-08-07T16:37:00.3508944Z test package_validate_rejects_missing_path ... ok
+test (windows-latest)	Run Tests (Default)	2026-08-07T16:37:00.3710869Z test package_validate_rejects_missing_version ... ok
+test (windows-latest)	Run Tests (Default)	2026-08-07T16:37:00.3912739Z test package_validate_rejects_self_dependency ... ok
+test (windows-latest)	Run Tests (Default)	2026-08-07T16:37:00.4089611Z test version_reports_current_release ... ok
+test (windows-latest)	Run Tests (Default)	2026-08-07T16:37:00.6655015Z test package_validate_accepts_git_dependency ... ok
+test (windows-latest)	Run Tests (Default)	2026-08-07T16:37:00.6765756Z test package_validate_rejects_git_without_ref ... ok
+test (windows-latest)	Run Tests (Default)	2026-08-07T16:37:01.3133992Z test package_fetch_git_dependency_offline ... ok
+test (windows-latest)	Run Tests (Default)	2026-08-07T16:37:01.3134360Z 
+test (windows-latest)	Run Tests (Default)	2026-08-07T16:37:01.3134708Z test result: ok. 27 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.19s
+test (windows-latest)	Run Tests (Default)	2026-08-07T16:37:01.3135102Z 
+test (windows-latest)	Run Tests (Default)	2026-08-07T16:37:01.3152469Z ^[[1m^[[92m     Running^[[0m tests\diff_integration_test.rs (target\debug\deps\diff_integration_test-bd23132c1d8796df.exe)
+test (windows-latest)	Run Tests (Default)	2026-08-07T16:37:01.3241412Z 
+test (windows-latest)	Run Tests (Default)	2026-08-07T16:37:01.3241845Z running 3 tests
+test (windows-latest)	Run Tests (Default)	2026-08-07T16:37:01.3414080Z test diff_help_documents_offline_comparison ... ok
+test (windows-latest)	Run Tests (Default)	2026-08-07T16:37:01.3418992Z test diff_missing_old_file_errors ... ok
+test (windows-latest)	Run Tests (Default)	2026-08-07T16:37:01.3439060Z test diff_accepts_json_format_flag ... ok
+test (windows-latest)	Run Tests (Default)	2026-08-07T16:37:01.3440383Z 
+test (windows-latest)	Run Tests (Default)	2026-08-07T16:37:01.3440947Z test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.02s
+test (windows-latest)	Run Tests (Default)	2026-08-07T16:37:01.3441597Z 
+test (windows-latest)	Run Tests (Default)	2026-08-07T16:37:01.3457715Z ^[[1m^[[92m     Running^[[0m tests\events_integration_test.rs (target\debug\deps\events_integration_test-79c599a23b07cb1b.exe)
+test (windows-latest)	Run Tests (Default)	2026-08-07T16:37:01.3537874Z 
+test (windows-latest)	Run Tests (Default)	2026-08-07T16:37:01.3538369Z running 2 tests
+test (windows-latest)	Run Tests (Default)	2026-08-07T16:37:01.3679351Z test test_events_invalid_format ... ok
+test (windows-latest)	Run Tests (Default)	2026-08-07T16:37:01.8049429Z test test_events_format_json ... ok
+test (windows-latest)	Run Tests (Default)	2026-08-07T16:37:01.8049844Z 
+test (windows-latest)	Run Tests (Default)	2026-08-07T16:37:01.8050111Z test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.45s
+test (windows-latest)	Run Tests (Default)	2026-08-07T16:37:01.8050450Z 
+test (windows-latest)	Run Tests (Default)	2026-08-07T16:37:01.8069026Z ^[[1m^[[92m     Running^[[0m tests\fee_integration_test.rs (target\debug\deps\fee_integration_test-aa5f5dadb3b9ee9f.exe)
+test (windows-latest)	Run Tests (Default)	2026-08-07T16:37:01.8161558Z 
+test (windows-latest)	Run Tests (Default)	2026-08-07T16:37:01.8162070Z running 4 tests
+test (windows-latest)	Run Tests (Default)	2026-08-07T16:37:01.8368490Z test test_cli_fee_estimate_mainnet_json ... ok
+test (windows-latest)	Run Tests (Default)	2026-08-07T16:37:01.8379712Z test test_cli_fee_estimate_testnet ... ok
+test (windows-latest)	Run Tests (Default)	2026-08-07T16:37:01.8398411Z test test_cli_fee_estimate_invalid_fees ... ok
+test (windows-latest)	Run Tests (Default)	2026-08-07T16:37:01.8399195Z test test_cli_fee_estimate_unknown_network ... ok
+test (windows-latest)	Run Tests (Default)	2026-08-07T16:37:01.8399619Z 
+test (windows-latest)	Run Tests (Default)	2026-08-07T16:37:01.8399962Z test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.02s
+test (windows-latest)	Run Tests (Default)	2026-08-07T16:37:01.8400283Z 
+test (windows-latest)	Run Tests (Default)	2026-08-07T16:37:01.8418299Z ^[[1m^[[92m     Running^[[0m tests\health_integration_test.rs (target\debug\deps\health_integration_test-53f48999c48ad359.exe)
+test (windows-latest)	Run Tests (Default)	2026-08-07T16:37:01.8500587Z 
+test (windows-latest)	Run Tests (Default)	2026-08-07T16:37:01.8501147Z running 6 tests
+test (windows-latest)	Run Tests (Default)	2026-08-07T16:37:01.8684851Z test test_cli_health_missing_contract_arg ... ok
+test (windows-latest)	Run Tests (Default)	2026-08-07T16:37:01.8685567Z test test_cli_health_invalid_format_arg ... ok
+test (windows-latest)	Run Tests (Default)	2026-08-07T16:37:01.8755002Z test test_cli_health_json_format_accepted ... ok
+test (windows-latest)	Run Tests (Default)	2026-08-07T16:37:01.8757526Z test test_cli_health_invalid_wasm ... ok
+test (windows-latest)	Run Tests (Default)	2026-08-07T16:37:01.8845361Z test test_cli_health_missing_wasm_file ... ok
+test (windows-latest)	Run Tests (Default)	2026-08-07T16:37:01.8861079Z test test_cli_health_onchain_error_path ... ok
+test (windows-latest)	Run Tests (Default)	2026-08-07T16:37:01.8861508Z 
+test (windows-latest)	Run Tests (Default)	2026-08-07T16:37:01.8862004Z test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.04s
+test (windows-latest)	Run Tests (Default)	2026-08-07T16:37:01.8862418Z 
+test (windows-latest)	Run Tests (Default)	2026-08-07T16:37:01.8878933Z ^[[1m^[[92m     Running^[[0m tests\identity_integration_test.rs (target\debug\deps\identity_integration_test-26878b1da5ca84f9.exe)
+test (windows-latest)	Run Tests (Default)	2026-08-07T16:37:01.8973679Z 
+test (windows-latest)	Run Tests (Default)	2026-08-07T16:37:01.8974083Z running 1 test
+test (windows-latest)	Run Tests (Default)	2026-08-07T16:37:01.9737350Z test test_cli_identity_lifecycle ... ok
+test (windows-latest)	Run Tests (Default)	2026-08-07T16:37:01.9737753Z 
+test (windows-latest)	Run Tests (Default)	2026-08-07T16:37:01.9738056Z test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.08s
+test (windows-latest)	Run Tests (Default)	2026-08-07T16:37:01.9738762Z 
+test (windows-latest)	Run Tests (Default)	2026-08-07T16:37:01.9753596Z ^[[1m^[[92m     Running^[[0m tests\init_tests.rs (target\debug\deps\init_tests-5db2bed178bc64ab.exe)
+test (windows-latest)	Run Tests (Default)	2026-08-07T16:37:01.9834040Z 
+test (windows-latest)	Run Tests (Default)	2026-08-07T16:37:01.9834434Z running 8 tests
+test (windows-latest)	Run Tests (Default)	2026-08-07T16:37:02.0101018Z test init_generated_cargo_toml_valid ... ok
+test (windows-latest)	Run Tests (Default)	2026-08-07T16:37:02.0157472Z test init_full_creates_all_files ... ok
+test (windows-latest)	Run Tests (Default)	2026-08-07T16:37:02.0158882Z test init_force_overwrites ... ok
+test (windows-latest)	Run Tests (Default)	2026-08-07T16:37:02.0345221Z test init_rejects_existing_directory ... ok
+test (windows-latest)	Run Tests (Default)	2026-08-07T16:37:02.0393894Z test init_json_output ... ok
+test (windows-latest)	Run Tests (Default)	2026-08-07T16:37:02.0411305Z test init_minimal_omits_extras ... ok
+test (windows-latest)	Run Tests (Default)	2026-08-07T16:37:02.0550527Z test init_sdkt_toml_has_network ... ok
+test (windows-latest)	Run Tests (Default)	2026-08-07T16:37:02.0925596Z ^[[1m^[[92m    Updating^[[0m crates.io index
+test (windows-latest)	Run Tests (Default)	2026-08-07T16:37:02.4629023Z ^[[1m^[[92m     Locking^[[0m 182 packages to latest compatible versions
+test (windows-latest)	Run Tests (Default)	2026-08-07T16:37:02.4700333Z ^[[1m^[[92m      Adding^[[0m arbitrary v1.3.2 ^[[1m^[[93m(available: v1.4.2)^[[0m
+test (windows-latest)	Run Tests (Default)	2026-08-07T16:37:02.4742312Z ^[[1m^[[92m      Adding^[[0m crypto-common v0.1.6 ^[[1m^[[93m(available: v0.1.7)^[[0m
+test (windows-latest)	Run Tests (Default)	2026-08-07T16:37:02.4799493Z ^[[1m^[[92m      Adding^[[0m derive_arbitrary v1.3.2 ^[[1m^[[93m(available: v1.4.2)^[[0m
+test (windows-latest)	Run Tests (Default)	2026-08-07T16:37:02.5093100Z ^[[1m^[[92m      Adding^[[0m soroban-builtin-sdk-macros v21.2.1 ^[[1m^[[93m(available: v21.2.2)^[[0m
+test (windows-latest)	Run Tests (Default)	2026-08-07T16:37:02.5094779Z ^[[1m^[[92m      Adding^[[0m soroban-env-common v21.2.1 ^[[1m^[[93m(available: v21.2.2)^[[0m
+test (windows-latest)	Run Tests (Default)	2026-08-07T16:37:02.5096261Z ^[[1m^[[92m      Adding^[[0m soroban-env-guest v21.2.1 ^[[1m^[[93m(available: v21.2.2)^[[0m
+test (windows-latest)	Run Tests (Default)	2026-08-07T16:37:02.5103220Z ^[[1m^[[92m      Adding^[[0m soroban-env-host v21.2.1 ^[[1m^[[93m(available: v21.2.2)^[[0m
+test (windows-latest)	Run Tests (Default)	2026-08-07T16:37:02.5106705Z ^[[1m^[[92m      Adding^[[0m soroban-env-macros v21.2.1 ^[[1m^[[93m(available: v21.2.2)^[[0m
+test (windows-latest)	Run Tests (Default)	2026-08-07T16:37:02.5118397Z ^[[1m^[[92m      Adding^[[0m soroban-sdk v21.7.7 ^[[1m^[[93m(available: v27.0.5)^[[0m
+test (windows-latest)	Run Tests (Default)	2026-08-07T16:37:02.5462002Z ^[[1m^[[92m Downloading^[[0m crates ...
+test (windows-latest)	Run Tests (Default)	2026-08-07T16:37:02.8292534Z ^[[1m^[[92m  Downloaded^[[0m crypto-common v0.1.6
+test (windows-latest)	Run Tests (Default)	2026-08-07T16:37:02.8387709Z ^[[1m^[[92m  Downloaded^[[0m bytes-lit v0.0.5
+test (windows-latest)	Run Tests (Default)	2026-08-07T16:37:02.8483427Z ^[[1m^[[92m  Downloaded^[[0m arbitrary v1.3.2
+test (windows-latest)	Run Tests (Default)	2026-08-07T16:37:02.8594666Z ^[[1m^[[92m  Downloaded^[[0m hex-literal v0.4.1
+test (windows-latest)	Run Tests (Default)	2026-08-07T16:37:02.8660454Z ^[[1m^[[92m  Downloaded^[[0m block-buffer v0.12.1
+test (windows-latest)	Run Tests (Default)	2026-08-07T16:37:02.8729239Z ^[[1m^[[92m  Downloaded^[[0m darling_macro v0.20.11
+test (windows-latest)	Run Tests (Default)	2026-08-07T16:37:02.8790486Z ^[[1m^[[92m  Downloaded^[[0m keccak v0.1.6
+test (windows-latest)	Run Tests (Default)	2026-08-07T16:37:02.8857821Z ^[[1m^[[92m  Downloaded^[[0m base32 v0.4.0
+test (windows-latest)	Run Tests (Default)	2026-08-07T16:37:02.8926550Z ^[[1m^[[92m  Downloaded^[[0m crypto-common v0.2.2
+test (windows-latest)	Run Tests (Default)	2026-08-07T16:37:02.8993015Z ^[[1m^[[92m  Downloaded^[[0m derive_arbitrary v1.3.2
+test (windows-latest)	Run Tests (Default)	2026-08-07T16:37:02.9051725Z ^[[1m^[[92m  Downloaded^[[0m ctor v0.2.9
+test (windows-latest)	Run Tests (Default)	2026-08-07T16:37:02.9113421Z ^[[1m^[[92m  Downloaded^[[0m downcast-rs v1.2.1
+test (windows-latest)	Run Tests (Default)	2026-08-07T16:37:02.9187415Z ^[[1m^[[92m  Downloaded^[[0m indexmap-nostd v0.4.0
+test (windows-latest)	Run Tests (Default)	2026-08-07T16:37:02.9260110Z ^[[1m^[[92m  Downloaded^[[0m base16ct v0.2.0
+test (windows-latest)	Run Tests (Default)	2026-08-07T16:37:02.9343891Z ^[[1m^[[92m  Downloaded^[[0m ecdsa v0.16.9
+test (windows-latest)	Run Tests (Default)	2026-08-07T16:37:02.9445059Z ^[[1m^[[92m  Downloaded^[[0m ff v0.13.1
+test (windows-latest)	Run Tests (Default)	2026-08-07T16:37:02.9553631Z ^[[1m^[[92m  Downloaded^[[0m digest v0.11.3
+test (windows-latest)	Run Tests (Default)	2026-08-07T16:37:02.9724162Z ^[[1m^[[92m  Downloaded^[[0m generic-array v0.14.9
+test (windows-latest)	Run Tests (Default)	2026-08-07T16:37:02.9825273Z ^[[1m^[[92m  Downloaded^[[0m group v0.13.0
+test (windows-latest)	Run Tests (Default)	2026-08-07T16:37:02.9911066Z ^[[1m^[[92m  Downloaded^[[0m ed25519 v3.0.0
+test (windows-latest)	Run Tests (Default)	2026-08-07T16:37:03.0000382Z ^[[1m^[[92m  Downloaded^[[0m hmac v0.12.1
+test (windows-latest)	Run Tests (Default)	2026-08-07T16:37:03.0142938Z ^[[1m^[[92m  Downloaded^[[0m darling v0.20.11
+test (windows-latest)	Run Tests (Default)	2026-08-07T16:37:03.0540926Z ^[[1m^[[92m  Downloaded^[[0m hybrid-array v0.4.14
+test (windows-latest)	Run Tests (Default)	2026-08-07T16:37:03.0708060Z ^[[1m^[[92m  Downloaded^[[0m backtrace v0.3.76
+test (windows-latest)	Run Tests (Default)	2026-08-07T16:37:03.1058602Z ^[[1m^[[92m  Downloaded^[[0m elliptic-curve v0.13.8
+test (windows-latest)	Run Tests (Default)	2026-08-07T16:37:03.1305711Z ^[[1m^[[92m  Downloaded^[[0m base64 v0.13.1
+test (windows-latest)	Run Tests (Default)	2026-08-07T16:37:03.1466800Z ^[[1m^[[92m  Downloaded^[[0m darling_core v0.20.11
+test (windows-latest)	Run Tests (Default)	2026-08-07T16:37:03.1899988Z ^[[1m^[[92m  Downloaded^[[0m crypto-bigint v0.5.5
+test (windows-latest)	Run Tests (Default)	2026-08-07T16:37:03.2421033Z ^[[1m^[[92m  Downloaded^[[0m k256 v0.13.4
+test (windows-latest)	Run Tests (Default)	2026-08-07T16:37:03.2613602Z ^[[1m^[[92m  Downloaded^[[0m ed25519-dalek v3.0.0
+test (windows-latest)	Run Tests (Default)	2026-08-07T16:37:03.2777410Z ^[[1m^[[92m  Downloaded^[[0m itertools v0.11.0
+test (windows-latest)	Run Tests (Default)	2026-08-07T16:37:03.3349120Z ^[[1m^[[92m  Downloaded^[[0m curve25519-dalek v5.0.0
+test (windows-latest)	Run Tests (Default)	2026-08-07T16:37:03.3856511Z ^[[1m^[[92m  Downloaded^[[0m num-bigint v0.4.8
+test (windows-latest)	Run Tests (Default)	2026-08-07T16:37:03.4227358Z ^[[1m^[[92m  Downloaded^[[0m paste v1.0.15
+test (windows-latest)	Run Tests (Default)	2026-08-07T16:37:03.4507157Z ^[[1m^[[92m  Downloaded^[[0m num-derive v0.4.2
+test (windows-latest)	Run Tests (Default)	2026-08-07T16:37:03.4622058Z ^[[1m^[[92m  Downloaded^[[0m num-integer v0.1.46
+test (windows-latest)	Run Tests (Default)	2026-08-07T16:37:03.4707910Z ^[[1m^[[92m  Downloaded^[[0m primeorder v0.13.6
+test (windows-latest)	Run Tests (Default)	2026-08-07T16:37:03.4796429Z ^[[1m^[[92m  Downloaded^[[0m rfc6979 v0.4.0
+test (windows-latest)	Run Tests (Default)	2026-08-07T16:37:03.4860206Z ^[[1m^[[92m  Downloaded^[[0m prettyplease v0.2.37
+test (windows-latest)	Run Tests (Default)	2026-08-07T16:37:03.5068234Z ^[[1m^[[92m  Downloaded^[[0m p256 v0.13.2
+test (windows-latest)	Run Tests (Default)	2026-08-07T16:37:03.5300440Z ^[[1m^[[92m  Downloaded^[[0m sec1 v0.7.3
+test (windows-latest)	Run Tests (Default)	2026-08-07T16:37:03.5408593Z ^[[1m^[[92m  Downloaded^[[0m static_assertions v1.1.0
+test (windows-latest)	Run Tests (Default)	2026-08-07T16:37:03.5518475Z ^[[1m^[[92m  Downloaded^[[0m sha2 v0.11.0
+test (windows-latest)	Run Tests (Default)	2026-08-07T16:37:03.5840261Z ^[[1m^[[92m  Downloaded^[[0m signature v3.0.0
+test (windows-latest)	Run Tests (Default)	2026-08-07T16:37:03.5940523Z ^[[1m^[[92m  Downloaded^[[0m soroban-builtin-sdk-macros v21.2.1
+test (windows-latest)	Run Tests (Default)	2026-08-07T16:37:03.5991311Z ^[[1m^[[92m  Downloaded^[[0m stellar-strkey v0.0.8
+test (windows-latest)	Run Tests (Default)	2026-08-07T16:37:03.6154664Z ^[[1m^[[92m  Downloaded^[[0m soroban-spec v21.7.7
+test (windows-latest)	Run Tests (Default)	2026-08-07T16:37:03.6201942Z ^[[1m^[[92m  Downloaded^[[0m spin v0.9.9
+test (windows-latest)	Run Tests (Default)	2026-08-07T16:37:03.6329805Z ^[[1m^[[92m  Downloaded^[[0m soroban-env-macros v21.2.1
+test (windows-latest)	Run Tests (Default)	2026-08-07T16:37:03.6409782Z ^[[1m^[[92m  Downloaded^[[0m soroban-sdk-macros v21.7.7
+test (windows-latest)	Run Tests (Default)	2026-08-07T16:37:03.6521703Z ^[[1m^[[92m  Downloaded^[[0m soroban-env-common v21.2.1
+test (windows-latest)	Run Tests (Default)	2026-08-07T16:37:03.6659537Z ^[[1m^[[92m  Downloaded^[[0m soroban-wasmi v0.31.1-soroban.20.0.1
+test (windows-latest)	Run Tests (Default)	2026-08-07T16:37:03.7101847Z ^[[1m^[[92m  Downloaded^[[0m soroban-env-host v21.2.1
+test (windows-latest)	Run Tests (Default)	2026-08-07T16:37:03.8186893Z ^[[1m^[[92m  Downloaded^[[0m soroban-spec-rust v21.7.7
+test (windows-latest)	Run Tests (Default)	2026-08-07T16:37:03.8275764Z ^[[1m^[[92m  Downloaded^[[0m soroban-ledger-snapshot v21.7.7
+test (windows-latest)	Run Tests (Default)	2026-08-07T16:37:03.8323769Z ^[[1m^[[92m  Downloaded^[[0m soroban-sdk v21.7.7
+test (windows-latest)	Run Tests (Default)	2026-08-07T16:37:03.8549919Z ^[[1m^[[92m  Downloaded^[[0m stellar-xdr v21.2.0
+test (windows-latest)	Run Tests (Default)	2026-08-07T16:37:03.8925713Z ^[[1m^[[92m  Downloaded^[[0m sha3 v0.10.9
+test (windows-latest)	Run Tests (Default)	2026-08-07T16:37:03.9106777Z ^[[1m^[[92m  Downloaded^[[0m time v0.3.55
+test (windows-latest)	Run Tests (Default)	2026-08-07T16:37:06.3512123Z ^[[1m^[[92m  Downloaded^[[0m wasmi_core v0.13.0
+test (windows-latest)	Run Tests (Default)	2026-08-07T16:37:06.3593906Z ^[[1m^[[92m  Downloaded^[[0m zerocopy v0.8.56
+test (windows-latest)	Run Tests (Default)	2026-08-07T16:37:07.0948158Z ^[[1m^[[92m  Downloaded^[[0m wasmi_arena v0.4.1
+test (windows-latest)	Run Tests (Default)	2026-08-07T16:37:07.1009249Z ^[[1m^[[92m  Downloaded^[[0m wasmparser-nostd v0.100.2
+test (windows-latest)	Run Tests (Default)	2026-08-07T16:37:07.2906173Z ^[[1m^[[92m  Downloaded^[[0m wasmparser v0.116.1
+test (windows-latest)	Run Tests (Default)	2026-08-07T16:37:07.6846994Z ^[[1m^[[92m   Compiling^[[0m proc-macro2 v1.0.107
+test (windows-latest)	Run Tests (Default)	2026-08-07T16:37:07.6847668Z ^[[1m^[[92m   Compiling^[[0m quote v1.0.47
+test (windows-latest)	Run Tests (Default)	2026-08-07T16:37:07.6848366Z ^[[1m^[[92m   Compiling^[[0m unicode-ident v1.0.24
+test (windows-latest)	Run Tests (Default)	2026-08-07T16:37:07.6849051Z ^[[1m^[[92m   Compiling^[[0m serde_core v1.0.229
+test (windows-latest)	Run Tests (Default)	2026-08-07T16:37:07.9373961Z ^[[1m^[[92m   Compiling^[[0m serde v1.0.229
+test (windows-latest)	Run Tests (Default)	2026-08-07T16:37:08.8513749Z ^[[1m^[[92m   Compiling^[[0m zmij v1.0.23
+test (windows-latest)	Run Tests (Default)	2026-08-07T16:37:09.1231086Z ^[[1m^[[92m   Compiling^[[0m version_check v0.9.5
+test (windows-latest)	Run Tests (Default)	2026-08-07T16:37:09.6199781Z ^[[1m^[[92m   Compiling^[[0m serde_json v1.0.151
+test (windows-latest)	Run Tests (Default)	2026-08-07T16:37:09.8859404Z ^[[1m^[[92m   Compiling^[[0m itoa v1.0.18
+test (windows-latest)	Run Tests (Default)	2026-08-07T16:37:10.4168820Z ^[[1m^[[92m   Compiling^[[0m memchr v2.8.3
+test (windows-latest)	Run Tests (Default)	2026-08-07T16:37:10.7784135Z ^[[1m^[[92m    Checking^[[0m typenum v1.20.1
+test (windows-latest)	Run Tests (Default)	2026-08-07T16:37:11.0776973Z ^[[1m^[[92m   Compiling^[[0m syn v3.0.3
+test (windows-latest)	Run Tests (Default)	2026-08-07T16:37:11.3941955Z ^[[1m^[[92m   Compiling^[[0m syn v2.0.119
+test (windows-latest)	Run Tests (Default)	2026-08-07T16:37:11.8380025Z ^[[1m^[[92m    Checking^[[0m zeroize v1.9.0
+test (windows-latest)	Run Tests (Default)	2026-08-07T16:37:12.1447503Z ^[[1m^[[92m   Compiling^[[0m generic-array v0.14.9
+test (windows-latest)	Run Tests (Default)	2026-08-07T16:37:12.4022438Z ^[[1m^[[92m   Compiling^[[0m strsim v0.11.1
+test (windows-latest)	Run Tests (Default)	2026-08-07T16:37:12.8072058Z ^[[1m^[[92m    Checking^[[0m subtle v2.6.1
+test (windows-latest)	Run Tests (Default)	2026-08-07T16:37:12.9332069Z ^[[1m^[[92m   Compiling^[[0m ident_case v1.0.1
+test (windows-latest)	Run Tests (Default)	2026-08-07T16:37:13.0233421Z ^[[1m^[[92m    Checking^[[0m cfg-if v1.0.4
+test (windows-latest)	Run Tests (Default)	2026-08-07T16:37:13.3587725Z ^[[1m^[[92m   Compiling^[[0m autocfg v1.5.1
+test (windows-latest)	Run Tests (Default)	2026-08-07T16:37:13.7493578Z ^[[1m^[[92m   Compiling^[[0m thiserror v1.0.69
+test (windows-latest)	Run Tests (Default)	2026-08-07T16:37:14.0284084Z ^[[1m^[[92m   Compiling^[[0m semver v1.0.28
+test (windows-latest)	Run Tests (Default)	2026-08-07T16:37:14.1102934Z ^[[1m^[[92m    Checking^[[0m const-oid v0.9.6
+test (windows-latest)	Run Tests (Default)	2026-08-07T16:37:14.3325650Z ^[[1m^[[92m   Compiling^[[0m serde_derive v1.0.229
+test (windows-latest)	Run Tests (Default)	2026-08-07T16:37:14.3395455Z ^[[1m^[[92m    Checking^[[0m getrandom v0.2.17
+test (windows-latest)	Run Tests (Default)	2026-08-07T16:37:14.4098790Z ^[[1m^[[92m    Checking^[[0m crypto-common v0.1.6
+test (windows-latest)	Run Tests (Default)	2026-08-07T16:37:14.4509726Z ^[[1m^[[92m    Checking^[[0m rand_core v0.6.4
+test (windows-latest)	Run Tests (Default)	2026-08-07T16:37:14.4910918Z ^[[1m^[[92m    Checking^[[0m block-buffer v0.10.4
+test (windows-latest)	Run Tests (Default)	2026-08-07T16:37:14.6070611Z ^[[1m^[[92m    Checking^[[0m digest v0.10.7
+test (windows-latest)	Run Tests (Default)	2026-08-07T16:37:14.6089295Z ^[[1m^[[92m   Compiling^[[0m rustc_version v0.4.1
+test (windows-latest)	Run Tests (Default)	2026-08-07T16:37:14.8409199Z ^[[1m^[[92m   Compiling^[[0m darling_core v0.23.0
+test (windows-latest)	Run Tests (Default)	2026-08-07T16:37:14.9462618Z ^[[1m^[[92m   Compiling^[[0m base32 v0.4.0
+test (windows-latest)	Run Tests (Default)	2026-08-07T16:37:15.0882399Z ^[[1m^[[92m   Compiling^[[0m escape-bytes v0.1.1
+test (windows-latest)	Run Tests (Default)	2026-08-07T16:37:15.2152155Z ^[[1m^[[92m    Checking^[[0m rand_core v0.10.1
+test (windows-latest)	Run Tests (Default)	2026-08-07T16:37:15.3477311Z ^[[1m^[[92m    Checking^[[0m ff v0.13.1
+test (windows-latest)	Run Tests (Default)	2026-08-07T16:37:15.4515186Z ^[[1m^[[92m    Checking^[[0m der v0.7.10
+test (windows-latest)	Run Tests (Default)	2026-08-07T16:37:16.5214891Z ^[[1m^[[92m   Compiling^[[0m num-traits v0.2.19
+test (windows-latest)	Run Tests (Default)	2026-08-07T16:37:16.7251763Z ^[[1m^[[92m    Checking^[[0m hybrid-array v0.4.14
+test (windows-latest)	Run Tests (Default)	2026-08-07T16:37:17.4483652Z ^[[1m^[[92m   Compiling^[[0m thiserror-impl v1.0.69
+test (windows-latest)	Run Tests (Default)	2026-08-07T16:37:18.7422040Z ^[[1m^[[92m   Compiling^[[0m darling_macro v0.23.0
+test (windows-latest)	Run Tests (Default)	2026-08-07T16:37:19.0360340Z ^[[1m^[[92m    Checking^[[0m base16ct v0.2.0
+test (windows-latest)	Run Tests (Default)	2026-08-07T16:37:19.1378807Z ^[[1m^[[92m   Compiling^[[0m crate-git-revision v0.0.6
+test (windows-latest)	Run Tests (Default)	2026-08-07T16:37:19.1769613Z ^[[1m^[[92m   Compiling^[[0m hex v0.4.3
+test (windows-latest)	Run Tests (Default)	2026-08-07T16:37:19.1856720Z ^[[1m^[[92m   Compiling^[[0m darling v0.23.0
+test (windows-latest)	Run Tests (Default)	2026-08-07T16:37:19.2481706Z ^[[1m^[[92m   Compiling^[[0m serde_with_macros v3.21.0
+test (windows-latest)	Run Tests (Default)	2026-08-07T16:37:19.3812310Z ^[[1m^[[92m   Compiling^[[0m stellar-strkey v0.0.8
+test (windows-latest)	Run Tests (Default)	2026-08-07T16:37:19.5784826Z ^[[1m^[[92m   Compiling^[[0m stellar-xdr v21.2.0
+test (windows-latest)	Run Tests (Default)	2026-08-07T16:37:19.8280135Z ^[[1m^[[92m   Compiling^[[0m either v1.17.0
+test (windows-latest)	Run Tests (Default)	2026-08-07T16:37:20.0056232Z ^[[1m^[[92m    Checking^[[0m sec1 v0.7.3
+test (windows-latest)	Run Tests (Default)	2026-08-07T16:37:20.0657706Z ^[[1m^[[92m   Compiling^[[0m itertools v0.11.0
+test (windows-latest)	Run Tests (Default)	2026-08-07T16:37:20.1690357Z ^[[1m^[[92m    Checking^[[0m group v0.13.0
+test (windows-latest)	Run Tests (Default)	2026-08-07T16:37:20.2454544Z ^[[1m^[[92m    Checking^[[0m crypto-bigint v0.5.5
+test (windows-latest)	Run Tests (Default)	2026-08-07T16:37:20.8290830Z ^[[1m^[[92m   Compiling^[[0m serde_with v3.21.0
+test (windows-latest)	Run Tests (Default)	2026-08-07T16:37:21.3738627Z ^[[1m^[[92m   Compiling^[[0m libm v0.2.16
+test (windows-latest)	Run Tests (Default)	2026-08-07T16:37:21.4522229Z ^[[1m^[[92m   Compiling^[[0m paste v1.0.15
+test (windows-latest)	Run Tests (Default)	2026-08-07T16:37:21.4899602Z ^[[1m^[[92m   Compiling^[[0m zerocopy v0.8.56
+test (windows-latest)	Run Tests (Default)	2026-08-07T16:37:21.7532860Z ^[[1m^[[92m    Checking^[[0m elliptic-curve v0.13.8
+test (windows-latest)	Run Tests (Default)	2026-08-07T16:37:22.4314870Z ^[[1m^[[92m    Checking^[[0m block-buffer v0.12.1
+test (windows-latest)	Run Tests (Default)	2026-08-07T16:37:22.6510860Z ^[[1m^[[92m    Checking^[[0m crypto-common v0.2.2
+test (windows-latest)	Run Tests (Default)	2026-08-07T16:37:22.6736270Z ^[[1m^[[92m    Checking^[[0m hmac v0.12.1
+test (windows-latest)	Run Tests (Default)	2026-08-07T16:37:22.7780972Z ^[[1m^[[92m    Checking^[[0m rfc6979 v0.4.0
+test (windows-latest)	Run Tests (Default)	2026-08-07T16:37:23.3837384Z ^[[1m^[[92m    Checking^[[0m digest v0.11.3
+test (windows-latest)	Run Tests (Default)	2026-08-07T16:37:24.5076617Z ^[[1m^[[92m   Compiling^[[0m num-derive v0.4.2
+test (windows-latest)	Run Tests (Default)	2026-08-07T16:37:24.7303405Z ^[[1m^[[92m   Compiling^[[0m curve25519-dalek v5.0.0
+test (windows-latest)	Run Tests (Default)	2026-08-07T16:37:25.1541038Z ^[[1m^[[92m    Checking^[[0m signature v2.2.0
+test (windows-latest)	Run Tests (Default)	2026-08-07T16:37:25.3260384Z ^[[1m^[[92m    Checking^[[0m indexmap-nostd v0.4.0
+test (windows-latest)	Run Tests (Default)	2026-08-07T16:37:25.4976490Z ^[[1m^[[92m    Checking^[[0m downcast-rs v1.2.1
+test (windows-latest)	Run Tests (Default)	2026-08-07T16:37:25.5784233Z ^[[1m^[[92m    Checking^[[0m equivalent v1.0.2
+test (windows-latest)	Run Tests (Default)	2026-08-07T16:37:25.6296974Z ^[[1m^[[92m    Checking^[[0m cpufeatures v0.2.17
+test (windows-latest)	Run Tests (Default)	2026-08-07T16:37:25.6529727Z ^[[1m^[[92m   Compiling^[[0m hashbrown v0.17.1
+test (windows-latest)	Run Tests (Default)	2026-08-07T16:37:25.6709441Z ^[[1m^[[92m    Checking^[[0m cpufeatures v0.3.0
+test (windows-latest)	Run Tests (Default)	2026-08-07T16:37:26.3347279Z ^[[1m^[[92m    Checking^[[0m indexmap v2.14.0
+test (windows-latest)	Run Tests (Default)	2026-08-07T16:37:27.0348916Z ^[[1m^[[92m    Checking^[[0m sha2 v0.10.9
+test (windows-latest)	Run Tests (Default)	2026-08-07T16:37:27.1720221Z ^[[1m^[[92m    Checking^[[0m wasmi_core v0.13.0
+test (windows-latest)	Run Tests (Default)	2026-08-07T16:37:27.6846735Z ^[[1m^[[92m    Checking^[[0m ppv-lite86 v0.2.21
+test (windows-latest)	Run Tests (Default)	2026-08-07T16:37:27.7818944Z ^[[1m^[[92m    Checking^[[0m wasmparser-nostd v0.100.2
+test (windows-latest)	Run Tests (Default)	2026-08-07T16:37:28.2633062Z ^[[1m^[[92m    Checking^[[0m ecdsa v0.16.9
+test (windows-latest)	Run Tests (Default)	2026-08-07T16:37:29.0705995Z ^[[1m^[[92m   Compiling^[[0m soroban-env-common v21.2.1
+test (windows-latest)	Run Tests (Default)	2026-08-07T16:37:29.3281369Z ^[[1m^[[92m   Compiling^[[0m curve25519-dalek-derive v0.1.1
+test (windows-latest)	Run Tests (Default)	2026-08-07T16:37:30.4162904Z ^[[1m^[[92m    Checking^[[0m signature v3.0.0
+test (windows-latest)	Run Tests (Default)	2026-08-07T16:37:30.5454630Z ^[[1m^[[92m    Checking^[[0m smallvec v1.15.2
+test (windows-latest)	Run Tests (Default)	2026-08-07T16:37:30.6229586Z ^[[1m^[[92m    Checking^[[0m wasmi_arena v0.4.1
+test (windows-latest)	Run Tests (Default)	2026-08-07T16:37:30.8115781Z ^[[1m^[[92m   Compiling^[[0m fnv v1.0.7
+test (windows-latest)	Run Tests (Default)	2026-08-07T16:37:30.8132758Z ^[[1m^[[92m   Compiling^[[0m prettyplease v0.2.37
+test (windows-latest)	Run Tests (Default)	2026-08-07T16:37:30.9618996Z ^[[1m^[[92m    Checking^[[0m base64 v0.13.1
+test (windows-latest)	Run Tests (Default)	2026-08-07T16:37:30.9733371Z ^[[1m^[[92m    Checking^[[0m spin v0.9.9
+test (windows-latest)	Run Tests (Default)	2026-08-07T16:37:31.1476240Z ^[[1m^[[92m    Checking^[[0m soroban-wasmi v0.31.1-soroban.20.0.1
+test (windows-latest)	Run Tests (Default)	2026-08-07T16:37:31.2421605Z ^[[1m^[[92m    Checking^[[0m wasmparser v0.116.1
+test (windows-latest)	Run Tests (Default)	2026-08-07T16:37:33.9058828Z ^[[1m^[[92m    Checking^[[0m ed25519 v3.0.0
+test (windows-latest)	Run Tests (Default)	2026-08-07T16:37:34.2253654Z ^[[1m^[[92m   Compiling^[[0m darling_core v0.20.11
+test (windows-latest)	Run Tests (Default)	2026-08-07T16:37:35.5802627Z ^[[1m^[[92m    Checking^[[0m rand_chacha v0.3.1
+test (windows-latest)	Run Tests (Default)	2026-08-07T16:37:37.5055768Z ^[[1m^[[92m    Checking^[[0m sha2 v0.11.0
+test (windows-latest)	Run Tests (Default)	2026-08-07T16:37:38.2649210Z ^[[1m^[[92m    Checking^[[0m primeorder v0.13.6
+test (windows-latest)	Run Tests (Default)	2026-08-07T16:37:38.8691751Z ^[[1m^[[92m    Checking^[[0m ethnum v1.5.3
+test (windows-latest)	Run Tests (Default)	2026-08-07T16:37:39.5387541Z ^[[1m^[[92m    Checking^[[0m static_assertions v1.1.0
+test (windows-latest)	Run Tests (Default)	2026-08-07T16:37:39.5892475Z ^[[1m^[[92m   Compiling^[[0m soroban-env-host v21.2.1
+test (windows-latest)	Run Tests (Default)	2026-08-07T16:37:40.0332081Z ^[[1m^[[92m    Checking^[[0m keccak v0.1.6
+test (windows-latest)	Run Tests (Default)	2026-08-07T16:37:41.9845408Z ^[[1m^[[92m    Checking^[[0m sha3 v0.10.9
+test (windows-latest)	Run Tests (Default)	2026-08-07T16:37:42.4101897Z ^[[1m^[[92m    Checking^[[0m p256 v0.13.2
+test (windows-latest)	Run Tests (Default)	2026-08-07T16:37:42.4128574Z ^[[1m^[[92m    Checking^[[0m ed25519-dalek v3.0.0
+test (windows-latest)	Run Tests (Default)	2026-08-07T16:37:42.5567709Z ^[[1m^[[92m   Compiling^[[0m darling_macro v0.20.11
+test (windows-latest)	Run Tests (Default)	2026-08-07T16:37:42.6446218Z ^[[1m^[[92m    Checking^[[0m rand v0.8.7
+test (windows-latest)	Run Tests (Default)	2026-08-07T16:37:43.1928510Z ^[[1m^[[92m   Compiling^[[0m soroban-spec v21.7.7
+test (windows-latest)	Run Tests (Default)	2026-08-07T16:37:43.9876243Z ^[[1m^[[92m    Checking^[[0m k256 v0.13.4
+test (windows-latest)	Run Tests (Default)	2026-08-07T16:37:44.3349443Z ^[[1m^[[92m   Compiling^[[0m num-integer v0.1.46
+test (windows-latest)	Run Tests (Default)	2026-08-07T16:37:44.7027407Z ^[[1m^[[92m   Compiling^[[0m soroban-builtin-sdk-macros v21.2.1
+test (windows-latest)	Run Tests (Default)	2026-08-07T16:37:44.7599327Z ^[[1m^[[92m   Compiling^[[0m soroban-env-macros v21.2.1
+test (windows-latest)	Run Tests (Default)	2026-08-07T16:37:44.9476711Z ^[[1m^[[92m   Compiling^[[0m soroban-sdk-macros v21.7.7
+test (windows-latest)	Run Tests (Default)	2026-08-07T16:37:45.7520380Z ^[[1m^[[92m    Checking^[[0m hex-literal v0.4.1
+test (windows-latest)	Run Tests (Default)	2026-08-07T16:37:46.9471554Z ^[[1m^[[92m   Compiling^[[0m num-bigint v0.4.8
+test (windows-latest)	Run Tests (Default)	2026-08-07T16:37:47.0367689Z ^[[1m^[[92m   Compiling^[[0m soroban-spec-rust v21.7.7
+test (windows-latest)	Run Tests (Default)	2026-08-07T16:37:47.5707689Z ^[[1m^[[92m   Compiling^[[0m darling v0.20.11
+test (windows-latest)	Run Tests (Default)	2026-08-07T16:37:47.6375911Z ^[[1m^[[92m   Compiling^[[0m soroban-sdk v21.7.7
+test (windows-latest)	Run Tests (Default)	2026-08-07T16:37:48.4589736Z ^[[1m^[[92m   Compiling^[[0m bytes-lit v0.0.5
+test (windows-latest)	Run Tests (Default)	2026-08-07T16:37:53.4704693Z ^[[1m^[[92m    Checking^[[0m soroban-ledger-snapshot v21.7.7
+test (windows-latest)	Run Tests (Default)	2026-08-07T16:37:54.1742201Z ^[[1m^[[92m    Checking^[[0m build_proj v0.1.0 (C:\Users\RUNNER~1\AppData\Local\Temp\.tmp49C9ov\build_proj)
+test (windows-latest)	Run Tests (Default)	2026-08-07T16:37:54.2578123Z ^[[1m^[[92m    Finished^[[0m `dev` profile [unoptimized + debuginfo] target(s) in 52.21s
+test (windows-latest)	Run Tests (Default)	2026-08-07T16:37:54.7965417Z test init_generated_project_compiles_successfully ... ok
+test (windows-latest)	Run Tests (Default)	2026-08-07T16:37:54.7965770Z 
+test (windows-latest)	Run Tests (Default)	2026-08-07T16:37:54.7965995Z test result: ok. 8 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 52.81s
+test (windows-latest)	Run Tests (Default)	2026-08-07T16:37:54.7966318Z 
+test (windows-latest)	Run Tests (Default)	2026-08-07T16:37:54.7988509Z ^[[1m^[[92m     Running^[[0m tests\integration_test.rs (target\debug\deps\integration_test-dd4aaaad72f339dc.exe)
+test (windows-latest)	Run Tests (Default)	2026-08-07T16:37:54.8148933Z 
+test (windows-latest)	Run Tests (Default)	2026-08-07T16:37:54.8149373Z running 2 tests
+test (windows-latest)	Run Tests (Default)	2026-08-07T16:37:54.8314207Z test test_inspect_format_flag ... ok
+test (windows-latest)	Run Tests (Default)	2026-08-07T16:37:54.8338825Z test test_decode_scval_integer ... ok
+test (windows-latest)	Run Tests (Default)	2026-08-07T16:37:54.8339210Z 
+test (windows-latest)	Run Tests (Default)	2026-08-07T16:37:54.8339577Z test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.02s
+test (windows-latest)	Run Tests (Default)	2026-08-07T16:37:54.8340015Z 
+test (windows-latest)	Run Tests (Default)	2026-08-07T16:37:54.8361620Z ^[[1m^[[92m     Running^[[0m tests\network_cli.rs (target\debug\deps\network_cli-86fdbab2bb1a8dac.exe)
+test (windows-latest)	Run Tests (Default)	2026-08-07T16:37:54.8450092Z 
+test (windows-latest)	Run Tests (Default)	2026-08-07T16:37:54.8450518Z running 9 tests
+test (windows-latest)	Run Tests (Default)	2026-08-07T16:37:54.8868189Z test existing_commands_work_without_profiles ... ok
+test (windows-latest)	Run Tests (Default)	2026-08-07T16:37:54.8927625Z test network_add_then_list_pretty ... ok
+test (windows-latest)	Run Tests (Default)	2026-08-07T16:37:54.8928145Z test network_add_then_show_json ... ok
+test (windows-latest)	Run Tests (Default)	2026-08-07T16:37:54.9064559Z test network_list_empty_message ... ok
+test (windows-latest)	Run Tests (Default)	2026-08-07T16:37:54.9091010Z test network_add_overwrites_existing ... ok
+test (windows-latest)	Run Tests (Default)	2026-08-07T16:37:54.9108018Z test network_profile_not_found_fails_before_rpc ... ok
+test (windows-latest)	Run Tests (Default)	2026-08-07T16:37:54.9252207Z test network_show_missing_errors ... ok
+test (windows-latest)	Run Tests (Default)	2026-08-07T16:37:54.9425582Z test network_remove_deletes_profile ... ok
+test (windows-latest)	Run Tests (Default)	2026-08-07T16:37:54.9909885Z test rpc_commands_expose_network_profile_flag ... ok
+test (windows-latest)	Run Tests (Default)	2026-08-07T16:37:54.9910249Z 
+test (windows-latest)	Run Tests (Default)	2026-08-07T16:37:54.9910487Z test result: ok. 9 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.15s
+test (windows-latest)	Run Tests (Default)	2026-08-07T16:37:54.9910777Z 
+test (windows-latest)	Run Tests (Default)	2026-08-07T16:37:54.9927701Z ^[[1m^[[92m     Running^[[0m tests\plugin_loading.rs (target\debug\deps\plugin_loading-8c8d9d15714f0ede.exe)
+test (windows-latest)	Run Tests (Default)	2026-08-07T16:37:55.0017267Z 
+test (windows-latest)	Run Tests (Default)	2026-08-07T16:37:55.0017657Z running 1 test
+test (windows-latest)	Run Tests (Default)	2026-08-07T16:37:55.0027561Z test plugin_without_feature_errors_clearly ... ok
+test (windows-latest)	Run Tests (Default)	2026-08-07T16:37:55.0027918Z 
+test (windows-latest)	Run Tests (Default)	2026-08-07T16:37:55.0028150Z test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test (windows-latest)	Run Tests (Default)	2026-08-07T16:37:55.0028714Z 
+test (windows-latest)	Run Tests (Default)	2026-08-07T16:37:55.0042705Z ^[[1m^[[92m     Running^[[0m tests\storage_analyze_integration_test.rs (target\debug\deps\storage_analyze_integration_test-bc9b3ebed52641c7.exe)
+test (windows-latest)	Run Tests (Default)	2026-08-07T16:37:55.0128348Z 
+test (windows-latest)	Run Tests (Default)	2026-08-07T16:37:55.0128744Z running 3 tests
+test (windows-latest)	Run Tests (Default)	2026-08-07T16:37:55.0280894Z test storage_analyze_help_documents_categorization ... ok
+test (windows-latest)	Run Tests (Default)	2026-08-07T16:37:55.0314390Z test storage_analyze_empty_id_errors ... ok
+test (windows-latest)	Run Tests (Default)	2026-08-07T16:37:55.5867294Z test storage_analyze_accepts_json_format_flag ... ok
+test (windows-latest)	Run Tests (Default)	2026-08-07T16:37:55.5867618Z 
+test (windows-latest)	Run Tests (Default)	2026-08-07T16:37:55.5867878Z test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.57s
+test (windows-latest)	Run Tests (Default)	2026-08-07T16:37:55.5868248Z 
+test (windows-latest)	Run Tests (Default)	2026-08-07T16:37:55.5886797Z ^[[1m^[[92m     Running^[[0m tests\tx_build_integration_test.rs (target\debug\deps\tx_build_integration_test-219ac7f0ecd8b3eb.exe)
+test (windows-latest)	Run Tests (Default)	2026-08-07T16:37:55.5979715Z 
+test (windows-latest)	Run Tests (Default)	2026-08-07T16:37:55.5980079Z running 6 tests
+test (windows-latest)	Run Tests (Default)	2026-08-07T16:37:55.6204077Z test test_cli_tx_build_json ... ok
+test (windows-latest)	Run Tests (Default)	2026-08-07T16:37:55.6210215Z test test_cli_tx_build_output_file ... ok
+test (windows-latest)	Run Tests (Default)	2026-08-07T16:37:55.6213870Z test test_cli_tx_build_invalid_source ... ok
+test (windows-latest)	Run Tests (Default)	2026-08-07T16:37:55.6219492Z test test_cli_tx_build_invalid_arg_format ... ok
+test (windows-latest)	Run Tests (Default)	2026-08-07T16:37:55.6351199Z test test_cli_tx_build_success ... ok
+test (windows-latest)	Run Tests (Default)	2026-08-07T16:37:55.6361287Z test test_cli_tx_build_typed_args ... ok
+test (windows-latest)	Run Tests (Default)	2026-08-07T16:37:55.6361625Z 
+test (windows-latest)	Run Tests (Default)	2026-08-07T16:37:55.6361977Z test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.04s
+test (windows-latest)	Run Tests (Default)	2026-08-07T16:37:55.6362290Z 
+test (windows-latest)	Run Tests (Default)	2026-08-07T16:37:55.6379630Z ^[[1m^[[92m     Running^[[0m tests\tx_integration_test.rs (target\debug\deps\tx_integration_test-9b5fdb4f80e37a95.exe)
+test (windows-latest)	Run Tests (Default)	2026-08-07T16:37:55.6463125Z 
+test (windows-latest)	Run Tests (Default)	2026-08-07T16:37:55.6463622Z running 2 tests
+test (windows-latest)	Run Tests (Default)	2026-08-07T16:37:55.6602840Z test test_tx_inspect_invalid_format ... ok
+test (windows-latest)	Run Tests (Default)	2026-08-07T16:37:55.8714084Z test test_tx_inspect_format_json ... ok
+test (windows-latest)	Run Tests (Default)	2026-08-07T16:37:55.8714438Z 
+test (windows-latest)	Run Tests (Default)	2026-08-07T16:37:55.8714807Z test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.23s
+test (windows-latest)	Run Tests (Default)	2026-08-07T16:37:55.8715246Z 
+test (windows-latest)	Run Tests (Default)	2026-08-07T16:37:55.8734697Z ^[[1m^[[92m     Running^[[0m tests\tx_sign.rs (target\debug\deps\tx_sign-8c9c1fc7f1bf696e.exe)
+test (windows-latest)	Run Tests (Default)	2026-08-07T16:37:55.8832506Z 
+test (windows-latest)	Run Tests (Default)	2026-08-07T16:37:55.8832956Z running 10 tests
+test (windows-latest)	Run Tests (Default)	2026-08-07T16:37:55.9310151Z test invalid_base64_errors ... ok
+test (windows-latest)	Run Tests (Default)	2026-08-07T16:37:55.9313228Z test invalid_file_errors ... ok
+test (windows-latest)	Run Tests (Default)	2026-08-07T16:37:55.9355165Z test invalid_envelope_errors ... ok
+test (windows-latest)	Run Tests (Default)	2026-08-07T16:37:55.9621248Z test cannot_write_output_errors ... ok
+test (windows-latest)	Run Tests (Default)	2026-08-07T16:37:55.9790894Z test missing_identity_errors ... ok
+test (windows-latest)	Run Tests (Default)	2026-08-07T16:37:56.0006041Z test invalid_network_errors ... ok
+test (windows-latest)	Run Tests (Default)	2026-08-07T16:37:56.0025280Z test successful_sign_json_format ... ok
+test (windows-latest)	Run Tests (Default)	2026-08-07T16:37:56.0263241Z test successful_sign_to_file ... ok
+test (windows-latest)	Run Tests (Default)	2026-08-07T16:37:56.0303621Z test successful_sign_to_stdout ... ok
+test (windows-latest)	Run Tests (Default)	2026-08-07T16:37:56.0331478Z test unknown_identity_errors ... ok
+test (windows-latest)	Run Tests (Default)	2026-08-07T16:37:56.0331836Z 
+test (windows-latest)	Run Tests (Default)	2026-08-07T16:37:56.0332174Z test result: ok. 10 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.15s
+test (windows-latest)	Run Tests (Default)	2026-08-07T16:37:56.0332484Z 
+test (windows-latest)	Run Tests (Default)	2026-08-07T16:37:56.0349177Z ^[[1m^[[92m     Running^[[0m tests\tx_simulate_integration_test.rs (target\debug\deps\tx_simulate_integration_test-96f16ce638200fc3.exe)
+test (windows-latest)	Run Tests (Default)	2026-08-07T16:37:56.0433250Z 
+test (windows-latest)	Run Tests (Default)	2026-08-07T16:37:56.0433689Z running 2 tests
+test (windows-latest)	Run Tests (Default)	2026-08-07T16:37:56.0594227Z test test_cli_tx_simulate_empty_envelope ... ok
+test (windows-latest)	Run Tests (Default)	2026-08-07T16:37:56.2641403Z test test_cli_tx_simulate_invalid_envelope ... ok
+test (windows-latest)	Run Tests (Default)	2026-08-07T16:37:56.2641793Z 
+test (windows-latest)	Run Tests (Default)	2026-08-07T16:37:56.2642086Z test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.22s
+test (windows-latest)	Run Tests (Default)	2026-08-07T16:37:56.2642396Z 
+test (windows-latest)	Run Tests (Default)	2026-08-07T16:37:56.2660496Z ^[[1m^[[92m     Running^[[0m tests\tx_submit_integration_test.rs (target\debug\deps\tx_submit_integration_test-309571448e2e4332.exe)
+test (windows-latest)	Run Tests (Default)	2026-08-07T16:37:56.2751985Z 
+test (windows-latest)	Run Tests (Default)	2026-08-07T16:37:56.2752368Z running 2 tests
+test (windows-latest)	Run Tests (Default)	2026-08-07T16:37:56.4978234Z test test_cli_submit_invalid_envelope_rejects ... ok
+test (windows-latest)	Run Tests (Default)	2026-08-07T16:37:56.5331057Z test test_cli_submit_json_output_format ... ok
+test (windows-latest)	Run Tests (Default)	2026-08-07T16:37:56.5331413Z 
+test (windows-latest)	Run Tests (Default)	2026-08-07T16:37:56.5331674Z test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.26s
+test (windows-latest)	Run Tests (Default)	2026-08-07T16:37:56.5332010Z 
+test (windows-latest)	Run Tests (Default)	2026-08-07T16:37:56.5349686Z ^[[1m^[[92m     Running^[[0m tests\upgrade_safety_integration_test.rs (target\debug\deps\upgrade_safety_integration_test-aae18b9e65cf6ff8.exe)
+test (windows-latest)	Run Tests (Default)	2026-08-07T16:37:56.5440555Z 
+test (windows-latest)	Run Tests (Default)	2026-08-07T16:37:56.5441368Z running 5 tests
+test (windows-latest)	Run Tests (Default)	2026-08-07T16:37:56.5635295Z test diff_help_documents_upgrade_safety ... ok
+test (windows-latest)	Run Tests (Default)	2026-08-07T16:37:56.5637483Z test deploy_deny_breaking_aborts_on_incompatible ... ok
+test (windows-latest)	Run Tests (Default)	2026-08-07T16:37:56.5687163Z test upgrade_safety_json_serializes_verdict ... ok
+test (windows-latest)	Run Tests (Default)	2026-08-07T16:37:56.5689521Z test deploy_without_deny_breaking_skips_guard ... ok
+test (windows-latest)	Run Tests (Default)	2026-08-07T16:37:56.5785911Z test upgrade_safety_pretty_shows_breaking_and_nonbreaking ... ok
+test (windows-latest)	Run Tests (Default)	2026-08-07T16:37:56.5786503Z 
+test (windows-latest)	Run Tests (Default)	2026-08-07T16:37:56.5786826Z test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.03s
+test (windows-latest)	Run Tests (Default)	2026-08-07T16:37:56.5787231Z 
+test (windows-latest)	Run Tests (Default)	2026-08-07T16:37:56.5804232Z ^[[1m^[[92m     Running^[[0m tests\verify_integration_test.rs (target\debug\deps\verify_integration_test-68a416602525e668.exe)
+test (windows-latest)	Run Tests (Default)	2026-08-07T16:37:56.5890307Z 
+test (windows-latest)	Run Tests (Default)	2026-08-07T16:37:56.5890626Z running 6 tests
+test (windows-latest)	Run Tests (Default)	2026-08-07T16:37:56.6069918Z test test_cli_verify_invalid_format_arg ... ok
+test (windows-latest)	Run Tests (Default)	2026-08-07T16:37:56.6070479Z test test_cli_verify_missing_contract_arg ... ok
+test (windows-latest)	Run Tests (Default)	2026-08-07T16:37:56.6120289Z test test_cli_verify_invalid_wasm ... ok
+test (windows-latest)	Run Tests (Default)	2026-08-07T16:37:56.6124865Z test test_cli_verify_json_format_accepted ... ok
+test (windows-latest)	Run Tests (Default)	2026-08-07T16:37:56.6222759Z test test_cli_verify_missing_wasm_file ... ok
+test (windows-latest)	Run Tests (Default)	2026-08-07T16:37:56.6232178Z test test_cli_verify_onchain_error_path ... ok
+test (windows-latest)	Run Tests (Default)	2026-08-07T16:37:56.6232489Z 
+test (windows-latest)	Run Tests (Default)	2026-08-07T16:37:56.6232745Z test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.03s
+test (windows-latest)	Run Tests (Default)	2026-08-07T16:37:56.6233070Z 
+test (windows-latest)	Run Tests (Default)	2026-08-07T16:37:56.6248363Z ^[[1m^[[92m     Running^[[0m tests\wasm_integration_test.rs (target\debug\deps\wasm_integration_test-a7a2ec1833f2a64f.exe)
+test (windows-latest)	Run Tests (Default)	2026-08-07T16:37:56.6330688Z 
+test (windows-latest)	Run Tests (Default)	2026-08-07T16:37:56.6331070Z running 9 tests
+test (windows-latest)	Run Tests (Default)	2026-08-07T16:37:56.6552243Z test test_cli_wasm_cache_info_default ... ok
+test (windows-latest)	Run Tests (Default)	2026-08-07T16:37:56.6575898Z test test_cli_wasm_cache_clear ... ok
+test (windows-latest)	Run Tests (Default)	2026-08-07T16:37:56.6597226Z test test_cli_wasm_cache_info_json ... ok
+test (windows-latest)	Run Tests (Default)	2026-08-07T16:37:56.6599203Z test test_cli_wasm_cache_remove ... ok
+test (windows-latest)	Run Tests (Default)	2026-08-07T16:37:56.6731998Z test test_cli_wasm_inspect_invalid_wasm ... ok
+test (windows-latest)	Run Tests (Default)	2026-08-07T16:37:56.6775794Z test test_cli_wasm_inspect_missing_file ... ok
+test (windows-latest)	Run Tests (Default)	2026-08-07T16:37:56.6777076Z test test_cli_wasm_inspect_json ... ok
+test (windows-latest)	Run Tests (Default)	2026-08-07T16:37:56.6784047Z test test_cli_wasm_inspect_valid_empty_wasm ... ok
+test (windows-latest)	Run Tests (Default)	2026-08-07T16:37:56.6874771Z test test_cli_wasm_metadata_missing_contract ... ok
+test (windows-latest)	Run Tests (Default)	2026-08-07T16:37:56.6875083Z 
+test (windows-latest)	Run Tests (Default)	2026-08-07T16:37:56.6875401Z test result: ok. 9 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.05s
+test (windows-latest)	Run Tests (Default)	2026-08-07T16:37:56.6875706Z 
+test (windows-latest)	Run Tests (Default)	2026-08-07T16:37:56.6890430Z ^[[1m^[[92m     Running^[[0m unittests src\lib.rs (target\debug\deps\sdkt_core-7ba29b9755b4d870.exe)
+test (windows-latest)	Run Tests (Default)	2026-08-07T16:37:56.6973772Z 
+test (windows-latest)	Run Tests (Default)	2026-08-07T16:37:56.6974023Z running 85 tests
+test (windows-latest)	Run Tests (Default)	2026-08-07T16:37:56.6980112Z test config::tests::test_default_config ... ok
+test (windows-latest)	Run Tests (Default)	2026-08-07T16:37:56.6981093Z test build::tests::test_build_empty_config ... ok
+test (windows-latest)	Run Tests (Default)	2026-08-07T16:37:56.6986664Z test build::tests::test_build_missing_path ... ok
+test (windows-latest)	Run Tests (Default)	2026-08-07T16:37:56.6999085Z test config::tests::test_duplicate_contract_name_rejected ... ok
+test (windows-latest)	Run Tests (Default)	2026-08-07T16:37:56.7002047Z test config::tests::test_old_toml_without_storage ... ok
+test (windows-latest)	Run Tests (Default)	2026-08-07T16:37:56.7004281Z test config::tests::test_parse_valid_toml ... ok
+test (windows-latest)	Run Tests (Default)	2026-08-07T16:37:56.7005961Z test config::tests::test_depends_on_field_parses ... ok
+test (windows-latest)	Run Tests (Default)	2026-08-07T16:37:56.7006964Z test fee::tests::test_estimate_base_fee_empty ... ok
+test (windows-latest)	Run Tests (Default)	2026-08-07T16:37:56.7007763Z test fee::tests::test_estimate_base_fee_even_count ... ok
+test (windows-latest)	Run Tests (Default)	2026-08-07T16:37:56.7010041Z test fee::tests::test_estimate_base_fee_median ... ok
+test (windows-latest)	Run Tests (Default)	2026-08-07T16:37:56.7010523Z test fee::tests::test_estimate_combined ... ok
+test (windows-latest)	Run Tests (Default)	2026-08-07T16:37:56.7010964Z test fee::tests::test_estimate_xlm_exact ... ok
+test (windows-latest)	Run Tests (Default)	2026-08-07T16:37:56.7011372Z test fee::tests::test_estimate_xlm_whole ... ok
+test (windows-latest)	Run Tests (Default)	2026-08-07T16:37:56.7011805Z test fee::tests::test_mainnet_fee_stroops ... ok
+test (windows-latest)	Run Tests (Default)	2026-08-07T16:37:56.7012232Z test fee::tests::test_multiple_samples ... ok
+test (windows-latest)	Run Tests (Default)	2026-08-07T16:37:56.7013405Z test fee::tests::test_network_display ... ok
+test (windows-latest)	Run Tests (Default)	2026-08-07T16:37:56.7014568Z test fee::tests::test_network_from_str ... ok
+test (windows-latest)	Run Tests (Default)	2026-08-07T16:37:56.7014994Z test fee::tests::test_network_multipliers ... ok
+test (windows-latest)	Run Tests (Default)	2026-08-07T16:37:56.7015413Z test fee::tests::test_override_multiplier ... ok
+test (windows-latest)	Run Tests (Default)	2026-08-07T16:37:56.7016316Z test fee::tests::test_real_testnet_sample ... ok
+test (windows-latest)	Run Tests (Default)	2026-08-07T16:37:56.7018591Z test fee::tests::test_standalone_fee_stroops ... ok
+test (windows-latest)	Run Tests (Default)	2026-08-07T16:37:56.7019115Z test fee::tests::test_stroops_per_xlm ... ok
+test (windows-latest)	Run Tests (Default)	2026-08-07T16:37:56.7020287Z test fee::tests::test_testnet_fee_stroops ... ok
+test (windows-latest)	Run Tests (Default)	2026-08-07T16:37:56.7021350Z test format::tests::test_output_format_from_str ... ok
+test (windows-latest)	Run Tests (Default)	2026-08-07T16:37:56.7038362Z test fetch::tests::path_resolver_returns_path ... ok
+test (windows-latest)	Run Tests (Default)	2026-08-07T16:37:56.7059701Z test lock::tests::generate_lock_errors_when_artifact_missing ... ok
+test (windows-latest)	Run Tests (Default)	2026-08-07T16:37:56.7060441Z test lock::tests::compute_sha256_known_vector ... ok
+test (windows-latest)	Run Tests (Default)	2026-08-07T16:37:56.7070095Z test lock::tests::lock_dependencies_records_local_and_git ... ok
+test (windows-latest)	Run Tests (Default)	2026-08-07T16:37:56.7081634Z test lock::tests::verify_lock_absent_reports_missing_in_lock ... ok
+test (windows-latest)	Run Tests (Default)	2026-08-07T16:37:56.7145529Z test lock::tests::verify_lock_detects_drift_and_missing ... ok
+test (windows-latest)	Run Tests (Default)	2026-08-07T16:37:56.7153398Z test lock::tests::generate_lock_records_order_and_hashes ... ok
+test (windows-latest)	Run Tests (Default)	2026-08-07T16:37:56.7154249Z test package::tests::test_duplicate_package_name_rejected_at_parse ... ok
+test (windows-latest)	Run Tests (Default)	2026-08-07T16:37:56.7158832Z test package::tests::test_topo_sort_deterministic_and_cyclic ... ok
+test (windows-latest)	Run Tests (Default)	2026-08-07T16:37:56.7159771Z test package::tests::test_unsupported_source_no_longer_rejected_at_parse ... ok
+test (windows-latest)	Run Tests (Default)	2026-08-07T16:37:56.7163144Z test package::tests::test_validate_git_rejects_empty_ref ... ok
+test (windows-latest)	Run Tests (Default)	2026-08-07T16:37:56.7164073Z test package::tests::test_validate_git_rejects_multiple_refs ... ok
+test (windows-latest)	Run Tests (Default)	2026-08-07T16:37:56.7166202Z test package::tests::test_validate_git_rejects_path_plus_git ... ok
+test (windows-latest)	Run Tests (Default)	2026-08-07T16:37:56.7166915Z test package::tests::test_validate_git_rejects_unsupported_scheme ... ok
+test (windows-latest)	Run Tests (Default)	2026-08-07T16:37:56.7169141Z test package::tests::test_validate_git_tag_ok ... ok
+test (windows-latest)	Run Tests (Default)	2026-08-07T16:37:56.7169719Z test package::tests::test_validate_git_url_accepts_and_rejects ... ok
+test (windows-latest)	Run Tests (Default)	2026-08-07T16:37:56.7171813Z test package::tests::test_validate_invalid_version_format ... ok
+test (windows-latest)	Run Tests (Default)	2026-08-07T16:37:56.7174096Z test package::tests::test_validate_missing_name ... ok
+test (windows-latest)	Run Tests (Default)	2026-08-07T16:37:56.7178156Z test package::tests::test_validate_missing_path ... ok
+test (windows-latest)	Run Tests (Default)	2026-08-07T16:37:56.7181822Z test package::tests::test_validate_missing_version ... ok
+test (windows-latest)	Run Tests (Default)	2026-08-07T16:37:56.7183255Z test package::tests::test_validate_manifest_full ... ok
+test (windows-latest)	Run Tests (Default)	2026-08-07T16:37:56.7186500Z test package::tests::test_validate_package_ok ... ok
+test (windows-latest)	Run Tests (Default)	2026-08-07T16:37:56.7187870Z test package::tests::test_validate_path_not_found ... ok
+test (windows-latest)	Run Tests (Default)	2026-08-07T16:37:56.7190184Z test package::tests::test_validate_self_dependency ... ok
+test (windows-latest)	Run Tests (Default)	2026-08-07T16:37:56.7193730Z test package::tests::test_validate_valid_version_with_prerelease ... ok
+test (windows-latest)	Run Tests (Default)	2026-08-07T16:37:56.7197820Z test project::tests::test_circular_dependency ... ok
+test (windows-latest)	Run Tests (Default)	2026-08-07T16:37:56.7202534Z test project::tests::test_depends_on_field ... ok
+test (windows-latest)	Run Tests (Default)	2026-08-07T16:37:56.7206615Z test package::tests::test_validate_valid_local_deps ... ok
+test (windows-latest)	Run Tests (Default)	2026-08-07T16:37:56.7219813Z test project::tests::test_deterministic_ordering ... ok
+test (windows-latest)	Run Tests (Default)	2026-08-07T16:37:56.7221121Z test project::tests::test_duplicate_dependency ... ok
+test (windows-latest)	Run Tests (Default)	2026-08-07T16:37:56.7224912Z test project::tests::test_missing_config ... ok
+test (windows-latest)	Run Tests (Default)	2026-08-07T16:37:56.7230719Z test project::tests::test_merged_deploy_after_and_depends_on ... ok
+test (windows-latest)	Run Tests (Default)	2026-08-07T16:37:56.7237754Z test project::tests::test_multiple_with_dependencies ... ok
+test (windows-latest)	Run Tests (Default)	2026-08-07T16:37:56.7238265Z test project::tests::test_self_dependency ... ok
+test (windows-latest)	Run Tests (Default)	2026-08-07T16:37:56.7241832Z test project::tests::test_single_contract ... ok
+test (windows-latest)	Run Tests (Default)	2026-08-07T16:37:56.7243096Z test project::tests::test_unknown_dependency ... ok
+test (windows-latest)	Run Tests (Default)	2026-08-07T16:37:56.7245453Z test project::tests::test_validate_project_ok_and_err ... ok
+test (windows-latest)	Run Tests (Default)	2026-08-07T16:37:56.7294828Z test scaffold::tests::cargo_toml_has_no_std_profile ... ok
+test (windows-latest)	Run Tests (Default)	2026-08-07T16:37:56.7318917Z test scaffold::tests::force_overwrites_existing ... ok
+test (windows-latest)	Run Tests (Default)	2026-08-07T16:37:56.7387512Z test scaffold::tests::full_scaffold_creates_all_files ... ok
+test (windows-latest)	Run Tests (Default)	2026-08-07T16:37:56.7417185Z test scaffold::tests::hyphenated_name_produces_valid_crate ... ok
+test (windows-latest)	Run Tests (Default)	2026-08-07T16:37:56.7461118Z test scaffold::tests::lib_rs_is_no_std ... ok
+test (windows-latest)	Run Tests (Default)	2026-08-07T16:37:56.7478315Z test scaffold::tests::rejects_existing_dir ... ok
+test (windows-latest)	Run Tests (Default)	2026-08-07T16:37:56.7484273Z test tx_builder::tests::test_builder_invalid_memo ... ok
+test (windows-latest)	Run Tests (Default)	2026-08-07T16:37:56.7496473Z test scaffold::tests::minimal_scaffold_omits_extras ... ok
+test (windows-latest)	Run Tests (Default)	2026-08-07T16:37:56.7501329Z test tx_builder::tests::test_builder_invoke_contract_empty_args ... ok
+test (windows-latest)	Run Tests (Default)	2026-08-07T16:37:56.7502679Z test tx_builder::tests::test_builder_invoke_contract_invalid_contract_id ... ok
+test (windows-latest)	Run Tests (Default)	2026-08-07T16:37:56.7506302Z test tx_builder::tests::test_builder_missing_operations ... ok
+test (windows-latest)	Run Tests (Default)	2026-08-07T16:37:56.7509262Z test tx_builder::tests::test_builder_missing_source ... ok
+test (windows-latest)	Run Tests (Default)	2026-08-07T16:37:56.7510255Z test tx_builder::tests::test_builder_invoke_contract_success ... ok
+test (windows-latest)	Run Tests (Default)	2026-08-07T16:37:56.7513323Z test validation::tests::classic_operation_warning ... ok
+test (windows-latest)	Run Tests (Default)	2026-08-07T16:37:56.7514646Z test tx_builder::tests::test_valid_build_and_encode ... ok
+test (windows-latest)	Run Tests (Default)	2026-08-07T16:37:56.7516980Z test validation::tests::empty_tx ... ok
+test (windows-latest)	Run Tests (Default)	2026-08-07T16:37:56.7517703Z test validation::tests::invalid_fee ... ok
+test (windows-latest)	Run Tests (Default)	2026-08-07T16:37:56.7522928Z test validation::tests::malformed_envelope ... ok
+test (windows-latest)	Run Tests (Default)	2026-08-07T16:37:56.7524090Z test validation::tests::invalid_sequence ... ok
+test (windows-latest)	Run Tests (Default)	2026-08-07T16:37:56.7527293Z test validation::tests::missing_function_name ... ok
+test (windows-latest)	Run Tests (Default)	2026-08-07T16:37:56.7529062Z test validation::tests::oversize_xdr ... ok
+test (windows-latest)	Run Tests (Default)	2026-08-07T16:37:56.7529420Z test validation::tests::valid_tx ... ok
+test (windows-latest)	Run Tests (Default)	2026-08-07T16:37:57.2426707Z test fetch::tests::fetch_git_by_tag ... FAILED
+test (windows-latest)	Run Tests (Default)	2026-08-07T16:37:57.2427280Z test fetch::tests::fetch_git_by_rev ... FAILED
+test (windows-latest)	Run Tests (Default)	2026-08-07T16:37:57.2427608Z 
+test (windows-latest)	Run Tests (Default)	2026-08-07T16:37:57.2427698Z failures:
+test (windows-latest)	Run Tests (Default)	2026-08-07T16:37:57.2427852Z 
+test (windows-latest)	Run Tests (Default)	2026-08-07T16:37:57.2427970Z ---- fetch::tests::fetch_git_by_tag stdout ----
+test (windows-latest)	Run Tests (Default)	2026-08-07T16:37:57.2428164Z 
+test (windows-latest)	Run Tests (Default)	2026-08-07T16:37:57.2428470Z thread 'fetch::tests::fetch_git_by_tag' (2712) panicked at crates\sdkt-core\src\fetch.rs:369:13:
+test (windows-latest)	Run Tests (Default)	2026-08-07T16:37:57.2428860Z git ["commit", "-q", "-m", "second"] failed: 
+test (windows-latest)	Run Tests (Default)	2026-08-07T16:37:57.2429043Z 
+test (windows-latest)	Run Tests (Default)	2026-08-07T16:37:57.2429162Z ---- fetch::tests::fetch_git_by_rev stdout ----
+test (windows-latest)	Run Tests (Default)	2026-08-07T16:37:57.2429334Z 
+test (windows-latest)	Run Tests (Default)	2026-08-07T16:37:57.2429540Z thread 'fetch::tests::fetch_git_by_rev' (2824) panicked at crates\sdkt-core\src\fetch.rs:369:13:
+test (windows-latest)	Run Tests (Default)	2026-08-07T16:37:57.2429905Z git ["commit", "-q", "-m", "second"] failed: 
+test (windows-latest)	Run Tests (Default)	2026-08-07T16:37:57.2430232Z note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+test (windows-latest)	Run Tests (Default)	2026-08-07T16:37:57.2430595Z 
+test (windows-latest)	Run Tests (Default)	2026-08-07T16:37:57.2430601Z 
+test (windows-latest)	Run Tests (Default)	2026-08-07T16:37:57.2430675Z failures:
+test (windows-latest)	Run Tests (Default)	2026-08-07T16:37:57.2430837Z     fetch::tests::fetch_git_by_rev
+test (windows-latest)	Run Tests (Default)	2026-08-07T16:37:57.2431036Z     fetch::tests::fetch_git_by_tag
+test (windows-latest)	Run Tests (Default)	2026-08-07T16:37:57.2431160Z 
+test (windows-latest)	Run Tests (Default)	2026-08-07T16:37:57.2431357Z test result: FAILED. 83 passed; 2 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.55s
+test (windows-latest)	Run Tests (Default)	2026-08-07T16:37:57.2431658Z 
+test (windows-latest)	Run Tests (Default)	2026-08-07T16:37:57.2446511Z ^[[1m^[[91merror^[[0m: test failed, to rerun pass `-p sdkt-core --lib`
+test (windows-latest)	Run Tests (Default)	2026-08-07T16:37:57.3335732Z ##[error]Process completed with exit code 1.
+test (macos-latest)	Run Tests (Default)	﻿2026-08-07T16:35:07.2797120Z ##[group]Run cargo test --workspace
+test (macos-latest)	Run Tests (Default)	2026-08-07T16:35:07.2797450Z ^[[36;1mcargo test --workspace^[[0m
+test (macos-latest)	Run Tests (Default)	2026-08-07T16:35:07.2832620Z shell: /bin/bash -e {0}
+test (macos-latest)	Run Tests (Default)	2026-08-07T16:35:07.2832830Z env:
+test (macos-latest)	Run Tests (Default)	2026-08-07T16:35:07.2833000Z   CARGO_TERM_COLOR: always
+test (macos-latest)	Run Tests (Default)	2026-08-07T16:35:07.2833260Z   CARGO_HOME: /Users/runner/.cargo
+test (macos-latest)	Run Tests (Default)	2026-08-07T16:35:07.2833600Z   CARGO_INCREMENTAL: 0
+test (macos-latest)	Run Tests (Default)	2026-08-07T16:35:07.2833820Z   CACHE_ON_FAILURE: false
+test (macos-latest)	Run Tests (Default)	2026-08-07T16:35:07.2834100Z ##[endgroup]
+test (macos-latest)	Run Tests (Default)	2026-08-07T16:35:07.5355300Z ^[[1m^[[92m    Updating^[[0m crates.io index
+test (macos-latest)	Run Tests (Default)	2026-08-07T16:35:10.0843880Z ^[[1m^[[92m   Compiling^[[0m sdkt-core v2.4.0 (/Users/runner/work/soroban-devkit/soroban-devkit/crates/sdkt-core)
+test (macos-latest)	Run Tests (Default)	2026-08-07T16:35:12.2925060Z ^[[1m^[[92m   Compiling^[[0m sdkt-wasm v2.4.0 (/Users/runner/work/soroban-devkit/soroban-devkit/crates/sdkt-wasm)
+test (macos-latest)	Run Tests (Default)	2026-08-07T16:35:13.6120190Z ^[[1m^[[92m   Compiling^[[0m sdkt-xdr v2.4.0 (/Users/runner/work/soroban-devkit/soroban-devkit/crates/sdkt-xdr)
+test (macos-latest)	Run Tests (Default)	2026-08-07T16:35:14.3478070Z ^[[1m^[[92m   Compiling^[[0m sdkt-audit v2.4.0 (/Users/runner/work/soroban-devkit/soroban-devkit/crates/sdkt-audit)
+test (macos-latest)	Run Tests (Default)	2026-08-07T16:35:14.9889450Z ^[[1m^[[92m   Compiling^[[0m sdkt-rpc v2.4.0 (/Users/runner/work/soroban-devkit/soroban-devkit/crates/sdkt-rpc)
+test (macos-latest)	Run Tests (Default)	2026-08-07T16:35:16.4811630Z ^[[1m^[[92m   Compiling^[[0m sdkt-storage v2.4.0 (/Users/runner/work/soroban-devkit/soroban-devkit/crates/sdkt-storage)
+test (macos-latest)	Run Tests (Default)	2026-08-07T16:35:16.9527460Z ^[[1m^[[92m   Compiling^[[0m sdkt-audit-example-rule v2.4.0 (/Users/runner/work/soroban-devkit/soroban-devkit/crates/sdkt-audit-example-rule)
+test (macos-latest)	Run Tests (Default)	2026-08-07T16:35:17.1984380Z ^[[1m^[[92m   Compiling^[[0m sdkt-cli v2.4.0 (/Users/runner/work/soroban-devkit/soroban-devkit/crates/sdkt-cli)
+test (macos-latest)	Run Tests (Default)	2026-08-07T16:35:27.3908760Z ^[[1m^[[92m    Finished^[[0m `test` profile [unoptimized + debuginfo] target(s) in 20.03s
+test (macos-latest)	Run Tests (Default)	2026-08-07T16:35:27.4552350Z ^[[1m^[[92m     Running^[[0m unittests src/lib.rs (target/debug/deps/sdkt_audit-51c2493b16496151)
+test (macos-latest)	Run Tests (Default)	2026-08-07T16:35:27.4616500Z 
+test (macos-latest)	Run Tests (Default)	2026-08-07T16:35:27.4620780Z running 19 tests
+test (macos-latest)	Run Tests (Default)	2026-08-07T16:35:27.4638970Z test audit::tests::auth001_fires_on_privileged_without_auth ... ok
+test (macos-latest)	Run Tests (Default)	2026-08-07T16:35:27.4640670Z test audit::tests::auth001_disabled_is_silent ... ok
+test (macos-latest)	Run Tests (Default)	2026-08-07T16:35:27.4641710Z test audit::tests::auth001_negative_on_normal_fn ... ok
+test (macos-latest)	Run Tests (Default)	2026-08-07T16:35:27.4643250Z test audit::tests::auth001_silent_when_auth_present ... ok
+test (macos-latest)	Run Tests (Default)	2026-08-07T16:35:27.4645240Z test audit::tests::auth002_fires_on_invoke_without_auth ... ok
+test (macos-latest)	Run Tests (Default)	2026-08-07T16:35:27.4646620Z test audit::tests::auth003_fires_on_unguarded_initialize ... ok
+test (macos-latest)	Run Tests (Default)	2026-08-07T16:35:27.4647760Z test audit::tests::auth002_silent_when_auth_present ... ok
+test (macos-latest)	Run Tests (Default)	2026-08-07T16:35:27.4648760Z test audit::tests::auth003_silent_when_initialize_has_auth ... ok
+test (macos-latest)	Run Tests (Default)	2026-08-07T16:35:27.4649900Z test audit::tests::clean_source_reports_no_findings ... ok
+test (macos-latest)	Run Tests (Default)	2026-08-07T16:35:27.4650830Z test audit::tests::move001_fires_on_double_arg_use ... ok
+test (macos-latest)	Run Tests (Default)	2026-08-07T16:35:27.4651920Z test audit::tests::parse_error_is_reported ... ok
+test (macos-latest)	Run Tests (Default)	2026-08-07T16:35:27.4652910Z test audit::tests::rules_implement_trait ... ok
+test (macos-latest)	Run Tests (Default)	2026-08-07T16:35:27.4654060Z test audit::tests::move001_silent_on_single_use ... ok
+test (macos-latest)	Run Tests (Default)	2026-08-07T16:35:27.4655140Z test registry::tests::builtin_registration_count ... ok
+test (macos-latest)	Run Tests (Default)	2026-08-07T16:35:27.4656140Z test registry::tests::duplicate_registration_is_ignored ... ok
+test (macos-latest)	Run Tests (Default)	2026-08-07T16:35:27.4657160Z test registry::tests::ordering_preserved ... ok
+test (macos-latest)	Run Tests (Default)	2026-08-07T16:35:27.4658240Z test registry::tests::register_adds_rule ... ok
+test (macos-latest)	Run Tests (Default)	2026-08-07T16:35:27.4659500Z test registry::tests::run_all_executes_every_rule ... ok
+test (macos-latest)	Run Tests (Default)	2026-08-07T16:35:27.4660730Z test registry::tests::run_all_respects_disabled ... ok
+test (macos-latest)	Run Tests (Default)	2026-08-07T16:35:27.4661230Z 
+test (macos-latest)	Run Tests (Default)	2026-08-07T16:35:27.4661860Z test result: ok. 19 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test (macos-latest)	Run Tests (Default)	2026-08-07T16:35:27.4662780Z 
+test (macos-latest)	Run Tests (Default)	2026-08-07T16:35:27.4664080Z ^[[1m^[[92m     Running^[[0m tests/registry_integration_test.rs (target/debug/deps/registry_integration_test-25eeb00a2b8241ca)
+test (macos-latest)	Run Tests (Default)	2026-08-07T16:35:27.4714060Z 
+test (macos-latest)	Run Tests (Default)	2026-08-07T16:35:27.4716340Z running 4 tests
+test (macos-latest)	Run Tests (Default)	2026-08-07T16:35:27.4726750Z test registry_executes_builtins_and_external_rule ... ok
+test (macos-latest)	Run Tests (Default)	2026-08-07T16:35:27.4728890Z test disable_still_suppresses_builtin ... ok
+test (macos-latest)	Run Tests (Default)	2026-08-07T16:35:27.4729300Z test builtins_unchanged_through_registry ... ok
+test (macos-latest)	Run Tests (Default)	2026-08-07T16:35:27.4729730Z test registry_respects_disabled_in_run_all ... ok
+test (macos-latest)	Run Tests (Default)	2026-08-07T16:35:27.4729980Z 
+test (macos-latest)	Run Tests (Default)	2026-08-07T16:35:27.4730180Z test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test (macos-latest)	Run Tests (Default)	2026-08-07T16:35:27.4730590Z 
+test (macos-latest)	Run Tests (Default)	2026-08-07T16:35:27.4741340Z ^[[1m^[[92m     Running^[[0m unittests src/lib.rs (target/debug/deps/sdkt_audit_example_rule-5597c5bc90be4391)
+test (macos-latest)	Run Tests (Default)	2026-08-07T16:35:27.4770160Z 
+test (macos-latest)	Run Tests (Default)	2026-08-07T16:35:27.4771150Z running 2 tests
+test (macos-latest)	Run Tests (Default)	2026-08-07T16:35:27.4771700Z test tests::example_rule_silent_on_normal_function ... ok
+test (macos-latest)	Run Tests (Default)	2026-08-07T16:35:27.4772280Z test tests::example_rule_fires_on_trigger_function ... ok
+test (macos-latest)	Run Tests (Default)	2026-08-07T16:35:27.4772610Z 
+test (macos-latest)	Run Tests (Default)	2026-08-07T16:35:27.4772970Z test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test (macos-latest)	Run Tests (Default)	2026-08-07T16:35:27.4773300Z 
+test (macos-latest)	Run Tests (Default)	2026-08-07T16:35:27.4776960Z ^[[1m^[[92m     Running^[[0m unittests src/main.rs (target/debug/deps/sdkt-250f352200bf55c7)
+test (macos-latest)	Run Tests (Default)	2026-08-07T16:35:27.4826780Z 
+test (macos-latest)	Run Tests (Default)	2026-08-07T16:35:27.4829290Z running 16 tests
+test (macos-latest)	Run Tests (Default)	2026-08-07T16:35:27.4830570Z test m22_tests::verification_outcome_verified ... ok
+test (macos-latest)	Run Tests (Default)	2026-08-07T16:35:27.4832020Z test m22_tests::verification_outcome_onchain_only ... ok
+test (macos-latest)	Run Tests (Default)	2026-08-07T16:35:27.4833190Z test m22_tests::verification_outcome_mismatch ... ok
+test (macos-latest)	Run Tests (Default)	2026-08-07T16:35:27.4834150Z test m23_tests::derive_verdict_at_risk_empty ... ok
+test (macos-latest)	Run Tests (Default)	2026-08-07T16:35:27.4835250Z test m22_tests::verification_report_json_schema ... ok
+test (macos-latest)	Run Tests (Default)	2026-08-07T16:35:27.4836160Z test m23_tests::derive_verdict_at_risk_expiring ... ok
+test (macos-latest)	Run Tests (Default)	2026-08-07T16:35:27.4837320Z test m23_tests::derive_verdict_critical_mismatch ... ok
+test (macos-latest)	Run Tests (Default)	2026-08-07T16:35:27.4838310Z test m23_tests::derive_verdict_healthy ... ok
+test (macos-latest)	Run Tests (Default)	2026-08-07T16:35:27.4839350Z test m23_tests::derive_verdict_onchain_only_healthy ... ok
+test (macos-latest)	Run Tests (Default)	2026-08-07T16:35:27.4840360Z test resolver_tests::built_in_default_when_nothing_set ... ok
+test (macos-latest)	Run Tests (Default)	2026-08-07T16:35:27.4841590Z test resolver_tests::explicit_flags_win_over_profile_both ... ok
+test (macos-latest)	Run Tests (Default)	2026-08-07T16:35:27.4842590Z test m23_tests::health_report_json_schema ... ok
+test (macos-latest)	Run Tests (Default)	2026-08-07T16:35:27.4843720Z test resolver_tests::passphrase_flag_overrides_profile ... ok
+test (macos-latest)	Run Tests (Default)	2026-08-07T16:35:27.4844960Z test resolver_tests::profile_overrides_built_in_default ... ok
+test (macos-latest)	Run Tests (Default)	2026-08-07T16:35:27.4846320Z test resolver_tests::rpc_url_flag_overrides_profile ... ok
+test (macos-latest)	Run Tests (Default)	2026-08-07T16:35:27.4847730Z test resolver_tests::rpc_url_flag_without_profile_overrides_built_in ... ok
+test (macos-latest)	Run Tests (Default)	2026-08-07T16:35:27.4848590Z 
+test (macos-latest)	Run Tests (Default)	2026-08-07T16:35:27.4849130Z test result: ok. 16 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test (macos-latest)	Run Tests (Default)	2026-08-07T16:35:27.4850040Z 
+test (macos-latest)	Run Tests (Default)	2026-08-07T16:35:27.4851380Z ^[[1m^[[92m     Running^[[0m tests/abi_decode_integration_test.rs (target/debug/deps/abi_decode_integration_test-fd5c586bfd646cf0)
+test (macos-latest)	Run Tests (Default)	2026-08-07T16:35:27.4867160Z 
+test (macos-latest)	Run Tests (Default)	2026-08-07T16:35:27.4868210Z running 2 tests
+test (macos-latest)	Run Tests (Default)	2026-08-07T16:35:27.5565410Z test test_events_abi_flag_exists ... ok
+test (macos-latest)	Run Tests (Default)	2026-08-07T16:35:27.5566990Z test test_inspect_abi_flag_exists ... ok
+test (macos-latest)	Run Tests (Default)	2026-08-07T16:35:27.5567260Z 
+test (macos-latest)	Run Tests (Default)	2026-08-07T16:35:27.5567580Z test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.07s
+test (macos-latest)	Run Tests (Default)	2026-08-07T16:35:27.5568070Z 
+test (macos-latest)	Run Tests (Default)	2026-08-07T16:35:27.5571730Z ^[[1m^[[92m     Running^[[0m tests/account_integration_test.rs (target/debug/deps/account_integration_test-6f32bfdc79a3b44c)
+test (macos-latest)	Run Tests (Default)	2026-08-07T16:35:27.5602720Z 
+test (macos-latest)	Run Tests (Default)	2026-08-07T16:35:27.5603190Z running 2 tests
+test (macos-latest)	Run Tests (Default)	2026-08-07T16:35:27.5661690Z test test_account_invalid_format ... ok
+test (macos-latest)	Run Tests (Default)	2026-08-07T16:35:27.5728030Z test test_account_format_json ... ok
+test (macos-latest)	Run Tests (Default)	2026-08-07T16:35:27.5730260Z 
+test (macos-latest)	Run Tests (Default)	2026-08-07T16:35:27.5731200Z test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+test (macos-latest)	Run Tests (Default)	2026-08-07T16:35:27.5732400Z ^[[1m^[[92m     Running^[[0m tests/audit_integration_test.rs (target/debug/deps/audit_integration_test-2b3cf68fea065393)
+test (macos-latest)	Run Tests (Default)	2026-08-07T16:35:27.5732780Z 
+test (macos-latest)	Run Tests (Default)	2026-08-07T16:35:27.5843520Z 
+test (macos-latest)	Run Tests (Default)	2026-08-07T16:35:27.5844040Z running 9 tests
+test (macos-latest)	Run Tests (Default)	2026-08-07T16:35:27.5968070Z test audit_flags_privileged_without_auth ... ok
+test (macos-latest)	Run Tests (Default)	2026-08-07T16:35:27.5968920Z test audit_clean_source_reports_no_issues ... ok
+test (macos-latest)	Run Tests (Default)	2026-08-07T16:35:27.5983210Z test audit_disable_rule_suppresses_finding ... ok
+test (macos-latest)	Run Tests (Default)	2026-08-07T16:35:27.6034350Z test audit_invalid_rust_source_errors ... ok
+test (macos-latest)	Run Tests (Default)	2026-08-07T16:35:27.6035660Z test audit_help_documents_gap_c ... ok
+test (macos-latest)	Run Tests (Default)	2026-08-07T16:35:27.6045670Z test audit_json_output_is_valid_report ... ok
+test (macos-latest)	Run Tests (Default)	2026-08-07T16:35:27.6099720Z test audit_rules_missing_path_errors ... ok
+test (macos-latest)	Run Tests (Default)	2026-08-07T16:35:27.6100240Z test audit_missing_file_errors ... ok
+test (macos-latest)	Run Tests (Default)	2026-08-07T16:35:27.6103630Z test audit_rules_flag_accepted_and_default_unchanged ... ok
+test (macos-latest)	Run Tests (Default)	2026-08-07T16:35:27.6104090Z 
+test (macos-latest)	Run Tests (Default)	2026-08-07T16:35:27.6104630Z test result: ok. 9 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.03s
+test (macos-latest)	Run Tests (Default)	2026-08-07T16:35:27.6105140Z 
+test (macos-latest)	Run Tests (Default)	2026-08-07T16:35:27.6108850Z ^[[1m^[[92m     Running^[[0m tests/cli_integration.rs (target/debug/deps/cli_integration-06f683612eb62316)
+test (macos-latest)	Run Tests (Default)	2026-08-07T16:35:27.6139720Z 
+test (macos-latest)	Run Tests (Default)	2026-08-07T16:35:27.6143040Z running 28 tests
+test (macos-latest)	Run Tests (Default)	2026-08-07T16:35:27.6246920Z test build_rejects_duplicate_contract_name ... ok
+test (macos-latest)	Run Tests (Default)	2026-08-07T16:35:27.6254530Z test build_rejects_self_dependency ... ok
+test (macos-latest)	Run Tests (Default)	2026-08-07T16:35:27.6256060Z test build_rejects_circular_dependency ... ok
+test (macos-latest)	Run Tests (Default)	2026-08-07T16:35:27.6349860Z test build_rejects_unknown_dependency ... ok
+test (macos-latest)	Run Tests (Default)	2026-08-07T16:35:27.6396150Z test completions_bash_emits_script ... ok
+test (macos-latest)	Run Tests (Default)	2026-08-07T16:35:27.6447100Z test completions_broken_pipe_exits_successfully ... ok
+test (macos-latest)	Run Tests (Default)	2026-08-07T16:35:27.6466270Z test completions_fish_emits_script ... ok
+test (macos-latest)	Run Tests (Default)	2026-08-07T16:35:27.6500110Z test completions_rejects_unknown_shell ... ok
+test (macos-latest)	Run Tests (Default)	2026-08-07T16:35:27.6562500Z test help_lists_all_top_level_commands ... ok
+test (macos-latest)	Run Tests (Default)	2026-08-07T16:35:27.6585720Z test completions_powershell_emits_script ... ok
+test (macos-latest)	Run Tests (Default)	2026-08-07T16:35:27.6633850Z test completions_zsh_emits_script ... ok
+test (macos-latest)	Run Tests (Default)	2026-08-07T16:35:27.6637100Z test invalid_top_level_subcommand_fails ... ok
+test (macos-latest)	Run Tests (Default)	2026-08-07T16:35:27.6702700Z test lock_verify_without_lock_is_non_fatal ... ok
+test (macos-latest)	Run Tests (Default)	2026-08-07T16:35:27.6765460Z test network_add_rejects_missing_required_args ... ok
+test (macos-latest)	Run Tests (Default)	2026-08-07T16:35:27.6780360Z test lock_verify_detects_drift ... ok
+test (macos-latest)	Run Tests (Default)	2026-08-07T16:35:27.6973140Z test network_list_empty_is_valid_json_array ... ok
+test (macos-latest)	Run Tests (Default)	2026-08-07T16:35:27.6978560Z test lock_generate_writes_sdkt_lock ... ok
+test (macos-latest)	Run Tests (Default)	2026-08-07T16:35:27.6979120Z test offline_command_help_does_not_require_network ... ok
+test (macos-latest)	Run Tests (Default)	2026-08-07T16:35:27.7091990Z test network_add_then_list_then_show_then_remove_json ... ok
+test (macos-latest)	Run Tests (Default)	2026-08-07T16:35:27.7173450Z test package_validate_accepts_valid_manifest ... ok
+test (macos-latest)	Run Tests (Default)	2026-08-07T16:35:27.7261670Z test package_validate_rejects_git_dependency_at_parse ... ok
+test (macos-latest)	Run Tests (Default)	2026-08-07T16:35:27.8170120Z test package_validate_accepts_git_dependency ... ok
+test (macos-latest)	Run Tests (Default)	2026-08-07T16:35:27.8172460Z test package_validate_rejects_git_without_ref ... ok
+test (macos-latest)	Run Tests (Default)	2026-08-07T16:35:27.8252530Z test package_validate_rejects_missing_version ... ok
+test (macos-latest)	Run Tests (Default)	2026-08-07T16:35:27.8266430Z test package_validate_rejects_missing_path ... ok
+test (macos-latest)	Run Tests (Default)	2026-08-07T16:35:27.8314250Z test package_validate_rejects_self_dependency ... ok
+test (macos-latest)	Run Tests (Default)	2026-08-07T16:35:27.8316290Z test version_reports_current_release ... ok
+test (macos-latest)	Run Tests (Default)	2026-08-07T16:35:27.9121790Z test package_fetch_git_dependency_offline ... ok
+test (macos-latest)	Run Tests (Default)	2026-08-07T16:35:27.9124400Z ^[[1m^[[92m     Running^[[0m tests/diff_integration_test.rs (target/debug/deps/diff_integration_test-06725c7e1e9b47e2)
+test (macos-latest)	Run Tests (Default)	2026-08-07T16:35:27.9125470Z 
+test (macos-latest)	Run Tests (Default)	2026-08-07T16:35:27.9126180Z test result: ok. 28 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.30s
+test (macos-latest)	Run Tests (Default)	2026-08-07T16:35:27.9127810Z 
+test (macos-latest)	Run Tests (Default)	2026-08-07T16:35:27.9159530Z 
+test (macos-latest)	Run Tests (Default)	2026-08-07T16:35:27.9162400Z running 3 tests
+test (macos-latest)	Run Tests (Default)	2026-08-07T16:35:27.9242340Z test diff_missing_old_file_errors ... ok
+test (macos-latest)	Run Tests (Default)	2026-08-07T16:35:27.9250450Z test diff_accepts_json_format_flag ... ok
+test (macos-latest)	Run Tests (Default)	2026-08-07T16:35:27.9255800Z test diff_help_documents_offline_comparison ... ok
+test (macos-latest)	Run Tests (Default)	2026-08-07T16:35:27.9256470Z 
+test (macos-latest)	Run Tests (Default)	2026-08-07T16:35:27.9257340Z test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+test (macos-latest)	Run Tests (Default)	2026-08-07T16:35:27.9259250Z ^[[1m^[[92m     Running^[[0m tests/events_integration_test.rs (target/debug/deps/events_integration_test-a8b49e9326a85bec)
+test (macos-latest)	Run Tests (Default)	2026-08-07T16:35:27.9261360Z 
+test (macos-latest)	Run Tests (Default)	2026-08-07T16:35:27.9288050Z 
+test (macos-latest)	Run Tests (Default)	2026-08-07T16:35:27.9288590Z running 2 tests
+test (macos-latest)	Run Tests (Default)	2026-08-07T16:35:27.9354030Z test test_events_invalid_format ... ok
+test (macos-latest)	Run Tests (Default)	2026-08-07T16:35:28.3679760Z test test_events_format_json ... ok
+test (macos-latest)	Run Tests (Default)	2026-08-07T16:35:28.3680310Z 
+test (macos-latest)	Run Tests (Default)	2026-08-07T16:35:28.3681520Z test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.44s
+test (macos-latest)	Run Tests (Default)	2026-08-07T16:35:28.3683150Z ^[[1m^[[92m     Running^[[0m tests/fee_integration_test.rs (target/debug/deps/fee_integration_test-575bc28d6f0231e5)
+test (macos-latest)	Run Tests (Default)	2026-08-07T16:35:28.3683560Z 
+test (macos-latest)	Run Tests (Default)	2026-08-07T16:35:28.3714900Z 
+test (macos-latest)	Run Tests (Default)	2026-08-07T16:35:28.3715120Z running 4 tests
+test (macos-latest)	Run Tests (Default)	2026-08-07T16:35:28.3791540Z test test_cli_fee_estimate_invalid_fees ... ok
+test (macos-latest)	Run Tests (Default)	2026-08-07T16:35:28.3793520Z test test_cli_fee_estimate_testnet ... ok
+test (macos-latest)	Run Tests (Default)	2026-08-07T16:35:28.3793850Z test test_cli_fee_estimate_mainnet_json ... ok
+test (macos-latest)	Run Tests (Default)	2026-08-07T16:35:28.3849300Z test test_cli_fee_estimate_unknown_network ... ok
+test (macos-latest)	Run Tests (Default)	2026-08-07T16:35:28.3849720Z 
+test (macos-latest)	Run Tests (Default)	2026-08-07T16:35:28.3851340Z ^[[1m^[[92m     Running^[[0m tests/health_integration_test.rs (target/debug/deps/health_integration_test-e07f8085fededc45)
+test (macos-latest)	Run Tests (Default)	2026-08-07T16:35:28.3854300Z test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+test (macos-latest)	Run Tests (Default)	2026-08-07T16:35:28.3854740Z 
+test (macos-latest)	Run Tests (Default)	2026-08-07T16:35:28.3880060Z 
+test (macos-latest)	Run Tests (Default)	2026-08-07T16:35:28.3880350Z running 6 tests
+test (macos-latest)	Run Tests (Default)	2026-08-07T16:35:28.3955930Z test test_cli_health_invalid_format_arg ... ok
+test (macos-latest)	Run Tests (Default)	2026-08-07T16:35:28.4019450Z test test_cli_health_invalid_wasm ... ok
+test (macos-latest)	Run Tests (Default)	2026-08-07T16:35:28.4032020Z test test_cli_health_json_format_accepted ... ok
+test (macos-latest)	Run Tests (Default)	2026-08-07T16:35:28.4032750Z test test_cli_health_missing_contract_arg ... ok
+test (macos-latest)	Run Tests (Default)	2026-08-07T16:35:28.4213350Z test test_cli_health_missing_wasm_file ... ok
+test (macos-latest)	Run Tests (Default)	2026-08-07T16:35:28.4314650Z ^[[1m^[[92m     Running^[[0m tests/identity_integration_test.rs (target/debug/deps/identity_integration_test-ad2dcc897a462f9e)
+test (macos-latest)	Run Tests (Default)	2026-08-07T16:35:28.4315190Z test test_cli_health_onchain_error_path ... ok
+test (macos-latest)	Run Tests (Default)	2026-08-07T16:35:28.4315500Z 
+test (macos-latest)	Run Tests (Default)	2026-08-07T16:35:28.4315890Z test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.03s
+test (macos-latest)	Run Tests (Default)	2026-08-07T16:35:28.4316250Z 
+test (macos-latest)	Run Tests (Default)	2026-08-07T16:35:28.4316320Z 
+test (macos-latest)	Run Tests (Default)	2026-08-07T16:35:28.4316420Z running 1 test
+test (macos-latest)	Run Tests (Default)	2026-08-07T16:35:28.4770240Z test test_cli_identity_lifecycle ... ok
+test (macos-latest)	Run Tests (Default)	2026-08-07T16:35:28.4770510Z 
+test (macos-latest)	Run Tests (Default)	2026-08-07T16:35:28.4770760Z test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.05s
+test (macos-latest)	Run Tests (Default)	2026-08-07T16:35:28.4771180Z 
+test (macos-latest)	Run Tests (Default)	2026-08-07T16:35:28.4772000Z ^[[1m^[[92m     Running^[[0m tests/init_tests.rs (target/debug/deps/init_tests-a7573b9572952a2a)
+test (macos-latest)	Run Tests (Default)	2026-08-07T16:35:28.4797840Z 
+test (macos-latest)	Run Tests (Default)	2026-08-07T16:35:28.4801500Z running 8 tests
+test (macos-latest)	Run Tests (Default)	2026-08-07T16:35:28.4874820Z test init_generated_cargo_toml_valid ... ok
+test (macos-latest)	Run Tests (Default)	2026-08-07T16:35:28.4878540Z test init_force_overwrites ... ok
+test (macos-latest)	Run Tests (Default)	2026-08-07T16:35:28.4883490Z test init_full_creates_all_files ... ok
+test (macos-latest)	Run Tests (Default)	2026-08-07T16:35:28.4949400Z test init_minimal_omits_extras ... ok
+test (macos-latest)	Run Tests (Default)	2026-08-07T16:35:28.4951900Z test init_json_output ... ok
+test (macos-latest)	Run Tests (Default)	2026-08-07T16:35:28.5009110Z test init_rejects_existing_directory ... ok
+test (macos-latest)	Run Tests (Default)	2026-08-07T16:35:28.5014400Z test init_sdkt_toml_has_network ... ok
+test (macos-latest)	Run Tests (Default)	2026-08-07T16:35:28.5705360Z ^[[1m^[[92m    Updating^[[0m crates.io index
+test (macos-latest)	Run Tests (Default)	2026-08-07T16:35:29.5036150Z ^[[1m^[[92m     Locking^[[0m 182 packages to latest compatible versions
+test (macos-latest)	Run Tests (Default)	2026-08-07T16:35:29.5070770Z ^[[1m^[[92m      Adding^[[0m arbitrary v1.3.2 ^[[1m^[[33m(available: v1.4.2)^[[0m
+test (macos-latest)	Run Tests (Default)	2026-08-07T16:35:29.5098160Z ^[[1m^[[92m      Adding^[[0m crypto-common v0.1.6 ^[[1m^[[33m(available: v0.1.7)^[[0m
+test (macos-latest)	Run Tests (Default)	2026-08-07T16:35:29.5154760Z ^[[1m^[[92m      Adding^[[0m derive_arbitrary v1.3.2 ^[[1m^[[33m(available: v1.4.2)^[[0m
+test (macos-latest)	Run Tests (Default)	2026-08-07T16:35:29.5375440Z ^[[1m^[[92m      Adding^[[0m soroban-builtin-sdk-macros v21.2.1 ^[[1m^[[33m(available: v21.2.2)^[[0m
+test (macos-latest)	Run Tests (Default)	2026-08-07T16:35:29.5377280Z ^[[1m^[[92m      Adding^[[0m soroban-env-common v21.2.1 ^[[1m^[[33m(available: v21.2.2)^[[0m
+test (macos-latest)	Run Tests (Default)	2026-08-07T16:35:29.5378550Z ^[[1m^[[92m      Adding^[[0m soroban-env-guest v21.2.1 ^[[1m^[[33m(available: v21.2.2)^[[0m
+test (macos-latest)	Run Tests (Default)	2026-08-07T16:35:29.5381640Z ^[[1m^[[92m      Adding^[[0m soroban-env-host v21.2.1 ^[[1m^[[33m(available: v21.2.2)^[[0m
+test (macos-latest)	Run Tests (Default)	2026-08-07T16:35:29.5385780Z ^[[1m^[[92m      Adding^[[0m soroban-env-macros v21.2.1 ^[[1m^[[33m(available: v21.2.2)^[[0m
+test (macos-latest)	Run Tests (Default)	2026-08-07T16:35:29.5399890Z ^[[1m^[[92m      Adding^[[0m soroban-sdk v21.7.7 ^[[1m^[[33m(available: v27.0.5)^[[0m
+test (macos-latest)	Run Tests (Default)	2026-08-07T16:35:29.5665150Z ^[[1m^[[92m Downloading^[[0m crates ...
+test (macos-latest)	Run Tests (Default)	2026-08-07T16:35:29.7385890Z ^[[1m^[[92m  Downloaded^[[0m addr2line v0.25.1
+test (macos-latest)	Run Tests (Default)	2026-08-07T16:35:29.7419100Z ^[[1m^[[92m  Downloaded^[[0m elliptic-curve v0.13.8
+test (macos-latest)	Run Tests (Default)	2026-08-07T16:35:29.7531420Z ^[[1m^[[92m  Downloaded^[[0m bytes-lit v0.0.5
+test (macos-latest)	Run Tests (Default)	2026-08-07T16:35:29.7570290Z ^[[1m^[[92m  Downloaded^[[0m block-buffer v0.12.1
+test (macos-latest)	Run Tests (Default)	2026-08-07T16:35:29.7608540Z ^[[1m^[[92m  Downloaded^[[0m crypto-common v0.1.6
+test (macos-latest)	Run Tests (Default)	2026-08-07T16:35:29.7648300Z ^[[1m^[[92m  Downloaded^[[0m derive_arbitrary v1.3.2
+test (macos-latest)	Run Tests (Default)	2026-08-07T16:35:29.7696400Z ^[[1m^[[92m  Downloaded^[[0m ctor v0.2.9
+test (macos-latest)	Run Tests (Default)	2026-08-07T16:35:29.7708480Z ^[[1m^[[92m  Downloaded^[[0m darling_macro v0.20.11
+test (macos-latest)	Run Tests (Default)	2026-08-07T16:35:29.7720920Z ^[[1m^[[92m  Downloaded^[[0m ff v0.13.1
+test (macos-latest)	Run Tests (Default)	2026-08-07T16:35:29.7765110Z ^[[1m^[[92m  Downloaded^[[0m downcast-rs v1.2.1
+test (macos-latest)	Run Tests (Default)	2026-08-07T16:35:29.7791640Z ^[[1m^[[92m  Downloaded^[[0m hex-literal v0.4.1
+test (macos-latest)	Run Tests (Default)	2026-08-07T16:35:29.7819660Z ^[[1m^[[92m  Downloaded^[[0m base16ct v0.2.0
+test (macos-latest)	Run Tests (Default)	2026-08-07T16:35:29.7873250Z ^[[1m^[[92m  Downloaded^[[0m keccak v0.1.6
+test (macos-latest)	Run Tests (Default)	2026-08-07T16:35:29.7896580Z ^[[1m^[[92m  Downloaded^[[0m base32 v0.4.0
+test (macos-latest)	Run Tests (Default)	2026-08-07T16:35:29.7926170Z ^[[1m^[[92m  Downloaded^[[0m crypto-common v0.2.2
+test (macos-latest)	Run Tests (Default)	2026-08-07T16:35:29.7955810Z ^[[1m^[[92m  Downloaded^[[0m indexmap-nostd v0.4.0
+test (macos-latest)	Run Tests (Default)	2026-08-07T16:35:29.8003800Z ^[[1m^[[92m  Downloaded^[[0m group v0.13.0
+test (macos-latest)	Run Tests (Default)	2026-08-07T16:35:29.8050420Z ^[[1m^[[92m  Downloaded^[[0m ecdsa v0.16.9
+test (macos-latest)	Run Tests (Default)	2026-08-07T16:35:29.8085050Z ^[[1m^[[92m  Downloaded^[[0m generic-array v0.14.9
+test (macos-latest)	Run Tests (Default)	2026-08-07T16:35:29.8105710Z ^[[1m^[[92m  Downloaded^[[0m darling v0.20.11
+test (macos-latest)	Run Tests (Default)	2026-08-07T16:35:29.8225820Z ^[[1m^[[92m  Downloaded^[[0m digest v0.11.3
+test (macos-latest)	Run Tests (Default)	2026-08-07T16:35:29.8256570Z ^[[1m^[[92m  Downloaded^[[0m ed25519 v3.0.0
+test (macos-latest)	Run Tests (Default)	2026-08-07T16:35:29.8283490Z ^[[1m^[[92m  Downloaded^[[0m hmac v0.12.1
+test (macos-latest)	Run Tests (Default)	2026-08-07T16:35:29.8342960Z ^[[1m^[[92m  Downloaded^[[0m hybrid-array v0.4.14
+test (macos-latest)	Run Tests (Default)	2026-08-07T16:35:29.8421440Z ^[[1m^[[92m  Downloaded^[[0m arbitrary v1.3.2
+test (macos-latest)	Run Tests (Default)	2026-08-07T16:35:29.8471300Z ^[[1m^[[92m  Downloaded^[[0m base64 v0.13.1
+test (macos-latest)	Run Tests (Default)	2026-08-07T16:35:29.8520960Z ^[[1m^[[92m  Downloaded^[[0m darling_core v0.20.11
+test (macos-latest)	Run Tests (Default)	2026-08-07T16:35:29.8622180Z ^[[1m^[[92m  Downloaded^[[0m k256 v0.13.4
+test (macos-latest)	Run Tests (Default)	2026-08-07T16:35:29.8723390Z ^[[1m^[[92m  Downloaded^[[0m crypto-bigint v0.5.5
+test (macos-latest)	Run Tests (Default)	2026-08-07T16:35:29.8879580Z ^[[1m^[[92m  Downloaded^[[0m ed25519-dalek v3.0.0
+test (macos-latest)	Run Tests (Default)	2026-08-07T16:35:29.8962050Z ^[[1m^[[92m  Downloaded^[[0m backtrace v0.3.76
+test (macos-latest)	Run Tests (Default)	2026-08-07T16:35:29.9073270Z ^[[1m^[[92m  Downloaded^[[0m itertools v0.11.0
+test (macos-latest)	Run Tests (Default)	2026-08-07T16:35:29.9199870Z ^[[1m^[[92m  Downloaded^[[0m gimli v0.32.3
+test (macos-latest)	Run Tests (Default)	2026-08-07T16:35:29.9303530Z ^[[1m^[[92m  Downloaded^[[0m curve25519-dalek v5.0.0
+test (macos-latest)	Run Tests (Default)	2026-08-07T16:35:29.9443910Z ^[[1m^[[92m  Downloaded^[[0m primeorder v0.13.6
+test (macos-latest)	Run Tests (Default)	2026-08-07T16:35:29.9466120Z ^[[1m^[[92m  Downloaded^[[0m num-bigint v0.4.8
+test (macos-latest)	Run Tests (Default)	2026-08-07T16:35:29.9544810Z ^[[1m^[[92m  Downloaded^[[0m num-integer v0.1.46
+test (macos-latest)	Run Tests (Default)	2026-08-07T16:35:29.9570750Z ^[[1m^[[92m  Downloaded^[[0m num-derive v0.4.2
+test (macos-latest)	Run Tests (Default)	2026-08-07T16:35:29.9605840Z ^[[1m^[[92m  Downloaded^[[0m p256 v0.13.2
+test (macos-latest)	Run Tests (Default)	2026-08-07T16:35:29.9656320Z ^[[1m^[[92m  Downloaded^[[0m paste v1.0.15
+test (macos-latest)	Run Tests (Default)	2026-08-07T16:35:29.9719980Z ^[[1m^[[92m  Downloaded^[[0m prettyplease v0.2.37
+test (macos-latest)	Run Tests (Default)	2026-08-07T16:35:29.9779770Z ^[[1m^[[92m  Downloaded^[[0m object v0.37.3
+test (macos-latest)	Run Tests (Default)	2026-08-07T16:35:29.9970210Z ^[[1m^[[92m  Downloaded^[[0m rfc6979 v0.4.0
+test (macos-latest)	Run Tests (Default)	2026-08-07T16:35:29.9988990Z ^[[1m^[[92m  Downloaded^[[0m sec1 v0.7.3
+test (macos-latest)	Run Tests (Default)	2026-08-07T16:35:30.0022730Z ^[[1m^[[92m  Downloaded^[[0m signature v3.0.0
+test (macos-latest)	Run Tests (Default)	2026-08-07T16:35:30.0047800Z ^[[1m^[[92m  Downloaded^[[0m stellar-strkey v0.0.8
+test (macos-latest)	Run Tests (Default)	2026-08-07T16:35:30.0089480Z ^[[1m^[[92m  Downloaded^[[0m sha2 v0.11.0
+test (macos-latest)	Run Tests (Default)	2026-08-07T16:35:30.0155170Z ^[[1m^[[92m  Downloaded^[[0m soroban-builtin-sdk-macros v21.2.1
+test (macos-latest)	Run Tests (Default)	2026-08-07T16:35:30.0172960Z ^[[1m^[[92m  Downloaded^[[0m soroban-env-macros v21.2.1
+test (macos-latest)	Run Tests (Default)	2026-08-07T16:35:30.0193430Z ^[[1m^[[92m  Downloaded^[[0m soroban-ledger-snapshot v21.7.7
+test (macos-latest)	Run Tests (Default)	2026-08-07T16:35:30.0204820Z ^[[1m^[[92m  Downloaded^[[0m soroban-sdk-macros v21.7.7
+test (macos-latest)	Run Tests (Default)	2026-08-07T16:35:30.0232390Z ^[[1m^[[92m  Downloaded^[[0m soroban-spec v21.7.7
+test (macos-latest)	Run Tests (Default)	2026-08-07T16:35:30.0245590Z ^[[1m^[[92m  Downloaded^[[0m soroban-spec-rust v21.7.7
+test (macos-latest)	Run Tests (Default)	2026-08-07T16:35:30.0256000Z ^[[1m^[[92m  Downloaded^[[0m spin v0.9.9
+test (macos-latest)	Run Tests (Default)	2026-08-07T16:35:30.0299430Z ^[[1m^[[92m  Downloaded^[[0m soroban-env-common v21.2.1
+test (macos-latest)	Run Tests (Default)	2026-08-07T16:35:30.0340900Z ^[[1m^[[92m  Downloaded^[[0m static_assertions v1.1.0
+test (macos-latest)	Run Tests (Default)	2026-08-07T16:35:30.0367630Z ^[[1m^[[92m  Downloaded^[[0m soroban-env-host v21.2.1
+test (macos-latest)	Run Tests (Default)	2026-08-07T16:35:30.0635180Z ^[[1m^[[92m  Downloaded^[[0m soroban-sdk v21.7.7
+test (macos-latest)	Run Tests (Default)	2026-08-07T16:35:30.0715190Z ^[[1m^[[92m  Downloaded^[[0m soroban-wasmi v0.31.1-soroban.20.0.1
+test (macos-latest)	Run Tests (Default)	2026-08-07T16:35:30.0835370Z ^[[1m^[[92m  Downloaded^[[0m stellar-xdr v21.2.0
+test (macos-latest)	Run Tests (Default)	2026-08-07T16:35:30.0978830Z ^[[1m^[[92m  Downloaded^[[0m sha3 v0.10.9
+test (macos-latest)	Run Tests (Default)	2026-08-07T16:35:30.1038380Z ^[[1m^[[92m  Downloaded^[[0m time v0.3.55
+test (macos-latest)	Run Tests (Default)	2026-08-07T16:35:30.1326240Z ^[[1m^[[92m  Downloaded^[[0m wasmi_core v0.13.0
+test (macos-latest)	Run Tests (Default)	2026-08-07T16:35:30.1351420Z ^[[1m^[[92m  Downloaded^[[0m wasmi_arena v0.4.1
+test (macos-latest)	Run Tests (Default)	2026-08-07T16:35:30.1366880Z ^[[1m^[[92m  Downloaded^[[0m wasmparser v0.116.1
+test (macos-latest)	Run Tests (Default)	2026-08-07T16:35:30.1464790Z ^[[1m^[[92m  Downloaded^[[0m zerocopy v0.8.56
+test (macos-latest)	Run Tests (Default)	2026-08-07T16:35:30.1870180Z ^[[1m^[[92m  Downloaded^[[0m wasmparser-nostd v0.100.2
+test (macos-latest)	Run Tests (Default)	2026-08-07T16:35:30.2347700Z ^[[1m^[[92m   Compiling^[[0m proc-macro2 v1.0.107
+test (macos-latest)	Run Tests (Default)	2026-08-07T16:35:30.2348510Z ^[[1m^[[92m   Compiling^[[0m unicode-ident v1.0.24
+test (macos-latest)	Run Tests (Default)	2026-08-07T16:35:30.2348900Z ^[[1m^[[92m   Compiling^[[0m quote v1.0.47
+test (macos-latest)	Run Tests (Default)	2026-08-07T16:35:30.2931140Z ^[[1m^[[92m   Compiling^[[0m serde_core v1.0.229
+test (macos-latest)	Run Tests (Default)	2026-08-07T16:35:30.4374060Z ^[[1m^[[92m   Compiling^[[0m serde v1.0.229
+test (macos-latest)	Run Tests (Default)	2026-08-07T16:35:30.5084160Z ^[[1m^[[92m   Compiling^[[0m zmij v1.0.23
+test (macos-latest)	Run Tests (Default)	2026-08-07T16:35:30.6750130Z ^[[1m^[[92m   Compiling^[[0m libc v0.2.189
+test (macos-latest)	Run Tests (Default)	2026-08-07T16:35:31.0734870Z ^[[1m^[[92m   Compiling^[[0m version_check v0.9.5
+test (macos-latest)	Run Tests (Default)	2026-08-07T16:35:31.2094460Z ^[[1m^[[92m   Compiling^[[0m syn v3.0.3
+test (macos-latest)	Run Tests (Default)	2026-08-07T16:35:31.4200520Z ^[[1m^[[92m   Compiling^[[0m syn v2.0.119
+test (macos-latest)	Run Tests (Default)	2026-08-07T16:35:32.9599480Z ^[[1m^[[92m   Compiling^[[0m serde_json v1.0.151
+test (macos-latest)	Run Tests (Default)	2026-08-07T16:35:33.4830300Z ^[[1m^[[92m   Compiling^[[0m itoa v1.0.18
+test (macos-latest)	Run Tests (Default)	2026-08-07T16:35:33.5721860Z ^[[1m^[[92m   Compiling^[[0m memchr v2.8.3
+test (macos-latest)	Run Tests (Default)	2026-08-07T16:35:33.6150650Z ^[[1m^[[92m   Compiling^[[0m serde_derive v1.0.229
+test (macos-latest)	Run Tests (Default)	2026-08-07T16:35:35.2303420Z ^[[1m^[[92m    Checking^[[0m typenum v1.20.1
+test (macos-latest)	Run Tests (Default)	2026-08-07T16:35:35.9951980Z ^[[1m^[[92m    Checking^[[0m zeroize v1.9.0
+test (macos-latest)	Run Tests (Default)	2026-08-07T16:35:36.0632260Z ^[[1m^[[92m   Compiling^[[0m generic-array v0.14.9
+test (macos-latest)	Run Tests (Default)	2026-08-07T16:35:36.0959470Z ^[[1m^[[92m   Compiling^[[0m strsim v0.11.1
+test (macos-latest)	Run Tests (Default)	2026-08-07T16:35:36.1975780Z ^[[1m^[[92m   Compiling^[[0m ident_case v1.0.1
+test (macos-latest)	Run Tests (Default)	2026-08-07T16:35:36.2435910Z ^[[1m^[[92m    Checking^[[0m subtle v2.6.1
+test (macos-latest)	Run Tests (Default)	2026-08-07T16:35:36.3025520Z ^[[1m^[[92m    Checking^[[0m cfg-if v1.0.4
+test (macos-latest)	Run Tests (Default)	2026-08-07T16:35:36.3481370Z ^[[1m^[[92m   Compiling^[[0m autocfg v1.5.1
+test (macos-latest)	Run Tests (Default)	2026-08-07T16:35:36.8177610Z ^[[1m^[[92m   Compiling^[[0m darling_core v0.23.0
+test (macos-latest)	Run Tests (Default)	2026-08-07T16:35:36.9482570Z ^[[1m^[[92m    Checking^[[0m const-oid v0.9.6
+test (macos-latest)	Run Tests (Default)	2026-08-07T16:35:37.0152240Z ^[[1m^[[92m   Compiling^[[0m crate-git-revision v0.0.6
+test (macos-latest)	Run Tests (Default)	2026-08-07T16:35:37.0480110Z ^[[1m^[[92m   Compiling^[[0m semver v1.0.28
+test (macos-latest)	Run Tests (Default)	2026-08-07T16:35:37.2197180Z ^[[1m^[[92m   Compiling^[[0m thiserror v1.0.69
+test (macos-latest)	Run Tests (Default)	2026-08-07T16:35:37.4735680Z ^[[1m^[[92m    Checking^[[0m getrandom v0.2.17
+test (macos-latest)	Run Tests (Default)	2026-08-07T16:35:37.5667230Z ^[[1m^[[92m   Compiling^[[0m thiserror-impl v1.0.69
+test (macos-latest)	Run Tests (Default)	2026-08-07T16:35:37.5989440Z ^[[1m^[[92m    Checking^[[0m rand_core v0.6.4
+test (macos-latest)	Run Tests (Default)	2026-08-07T16:35:37.6903830Z ^[[1m^[[92m   Compiling^[[0m stellar-strkey v0.0.8
+test (macos-latest)	Run Tests (Default)	2026-08-07T16:35:37.8330710Z ^[[1m^[[92m    Checking^[[0m block-buffer v0.10.4
+test (macos-latest)	Run Tests (Default)	2026-08-07T16:35:37.8840420Z ^[[1m^[[92m    Checking^[[0m crypto-common v0.1.6
+test (macos-latest)	Run Tests (Default)	2026-08-07T16:35:37.9255000Z ^[[1m^[[92m    Checking^[[0m digest v0.10.7
+test (macos-latest)	Run Tests (Default)	2026-08-07T16:35:38.0596440Z ^[[1m^[[92m   Compiling^[[0m rustc_version v0.4.1
+test (macos-latest)	Run Tests (Default)	2026-08-07T16:35:38.2508580Z ^[[1m^[[92m   Compiling^[[0m stellar-xdr v21.2.0
+test (macos-latest)	Run Tests (Default)	2026-08-07T16:35:38.3934790Z ^[[1m^[[92m   Compiling^[[0m base32 v0.4.0
+test (macos-latest)	Run Tests (Default)	2026-08-07T16:35:38.4771210Z ^[[1m^[[92m   Compiling^[[0m hex v0.4.3
+test (macos-latest)	Run Tests (Default)	2026-08-07T16:35:38.6299920Z ^[[1m^[[92m   Compiling^[[0m escape-bytes v0.1.1
+test (macos-latest)	Run Tests (Default)	2026-08-07T16:35:38.6323370Z ^[[1m^[[92m    Checking^[[0m rand_core v0.10.1
+test (macos-latest)	Run Tests (Default)	2026-08-07T16:35:38.6893860Z ^[[1m^[[92m    Checking^[[0m ff v0.13.1
+test (macos-latest)	Run Tests (Default)	2026-08-07T16:35:38.6991210Z ^[[1m^[[92m    Checking^[[0m der v0.7.10
+test (macos-latest)	Run Tests (Default)	2026-08-07T16:35:38.7374570Z ^[[1m^[[92m   Compiling^[[0m num-traits v0.2.19
+test (macos-latest)	Run Tests (Default)	2026-08-07T16:35:38.8328410Z ^[[1m^[[92m    Checking^[[0m hybrid-array v0.4.14
+test (macos-latest)	Run Tests (Default)	2026-08-07T16:35:39.0896410Z ^[[1m^[[92m   Compiling^[[0m darling_macro v0.23.0
+test (macos-latest)	Run Tests (Default)	2026-08-07T16:35:39.1699290Z ^[[1m^[[92m   Compiling^[[0m either v1.17.0
+test (macos-latest)	Run Tests (Default)	2026-08-07T16:35:39.2836530Z ^[[1m^[[92m   Compiling^[[0m darling v0.23.0
+test (macos-latest)	Run Tests (Default)	2026-08-07T16:35:39.3093000Z ^[[1m^[[92m    Checking^[[0m base16ct v0.2.0
+test (macos-latest)	Run Tests (Default)	2026-08-07T16:35:39.3159150Z ^[[1m^[[92m   Compiling^[[0m serde_with_macros v3.21.0
+test (macos-latest)	Run Tests (Default)	2026-08-07T16:35:39.3510610Z ^[[1m^[[92m    Checking^[[0m sec1 v0.7.3
+test (macos-latest)	Run Tests (Default)	2026-08-07T16:35:39.4233800Z ^[[1m^[[92m   Compiling^[[0m itertools v0.11.0
+test (macos-latest)	Run Tests (Default)	2026-08-07T16:35:39.8727520Z ^[[1m^[[92m   Compiling^[[0m serde_with v3.21.0
+test (macos-latest)	Run Tests (Default)	2026-08-07T16:35:40.2778100Z ^[[1m^[[92m    Checking^[[0m group v0.13.0
+test (macos-latest)	Run Tests (Default)	2026-08-07T16:35:40.3098890Z ^[[1m^[[92m    Checking^[[0m crypto-bigint v0.5.5
+test (macos-latest)	Run Tests (Default)	2026-08-07T16:35:40.4773030Z ^[[1m^[[92m    Checking^[[0m cpufeatures v0.2.17
+test (macos-latest)	Run Tests (Default)	2026-08-07T16:35:40.5073930Z ^[[1m^[[92m   Compiling^[[0m paste v1.0.15
+test (macos-latest)	Run Tests (Default)	2026-08-07T16:35:40.6800010Z ^[[1m^[[92m   Compiling^[[0m libm v0.2.16
+test (macos-latest)	Run Tests (Default)	2026-08-07T16:35:41.0079760Z ^[[1m^[[92m   Compiling^[[0m zerocopy v0.8.56
+test (macos-latest)	Run Tests (Default)	2026-08-07T16:35:41.2318150Z ^[[1m^[[92m    Checking^[[0m elliptic-curve v0.13.8
+test (macos-latest)	Run Tests (Default)	2026-08-07T16:35:41.8007660Z ^[[1m^[[92m    Checking^[[0m block-buffer v0.12.1
+test (macos-latest)	Run Tests (Default)	2026-08-07T16:35:41.8581160Z ^[[1m^[[92m    Checking^[[0m crypto-common v0.2.2
+test (macos-latest)	Run Tests (Default)	2026-08-07T16:35:41.8785020Z ^[[1m^[[92m    Checking^[[0m hmac v0.12.1
+test (macos-latest)	Run Tests (Default)	2026-08-07T16:35:41.9287230Z ^[[1m^[[92m    Checking^[[0m rfc6979 v0.4.0
+test (macos-latest)	Run Tests (Default)	2026-08-07T16:35:42.2184350Z ^[[1m^[[92m    Checking^[[0m digest v0.11.3
+test (macos-latest)	Run Tests (Default)	2026-08-07T16:35:43.1642870Z ^[[1m^[[92m   Compiling^[[0m curve25519-dalek v5.0.0
+test (macos-latest)	Run Tests (Default)	2026-08-07T16:35:43.3467450Z ^[[1m^[[92m    Checking^[[0m signature v2.2.0
+test (macos-latest)	Run Tests (Default)	2026-08-07T16:35:43.4780370Z ^[[1m^[[92m   Compiling^[[0m num-derive v0.4.2
+test (macos-latest)	Run Tests (Default)	2026-08-07T16:35:44.0575950Z ^[[1m^[[92m    Checking^[[0m hashbrown v0.17.1
+test (macos-latest)	Run Tests (Default)	2026-08-07T16:35:44.4388060Z ^[[1m^[[92m    Checking^[[0m equivalent v1.0.2
+test (macos-latest)	Run Tests (Default)	2026-08-07T16:35:44.5126880Z ^[[1m^[[92m    Checking^[[0m indexmap-nostd v0.4.0
+test (macos-latest)	Run Tests (Default)	2026-08-07T16:35:44.6216340Z ^[[1m^[[92m    Checking^[[0m downcast-rs v1.2.1
+test (macos-latest)	Run Tests (Default)	2026-08-07T16:35:45.0716800Z ^[[1m^[[92m   Compiling^[[0m indexmap v2.14.0
+test (macos-latest)	Run Tests (Default)	2026-08-07T16:35:45.2331450Z ^[[1m^[[92m    Checking^[[0m ppv-lite86 v0.2.21
+test (macos-latest)	Run Tests (Default)	2026-08-07T16:35:45.3839280Z ^[[1m^[[92m    Checking^[[0m wasmi_core v0.13.0
+test (macos-latest)	Run Tests (Default)	2026-08-07T16:35:45.5830060Z ^[[1m^[[92m    Checking^[[0m wasmparser-nostd v0.100.2
+test (macos-latest)	Run Tests (Default)	2026-08-07T16:35:46.2693870Z ^[[1m^[[92m    Checking^[[0m ecdsa v0.16.9
+test (macos-latest)	Run Tests (Default)	2026-08-07T16:35:47.2386230Z ^[[1m^[[92m    Checking^[[0m sha2 v0.10.9
+test (macos-latest)	Run Tests (Default)	2026-08-07T16:35:47.3284130Z ^[[1m^[[92m    Checking^[[0m signature v3.0.0
+test (macos-latest)	Run Tests (Default)	2026-08-07T16:35:47.3887570Z ^[[1m^[[92m   Compiling^[[0m soroban-env-common v21.2.1
+test (macos-latest)	Run Tests (Default)	2026-08-07T16:35:47.5261400Z ^[[1m^[[92m    Checking^[[0m cpufeatures v0.3.0
+test (macos-latest)	Run Tests (Default)	2026-08-07T16:35:47.6623190Z ^[[1m^[[92m    Checking^[[0m wasmi_arena v0.4.1
+test (macos-latest)	Run Tests (Default)	2026-08-07T16:35:47.7168340Z ^[[1m^[[92m   Compiling^[[0m fnv v1.0.7
+test (macos-latest)	Run Tests (Default)	2026-08-07T16:35:47.7976810Z ^[[1m^[[92m    Checking^[[0m spin v0.9.9
+test (macos-latest)	Run Tests (Default)	2026-08-07T16:35:47.8630220Z ^[[1m^[[92m    Checking^[[0m smallvec v1.15.2
+test (macos-latest)	Run Tests (Default)	2026-08-07T16:35:47.8836930Z ^[[1m^[[92m   Compiling^[[0m prettyplease v0.2.37
+test (macos-latest)	Run Tests (Default)	2026-08-07T16:35:47.9511080Z ^[[1m^[[92m    Checking^[[0m base64 v0.13.1
+test (macos-latest)	Run Tests (Default)	2026-08-07T16:35:47.9965220Z ^[[1m^[[92m    Checking^[[0m soroban-wasmi v0.31.1-soroban.20.0.1
+test (macos-latest)	Run Tests (Default)	2026-08-07T16:35:49.5461760Z ^[[1m^[[92m   Compiling^[[0m darling_core v0.20.11
+test (macos-latest)	Run Tests (Default)	2026-08-07T16:35:51.5085550Z ^[[1m^[[92m    Checking^[[0m wasmparser v0.116.1
+test (macos-latest)	Run Tests (Default)	2026-08-07T16:35:53.5287160Z ^[[1m^[[92m    Checking^[[0m sha2 v0.11.0
+test (macos-latest)	Run Tests (Default)	2026-08-07T16:35:54.0319060Z ^[[1m^[[92m    Checking^[[0m ed25519 v3.0.0
+test (macos-latest)	Run Tests (Default)	2026-08-07T16:35:54.8313620Z ^[[1m^[[92m   Compiling^[[0m soroban-env-macros v21.2.1
+test (macos-latest)	Run Tests (Default)	2026-08-07T16:35:56.4749880Z ^[[1m^[[92m    Checking^[[0m rand_chacha v0.3.1
+test (macos-latest)	Run Tests (Default)	2026-08-07T16:35:56.6787550Z ^[[1m^[[92m    Checking^[[0m primeorder v0.13.6
+test (macos-latest)	Run Tests (Default)	2026-08-07T16:35:56.9306210Z ^[[1m^[[92m    Checking^[[0m keccak v0.1.6
+test (macos-latest)	Run Tests (Default)	2026-08-07T16:35:57.1412830Z ^[[1m^[[92m    Checking^[[0m static_assertions v1.1.0
+test (macos-latest)	Run Tests (Default)	2026-08-07T16:35:57.1626590Z ^[[1m^[[92m   Compiling^[[0m soroban-env-host v21.2.1
+test (macos-latest)	Run Tests (Default)	2026-08-07T16:35:57.2794510Z ^[[1m^[[92m    Checking^[[0m ethnum v1.5.3
+test (macos-latest)	Run Tests (Default)	2026-08-07T16:35:57.8260480Z ^[[1m^[[92m   Compiling^[[0m soroban-spec v21.7.7
+test (macos-latest)	Run Tests (Default)	2026-08-07T16:35:58.2115620Z ^[[1m^[[92m    Checking^[[0m sha3 v0.10.9
+test (macos-latest)	Run Tests (Default)	2026-08-07T16:35:58.2970240Z ^[[1m^[[92m    Checking^[[0m p256 v0.13.2
+test (macos-latest)	Run Tests (Default)	2026-08-07T16:35:58.4348500Z ^[[1m^[[92m    Checking^[[0m rand v0.8.7
+test (macos-latest)	Run Tests (Default)	2026-08-07T16:35:58.7434030Z ^[[1m^[[92m    Checking^[[0m ed25519-dalek v3.0.0
+test (macos-latest)	Run Tests (Default)	2026-08-07T16:35:58.8112540Z ^[[1m^[[92m   Compiling^[[0m darling_macro v0.20.11
+test (macos-latest)	Run Tests (Default)	2026-08-07T16:35:59.0193630Z ^[[1m^[[92m    Checking^[[0m k256 v0.13.4
+test (macos-latest)	Run Tests (Default)	2026-08-07T16:35:59.2166940Z ^[[1m^[[92m   Compiling^[[0m num-integer v0.1.46
+test (macos-latest)	Run Tests (Default)	2026-08-07T16:35:59.4238460Z ^[[1m^[[92m   Compiling^[[0m soroban-builtin-sdk-macros v21.2.1
+test (macos-latest)	Run Tests (Default)	2026-08-07T16:35:59.5469760Z ^[[1m^[[92m   Compiling^[[0m soroban-sdk-macros v21.7.7
+test (macos-latest)	Run Tests (Default)	2026-08-07T16:35:59.8946560Z ^[[1m^[[92m    Checking^[[0m hex-literal v0.4.1
+test (macos-latest)	Run Tests (Default)	2026-08-07T16:36:00.5956040Z ^[[1m^[[92m   Compiling^[[0m num-bigint v0.4.8
+test (macos-latest)	Run Tests (Default)	2026-08-07T16:36:01.2062250Z ^[[1m^[[92m   Compiling^[[0m soroban-spec-rust v21.7.7
+test (macos-latest)	Run Tests (Default)	2026-08-07T16:36:01.3888840Z ^[[1m^[[92m   Compiling^[[0m darling v0.20.11
+test (macos-latest)	Run Tests (Default)	2026-08-07T16:36:01.4291330Z ^[[1m^[[92m   Compiling^[[0m soroban-sdk v21.7.7
+test (macos-latest)	Run Tests (Default)	2026-08-07T16:36:01.6020010Z ^[[1m^[[92m   Compiling^[[0m bytes-lit v0.0.5
+test (macos-latest)	Run Tests (Default)	2026-08-07T16:36:03.7189330Z ^[[1m^[[92m    Checking^[[0m soroban-ledger-snapshot v21.7.7
+test (macos-latest)	Run Tests (Default)	2026-08-07T16:36:04.3276910Z ^[[1m^[[92m    Checking^[[0m build_proj v0.1.0 (/private/var/folders/df/djsxfhc17x95674wsm_g8s980000gn/T/.tmppjs40J/build_proj)
+test (macos-latest)	Run Tests (Default)	2026-08-07T16:36:04.3746600Z ^[[1m^[[92m    Finished^[[0m `dev` profile [unoptimized + debuginfo] target(s) in 35.83s
+test (macos-latest)	Run Tests (Default)	2026-08-07T16:36:04.4943090Z test init_generated_project_compiles_successfully ... ok
+test (macos-latest)	Run Tests (Default)	2026-08-07T16:36:04.4943480Z 
+test (macos-latest)	Run Tests (Default)	2026-08-07T16:36:04.4943790Z test result: ok. 8 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 36.01s
+test (macos-latest)	Run Tests (Default)	2026-08-07T16:36:04.4944150Z 
+test (macos-latest)	Run Tests (Default)	2026-08-07T16:36:04.4952260Z ^[[1m^[[92m     Running^[[0m tests/integration_test.rs (target/debug/deps/integration_test-1d4585b599b81cd2)
+test (macos-latest)	Run Tests (Default)	2026-08-07T16:36:04.5043500Z 
+test (macos-latest)	Run Tests (Default)	2026-08-07T16:36:04.5043940Z running 2 tests
+test (macos-latest)	Run Tests (Default)	2026-08-07T16:36:04.5284600Z test test_inspect_format_flag ... ok
+test (macos-latest)	Run Tests (Default)	2026-08-07T16:36:04.5371510Z test test_decode_scval_integer ... ok
+test (macos-latest)	Run Tests (Default)	2026-08-07T16:36:04.5372280Z ^[[1m^[[92m     Running^[[0m tests/network_cli.rs (target/debug/deps/network_cli-83561f1c0d88e93f)
+test (macos-latest)	Run Tests (Default)	2026-08-07T16:36:04.5372700Z 
+test (macos-latest)	Run Tests (Default)	2026-08-07T16:36:04.5372970Z test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.03s
+test (macos-latest)	Run Tests (Default)	2026-08-07T16:36:04.5373320Z 
+test (macos-latest)	Run Tests (Default)	2026-08-07T16:36:04.5469730Z 
+test (macos-latest)	Run Tests (Default)	2026-08-07T16:36:04.5470150Z running 9 tests
+test (macos-latest)	Run Tests (Default)	2026-08-07T16:36:04.5619160Z test existing_commands_work_without_profiles ... ok
+test (macos-latest)	Run Tests (Default)	2026-08-07T16:36:04.5662550Z test network_add_then_list_pretty ... ok
+test (macos-latest)	Run Tests (Default)	2026-08-07T16:36:04.5720430Z test network_add_overwrites_existing ... ok
+test (macos-latest)	Run Tests (Default)	2026-08-07T16:36:04.5745200Z test network_list_empty_message ... ok
+test (macos-latest)	Run Tests (Default)	2026-08-07T16:36:04.5764450Z test network_add_then_show_json ... ok
+test (macos-latest)	Run Tests (Default)	2026-08-07T16:36:04.5776360Z test network_profile_not_found_fails_before_rpc ... ok
+test (macos-latest)	Run Tests (Default)	2026-08-07T16:36:04.5827250Z test network_show_missing_errors ... ok
+test (macos-latest)	Run Tests (Default)	2026-08-07T16:36:04.5908790Z test network_remove_deletes_profile ... ok
+test (macos-latest)	Run Tests (Default)	2026-08-07T16:36:04.6096830Z test rpc_commands_expose_network_profile_flag ... ok
+test (macos-latest)	Run Tests (Default)	2026-08-07T16:36:04.6097240Z 
+test (macos-latest)	Run Tests (Default)	2026-08-07T16:36:04.6097540Z test result: ok. 9 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.06s
+test (macos-latest)	Run Tests (Default)	2026-08-07T16:36:04.6097960Z 
+test (macos-latest)	Run Tests (Default)	2026-08-07T16:36:04.6099150Z ^[[1m^[[92m     Running^[[0m tests/plugin_loading.rs (target/debug/deps/plugin_loading-2bdc62ba50718459)
+test (macos-latest)	Run Tests (Default)	2026-08-07T16:36:04.6188350Z 
+test (macos-latest)	Run Tests (Default)	2026-08-07T16:36:04.6188760Z running 1 test
+test (macos-latest)	Run Tests (Default)	2026-08-07T16:36:04.6205580Z test plugin_without_feature_errors_clearly ... ok
+test (macos-latest)	Run Tests (Default)	2026-08-07T16:36:04.6205830Z 
+test (macos-latest)	Run Tests (Default)	2026-08-07T16:36:04.6206030Z test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test (macos-latest)	Run Tests (Default)	2026-08-07T16:36:04.6206390Z 
+test (macos-latest)	Run Tests (Default)	2026-08-07T16:36:04.6208940Z ^[[1m^[[92m     Running^[[0m tests/storage_analyze_integration_test.rs (target/debug/deps/storage_analyze_integration_test-c731e69df44a3e4c)
+test (macos-latest)	Run Tests (Default)	2026-08-07T16:36:04.6297890Z 
+test (macos-latest)	Run Tests (Default)	2026-08-07T16:36:04.6298230Z running 3 tests
+test (macos-latest)	Run Tests (Default)	2026-08-07T16:36:04.6372810Z test storage_analyze_help_documents_categorization ... ok
+test (macos-latest)	Run Tests (Default)	2026-08-07T16:36:04.6508770Z test storage_analyze_empty_id_errors ... ok
+test (macos-latest)	Run Tests (Default)	2026-08-07T16:36:05.0422880Z test storage_analyze_accepts_json_format_flag ... ok
+test (macos-latest)	Run Tests (Default)	2026-08-07T16:36:05.0424060Z 
+test (macos-latest)	Run Tests (Default)	2026-08-07T16:36:05.0425180Z ^[[1m^[[92m     Running^[[0m tests/tx_build_integration_test.rs (target/debug/deps/tx_build_integration_test-d22268959edccb03)
+test (macos-latest)	Run Tests (Default)	2026-08-07T16:36:05.0425990Z test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.41s
+test (macos-latest)	Run Tests (Default)	2026-08-07T16:36:05.0426440Z 
+test (macos-latest)	Run Tests (Default)	2026-08-07T16:36:05.0521930Z 
+test (macos-latest)	Run Tests (Default)	2026-08-07T16:36:05.0522230Z running 6 tests
+test (macos-latest)	Run Tests (Default)	2026-08-07T16:36:05.0620180Z test test_cli_tx_build_invalid_source ... ok
+test (macos-latest)	Run Tests (Default)	2026-08-07T16:36:05.0620880Z test test_cli_tx_build_invalid_arg_format ... ok
+test (macos-latest)	Run Tests (Default)	2026-08-07T16:36:05.0634430Z test test_cli_tx_build_json ... ok
+test (macos-latest)	Run Tests (Default)	2026-08-07T16:36:05.0684850Z test test_cli_tx_build_success ... ok
+test (macos-latest)	Run Tests (Default)	2026-08-07T16:36:05.0687060Z test test_cli_tx_build_output_file ... ok
+test (macos-latest)	Run Tests (Default)	2026-08-07T16:36:05.0690790Z test test_cli_tx_build_typed_args ... ok
+test (macos-latest)	Run Tests (Default)	2026-08-07T16:36:05.0691130Z 
+test (macos-latest)	Run Tests (Default)	2026-08-07T16:36:05.0691940Z test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.02s
+test (macos-latest)	Run Tests (Default)	2026-08-07T16:36:05.0694720Z ^[[1m^[[92m     Running^[[0m tests/tx_integration_test.rs (target/debug/deps/tx_integration_test-ef3acce5ec327fcd)
+test (macos-latest)	Run Tests (Default)	2026-08-07T16:36:05.0695130Z 
+test (macos-latest)	Run Tests (Default)	2026-08-07T16:36:05.0785720Z 
+test (macos-latest)	Run Tests (Default)	2026-08-07T16:36:05.0786150Z running 2 tests
+test (macos-latest)	Run Tests (Default)	2026-08-07T16:36:05.0860340Z test test_tx_inspect_invalid_format ... ok
+test (macos-latest)	Run Tests (Default)	2026-08-07T16:36:05.2387280Z ^[[1m^[[92m     Running^[[0m tests/tx_sign.rs (target/debug/deps/tx_sign-2c51edabe5dffccc)
+test (macos-latest)	Run Tests (Default)	2026-08-07T16:36:05.2387790Z test test_tx_inspect_format_json ... ok
+test (macos-latest)	Run Tests (Default)	2026-08-07T16:36:05.2493460Z 
+test (macos-latest)	Run Tests (Default)	2026-08-07T16:36:05.2603740Z test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.15s
+test (macos-latest)	Run Tests (Default)	2026-08-07T16:36:05.2704770Z 
+test (macos-latest)	Run Tests (Default)	2026-08-07T16:36:05.2808290Z 
+test (macos-latest)	Run Tests (Default)	2026-08-07T16:36:05.2909200Z running 10 tests
+test (macos-latest)	Run Tests (Default)	2026-08-07T16:36:05.3030170Z test invalid_base64_errors ... ok
+test (macos-latest)	Run Tests (Default)	2026-08-07T16:36:05.3131600Z ^[[1m^[[92m     Running^[[0m tests/tx_simulate_integration_test.rs (target/debug/deps/tx_simulate_integration_test-719aa9b263a78aee)
+test (macos-latest)	Run Tests (Default)	2026-08-07T16:36:05.3132280Z test invalid_envelope_errors ... ok
+test (macos-latest)	Run Tests (Default)	2026-08-07T16:36:05.3163790Z test cannot_write_output_errors ... ok
+test (macos-latest)	Run Tests (Default)	2026-08-07T16:36:05.3164310Z test invalid_file_errors ... ok
+test (macos-latest)	Run Tests (Default)	2026-08-07T16:36:05.3164700Z test missing_identity_errors ... ok
+test (macos-latest)	Run Tests (Default)	2026-08-07T16:36:05.3165080Z test invalid_network_errors ... ok
+test (macos-latest)	Run Tests (Default)	2026-08-07T16:36:05.3165490Z test successful_sign_json_format ... ok
+test (macos-latest)	Run Tests (Default)	2026-08-07T16:36:05.3165830Z test successful_sign_to_file ... ok
+test (macos-latest)	Run Tests (Default)	2026-08-07T16:36:05.3166280Z test successful_sign_to_stdout ... ok
+test (macos-latest)	Run Tests (Default)	2026-08-07T16:36:05.3167370Z test unknown_identity_errors ... ok
+test (macos-latest)	Run Tests (Default)	2026-08-07T16:36:05.3167640Z 
+test (macos-latest)	Run Tests (Default)	2026-08-07T16:36:05.3167970Z test result: ok. 10 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.07s
+test (macos-latest)	Run Tests (Default)	2026-08-07T16:36:05.3168360Z 
+test (macos-latest)	Run Tests (Default)	2026-08-07T16:36:05.3240730Z 
+test (macos-latest)	Run Tests (Default)	2026-08-07T16:36:05.3241190Z running 2 tests
+test (macos-latest)	Run Tests (Default)	2026-08-07T16:36:05.3357390Z test test_cli_tx_simulate_empty_envelope ... ok
+test (macos-latest)	Run Tests (Default)	2026-08-07T16:36:05.5782590Z test test_cli_tx_simulate_invalid_envelope ... ok
+test (macos-latest)	Run Tests (Default)	2026-08-07T16:36:05.5783040Z 
+test (macos-latest)	Run Tests (Default)	2026-08-07T16:36:05.5783340Z test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.25s
+test (macos-latest)	Run Tests (Default)	2026-08-07T16:36:05.5783720Z 
+test (macos-latest)	Run Tests (Default)	2026-08-07T16:36:05.5784720Z ^[[1m^[[92m     Running^[[0m tests/tx_submit_integration_test.rs (target/debug/deps/tx_submit_integration_test-cb691fb7342dafb3)
+test (macos-latest)	Run Tests (Default)	2026-08-07T16:36:05.5872320Z 
+test (macos-latest)	Run Tests (Default)	2026-08-07T16:36:05.5872730Z running 2 tests
+test (macos-latest)	Run Tests (Default)	2026-08-07T16:36:05.7380930Z test test_cli_submit_json_output_format ... ok
+test (macos-latest)	Run Tests (Default)	2026-08-07T16:36:05.7583210Z ^[[1m^[[92m     Running^[[0m tests/upgrade_safety_integration_test.rs (target/debug/deps/upgrade_safety_integration_test-7e418e24d0e5fff6)
+test (macos-latest)	Run Tests (Default)	2026-08-07T16:36:05.7584670Z test test_cli_submit_invalid_envelope_rejects ... ok
+test (macos-latest)	Run Tests (Default)	2026-08-07T16:36:05.7685440Z 
+test (macos-latest)	Run Tests (Default)	2026-08-07T16:36:05.7786960Z test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.16s
+test (macos-latest)	Run Tests (Default)	2026-08-07T16:36:05.7889760Z ^[[1m^[[92m     Running^[[0m tests/verify_integration_test.rs (target/debug/deps/verify_integration_test-2e45bea3f5790b3e)
+test (macos-latest)	Run Tests (Default)	2026-08-07T16:36:05.7891010Z 
+test (macos-latest)	Run Tests (Default)	2026-08-07T16:36:05.7991700Z 
+test (macos-latest)	Run Tests (Default)	2026-08-07T16:36:05.8117280Z running 5 tests
+test (macos-latest)	Run Tests (Default)	2026-08-07T16:36:05.8219280Z test diff_help_documents_upgrade_safety ... ok
+test (macos-latest)	Run Tests (Default)	2026-08-07T16:36:05.8242580Z test deploy_deny_breaking_aborts_on_incompatible ... ok
+test (macos-latest)	Run Tests (Default)	2026-08-07T16:36:05.8344430Z test deploy_without_deny_breaking_skips_guard ... ok
+test (macos-latest)	Run Tests (Default)	2026-08-07T16:36:05.8374740Z test upgrade_safety_json_serializes_verdict ... ok
+test (macos-latest)	Run Tests (Default)	2026-08-07T16:36:05.8379720Z ^[[1m^[[92m     Running^[[0m tests/wasm_integration_test.rs (target/debug/deps/wasm_integration_test-f0f66a7fa7c6f1b3)
+test (macos-latest)	Run Tests (Default)	2026-08-07T16:36:05.8380370Z test upgrade_safety_pretty_shows_breaking_and_nonbreaking ... ok
+test (macos-latest)	Run Tests (Default)	2026-08-07T16:36:05.8381790Z 
+test (macos-latest)	Run Tests (Default)	2026-08-07T16:36:05.8382190Z test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.02s
+test (macos-latest)	Run Tests (Default)	2026-08-07T16:36:05.8382610Z 
+test (macos-latest)	Run Tests (Default)	2026-08-07T16:36:05.8382690Z 
+test (macos-latest)	Run Tests (Default)	2026-08-07T16:36:05.8382860Z running 6 tests
+test (macos-latest)	Run Tests (Default)	2026-08-07T16:36:05.8383190Z test test_cli_verify_invalid_format_arg ... ok
+test (macos-latest)	Run Tests (Default)	2026-08-07T16:36:05.8384730Z test test_cli_verify_invalid_wasm ... ok
+test (macos-latest)	Run Tests (Default)	2026-08-07T16:36:05.8385840Z test test_cli_verify_json_format_accepted ... ok
+test (macos-latest)	Run Tests (Default)	2026-08-07T16:36:05.8386340Z test test_cli_verify_missing_contract_arg ... ok
+test (macos-latest)	Run Tests (Default)	2026-08-07T16:36:05.8386730Z test test_cli_verify_missing_wasm_file ... ok
+test (macos-latest)	Run Tests (Default)	2026-08-07T16:36:05.8387170Z test test_cli_verify_onchain_error_path ... ok
+test (macos-latest)	Run Tests (Default)	2026-08-07T16:36:05.8387460Z 
+test (macos-latest)	Run Tests (Default)	2026-08-07T16:36:05.8387770Z test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.03s
+test (macos-latest)	Run Tests (Default)	2026-08-07T16:36:05.8388190Z 
+test (macos-latest)	Run Tests (Default)	2026-08-07T16:36:05.8523480Z 
+test (macos-latest)	Run Tests (Default)	2026-08-07T16:36:05.8524530Z running 9 tests
+test (macos-latest)	Run Tests (Default)	2026-08-07T16:36:05.8623710Z test test_cli_wasm_cache_info_json ... ok
+test (macos-latest)	Run Tests (Default)	2026-08-07T16:36:05.8626220Z test test_cli_wasm_cache_info_default ... ok
+test (macos-latest)	Run Tests (Default)	2026-08-07T16:36:05.8629040Z test test_cli_wasm_cache_clear ... ok
+test (macos-latest)	Run Tests (Default)	2026-08-07T16:36:05.8733220Z test test_cli_wasm_cache_remove ... ok
+test (macos-latest)	Run Tests (Default)	2026-08-07T16:36:05.8749470Z test test_cli_wasm_inspect_invalid_wasm ... ok
+test (macos-latest)	Run Tests (Default)	2026-08-07T16:36:05.8760840Z test test_cli_wasm_inspect_json ... ok
+test (macos-latest)	Run Tests (Default)	2026-08-07T16:36:05.8802740Z test test_cli_wasm_inspect_missing_file ... ok
+test (macos-latest)	Run Tests (Default)	2026-08-07T16:36:05.8807690Z test test_cli_wasm_inspect_valid_empty_wasm ... ok
+test (macos-latest)	Run Tests (Default)	2026-08-07T16:36:05.8846380Z test test_cli_wasm_metadata_missing_contract ... ok
+test (macos-latest)	Run Tests (Default)	2026-08-07T16:36:05.8846810Z 
+test (macos-latest)	Run Tests (Default)	2026-08-07T16:36:05.8847210Z test result: ok. 9 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.03s
+test (macos-latest)	Run Tests (Default)	2026-08-07T16:36:05.8847580Z 
+test (macos-latest)	Run Tests (Default)	2026-08-07T16:36:05.8850840Z ^[[1m^[[92m     Running^[[0m unittests src/lib.rs (target/debug/deps/sdkt_core-97874f7c6e2ea9a3)
+test (macos-latest)	Run Tests (Default)	2026-08-07T16:36:05.9002790Z 
+test (macos-latest)	Run Tests (Default)	2026-08-07T16:36:05.9003250Z running 85 tests
+test (macos-latest)	Run Tests (Default)	2026-08-07T16:36:05.9049440Z test build::tests::test_build_empty_config ... ok
+test (macos-latest)	Run Tests (Default)	2026-08-07T16:36:05.9049920Z test config::tests::test_default_config ... ok
+test (macos-latest)	Run Tests (Default)	2026-08-07T16:36:05.9083040Z test build::tests::test_build_missing_path ... ok
+test (macos-latest)	Run Tests (Default)	2026-08-07T16:36:05.9126630Z test config::tests::test_duplicate_contract_name_rejected ... ok
+test (macos-latest)	Run Tests (Default)	2026-08-07T16:36:05.9134740Z test config::tests::test_parse_valid_toml ... ok
+test (macos-latest)	Run Tests (Default)	2026-08-07T16:36:05.9136720Z test config::tests::test_old_toml_without_storage ... ok
+test (macos-latest)	Run Tests (Default)	2026-08-07T16:36:05.9137920Z test config::tests::test_depends_on_field_parses ... ok
+test (macos-latest)	Run Tests (Default)	2026-08-07T16:36:05.9139300Z test fee::tests::test_estimate_base_fee_empty ... ok
+test (macos-latest)	Run Tests (Default)	2026-08-07T16:36:05.9140600Z test fee::tests::test_estimate_base_fee_median ... ok
+test (macos-latest)	Run Tests (Default)	2026-08-07T16:36:05.9144350Z test fee::tests::test_estimate_combined ... ok
+test (macos-latest)	Run Tests (Default)	2026-08-07T16:36:05.9147860Z test fee::tests::test_estimate_base_fee_even_count ... ok
+test (macos-latest)	Run Tests (Default)	2026-08-07T16:36:05.9148840Z test fee::tests::test_estimate_xlm_exact ... ok
+test (macos-latest)	Run Tests (Default)	2026-08-07T16:36:05.9149610Z test fee::tests::test_estimate_xlm_whole ... ok
+test (macos-latest)	Run Tests (Default)	2026-08-07T16:36:05.9151460Z test fee::tests::test_mainnet_fee_stroops ... ok
+test (macos-latest)	Run Tests (Default)	2026-08-07T16:36:05.9152240Z test fee::tests::test_multiple_samples ... ok
+test (macos-latest)	Run Tests (Default)	2026-08-07T16:36:05.9153190Z test fee::tests::test_network_display ... ok
+test (macos-latest)	Run Tests (Default)	2026-08-07T16:36:05.9154030Z test fee::tests::test_network_multipliers ... ok
+test (macos-latest)	Run Tests (Default)	2026-08-07T16:36:05.9154780Z test fee::tests::test_network_from_str ... ok
+test (macos-latest)	Run Tests (Default)	2026-08-07T16:36:05.9155620Z test fee::tests::test_real_testnet_sample ... ok
+test (macos-latest)	Run Tests (Default)	2026-08-07T16:36:05.9157200Z test fee::tests::test_standalone_fee_stroops ... ok
+test (macos-latest)	Run Tests (Default)	2026-08-07T16:36:05.9158120Z test fee::tests::test_override_multiplier ... ok
+test (macos-latest)	Run Tests (Default)	2026-08-07T16:36:05.9159400Z test fee::tests::test_testnet_fee_stroops ... ok
+test (macos-latest)	Run Tests (Default)	2026-08-07T16:36:05.9160180Z test fee::tests::test_stroops_per_xlm ... ok
+test (macos-latest)	Run Tests (Default)	2026-08-07T16:36:05.9161050Z test fetch::tests::path_resolver_returns_path ... ok
+test (macos-latest)	Run Tests (Default)	2026-08-07T16:36:05.9161890Z test format::tests::test_output_format_from_str ... ok
+test (macos-latest)	Run Tests (Default)	2026-08-07T16:36:05.9162890Z test lock::tests::compute_sha256_known_vector ... ok
+test (macos-latest)	Run Tests (Default)	2026-08-07T16:36:05.9168090Z test lock::tests::generate_lock_errors_when_artifact_missing ... ok
+test (macos-latest)	Run Tests (Default)	2026-08-07T16:36:05.9201240Z test lock::tests::generate_lock_records_order_and_hashes ... ok
+test (macos-latest)	Run Tests (Default)	2026-08-07T16:36:05.9202310Z test lock::tests::lock_dependencies_records_local_and_git ... ok
+test (macos-latest)	Run Tests (Default)	2026-08-07T16:36:05.9208960Z test lock::tests::verify_lock_absent_reports_missing_in_lock ... ok
+test (macos-latest)	Run Tests (Default)	2026-08-07T16:36:05.9275190Z test lock::tests::verify_lock_detects_drift_and_missing ... ok
+test (macos-latest)	Run Tests (Default)	2026-08-07T16:36:05.9276630Z test package::tests::test_duplicate_package_name_rejected_at_parse ... ok
+test (macos-latest)	Run Tests (Default)	2026-08-07T16:36:05.9277350Z test package::tests::test_topo_sort_deterministic_and_cyclic ... ok
+test (macos-latest)	Run Tests (Default)	2026-08-07T16:36:05.9278540Z test package::tests::test_unsupported_source_no_longer_rejected_at_parse ... ok
+test (macos-latest)	Run Tests (Default)	2026-08-07T16:36:05.9280280Z test package::tests::test_validate_git_rejects_empty_ref ... ok
+test (macos-latest)	Run Tests (Default)	2026-08-07T16:36:05.9281290Z test package::tests::test_validate_git_rejects_multiple_refs ... ok
+test (macos-latest)	Run Tests (Default)	2026-08-07T16:36:05.9283160Z test package::tests::test_validate_git_rejects_path_plus_git ... ok
+test (macos-latest)	Run Tests (Default)	2026-08-07T16:36:05.9284620Z test package::tests::test_validate_git_rejects_unsupported_scheme ... ok
+test (macos-latest)	Run Tests (Default)	2026-08-07T16:36:05.9285170Z test package::tests::test_validate_git_tag_ok ... ok
+test (macos-latest)	Run Tests (Default)	2026-08-07T16:36:05.9285760Z test package::tests::test_validate_git_url_accepts_and_rejects ... ok
+test (macos-latest)	Run Tests (Default)	2026-08-07T16:36:05.9289530Z test package::tests::test_validate_invalid_version_format ... ok
+test (macos-latest)	Run Tests (Default)	2026-08-07T16:36:05.9290120Z test package::tests::test_validate_manifest_full ... ok
+test (macos-latest)	Run Tests (Default)	2026-08-07T16:36:05.9291220Z test package::tests::test_validate_missing_name ... ok
+test (macos-latest)	Run Tests (Default)	2026-08-07T16:36:05.9293270Z test package::tests::test_validate_missing_path ... ok
+test (macos-latest)	Run Tests (Default)	2026-08-07T16:36:05.9293820Z test package::tests::test_validate_missing_version ... ok
+test (macos-latest)	Run Tests (Default)	2026-08-07T16:36:05.9294470Z test package::tests::test_validate_package_ok ... ok
+test (macos-latest)	Run Tests (Default)	2026-08-07T16:36:05.9295100Z test package::tests::test_validate_path_not_found ... ok
+test (macos-latest)	Run Tests (Default)	2026-08-07T16:36:05.9302180Z test package::tests::test_validate_self_dependency ... ok
+test (macos-latest)	Run Tests (Default)	2026-08-07T16:36:05.9306990Z test package::tests::test_validate_valid_local_deps ... ok
+test (macos-latest)	Run Tests (Default)	2026-08-07T16:36:05.9308530Z test package::tests::test_validate_valid_version_with_prerelease ... ok
+test (macos-latest)	Run Tests (Default)	2026-08-07T16:36:05.9309050Z test project::tests::test_circular_dependency ... ok
+test (macos-latest)	Run Tests (Default)	2026-08-07T16:36:05.9309780Z test project::tests::test_depends_on_field ... ok
+test (macos-latest)	Run Tests (Default)	2026-08-07T16:36:05.9310370Z test project::tests::test_deterministic_ordering ... ok
+test (macos-latest)	Run Tests (Default)	2026-08-07T16:36:05.9311020Z test project::tests::test_duplicate_dependency ... ok
+test (macos-latest)	Run Tests (Default)	2026-08-07T16:36:05.9311570Z test project::tests::test_merged_deploy_after_and_depends_on ... ok
+test (macos-latest)	Run Tests (Default)	2026-08-07T16:36:05.9312140Z test project::tests::test_missing_config ... ok
+test (macos-latest)	Run Tests (Default)	2026-08-07T16:36:05.9314760Z test project::tests::test_multiple_with_dependencies ... ok
+test (macos-latest)	Run Tests (Default)	2026-08-07T16:36:05.9315300Z test project::tests::test_self_dependency ... ok
+test (macos-latest)	Run Tests (Default)	2026-08-07T16:36:05.9318290Z test project::tests::test_single_contract ... ok
+test (macos-latest)	Run Tests (Default)	2026-08-07T16:36:05.9319990Z test project::tests::test_unknown_dependency ... ok
+test (macos-latest)	Run Tests (Default)	2026-08-07T16:36:05.9330600Z test project::tests::test_validate_project_ok_and_err ... ok
+test (macos-latest)	Run Tests (Default)	2026-08-07T16:36:05.9342110Z test scaffold::tests::cargo_toml_has_no_std_profile ... ok
+test (macos-latest)	Run Tests (Default)	2026-08-07T16:36:05.9342780Z test scaffold::tests::force_overwrites_existing ... ok
+test (macos-latest)	Run Tests (Default)	2026-08-07T16:36:05.9346200Z test scaffold::tests::full_scaffold_creates_all_files ... ok
+test (macos-latest)	Run Tests (Default)	2026-08-07T16:36:05.9376200Z test scaffold::tests::hyphenated_name_produces_valid_crate ... ok
+test (macos-latest)	Run Tests (Default)	2026-08-07T16:36:05.9377030Z test scaffold::tests::lib_rs_is_no_std ... ok
+test (macos-latest)	Run Tests (Default)	2026-08-07T16:36:05.9377430Z test scaffold::tests::minimal_scaffold_omits_extras ... ok
+test (macos-latest)	Run Tests (Default)	2026-08-07T16:36:05.9378270Z test scaffold::tests::rejects_existing_dir ... ok
+test (macos-latest)	Run Tests (Default)	2026-08-07T16:36:05.9378640Z test tx_builder::tests::test_builder_invalid_memo ... ok
+test (macos-latest)	Run Tests (Default)	2026-08-07T16:36:05.9396040Z test tx_builder::tests::test_builder_invoke_contract_empty_args ... ok
+test (macos-latest)	Run Tests (Default)	2026-08-07T16:36:05.9398210Z test tx_builder::tests::test_builder_invoke_contract_invalid_contract_id ... ok
+test (macos-latest)	Run Tests (Default)	2026-08-07T16:36:05.9399260Z test tx_builder::tests::test_builder_invoke_contract_success ... ok
+test (macos-latest)	Run Tests (Default)	2026-08-07T16:36:05.9399940Z test tx_builder::tests::test_builder_missing_operations ... ok
+test (macos-latest)	Run Tests (Default)	2026-08-07T16:36:05.9400610Z test tx_builder::tests::test_builder_missing_source ... ok
+test (macos-latest)	Run Tests (Default)	2026-08-07T16:36:05.9402320Z test tx_builder::tests::test_valid_build_and_encode ... ok
+test (macos-latest)	Run Tests (Default)	2026-08-07T16:36:05.9402970Z test validation::tests::classic_operation_warning ... ok
+test (macos-latest)	Run Tests (Default)	2026-08-07T16:36:05.9403860Z test validation::tests::empty_tx ... ok
+test (macos-latest)	Run Tests (Default)	2026-08-07T16:36:05.9404810Z test validation::tests::invalid_fee ... ok
+test (macos-latest)	Run Tests (Default)	2026-08-07T16:36:05.9405260Z test validation::tests::invalid_sequence ... ok
+test (macos-latest)	Run Tests (Default)	2026-08-07T16:36:05.9405650Z test validation::tests::malformed_envelope ... ok
+test (macos-latest)	Run Tests (Default)	2026-08-07T16:36:05.9405970Z test validation::tests::missing_function_name ... ok
+test (macos-latest)	Run Tests (Default)	2026-08-07T16:36:05.9410690Z test validation::tests::oversize_xdr ... ok
+test (macos-latest)	Run Tests (Default)	2026-08-07T16:36:05.9411100Z test validation::tests::valid_tx ... ok
+test (macos-latest)	Run Tests (Default)	2026-08-07T16:36:05.9476280Z test fetch::tests::fetch_git_by_rev ... FAILED
+test (macos-latest)	Run Tests (Default)	2026-08-07T16:36:06.2207210Z test fetch::tests::fetch_git_by_tag ... ok
+test (macos-latest)	Run Tests (Default)	2026-08-07T16:36:06.2209500Z 
+test (macos-latest)	Run Tests (Default)	2026-08-07T16:36:06.2209800Z failures:
+test (macos-latest)	Run Tests (Default)	2026-08-07T16:36:06.2210110Z 
+test (macos-latest)	Run Tests (Default)	2026-08-07T16:36:06.2210270Z ---- fetch::tests::fetch_git_by_rev stdout ----
+test (macos-latest)	Run Tests (Default)	2026-08-07T16:36:06.2210580Z 
+test (macos-latest)	Run Tests (Default)	2026-08-07T16:36:06.2210900Z thread 'fetch::tests::fetch_git_by_rev' (15404) panicked at crates/sdkt-core/src/fetch.rs:369:13:
+test (macos-latest)	Run Tests (Default)	2026-08-07T16:36:06.2211830Z git ["init", "-q"] failed: fatal: cannot copy '/opt/homebrew/opt/git/share/git-core/templates/info/exclude' to '/private/var/folders/df/djsxfhc17x95674wsm_g8s980000gn/T/sdkt-fetch-src-1786120565914525000/.git/info/exclude': File exists
+test (macos-latest)	Run Tests (Default)	2026-08-07T16:36:06.2213240Z 
+test (macos-latest)	Run Tests (Default)	2026-08-07T16:36:06.2213480Z note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+test (macos-latest)	Run Tests (Default)	2026-08-07T16:36:06.2213910Z 
+test (macos-latest)	Run Tests (Default)	2026-08-07T16:36:06.2213920Z 
+test (macos-latest)	Run Tests (Default)	2026-08-07T16:36:06.2214040Z failures:
+test (macos-latest)	Run Tests (Default)	2026-08-07T16:36:06.2214200Z     fetch::tests::fetch_git_by_rev
+test (macos-latest)	Run Tests (Default)	2026-08-07T16:36:06.2214340Z 
+test (macos-latest)	Run Tests (Default)	2026-08-07T16:36:06.2214600Z test result: FAILED. 84 passed; 1 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.32s
+test (macos-latest)	Run Tests (Default)	2026-08-07T16:36:06.2215010Z 
+test (macos-latest)	Run Tests (Default)	2026-08-07T16:36:06.2217070Z ^[[1m^[[91merror^[[0m: test failed, to rerun pass `-p sdkt-core --lib`
+test (macos-latest)	Run Tests (Default)	2026-08-07T16:36:06.2280550Z ##[error]Process completed with exit code 101.
