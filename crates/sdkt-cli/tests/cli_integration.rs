@@ -219,6 +219,7 @@ fn invalid_top_level_subcommand_fails() {
     sdkt_isolated().arg("bogus-cmd").assert().failure();
 }
 
+#[cfg(unix)]
 #[test]
 fn completions_broken_pipe_exits_successfully() {
     // `sdkt completions bash | head -c 1` closes the pipe after one byte.
