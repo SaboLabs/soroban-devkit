@@ -29,7 +29,18 @@ pub struct IdentityStore {
 
 impl IdentityStore {
     /// Initialize the keystore in the default OS-portable config directory (`~/.config/sdkt/identities/`).
+    ///
+    /// If the `SDKT_IDENTITY_DIR` environment variable is set, its value is used instead of the
+    /// OS-default config directory. This provides a cross-platform override (works on macOS and
+    /// Windows, where `XDG_CONFIG_HOME` is ignored by `directories::ProjectDirs`), and is the
+    /// canonical way for tests and CI to isolate the identity store.
     pub fn new() -> Result<Self, StorageError> {
+        if let Ok(dir) = std::env::var("SDKT_IDENTITY_DIR") {
+            if !dir.is_empty() {
+                return Self::with_dir(dir);
+            }
+        }
+
         let proj_dirs = ProjectDirs::from("com", "SorobanDevKit", "sdkt").ok_or_else(|| {
             StorageError::Io(std::io::Error::new(
                 std::io::ErrorKind::NotFound,
