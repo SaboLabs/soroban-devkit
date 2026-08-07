@@ -61,6 +61,24 @@ jobs:
       if: matrix.os == 'ubuntu-latest'
       run: cargo test -p sdkt-cli --test plugin_loading --all-features
 
+  supply-chain:
+    name: supply-chain audit (best-effort)
+    runs-on: ubuntu-latest
+    # Advisory DB downloads or findings must never break the build.
+    continue-on-error: true
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Set up Rust
+      uses: dtolnay/rust-toolchain@stable
+
+    - name: cargo audit (advisory DB best-effort)
+      # rustsec/audit-check downloads the advisory DB; on DB/network issues it
+      # is allowed to fail without failing the overall CI run.
+      uses: rustsec/audit-check@v2
+      with:
+        token: ${{ secrets.GITHUB_TOKEN }}
+
   install-script:
     name: install-script validation
     runs-on: ubuntu-latest

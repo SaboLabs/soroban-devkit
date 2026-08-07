@@ -116,6 +116,23 @@ explicit --rpc-url / --network-passphrase
 `tx sign` is excluded — it is offline signing and takes only `--network` for the
 signature hash. Commands invoked without these flags behave exactly as before.
 
+## Shell completions
+
+`sdkt` can emit shell completion scripts for the major shells. This is the
+fastest way to discover subcommands and flags.
+
+```bash
+sdkt completions bash       # bash
+sdkt completions zsh        # zsh
+sdkt completions fish       # fish
+sdkt completions powershell # powershell
+sdkt completions elvish     # elvish
+```
+
+Pipe the output to a file your shell reads at startup (see the README
+"Shell completions" section for per-shell install paths). Tab-completion then
+covers commands, subcommands, and flag names.
+
 ## Notes
 
 - `--format json` is supported on all read-style commands and on `diff`, `audit`, `deploy`, `init` for scripting / CI.

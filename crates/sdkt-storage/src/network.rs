@@ -2,6 +2,23 @@
 //!
 //! Manages named network configurations that can be referenced by profile name
 //! in CLI commands instead of specifying full RPC URLs and network passphrases.
+//!
+//! # Example
+//!
+//! ```
+//! use sdkt_storage::NetworkProfile;
+//!
+//! let profile = NetworkProfile::new(
+//!     "testnet",
+//!     "https://soroban-testnet.stellar.org",
+//!     "Test SDF Network ; September 2015",
+//! )
+//! .with_friendbot("https://friendbot.stellar.org");
+//!
+//! assert_eq!(profile.name, "testnet");
+//! assert_eq!(profile.rpc_url, "https://soroban-testnet.stellar.org");
+//! assert_eq!(profile.friendbot_url.as_deref(), Some("https://friendbot.stellar.org"));
+//! ```
 
 use directories::ProjectDirs;
 use serde::{Deserialize, Serialize};

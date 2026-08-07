@@ -51,6 +51,17 @@ pub struct WasmImport {
     pub kind: String,
 }
 
+/// Parse metadata (hash, size, exports, imports, custom sections) from raw
+/// Soroban contract WASM bytes.
+///
+/// # Example
+///
+/// ```
+/// use sdkt_wasm::parse_metadata;
+///
+/// // Empty input is rejected with `WasmError::Empty`.
+/// assert!(parse_metadata(b"").is_err());
+/// ```
 pub fn parse_metadata(wasm_bytes: &[u8]) -> Result<WasmMetadata, WasmError> {
     if wasm_bytes.is_empty() {
         return Err(WasmError::Empty);

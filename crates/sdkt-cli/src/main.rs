@@ -1,4 +1,5 @@
-use clap::{Args, Parser, Subcommand};
+use clap::{Args, CommandFactory, Parser, Subcommand};
+use clap_complete::Shell;
 use sdkt_core::fee::{FeeConfig, FeeEstimator, LedgerFeeSample, NetworkKind};
 use sdkt_core::{DevKitConfig, NetworkConfig, OutputFormat};
 use sdkt_rpc::{
@@ -15,6 +16,7 @@ use sdkt_xdr::{
     SigningError, SigningOptions,
 };
 use std::fs;
+use std::io::{self, Write};
 use std::process;
 
 /// Reusable network-resolution flags shared by every command that talks to a
@@ -117,6 +119,34 @@ fn resolve_rpc_client(
         Err(e) => {
             eprintln!("Error: {}", e);
             process::exit(1);
+        }
+    }
+}
+
+/// Adapter that makes a closed consumer (EPIPE / `BrokenPipe`) look like a
+/// successful write.
+///
+/// `clap_complete::generate` writes the script to the provided `Write` and
+/// (in this version) unwraps write errors internally. When the consumer closes
+/// the pipe early — e.g. `sdkt completions bash | head` — the underlying write
+/// fails with `BrokenPipe`, which would otherwise panic. By mapping that one
+/// error to `Ok`, downstream writers never see it and `sdkt` exits cleanly.
+/// Every other I/O error is passed through unchanged, preserving the existing
+/// failure behavior for real write problems.
+struct BrokenPipeOk<W: Write>(W);
+
+impl<W: Write> Write for BrokenPipeOk<W> {
+    fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+        match self.0.write(buf) {
+            Err(e) if e.kind() == io::ErrorKind::BrokenPipe => Ok(buf.len()),
+            other => other,
+        }
+    }
+
+    fn flush(&mut self) -> io::Result<()> {
+        match self.0.flush() {
+            Err(e) if e.kind() == io::ErrorKind::BrokenPipe => Ok(()),
+            other => other,
         }
     }
 }
@@ -405,6 +435,12 @@ enum Commands {
         action: ProjectCommand,
         #[command(flatten)]
         net: NetworkArgs,
+    },
+    /// Generate shell completion scripts for your shell
+    Completions {
+        /// Shell to generate completions for (bash, zsh, fish, powershell, elvish)
+        #[arg(value_enum)]
+        shell: Shell,
     },
 }
 
@@ -2843,6 +2879,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 }
             }
         },
+        Commands::Completions { shell } => {
+            let mut cmd = Cli::command();
+            // Wrap stdout so a consumer that closes the pipe early
+            // (`sdkt completions bash | head`) yields EPIPE, which we treat as
+            // success instead of letting clap_complete panic on it.
+            let mut out = BrokenPipeOk(std::io::stdout());
+            clap_complete::generate(shell, &mut cmd, "sdkt", &mut out);
+        }
     }
 
     Ok(())

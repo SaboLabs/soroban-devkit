@@ -105,6 +105,24 @@ sdkt --help
 
 A successful `sdkt --version` means the binary is installed and on your `PATH`.
 
+### Shell completions
+
+Generate completion scripts for your shell and source them:
+
+```bash
+# bash
+sdkt completions bash > ~/.local/share/bash-completion/completions/sdkt
+# zsh
+sdkt completions zsh > "${fpath[1]}/_sdkt"
+# fish
+sdkt completions fish > ~/.config/fish/completions/sdkt.fish
+# powershell
+sdkt completions powershell > sdkt.ps1
+# then in your profile: . ./sdkt.ps1
+```
+
+Supported shells: `bash`, `zsh`, `fish`, `powershell` (also `elvish`).
+
 ### 3. Your first command (offline)
 
 Inspect a compiled contract WASM that ships with the repo:

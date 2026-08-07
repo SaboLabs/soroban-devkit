@@ -7,6 +7,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **Shell completions (M32).** New `sdkt completions <shell>` command generates
+  completion scripts for `bash`, `zsh`, `fish`, `powershell`, and `elvish`
+  (via `clap_complete`). Documented in README and `docs/cli.md`.
+- **CLI integration tests (M32).** New `crates/sdkt-cli/tests/cli_integration.rs`
+  covers `--help`, `--version`, `completions`, the full `network`
+  add/list/show/remove lifecycle with `--format json`, invalid-argument handling,
+  and offline commands. Tests are deterministic and hermetic (per-test
+  `SDKT_NETWORK_DIR`).
+- **Supply-chain audit (M32).** New `supply-chain` CI job runs `cargo audit`
+  (`rustsec/audit-check`) on `ubuntu-latest` with `continue-on-error`, so
+  advisory-DB or network issues never break the build. Portable across the
+  existing Linux/macOS/Windows matrix.
+- **Runnable crate doc examples (M32).** Added `///` doc examples to
+  `sdkt_storage::NetworkProfile` and `sdkt_wasm::parse_metadata` so docs.rs
+  renders verified, executable examples.
+
 ### Planned
 - Post-2.0 mainnet-focused tooling, SCF grant alignment, and a plugin marketplace.
 
