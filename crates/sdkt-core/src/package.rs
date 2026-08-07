@@ -595,13 +595,18 @@ mod tests {
 
     #[test]
     fn test_validate_git_url_accepts_and_rejects() {
+        // A platform-absolute local path (used by offline/hermetic tests).
+        let abs_local = std::env::temp_dir()
+            .join("sdkt-local-repo")
+            .to_string_lossy()
+            .into_owned();
         for ok in [
             "https://github.com/org/repo",
             "http://github.com/org/repo",
             "git://github.com/org/repo",
             "ssh://git@github.com/org/repo",
             "git@github.com:org/repo",
-            "/tmp/local/repo",
+            abs_local.as_str(),
             "./local/repo",
             "../sibling/repo",
         ] {

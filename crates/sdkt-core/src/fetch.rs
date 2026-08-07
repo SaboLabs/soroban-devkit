@@ -376,6 +376,10 @@ mod tests {
         run(&["init", "-q"]);
         run(&["config", "user.email", "test@sdkt.local"]);
         run(&["config", "user.name", "sdkt test"]);
+        // Mark the temp checkout as safe so commits work even on Windows CI,
+        // where git's "dubious ownership" protection otherwise blocks writes
+        // inside a shared/runner-owned temp directory.
+        run(&["config", "safe.directory", "*"]);
         // v1.0.0 tag on first commit.
         let f = dir.join("lib.rs");
         let mut fh = std::fs::File::create(&f).unwrap();
