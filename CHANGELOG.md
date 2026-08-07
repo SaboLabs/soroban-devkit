@@ -110,8 +110,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   dependency-graph, topo-sort, validation, hashing, or git-cache code. New
   unit tests cover branch/tag/rev update, dry-run, check mode, JSON output,
   lock refresh, unchanged dep, update-after-fetch, missing cache, and invalid
-  reference; new CLI integration tests cover `package update`, `--check`,
-  `--dry-run`, `--format json`, and offline local-path behavior.
+  new CLI integration tests cover `package update`, `--check`, `--dry-run`,
+  `--format json`, and offline local-path behavior.
+
+- **Dependency version resolution (M37).** Git dependencies may now declare an
+  optional semver `version` constraint (e.g. `version = ">=1.0, <2"`) instead
+  of a fixed `tag`/`branch`/`rev`. When a constraint is set without an explicit
+  ref, `sdkt package fetch` / `sdkt package update` resolve the **highest
+  remote tag that satisfies the constraint** (via `git ls-remote --tags`,
+  offline for local remotes) and materialize / lock that exact tag. An explicit
+  `tag`/`branch`/`rev` still takes precedence and the constraint is ignored
+  (mirroring how `rev`/`path` deps bypass version resolution). `sdkt package
+  update --check` reports `constraint unsatisfied` when no tag matches; the
+  lock records the resolved `version` for audit. Reuses the existing
+  `git_cache_key` / `GitFetcher` / `lock_dependencies_resolved` infrastructure
+  and adds a single pure `VersionResolver::best_version_match` (semver crate)
+  as the one source of truth for constraint matching — no dependency-graph,
+  validation, or fetch logic duplicated. New unit tests cover resolver
+  selection, update detection, up-to-date, and unsatisfied-constraint; new CLI
+  integration tests cover fetch/update picking the highest satisfying tag and a
+  clear error on an unsatisfiable constraint.
 
 ### Planned
 - Post-2.0 mainnet-focused tooling, SCF grant alignment, and a plugin marketplace.

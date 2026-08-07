@@ -124,6 +124,26 @@ and `integrity` for git deps — contract entries, artifact hashes, and deploy o
 preserved. Clear errors are produced for: missing cache, git unavailable, invalid
 manifest, missing lock, detached branch, unknown reference, and network failure.
 
+### Version-constrained dependencies (M37)
+
+A git dependency may declare an optional semver `version` constraint instead of a
+fixed `tag` / `branch` / `rev`:
+
+```toml
+[dependencies.math]
+git = "https://github.com/org/math"
+version = ">=1.0, <2"
+```
+
+When `version` is set **without** an explicit ref, `sdkt package fetch` / `sdkt package
+update` resolve the **highest remote tag that satisfies the constraint** (via
+`git ls-remote --tags`; offline for local remotes) and materialize / lock that exact
+tag. `--check` reports `constraint unsatisfied` when no tag matches. An explicit
+`tag` / `branch` / `rev` always takes precedence and the constraint is ignored
+(mirroring how `rev` / `path` deps bypass version resolution). The lock records the
+resolved `version` for audit. This reuses the existing fetch / cache / lock
+infrastructure; the only new logic is a single pure `VersionResolver`.
+
 ├── project
 │   └── deploy                Deploy all contracts defined in the workspace (.sdkt.toml),
 │                             applying topological dependency sorting

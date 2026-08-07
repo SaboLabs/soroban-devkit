@@ -69,6 +69,11 @@ pub struct DependencyLock {
     /// when computed. Empty when not available (e.g. un-fetched path dep).
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub integrity: String,
+    /// Optional semver version constraint declared for this git dependency
+    /// (M37). Empty when none. Recorded for reproducibility / audit; an explicit
+    /// `tag`/`branch`/`rev` reference takes precedence over the constraint.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub version: String,
 }
 
 /// The on-disk `sdkt.lock` structure.
@@ -260,6 +265,7 @@ pub fn lock_dependencies(
                 commit_sha: String::new(),
                 cache_location: String::new(),
                 integrity: String::new(),
+                version: dep.version.clone().unwrap_or_default(),
             });
         } else {
             let path = dep.path.clone().unwrap_or_default();
@@ -279,6 +285,7 @@ pub fn lock_dependencies(
                 commit_sha: String::new(),
                 cache_location: String::new(),
                 integrity: String::new(),
+                version: String::new(),
             });
         }
     }
@@ -331,6 +338,7 @@ pub fn lock_dependencies_resolved(
                 commit_sha: outcome.resolved_rev.clone(),
                 cache_location: outcome.local_path.display().to_string(),
                 integrity,
+                version: dep.version.clone().unwrap_or_default(),
             });
         } else {
             // No fetched outcome (e.g. a local path dep, or an unchanged git dep

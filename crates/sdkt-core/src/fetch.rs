@@ -16,6 +16,7 @@
 //!   responsibility.
 
 use crate::config::Dependency;
+use crate::sync::resolve_version_constraint;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
@@ -224,7 +225,44 @@ impl DependencyFetcher for GitFetcher {
 
         Self::git_available()?;
 
-        let key = git_cache_key(dep);
+        // M37 — version-constrained git dep: resolve the `version` semver
+        // constraint to a concrete tag before acquiring. Reuses the single
+        // `resolve_version_constraint` helper (which shells out via `git
+        // ls-remote --tags` and `crate::package::best_version_match`); no
+        // comparator logic is duplicated here. An explicit tag/branch/rev
+        // always wins and the constraint is ignored.
+        let effective_dep = if let Some(ver) = &dep.version {
+            if dep.tag.is_none() && dep.branch.is_none() && dep.rev.is_none() {
+                match resolve_version_constraint(&url, ver) {
+                    Ok(Some((tag, _))) => Dependency {
+                        git: Some(url.clone()),
+                        tag: Some(tag),
+                        ..Default::default()
+                    },
+                    Ok(None) => {
+                        return Err(FetchError::Git {
+                            args: format!("resolve version '{}'", ver),
+                            status: Some(1),
+                            stderr: format!("no remote tag satisfies constraint '{}'", ver),
+                        });
+                    }
+                    Err(e) => {
+                        return Err(FetchError::Git {
+                            args: format!("resolve version '{}'", ver),
+                            status: None,
+                            stderr: e.to_string(),
+                        });
+                    }
+                }
+            } else {
+                // An explicit ref wins; the constraint is inert.
+                dep.clone()
+            }
+        } else {
+            dep.clone()
+        };
+
+        let key = git_cache_key(&effective_dep);
         let checkout = self.cache_root.join("git").join(&key);
         // Ensure the parent cache dir (`<cache_root>/git`) exists so `git clone`
         // can create the destination checkout dir itself. The checkout dir
@@ -246,7 +284,7 @@ impl DependencyFetcher for GitFetcher {
         let existing = checkout.join(".git").exists();
         if existing && !force {
             // Verify the checkout already resolves to the requested ref.
-            let want = Self::resolved_rev_for(dep, &checkout);
+            let want = Self::resolved_rev_for(&effective_dep, &checkout);
             if !want.is_empty() && want == Self::head_rev(&checkout) {
                 return Ok(FetchOutcome {
                     name: name.to_string(),
@@ -290,11 +328,11 @@ impl DependencyFetcher for GitFetcher {
         run_git(&workdir, &clone_args)?;
 
         // Checkout the requested reference.
-        let checkout_ref: String = if let Some(rev) = &dep.rev {
+        let checkout_ref: String = if let Some(rev) = &effective_dep.rev {
             rev.clone()
-        } else if let Some(tag) = &dep.tag {
+        } else if let Some(tag) = &effective_dep.tag {
             tag.clone()
-        } else if let Some(branch) = &dep.branch {
+        } else if let Some(branch) = &effective_dep.branch {
             format!("origin/{}", branch)
         } else {
             "origin/HEAD".to_string()
@@ -304,7 +342,7 @@ impl DependencyFetcher for GitFetcher {
             &["checkout".to_string(), "--force".to_string(), checkout_ref],
         )?;
 
-        let resolved = Self::resolved_rev_for(dep, &checkout);
+        let resolved = Self::resolved_rev_for(&effective_dep, &checkout);
         Ok(FetchOutcome {
             name: name.to_string(),
             local_path: checkout,

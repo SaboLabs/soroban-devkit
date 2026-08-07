@@ -3216,6 +3216,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                             sdkt_core::sync::UpdateStatus::Pinned => {
                                 println!("✓ {} pinned (rev)", c.name);
                             }
+                            sdkt_core::sync::UpdateStatus::Constraint => {
+                                println!("⚠ {} constraint unsatisfied", c.name);
+                            }
                             sdkt_core::sync::UpdateStatus::Error => {
                                 println!("✗ {} error: {}", c.name, c.detail);
                             }
@@ -3260,6 +3263,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                             );
                         } else if c.status == sdkt_core::sync::UpdateStatus::Pinned {
                             println!("  {} (pinned, skip)", c.name);
+                        } else if c.status == sdkt_core::sync::UpdateStatus::Constraint {
+                            println!("  {} (constraint unsatisfied, skip)", c.name);
                         } else if c.status == sdkt_core::sync::UpdateStatus::Error {
                             println!("  {} (error: {})", c.name, c.detail);
                         } else {
@@ -3289,6 +3294,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                             }
                             sdkt_core::sync::UpdateStatus::Pinned => {
                                 println!("✓ {} pinned (rev)", c.name);
+                            }
+                            sdkt_core::sync::UpdateStatus::Constraint => {
+                                println!("⚠ {} constraint unsatisfied", c.name);
                             }
                             sdkt_core::sync::UpdateStatus::Error => {
                                 println!("✗ {} error: {}", c.name, c.detail);

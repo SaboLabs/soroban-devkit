@@ -964,6 +964,74 @@ fn advance_repo(src: &std::path::Path) {
     assert!(o.status.success(), "advance tag failed");
 }
 
+/// Build a local "remote" with multiple semver tags so the M37 version resolver
+/// has a choice. Tags: v1.0.0, v1.5.0, v2.0.0 (HEAD sits at v2.0.0).
+fn make_version_repo() -> (std::path::PathBuf, String, String, String) {
+    let dir = std::env::temp_dir().join(format!(
+        "sdkt-it-ver-remote-{}-{}",
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos()
+    ));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let run = |args: &[&str]| {
+        let o = std::process::Command::new("git")
+            .current_dir(&dir)
+            .args(args)
+            .output()
+            .expect("git available");
+        assert!(
+            o.status.success(),
+            "git {:?} failed: {}",
+            args,
+            String::from_utf8_lossy(&o.stderr)
+        );
+    };
+    run(&["init", "-q"]);
+    run(&["config", "user.email", "t@sdkt.local"]);
+    run(&["config", "user.name", "sdkt test"]);
+    std::fs::write(dir.join("lib.rs"), "pub fn answer() -> u32 { 42 }\n").unwrap();
+    run(&["add", "."]);
+    run(&["commit", "-q", "-m", "v1"]);
+    run(&["tag", "v1.0.0"]);
+    let v1 = {
+        let o = std::process::Command::new("git")
+            .current_dir(&dir)
+            .args(["rev-parse", "v1.0.0"])
+            .output()
+            .unwrap();
+        String::from_utf8_lossy(&o.stdout).trim().to_string()
+    };
+    std::fs::write(dir.join("lib.rs"), "pub fn answer() -> u32 { 43 }\n").unwrap();
+    run(&["add", "."]);
+    run(&["commit", "-q", "-m", "v15"]);
+    run(&["tag", "v1.5.0"]);
+    let v15 = {
+        let o = std::process::Command::new("git")
+            .current_dir(&dir)
+            .args(["rev-parse", "v1.5.0"])
+            .output()
+            .unwrap();
+        String::from_utf8_lossy(&o.stdout).trim().to_string()
+    };
+    std::fs::write(dir.join("lib.rs"), "pub fn answer() -> u32 { 44 }\n").unwrap();
+    run(&["add", "."]);
+    run(&["commit", "-q", "-m", "v2"]);
+    run(&["tag", "v2.0.0"]);
+    let v2 = {
+        let o = std::process::Command::new("git")
+            .current_dir(&dir)
+            .args(["rev-parse", "v2.0.0"])
+            .output()
+            .unwrap();
+        String::from_utf8_lossy(&o.stdout).trim().to_string()
+    };
+    (dir, v1, v15, v2)
+}
+
 #[test]
 fn package_update_refreshes_lock() {
     let (src, v1, v2) = make_advancing_repo();
@@ -1248,4 +1316,114 @@ fn package_update_offline_local_path_unchanged() {
     );
 
     let _ = std::fs::remove_dir_all(&tmp);
+}
+
+#[test]
+fn package_update_version_constraint_picks_highest() {
+    // A git dep constrained by `version = ">=1.0, <2"` must resolve to the
+    // highest satisfying tag (v1.5.0), never v2.0.0 (which is outside the
+    // range). Exercises the M37 VersionResolver end-to-end via fetch+update.
+    let (src, _v1, v15, v2) = make_version_repo();
+    let url = src.to_string_lossy().replace('\\', "\\\\");
+    let tmp = std::env::temp_dir().join(format!(
+        "sdkt-it-m37-ver-{}-{}",
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos()
+    ));
+    let _ = std::fs::remove_dir_all(&tmp);
+    write_manifest(
+        &tmp,
+        &format!(
+            "[package]\nname = \"my-app\"\nversion = \"0.1.0\"\n\n[dependencies.math]\ngit = \"{}\"\nversion = \">=1.0, <2\"\n",
+            url
+        ),
+    );
+
+    // fetch materializes the resolved tag (v1.5.0) into the cache + lock.
+    Command::cargo_bin("sdkt")
+        .expect("sdkt binary built")
+        .current_dir(&tmp)
+        .arg("package")
+        .arg("fetch")
+        .assert()
+        .success();
+
+    let lock = std::fs::read_to_string(tmp.join("sdkt.lock")).unwrap();
+    assert!(
+        lock.contains(&v15[..12]),
+        "lock should record the highest satisfying tag v1.5.0: {}",
+        lock
+    );
+    assert!(
+        !lock.contains(&v2[..12]),
+        "lock must NOT record v2.0.0 (outside constraint): {}",
+        lock
+    );
+
+    // `package update` must report the dep as up-to-date (already at best).
+    let out = Command::cargo_bin("sdkt")
+        .expect("sdkt binary built")
+        .current_dir(&tmp)
+        .arg("package")
+        .arg("update")
+        .output()
+        .unwrap();
+    assert!(out.status.success());
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(
+        stdout.to_lowercase().contains("up to date") || stdout.to_lowercase().contains("unchanged"),
+        "version-constrained dep should be up-to-date at best tag: {}",
+        stdout
+    );
+
+    let _ = std::fs::remove_dir_all(&tmp);
+    let _ = std::fs::remove_dir_all(&src);
+}
+
+#[test]
+fn package_update_version_constraint_unsatisfied_reports_error() {
+    // A constraint with no satisfying tag must surface a clear error (not a
+    // panic) during fetch. The remote only has v1.x/v2.x tags.
+    let (src, _v1, _v15, _v2) = make_version_repo();
+    let url = src.to_string_lossy().replace('\\', "\\\\");
+    let tmp = std::env::temp_dir().join(format!(
+        "sdkt-it-m37-verbad-{}-{}",
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos()
+    ));
+    let _ = std::fs::remove_dir_all(&tmp);
+    write_manifest(
+        &tmp,
+        &format!(
+            "[package]\nname = \"my-app\"\nversion = \"0.1.0\"\n\n[dependencies.math]\ngit = \"{}\"\nversion = \">=3.0\"\n",
+            url
+        ),
+    );
+
+    let out = Command::cargo_bin("sdkt")
+        .expect("sdkt binary built")
+        .current_dir(&tmp)
+        .arg("package")
+        .arg("fetch")
+        .output()
+        .unwrap();
+    assert!(
+        !out.status.success(),
+        "fetch with unsatisfied constraint must fail clearly"
+    );
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        stderr.contains("satisfies") || stderr.to_lowercase().contains("constraint"),
+        "error should mention the unsatisfied constraint: {}",
+        stderr
+    );
+
+    let _ = std::fs::remove_dir_all(&tmp);
+    let _ = std::fs::remove_dir_all(&src);
 }

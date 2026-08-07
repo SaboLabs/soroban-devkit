@@ -158,6 +158,41 @@ pub fn validate_package(config: &DevKitConfig) -> Result<PackageConfig, PackageE
     Ok(pkg.clone())
 }
 
+/// Resolve the best available dependency version that satisfies a semver
+/// constraint, given a list of `(tag, commit)` pairs (already fetched from the
+/// remote via `git ls-remote --tags`). Pure: no I/O, no allocation beyond the
+/// returned `Option`.
+///
+/// Selection rule (M37): among the remote tags whose names parse as valid
+/// semver, return the one whose version *satisfies* `constraint` and is the
+/// highest by semver ordering. Tags that are not valid semver (e.g. `latest`,
+/// `main`) are ignored. If no tag satisfies the constraint, returns `None`.
+///
+/// This is the single source of truth for constraint matching; `plan_updates`
+/// in `crate::sync` calls it rather than re-implementing comparator logic.
+pub fn best_version_match(tags: &[(String, String)], constraint: &str) -> Option<(String, String)> {
+    use semver::{Version, VersionReq};
+
+    let req = VersionReq::parse(constraint).ok()?;
+    let mut best: Option<(Version, (String, String))> = None;
+    for (tag, commit) in tags {
+        // Strip a leading "v" so `v1.2.0` parses as `1.2.0`.
+        let bare = tag.strip_prefix('v').unwrap_or(tag);
+        let ver = match Version::parse(bare) {
+            Ok(v) => v,
+            Err(_) => continue,
+        };
+        if !req.matches(&ver) {
+            continue;
+        }
+        match &best {
+            Some((bv, _)) if *bv >= ver => {}
+            _ => best = Some((ver, (tag.clone(), commit.clone()))),
+        }
+    }
+    best.map(|(_, pair)| pair)
+}
+
 /// Validate a single `[package]` version string.
 ///
 /// Accepts `MAJOR.MINOR.PATCH` with an optional pre-release (`-x.y`) and/or
@@ -300,27 +335,41 @@ pub fn validate_dependencies(base_dir: &Path, config: &DevKitConfig) -> Result<(
                 }
                 validate_git_url(url)?;
 
-                // Exactly one of branch/tag/rev, none empty.
-                let refs = [
-                    dep.branch.as_ref().map(|_| "branch"),
-                    dep.tag.as_ref().map(|_| "tag"),
-                    dep.rev.as_ref().map(|_| "rev"),
-                ];
-                let present: Vec<&str> = refs.iter().flatten().copied().collect();
-                if present.len() != 1 {
-                    // Zero or more than one reference is invalid.
-                    return Err(if present.is_empty() {
-                        PackageError::MissingGitRef(name.clone())
+                // Exactly one of branch/tag/rev, none empty — UNLESS a
+                // `version` constraint is declared (M37), in which case the
+                // constraint resolves against remote tags and no explicit ref
+                // is required. An explicit ref always takes precedence and
+                // makes the `version` constraint inert.
+                let has_ref = dep.branch.is_some() || dep.tag.is_some() || dep.rev.is_some();
+                if !has_ref {
+                    if let Some(ver) = &dep.version {
+                        // A `version` constraint (M37), e.g. ">=1.0, <2". It is
+                        // a semver *requirement* (VersionReq), NOT a fixed
+                        // MAJOR.MINOR.PATCH version — validate it parses as such.
+                        if semver::VersionReq::parse(ver).is_err() {
+                            return Err(PackageError::InvalidVersion(ver.clone()));
+                        }
                     } else {
-                        PackageError::MultipleGitRefs(name.clone())
-                    });
-                }
-                for v in [dep.branch.as_ref(), dep.tag.as_ref(), dep.rev.as_ref()]
-                    .into_iter()
-                    .flatten()
-                {
-                    if v.trim().is_empty() {
-                        return Err(PackageError::EmptyGitRef(name.clone()));
+                        return Err(PackageError::MissingGitRef(name.clone()));
+                    }
+                } else {
+                    // Exactly one of branch/tag/rev may be set. A `version`
+                    // constraint co-declared with a ref is allowed (the ref
+                    // wins and the constraint becomes inert); only ref + ref
+                    // is rejected.
+                    let ref_count = dep.branch.is_some() as u8
+                        + dep.tag.is_some() as u8
+                        + dep.rev.is_some() as u8;
+                    if ref_count > 1 {
+                        return Err(PackageError::MultipleGitRefs(name.clone()));
+                    }
+                    for v in [dep.branch.as_ref(), dep.tag.as_ref(), dep.rev.as_ref()]
+                        .into_iter()
+                        .flatten()
+                    {
+                        if v.trim().is_empty() {
+                            return Err(PackageError::EmptyGitRef(name.clone()));
+                        }
                     }
                 }
             }

@@ -111,6 +111,13 @@ pub struct Dependency {
     /// Exact Git commit SHA. Mutually exclusive with `tag`/`branch`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub rev: Option<String>,
+    /// Optional semver version constraint for `git` deps resolved against the
+    /// remote's tags (M37). When set without `tag`/`branch`/`rev`, `sdkt package
+    /// update` selects the highest tag satisfying the constraint. An explicit
+    /// `tag`/`branch`/`rev` always takes precedence and the constraint is
+    /// ignored (mirrors how `rev`/`path` deps bypass version resolution).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub version: Option<String>,
 }
 
 /// Backward-compatibility alias for the M35.0 local-only dependency type.
