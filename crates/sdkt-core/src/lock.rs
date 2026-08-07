@@ -713,7 +713,9 @@ pub fn verify_dependencies(base_dir: &Path, config: &DevKitConfig) -> DepVerifyR
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::config::{ContractConfig, DecodeConfig, Dependency, DevKitConfig, NetworkConfig, StorageConfig};
+    use crate::config::{
+        ContractConfig, DecodeConfig, Dependency, DevKitConfig, NetworkConfig, StorageConfig,
+    };
     use std::collections::HashMap;
     use std::io::Write;
 
