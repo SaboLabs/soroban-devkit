@@ -363,16 +363,31 @@ mod tests {
         c
     }
 
-    fn make_git_repo() -> PathBuf {
-        let dir = std::env::temp_dir().join(format!(
-            "sdkt-fetch-src-{}",
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap()
-                .as_nanos()
-        ));
+    // Build a collision-free temp directory for a throwaway git repo. A unique
+    // name (pid + nanosecond clock + per-process counter) guarantees every call
+    // gets a fresh path, even when tests run in parallel threads or a stale dir
+    // from a previous CI run lingers in the shared temp folder. This is what
+    // prevents `git init` from failing on macOS with ".git/info/exclude: File
+    // exists" (it was hitting a leftover/colliding directory).
+    fn fresh_repo_dir() -> PathBuf {
+        use std::sync::atomic::{AtomicU64, Ordering};
+        static COUNTER: AtomicU64 = AtomicU64::new(0);
+        let n = COUNTER.fetch_add(1, Ordering::Relaxed);
+        let nanos = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let pid = std::process::id();
+        let dir = std::env::temp_dir().join(format!("sdkt-fetch-src-{}-{}-{}", pid, nanos, n));
+        // Remove any stale directory from a prior run (best effort) so git init
+        // always starts from a clean, unique path.
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    fn make_git_repo() -> PathBuf {
+        let dir = fresh_repo_dir();
         let run = |args: &[&str]| {
             let o = git_cmd(&dir).args(args).output().expect("git available");
             if !o.status.success() {
@@ -388,17 +403,25 @@ mod tests {
         run(&["init", "-q"]);
         run(&["config", "user.email", "test@sdkt.local"]);
         run(&["config", "user.name", "sdkt test"]);
-        // v1.0.0 tag on first commit.
-        let f = dir.join("lib.rs");
-        let mut fh = std::fs::File::create(&f).unwrap();
-        fh.write_all(b"pub fn answer() -> u32 { 42 }").unwrap();
-        run(&["add", "."]);
+        // v1.0.0 tag on first commit. The file handle is scoped so it is
+        // closed (dropped) before git stages the file — required on Windows,
+        // where an open handle can prevent `git add` from seeing the new
+        // content ("no changes added to commit").
+        {
+            let f = dir.join("lib.rs");
+            let mut fh = std::fs::File::create(&f).unwrap();
+            fh.write_all(b"pub fn answer() -> u32 { 42 }").unwrap();
+        }
+        run(&["add", "lib.rs"]);
         run(&["commit", "-q", "-m", "initial"]);
         run(&["tag", "v1.0.0"]);
         // A second commit + main branch head.
-        let mut fh = std::fs::File::create(&f).unwrap();
-        fh.write_all(b"pub fn answer() -> u32 { 43 }").unwrap();
-        run(&["add", "."]);
+        {
+            let f = dir.join("lib.rs");
+            let mut fh = std::fs::File::create(&f).unwrap();
+            fh.write_all(b"pub fn answer() -> u32 { 43 }").unwrap();
+        }
+        run(&["add", "lib.rs"]);
         run(&["commit", "-q", "-m", "second"]);
         dir
     }
