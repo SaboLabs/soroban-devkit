@@ -643,3 +643,156 @@ fn package_validate_rejects_self_dependency() {
     );
     let _ = std::fs::remove_dir_all(&tmp);
 }
+
+// ---------------------------------------------------------------------------
+// M35.1 — Git dependency sources: validation + fetch (offline, local git).
+// `sdkt package validate` accepts git deps; `sdkt package fetch` clones a
+// local git repo into `.sdkt-cache` (no real network).
+// ---------------------------------------------------------------------------
+
+fn make_local_git_repo() -> std::path::PathBuf {
+    let dir = std::env::temp_dir().join(format!(
+        "sdkt-it-gitsrc-{}",
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos()
+    ));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let run = |args: &[&str]| {
+        let o = std::process::Command::new("git")
+            .current_dir(&dir)
+            .args(args)
+            .output()
+            .expect("git available");
+        assert!(
+            o.status.success(),
+            "git {:?} failed: {}",
+            args,
+            String::from_utf8_lossy(&o.stderr)
+        );
+    };
+    run(&["init", "-q"]);
+    run(&["config", "user.email", "t@sdkt.local"]);
+    run(&["config", "user.name", "sdkt test"]);
+    let f = dir.join("lib.rs");
+    std::fs::write(&f, "pub fn answer() -> u32 { 42 }\n").unwrap();
+    run(&["add", "."]);
+    run(&["commit", "-q", "-m", "initial"]);
+    run(&["tag", "v1.0.0"]);
+    dir
+}
+
+#[test]
+fn package_validate_accepts_git_dependency() {
+    let src = make_local_git_repo();
+    let url = src.to_string_lossy().to_string();
+    let tmp = std::env::temp_dir().join(format!(
+        "sdkt-it-m351-valid-{}",
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos()
+    ));
+    let _ = std::fs::remove_dir_all(&tmp);
+    write_manifest(
+        &tmp,
+        &format!(
+            "[package]\nname = \"my-app\"\nversion = \"0.1.0\"\n\n[dependencies.math]\ngit = \"{}\"\ntag = \"v1.0.0\"\n",
+            url
+        ),
+    );
+
+    let mut cmd = Command::cargo_bin("sdkt").expect("sdkt binary built");
+    cmd.current_dir(&tmp).arg("package").arg("validate");
+    let assert = cmd.assert().success();
+    let out = String::from_utf8_lossy(&assert.get_output().stdout);
+    assert!(
+        out.to_lowercase().contains("valid"),
+        "git dependency manifest should be valid: {}",
+        out
+    );
+    let _ = std::fs::remove_dir_all(&tmp);
+    let _ = std::fs::remove_dir_all(&src);
+}
+
+#[test]
+fn package_validate_rejects_git_without_ref() {
+    let src = make_local_git_repo();
+    let url = src.to_string_lossy().to_string();
+    let tmp = std::env::temp_dir().join(format!(
+        "sdkt-it-m351-noref-{}",
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos()
+    ));
+    let _ = std::fs::remove_dir_all(&tmp);
+    write_manifest(
+        &tmp,
+        &format!(
+            "[package]\nname = \"my-app\"\nversion = \"0.1.0\"\n\n[dependencies.math]\ngit = \"{}\"\n",
+            url
+        ),
+    );
+
+    let mut cmd = Command::cargo_bin("sdkt").expect("sdkt binary built");
+    cmd.current_dir(&tmp).arg("package").arg("validate");
+    let assert = cmd.assert().failure();
+    let out = String::from_utf8_lossy(&assert.get_output().stderr);
+    assert!(
+        !out.is_empty(),
+        "git dependency without a reference must be rejected: {}",
+        out
+    );
+    let _ = std::fs::remove_dir_all(&tmp);
+    let _ = std::fs::remove_dir_all(&src);
+}
+
+#[test]
+fn package_fetch_git_dependency_offline() {
+    let src = make_local_git_repo();
+    let url = src.to_string_lossy().to_string();
+    let tmp = std::env::temp_dir().join(format!(
+        "sdkt-it-m351-fetch-{}",
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos()
+    ));
+    let _ = std::fs::remove_dir_all(&tmp);
+    write_manifest(
+        &tmp,
+        &format!(
+            "[package]\nname = \"my-app\"\nversion = \"0.1.0\"\n\n[dependencies.math]\ngit = \"{}\"\ntag = \"v1.0.0\"\n",
+            url
+        ),
+    );
+
+    // Fetch the git dependency (clones the local repo, no real network).
+    let mut cmd = Command::cargo_bin("sdkt").expect("sdkt binary built");
+    cmd.current_dir(&tmp).arg("package").arg("fetch");
+    let assert = cmd.assert().success();
+    let out = String::from_utf8_lossy(&assert.get_output().stdout);
+    assert!(
+        out.to_lowercase().contains("fetched"),
+        "fetch should report success: {}",
+        out
+    );
+    // Cache entry must exist under .sdkt-cache/git/<key>/.
+    let cache = tmp.join(".sdkt-cache").join("git");
+    assert!(cache.exists(), "git cache dir should exist");
+    let mut found = false;
+    if let Ok(entries) = std::fs::read_dir(&cache) {
+        for e in entries.flatten() {
+            if e.path().join(".git").exists() && e.path().join("lib.rs").exists() {
+                found = true;
+            }
+        }
+    }
+    assert!(found, "cloned checkout with lib.rs should be in cache");
+
+    let _ = std::fs::remove_dir_all(&tmp);
+    let _ = std::fs::remove_dir_all(&src);
+}

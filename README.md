@@ -197,7 +197,8 @@ See [`docs/plugin-authoring.md`](docs/plugin-authoring.md) for how to build or u
 | `sdkt lock generate` | Write `sdkt.lock` recording each built artifact's SHA-256 + deploy order (after `sdkt build`). |
 | `sdkt lock verify` | Check `sdkt.lock` against current on-disk artifacts (advisory; never fails the build). |
 | `sdkt lock show` | Print the current `sdkt.lock` contents. |
-| `sdkt package validate` | Validate the local package manifest (`[package]` metadata + local `[dependencies]` graph). Offline; never touches the network or a registry. |
+| `sdkt package validate` | Validate the local package manifest (`[package]` metadata + local/git `[dependencies]` graph). Offline; never touches the network or a registry. |
+| `sdkt package fetch [--force]` | Fetch declared dependencies into `.sdkt-cache` (local path passthrough; git clone/checkout). Never builds. `--force` updates existing checkouts. |
 
 ### Multi-contract dependency graphs
 
@@ -253,17 +254,45 @@ Validation rules (all offline — never performs network or registry I/O):
 - `[package]` must have a `name` and a `version`.
 - `version` must be a valid `MAJOR.MINOR.PATCH` shape (with optional
   pre-release/build metadata), matching the common semver form.
-- `[dependencies.*]` entries support **local path references only**. A `path`
-  is required; any other source key (e.g. `git`, `registry`) is rejected at
-  parse time via `deny_unknown_fields`.
+- Each `[dependencies.<name>]` entry is **exactly one source**: a local `path`
+  **or** a `git` URL (never both). `deny_unknown_fields` rejects unrecognized
+  keys so future source kinds (e.g. a registry) are explicit additions.
+- For `git` deps, exactly one of `tag` / `branch` / `rev` must be set, and the
+  URL must use `https`/`http`/`git`/`ssh` (or the `git@host:org/repo` SCP form).
 - No self-dependency (a dependency key equal to the package `name`).
-- The referenced `path` must resolve to an existing directory.
+- For `path` deps, the referenced directory must exist.
 - The dependency graph is checked for cycles (reusing the same topological-sort
   core as contract deploy-order resolution).
 
 `sdkt package validate` exits non-zero on the first failure and prints a clear
 message; with `--format json` it emits `{"valid": true}` or
 `{"valid": false, "error": "..."}`.
+
+### Fetching dependencies (M35.1)
+
+`sdkt package fetch` materializes declared dependencies into a deterministic
+local cache at `.sdkt-cache` (no registry, no authentication helpers, never
+builds automatically):
+
+```toml
+[dependencies]
+math = { path = "../math" }
+
+token = { git = "https://github.com/org/token", tag = "v1.2.0" }
+access = { git = "https://github.com/org/access", rev = "<commit>" }
+utils = { git = "https://github.com/org/utils", branch = "main" }
+```
+
+- `path` deps are passed through (validated already by `validate`).
+- `git` deps are cloned/checked out via the system `git` CLI into
+  `.sdkt-cache/git/<stable-key>/`, then pinned to the requested `tag` /
+  `branch` / `rev`. Re-running reuses an existing checkout unless `--force` is
+  passed. A future registry source plugs into the same `DependencyFetcher`
+  abstraction without touching callers.
+
+The lock file (`sdkt.lock`) records each dependency's source, git URL,
+requested reference, and resolved commit SHA (when available), so fetches are
+reproducible. Local path deps remain unchanged in the lock.
 
 | `sdkt deploy --wasm <file> --salt <salt>` | Upload WASM + instantiate. Add `--deny-breaking --old-wasm <deployed.wasm>` to abort on a non-backwards-compatible upgrade. |
 ### Network profiles

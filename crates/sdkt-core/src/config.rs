@@ -26,10 +26,12 @@ pub struct DevKitConfig {
     /// is itself a publishable package.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub package: Option<PackageConfig>,
-    /// Local path-only package dependencies (M35.0). Keys are package names;
-    /// values are local path references. No git/HTTP/registry sources.
+    /// Local and Git package dependencies (M35.0 / M35.1). Keys are package
+    /// names; values describe exactly one source. A dependency is either a
+    /// local `path` reference or a `git` reference (with exactly one of
+    /// `tag` / `branch` / `rev`). No registry, no HTTP crate sources.
     #[serde(default, skip_serializing_if = "std::collections::HashMap::is_empty")]
-    pub dependencies: std::collections::HashMap<String, LocalDependency>,
+    pub dependencies: std::collections::HashMap<String, Dependency>,
 }
 
 /// Settings for a specific contract in a workspace.
@@ -66,19 +68,56 @@ pub struct PackageConfig {
     pub description: Option<String>,
 }
 
-/// A single local package dependency (M35.0).
+/// A Git reference selector for a [`Dependency`] (M35.1).
 ///
-/// Only path-based local dependencies are supported. `deny_unknown_fields`
-/// rejects `git`, `version`, `registry`, or any remote-style key at parse time,
-/// enforcing the "local path only, no network, no registry" constraint before
-/// any validation logic runs.
+/// Exactly one variant must be set. `Tag` pins to a tag, `Branch` to a branch
+/// head, `Rev` to an exact commit SHA. This mirrors Cargo's git dependency
+/// reference semantics (minus `default-features`/subpath concerns outside the
+/// scope of M35.1).
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum GitReference {
+    /// A specific tag, e.g. `v1.2.0`.
+    Tag(String),
+    /// A branch head, e.g. `main`.
+    Branch(String),
+    /// An exact commit SHA.
+    Rev(String),
+}
+
+/// A single package dependency (M35.0 / M35.1).
+///
+/// Exactly one source is allowed: a local `path` OR a `git` URL. When `git`
+/// is set, exactly one of `tag` / `branch` / `rev` must also be set (the
+/// [`crate::package::validate_dependencies`] resolver rejects any malformed
+/// combination). `deny_unknown_fields` rejects unrecognized keys so future
+/// source kinds (e.g. a registry) are explicit additions, not silent parses.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
 #[serde(deny_unknown_fields)]
-pub struct LocalDependency {
-    /// Relative path (from the depending manifest) to the local package root.
+pub struct Dependency {
+    /// Local filesystem path (relative to the depending manifest) to the
+    /// package root. Mutually exclusive with [`Dependency::git`].
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub path: Option<String>,
+    /// Git remote URL. Mutually exclusive with [`Dependency::path`].
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub git: Option<String>,
+    /// Git tag reference (e.g. `v1.2.0`). Mutually exclusive with `branch`/`rev`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tag: Option<String>,
+    /// Git branch reference (e.g. `main`). Mutually exclusive with `tag`/`rev`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub branch: Option<String>,
+    /// Exact Git commit SHA. Mutually exclusive with `tag`/`branch`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub rev: Option<String>,
 }
+
+/// Backward-compatibility alias for the M35.0 local-only dependency type.
+///
+/// `LocalDependency` previously held a single `path` field; it is now a thin
+/// type alias of [`Dependency`] so existing code/tests keep compiling.
+pub type LocalDependency = Dependency;
 
 /// Soroban network connection settings.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]

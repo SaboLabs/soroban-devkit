@@ -86,8 +86,10 @@ sdkt
 │   └── show                  Print `sdkt.lock` contents
 
 ├── package                   Validate local package manifests (M35.0)
-│   └── validate              Offline-validate `[package]` metadata + local `[dependencies]`
+│   ├── validate              Offline-validate `[package]` metadata + local `[dependencies]`
 │                             path graph (no network/registry; git/* sources rejected)
+│   └── fetch                 Fetch deps into `.sdkt-cache` (M35.1): local path passthrough,
+│                             git clone/checkout. `--force` updates. Never builds.
 
 ├── project
 │   └── deploy                Deploy all contracts defined in the workspace (.sdkt.toml),

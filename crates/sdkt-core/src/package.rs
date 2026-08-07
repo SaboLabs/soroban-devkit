@@ -40,6 +40,20 @@ pub enum PackageError {
     DuplicateDependency(String),
     /// A dependency's `path` does not exist on disk.
     PathNotFound(String),
+    /// A dependency declares both a `path` and a `git` source.
+    MixedSources(String),
+    /// A `git` dependency is missing its URL.
+    MissingGitUrl(String),
+    /// A `git` dependency URL is not a valid URL.
+    InvalidGitUrl(String),
+    /// A `git` dependency URL uses an unsupported scheme (only `https`/`http`/`git`/`ssh`).
+    UnsupportedUrlScheme(String),
+    /// A `git` dependency specifies more than one of `branch`/`tag`/`rev`.
+    MultipleGitRefs(String),
+    /// A `git` dependency specifies none of `branch`/`tag`/`rev`.
+    MissingGitRef(String),
+    /// A `git` dependency's `branch`/`tag`/`rev` value is empty.
+    EmptyGitRef(String),
 }
 
 impl fmt::Display for PackageError {
@@ -74,6 +88,43 @@ impl fmt::Display for PackageError {
             }
             PackageError::PathNotFound(path) => {
                 write!(f, "dependency path does not exist: {}", path)
+            }
+            PackageError::MixedSources(name) => {
+                write!(f, "dependency '{}' declares both `path` and `git`", name)
+            }
+            PackageError::MissingGitUrl(name) => {
+                write!(f, "git dependency '{}' is missing a `git` URL", name)
+            }
+            PackageError::InvalidGitUrl(name) => {
+                write!(f, "git dependency '{}' has an invalid URL", name)
+            }
+            PackageError::UnsupportedUrlScheme(url) => {
+                write!(
+                    f,
+                    "git dependency URL uses an unsupported scheme: {} (only https/http/git/ssh allowed)",
+                    url
+                )
+            }
+            PackageError::MultipleGitRefs(name) => {
+                write!(
+                    f,
+                    "git dependency '{}' specifies more than one of `branch`/`tag`/`rev`",
+                    name
+                )
+            }
+            PackageError::MissingGitRef(name) => {
+                write!(
+                    f,
+                    "git dependency '{}' must specify exactly one of `branch`/`tag`/`rev`",
+                    name
+                )
+            }
+            PackageError::EmptyGitRef(name) => {
+                write!(
+                    f,
+                    "git dependency '{}' has an empty `branch`/`tag`/`rev`",
+                    name
+                )
             }
         }
     }
@@ -197,17 +248,18 @@ pub fn topo_sort(graph: &HashMap<String, Vec<String>>) -> Result<Vec<String>, St
 /// Validate the local `[dependencies]` graph.
 ///
 /// Checks, in order, without performing any network I/O:
-/// * every dependency has a `path` (no git/HTTP/registry — enforced at parse
-///   time via `deny_unknown_fields`, so an unsupported source surfaces as a
-///   missing `path` here),
+/// * exactly one source per dependency — a `path` OR a `git` URL (not both),
+/// * for `path` deps: the path is non-empty and resolves to an existing dir,
+/// * for `git` deps: a URL is present and a valid, supported-scheme URL;
+///   exactly one of `branch`/`tag`/`rev` (none empty),
 /// * no self-dependency (a dependency key equal to the package name),
 /// * no duplicate dependency name,
-/// * the referenced `path` resolves to an existing directory (relative to
-///   `base_dir`),
 /// * the dependency graph is acyclic (reuses [`topo_sort`]).
 ///
 /// `base_dir` is the manifest's directory used to resolve relative `path`
-/// values (in production this is `.`, the cwd sdkt runs from).
+/// values (in production this is `.`, the cwd sdkt runs from). Git deps are
+/// only validated for syntax/shape here; acquisition happens in the fetch
+/// layer ([`crate::fetch`]).
 pub fn validate_dependencies(base_dir: &Path, config: &DevKitConfig) -> Result<(), PackageError> {
     let pkg_name = config
         .package
@@ -218,14 +270,6 @@ pub fn validate_dependencies(base_dir: &Path, config: &DevKitConfig) -> Result<(
     let mut graph: HashMap<String, Vec<String>> = HashMap::new();
 
     for (name, dep) in &config.dependencies {
-        let path = dep
-            .path
-            .as_ref()
-            .ok_or_else(|| PackageError::MissingPath(name.clone()))?;
-        if path.trim().is_empty() {
-            return Err(PackageError::MissingPath(name.clone()));
-        }
-
         if name == &pkg_name {
             return Err(PackageError::SelfDependency(name.clone()));
         }
@@ -234,9 +278,53 @@ pub fn validate_dependencies(base_dir: &Path, config: &DevKitConfig) -> Result<(
             return Err(PackageError::DuplicateDependency(name.clone()));
         }
 
-        let full = base_dir.join(path);
-        if !full.exists() {
-            return Err(PackageError::PathNotFound(full.display().to_string()));
+        let is_path = dep.path.is_some();
+        let is_git = dep.git.is_some();
+
+        match (is_path, is_git) {
+            (true, true) => return Err(PackageError::MixedSources(name.clone())),
+            (true, false) => {
+                let path = dep.path.as_ref().unwrap();
+                if path.trim().is_empty() {
+                    return Err(PackageError::MissingPath(name.clone()));
+                }
+                let full = base_dir.join(path);
+                if !full.exists() {
+                    return Err(PackageError::PathNotFound(full.display().to_string()));
+                }
+            }
+            (false, true) => {
+                let url = dep.git.as_ref().unwrap();
+                if url.trim().is_empty() {
+                    return Err(PackageError::MissingGitUrl(name.clone()));
+                }
+                validate_git_url(url)?;
+
+                // Exactly one of branch/tag/rev, none empty.
+                let refs = [
+                    dep.branch.as_ref().map(|_| "branch"),
+                    dep.tag.as_ref().map(|_| "tag"),
+                    dep.rev.as_ref().map(|_| "rev"),
+                ];
+                let present: Vec<&str> = refs.iter().flatten().copied().collect();
+                if present.len() != 1 {
+                    // Zero or more than one reference is invalid.
+                    return Err(if present.is_empty() {
+                        PackageError::MissingGitRef(name.clone())
+                    } else {
+                        PackageError::MultipleGitRefs(name.clone())
+                    });
+                }
+                for v in [dep.branch.as_ref(), dep.tag.as_ref(), dep.rev.as_ref()]
+                    .into_iter()
+                    .flatten()
+                {
+                    if v.trim().is_empty() {
+                        return Err(PackageError::EmptyGitRef(name.clone()));
+                    }
+                }
+            }
+            (false, false) => return Err(PackageError::MissingPath(name.clone())),
         }
 
         graph.insert(name.clone(), Vec::new());
@@ -249,6 +337,57 @@ pub fn validate_dependencies(base_dir: &Path, config: &DevKitConfig) -> Result<(
     }
 
     Ok(())
+}
+
+/// Validate a Git remote URL's scheme and basic shape (no network access).
+///
+/// Accepted forms:
+/// * SCP-like `git@host:org/repo` (no scheme),
+/// * URL forms with scheme `https`, `http`, `git`, or `ssh`,
+/// * Local repository paths (`/abs/path`, `./rel`, `../rel`, `~/path`), which
+///   `git clone` accepts directly and are used by offline/hermetic tests.
+///
+/// The URL/reference must be non-empty. A bare host with no scheme and no path
+/// separator (e.g. `github.com/org/repo` without a scheme) is rejected as an
+/// invalid URL. This is a syntax/shape check only — no network connection is
+/// made.
+pub fn validate_git_url(url: &str) -> Result<(), PackageError> {
+    let trimmed = url.trim();
+    if trimmed.is_empty() {
+        return Err(PackageError::InvalidGitUrl(url.to_string()));
+    }
+
+    // SCP-like form: git@host:org/repo
+    if let Some(rest) = trimmed.strip_prefix("git@") {
+        let (host, _) = rest
+            .split_once(':')
+            .ok_or_else(|| PackageError::InvalidGitUrl(url.to_string()))?;
+        if host.is_empty() {
+            return Err(PackageError::InvalidGitUrl(url.to_string()));
+        }
+        return Ok(());
+    }
+
+    // scheme://host/... form.
+    if let Some((scheme, rest)) = trimmed.split_once("://") {
+        match scheme {
+            "https" | "http" | "git" | "ssh" => {}
+            other => return Err(PackageError::UnsupportedUrlScheme(other.to_string())),
+        }
+        let host = rest.split(['/', ':', '?', '#']).next().unwrap_or("");
+        if host.is_empty() {
+            return Err(PackageError::InvalidGitUrl(url.to_string()));
+        }
+        return Ok(());
+    }
+
+    // Local path form: absolute, relative, or home-anchored. `git clone`
+    // accepts these directly. Reject bare hosts with no path separator.
+    if trimmed.starts_with('/') || trimmed.starts_with('.') || trimmed.starts_with('~') {
+        return Ok(());
+    }
+
+    Err(PackageError::InvalidGitUrl(url.to_string()))
 }
 
 /// Validate an entire local package manifest: metadata + dependency graph.
@@ -275,7 +414,7 @@ pub fn parse_manifest(content: &str) -> Result<DevKitConfig, toml::de::Error> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::config::LocalDependency;
+    use crate::config::{Dependency, LocalDependency, PackageConfig};
     use std::collections::HashMap;
 
     fn manifest(
@@ -298,6 +437,7 @@ mod tests {
                 dname.to_string(),
                 LocalDependency {
                     path: dpath.map(|s| s.to_string()),
+                    ..Default::default()
                 },
             );
         }
@@ -421,11 +561,200 @@ mod tests {
     }
 
     #[test]
-    fn test_unsupported_source_rejected_at_parse() {
+    fn test_unsupported_source_no_longer_rejected_at_parse() {
+        // Since M35.1 `git` is a known dependency field, so the manifest
+        // parses. Validation then rejects it because it lacks a reference.
         let toml_data = "\
 [package]\nname = \"my-token\"\nversion = \"0.1.0\"\n\n[dependencies.math]\ngit = \"https://github.com/example/math\"\n";
         let parsed = parse_manifest(toml_data);
-        assert!(parsed.is_err(), "git dependency must be rejected at parse");
+        assert!(
+            parsed.is_ok(),
+            "git dependency must parse (validation handles the rest)"
+        );
+        let cfg = parsed.unwrap();
+        let res = validate_dependencies(Path::new("."), &cfg);
+        assert!(
+            matches!(
+                res,
+                Err(PackageError::MissingGitRef(_))
+                    | Err(PackageError::MultipleGitRefs(_))
+                    | Err(PackageError::EmptyGitRef(_))
+                    | Err(PackageError::MissingGitUrl(_))
+                    | Err(PackageError::MixedSources(_))
+            ),
+            "git dependency without a reference must be rejected: {:?}",
+            res
+        );
+    }
+
+    #[test]
+    fn test_validate_git_url_accepts_and_rejects() {
+        for ok in [
+            "https://github.com/org/repo",
+            "http://github.com/org/repo",
+            "git://github.com/org/repo",
+            "ssh://git@github.com/org/repo",
+            "git@github.com:org/repo",
+            "/tmp/local/repo",
+            "./local/repo",
+            "../sibling/repo",
+        ] {
+            assert!(validate_git_url(ok).is_ok(), "url '{}' should be valid", ok);
+        }
+        for bad in [
+            "",
+            "ftp://github.com/org/repo",
+            "file:///tmp/repo",
+            "github.com/org/repo",
+            "git@:org/repo",
+            "https://",
+        ] {
+            assert!(
+                validate_git_url(bad).is_err(),
+                "url '{}' should be invalid",
+                bad
+            );
+        }
+    }
+
+    #[test]
+    fn test_validate_git_tag_ok() {
+        let cfg = DevKitConfig {
+            package: Some(PackageConfig {
+                name: Some("my-token".to_string()),
+                version: Some("0.1.0".to_string()),
+                description: None,
+            }),
+            dependencies: {
+                let mut m = HashMap::new();
+                m.insert(
+                    "token".to_string(),
+                    Dependency {
+                        git: Some("https://github.com/org/token".to_string()),
+                        tag: Some("v1.2.0".to_string()),
+                        ..Default::default()
+                    },
+                );
+                m
+            },
+            ..Default::default()
+        };
+        assert!(validate_dependencies(Path::new("."), &cfg).is_ok());
+    }
+
+    #[test]
+    fn test_validate_git_rejects_multiple_refs() {
+        let cfg = DevKitConfig {
+            package: Some(PackageConfig {
+                name: Some("my-token".to_string()),
+                version: Some("0.1.0".to_string()),
+                description: None,
+            }),
+            dependencies: {
+                let mut m = HashMap::new();
+                m.insert(
+                    "token".to_string(),
+                    Dependency {
+                        git: Some("https://github.com/org/token".to_string()),
+                        tag: Some("v1.2.0".to_string()),
+                        branch: Some("main".to_string()),
+                        ..Default::default()
+                    },
+                );
+                m
+            },
+            ..Default::default()
+        };
+        match validate_dependencies(Path::new("."), &cfg) {
+            Err(PackageError::MultipleGitRefs(d)) => assert_eq!(d, "token"),
+            other => panic!("Expected MultipleGitRefs, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_validate_git_rejects_path_plus_git() {
+        let cfg = DevKitConfig {
+            package: Some(PackageConfig {
+                name: Some("my-token".to_string()),
+                version: Some("0.1.0".to_string()),
+                description: None,
+            }),
+            dependencies: {
+                let mut m = HashMap::new();
+                m.insert(
+                    "token".to_string(),
+                    Dependency {
+                        path: Some("local/token".to_string()),
+                        git: Some("https://github.com/org/token".to_string()),
+                        ..Default::default()
+                    },
+                );
+                m
+            },
+            ..Default::default()
+        };
+        match validate_dependencies(Path::new("."), &cfg) {
+            Err(PackageError::MixedSources(d)) => assert_eq!(d, "token"),
+            other => panic!("Expected MixedSources, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_validate_git_rejects_unsupported_scheme() {
+        let cfg = DevKitConfig {
+            package: Some(PackageConfig {
+                name: Some("my-token".to_string()),
+                version: Some("0.1.0".to_string()),
+                description: None,
+            }),
+            dependencies: {
+                let mut m = HashMap::new();
+                m.insert(
+                    "token".to_string(),
+                    Dependency {
+                        git: Some("ftp://github.com/org/token".to_string()),
+                        tag: Some("v1.2.0".to_string()),
+                        ..Default::default()
+                    },
+                );
+                m
+            },
+            ..Default::default()
+        };
+        match validate_dependencies(Path::new("."), &cfg) {
+            Err(PackageError::UnsupportedUrlScheme(s)) => {
+                assert_eq!(s, "ftp")
+            }
+            other => panic!("Expected UnsupportedUrlScheme, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_validate_git_rejects_empty_ref() {
+        let cfg = DevKitConfig {
+            package: Some(PackageConfig {
+                name: Some("my-token".to_string()),
+                version: Some("0.1.0".to_string()),
+                description: None,
+            }),
+            dependencies: {
+                let mut m = HashMap::new();
+                m.insert(
+                    "token".to_string(),
+                    Dependency {
+                        git: Some("https://github.com/org/token".to_string()),
+                        tag: Some("".to_string()),
+                        ..Default::default()
+                    },
+                );
+                m
+            },
+            ..Default::default()
+        };
+        match validate_dependencies(Path::new("."), &cfg) {
+            Err(PackageError::EmptyGitRef(d)) => assert_eq!(d, "token"),
+            other => panic!("Expected EmptyGitRef, got {:?}", other),
+        }
     }
 
     #[test]

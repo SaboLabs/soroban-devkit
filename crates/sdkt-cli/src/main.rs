@@ -1,6 +1,7 @@
 use clap::{Args, CommandFactory, Parser, Subcommand};
 use clap_complete::Shell;
 use sdkt_core::fee::{FeeConfig, FeeEstimator, LedgerFeeSample, NetworkKind};
+use sdkt_core::fetch::DependencyFetcher;
 use sdkt_core::{DevKitConfig, NetworkConfig, OutputFormat};
 use sdkt_rpc::{
     estimate_dynamic_fee, get_contract_events, get_ttl_info, get_wasm_metadata, inspect_account,
@@ -701,6 +702,16 @@ enum PackageCommand {
     Validate {
         #[arg(short, long, default_value = "pretty")]
         format: String,
+    },
+    /// Fetch declared dependencies into the local cache.
+    /// Git deps are cloned/checked out; local `path` deps are passed through.
+    /// Never builds automatically. Use `--force` to update existing checkouts.
+    Fetch {
+        #[arg(short, long, default_value = "pretty")]
+        format: String,
+        /// Re-fetch / update existing checkouts instead of reusing them.
+        #[arg(long)]
+        force: bool,
     },
 }
 
@@ -3004,6 +3015,84 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                         }
                         std::process::exit(1);
                     }
+                }
+            }
+            PackageCommand::Fetch { format, force } => {
+                let fmt = parse_format_str(&format);
+                let config = load_config();
+                // Validation first, so a malformed manifest never triggers a fetch.
+                let base = Path::new(".");
+                if let Err(e) = sdkt_core::package::validate_manifest(base, &config) {
+                    eprintln!("Package validation failed: {}", e);
+                    std::process::exit(1);
+                }
+
+                // Deterministic cache at `.sdkt-cache` (workspace-local).
+                // Use an absolute path so `git clone <url> <checkout>` is not
+                // resolved relative to the fetcher's working dir (which would
+                // double the path). Fall back to the relative form only if the
+                // current dir cannot be resolved.
+                let cache = std::env::current_dir()
+                    .map(|c| c.join(".sdkt-cache"))
+                    .unwrap_or_else(|_| std::path::PathBuf::from(".sdkt-cache"));
+                let fetcher = sdkt_core::fetch::GitFetcher::new(cache);
+
+                if config.dependencies.is_empty() {
+                    if fmt != OutputFormat::Json {
+                        println!("No dependencies to fetch.");
+                    }
+                    return Ok(());
+                }
+
+                let mut fetched = Vec::new();
+                for (name, dep) in &config.dependencies {
+                    let outcome = if dep.git.is_some() {
+                        fetcher.fetch(name, dep, force)
+                    } else {
+                        sdkt_core::fetch::PathResolver.fetch(name, dep, force)
+                    };
+                    match outcome {
+                        Ok(o) => {
+                            fetched.push(o);
+                        }
+                        Err(e) => {
+                            eprintln!("Failed to fetch '{}': {}", name, e);
+                            std::process::exit(1);
+                        }
+                    }
+                }
+
+                if fmt != OutputFormat::Json {
+                    for o in &fetched {
+                        let rev = if o.resolved_rev.is_empty() {
+                            "(local)".to_string()
+                        } else {
+                            o.resolved_rev.chars().take(12).collect()
+                        };
+                        println!(
+                            "Fetched '{}' -> {} @ {}",
+                            o.name,
+                            o.local_path.display(),
+                            rev
+                        );
+                    }
+                    println!("Fetched {} dependenc(y/ies).", fetched.len());
+                } else {
+                    println!(
+                        "{}",
+                        serde_json::to_string_pretty(&serde_json::json!({
+                            "fetched": fetched
+                                .iter()
+                                .map(|o| serde_json::json!({
+                                    "name": o.name,
+                                    "local_path": o.local_path.display().to_string(),
+                                    "resolved_rev": o.resolved_rev,
+                                    "already_present": o.already_present,
+                                }))
+                                .collect::<Vec<_>>()
+                        }))
+                        .unwrap()
+                    );
                 }
             }
         },

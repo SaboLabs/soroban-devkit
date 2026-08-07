@@ -49,6 +49,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   breaking CLI changes, no version bump/tag/publish, no external services. New
   unit tests cover every validation error; new CLI integration tests cover valid
   and invalid manifests end-to-end.
+- **Git dependency sources (M35.1).** Package dependencies now support both
+  local `path` and `git` sources, exactly one per `[dependencies.<name>`. Git
+  deps take a `git` URL plus exactly one of `tag` / `branch` / `rev`. Validation
+  rejects `path` + `git` together, multiple git references, missing/empty git
+  URL, unsupported schemes (`https`/`http`/`git`/`ssh` or `git@host:org/repo`),
+  empty references, duplicate names, and cycles — reusing the existing resolver
+  and shared `topo_sort`. New `sdkt package fetch` materializes dependencies
+  into a deterministic `.sdkt-cache` via the system `git` CLI (no registry, no
+  auth helpers, never builds; `--force` updates existing checkouts). A
+  `DependencyFetcher` trait abstracts acquisition so a future registry source
+  plugs in without touching callers. `sdkt.lock` now records each dependency's
+  source, git URL, requested reference, and resolved commit SHA (local path
+  deps unchanged). `LocalDependency` is retained as a type alias of `Dependency`
+  for backward compatibility. Fully backward compatible: no breaking CLI
+  changes, no version bump/tag/publish, no external service beyond git fetch.
+  New unit tests cover parser/validation/lock serialization and fetch using
+  on-the-fly local git repos (no network); new CLI integration tests cover
+  validate-accept, validate-reject, and offline fetch end-to-end.
 
 ### Planned
 - Post-2.0 mainnet-focused tooling, SCF grant alignment, and a plugin marketplace.

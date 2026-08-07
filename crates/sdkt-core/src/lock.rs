@@ -34,6 +34,29 @@ pub struct LockEntry {
     pub order: usize,
 }
 
+/// One locked dependency entry (M35.0 / M35.1).
+///
+/// Mirrors a resolved `[dependencies.*]` entry from `.sdkt.toml`. Local path
+/// deps record nothing but their source kind; Git deps record the URL, the
+/// requested reference, and the resolved commit SHA (when known). This is the
+/// seam where a future registry source would add its own fields.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
+pub struct DependencyLock {
+    /// Dependency name (key under `[dependencies]`).
+    pub name: String,
+    /// Source kind: `local` or `git`.
+    pub source: String,
+    /// Git remote URL (empty for local path deps).
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub git_url: String,
+    /// Requested reference: `tag`/`branch`/`rev` value (empty for path deps).
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub resolved_reference: String,
+    /// Resolved commit SHA (empty if not available / not a Git dep).
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub commit_sha: String,
+}
+
 /// The on-disk `sdkt.lock` structure.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct LockFile {
@@ -43,6 +66,9 @@ pub struct LockFile {
     pub deploy_order: Vec<String>,
     /// Per-contract locked artifacts.
     pub contracts: Vec<LockEntry>,
+    /// Locked package dependencies (M35.0 / M35.1). Absent in older locks.
+    #[serde(default)]
+    pub dependencies: Vec<DependencyLock>,
 }
 
 /// Errors raised while generating or verifying the lock file.
@@ -184,10 +210,53 @@ pub fn generate_lock(base_dir: &Path, config: &DevKitConfig) -> Result<LockFile,
         version: LOCK_VERSION,
         deploy_order: ordered,
         contracts,
+        dependencies: vec![],
     })
 }
 
-/// Serialize a [`LockFile`] to TOML.
+/// Build [`DependencyLock`] entries from a `.sdkt.toml` dependency map.
+///
+/// Pure: does not fetch. For Git deps it records the URL + requested
+/// reference; `resolved_rev`/`commit_sha` are filled in by the caller after a
+/// fetch (or left empty when only locking the manifest). Local path deps are
+/// recorded with `source = "local"`. This keeps `sdkt.lock` stable across
+/// machines that haven't fetched yet.
+pub fn lock_dependencies(
+    deps: &std::collections::HashMap<String, crate::config::Dependency>,
+) -> Vec<DependencyLock> {
+    let mut out = Vec::with_capacity(deps.len());
+    for (name, dep) in deps {
+        if dep.git.is_some() {
+            let reference = dep
+                .tag
+                .clone()
+                .or_else(|| dep.branch.clone())
+                .or_else(|| dep.rev.clone())
+                .unwrap_or_default();
+            out.push(DependencyLock {
+                name: name.clone(),
+                source: "git".to_string(),
+                git_url: dep.git.clone().unwrap_or_default(),
+                resolved_reference: reference,
+                commit_sha: String::new(),
+            });
+        } else {
+            out.push(DependencyLock {
+                name: name.clone(),
+                source: "local".to_string(),
+                git_url: String::new(),
+                resolved_reference: String::new(),
+                commit_sha: String::new(),
+            });
+        }
+    }
+    out
+}
+
+/// Read a [`LockFile`] and return its locked dependencies (empty if none).
+pub fn locked_dependencies(lock: &LockFile) -> &[DependencyLock] {
+    &lock.dependencies
+}
 pub fn lock_to_toml(lock: &LockFile) -> Result<String, LockError> {
     toml::to_string_pretty(lock).map_err(|source| LockError::Write {
         path: PathBuf::from(LOCK_FILE_NAME),
@@ -488,5 +557,50 @@ mod tests {
         assert_eq!(report.missing_in_lock, vec!["token".to_string()]);
 
         let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn lock_dependencies_records_local_and_git() {
+        use crate::config::Dependency;
+        let mut deps = HashMap::new();
+        deps.insert(
+            "math".to_string(),
+            Dependency {
+                path: Some("libs/math".to_string()),
+                ..Default::default()
+            },
+        );
+        deps.insert(
+            "token".to_string(),
+            Dependency {
+                git: Some("https://github.com/org/token".to_string()),
+                tag: Some("v1.2.0".to_string()),
+                ..Default::default()
+            },
+        );
+
+        let locked = lock_dependencies(&deps);
+        assert_eq!(locked.len(), 2);
+
+        let math = locked.iter().find(|d| d.name == "math").unwrap();
+        assert_eq!(math.source, "local");
+        assert!(math.git_url.is_empty());
+
+        let token = locked.iter().find(|d| d.name == "token").unwrap();
+        assert_eq!(token.source, "git");
+        assert_eq!(token.git_url, "https://github.com/org/token");
+        assert_eq!(token.resolved_reference, "v1.2.0");
+        assert!(token.commit_sha.is_empty());
+
+        // Round-trips through the lock file TOML (empty commit_sha omitted).
+        let lock = LockFile {
+            version: LOCK_VERSION,
+            deploy_order: vec![],
+            contracts: vec![],
+            dependencies: locked,
+        };
+        let toml = lock_to_toml(&lock).unwrap();
+        let parsed = lock_from_toml(&toml).unwrap();
+        assert_eq!(parsed.dependencies, lock.dependencies);
     }
 }
