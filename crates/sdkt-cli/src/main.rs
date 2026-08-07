@@ -27,12 +27,14 @@ struct Cli {
 enum Commands {
     /// Decode base64-encoded XDR to JSON
     Decode {
+        /// Base64 XDR string to decode. Optional when --file is provided.
         #[arg(value_name = "XDR")]
-        payload: String,
+        payload: Option<String>,
         #[arg(short, long, value_name = "TYPE")]
         r#type: Option<String>,
         #[arg(short, long, value_name = "FORMAT", default_value = "pretty")]
         format: String,
+        /// Read the XDR payload from a file instead of the positional argument.
         #[arg(short = 'i', long, value_name = "FILE")]
         file: Option<String>,
     },
@@ -693,10 +695,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             format,
             file,
         } => {
-            let input = if let Some(path) = file {
-                fs::read_to_string(&path)?
-            } else {
-                payload
+            let input = match (file, payload) {
+                (Some(path), _) => fs::read_to_string(&path)?,
+                (None, Some(p)) => p,
+                (None, None) => {
+                    return Err("no input provided: pass XDR as an argument or use --file".into());
+                }
             };
 
             let fmt = parse_format_str(&format);

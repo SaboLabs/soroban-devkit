@@ -166,7 +166,7 @@ See [`docs/plugin-authoring.md`](docs/plugin-authoring.md) for how to build or u
 | `sdkt verify --contract <ID> [--wasm <file>] [--network <net>]` | Verify a deployed contract matches a local WASM (offline hash vs on-chain hash). |
 | `sdkt health --contract <ID> [--wasm <file>] [--network <net>]` | Unified read-only contract posture report (WASM, storage, TTL, health verdict). |
 | `sdkt wasm inspect <file>` | Inspect offline WASM metadata, sections, and specifications. |
-| `sdkt wasm metadata <contract>` | WASM metadata for a deployed contract (cached). |
+| `sdkt wasm metadata --contract <contract>` | WASM metadata for a deployed contract (cached). |
 | `sdkt wasm cache` | Manage the WASM cache (`info` / `remove` / `clear`). |
 | `sdkt audit <path.rs>` | Static security analysis (AUTH-001/002/003, MOVE-001). `--disable <RULE_ID>` to skip a rule. `--rules <path>` (repeatable) to load external rule paths. |
 | `sdkt identity <generate\|import\|list\|show\|delete\|default>` | ED25519 keystore management. |

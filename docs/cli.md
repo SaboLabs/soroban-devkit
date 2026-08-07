@@ -37,15 +37,15 @@ sdkt
 │
 ├── wasm
 │   ├── inspect <file.wasm>  Offline inspection of a local WASM file (sections, exports, spec)
-│   ├── metadata <contract>  [--network testnet] [--refresh] [--format]
+│   ├── metadata --contract <contract>  [--network testnet] [--refresh] [--format]
 │   └── cache                 (info | remove | clear)
 │
-├── verify <contract-id>
+├── verify --contract <contract-id>
 │   ├── --wasm <file.wasm>    (local artifact to compare; offline hashed)
 │   ├── --network <testnet>   (RPC network)
 │   └── --format <json|pretty>
 │
-├── health <contract-id>
+├── health --contract <contract-id>
 │   ├── --wasm <file.wasm>    (optional local artifact to verify against)
 │   ├── --network <testnet>   (RPC network / report label)
 │   └── --format <json|pretty>
