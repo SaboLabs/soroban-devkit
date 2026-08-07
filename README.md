@@ -16,7 +16,7 @@ Developing on Soroban often requires context-switching across multiple CLI tools
 - **Inspect & decode** — base64 XDR decoding, contract ABI + storage inspection, event exploration.
 - **Analyze** — storage TTL / rent visibility, Instance / Persistent / Temporary classification, offline ABI/function/event/type WASM diffing.
 - **Secure** — static analysis of contract source (`AUTH-001/002/003`, `MOVE-001`) and an upgrade-safety verdict for safe contract upgrades.
-- **Build & ship** — typed transaction envelope builder, simulate, submit, identity/keystore management, multi-contract workspace topological deployments, and upgrade breaking-change guards.
+- **Build & ship** — typed transaction envelope builder, simulate, **native transaction signing (M27)**, submit, identity/keystore management, multi-contract workspace topological deployments, and upgrade breaking-change guards.
 
 Most commands are **offline**; only on-chain reads (`inspect`, `storage`, `tx`, `events`, `account`, `fee`, `wasm metadata`) need an RPC endpoint.
 
@@ -154,8 +154,10 @@ See [`docs/plugin-authoring.md`](docs/plugin-authoring.md) for how to build or u
 | `sdkt storage analyze <contract-id>` | Classify Instance / Persistent / Temporary storage entries + TTL summary. |
 | `sdkt storage estimate <wasm-path>` | Estimate storage cost for a WASM. |
 | `sdkt tx inspect <hash>` | Transaction status / ledger inclusion. |
-| `sdkt tx simulate <xdr>` | Offline pre-flight via `simulateTransaction`. |
-| `sdkt tx submit <xdr>` | Submit a transaction (with optional poll). |
+| `sdkt tx validate <xdr>` | Offline pre-flight validation of an envelope (parses + structural checks). |
+| `sdkt tx simulate <xdr>` | Offline pre-flight via `simulateTransaction` (RPC). |
+| `sdkt tx sign --input <xdr> --identity <name>` | Sign an envelope with a local ED25519 identity — fully offline. |
+| `sdkt tx submit <xdr>` | Submit a transaction (with optional poll; RPC). |
 | `sdkt tx build` | Typed envelope builder. |
 | `sdkt events <contract-id>` | Emitted-contract event explorer (`--abi <wasm>`). |
 | `sdkt account <address>` | Account balances + signers (Horizon-enriched). |
@@ -183,6 +185,46 @@ Most commands accept `--format json` for scripting / CI integration.
   breaking contract changes.
 - **Local analysis** — `decode`, `diff`, and `audit` need no RPC; run them in
   CI or locally without secrets.
+
+### End-to-end transaction signing (build → sign → submit)
+
+`sdkt` can build, validate, simulate, **sign**, and submit a Soroban
+transaction entirely from the CLI. Signing is **fully offline** — it uses a
+local ED25519 identity from the keystore (`sdkt identity`); no RPC, no secret
+ever leaves your machine.
+
+```bash
+# 1. Create a local signing identity (offline)
+sdkt identity generate alice
+
+# 2. Build an unsigned envelope (offline)
+sdkt tx build \
+  --source <SOURCE_ACCOUNT> \
+  --sequence <SEQ> \
+  --contract <CONTRACT_ID> \
+  --function hello \
+  --output unsigned.xdr
+
+# 3. Validate the envelope offline
+sdkt tx validate --envelope unsigned.xdr
+
+# 4. Simulate against the network (RPC) to catch failures early
+sdkt tx simulate --envelope unsigned.xdr
+
+# 5. Sign with the local identity (offline) — picks testnet by default
+sdkt tx sign --input unsigned.xdr --output signed.xdr --identity alice --network testnet
+
+# 6. Submit the signed envelope (RPC)
+sdkt tx submit --envelope signed.xdr
+```
+
+Notes:
+- `tx sign` takes `--network testnet|mainnet|futurenet|custom:<passphrase>`; the
+  network only affects the signature hash, so signing needs no RPC.
+- `tx submit` / `tx simulate` read the network from `.sdkt.toml`
+  (`[network]` section) or fall back to the default testnet RPC.
+- `--output` is optional; without it, the signed base64 envelope is printed to
+  stdout. Use `--format json` for scripting.
 
 Copy-paste recipes for every subcommand are in
 [docs/examples.md](docs/examples.md).

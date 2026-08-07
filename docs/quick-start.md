@@ -55,8 +55,8 @@ sdkt --version
 
 Expected output (version may be newer):
 
-```
-sdkt 2.1.1
+```text
+sdkt 2.2.0
 ```
 
 Then confirm the CLI is responsive:
@@ -206,6 +206,37 @@ This tells you the upgrade changes `mint()`'s signature and drops the
 `Transfer` event and `Point` type — a breaking change — while adding
 `balance()`, a `Mint` event, and a `Circle` type. Use `--deny-breaking` with
 `sdkt deploy` to abort an upgrade automatically if this verdict is `NO`.
+
+---
+
+## Step 5 — Sign a transaction (offline)
+
+`sdkt` can sign a built transaction envelope with a local ED25519 identity,
+**without any network or secret exposure**. First create an identity, then build
+and sign an envelope.
+
+```bash
+# Create a local signing identity (stored in the keystore, never printed)
+sdkt identity generate alice
+
+# Build an unsigned envelope (offline)
+sdkt tx build \
+  --source <SOURCE_ACCOUNT> \
+  --sequence <SEQ> \
+  --contract <CONTRACT_ID> \
+  --function hello \
+  --output unsigned.xdr
+
+# Validate it offline
+sdkt tx validate --envelope unsigned.xdr
+
+# Sign with the local identity (offline; --network selects the signature hash)
+sdkt tx sign --input unsigned.xdr --output signed.xdr --identity alice --network testnet
+```
+
+The signed envelope in `signed.xdr` is ready to broadcast with `sdkt tx submit
+--envelope signed.xdr` (requires RPC) or any compatible Stellar client. Signing
+itself uses only the local keystore — no RPC call is made.
 
 ---
 

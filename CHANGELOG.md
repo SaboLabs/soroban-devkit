@@ -10,6 +10,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Planned
 - Post-2.0 mainnet-focused tooling, SCF grant alignment, and a plugin marketplace.
 
+## [v2.2.0] - 2026-08-07
+
+### Added
+- **Native transaction signing (M27).** `sdkt` can now sign Soroban transaction envelopes with a local ED25519 identity — completing the build → sign → submit lifecycle.
+  - New `sdkt tx sign` command: signs a base64 `TransactionEnvelope` (or a file containing one) using an identity from the local keystore, appending a `DecoratedSignature`. Fully offline — no RPC, no secret exposure.
+  - Flags: `--input <xdr|file>`, `--output <file>` (prints to stdout if omitted), `--identity <name>` (defaults to `default`), `--network testnet|mainnet|futurenet|custom:<passphrase>`, `--format json|pretty`.
+  - Core signing library in `sdkt-xdr` (`sign_transaction`, `sign_envelope_with`, `verify_signature`, `Ed25519Signer`, `Network`, `Signer`, `SigningOptions`, `SigningError`) — dependency-clean and reusable by future signers (hardware/remote, deferred).
+  - Keystore integration: `sdkt-storage::IdentityStore::load_signing_key(name)` exposes the in-memory `ed25519_dalek::SigningKey` for signing without serializing secrets.
+
+### Changed
+- `sdkt tx validate` and `sdkt tx sign` are now first-class `tx` subcommands documented across README, `docs/cli.md`, and `docs/examples.md`.
+- Documentation: README, quick-start, CLI reference, and examples now show the complete build → validate → simulate → sign → submit workflow.
+
+### Fixed
+- Stabilized the `sdkt-cli` identity lifecycle integration test (`test_cli_identity_lifecycle`), which was intermittently failing under parallel `cargo test --workspace` due to a process-global `HOME` mutation. The test now redirects the keystore via a per-subprocess `XDG_CONFIG_HOME`, eliminating the flakiness without weakening coverage.
+
+### Security
+- Signing derives the canonical envelope hash via `stellar_xdr`'s `TransactionEnvelope::hash(network_id)` (version-correct preimage construction) — no hand-rolled `HashIdPreimage`.
+- Secret key material is handled only as in-memory `ed25519_dalek::SigningKey` values for the duration of a single sign call. No secret bytes are ever written to logs, `stdout`, `stderr`, or error messages; `SigningError` carries only key-free text.
+
+### Testing
+- `cargo fmt --all --check`, `cargo clippy --workspace --all-targets --all-features -- -D warnings`, and `cargo test --workspace` all pass (280 tests, 0 failed).
+- New coverage: 12 unit tests in `sdkt-xdr` (network handling, single/double signature append, golden-vector determinism, cross-network divergence, invalid base64/XDR/empty/envelope, invalid/unknown secret key, secret-key roundtrip, wrong-signer rejection) + 10 `sdkt-cli` integration tests for `tx sign` (success → file/stdout/json, success cases, unknown/missing identity, invalid file/base64/envelope, invalid network, unwritable output).
+
 ## [v2.1.1] - 2026-08-06
 
 ### Fixed

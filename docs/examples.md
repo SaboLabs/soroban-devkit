@@ -56,12 +56,36 @@ sdkt storage estimate contract.wasm
 
 ### Transaction lifecycle
 
+Build, validate, simulate, sign, and submit a Soroban transaction:
+
 ```bash
-sdkt tx inspect <TX_HASH>
-sdkt tx simulate <XDR>
-sdkt tx submit <XDR>
-sdkt tx build   # interactive typed envelope builder
+# 1. Create a local signing identity (offline)
+sdkt identity generate alice
+
+# 2. Build an unsigned envelope (offline)
+sdkt tx build \
+  --source <SOURCE_ACCOUNT> --sequence <SEQ> \
+  --contract <CONTRACT_ID> --function hello \
+  --output unsigned.xdr
+
+# 3. Validate the envelope offline
+sdkt tx validate --envelope unsigned.xdr
+
+# 4. Simulate against the network to catch failures early (RPC)
+sdkt tx simulate --envelope unsigned.xdr
+
+# 5. Sign with the local identity (offline)
+sdkt tx sign --input unsigned.xdr --output signed.xdr --identity alice --network testnet
+
+# 6. Submit the signed envelope (RPC)
+sdkt tx submit --envelope signed.xdr
 ```
+
+`tx sign` is **fully offline** — it signs with a local ED25519 keystore
+identity, so no RPC or secret exposure is involved. The `--network` flag
+(`testnet` | `mainnet` | `futurenet` | `custom:<passphrase>`) only selects the
+signature hash; signing never touches the network. `tx submit` / `tx simulate`
+read the network from `.sdkt.toml` or default to testnet RPC.
 
 ### Events and account
 

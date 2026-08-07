@@ -1,7 +1,7 @@
 # Soroban DevKit (`sdkt`) — Roadmap
 
 **Last updated:** 2026-08-07
-**Status:** Active development · default branch `main` · current release **v2.1.1**
+**Status:** Active development · default branch `main` · current release **v2.2.0**
 
 This document is the single source of truth for milestone scope and sequencing.
 Individual milestone plans live under `docs/milestone-*-plan.md`; engineering
@@ -18,10 +18,10 @@ production-grade binary.
 
 | | |
 |---|---|
-| **Current release** | `v2.1.1` (tags `v2.0.0`, `v2.1.0` also published) |
-| **Repository status** | Active · all milestones through **M26** merged to `main` |
+| **Current release** | `v2.2.0` (tags `v2.0.0`, `v2.1.0`, `v2.1.1` also published) |
+| **Repository status** | Active · all milestones through **M27** merged to `main` |
 | **Crates** | 8 (`sdkt-cli` + 7 supporting crates) |
-| **Completed milestones** | 24 (M3A, M3B, M5–M26) |
+| **Completed milestones** | 25 (M3A, M3B, M5–M26, M27) |
 | **Current focus** | Post-2.0 direction — mainnet tooling, plugin ecosystem, SCF alignment (see §6) |
 | **Original gap analysis** | [`GAP_ANALYSIS.md`](GAP_ANALYSIS.md) — market-gap justification |
 
@@ -68,8 +68,8 @@ The workspace is a Cargo virtual workspace. The `sdkt` binary is produced by
 ## 4. Development Progress
 
 Milestones are grouped by theme. Numbering is unchanged; all historical scope
-is preserved. Milestones **M16–M26** were merged to `main` across the
-`v1.0.0` → `v2.1.1` release line.
+is preserved. Milestones **M16–M27** were merged to `main` across the
+`v1.0.0` → `v2.2.0` release line.
 
 ### Foundation
 
@@ -133,6 +133,7 @@ is preserved. Milestones **M16–M26** were merged to `main` across the
 | M8 | Mutability foundation | `sdkt tx simulate`, `sdkt tx submit`, `sdkt identity` (ED25519 keystore), `sdkt tx build` envelope builder, fee estimation | v0.8.0-alpha |
 | M25 | RPC Connection Pooling (ENG-01) | Persistent pooled `reqwest::Client` in `SorobanRpcClient`; configurable `timeout_secs` / `pool_max_idle_per_host` | main |
 | M26 | Transaction Simulation Enhancements (ENG-03) | `sdkt tx simulate` surfaces `restorePreamble` and granular `stateChanges` | main |
+| M27 | Native Transaction Signing | `sdkt tx sign` signs envelopes with a local ED25519 identity (offline); `sdkt-xdr` signing library (`sign_transaction`, `Ed25519Signer`, `Network`, `Signer`); `sdkt-storage::IdentityStore::load_signing_key` keystore integration | main |
 
 ---
 
@@ -140,9 +141,9 @@ is preserved. Milestones **M16–M26** were merged to `main` across the
 
 **Where is this project today?**
 
-- **Completed milestones:** 24 — M3A, M3B, M5, M6, M7, M8, M9, M10, M11, M12, M13, M14, M15, M16, M17, M18, M19, M20, M21, M22, M23, M24, M25, M26.
-- **Active milestone:** None in progress. The latest merged work is M26 (shipped in `v2.1.1`); mainline development now tracks the Post-2.0 direction in §6.
-- **Current release:** `v2.1.1` (tagged). Prior tagged releases: `v2.0.0`, `v2.1.0`.
+- **Completed milestones:** 25 — M3A, M3B, M5, M6, M7, M8, M9, M10, M11, M12, M13, M14, M15, M16, M17, M18, M19, M20, M21, M22, M23, M24, M25, M26, M27.
+- **Active milestone:** None in progress. The latest merged work is M27 (native transaction signing, shipped in `v2.2.0`); mainline development now tracks the Post-2.0 direction in §6.
+- **Current release:** `v2.2.0` (tagged). Prior tagged releases: `v2.1.1`, `v2.1.0`, `v2.0.0`.
 - **Repository health:** Healthy. 8 crates, all quality gates enforced in CI (`cargo fmt`, `cargo clippy --workspace --all-targets -- -D warnings` default + all-features, `cargo test --workspace`).
 - **CI status:** Green. Workflows: `ci.yml` (fmt/clippy/test on Ubuntu/macOS/Windows + MSRV + install-script validation), `release.yml` (tag-gated cross-platform binaries, checksums, crates.io publish), `compatibility.yml` (real-world `stellar/soroban-examples` validation), `sdkt-action-ci.yml` (self-validates the reusable Action).
 

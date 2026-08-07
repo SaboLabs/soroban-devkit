@@ -22,9 +22,11 @@ sdkt
 │
 ├── tx
 │   ├── inspect <hash>        [--format]
-│   ├── simulate <xdr>        [--format] (surfaces restore preambles, costs, state changes)
-│   ├── submit <xdr>
-│   └── build
+│   ├── validate <xdr>        [--format] (offline parse + structural checks)
+│   ├── simulate <xdr>        [--format] (RPC; surfaces restore preambles, costs, state changes)
+│   ├── sign                  [--input <xdr|file>] [--output <file>] [--identity <name>] [--network <testnet|mainnet|futurenet|custom:<p>>] [--format] (offline ED25519 signing)
+│   ├── submit <xdr>          [--wait] [--timeout <s>] [--interval <s>] [--format] (RPC)
+│   └── build                 [--source --sequence --contract --function --arg* --output]
 │
 ├── events <contract-id>
 │   ├── --format <json|pretty>
