@@ -2733,7 +2733,7 @@ dependencies = [
 
 [[package]]
 name = "sdkt-audit"
-version = "2.3.0"
+version = "2.4.0"
 dependencies = [
  "extism",
  "libloading",
@@ -2747,7 +2747,7 @@ dependencies = [
 
 [[package]]
 name = "sdkt-audit-example-rule"
-version = "2.3.0"
+version = "2.4.0"
 dependencies = [
  "extism-pdk",
  "sdkt-audit",
@@ -2757,7 +2757,7 @@ dependencies = [
 
 [[package]]
 name = "sdkt-cli"
-version = "2.3.0"
+version = "2.4.0"
 dependencies = [
  "assert_cmd",
  "clap",
@@ -2778,7 +2778,7 @@ dependencies = [
 
 [[package]]
 name = "sdkt-core"
-version = "2.3.0"
+version = "2.4.0"
 dependencies = [
  "serde",
  "stellar-strkey 0.0.18",
@@ -2789,7 +2789,7 @@ dependencies = [
 
 [[package]]
 name = "sdkt-rpc"
-version = "2.3.0"
+version = "2.4.0"
 dependencies = [
  "base64",
  "reqwest",
@@ -2805,7 +2805,7 @@ dependencies = [
 
 [[package]]
 name = "sdkt-storage"
-version = "2.3.0"
+version = "2.4.0"
 dependencies = [
  "base64",
  "directories",
@@ -2824,7 +2824,7 @@ dependencies = [
 
 [[package]]
 name = "sdkt-wasm"
-version = "2.3.0"
+version = "2.4.0"
 dependencies = [
  "hex",
  "sdkt-core",
@@ -2837,7 +2837,7 @@ dependencies = [
 
 [[package]]
 name = "sdkt-xdr"
-version = "2.3.0"
+version = "2.4.0"
 dependencies = [
  "base64",
  "ed25519-dalek",

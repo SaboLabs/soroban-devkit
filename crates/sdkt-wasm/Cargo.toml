@@ -14,7 +14,7 @@ keywords = ["soroban", "stellar", "sdk", "toolkit", "wasm"]
 categories = ["development-tools", "wasm"]
 
 [dependencies]
-sdkt-core = { version = "2.3.0", path = "../sdkt-core" }
+sdkt-core = { version = "2.4.0", path = "../sdkt-core" }
 wasmparser = "0.255"
 sha2 = "0.10"
 serde = { version = "1", features = ["derive"] }
