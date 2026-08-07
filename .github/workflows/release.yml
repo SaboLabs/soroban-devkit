@@ -142,7 +142,7 @@ jobs:
       - name: Verify tarball contents
         run: |
           # Regression guard: the release tarball MUST contain both the binary
-          # and its checksum (sdkt + sdkt.sha256), per M38 / README.
+          # and its checksum (sdkt + sdkt.sha256), per M16 / README.
           echo "Contents of sdkt-${{ matrix.target }}.tar.gz:"
           tar -tzf "sdkt-${{ matrix.target }}.tar.gz"
           tar -tzf "sdkt-${{ matrix.target }}.tar.gz" | grep -qx sdkt \

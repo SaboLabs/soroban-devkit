@@ -17,9 +17,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   and offline commands. Tests are deterministic and hermetic (per-test
   `SDKT_NETWORK_DIR`).
 - **Supply-chain audit (M32).** New `supply-chain` CI job runs `cargo audit`
-  (`rustsec/audit-check`) on `ubuntu-latest` with `continue-on-error`, so
-  advisory-DB or network issues never break the build. Portable across the
-  existing Linux/macOS/Windows matrix.
+  directly (no third-party action) on `ubuntu-latest` with `continue-on-error`,
+  so dependency advisories, advisory-DB, or network issues never break the
+  build. Portable across the existing Linux/macOS/Windows test matrix.
 - **Runnable crate doc examples (M32).** Added `///` doc examples to
   `sdkt_storage::NetworkProfile` and `sdkt_wasm::parse_metadata` so docs.rs
   renders verified, executable examples.
@@ -212,7 +212,7 @@ the release pipeline fully green end-to-end.
 ### Changed (release readiness, no new features)
 - **Unified workspace version** — added `[workspace.package]` as the single source of truth (`version = 0.16.0-alpha`, `edition`, `license`, `authors`, `repository`, `homepage`). All 7 crates inherit via `*.workspace = true`; internal path-dependencies pinned to the unified version. Removes the `0.6.0-alpha` vs `v0.15.0-alpha` drift.
 - **CI Action install fixed** — `action.yml` now installs `sdkt` from a real git tag (`cargo install --git ... --tag <sdkt-version>`, default `v0.15.0-alpha`) instead of a never-published crates.io version; swapped deprecated `actions-rs/toolchain` for `dtolnay/rust-toolchain@stable`. Inputs unchanged (backward compatible).
-- **Release workflow** — `.github/workflows/release.yml` on `v*` tags: fmt/clippy/test validation, `cargo publish --dry-run` per crate, cross-platform binary build (linux / macos intel+arm / windows) uploaded to a GitHub Release, and ordered `cargo publish` (needs `CARGO_REGISTRY_TOKEN`).
+- **Release workflow** — `.github/workflows/release.yml` on `v*` tags: fmt/clippy/test validation, `cargo publish --dry-run` per crate, cross-platform binary build (linux / macOS Intel / macOS Apple Silicon) uploaded to a GitHub Release, and ordered `cargo publish` (needs `CARGO_REGISTRY_TOKEN`).
 - **`.gitignore`** — removed the contradictory `Cargo.lock` ignore (it is intentionally tracked; the Action installs with `--locked`).
 - **Docs** — `README.md` rewritten (real repo URL, all 13+ subcommands, install, CI link); `docs/cli.md` rewritten to the full current command tree.
 - **Panic audit** — replaced `unwrap()`/`expect()` on user-input execution paths (the `fee estimate` manual-arg parser and JSON-serialize `println!` sites) with `?`/`map_err` so malformed input returns a clean error instead of panicking. Internal invariants and test code untouched.
