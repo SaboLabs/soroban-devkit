@@ -105,6 +105,25 @@ sdkt identity default alice
 sdkt identity delete alice
 ```
 
+### Network profiles
+
+```bash
+# Save a named network profile (referenced by other commands instead of full URLs)
+sdkt network add testnet \
+  --rpc-url https://soroban-testnet.stellar.org \
+  --passphrase "Test SDF Network ; September 2015" \
+  --friendbot https://friendbot.stellar.org \
+  --description "Stellar testnet"
+
+# List / inspect / remove
+sdkt network list
+sdkt network show testnet
+sdkt network remove testnet
+
+# Machine-readable output for scripting / CI
+sdkt network show testnet --format json
+```
+
 ### Deploy
 
 ```bash

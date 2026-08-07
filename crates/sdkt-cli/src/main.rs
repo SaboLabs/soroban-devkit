@@ -152,6 +152,11 @@ enum Commands {
         #[command(subcommand)]
         action: IdentityAction,
     },
+    /// Manage named network profiles (RPC endpoint + passphrase)
+    Network {
+        #[command(subcommand)]
+        action: NetworkAction,
+    },
     /// Initialize a new Soroban contract project
     Init {
         /// Project name (directory)
@@ -199,6 +204,52 @@ enum IdentityAction {
     Show { name: String },
     Delete { name: String },
     Default { name: String },
+}
+
+#[derive(Subcommand)]
+enum NetworkAction {
+    /// Add or update a named network profile
+    Add {
+        /// Profile name (referenced by other commands)
+        name: String,
+        /// RPC endpoint URL (e.g. https://soroban-testnet.stellar.org)
+        #[arg(short, long, value_name = "URL")]
+        rpc_url: String,
+        /// Network passphrase (e.g. "Test SDF Network ; September 2015")
+        #[arg(short, long, value_name = "PASSPHRASE")]
+        passphrase: String,
+        /// Optional friendbot URL for test networks
+        #[arg(long, value_name = "URL")]
+        friendbot: Option<String>,
+        /// Optional human-readable description
+        #[arg(short, long)]
+        description: Option<String>,
+        /// Output format (pretty or json)
+        #[arg(short, long, default_value = "pretty")]
+        format: String,
+    },
+    /// List all saved network profiles
+    List {
+        /// Output format (pretty or json)
+        #[arg(short, long, default_value = "pretty")]
+        format: String,
+    },
+    /// Show a single network profile by name
+    Show {
+        /// Profile name
+        name: String,
+        /// Output format (pretty or json)
+        #[arg(short, long, default_value = "pretty")]
+        format: String,
+    },
+    /// Remove a network profile by name
+    Remove {
+        /// Profile name
+        name: String,
+        /// Output format (pretty or json)
+        #[arg(short, long, default_value = "pretty")]
+        format: String,
+    },
 }
 
 #[derive(Subcommand)]
@@ -2266,6 +2317,79 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 IdentityAction::Default { name } => {
                     store.set_default(&name)?;
                     println!("Identity '{}' set as default.", name);
+                }
+            }
+        }
+        Commands::Network { action } => {
+            use sdkt_storage::{NetworkProfile, NetworkStore};
+            let store = NetworkStore::new()?;
+            match action {
+                NetworkAction::Add {
+                    name,
+                    rpc_url,
+                    passphrase,
+                    friendbot,
+                    description,
+                    format,
+                } => {
+                    let fmt = parse_format_str(&format);
+                    let mut profile = NetworkProfile::new(name.clone(), rpc_url, passphrase);
+                    if let Some(url) = friendbot {
+                        profile = profile.with_friendbot(url);
+                    }
+                    if let Some(desc) = description {
+                        profile = profile.with_description(desc);
+                    }
+                    store.add(profile)?;
+                    if fmt == OutputFormat::Json {
+                        println!("{}", serde_json::to_string(&store.get(&name)?)?);
+                    } else {
+                        println!("Network profile '{}' saved.", name);
+                    }
+                }
+                NetworkAction::List { format } => {
+                    let fmt = parse_format_str(&format);
+                    let profiles = store.list()?;
+                    if fmt == OutputFormat::Json {
+                        println!("{}", serde_json::to_string(&profiles)?);
+                    } else if profiles.is_empty() {
+                        println!("No network profiles found.");
+                    } else {
+                        println!("Network profiles:");
+                        for p in profiles {
+                            println!("  {} ({})", p.name, p.rpc_url);
+                        }
+                    }
+                }
+                NetworkAction::Show { name, format } => {
+                    let fmt = parse_format_str(&format);
+                    let profile = store.get(&name)?;
+                    if fmt == OutputFormat::Json {
+                        println!("{}", serde_json::to_string(&profile)?);
+                    } else {
+                        println!("Network profile: {}", profile.name);
+                        println!("  RPC URL:         {}", profile.rpc_url);
+                        println!("  Passphrase:      {}", profile.network_passphrase);
+                        if let Some(url) = &profile.friendbot_url {
+                            println!("  Friendbot URL:   {}", url);
+                        }
+                        if let Some(desc) = &profile.description {
+                            println!("  Description:     {}", desc);
+                        }
+                    }
+                }
+                NetworkAction::Remove { name, format } => {
+                    let fmt = parse_format_str(&format);
+                    store.remove(&name)?;
+                    if fmt == OutputFormat::Json {
+                        let json = serde_json::json!({
+                            "status": "removed",
+                            "name": name,
+                        });
+                        println!("{}", serde_json::to_string(&json)?);
+                    } else {
+                        println!("Network profile '{}' removed.", name);
+                    }
                 }
             }
         }

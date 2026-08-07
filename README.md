@@ -36,6 +36,7 @@ Most commands are **offline**; only on-chain reads (`inspect`, `storage`, `tx`, 
 | Offline WASM diff + upgrade-safety verdict | `sdkt diff --upgrade-safety` |
 | Static security audit | `sdkt audit` |
 | ED25519 keystore | `sdkt identity` |
+| Named network profiles | `sdkt network` |
 | Project scaffolding | `sdkt init` |
 | Deploy (with `--deny-breaking` guard) | `sdkt deploy` |
 
@@ -172,6 +173,7 @@ See [`docs/plugin-authoring.md`](docs/plugin-authoring.md) for how to build or u
 | `sdkt wasm cache` | Manage the WASM cache (`info` / `remove` / `clear`). |
 | `sdkt audit <path.rs>` | Static security analysis (AUTH-001/002/003, MOVE-001). `--disable <RULE_ID>` to skip a rule. `--rules <path>` (repeatable) to load external rule paths. |
 | `sdkt identity <generate\|import\|list\|show\|delete\|default>` | ED25519 keystore management. |
+| `sdkt network <add\|list\|show\|remove>` | Named network profiles (RPC URL + passphrase). |
 | `sdkt init <name>` | Scaffold a new Soroban project (`--minimal`, `--force`). |
 | `sdkt deploy --wasm <file> --salt <salt>` | Upload WASM + instantiate. Add `--deny-breaking --old-wasm <deployed.wasm>` to abort on a non-backwards-compatible upgrade. |
 
