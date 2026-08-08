@@ -45,7 +45,11 @@ sdkt
 ├── verify --contract <contract-id>
 │   ├── --wasm <file.wasm>    (local artifact to compare; offline hashed)
 │   ├── --network <testnet>   (RPC network)
-│   └── --format <json|pretty>
+│   ├── --format <json|pretty>
+│   └── --upgrade-safety      (compare the live deployed contract's interface
+│                               against --wasm candidate; emits UpgradeVerdict.
+│                               Requires --wasm. Read-only; inherits mainnet-safety
+│                               guard. See M42.)
 │
 ├── health --contract <contract-id>
 │   ├── --wasm <file.wasm>    (optional local artifact to verify against)

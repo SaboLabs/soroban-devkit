@@ -116,7 +116,8 @@ is preserved. Milestones **M16–M27** were merged to `main` across the
 
 | Milestone | Theme | Highlights | Release |
 |---|---|---|---|
-| M41 | On-Chain Contract Interface & Instance Inspection | Wire existing `get_wasm_metadata` into `inspect_contract`; enrich `ContractInspection` with on-chain WASM size, parsed ABI (functions/events/types), storage summary, TTL, storage keys; `sdkt wasm metadata --contract <id>` returns a complete report; add network-guarded on-chain compatibility coverage | main (scheduled) |
+| M41 | On-Chain Contract Interface & Instance Inspection | Wire existing `get_wasm_metadata` into `inspect_contract`; enrich `ContractInspection` with on-chain WASM size, parsed ABI (functions/events/types), storage summary, TTL, storage keys; `sdkt wasm metadata --contract <id>` returns a complete report; add network-guarded on-chain compatibility coverage | main (merged in v2.5.0) |
+| M42 | On-Chain Upgrade-Safety Verification | Bridge M41 (deployed-WASM retrieval) with M14 (`SpecDiff`/`UpgradeVerdict`): `sdkt verify --contract <id> --wasm <candidate.wasm> --upgrade-safety` fetches the live contract's `ContractSpec` and classifies breaking vs non-breaking changes vs a local candidate. Reuses `inspect_contract`/`get_wasm_bytecode`, `parse_contract_spec`, existing `SpecDiff`/`UpgradeVerdict`; no new RPC method, no new engine. Plan: `docs/milestone-42-plan.md` | main (implemented on `feat/milestone-42`, pending merge) |
 
 | Milestone | Theme | Highlights | Release |
 |-----------|-------|-----------|---------|
@@ -161,7 +162,7 @@ is preserved. Milestones **M16–M27** were merged to `main` across the
 **Where is this project today?**
 
 - **Completed milestones:** 33 — M3A, M3B, M5, M6, M7, M8, M9, M10, M11, M12, M13, M14, M15, M16, M17, M18, M19, M20, M21, M22, M23, M24, M25, M26, M27, M28, M29, M35.0, M35.1, M35.2, M36.0, M37, M38, M39, M40.
-- **Active milestone:** **M41 (On-Chain Contract Interface & Instance Inspection)** is scheduled; plan at `docs/milestone-41-plan.md`. It enriches on-chain contract inspection by wiring the already-existing `get_wasm_metadata` into `inspect_contract` and surfacing the parsed ABI, WASM size, storage summary, TTL, and storage keys — no new RPC methods, no new CLI subcommand, no version bump. M40 (Plugin Ecosystem — Local Store & Distribution) is merged and shipped in `v2.5.0`.
+- **Active milestone:** **M42 (On-Chain Upgrade-Safety Verification)** is implemented on branch `feat/milestone-42` (pending merge); plan at `docs/milestone-42-plan.md`. It bridges M41's deployed-WASM retrieval with the M14 upgrade-safety engine so `sdkt verify --contract <id> --wasm <candidate.wasm> --upgrade-safety` classifies breaking vs non-breaking changes against a live contract — reusing `inspect_contract`/`get_wasm_bytecode`, `parse_contract_spec`, and the existing `SpecDiff`/`UpgradeVerdict`; no new RPC method, no new engine. **M41 (On-Chain Contract Interface & Instance Inspection) is merged and shipped in `v2.5.0`**; M40 (Plugin Ecosystem — Local Store & Distribution) is also merged and shipped in `v2.5.0`.
 - **Current release:** `v2.5.0` (tagged). Prior tagged releases: `v2.4.0`, `v2.3.0`, `v2.2.0`, `v2.1.1`, `v2.1.0`, `v2.0.0`.
 - **Repository health:** Healthy. 8 crates, all quality gates enforced in CI (`cargo fmt`, `cargo clippy --workspace --all-targets -- -D warnings` default + all-features, `cargo test --workspace`).
 - **CI status:** Green. Workflows: `ci.yml` (fmt/clippy/test on Ubuntu/macOS/Windows + MSRV + install-script validation), `release.yml` (tag-gated cross-platform binaries, checksums, crates.io publish), `compatibility.yml` (real-world `stellar/soroban-examples` validation), `sdkt-action-ci.yml` (self-validates the reusable Action).
@@ -170,21 +171,18 @@ is preserved. Milestones **M16–M27** were merged to `main` across the
 
 ## 6. Next Priorities
 
-The package-manager line is now fully scheduled through M39; M40 (plugin local
-store) and M41 (on-chain inspection) are scheduled in §4. The remaining backlog
-items below are explicitly unscheduled:
+The package-manager line is fully scheduled and completed through M39; M40 (plugin
+local store) and M41 (on-chain inspection) are merged and shipped in `v2.5.0`. The
+next scheduled milestone is **M42 (On-Chain Upgrade-Safety Verification)** — see
+`docs/milestone-42-plan.md`. The remaining backlog items below are explicitly
+unscheduled:
 
-- **M37 — Dependency Version Resolution.** Semver `version` constraints on dependencies; a pure
-  `VersionResolver` selects the best satisfying tag/commit; `sdkt package update --check` reports
-  constraint state. Builds on M36.0. Plan: `docs/milestone-37-plan.md`.
-- **M38 — Packaging & Publishing Workflow.** `sdkt package pack` bundles manifest + lock + cached
-  checkouts into a portable, offline-runnable artifact; `sdkt package publish --dry-run` validates
-  publish-readiness (manifest + lock + cache + integrity). Builds on M35.2/M36.0. Plan:
-  `docs/milestone-38-plan.md`.
-- **M39 — Release Polish & SCF Readiness.** Containerized distribution (`Dockerfile`), mainnet-safety
-  guards on RPC commands, SCF grant positioning doc, `RELEASE_READINESS.md` refresh, and opt-in
-  `--version` provenance. Polish/alignment only — no new command surface. Plan:
-  `docs/milestone-39-plan.md`.
+- **M42 — On-Chain Upgrade-Safety Verification.** Bridge M41's deployed-WASM
+  retrieval with the M14 `SpecDiff`/`UpgradeVerdict` engine so
+  `sdkt verify --contract <id> --wasm <candidate.wasm> --upgrade-safety` classifies
+  breaking vs non-breaking changes against a live deployed contract. Plan:
+  `docs/milestone-42-plan.md`. (M37/M38/M39 described below are already completed
+  and shipped in `v2.5.0`; they are listed for historical continuity only.)
 
 ### Future Work (unscheduled backlog)
 
