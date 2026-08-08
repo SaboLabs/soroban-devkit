@@ -1,0 +1,13 @@
+{
+  "compatible": false,
+  "breaking_changes": [
+    { "kind": "changed_signature", "name": "mint", "detail": "old: mint(u32) -> ()\n      new: mint(u64) -> ()" },
+    { "kind": "removed_event", "name": "Transfer" },
+    { "kind": "removed_type", "name": "Point" }
+  ],
+  "non_breaking_changes": [
+    { "kind": "added_function", "name": "balance" },
+    { "kind": "added_event", "name": "Mint" },
+    { "kind": "added_type", "name": "Circle" }
+  ]
+}

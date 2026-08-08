@@ -4,6 +4,7 @@ use sdkt_core::fee::{FeeConfig, FeeEstimator, LedgerFeeSample, NetworkKind};
 use sdkt_core::fetch::DependencyFetcher;
 use sdkt_core::{DevKitConfig, NetworkConfig, OutputFormat};
 use sdkt_rpc::inspect::StorageSummary;
+use sdkt_rpc::wasm::get_wasm_bytecode;
 use sdkt_rpc::{
     estimate_dynamic_fee, get_contract_events, get_ttl_info, get_wasm_metadata, inspect_account,
     inspect_contract, inspect_transaction, simulate_transaction, SorobanRpcClient, StorageKeyInfo,
@@ -381,6 +382,10 @@ enum Commands {
         /// Output format
         #[arg(short, long, default_value = "pretty")]
         format: String,
+        /// Emit an upgrade-safety verdict comparing the live deployed contract
+        /// (fetched on-chain) against the local `--wasm` candidate. Requires `--wasm`.
+        #[arg(long, default_value_t = false)]
+        upgrade_safety: bool,
         #[command(flatten)]
         net: NetworkArgs,
     },
@@ -1250,6 +1255,66 @@ fn print_upgrade_verdict(v: &sdkt_wasm::UpgradeVerdict) {
     }
 }
 
+/// M42 — On-chain upgrade-safety verification.
+///
+/// Fetches the deployed contract's on-chain WASM via the M41 path
+/// (`inspect_contract` -> `get_wasm_bytecode`), parses its `ContractSpec`, and
+/// runs the existing M14 `SpecDiff`/`UpgradeVerdict` engine against a local
+/// candidate WASM. No new RPC method, no new parser, no new verdict engine — it
+/// reuses `sdkt-rpc` retrieval and `sdkt-wasm` diffing verbatim. Read-only; the
+/// network/mainnet-safety guard is inherited from `resolve_rpc_client` in the
+/// caller.
+async fn run_upgrade_safety(
+    client: &SorobanRpcClient,
+    contract_id: &str,
+    candidate_bytes: &[u8],
+    network: &str,
+    fmt: OutputFormat,
+) -> Result<(), String> {
+    // Candidate WASM is parsed offline first (fail-fast on malformed input).
+    let _candidate_meta = sdkt_wasm::parse_metadata(candidate_bytes)
+        .map_err(|e| format!("{} is not valid WASM: {}", "<candidate>", e))?;
+
+    // On-chain WASM hash (M41 path).
+    let inspection = inspect_contract(client, contract_id)
+        .await
+        .map_err(|e| match e {
+            sdkt_rpc::RpcError::ContractNotFound => {
+                format!("contract {} not found on {}", contract_id, network)
+            }
+            other => format!("{}", other),
+        })?;
+    let wasm_hash = inspection.wasm_hash;
+
+    // Fetch the raw on-chain WASM bytecode (M41 path) — reuse existing extractor.
+    let deployed_bytes = get_wasm_bytecode(client, &wasm_hash)
+        .await
+        .map_err(|e| format!("could not fetch on-chain WASM for {}: {}", contract_id, e))?;
+
+    // Compare the two ContractSpecs with the M14 engine (raw entry point reuses
+    // diff_specs internally). The "old" side is the deployed contract; the "new"
+    // side is the candidate local WASM.
+    let diff = sdkt_wasm::diff_wasm(&deployed_bytes, candidate_bytes)
+        .map_err(|e| format!("failed to diff contracts: {}", e))?;
+
+    let verdict = sdkt_wasm::UpgradeVerdict::from_diff(&diff);
+
+    if fmt == OutputFormat::Json {
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&verdict).map_err(|e| format!("{}", e))?
+        );
+    } else {
+        print_upgrade_verdict(&verdict);
+        println!();
+        println!(
+            "Baseline: live contract {} on {} (WASM {})",
+            contract_id, network, wasm_hash
+        );
+    }
+    Ok(())
+}
+
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let cli = Cli::parse();
@@ -1492,6 +1557,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             wasm,
             network,
             format,
+            upgrade_safety,
             net,
         } => {
             let fmt = parse_format_str(&format);
@@ -1500,6 +1566,38 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 net.network_passphrase.clone(),
                 net.network_profile.clone(),
             );
+
+            // On-chain upgrade-safety verification: compare the live deployed
+            // contract's interface against a local candidate WASM.
+            if upgrade_safety {
+                match wasm.as_ref() {
+                    None => {
+                        eprintln!("Error: --upgrade-safety requires --wasm <candidate.wasm>");
+                        process::exit(1);
+                    }
+                    Some(path) => {
+                        let candidate_bytes = fs::read(path).unwrap_or_else(|e| {
+                            eprintln!("Error reading WASM file {}: {}", path, e);
+                            process::exit(1);
+                        });
+                        match run_upgrade_safety(
+                            &client,
+                            &contract,
+                            &candidate_bytes,
+                            &network,
+                            fmt,
+                        )
+                        .await
+                        {
+                            Ok(()) => return Ok(()),
+                            Err(e) => {
+                                eprintln!("Error verifying upgrade safety: {}", e);
+                                process::exit(1);
+                            }
+                        }
+                    }
+                }
+            }
 
             // Read + hash the local WASM fully offline (no RPC).
             let local_bytes = match wasm.as_ref() {
