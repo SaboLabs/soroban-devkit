@@ -1398,7 +1398,7 @@ mod tests {
     fn pack_dir_roundtrip_preserves_lock_and_integrity() {
         let src = temp_dir("m38-src");
         git_repo_with_tag(&src, "v1.0.0");
-        let url = src.to_string_lossy().to_string();
+        let url = src.to_string_lossy().replace('\\', "/");
 
         let base = temp_dir("m38-base-dir");
         setup_packed_project(&base, &url);
@@ -1431,7 +1431,7 @@ mod tests {
     fn pack_tar_zst_roundtrip_preserves_lock_and_integrity() {
         let src = temp_dir("m38-src-tar");
         git_repo_with_tag(&src, "v1.0.0");
-        let url = src.to_string_lossy().to_string();
+        let url = src.to_string_lossy().replace('\\', "/");
 
         let base = temp_dir("m38-base-tar");
         setup_packed_project(&base, &url);
@@ -1465,7 +1465,7 @@ mod tests {
     fn pack_rejects_unknown_format() {
         let src = temp_dir("m38-src-fmt");
         git_repo_with_tag(&src, "v1.0.0");
-        let url = src.to_string_lossy().to_string();
+        let url = src.to_string_lossy().replace('\\', "/");
         let base = temp_dir("m38-base-fmt");
         setup_packed_project(&base, &url);
         let out = temp_dir("m38-out-fmt");
@@ -1480,7 +1480,7 @@ mod tests {
     fn publish_plan_ready_when_consistent() {
         let src = temp_dir("m38-src-ready");
         git_repo_with_tag(&src, "v1.0.0");
-        let url = src.to_string_lossy().to_string();
+        let url = src.to_string_lossy().replace('\\', "/");
         let base = temp_dir("m38-base-ready");
         let cfg = setup_packed_project(&base, &url);
 
@@ -1501,7 +1501,7 @@ mod tests {
     fn publish_plan_detects_missing_cache() {
         let src = temp_dir("m38-src-drift");
         git_repo_with_tag(&src, "v1.0.0");
-        let url = src.to_string_lossy().to_string();
+        let url = src.to_string_lossy().replace('\\', "/");
         let base = temp_dir("m38-base-drift");
         let cfg = setup_packed_project(&base, &url);
 

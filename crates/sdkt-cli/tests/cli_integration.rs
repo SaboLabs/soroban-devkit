@@ -1463,7 +1463,7 @@ fn make_pack_repo() -> (std::path::PathBuf, String) {
     run(&["add", "."]);
     run(&["commit", "-q", "-m", "initial"]);
     run(&["tag", "v1.0.0"]);
-    let url = dir.to_string_lossy().to_string();
+    let url = dir.to_string_lossy().replace('\\', "/");
     (dir, url)
 }
 
