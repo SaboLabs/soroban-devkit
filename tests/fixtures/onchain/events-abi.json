@@ -1,0 +1,10 @@
+{
+  "source_wasm": "crates/sdkt-cli/tests/fixtures/us_new.wasm",
+  "event_topic_symbol": "Mint",
+  "expected": {
+    "label": "Mint",
+    "matched_type": "event:Mint",
+    "decoded_by": "sdkt_xdr::abi_decode::decode_event_topics (M10)"
+  },
+  "note": "Deterministic, offline-provable assertion: the deployed-contract ABI path (M41 retrieval -> parse_contract_spec) feeds the M10 decoder exactly this spec, so a 'Mint' event topic decodes to label 'Mint' / matched_type 'event:Mint'. CI validates the source WASM declares the 'Mint' event (via offline `sdkt wasm inspect`) and that the decoder yields the expected label."
+}

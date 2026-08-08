@@ -30,7 +30,11 @@ sdkt
 │
 ├── events <contract-id>
 │   ├── --format <json|pretty>
-│   └── --abi <wasm>          (ABI-aware decode)
+│   ├── --abi <wasm>          (ABI-aware decode from a local WASM)
+│   └── --abi-contract <id>   (ABI-aware decode using the deployed contract's
+│                               on-chain WASM, fetched via M41 path; no local
+│                               artifact needed. Mutually exclusive with --abi.
+│                               See M43.)
 │
 ├── account <address>         [--format]
 │
