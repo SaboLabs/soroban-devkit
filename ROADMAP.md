@@ -19,9 +19,9 @@ production-grade binary.
 | | |
 |---|---|
 | **Current release** | `v2.5.0` (tags `v2.0.0`, `v2.1.0`, `v2.1.1`, `v2.2.0`, `v2.3.0`, `v2.4.0`, `v2.5.0` also published) |
-| **Repository status** | Active · all milestones through **M40** merged to `main` |
+| **Repository status** | Active · all milestones through **M44** merged to `main` |
 | **Crates** | 8 (`sdkt-cli` + 7 supporting crates) |
-| **Completed milestones** | 33 (M3A, M3B, M5–M29, M35.0, M35.1, M35.2, M36.0, M37, M38, M39, M40) |
+| **Completed milestones** | 37 (M3A, M3B, M5–M29, M35.0, M35.1, M35.2, M36.0, M37, M38, M39, M40, M41, M42, M43, M44) |
 | **Current focus** | Post-2.0 direction — mainnet tooling, plugin ecosystem, SCF alignment (see §6) |
 | **Original gap analysis** | [`GAP_ANALYSIS.md`](GAP_ANALYSIS.md) — market-gap justification |
 
@@ -119,7 +119,7 @@ is preserved. Milestones **M16–M27** were merged to `main` across the
 | M41 | On-Chain Contract Interface & Instance Inspection | Wire existing `get_wasm_metadata` into `inspect_contract`; enrich `ContractInspection` with on-chain WASM size, parsed ABI (functions/events/types), storage summary, TTL, storage keys; `sdkt wasm metadata --contract <id>` returns a complete report; add network-guarded on-chain compatibility coverage | main (merged in v2.5.0) |
 | M42 | On-Chain Upgrade-Safety Verification | Bridge M41 (deployed-WASM retrieval) with M14 (`SpecDiff`/`UpgradeVerdict`): `sdkt verify --contract <id> --wasm <candidate.wasm> --upgrade-safety` fetches the live contract's `ContractSpec` and classifies breaking vs non-breaking changes vs a local candidate. Reuses `inspect_contract`/`get_wasm_bytecode`, `parse_contract_spec`, existing `SpecDiff`/`UpgradeVerdict`; no new RPC method, no new engine. Plan: `docs/milestone-42-plan.md` | main (merged in v2.5.0) |
 | M43 | Live-Contract ABI for Events Decode | Extend `sdkt events` with `--abi-contract <id>` so a deployed contract's on-chain WASM (fetched via M41 `inspect_contract`/`get_wasm_bytecode`, parsed by `parse_contract_spec`) supplies the ABI for `decode_event_topics` (M10). No local WASM artifact required. Reuses M41 retrieval + M10 decoding; no new RPC method, no new parser. Plan: `docs/milestone-43-plan.md` | main (merged in v2.5.0) |
-| M44 | On-Chain ABI for Storage Decode | Extend `sdkt storage` with `--abi-contract <id>` so a deployed contract's on-chain WASM (M41 path) supplies the ABI for the existing storage analyzer's ABI-aware decode, mirroring M43. `--abi <path>` unchanged; mutually exclusive. Reuses M41 retrieval + existing storage analyzer; no new RPC method, no new decoder. Plan: `docs/milestone-44-plan.md` | main (implemented on `feat/milestone-44`, pending merge) |
+| M44 | On-Chain ABI for Storage Decode | Extend `sdkt storage` with `--abi-contract <id>` so a deployed contract's on-chain WASM (M41 path) supplies the ABI for the existing storage analyzer's ABI-aware decode, mirroring M43. `--abi <path>` unchanged; mutually exclusive. Reuses M41 retrieval + existing storage analyzer; no new RPC method, no new decoder. Plan: `docs/milestone-44-plan.md` | main (merged in v2.5.0) |
 
 | Milestone | Theme | Highlights | Release |
 |-----------|-------|-----------|---------|
@@ -163,8 +163,8 @@ is preserved. Milestones **M16–M27** were merged to `main` across the
 
 **Where is this project today?**
 
-- **Completed milestones:** 33 — M3A, M3B, M5, M6, M7, M8, M9, M10, M11, M12, M13, M14, M15, M16, M17, M18, M19, M20, M21, M22, M23, M24, M25, M26, M27, M28, M29, M35.0, M35.1, M35.2, M36.0, M37, M38, M39, M40.
-- **Active milestone:** **M44 (On-Chain ABI for Storage Decode)** is implemented on branch `feat/milestone-44` (pending merge); plan at `docs/milestone-44-plan.md`. It extends `sdkt storage` with `--abi-contract <id>` so a deployed contract's on-chain WASM (fetched via the M41 `inspect_contract`/`get_wasm_bytecode` path, parsed by `parse_contract_spec`) supplies the ABI for the existing storage analyzer's decode path — mirroring M43, no local WASM artifact required. Reuses M41 retrieval + existing storage analyzer; no new RPC method, no new decoder. **M43 (Live-Contract ABI for Events Decode) is merged and shipped in `v2.5.0`**; M42 (On-Chain Upgrade-Safety Verification), M41 (On-Chain Contract Interface & Instance Inspection), and M40 (Plugin Ecosystem — Local Store & Distribution) are also merged and shipped in `v2.5.0`.
+- **Completed milestones:** 37 — M3A, M3B, M5, M6, M7, M8, M9, M10, M11, M12, M13, M14, M15, M16, M17, M18, M19, M20, M21, M22, M23, M24, M25, M26, M27, M28, M29, M35.0, M35.1, M35.2, M36.0, M37, M38, M39, M40, M41, M42, M43, M44.
+- **Latest milestone:** **M44 (On-Chain ABI for Storage Decode)** is merged to `main` and shipped in `v2.5.0`; plan at `docs/milestone-44-plan.md`. It extends `sdkt storage` with `--abi-contract <id>` so a deployed contract's on-chain WASM (fetched via the M41 `inspect_contract`/`get_wasm_bytecode` path, parsed by `parse_contract_spec`) supplies the ABI for the existing storage analyzer's decode path — mirroring M43, no local WASM artifact required. Reuses M41 retrieval + existing storage analyzer; no new RPC method, no new decoder. M43 (Live-Contract ABI for Events Decode), M42 (On-Chain Upgrade-Safety Verification), M41 (On-Chain Contract Interface & Instance Inspection), and M40 (Plugin Ecosystem — Local Store & Distribution) are also merged and shipped in `v2.5.0`.
 - **Current release:** `v2.5.0` (tagged). Prior tagged releases: `v2.4.0`, `v2.3.0`, `v2.2.0`, `v2.1.1`, `v2.1.0`, `v2.0.0`.
 - **Repository health:** Healthy. 8 crates, all quality gates enforced in CI (`cargo fmt`, `cargo clippy --workspace --all-targets -- -D warnings` default + all-features, `cargo test --workspace`).
 - **CI status:** Green. Workflows: `ci.yml` (fmt/clippy/test on Ubuntu/macOS/Windows + MSRV + install-script validation), `release.yml` (tag-gated cross-platform binaries, checksums, crates.io publish), `compatibility.yml` (real-world `stellar/soroban-examples` validation), `sdkt-action-ci.yml` (self-validates the reusable Action).
