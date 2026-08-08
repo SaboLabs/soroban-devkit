@@ -228,4 +228,45 @@ mod tests {
         // The bare-array form (the old bug) must NOT match.
         assert_ne!(body, serde_json::json!(["AAAA".to_string()]));
     }
+
+    // Regression test for the M43 HTTP/gzip transport blocker: when the Soroban RPC
+    // answers with `Content-Encoding: gzip`, the reqwest client (with the `gzip`
+    // feature enabled) must transparently decode the body and parse the JSON-RPC
+    // response. This is hermetic — it stands up a local gzip-speaking server and
+    // never touches the Stellar testnet.
+    #[tokio::test]
+    async fn request_decodes_gzip_response_body() {
+        use flate2::write::GzEncoder;
+        use flate2::Compression;
+        use std::io::Write;
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        use tokio::net::TcpListener;
+
+        let payload = br#"{"jsonrpc":"2.0","id":1,"result":{"status":"ok"}}"#;
+        let mut enc = GzEncoder::new(Vec::new(), Compression::default());
+        enc.write_all(payload).unwrap();
+        let compressed = enc.finish().unwrap();
+
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+
+        let server = tokio::spawn(async move {
+            let (mut sock, _) = listener.accept().await.unwrap();
+            let mut buf = [0u8; 8192];
+            // Drain the incoming HTTP request so the client doesn't block on write.
+            let _ = sock.read(&mut buf).await.unwrap();
+            let header = format!(
+                "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Encoding: gzip\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+                compressed.len()
+            );
+            sock.write_all(header.as_bytes()).await.unwrap();
+            sock.write_all(&compressed).await.unwrap();
+        });
+
+        let client = SorobanRpcClient::new(&format!("http://{}", addr));
+        let res: HealthCheck = client.request("getHealth", ()).await.unwrap();
+        assert_eq!(res.status, "ok");
+
+        server.await.unwrap();
+    }
 }

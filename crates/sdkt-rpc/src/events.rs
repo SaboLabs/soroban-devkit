@@ -34,16 +34,16 @@ struct GetEventsResponse {
 #[derive(Deserialize)]
 #[allow(non_snake_case, dead_code)]
 struct RpcEvent {
-    ledger: String,
+    // The Soroban RPC `getEvents` response returns `ledger` as an integer, not a
+    // string (unlike some other RPC fields). Declared as `u32` to match the wire
+    // format; callers in `get_contract_events` map it into `ContractEvent.ledger`
+    // (Option<u32>) directly.
+    ledger: u32,
     contractId: String,
     topic: Vec<String>,
-    value: GetEventsResponseValue,
-}
-
-#[derive(Deserialize)]
-#[allow(non_snake_case, dead_code)]
-struct GetEventsResponseValue {
-    xdr: String,
+    // The RPC returns `value` as a base64-encoded XDR *string* (not an object with
+    // an `xdr` field), so it maps directly onto `ContractEvent.value: Option<String>`.
+    value: String,
 }
 
 pub async fn get_contract_events(
@@ -79,9 +79,9 @@ pub async fn get_contract_events(
     for ev in result.events {
         contract_events.push(ContractEvent {
             contract_id: ev.contractId,
-            ledger: ev.ledger.parse::<u32>().ok(),
+            ledger: Some(ev.ledger),
             topics: ev.topic,
-            value: Some(ev.value.xdr),
+            value: Some(ev.value),
         });
     }
 

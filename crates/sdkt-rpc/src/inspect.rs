@@ -2,17 +2,38 @@ use crate::client::SorobanRpcClient;
 use crate::error::RpcError;
 use crate::wasm::get_wasm_bytecode;
 use sdkt_wasm::{parse_contract_spec, ContractSpec};
-use sdkt_xdr::{encode_ledger_key, extract_wasm_hash, LedgerKeyParams};
+use sdkt_xdr::{decode_contract_id, encode_ledger_key, extract_wasm_hash, LedgerKeyParams};
 use serde::Deserialize;
 use serde::Serialize;
 
-/// A serializable projection of a contract's parsed ABI (from `contractspecv0`).
+/// Normalize a user-supplied contract identifier into a 32-byte hex string
+/// suitable for [`encode_ledger_key`].
 ///
-/// This reuses the existing `sdkt_wasm::parse_contract_spec` parser — it does NOT
-/// introduce a new ABI decoder. It only lists the declared symbol names so the
-/// on-chain inspection report can summarize a deployed contract's interface.
+/// Accepts both the canonical StrKey form (`C...`) and a raw 32-byte hex string,
+/// so callers (CLI `inspect`, `events --abi-contract`, `storage --abi-contract`)
+/// can pass whichever form they already hold without pre-converting.
+///
+/// StrKey decoding is delegated to [`sdkt_xdr::decode_contract_id`], which maps
+/// `C...` -> `Hash` -> hex. A value that is already valid 32-byte hex is passed
+/// through unchanged.
+fn contract_id_to_hex(contract_id: &str) -> Result<String, RpcError> {
+    // Fast path: already a 32-byte hex string.
+    if let Ok(bytes) = hex::decode(contract_id) {
+        if bytes.len() == 32 {
+            return Ok(contract_id.to_string());
+        }
+    }
+    // Otherwise treat it as a StrKey `C...` and decode to the underlying hash.
+    let hash = decode_contract_id(contract_id)
+        .map_err(|e| RpcError::Rpc(format!("Invalid contract ID '{contract_id}': {e}")))?;
+    Ok(hex::encode(hash.0))
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
 pub struct ContractAbiSummary {
+    /// This reuses the existing `sdkt_wasm::parse_contract_spec` parser — it does NOT
+    /// introduce a new ABI decoder. It only lists the declared symbol names so the
+    /// on-chain inspection report can summarize a deployed contract's interface.
     pub functions: Vec<String>,
     pub events: Vec<String>,
     pub types: Vec<String>,
@@ -81,7 +102,8 @@ pub async fn inspect_contract(
     client: &SorobanRpcClient,
     contract_id: &str,
 ) -> Result<ContractInspection, RpcError> {
-    let encoded_key = encode_ledger_key(&LedgerKeyParams::ContractData(contract_id.to_string()))
+    let contract_id_hex = contract_id_to_hex(contract_id)?;
+    let encoded_key = encode_ledger_key(&LedgerKeyParams::ContractData(contract_id_hex.clone()))
         .map_err(|e| RpcError::Rpc(format!("Failed to encode ledger key: {e}")))?;
 
     let response = client
@@ -158,5 +180,30 @@ mod tests {
         assert!(s.functions.is_empty());
         assert!(s.events.is_empty());
         assert!(s.types.is_empty());
+    }
+
+    #[test]
+    fn contract_id_to_hex_accepts_strkey_c_address() {
+        // Real testnet contract StrKey `C...` used by the M43/M41 live validation.
+        let c = "CAE3U7JKESRWZHPEQ72DVNGOQ6WPA7HSPQZL5YV46NPCE4TMUPAGYMEC";
+        let hex = contract_id_to_hex(c).expect("StrKey C... should decode");
+        // 32-byte hash -> 64 hex chars.
+        assert_eq!(hex.len(), 64);
+        // Re-decoding the hex must be a no-op (already hex, passed through).
+        assert_eq!(contract_id_to_hex(&hex).unwrap(), hex);
+        // The decode must match the canonical hash of this contract.
+        assert_eq!(
+            hex,
+            "09ba7d2a24a36c9de487f43ab4ce87acf07cf27c32bee2bcf35e22726ca3c06c"
+        );
+    }
+
+    #[test]
+    fn contract_id_to_hex_rejects_garbage() {
+        assert!(contract_id_to_hex("not-a-contract-id").is_err());
+        // Valid-length hex but wrong type of strkey (account G...) must fail.
+        assert!(
+            contract_id_to_hex("GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF").is_err()
+        );
     }
 }
