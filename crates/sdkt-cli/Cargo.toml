@@ -45,6 +45,14 @@ wasm-plugins = [
     "sdkt-audit-example-rule/wasm-plugins",
 ]
 
+# Opt-in build provenance (M39). When enabled, `sdkt --version` appends the
+# git commit and build date. Disabled by default so the binary stays
+# reproducible (the version string depends only on CARGO_PKG_VERSION) and
+# `cargo install --path` / `cargo build` without extra env never varies.
+# The release workflow may opt in via `--features provenance`, supplying
+# SDKT_GIT_COMMIT / SDKT_BUILD_DATE at build time.
+provenance = []
+
 [dev-dependencies]
 assert_cmd = "2.2.2"
 predicates = "3.1.4"

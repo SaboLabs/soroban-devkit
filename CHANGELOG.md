@@ -8,6 +8,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **Release polish & SCF readiness (M39).** Containerized distribution via a
+  maintained multi-stage `Dockerfile` (+ `.dockerignore`); a conservative
+  mainnet-safety guard on mutating RPC commands (`tx submit`, `deploy`,
+  `project deploy`) that refuses mainnet unless the operator explicitly selects
+  the network; `docs/scf.md` positioning the project for SCF grant tracks;
+  refreshed `RELEASE_READINESS.md`; and opt-in `--version` provenance behind the
+  new `provenance` feature (default OFF, so builds stay reproducible).
 - **Shell completions (M32).** New `sdkt completions <shell>` command generates
   completion scripts for `bash`, `zsh`, `fish`, `powershell`, and `elvish`
   (via `clap_complete`). Documented in README and `docs/cli.md`.

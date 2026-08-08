@@ -4,6 +4,7 @@ pub mod fee;
 pub mod fetch;
 pub mod format;
 pub mod lock;
+pub mod network_safety;
 pub mod package;
 pub mod project;
 pub mod scaffold;
@@ -18,6 +19,9 @@ pub use config::{
 pub use fee::{FeeConfig, FeeError, FeeEstimator, LedgerFeeSample, NetworkKind, STROOPS_PER_XLM};
 pub use fetch::{DependencyFetcher, FetchError, FetchOutcome, GitFetcher, PathResolver};
 pub use format::OutputFormat;
+pub use network_safety::{
+    guard_mutating_network, MainnetSafetyError, MAINNET_PASSPHRASE, TESTNET_PASSPHRASE,
+};
 pub use package::{
     validate_dependencies, validate_git_url, validate_manifest, validate_package,
     validate_version_format, PackageError,

@@ -1,0 +1,30 @@
+# Build artifacts
+/target
+**/target
+
+# Git metadata (keeps the image reproducible; build provenance is opt-in only)
+.git
+.github
+
+# Local caches / generated artifacts
+.sdkt-cache
+.sdkt
+**/.sdkt-cache
+
+# Logs and scratch
+*.log
+logs/
+ci-failed.log
+failed.log
+gen_keys
+gen_keys.rs
+
+# Editor / OS cruft
+.idea
+.vscode
+*.swp
+.DS_Store
+
+# Docs are not needed inside the image
+docs/
+*.md

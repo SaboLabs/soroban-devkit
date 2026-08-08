@@ -99,10 +99,25 @@ cargo install sdkt-cli
 |---|---|---|
 | `wasm-plugins` | off | Loads cross-platform, sandboxed `.wasm` plugins via `extism` for `sdkt audit`. |
 | `plugins` | off | Loads native shared-library plugins (`.so`/`.dylib`/`.dll`) via C-ABI for `sdkt audit`. |
+| `provenance` | off | Appends build provenance (git commit + date) to `sdkt --version`. Off by default so release binaries stay reproducible; the release workflow may enable it (`--features provenance`) and supply `SDKT_GIT_COMMIT` / `SDKT_BUILD_DATE` at build time. |
 
 ```bash
 cargo install --path crates/sdkt-cli --features wasm-plugins
 ```
+
+## Containerized distribution (M39)
+
+A maintained `Dockerfile` builds a minimal, reproducible `sdkt` image. Build and
+smoke-test it locally:
+
+```bash
+docker build -t sdkt .
+docker run --rm sdkt --help
+```
+
+The image runs as a non-root user and only needs network access at runtime when
+you point it at a Soroban RPC endpoint. No git metadata or build date is embedded
+unless you build with `--features provenance` and supply the provenance env vars.
 
 ## Updating
 

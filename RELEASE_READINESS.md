@@ -1,6 +1,6 @@
 # Soroban DevKit (`sdkt`) — Release Readiness
 
-**Version:** `2.1.1` (workspace-wide, single source of truth in `[workspace.package]`)
+**Version:** `2.4.0` (workspace-wide, single source of truth in `[workspace.package]`)
 **Rust edition:** 2021
 **MSRV:** `1.88.0` (pinned)
 **License:** MIT
@@ -53,8 +53,12 @@ Rule: `sdkt-core` and `sdkt-xdr` perform no networking; everything may depend on
 - **Secure** — static analysis of contract source (`AUTH-001/002/003`, `MOVE-001`) and an upgrade-safety verdict for safe contract upgrades.
 - **Build & ship** — typed transaction envelope builder, simulate, submit, ED25519 keystore, multi-contract workspace topological deployments, and upgrade breaking-change guards.
 - **Verify & health** — confirm a deployed contract's on-chain WASM hash matches a local artifact; aggregate posture reports with a `healthy`/`at_risk`/`critical` verdict.
+- **Package management** — offline `.sdkt.toml` manifest, git dependency sources, locked dependency resolution (`sdkt.lock`), `package pack` bundles, and `package publish --dry-run` publish-readiness checks.
+- **Network profiles** — saved named network configurations (`sdkt network add/list/show/remove`) with M29 precedence (flags > profile > `.sdkt.toml` > defaults).
+- **Mainnet safety (M39)** — mutating commands (submit, deploy) refuse mainnet unless the operator explicitly selects the network, guarding against a testnet-default passphrase hitting a mainnet endpoint.
+- **Containerized distribution (M39)** — a maintained multi-stage `Dockerfile` (+ `.dockerignore`) producing a minimal, reproducible `sdkt` image.
 
-Most commands are **offline**; only on-chain reads (`inspect`, `storage`, `tx`, `events`, `account`, `fee`, `wasm metadata`, `verify`, `health`) need an RPC endpoint.
+Most commands are **offline**; only on-chain reads (`inspect`, `storage`, `tx`, `events`, `account`, `fee`, `wasm metadata`, `verify`, `health`) and writes (`tx submit`, `deploy`, `project deploy`) need an RPC endpoint.
 
 ---
 
@@ -62,7 +66,7 @@ Most commands are **offline**; only on-chain reads (`inspect`, `storage`, `tx`, 
 
 All checks below are mandatory for every PR and for every release tag
 (`v*`) via `.github/workflows/ci.yml` and `release.yml`. The numbers reflect
-the latest run on `main` at version `2.1.1`.
+The numbers reflect the latest run on `main` at version `2.4.0`.
 
 | Check | Command | Result |
 |-------|---------|--------|
@@ -139,6 +143,15 @@ sdkt-core → sdkt-xdr → sdkt-wasm → sdkt-rpc → sdkt-storage → sdkt-audi
 
 ## Remaining work (deferred)
 
-- Docker image for containerized runs (planned).
-- Mainnet-focused tooling, SCF grant alignment, and a plugin marketplace
-  (tracked under "Post-2.0" in `ROADMAP.md`).
+- **Hosted package registry** — a remote index/server that the `DependencyFetcher`
+  trait (M35.1) can target; explicitly deferred past M38 (see "Future Work" in
+  `ROADMAP.md`).
+- **Third-party audit-rule marketplace** — tooling/conventions for sharing
+  community-authored rules (native + WASM) built on M17–M19.
+- **Broader Soroban ecosystem integration** — deeper compatibility and
+  first-class support for the contracts developers actually deploy.
+
+> Done in M39: containerized distribution (`Dockerfile` + `.dockerignore`),
+> mainnet-safety guards on mutating RPC commands, SCF grant positioning
+> (`docs/scf.md`), and opt-in `--version` provenance behind the `provenance`
+> feature. These items are removed from the deferred list above.

@@ -247,6 +247,7 @@ covers commands, subcommands, and flag names.
 - `--format json` is supported on all read-style commands and on `diff`, `audit`, `deploy`, `init` for scripting / CI.
 - `diff --upgrade-safety` and `deploy --deny-breaking` implement the Milestone 14 Upgrade Safety Guard (see `ROADMAP.md`).
 - `audit` implements the Milestone 13 static-analysis rules (AUTH-001/002/003, MOVE-001).
+- **Mainnet safety (M39).** Mutating commands (`tx submit`, `deploy`, `project deploy`) refuse to target mainnet unless you explicitly select the network — via `--network-profile`, `--rpc-url`, or `--network-passphrase`. A testnet-default passphrase pointed at a mainnet endpoint is rejected before any request is sent, protecting against signing for the wrong network.
 
 ## Error Handling
 

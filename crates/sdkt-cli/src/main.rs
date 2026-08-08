@@ -21,6 +21,41 @@ use std::io::{self, Write};
 use std::path::Path;
 use std::process;
 
+/// Version string used by `sdkt --version` / `sdkt --long-version` (M39).
+///
+/// Default (`provenance` feature off): returns just the semantic version, so
+/// the build stays reproducible and identical to pre-M39 releases.
+///
+/// When compiled with `--features provenance`, appends an optional
+/// `commit@date` provenance suffix supplied at build time via the
+/// `SDKT_GIT_COMMIT` / `SDKT_BUILD_DATE` environment variables. If those are
+/// absent the provenance line is simply omitted — there is never any implicit
+/// `git` invocation that would make the binary non-reproducible.
+///
+/// Returns `&'static str` because clap's `long_version` requires a static
+/// string; the provenance branch leases a boxed string (one-time, at command
+/// construction) which is intentional and harmless for a CLI binary.
+fn sdkt_version_string() -> &'static str {
+    let base = env!("CARGO_PKG_VERSION");
+    #[cfg(feature = "provenance")]
+    {
+        let commit = option_env!("SDKT_GIT_COMMIT");
+        let date = option_env!("SDKT_BUILD_DATE");
+        match (commit, date) {
+            (Some(c), Some(d)) => {
+                Box::leak(format!("{} (commit {} built {})", base, c, d).into_boxed_str())
+            }
+            (Some(c), None) => Box::leak(format!("{} (commit {})", base, c).into_boxed_str()),
+            (None, Some(d)) => Box::leak(format!("{} (built {})", base, d).into_boxed_str()),
+            (None, None) => base,
+        }
+    }
+    #[cfg(not(feature = "provenance"))]
+    {
+        base
+    }
+}
+
 /// Reusable network-resolution flags shared by every command that talks to a
 /// Soroban/Stellar RPC endpoint.
 ///
@@ -123,6 +158,51 @@ fn resolve_rpc_client(
             process::exit(1);
         }
     }
+}
+
+/// Whether the operator explicitly named the target network (via `--rpc-url`,
+/// `--network-passphrase`, or `--network-profile`). When this is `false` the
+/// resolved [`NetworkConfig`] came entirely from built-in defaults (testnet),
+/// and mutating operations must therefore refuse mainnet.
+fn network_is_explicit(
+    rpc_url: &Option<String>,
+    network_passphrase: &Option<String>,
+    network_profile: &Option<String>,
+) -> bool {
+    rpc_url.is_some() || network_passphrase.is_some() || network_profile.is_some()
+}
+
+/// Build a [`SorobanRpcClient`] for a *mutating* (state-changing) RPC operation.
+///
+/// This reuses the existing M29 resolution path and then applies the conservative
+/// mainnet-safety guard from `sdkt_core::guard_mutating_network`. A mutating
+/// command is only allowed to touch mainnet when the operator has explicitly
+/// selected the network; an implicit testnet default combined with a mainnet
+/// endpoint/passphrase is rejected before any request leaves the process.
+///
+/// Resolution or guard failures print a clear message and exit non-zero.
+fn resolve_rpc_client_mutating(
+    rpc_url: Option<String>,
+    network_passphrase: Option<String>,
+    network_profile: Option<String>,
+) -> SorobanRpcClient {
+    let explicit = network_is_explicit(&rpc_url, &network_passphrase, &network_profile);
+    let cfg = match resolve_network_config(
+        rpc_url.clone(),
+        network_passphrase.clone(),
+        network_profile.clone(),
+    ) {
+        Ok(cfg) => cfg,
+        Err(e) => {
+            eprintln!("Error: {}", e);
+            process::exit(1);
+        }
+    };
+    if let Err(e) = sdkt_core::guard_mutating_network(&cfg, explicit) {
+        eprintln!("Error: {}", e);
+        process::exit(1);
+    }
+    SorobanRpcClient::from_config(&cfg)
 }
 
 /// Adapter that makes a closed consumer (EPIPE / `BrokenPipe`) look like a
@@ -243,6 +323,7 @@ mod resolver_tests {
 #[command(name = "sdkt")]
 #[command(about = "Soroban DevKit — unified toolkit for Stellar/Soroban development")]
 #[command(version = env!("CARGO_PKG_VERSION"))]
+#[command(long_version = sdkt_version_string())]
 struct Cli {
     #[command(subcommand)]
     command: Commands,
@@ -1720,7 +1801,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 format,
             } => {
                 let fmt = parse_format_str(&format);
-                let client = resolve_rpc_client(
+                let client = resolve_rpc_client_mutating(
                     net.rpc_url.clone(),
                     net.network_passphrase.clone(),
                     net.network_profile.clone(),
@@ -2875,7 +2956,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             }
 
             use sdkt_rpc::deploy_contract;
-            let client = resolve_rpc_client(
+            let client = resolve_rpc_client_mutating(
                 net.rpc_url.clone(),
                 net.network_passphrase.clone(),
                 net.network_profile.clone(),
@@ -3406,7 +3487,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     eprintln!("⚠ Warning: sdkt.lock is stale — run `sdkt build` to refresh it.");
                 }
 
-                let client = resolve_rpc_client(
+                let client = resolve_rpc_client_mutating(
                     net.rpc_url.clone(),
                     net.network_passphrase.clone(),
                     net.network_profile.clone(),
