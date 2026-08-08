@@ -1,7 +1,7 @@
 # Soroban DevKit (`sdkt`) — Roadmap
 
 **Last updated:** 2026-08-07
-**Status:** Active development · default branch `main` · current release **v2.4.0**
+**Status:** Active development · default branch `main` · current release **v2.5.0**
 
 This document is the single source of truth for milestone scope and sequencing.
 Individual milestone plans live under `docs/milestone-*-plan.md`; engineering
@@ -18,10 +18,10 @@ production-grade binary.
 
 | | |
 |---|---|
-| **Current release** | `v2.4.0` (tags `v2.0.0`, `v2.1.0`, `v2.1.1`, `v2.2.0`, `v2.3.0`, `v2.4.0` also published) |
-| **Repository status** | Active · all milestones through **M29** merged to `main` |
+| **Current release** | `v2.5.0` (tags `v2.0.0`, `v2.1.0`, `v2.1.1`, `v2.2.0`, `v2.3.0`, `v2.4.0`, `v2.5.0` also published) |
+| **Repository status** | Active · all milestones through **M40** merged to `main` |
 | **Crates** | 8 (`sdkt-cli` + 7 supporting crates) |
-| **Completed milestones** | 27 (M3A, M3B, M5–M27, M28, M29) |
+| **Completed milestones** | 33 (M3A, M3B, M5–M29, M35.0, M35.1, M35.2, M36.0, M37, M38, M39, M40) |
 | **Current focus** | Post-2.0 direction — mainnet tooling, plugin ecosystem, SCF alignment (see §6) |
 | **Original gap analysis** | [`GAP_ANALYSIS.md`](GAP_ANALYSIS.md) — market-gap justification |
 
@@ -110,9 +110,13 @@ is preserved. Milestones **M16–M27** were merged to `main` across the
 | M17 | Plugin System — Phase A (Rule Registry) | `RuleRegistry` in `sdkt-audit`; additive `--rules <path>`; plugin author API; example rule crate; `docs/plugin-authoring.md` | main |
 | M18 | Plugin System — Phase B (Dynamic Rule Loading) | Native `.so`/`.dylib`/`.dll` plugins via `libloading` + C-ABI; `sdkt audit --rules <plugin.so>`; ABI major-version gate (feature `plugins`, default OFF) | main |
 | M19 | Plugin System — Phase C (WASM Sandbox) | Sandboxed `.wasm` plugins via `extism` + JSON-ABI; `sdkt audit --rules <plugin.wasm>`; no FS/network (feature `wasm-plugins`, default OFF) | main |
-| M40 | Plugin Ecosystem (Local Store & Distribution) | Local offline plugin store (`plugin.toml` metadata), `sdkt plugin list/show/install/remove/update` (local-only), identity-based `--rules <id>` resolution; reuses M17–M19 loaders; NO hosted registry | main (scheduled) |
+| M40 | Plugin Ecosystem (Local Store & Distribution) | Local offline plugin store (`plugin.toml` metadata), `sdkt plugin list/show/install/remove/update` (local-only), identity-based `--rules <id>` resolution; reuses M17–M19 loaders; NO hosted registry | main (merged in v2.5.0) |
 
-### Release Engineering
+### Soroban Ecosystem Integration
+
+| Milestone | Theme | Highlights | Release |
+|---|---|---|---|
+| M41 | On-Chain Contract Interface & Instance Inspection | Wire existing `get_wasm_metadata` into `inspect_contract`; enrich `ContractInspection` with on-chain WASM size, parsed ABI (functions/events/types), storage summary, TTL, storage keys; `sdkt wasm metadata --contract <id>` returns a complete report; add network-guarded on-chain compatibility coverage | main (scheduled) |
 
 | Milestone | Theme | Highlights | Release |
 |-----------|-------|-----------|---------|
@@ -156,8 +160,8 @@ is preserved. Milestones **M16–M27** were merged to `main` across the
 
 **Where is this project today?**
 
-- **Completed milestones:** 32 — M3A, M3B, M5, M6, M7, M8, M9, M10, M11, M12, M13, M14, M15, M16, M17, M18, M19, M20, M21, M22, M23, M24, M25, M26, M27, M28, M29, M35.0, M35.1, M35.2, M36.0, M37, M38, M39.
-- **Active milestone:** None in progress. The latest merged work is M39 (Release Polish & SCF Readiness, shipped in `v2.5.0`). The next scheduled milestone is **M40 (Plugin Ecosystem — Local Store & Distribution)**, documented in `docs/milestone-40-plan.md`; it is the local, offline-first slice of the "Plugin ecosystem / marketplace" backlog item and explicitly introduces no hosted registry. Milestones M37–M39 were officially scheduled (see §4 "Package Manager & Distribution") and are now complete.
+- **Completed milestones:** 33 — M3A, M3B, M5, M6, M7, M8, M9, M10, M11, M12, M13, M14, M15, M16, M17, M18, M19, M20, M21, M22, M23, M24, M25, M26, M27, M28, M29, M35.0, M35.1, M35.2, M36.0, M37, M38, M39, M40.
+- **Active milestone:** **M41 (On-Chain Contract Interface & Instance Inspection)** is scheduled; plan at `docs/milestone-41-plan.md`. It enriches on-chain contract inspection by wiring the already-existing `get_wasm_metadata` into `inspect_contract` and surfacing the parsed ABI, WASM size, storage summary, TTL, and storage keys — no new RPC methods, no new CLI subcommand, no version bump. M40 (Plugin Ecosystem — Local Store & Distribution) is merged and shipped in `v2.5.0`.
 - **Current release:** `v2.5.0` (tagged). Prior tagged releases: `v2.4.0`, `v2.3.0`, `v2.2.0`, `v2.1.1`, `v2.1.0`, `v2.0.0`.
 - **Repository health:** Healthy. 8 crates, all quality gates enforced in CI (`cargo fmt`, `cargo clippy --workspace --all-targets -- -D warnings` default + all-features, `cargo test --workspace`).
 - **CI status:** Green. Workflows: `ci.yml` (fmt/clippy/test on Ubuntu/macOS/Windows + MSRV + install-script validation), `release.yml` (tag-gated cross-platform binaries, checksums, crates.io publish), `compatibility.yml` (real-world `stellar/soroban-examples` validation), `sdkt-action-ci.yml` (self-validates the reusable Action).
@@ -166,7 +170,9 @@ is preserved. Milestones **M16–M27** were merged to `main` across the
 
 ## 6. Next Priorities
 
-The package-manager line is now fully scheduled through M39:
+The package-manager line is now fully scheduled through M39; M40 (plugin local
+store) and M41 (on-chain inspection) are scheduled in §4. The remaining backlog
+items below are explicitly unscheduled:
 
 - **M37 — Dependency Version Resolution.** Semver `version` constraints on dependencies; a pure
   `VersionResolver` selects the best satisfying tag/commit; `sdkt package update --check` reports
@@ -190,8 +196,10 @@ The following remain tracked as backlog, not yet assigned milestone IDs:
   `https` plugin sources, `sdkt plugin update` from a remote, plugin signing /
   checksum verification, and a `.sdktplugin` bundle format — stays unscheduled
   backlog.
-- **Broader Soroban ecosystem integration** — deeper compatibility and first-class support for the
-  contracts developers actually deploy.
+- **Broader Soroban ecosystem integration** — M41 (scheduled) covers the
+  on-chain contract interface & instance inspection slice of this backlog item.
+  Deeper compatibility-matrix work (beyond the on-chain inspection path) remains
+  unscheduled.
 - **Developer productivity** — continuing the DX investments started in M7/M20 (faster feedback, better
   errors, smoother onboarding).
 - **Hosted package registry** — a remote index/server that the `DependencyFetcher` trait (M35.1) can

@@ -33,6 +33,28 @@ pub async fn get_wasm_metadata(
     Ok(metadata)
 }
 
+/// Fetch only the raw WASM bytecode for a contract's code entry, identified by
+/// its WASM hash. Reuses the same `getLedgerEntries` + `extract_wasm_bytecode`
+/// path as [`get_wasm_metadata`] but returns the raw bytes so callers can run
+/// additional offline parsers (e.g. `sdkt_wasm::parse_contract_spec`) without a
+/// second network round-trip for metadata.
+pub async fn get_wasm_bytecode(
+    client: &SorobanRpcClient,
+    wasm_hash: &str,
+) -> Result<Vec<u8>, RpcError> {
+    let encoded_key = encode_ledger_key(&LedgerKeyParams::ContractCode(wasm_hash.to_string()))
+        .map_err(|e| RpcError::Rpc(format!("Failed to encode WASM ledger key: {e}")))?;
+
+    let response = client.get_contract_storage("", &[encoded_key]).await?;
+
+    if response.entries.is_empty() {
+        return Err(RpcError::Rpc("WASM code not found on network".to_string()));
+    }
+
+    extract_wasm_bytecode(&response.entries[0].xdr)
+        .map_err(|e| RpcError::Rpc(format!("Failed to extract WASM bytecode: {e}")))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

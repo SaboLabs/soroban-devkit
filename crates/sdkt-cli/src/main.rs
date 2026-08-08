@@ -3,12 +3,14 @@ use clap_complete::Shell;
 use sdkt_core::fee::{FeeConfig, FeeEstimator, LedgerFeeSample, NetworkKind};
 use sdkt_core::fetch::DependencyFetcher;
 use sdkt_core::{DevKitConfig, NetworkConfig, OutputFormat};
+use sdkt_rpc::inspect::StorageSummary;
 use sdkt_rpc::{
     estimate_dynamic_fee, get_contract_events, get_ttl_info, get_wasm_metadata, inspect_account,
-    inspect_contract, inspect_transaction, simulate_transaction, SorobanRpcClient,
+    inspect_contract, inspect_transaction, simulate_transaction, SorobanRpcClient, StorageKeyInfo,
+    TtlInfoSummary,
 };
 use sdkt_storage::WasmCache;
-use sdkt_storage::{NetworkProfile, NetworkStore};
+use sdkt_storage::{NetworkProfile, NetworkStore, StorageAnalyzer};
 use sdkt_wasm::spec::parse_contract_spec;
 use sdkt_xdr::abi_decode::decode_event_topics;
 use sdkt_xdr::decode;
@@ -2711,19 +2713,79 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     fetched
                 };
 
+                // Enrich with storage/TTL/storage-key posture using the existing
+                // StorageAnalyzer (available in the CLI layer). This populates the
+                // remaining ContractInspection fields without adding a circular
+                // sdkt-rpc -> sdkt-storage dependency.
+                let mut inspection = inspection;
+                if let Ok(report) = StorageAnalyzer::new(client.clone())
+                    .inspect_contract_storage(&contract)
+                    .await
+                {
+                    inspection.storage_summary = StorageSummary {
+                        instance_entries: report.instance_entries,
+                        persistent_entries: report.persistent_entries,
+                        temporary_entries: report.temporary_entries,
+                    };
+                    inspection.ttl_info = report.ttl_summary.clone().map(|t| TtlInfoSummary {
+                        minimum_ttl: t.minimum_ttl,
+                        maximum_ttl: t.maximum_ttl,
+                        average_ttl: t.average_ttl,
+                        expiring_entries_count: t.expiring_entries_count,
+                        estimated_rent_cost: t.estimated_rent_cost,
+                    });
+                    inspection.storage_keys = report
+                        .entries
+                        .iter()
+                        .map(|e| StorageKeyInfo {
+                            key: e.key.clone(),
+                            key_type: format!("{:?}", e.class),
+                            permissions: "read_write".to_string(),
+                        })
+                        .collect();
+                }
+
                 if fmt == OutputFormat::Json {
-                    let json_str = serde_json::to_string(&meta)?;
+                    let json_str = serde_json::to_string(&inspection)?;
                     println!("{}", json_str);
                 } else {
                     println!("WASM Metadata:");
                     println!("Contract ID: {}", contract);
                     println!("Network: {}", network);
-                    println!("WASM Hash: {}", meta.hash);
+                    println!("WASM Hash: {}", inspection.wasm_hash);
                     println!("Cache Status: {}", cache_status);
-                    println!("Size: {} bytes", meta.size_bytes);
+                    let size = inspection.wasm_size.unwrap_or(meta.size_bytes);
+                    println!("Size: {} bytes", size);
                     println!("Exports: {}", meta.exports.len());
                     println!("Imports: {}", meta.imports.len());
                     println!("Custom Sections: {}", meta.custom_sections.len());
+                    if let Some(abi) = &inspection.abi {
+                        println!(
+                            "Functions ({}): {}",
+                            abi.functions.len(),
+                            abi.functions.join(", ")
+                        );
+                        println!("Events ({}): {}", abi.events.len(), abi.events.join(", "));
+                        println!("Types ({}): {}", abi.types.len(), abi.types.join(", "));
+                    } else {
+                        println!(
+                            "ABI: (unavailable — on-chain WASM not fetched or no contractspecv0)"
+                        );
+                    }
+                    let s = &inspection.storage_summary;
+                    println!(
+                        "Storage: instance={} persistent={} temporary={}",
+                        s.instance_entries, s.persistent_entries, s.temporary_entries
+                    );
+                    if let Some(ttl) = &inspection.ttl_info {
+                        println!(
+                            "TTL: min={} max={} avg={} expiring={}",
+                            ttl.minimum_ttl,
+                            ttl.maximum_ttl,
+                            ttl.average_ttl,
+                            ttl.expiring_entries_count
+                        );
+                    }
                 }
             }
             WasmAction::Cache { action } => {
