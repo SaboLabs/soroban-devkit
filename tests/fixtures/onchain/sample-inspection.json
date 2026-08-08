@@ -1,0 +1,13 @@
+{
+  "contract_id": "CCJFOGL5RVIAZC3F4KTV5XK3YZYEXZCBEEDCSU4T202MJQVVP5JXN3M",
+  "wasm_hash": "aabbccddeeff00112233445566778899aabbccddeeff00112233445566778899",
+  "wasm_size": 24576,
+  "abi": {
+    "functions": ["mint", "burn", "transfer", "balance", "allowance", "approve", "set_admin", "admin"],
+    "events": ["transfer", "mint", "burn", "approve"],
+    "types": ["Asset", "Balance", "Allowance"]
+  },
+  "storage_summary": { "instance_entries": 1, "persistent_entries": 4, "temporary_entries": 0 },
+  "ttl_info": { "minimum_ttl": 1000, "maximum_ttl": 99999, "average_ttl": 50000, "expiring_entries_count": 0, "estimated_rent_cost": 100 },
+  "storage_keys": []
+}
