@@ -10,13 +10,14 @@ use serde::Serialize;
 /// suitable for [`encode_ledger_key`].
 ///
 /// Accepts both the canonical StrKey form (`C...`) and a raw 32-byte hex string,
-/// so callers (CLI `inspect`, `events --abi-contract`, `storage --abi-contract`)
-/// can pass whichever form they already hold without pre-converting.
+/// so callers (CLI `inspect`, `events --abi-contract`, `storage --abi-contract`,
+/// and the storage TTL analyzer) can pass whichever form they already hold
+/// without pre-converting.
 ///
 /// StrKey decoding is delegated to [`sdkt_xdr::decode_contract_id`], which maps
 /// `C...` -> `Hash` -> hex. A value that is already valid 32-byte hex is passed
 /// through unchanged.
-fn contract_id_to_hex(contract_id: &str) -> Result<String, RpcError> {
+pub(crate) fn contract_id_to_hex(contract_id: &str) -> Result<String, RpcError> {
     // Fast path: already a 32-byte hex string.
     if let Ok(bytes) = hex::decode(contract_id) {
         if bytes.len() == 32 {
