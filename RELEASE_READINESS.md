@@ -1,6 +1,6 @@
 # Soroban DevKit (`sdkt`) — Release Readiness
 
-**Version:** `2.4.0` (workspace-wide, single source of truth in `[workspace.package]`)
+**Version:** `2.5.0` (workspace-wide, single source of truth in `[workspace.package]`)
 **Rust edition:** 2021
 **MSRV:** `1.88.0` (pinned)
 **License:** MIT
@@ -66,7 +66,7 @@ Most commands are **offline**; only on-chain reads (`inspect`, `storage`, `tx`, 
 
 All checks below are mandatory for every PR and for every release tag
 (`v*`) via `.github/workflows/ci.yml` and `release.yml`. The numbers reflect
-The numbers reflect the latest run on `main` at version `2.4.0`.
+The numbers reflect the latest run on `main` at version `2.5.0`.
 
 | Check | Command | Result |
 |-------|---------|--------|

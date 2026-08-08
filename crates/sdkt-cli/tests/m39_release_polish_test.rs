@@ -34,7 +34,7 @@ fn version_is_semver_without_provenance() {
         .arg("--version")
         .assert()
         .success()
-        .stdout(predicate::str::contains("2.4.0"))
+        .stdout(predicate::str::contains("2.5.0"))
         .stdout(predicate::function(|s: &str| {
             // No provenance suffix leaked into the default build.
             !s.contains("commit") && !s.contains("built")

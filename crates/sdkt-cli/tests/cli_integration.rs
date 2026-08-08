@@ -46,7 +46,7 @@ fn version_reports_current_release() {
         .arg("--version")
         .assert()
         .success()
-        .stdout(predicate::str::contains("sdkt 2.4.0"));
+        .stdout(predicate::str::contains("sdkt 2.5.0"));
 }
 
 #[test]
