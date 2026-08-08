@@ -251,3 +251,63 @@ fn fires_on_trigger() {
 
 Also add a CLI integration test (as in `crates/sdkt-cli/tests/audit_integration_test.rs`)
 that builds with your feature and asserts the rule id appears in output.
+
+---
+
+## Publishing & Installing (M40 — Local Plugin Ecosystem)
+
+M40 adds a **local, offline-first** plugin store. No hosted registry, no remote
+sources, no crates.io plugin publishing. You package a plugin as:
+
+```
+my-plugin/
+  plugin.toml      # metadata (see schema below)
+  my_rule.wasm     # or .so / .dylib / .dll artifact
+```
+
+### `plugin.toml` schema
+
+```toml
+id = "author/name"          # stable, namespaced plugin id
+name = "My Rule"
+version = "1.0.0"           # semver
+author = "author"
+description = "What it checks."
+kind = "wasm"               # "wasm" | "native"
+artifact = "my_rule.wasm"   # filename inside the plugin directory
+abi_major = 1               # must equal host SDKT_AUDIT_ABI_MAJOR
+abi_minor = 0
+```
+
+### CLI
+
+```bash
+sdkt plugin list                                  # installed plugins
+sdkt plugin show <id>                             # metadata
+sdkt plugin install ./my-plugin/my_rule.wasm      # copies + validates (local path)
+sdkt plugin remove <id>                           # idempotent
+sdkt plugin update <id> ./my-plugin/my_rule.wasm  # local-only update
+sdkt audit contract.rs --rules <id>               # resolve id → artifact
+```
+
+### Install validation (applied before the plugin is committed to the store)
+
+- `plugin.toml` parses and `abi_major` equals the host ABI major (else rejected).
+- `kind` is `wasm` or `native`, and the artifact extension matches
+  (`.wasm` for `wasm`; `.so`/`.dylib`/`.dll` for `native`).
+- A dry-run load via the existing loader runs when the corresponding feature
+  (`wasm-plugins` / `plugins`) is compiled in.
+- **Trust model:** provenance-by-path. You installed the artifact from a local
+  file you obtained out-of-band; no third-party trust is assumed. Signature /
+  checksum verification is explicitly **not** part of M40. Native plugins run
+  unsandboxed (unchanged M18 behavior) — `sdkt plugin install` prints a warning.
+
+### Store location (precedence, lowest → highest)
+
+1. `<cwd>/.sdkt/plugins`
+2. `<config-dir>/sdkt/plugins` (XDG/config per platform)
+3. `$SDKT_PLUGIN_DIR` (environment override)
+
+The existing `RuleRegistry`, native loader, and WASM (Extism) sandbox are reused
+verbatim — M40 only adds the management layer. The remote/marketplace layer
+(hosted index, signing, `.sdktplugin` bundles) remains unscheduled backlog.

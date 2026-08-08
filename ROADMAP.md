@@ -110,6 +110,7 @@ is preserved. Milestones **M16–M27** were merged to `main` across the
 | M17 | Plugin System — Phase A (Rule Registry) | `RuleRegistry` in `sdkt-audit`; additive `--rules <path>`; plugin author API; example rule crate; `docs/plugin-authoring.md` | main |
 | M18 | Plugin System — Phase B (Dynamic Rule Loading) | Native `.so`/`.dylib`/`.dll` plugins via `libloading` + C-ABI; `sdkt audit --rules <plugin.so>`; ABI major-version gate (feature `plugins`, default OFF) | main |
 | M19 | Plugin System — Phase C (WASM Sandbox) | Sandboxed `.wasm` plugins via `extism` + JSON-ABI; `sdkt audit --rules <plugin.wasm>`; no FS/network (feature `wasm-plugins`, default OFF) | main |
+| M40 | Plugin Ecosystem (Local Store & Distribution) | Local offline plugin store (`plugin.toml` metadata), `sdkt plugin list/show/install/remove/update` (local-only), identity-based `--rules <id>` resolution; reuses M17–M19 loaders; NO hosted registry | main (scheduled) |
 
 ### Release Engineering
 
@@ -155,9 +156,9 @@ is preserved. Milestones **M16–M27** were merged to `main` across the
 
 **Where is this project today?**
 
-- **Completed milestones:** 31 — M3A, M3B, M5, M6, M7, M8, M9, M10, M11, M12, M13, M14, M15, M16, M17, M18, M19, M20, M21, M22, M23, M24, M25, M26, M27, M28, M29, M35.0, M35.1, M35.2, M36.0.
-- **Active milestone:** None in progress. The latest merged work is M36.0 (package update & synchronization, shipped to `main`). The next three milestones — **M37 (Dependency Version Resolution)**, **M38 (Packaging & Publishing Workflow)**, and **M39 (Release Polish & SCF Readiness)** — are officially scheduled (see §4 "Package Manager & Distribution"); they are documented in `docs/milestone-37-plan.md`, `docs/milestone-38-plan.md`, and `docs/milestone-39-plan.md` and await implementation on their respective `feat/milestone-NN` branches.
-- **Current release:** `v2.4.0` (tagged). Prior tagged releases: `v2.3.0`, `v2.2.0`, `v2.1.1`, `v2.1.0`, `v2.0.0`.
+- **Completed milestones:** 32 — M3A, M3B, M5, M6, M7, M8, M9, M10, M11, M12, M13, M14, M15, M16, M17, M18, M19, M20, M21, M22, M23, M24, M25, M26, M27, M28, M29, M35.0, M35.1, M35.2, M36.0, M37, M38, M39.
+- **Active milestone:** None in progress. The latest merged work is M39 (Release Polish & SCF Readiness, shipped in `v2.5.0`). The next scheduled milestone is **M40 (Plugin Ecosystem — Local Store & Distribution)**, documented in `docs/milestone-40-plan.md`; it is the local, offline-first slice of the "Plugin ecosystem / marketplace" backlog item and explicitly introduces no hosted registry. Milestones M37–M39 were officially scheduled (see §4 "Package Manager & Distribution") and are now complete.
+- **Current release:** `v2.5.0` (tagged). Prior tagged releases: `v2.4.0`, `v2.3.0`, `v2.2.0`, `v2.1.1`, `v2.1.0`, `v2.0.0`.
 - **Repository health:** Healthy. 8 crates, all quality gates enforced in CI (`cargo fmt`, `cargo clippy --workspace --all-targets -- -D warnings` default + all-features, `cargo test --workspace`).
 - **CI status:** Green. Workflows: `ci.yml` (fmt/clippy/test on Ubuntu/macOS/Windows + MSRV + install-script validation), `release.yml` (tag-gated cross-platform binaries, checksums, crates.io publish), `compatibility.yml` (real-world `stellar/soroban-examples` validation), `sdkt-action-ci.yml` (self-validates the reusable Action).
 
@@ -183,8 +184,12 @@ The package-manager line is now fully scheduled through M39:
 
 The following remain tracked as backlog, not yet assigned milestone IDs:
 
-- **Plugin ecosystem / marketplace** — tooling and conventions for sharing/consuming third-party audit
-  rules (native + WASM) built on M17–M19.
+- **Plugin ecosystem / marketplace — REMOTE slice.** M40 (scheduled) delivers the
+  local, offline-first store + install/remove/list/update (local sources only).
+  The remaining remote/marketplace layer — a hosted index/server, remote
+  `https` plugin sources, `sdkt plugin update` from a remote, plugin signing /
+  checksum verification, and a `.sdktplugin` bundle format — stays unscheduled
+  backlog.
 - **Broader Soroban ecosystem integration** — deeper compatibility and first-class support for the
   contracts developers actually deploy.
 - **Developer productivity** — continuing the DX investments started in M7/M20 (faster feedback, better

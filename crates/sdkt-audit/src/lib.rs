@@ -13,6 +13,7 @@
 pub mod audit;
 pub mod error;
 pub mod plugin_abi;
+pub mod plugin_store;
 pub mod registry;
 pub mod rules;
 pub mod types;
@@ -30,6 +31,7 @@ pub use audit::{
     scan_all_functions_str, AuditContext, AuditRule, FnScan,
 };
 pub use error::AuditError;
+pub use plugin_store::{InstallOpts, PluginMeta, StoreError};
 pub use registry::{
     register_builtin_rules, register_rule, run_registered, BoxedRule, RuleRegistry,
 };
