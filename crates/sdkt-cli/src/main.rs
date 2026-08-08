@@ -352,8 +352,12 @@ enum Commands {
         #[command(subcommand)]
         action: StorageAction,
         /// Path to contract WASM for ABI-aware storage decoding
-        #[arg(long, value_name = "WASM")]
+        #[arg(long, value_name = "WASM", global = true)]
         abi: Option<String>,
+        /// Use the ABI of a deployed contract (fetched on-chain via M41 path) for
+        /// storage decoding. Mutually exclusive with `--abi`.
+        #[arg(long, value_name = "CONTRACT_ID", global = true)]
+        abi_contract: Option<String>,
         #[command(flatten)]
         net: NetworkArgs,
     },
@@ -1342,146 +1346,187 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             let json = decode(&input, r#type.as_deref(), fmt)?;
             println!("{}", json);
         }
-        Commands::Storage { action, abi, net } => match action {
-            StorageAction::Check {
-                contract_id,
-                format,
-            } => {
-                let fmt = parse_format_str(&format);
-                let client = resolve_rpc_client(
-                    net.rpc_url.clone(),
-                    net.network_passphrase.clone(),
-                    net.network_profile.clone(),
-                );
+        Commands::Storage {
+            action,
+            abi,
+            abi_contract,
+            net,
+        } => {
+            let client = resolve_rpc_client(
+                net.rpc_url.clone(),
+                net.network_passphrase.clone(),
+                net.network_profile.clone(),
+            );
 
-                // Load ABI spec if provided for storage decoding
-                let contract_spec = if let Some(wasm_path) = abi.as_ref() {
+            // Load ABI spec if provided. Two mutually exclusive sources:
+            // a local WASM file (`--abi`) or a deployed contract's on-chain WASM
+            // fetched via the M41 path (`--abi-contract`).
+            if abi.is_some() && abi_contract.is_some() {
+                eprintln!("Error: specify only one of --abi or --abi-contract");
+                process::exit(1);
+            }
+
+            let contract_spec: Option<sdkt_wasm::ContractSpec> =
+                if let Some(wasm_path) = abi.as_ref() {
                     let wasm_bytes =
                         fs::read(wasm_path).map_err(|e| format!("Failed to read WASM: {}", e))?;
                     Some(
                         parse_contract_spec(&wasm_bytes)
                             .map_err(|e| format!("Failed to parse ABI: {}", e))?,
                     )
+                } else if let Some(id) = abi_contract.as_ref() {
+                    // M41 on-chain retrieval: inspect_contract -> wasm hash, then
+                    // get_wasm_bytecode -> raw bytes, then parse_contract_spec.
+                    let inspection = inspect_contract(&client, id).await.map_err(|e| match e {
+                        sdkt_rpc::RpcError::ContractNotFound => {
+                            format!("contract {} not found", id)
+                        }
+                        other => format!("{}", other),
+                    })?;
+                    let deployed_bytes = get_wasm_bytecode(&client, &inspection.wasm_hash)
+                        .await
+                        .map_err(|e| format!("could not fetch on-chain WASM for {}: {}", id, e))?;
+                    Some(
+                        parse_contract_spec(&deployed_bytes)
+                            .map_err(|e| format!("failed to parse deployed ABI: {}", e))?,
+                    )
                 } else {
                     None
                 };
 
-                match get_ttl_info(&client, &contract_id).await {
-                    Ok(ttl_info) => {
-                        if fmt == OutputFormat::Json {
-                            if let Some(spec) = contract_spec {
-                                let json_str = serde_json::to_string(&serde_json::json!({
-                                    "contract_id": contract_id,
-                                    "entries": ttl_info.entries.len(),
-                                    "abi": serde_json::json!({
-                                        "functions": spec.functions.iter().map(|f| f.name.as_str()).collect::<Vec<_>>(),
-                                        "events": spec.events.iter().map(|e| e.name.as_str()).collect::<Vec<_>>(),
-                                        "custom_types": spec.custom_types.iter().map(|t| t.name.as_str()).collect::<Vec<_>>()
-                                    })
-                                }))?;
-                                println!("{}", json_str);
-                            } else {
-                                let json_str = serde_json::to_string(&ttl_info)?;
-                                println!("{}", json_str);
-                            }
-                        } else {
-                            println!("Storage Check for Contract ID: {}", contract_id);
-                            println!("Total Entries: {}", ttl_info.entries.len());
-                            for (i, entry) in ttl_info.entries.iter().enumerate() {
-                                println!("\nEntry #{}", i + 1);
-                                println!("  Key: {}", entry.key);
-                                println!("  Current TTL: {} ledgers", entry.current_ttl);
-                                println!("  Remaining: {}", entry.expiration_time);
-                                println!(
-                                    "  Est. Extension Cost: {} stroops",
-                                    entry.extension_cost_stroops
-                                );
-                            }
+            match action {
+                StorageAction::Check {
+                    contract_id,
+                    format,
+                } => {
+                    let fmt = parse_format_str(&format);
+                    let client = resolve_rpc_client(
+                        net.rpc_url.clone(),
+                        net.network_passphrase.clone(),
+                        net.network_profile.clone(),
+                    );
 
-                            if let Some(spec) = contract_spec {
-                                println!("\nABI Functions:");
-                                for f in &spec.functions {
-                                    println!("  - {} ({})", f.name, f.doc);
+                    // Load ABI spec if provided for storage decoding
+                    match get_ttl_info(&client, &contract_id).await {
+                        Ok(ttl_info) => {
+                            if fmt == OutputFormat::Json {
+                                if let Some(spec) = contract_spec {
+                                    let json_str = serde_json::to_string(&serde_json::json!({
+                                        "contract_id": contract_id,
+                                        "entries": ttl_info.entries.len(),
+                                        "abi": serde_json::json!({
+                                            "functions": spec.functions.iter().map(|f| f.name.as_str()).collect::<Vec<_>>(),
+                                            "events": spec.events.iter().map(|e| e.name.as_str()).collect::<Vec<_>>(),
+                                            "custom_types": spec.custom_types.iter().map(|t| t.name.as_str()).collect::<Vec<_>>()
+                                        })
+                                    }))?;
+                                    println!("{}", json_str);
+                                } else {
+                                    let json_str = serde_json::to_string(&ttl_info)?;
+                                    println!("{}", json_str);
                                 }
-                                println!("\nABI Events:");
-                                for e in &spec.events {
-                                    println!("  - {}", e.name);
+                            } else {
+                                println!("Storage Check for Contract ID: {}", contract_id);
+                                println!("Total Entries: {}", ttl_info.entries.len());
+                                for (i, entry) in ttl_info.entries.iter().enumerate() {
+                                    println!("\nEntry #{}", i + 1);
+                                    println!("  Key: {}", entry.key);
+                                    println!("  Current TTL: {} ledgers", entry.current_ttl);
+                                    println!("  Remaining: {}", entry.expiration_time);
+                                    println!(
+                                        "  Est. Extension Cost: {} stroops",
+                                        entry.extension_cost_stroops
+                                    );
                                 }
-                                if !spec.custom_types.is_empty() {
-                                    println!("\nABI Custom Types:");
-                                    for t in &spec.custom_types {
-                                        println!("  - {} ({})", t.name, t.kind);
+
+                                if let Some(spec) = contract_spec {
+                                    println!("\nABI Functions:");
+                                    for f in &spec.functions {
+                                        println!("  - {} ({})", f.name, f.doc);
+                                    }
+                                    println!("\nABI Events:");
+                                    for e in &spec.events {
+                                        println!("  - {}", e.name);
+                                    }
+                                    if !spec.custom_types.is_empty() {
+                                        println!("\nABI Custom Types:");
+                                        for t in &spec.custom_types {
+                                            println!("  - {} ({})", t.name, t.kind);
+                                        }
                                     }
                                 }
                             }
                         }
-                    }
-                    Err(e) => {
-                        eprintln!("Error fetching storage TTL: {}", e);
-                        process::exit(1);
+                        Err(e) => {
+                            eprintln!("Error fetching storage TTL: {}", e);
+                            process::exit(1);
+                        }
                     }
                 }
-            }
-            StorageAction::Estimate { wasm } => {
-                println!("Storage Estimate for {} (Not yet implemented)", wasm);
-            }
-            StorageAction::Analyze {
-                contract_id,
-                format,
-            } => {
-                let fmt = parse_format_str(&format);
-                let client = resolve_rpc_client(
-                    net.rpc_url.clone(),
-                    net.network_passphrase.clone(),
-                    net.network_profile.clone(),
-                );
-                let analyzer = sdkt_storage::StorageAnalyzer::new(client);
+                StorageAction::Estimate { wasm } => {
+                    println!("Storage Estimate for {} (Not yet implemented)", wasm);
+                }
+                StorageAction::Analyze {
+                    contract_id,
+                    format,
+                } => {
+                    let fmt = parse_format_str(&format);
+                    let client = resolve_rpc_client(
+                        net.rpc_url.clone(),
+                        net.network_passphrase.clone(),
+                        net.network_profile.clone(),
+                    );
+                    let analyzer = sdkt_storage::StorageAnalyzer::new(client);
 
-                match analyzer.inspect_contract_storage(&contract_id).await {
-                    Ok(report) => {
-                        if fmt == OutputFormat::Json {
-                            println!("{}", serde_json::to_string(&report)?);
-                        } else {
-                            println!("Storage Analysis for Contract: {}", report.contract_id);
-                            println!("Total Entries: {}", report.total_entries);
-                            println!("  Instance:    {}", report.instance_entries);
-                            println!("  Persistent: {}", report.persistent_entries);
-                            println!("  Temporary:   {}", report.temporary_entries);
-                            if report.other_entries > 0 {
-                                println!("  Other:      {}", report.other_entries);
-                            }
-                            if let Some(summary) = &report.ttl_summary {
-                                println!("\nTTL Summary:");
-                                println!("  Min TTL:        {}", summary.minimum_ttl);
-                                println!("  Max TTL:        {}", summary.maximum_ttl);
-                                println!("  Average TTL:    {}", summary.average_ttl);
-                                println!("  Expiring Soon:  {}", summary.expiring_entries_count);
-                                if let Some(cost) = summary.estimated_rent_cost {
-                                    println!("  Est. Rent Cost: {} stroops", cost);
+                    match analyzer.inspect_contract_storage(&contract_id).await {
+                        Ok(report) => {
+                            if fmt == OutputFormat::Json {
+                                println!("{}", serde_json::to_string(&report)?);
+                            } else {
+                                println!("Storage Analysis for Contract: {}", report.contract_id);
+                                println!("Total Entries: {}", report.total_entries);
+                                println!("  Instance:    {}", report.instance_entries);
+                                println!("  Persistent: {}", report.persistent_entries);
+                                println!("  Temporary:   {}", report.temporary_entries);
+                                if report.other_entries > 0 {
+                                    println!("  Other:      {}", report.other_entries);
                                 }
-                            }
-                            if !report.entries.is_empty() {
-                                println!("\nEntries:");
-                                for (i, entry) in report.entries.iter().enumerate() {
+                                if let Some(summary) = &report.ttl_summary {
+                                    println!("\nTTL Summary:");
+                                    println!("  Min TTL:        {}", summary.minimum_ttl);
+                                    println!("  Max TTL:        {}", summary.maximum_ttl);
+                                    println!("  Average TTL:    {}", summary.average_ttl);
                                     println!(
-                                        "  #{:<3} [{}] ttl={} (~{}d) cost={} stroops",
-                                        i + 1,
-                                        entry.class.label(),
-                                        entry.current_ttl,
-                                        entry.days_remaining,
-                                        entry.extension_cost_stroops
+                                        "  Expiring Soon:  {}",
+                                        summary.expiring_entries_count
                                     );
+                                    if let Some(cost) = summary.estimated_rent_cost {
+                                        println!("  Est. Rent Cost: {} stroops", cost);
+                                    }
+                                }
+                                if !report.entries.is_empty() {
+                                    println!("\nEntries:");
+                                    for (i, entry) in report.entries.iter().enumerate() {
+                                        println!(
+                                            "  #{:<3} [{}] ttl={} (~{}d) cost={} stroops",
+                                            i + 1,
+                                            entry.class.label(),
+                                            entry.current_ttl,
+                                            entry.days_remaining,
+                                            entry.extension_cost_stroops
+                                        );
+                                    }
                                 }
                             }
                         }
-                    }
-                    Err(e) => {
-                        eprintln!("Error analyzing storage: {}", e);
-                        process::exit(1);
+                        Err(e) => {
+                            eprintln!("Error analyzing storage: {}", e);
+                            process::exit(1);
+                        }
                     }
                 }
             }
-        },
+        }
         Commands::Inspect {
             contract_id,
             format,
