@@ -16,9 +16,13 @@ sdkt
 │   └── --abi <wasm>            (ABI-aware storage decode)
 │
 ├── storage
-│   ├── check <contract-id>   [--abi <wasm>] [--format]
-│   ├── analyze <contract-id> [--format]
+│   ├── check <contract-id>   [--abi <wasm>] [--abi-contract <id>] [--format]
+│   ├── analyze <contract-id> [--abi <wasm>] [--abi-contract <id>] [--format]
 │   └── estimate <wasm-path>  [--format]
+│
+│   `--abi <wasm>` supplies the ABI from a local WASM; `--abi-contract <id>` fetches
+│   the deployed contract's on-chain WASM (M41 path) and uses it as the ABI source
+│   for storage decoding (M44). The two flags are mutually exclusive.
 │
 ├── tx
 │   ├── inspect <hash>        [--format]
