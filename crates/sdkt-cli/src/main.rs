@@ -727,6 +727,29 @@ enum PackageCommand {
         #[arg(long)]
         dry_run: bool,
     },
+    /// Bundle the resolved project into a portable offline artifact: the
+    /// manifest, the lockfile, and the cached git dependency checkouts. The
+    /// artifact can be unpacked on another machine and rebuilt without network.
+    Pack {
+        /// Output directory for the artifact (default: `./dist`).
+        #[arg(short, long, default_value = "dist")]
+        out: String,
+        /// Artifact format: `tar.zst` (compressed tarball) or `dir` (directory tree).
+        #[arg(long, default_value = "tar.zst")]
+        format: String,
+    },
+    /// Validate publish readiness (read-only): manifest valid, lock consistent,
+    /// all cached commits present, integrity hashes match. Default is
+    /// `--dry-run`; nothing is published. `--broadcast` is opt-in and only acts
+    /// when a registry source is configured (none in M38, so it stays offline).
+    Publish {
+        /// Perform a read-only readiness check (default: true). No publish.
+        #[arg(long, default_value_t = true)]
+        dry_run: bool,
+        /// Actually publish. Opt-in only; requires a configured registry source.
+        #[arg(long)]
+        broadcast: bool,
+    },
 }
 
 #[derive(Subcommand)]
@@ -3312,6 +3335,59 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                         println!("Lock refreshed.");
                     } else {
                         println!("Nothing to update.");
+                    }
+                }
+            }
+            PackageCommand::Pack { out, format } => {
+                let base = Path::new(".");
+                let out_dir = Path::new(&out);
+                std::fs::create_dir_all(out_dir).unwrap_or_else(|e| {
+                    eprintln!("Error creating output dir {}: {}", out_dir.display(), e);
+                    std::process::exit(1);
+                });
+                match sdkt_core::package::pack(base, out_dir, &format) {
+                    Ok(bundle) => {
+                        println!("Packed {} v{}", bundle.name, bundle.version);
+                        println!("  format:  {}", bundle.format);
+                        println!("  artifact: {}", bundle.out_path);
+                        println!("  lock sha256: {}", bundle.lock_sha256);
+                        println!("  dependencies bundled: {}", bundle.entries.len());
+                    }
+                    Err(e) => {
+                        eprintln!("Error packing package: {}", e);
+                        std::process::exit(1);
+                    }
+                }
+            }
+            PackageCommand::Publish { dry_run, broadcast } => {
+                let base = Path::new(".");
+                let config = load_config();
+                // `--broadcast` is opt-in; M38 defines no registry source, so it is
+                // rejected (stays offline / dry-run only). No network is ever used.
+                if broadcast {
+                    eprintln!(
+                        "Error: `--broadcast` requires a configured registry source; none is defined in M38."
+                    );
+                    std::process::exit(1);
+                }
+                let _ = dry_run; // default true; readiness is always read-only here.
+                match sdkt_core::package::publish_plan(base, &config) {
+                    Ok(readiness) => {
+                        println!("Publish readiness check:");
+                        for (name, ok, detail) in &readiness.checks {
+                            let mark = if *ok { "✓" } else { "✗" };
+                            println!("  {} {} — {}", mark, name, detail);
+                        }
+                        if readiness.ready {
+                            println!("Package is ready to publish (dry-run).");
+                        } else {
+                            eprintln!("Package is NOT ready to publish. Fix the issues above.");
+                            std::process::exit(1);
+                        }
+                    }
+                    Err(e) => {
+                        eprintln!("Error evaluating publish readiness: {}", e);
+                        std::process::exit(1);
                     }
                 }
             }

@@ -13,9 +13,10 @@
 //! two resolvers share one implementation.
 
 use crate::config::{DevKitConfig, PackageConfig};
+use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::fmt;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 /// Errors raised while validating a local package manifest/dependency graph.
 #[derive(Debug, PartialEq)]
@@ -54,6 +55,8 @@ pub enum PackageError {
     MissingGitRef(String),
     /// A `git` dependency's `branch`/`tag`/`rev` value is empty.
     EmptyGitRef(String),
+    /// Generic error carrying a free-form message (used by M38 packaging I/O).
+    Other(String),
 }
 
 impl fmt::Display for PackageError {
@@ -126,6 +129,7 @@ impl fmt::Display for PackageError {
                     name
                 )
             }
+            PackageError::Other(msg) => write!(f, "{}", msg),
         }
     }
 }
@@ -466,10 +470,456 @@ pub fn parse_manifest(content: &str) -> Result<DevKitConfig, toml::de::Error> {
     DevKitConfig::from_toml(content)
 }
 
+// ===== Milestone 38 — Packaging & publishing workflow =====
+//
+// `pack` bundles a resolved project (`.sdkt.toml` + `sdkt.lock` + the git
+// checkouts under `.sdkt-cache/git/<key>`) into a portable offline artifact.
+// `publish_plan` is a read-only readiness check built entirely on
+// `verify_dependencies` + `compute_dependency_integrity` (M35.2) — no new
+// verification algorithm, no network.
+//
+// All new git/hash/cache logic is *reused*; packing is a copy/archive operation
+// over the existing checkout tree and the descriptor is produced from data the
+// lock already carries.
+
+use std::time::{SystemTime, UNIX_EPOCH};
+
+/// One resolved dependency recorded in a [`PackageBundle`] descriptor.
+///
+/// Carries enough to locate and re-verify a bundled git checkout offline: the
+/// cache key (`.sdkt-cache/git/<key>`), the resolved commit, and the integrity
+/// hash computed by [`crate::lock::compute_dependency_integrity`].
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
+pub struct BundleEntry {
+    /// Dependency name (key under `[dependencies]`).
+    pub name: String,
+    /// Source kind: `local` or `git`.
+    pub source: String,
+    /// Git remote URL (empty for local path deps).
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub git_url: String,
+    /// Resolved commit SHA (empty for local path deps / not-yet-fetched).
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub commit_sha: String,
+    /// Integrity hash ("sha256:<hex>") of the cached checkout's tracked tree.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub integrity: String,
+    /// Cache key used by [`crate::fetch::git_cache_key`] (git deps only).
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub cache_key: String,
+    /// Declared `version` constraint (M37), if any.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub version: String,
+}
+
+/// A self-contained, offline package bundle descriptor (M38).
+///
+/// Produced by [`pack`] and written as `package.json` inside the artifact so a
+/// downstream consumer / CI can verify the bundle reproduces the original
+/// `sdkt.lock` and per-dependency integrity hashes exactly.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
+pub struct PackageBundle {
+    /// Schema marker for the descriptor.
+    pub schema: String,
+    /// Package name (from `[package]`).
+    pub name: String,
+    /// Package version (from `[package]`).
+    pub version: String,
+    /// Artifact format: `tar.zst` or `dir`.
+    pub format: String,
+    /// Path to the produced artifact (file or directory).
+    pub out_path: String,
+    /// sha256 of the bundled `sdkt.lock` bytes (verifies lock equivalence).
+    pub lock_sha256: String,
+    /// Per-dependency resolved entries (for offline reconstruct + verify).
+    pub entries: Vec<BundleEntry>,
+    /// Bundle creation timestamp (Unix seconds; no external time crate).
+    pub created_at: u64,
+}
+
+/// Result of a `publish --dry-run` readiness check (M38).
+///
+/// `ready` is true only when every gate passes. `checks` lists each gate with
+/// its pass state and a human-readable detail, so the CLI can render a plan.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PublishReadiness {
+    /// True when the package is ready to publish (all checks passed).
+    pub ready: bool,
+    /// `(check_name, passed, detail)` for every readiness gate.
+    pub checks: Vec<(String, bool, String)>,
+}
+
+impl PackageBundle {
+    /// Write this descriptor as `package.json` into `dir`.
+    pub fn write_descriptor(&self, dir: &Path) -> Result<PathBuf, PackageError> {
+        let json = serde_json::to_string_pretty(self)
+            .map_err(|e| PackageError::Other(format!("serialize bundle descriptor: {}", e)))?;
+        let path = dir.join("package.json");
+        std::fs::write(&path, json)
+            .map_err(|e| PackageError::Other(format!("write {}: {}", path.display(), e)))?;
+        Ok(path)
+    }
+}
+
+/// Recursively copy a directory tree (std only; no new dependency).
+fn copy_dir_all(src: &Path, dst: &Path) -> Result<(), PackageError> {
+    std::fs::create_dir_all(dst)
+        .map_err(|e| PackageError::Other(format!("create {}: {}", dst.display(), e)))?;
+    for entry in std::fs::read_dir(src)
+        .map_err(|e| PackageError::Other(format!("read {}: {}", src.display(), e)))?
+    {
+        let entry = entry
+            .map_err(|e| PackageError::Other(format!("read entry in {}: {}", src.display(), e)))?;
+        let path = entry.path();
+        let target = dst.join(entry.file_name());
+        if path.is_dir() {
+            copy_dir_all(&path, &target)?;
+        } else {
+            std::fs::copy(&path, &target).map_err(|e| {
+                PackageError::Other(format!(
+                    "copy {} -> {}: {}",
+                    path.display(),
+                    target.display(),
+                    e
+                ))
+            })?;
+        }
+    }
+    Ok(())
+}
+
+fn sha256_hex(bytes: &[u8]) -> String {
+    use sha2::{Digest, Sha256};
+    let mut h = Sha256::new();
+    h.update(bytes);
+    format!("sha256:{:x}", h.finalize())
+}
+
+/// Bundle a project into a portable offline artifact (M38).
+///
+/// Reads `.sdkt.toml` + `sdkt.lock` + the resolved git checkouts under
+/// `.sdkt-cache/git/<key>` (reusing [`crate::fetch::git_cache_key`] layout) and
+/// writes either:
+/// * a directory tree at `<out>/<name>-<version>/` (`--format dir`), or
+/// * a compressed tarball `<out>/<name>-<version>.tar.zst` (`--format tar.zst`).
+///
+/// In both cases a `package.json` descriptor is emitted recording the lock
+/// sha256 and per-dependency integrity so the bundle can be verified offline.
+/// This is a **copy/archive** operation only — it introduces no new caching,
+/// hashing, or git-clone logic; [`crate::lock::compute_dependency_integrity`]
+/// already hashes each checkout tree and is reused here.
+pub fn pack(base: &Path, out: &Path, format: &str) -> Result<PackageBundle, PackageError> {
+    if format != "tar.zst" && format != "dir" {
+        return Err(PackageError::Other(format!(
+            "unsupported --format '{}' (expected 'tar.zst' or 'dir')",
+            format
+        )));
+    }
+
+    let config = DevKitConfig::from_file(base.join(".sdkt.toml"))
+        .map_err(|e| PackageError::Other(format!("reading .sdkt.toml: {}", e)))?;
+    let pkg = config
+        .package
+        .as_ref()
+        .ok_or_else(|| PackageError::Other("manifest has no [package] table".to_string()))?;
+    let name = pkg.name.clone().unwrap_or_default();
+    let version = pkg.version.clone().unwrap_or_default();
+    if name.is_empty() || version.is_empty() {
+        return Err(PackageError::Other(
+            "package name and version are required to pack".to_string(),
+        ));
+    }
+
+    let lock_path = base.join("sdkt.lock");
+    if !lock_path.exists() {
+        return Err(PackageError::Other(
+            "sdkt.lock not found; run `sdkt package fetch` before packing".to_string(),
+        ));
+    }
+    let lock_bytes = std::fs::read(&lock_path)
+        .map_err(|e| PackageError::Other(format!("read sdkt.lock: {}", e)))?;
+    let lock_sha256 = sha256_hex(&lock_bytes);
+
+    let lock = crate::lock::read_lock(base)
+        .map_err(|e| PackageError::Other(format!("parse sdkt.lock: {}", e)))?;
+
+    let staging = out.join(format!("{}-{}", name, version));
+    // Clean any prior staging dir of the same name.
+    if staging.exists() {
+        std::fs::remove_dir_all(&staging).map_err(|e| {
+            PackageError::Other(format!("clean staging {}: {}", staging.display(), e))
+        })?;
+    }
+    std::fs::create_dir_all(&staging)
+        .map_err(|e| PackageError::Other(format!("create staging {}: {}", staging.display(), e)))?;
+
+    // Copy manifest + lock into the staging root.
+    std::fs::copy(base.join(".sdkt.toml"), staging.join(".sdkt.toml"))
+        .map_err(|e| PackageError::Other(format!("copy .sdkt.toml: {}", e)))?;
+    std::fs::write(staging.join("sdkt.lock"), &lock_bytes)
+        .map_err(|e| PackageError::Other(format!("write sdkt.lock: {}", e)))?;
+
+    let mut entries: Vec<BundleEntry> = Vec::new();
+    for entry in &lock.dependencies {
+        let dep = config.dependencies.get(&entry.name);
+        let integrity = match dep {
+            Some(d) => crate::lock::compute_dependency_integrity(base, d),
+            None => entry.integrity.clone(),
+        };
+        let (cache_key, src_checkout) = match dep {
+            Some(d) if d.git.is_some() => {
+                let key = crate::fetch::git_cache_key(d);
+                let checkout = base.join(".sdkt-cache").join("git").join(&key);
+                (key, Some(checkout))
+            }
+            _ => (String::new(), None),
+        };
+        // Stage the git checkout (local path deps are not in the cache; the plan
+        // bundles only the resolved git checkouts — see milestone-38-plan.md §2).
+        if let Some(checkout) = src_checkout {
+            if checkout.join(".git").exists() {
+                let dst = staging.join(".sdkt-cache").join("git").join(&cache_key);
+                copy_dir_all(&checkout, &dst)?;
+            }
+        }
+        entries.push(BundleEntry {
+            name: entry.name.clone(),
+            source: entry.source.clone(),
+            git_url: entry.git_url.clone(),
+            commit_sha: entry.commit_sha.clone(),
+            integrity,
+            cache_key,
+            version: entry.version.clone(),
+        });
+    }
+
+    let created_at = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0);
+    let mut bundle = PackageBundle {
+        schema: "sdkt.package.bundle/v1".to_string(),
+        name,
+        version,
+        format: format.to_string(),
+        out_path: String::new(),
+        lock_sha256,
+        entries,
+        created_at,
+    };
+    bundle.write_descriptor(&staging)?;
+
+    // Materialize the final artifact.
+    let final_out_path: PathBuf = if format == "tar.zst" {
+        let tar_path = out.join(format!("{}-{}.tar.zst", bundle.name, bundle.version));
+        {
+            let file = std::fs::File::create(&tar_path).map_err(|e| {
+                PackageError::Other(format!("create {}: {}", tar_path.display(), e))
+            })?;
+            let enc = zstd::Encoder::new(file, 0)
+                .map_err(|e| PackageError::Other(format!("zstd encoder: {}", e)))?;
+            {
+                let mut builder = tar::Builder::new(enc);
+                builder
+                    .append_dir_all(".", &staging)
+                    .map_err(|e| PackageError::Other(format!("tar build: {}", e)))?;
+                let enc = builder
+                    .into_inner()
+                    .map_err(|e| PackageError::Other(format!("tar finalize: {}", e)))?;
+                enc.finish()
+                    .map_err(|e| PackageError::Other(format!("zstd finish: {}", e)))?;
+            }
+        }
+        // Remove the staging dir; keep only the tarball.
+        std::fs::remove_dir_all(&staging).map_err(|e| {
+            PackageError::Other(format!("clean staging {}: {}", staging.display(), e))
+        })?;
+        tar_path
+    } else {
+        staging
+    };
+
+    bundle.out_path = final_out_path.to_string_lossy().to_string();
+    Ok(bundle)
+}
+
+/// Evaluate publish readiness for a project (M38 `publish --dry-run`).
+///
+/// Pure read-only validation built on [`crate::lock::verify_dependencies`]
+/// (M35.2) plus manifest/lock presence. Detects: missing cache, lock drift,
+/// integrity mismatch, commit mismatch, reference change, and invalid package
+/// state. No network, no publish.
+pub fn publish_plan(base: &Path, config: &DevKitConfig) -> Result<PublishReadiness, PackageError> {
+    let mut checks: Vec<(String, bool, String)> = Vec::new();
+
+    // 1) Manifest validity (reuses the existing validator).
+    match validate_manifest(base, config) {
+        Ok(()) => checks.push((
+            "manifest-valid".to_string(),
+            true,
+            "manifest validated".to_string(),
+        )),
+        Err(e) => checks.push((
+            "manifest-valid".to_string(),
+            false,
+            format!("manifest invalid: {}", e),
+        )),
+    }
+
+    // 2) Lock presence + consistency (reuses M35.2 verify_dependencies).
+    let report = crate::lock::verify_dependencies(base, config);
+    checks.push((
+        "lock-present".to_string(),
+        report.present,
+        if report.present {
+            "sdkt.lock present".to_string()
+        } else {
+            "sdkt.lock missing".to_string()
+        },
+    ));
+    checks.push((
+        "lock-consistent".to_string(),
+        report.consistent,
+        if report.consistent {
+            "lock consistent with manifest + cache".to_string()
+        } else {
+            format!("{} drift(s) detected", report.mismatches.len())
+        },
+    ));
+
+    // 3) Per-dependency drift detail (cache missing / integrity / commit / ref).
+    for m in &report.mismatches {
+        let detail = match m.kind {
+            crate::lock::DepMismatchKind::CacheMissing => {
+                format!("{}: cache checkout missing", m.name)
+            }
+            crate::lock::DepMismatchKind::IntegrityMismatch => {
+                format!("{}: integrity mismatch", m.name)
+            }
+            crate::lock::DepMismatchKind::CommitMismatch => format!("{}: commit mismatch", m.name),
+            crate::lock::DepMismatchKind::ReferenceChanged => {
+                format!("{}: reference changed", m.name)
+            }
+            crate::lock::DepMismatchKind::SourceChanged => format!("{}: source changed", m.name),
+            crate::lock::DepMismatchKind::MissingInLock => format!("{}: missing in lock", m.name),
+            crate::lock::DepMismatchKind::NotInManifest => format!("{}: not in manifest", m.name),
+            crate::lock::DepMismatchKind::PathMissing => format!("{}: local path missing", m.name),
+        };
+        checks.push((format!("dep:{}", m.name), false, detail));
+    }
+
+    let ready = checks.iter().all(|(_, ok, _)| *ok);
+    Ok(PublishReadiness { ready, checks })
+}
+
+/// Verify a reconstructed (unpacked) bundle reproduces the original
+/// `sdkt.lock` sha256 and per-git-dependency integrity exactly (M38 round-trip).
+///
+/// Reuses [`crate::fetch::git_bin`] to read each checkout's tree hash the same
+/// way [`crate::lock::compute_dependency_integrity`] does, so no hash logic is
+/// duplicated.
+pub fn verify_bundle_equivalence(
+    unpacked_base: &Path,
+    bundle: &PackageBundle,
+) -> Result<bool, PackageError> {
+    let lock_path = unpacked_base.join("sdkt.lock");
+    let lock_bytes = std::fs::read(&lock_path)
+        .map_err(|e| PackageError::Other(format!("read sdkt.lock: {}", e)))?;
+    if sha256_hex(&lock_bytes) != bundle.lock_sha256 {
+        return Ok(false);
+    }
+    for entry in &bundle.entries {
+        if entry.source != "git" || entry.cache_key.is_empty() {
+            continue;
+        }
+        let checkout = unpacked_base
+            .join(".sdkt-cache")
+            .join("git")
+            .join(&entry.cache_key);
+        if !checkout.join(".git").exists() {
+            return Ok(false);
+        }
+        let out = std::process::Command::new(crate::fetch::git_bin())
+            .current_dir(&checkout)
+            .args(["rev-parse", "HEAD^{tree}"])
+            .output();
+        match out {
+            Ok(o) if o.status.success() => {
+                let tree = String::from_utf8_lossy(&o.stdout).trim().to_string();
+                if format!("sha256:{}", tree) != entry.integrity {
+                    return Ok(false);
+                }
+            }
+            _ => return Ok(false),
+        }
+    }
+    Ok(true)
+}
+
+/// Reconstruct a project from a bundle artifact (M38 round-trip).
+///
+/// * `tar.zst` — decompresses (zstd) and extracts the tar into `dest`.
+/// * `dir` — copies the directory tree into `dest`.
+///
+/// The reconstructed tree can then be verified offline with
+/// [`verify_bundle_equivalence`]. No new archive/hash logic: it reuses the
+/// same `tar` / `zstd` crates and the `copy_dir_all` helper used by [`pack`].
+pub fn unpack(artifact: &Path, dest: &Path) -> Result<PathBuf, PackageError> {
+    std::fs::create_dir_all(dest)
+        .map_err(|e| PackageError::Other(format!("create {}: {}", dest.display(), e)))?;
+    let name = artifact
+        .file_name()
+        .map(|n| n.to_string_lossy().to_string())
+        .unwrap_or_default();
+    let is_tar = name.ends_with(".tar.zst") || name.ends_with(".tgz");
+    if is_tar {
+        let file = std::fs::File::open(artifact)
+            .map_err(|e| PackageError::Other(format!("open {}: {}", artifact.display(), e)))?;
+        let dec = zstd::Decoder::new(file)
+            .map_err(|e| PackageError::Other(format!("zstd decoder: {}", e)))?;
+        let mut ar = tar::Archive::new(dec);
+        ar.unpack(dest)
+            .map_err(|e| PackageError::Other(format!("tar extract: {}", e)))?;
+    } else {
+        // Directory-format bundle: copy its contents into `dest`.
+        copy_dir_contents(artifact, dest)?;
+    }
+    Ok(dest.to_path_buf())
+}
+
+/// Copy the *contents* of `src` into `dst` (does not create a `src`-named
+/// subdirectory), reusing [`copy_dir_all`] per entry.
+fn copy_dir_contents(src: &Path, dst: &Path) -> Result<(), PackageError> {
+    std::fs::create_dir_all(dst)
+        .map_err(|e| PackageError::Other(format!("create {}: {}", dst.display(), e)))?;
+    for entry in std::fs::read_dir(src)
+        .map_err(|e| PackageError::Other(format!("read {}: {}", src.display(), e)))?
+    {
+        let entry = entry
+            .map_err(|e| PackageError::Other(format!("read entry in {}: {}", src.display(), e)))?;
+        let path = entry.path();
+        let target = dst.join(entry.file_name());
+        if path.is_dir() {
+            copy_dir_all(&path, &target)?;
+        } else {
+            std::fs::copy(&path, &target).map_err(|e| {
+                PackageError::Other(format!(
+                    "copy {} -> {}: {}",
+                    path.display(),
+                    target.display(),
+                    e
+                ))
+            })?;
+        }
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::config::{Dependency, LocalDependency, PackageConfig};
+    use crate::fetch::DependencyFetcher;
     use std::collections::HashMap;
 
     fn manifest(
@@ -858,5 +1308,220 @@ mod tests {
         assert!(validate_manifest(&tmp, &cfg).is_ok());
 
         let _ = std::fs::remove_dir_all(&tmp);
+    }
+
+    // --- M38 packaging / publish-readiness tests ----------------------------
+
+    fn git_repo_with_tag(dir: &Path, tag: &str) -> String {
+        std::fs::create_dir_all(dir)
+            .unwrap_or_else(|e| panic!("create test repo dir {}: {}", dir.display(), e));
+        let run = |args: &[&str]| {
+            let o = std::process::Command::new(crate::fetch::git_bin())
+                .current_dir(dir)
+                .env("GIT_CONFIG_COUNT", "1")
+                .env("GIT_CONFIG_KEY_0", "safe.directory")
+                .env("GIT_CONFIG_VALUE_0", "*")
+                .args(args)
+                .output()
+                .expect("git available");
+            assert!(
+                o.status.success(),
+                "git {:?} failed: {}",
+                args,
+                String::from_utf8_lossy(&o.stderr)
+            );
+        };
+        run(&["init", "-q"]);
+        run(&["config", "user.email", "t@sdkt.local"]);
+        run(&["config", "user.name", "sdkt test"]);
+        std::fs::write(dir.join("lib.rs"), b"pub fn answer() -> u32 { 42 }\n").unwrap();
+        run(&["add", "."]);
+        run(&["commit", "-q", "-m", "initial"]);
+        run(&["tag", tag]);
+        let o = std::process::Command::new(crate::fetch::git_bin())
+            .current_dir(dir)
+            .args(["rev-parse", "HEAD"])
+            .output()
+            .unwrap();
+        String::from_utf8_lossy(&o.stdout).trim().to_string()
+    }
+
+    /// Build a project at `base` with one git dependency (tagged local repo),
+    /// fetch it into `.sdkt-cache`, and write `sdkt.lock`. Returns the config.
+    fn setup_packed_project(base: &Path, dep_url: &str) -> DevKitConfig {
+        let pkg = DevKitConfig {
+            package: Some(PackageConfig {
+                name: Some("m38-app".to_string()),
+                version: Some("0.3.0".to_string()),
+                description: None,
+            }),
+            dependencies: {
+                let mut m = HashMap::new();
+                m.insert(
+                    "math".to_string(),
+                    Dependency {
+                        git: Some(dep_url.to_string()),
+                        tag: Some("v1.0.0".to_string()),
+                        ..Default::default()
+                    },
+                );
+                m
+            },
+            ..Default::default()
+        };
+        std::fs::create_dir_all(base).unwrap();
+        std::fs::write(
+            base.join(".sdkt.toml"),
+            "[package]\nname = \"m38-app\"\nversion = \"0.3.0\"\n\n[dependencies.math]\ngit = \"DEP_URL\"\ntag = \"v1.0.0\"\n"
+                .replace("DEP_URL", dep_url),
+        )
+        .unwrap();
+
+        // Fetch the dependency into the project cache.
+        let cache = crate::fetch::GitFetcher::new(base.join(".sdkt-cache"));
+        let outcome = cache
+            .fetch("math", &pkg.dependencies["math"], false)
+            .unwrap();
+
+        // Write the lock (reuses the single lock writer).
+        let lock = crate::lock::LockFile {
+            version: crate::lock::LOCK_VERSION,
+            deploy_order: vec![],
+            contracts: vec![],
+            dependencies: crate::lock::lock_dependencies_resolved(base, &pkg, &[outcome]),
+        };
+        crate::lock::write_lock(base, &lock).unwrap();
+        pkg
+    }
+
+    #[test]
+    fn pack_dir_roundtrip_preserves_lock_and_integrity() {
+        let src = temp_dir("m38-src");
+        git_repo_with_tag(&src, "v1.0.0");
+        let url = src.to_string_lossy().to_string();
+
+        let base = temp_dir("m38-base-dir");
+        setup_packed_project(&base, &url);
+
+        let out = temp_dir("m38-out-dir");
+        let bundle = pack(&base, &out, "dir").expect("pack dir");
+        assert_eq!(bundle.format, "dir");
+        assert_eq!(bundle.name, "m38-app");
+        assert_eq!(bundle.version, "0.3.0");
+        assert!(!bundle.entries.is_empty(), "should record the git dep");
+        assert!(bundle.lock_sha256.starts_with("sha256:"));
+
+        let reconstructed = out.join("m38-app-0.3.0");
+        assert!(reconstructed.join(".sdkt.toml").exists());
+        assert!(reconstructed.join("sdkt.lock").exists());
+        assert!(reconstructed.join("package.json").exists());
+
+        // The reconstructed tree must reproduce the lock + per-dep integrity.
+        assert!(
+            verify_bundle_equivalence(&reconstructed, &bundle).unwrap(),
+            "dir round-trip must preserve lock + integrity"
+        );
+
+        let _ = std::fs::remove_dir_all(&src);
+        let _ = std::fs::remove_dir_all(&base);
+        let _ = std::fs::remove_dir_all(&out);
+    }
+
+    #[test]
+    fn pack_tar_zst_roundtrip_preserves_lock_and_integrity() {
+        let src = temp_dir("m38-src-tar");
+        git_repo_with_tag(&src, "v1.0.0");
+        let url = src.to_string_lossy().to_string();
+
+        let base = temp_dir("m38-base-tar");
+        setup_packed_project(&base, &url);
+
+        let out = temp_dir("m38-out-tar");
+        let bundle = pack(&base, &out, "tar.zst").expect("pack tar.zst");
+        assert_eq!(bundle.format, "tar.zst");
+        let tarball = Path::new(&bundle.out_path);
+        assert!(tarball.exists(), "tarball must exist");
+        assert!(tarball.to_string_lossy().ends_with(".tar.zst"));
+
+        // Reconstruct from the tarball and verify equivalence via the embedded
+        // `package.json` descriptor (no double-pack).
+        let reconstruct = temp_dir("m38-reconstruct-tar");
+        let _ = crate::package::unpack(tarball, &reconstruct).expect("unpack");
+        let desc = std::fs::read_to_string(reconstruct.join("package.json")).unwrap();
+        let rebuilt: PackageBundle = serde_json::from_str(&desc).unwrap();
+        assert_eq!(rebuilt.lock_sha256, bundle.lock_sha256);
+        assert!(
+            verify_bundle_equivalence(&reconstruct, &rebuilt).unwrap(),
+            "tar.zst round-trip must preserve lock + integrity"
+        );
+
+        let _ = std::fs::remove_dir_all(&src);
+        let _ = std::fs::remove_dir_all(&base);
+        let _ = std::fs::remove_dir_all(&out);
+        let _ = std::fs::remove_dir_all(&reconstruct);
+    }
+
+    #[test]
+    fn pack_rejects_unknown_format() {
+        let src = temp_dir("m38-src-fmt");
+        git_repo_with_tag(&src, "v1.0.0");
+        let url = src.to_string_lossy().to_string();
+        let base = temp_dir("m38-base-fmt");
+        setup_packed_project(&base, &url);
+        let out = temp_dir("m38-out-fmt");
+        let err = pack(&base, &out, "zip").unwrap_err();
+        assert!(err.to_string().contains("unsupported --format"));
+        let _ = std::fs::remove_dir_all(&src);
+        let _ = std::fs::remove_dir_all(&base);
+        let _ = std::fs::remove_dir_all(&out);
+    }
+
+    #[test]
+    fn publish_plan_ready_when_consistent() {
+        let src = temp_dir("m38-src-ready");
+        git_repo_with_tag(&src, "v1.0.0");
+        let url = src.to_string_lossy().to_string();
+        let base = temp_dir("m38-base-ready");
+        let cfg = setup_packed_project(&base, &url);
+
+        let readiness = publish_plan(&base, &cfg).expect("publish_plan");
+        assert!(
+            readiness.ready,
+            "consistent project must be ready: {:?}",
+            readiness.checks
+        );
+        // Every gate passes.
+        assert!(readiness.checks.iter().all(|(_, ok, _)| *ok));
+
+        let _ = std::fs::remove_dir_all(&src);
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    #[test]
+    fn publish_plan_detects_missing_cache() {
+        let src = temp_dir("m38-src-drift");
+        git_repo_with_tag(&src, "v1.0.0");
+        let url = src.to_string_lossy().to_string();
+        let base = temp_dir("m38-base-drift");
+        let cfg = setup_packed_project(&base, &url);
+
+        // Remove the cached git checkout to simulate drift.
+        let key = crate::fetch::git_cache_key(&cfg.dependencies["math"]);
+        let checkout = base.join(".sdkt-cache").join("git").join(&key);
+        assert!(checkout.exists());
+        std::fs::remove_dir_all(&checkout).unwrap();
+
+        let readiness = publish_plan(&base, &cfg).expect("publish_plan");
+        assert!(!readiness.ready, "missing cache must make publish unready");
+        assert!(
+            readiness
+                .checks
+                .iter()
+                .any(|(n, ok, _)| n == "dep:math" && !*ok),
+            "must report the math dep drift"
+        );
+
+        let _ = std::fs::remove_dir_all(&src);
+        let _ = std::fs::remove_dir_all(&base);
     }
 }

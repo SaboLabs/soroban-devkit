@@ -1427,3 +1427,423 @@ fn package_update_version_constraint_unsatisfied_reports_error() {
     let _ = std::fs::remove_dir_all(&tmp);
     let _ = std::fs::remove_dir_all(&src);
 }
+
+// --- M38 packaging / publishing CLI integration tests --------------------
+
+/// Build a local "remote" git repo with a single tag `v1.0.0` for M38 pack
+/// tests. Offline; no network.
+fn make_pack_repo() -> (std::path::PathBuf, String) {
+    let dir = std::env::temp_dir().join(format!(
+        "sdkt-it-m38-remote-{}-{}",
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos()
+    ));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let run = |args: &[&str]| {
+        let o = std::process::Command::new("git")
+            .current_dir(&dir)
+            .args(args)
+            .output()
+            .expect("git available");
+        assert!(
+            o.status.success(),
+            "git {:?} failed: {}",
+            args,
+            String::from_utf8_lossy(&o.stderr)
+        );
+    };
+    run(&["init", "-q"]);
+    run(&["config", "user.email", "t@sdkt.local"]);
+    run(&["config", "user.name", "sdkt test"]);
+    std::fs::write(dir.join("lib.rs"), "pub fn answer() -> u32 { 42 }\n").unwrap();
+    run(&["add", "."]);
+    run(&["commit", "-q", "-m", "initial"]);
+    run(&["tag", "v1.0.0"]);
+    let url = dir.to_string_lossy().to_string();
+    (dir, url)
+}
+
+fn write_pack_manifest(tmp: &std::path::Path, url: &str) {
+    write_manifest(
+        tmp,
+        &format!(
+            "[package]\nname = \"m38-app\"\nversion = \"0.3.0\"\n\n[dependencies.math]\ngit = \"{}\"\ntag = \"v1.0.0\"\n",
+            url
+        ),
+    );
+}
+
+#[test]
+fn package_pack_produces_artifact() {
+    // `sdkt package pack` without --out must write to the default `./dist`.
+    let (src, url) = make_pack_repo();
+    let tmp = std::env::temp_dir().join(format!(
+        "sdkt-it-m38-pack-{}-{}",
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos()
+    ));
+    let _ = std::fs::remove_dir_all(&tmp);
+    write_pack_manifest(&tmp, &url);
+
+    // Fetch first so a cache + lock exist (pack requires sdkt.lock).
+    Command::cargo_bin("sdkt")
+        .expect("sdkt binary built")
+        .current_dir(&tmp)
+        .arg("package")
+        .arg("fetch")
+        .assert()
+        .success();
+
+    let out = Command::cargo_bin("sdkt")
+        .expect("sdkt binary built")
+        .current_dir(&tmp)
+        .args(["package", "pack"])
+        .output()
+        .unwrap();
+    assert!(out.status.success(), "pack must succeed");
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(
+        stdout.contains("Packed m38-app v0.3.0"),
+        "pack prints summary: {}",
+        stdout
+    );
+    assert!(
+        stdout.contains("lock sha256"),
+        "pack prints lock hash: {}",
+        stdout
+    );
+
+    // Default output dir is ./dist; artifact is a .tar.zst.
+    let dist = tmp.join("dist");
+    assert!(dist.exists(), "default dist/ must exist");
+    let mut found = false;
+    for entry in std::fs::read_dir(&dist).unwrap() {
+        let p = entry.unwrap().path();
+        if p.to_string_lossy().ends_with(".tar.zst") {
+            found = true;
+        }
+    }
+    assert!(found, "dist/ must contain a .tar.zst artifact");
+
+    let _ = std::fs::remove_dir_all(&tmp);
+    let _ = std::fs::remove_dir_all(&src);
+}
+
+#[test]
+fn package_pack_with_out_dir() {
+    // `--out` must direct the artifact to a chosen directory.
+    let (src, url) = make_pack_repo();
+    let tmp = std::env::temp_dir().join(format!(
+        "sdkt-it-m38-packout-{}-{}",
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos()
+    ));
+    let _ = std::fs::remove_dir_all(&tmp);
+    write_pack_manifest(&tmp, &url);
+    Command::cargo_bin("sdkt")
+        .expect("sdkt binary built")
+        .current_dir(&tmp)
+        .arg("package")
+        .arg("fetch")
+        .assert()
+        .success();
+
+    let custom = tmp.join("artifacts");
+    let out = Command::cargo_bin("sdkt")
+        .expect("sdkt binary built")
+        .current_dir(&tmp)
+        .args(["package", "pack", "--out", custom.to_str().unwrap()])
+        .output()
+        .unwrap();
+    assert!(out.status.success(), "pack --out must succeed");
+    assert!(custom.exists(), "--out dir must be created");
+    let mut found = false;
+    for entry in std::fs::read_dir(&custom).unwrap() {
+        if entry
+            .unwrap()
+            .path()
+            .to_string_lossy()
+            .ends_with(".tar.zst")
+        {
+            found = true;
+        }
+    }
+    assert!(found, "--out must contain the artifact");
+
+    let _ = std::fs::remove_dir_all(&tmp);
+    let _ = std::fs::remove_dir_all(&src);
+}
+
+#[test]
+fn package_pack_format_handling() {
+    // `tar.zst` (default) and `dir` both work; an unknown format errors.
+    let (src, url) = make_pack_repo();
+    let tmp = std::env::temp_dir().join(format!(
+        "sdkt-it-m38-fmt-{}-{}",
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos()
+    ));
+    let _ = std::fs::remove_dir_all(&tmp);
+    write_pack_manifest(&tmp, &url);
+    Command::cargo_bin("sdkt")
+        .expect("sdkt binary built")
+        .current_dir(&tmp)
+        .arg("package")
+        .arg("fetch")
+        .assert()
+        .success();
+
+    // dir format → <out>/<name>-<version>/ directory exists.
+    let out = Command::cargo_bin("sdkt")
+        .expect("sdkt binary built")
+        .current_dir(&tmp)
+        .args(["package", "pack", "--out", "d1", "--format", "dir"])
+        .output()
+        .unwrap();
+    assert!(out.status.success(), "pack --format dir must succeed");
+    assert!(
+        tmp.join("d1").join("m38-app-0.3.0").exists(),
+        "dir artifact missing"
+    );
+    assert!(
+        tmp.join("d1")
+            .join("m38-app-0.3.0")
+            .join("package.json")
+            .exists(),
+        "descriptor missing in dir bundle"
+    );
+
+    // Unknown format → non-zero, clear error.
+    let bad = Command::cargo_bin("sdkt")
+        .expect("sdkt binary built")
+        .current_dir(&tmp)
+        .args(["package", "pack", "--out", "d2", "--format", "zip"])
+        .output()
+        .unwrap();
+    assert!(!bad.status.success(), "unknown format must fail");
+    let stderr = String::from_utf8_lossy(&bad.stderr);
+    assert!(
+        stderr.contains("unsupported --format"),
+        "error should name the bad format: {}",
+        stderr
+    );
+
+    let _ = std::fs::remove_dir_all(&tmp);
+    let _ = std::fs::remove_dir_all(&src);
+}
+
+#[test]
+fn package_pack_roundtrip_preserves_lock_and_integrity() {
+    // pack (tar.zst) → unpack → reconstructed tree reproduces lock + integrity.
+    let (src, url) = make_pack_repo();
+    let tmp = std::env::temp_dir().join(format!(
+        "sdkt-it-m38-rt-{}-{}",
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos()
+    ));
+    let _ = std::fs::remove_dir_all(&tmp);
+    write_pack_manifest(&tmp, &url);
+    Command::cargo_bin("sdkt")
+        .expect("sdkt binary built")
+        .current_dir(&tmp)
+        .arg("package")
+        .arg("fetch")
+        .assert()
+        .success();
+
+    let out_dir = tmp.join("dist");
+    Command::cargo_bin("sdkt")
+        .expect("sdkt binary built")
+        .current_dir(&tmp)
+        .args(["package", "pack", "--out", "dist"])
+        .assert()
+        .success();
+
+    // Locate the produced tarball.
+    let tarball = {
+        let mut tb = None;
+        for entry in std::fs::read_dir(&out_dir).unwrap() {
+            let p = entry.unwrap().path();
+            if p.to_string_lossy().ends_with(".tar.zst") {
+                tb = Some(p);
+            }
+        }
+        tb.expect("tarball produced")
+    };
+
+    // Reconstruct + verify using the public library API (no double-pack).
+    use sdkt_core::package::{unpack, verify_bundle_equivalence, PackageBundle};
+    let reconstruct = tmp.join("reconstruct");
+    unpack(&tarball, &reconstruct).expect("unpack ok");
+    let desc = std::fs::read_to_string(reconstruct.join("package.json")).unwrap();
+    let bundle: PackageBundle = serde_json::from_str(&desc).unwrap();
+    assert!(
+        verify_bundle_equivalence(&reconstruct, &bundle).unwrap(),
+        "round-trip must preserve lock + integrity"
+    );
+
+    let _ = std::fs::remove_dir_all(&tmp);
+    let _ = std::fs::remove_dir_all(&src);
+}
+
+#[test]
+fn package_publish_dry_run_reports_ready() {
+    // A consistent, fully cached project must pass `--dry-run` (exit 0).
+    let (src, url) = make_pack_repo();
+    let tmp = std::env::temp_dir().join(format!(
+        "sdkt-it-m38-ready-{}-{}",
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos()
+    ));
+    let _ = std::fs::remove_dir_all(&tmp);
+    write_pack_manifest(&tmp, &url);
+    Command::cargo_bin("sdkt")
+        .expect("sdkt binary built")
+        .current_dir(&tmp)
+        .arg("package")
+        .arg("fetch")
+        .assert()
+        .success();
+
+    let out = Command::cargo_bin("sdkt")
+        .expect("sdkt binary built")
+        .current_dir(&tmp)
+        .args(["package", "publish", "--dry-run"])
+        .output()
+        .unwrap();
+    assert!(
+        out.status.success(),
+        "publish --dry-run must exit 0 when ready"
+    );
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(
+        stdout.to_lowercase().contains("ready to publish"),
+        "should report ready: {}",
+        stdout
+    );
+    assert!(
+        stdout.contains("✓"),
+        "should list passing checks: {}",
+        stdout
+    );
+
+    let _ = std::fs::remove_dir_all(&tmp);
+    let _ = std::fs::remove_dir_all(&src);
+}
+
+#[test]
+fn package_publish_dry_run_failure_on_drift() {
+    // Removing the cached checkout must make `--dry-run` fail (exit non-zero).
+    let (src, url) = make_pack_repo();
+    let tmp = std::env::temp_dir().join(format!(
+        "sdkt-it-m38-drift-{}-{}",
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos()
+    ));
+    let _ = std::fs::remove_dir_all(&tmp);
+    write_pack_manifest(&tmp, &url);
+    Command::cargo_bin("sdkt")
+        .expect("sdkt binary built")
+        .current_dir(&tmp)
+        .arg("package")
+        .arg("fetch")
+        .assert()
+        .success();
+
+    // Delete the cached git checkout (simulate cache/lock drift).
+    let cache_root = tmp.join(".sdkt-cache").join("git");
+    assert!(cache_root.exists());
+    std::fs::remove_dir_all(&cache_root).unwrap();
+
+    let out = Command::cargo_bin("sdkt")
+        .expect("sdkt binary built")
+        .current_dir(&tmp)
+        .args(["package", "publish", "--dry-run"])
+        .output()
+        .unwrap();
+    assert!(
+        !out.status.success(),
+        "publish --dry-run must fail when dep cache is missing"
+    );
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    let combined = format!("{}{}", stdout, stderr);
+    assert!(
+        combined.to_lowercase().contains("not ready")
+            || combined.contains("✗")
+            || combined.to_lowercase().contains("cache"),
+        "should report unready / drift: {}",
+        combined
+    );
+
+    let _ = std::fs::remove_dir_all(&tmp);
+    let _ = std::fs::remove_dir_all(&src);
+}
+
+#[test]
+fn package_pack_and_publish_offline() {
+    // Both commands must run with zero network: the "remote" is a local path
+    // repo, and no git ls-remote to a real host is performed. This is the same
+    // offline guarantee as fetch/update (M35/M36/M37).
+    let (src, url) = make_pack_repo();
+    let tmp = std::env::temp_dir().join(format!(
+        "sdkt-it-m38-offline-{}-{}",
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos()
+    ));
+    let _ = std::fs::remove_dir_all(&tmp);
+    write_pack_manifest(&tmp, &url);
+
+    // fetch + pack + publish all offline.
+    Command::cargo_bin("sdkt")
+        .expect("sdkt binary built")
+        .current_dir(&tmp)
+        .arg("package")
+        .arg("fetch")
+        .assert()
+        .success();
+    Command::cargo_bin("sdkt")
+        .expect("sdkt binary built")
+        .current_dir(&tmp)
+        .args(["package", "pack"])
+        .assert()
+        .success();
+    let pub_out = Command::cargo_bin("sdkt")
+        .expect("sdkt binary built")
+        .current_dir(&tmp)
+        .args(["package", "publish", "--dry-run"])
+        .output()
+        .unwrap();
+    assert!(
+        pub_out.status.success(),
+        "offline publish --dry-run must pass"
+    );
+
+    let _ = std::fs::remove_dir_all(&tmp);
+    let _ = std::fs::remove_dir_all(&src);
+}

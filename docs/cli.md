@@ -93,9 +93,13 @@ sdkt
 │                             path graph (no network/registry; git/* sources rejected)
 │   ├── fetch                 Fetch deps into `.sdkt-cache` (M35.1): local path passthrough,
 │                             git clone/checkout. `--force` updates. Never builds.
-│   └── update                Synchronize deps (M36.0): refresh git deps to latest available
+│   ├── update                Synchronize deps (M36.0): refresh git deps to latest available
 │                             commit and rewrite `sdkt.lock`. `rev` pinned; `tag`/`branch`
 │                             update on drift. `--check` reports; `--dry-run` previews.
+│   ├── pack                  Bundle the resolved project into a portable offline artifact
+│                             (M38): manifest + lock + cached git checkouts. `--out`, `--format`.
+│   └── publish               Validate publish readiness (M38, `--dry-run` only, read-only);
+│                             detects missing cache, lock drift, integrity mismatch.
 
 ### Synchronizing dependencies (M36.0)
 
@@ -143,6 +147,41 @@ tag. `--check` reports `constraint unsatisfied` when no tag matches. An explicit
 (mirroring how `rev` / `path` deps bypass version resolution). The lock records the
 resolved `version` for audit. This reuses the existing fetch / cache / lock
 infrastructure; the only new logic is a single pure `VersionResolver`.
+
+### Offline packaging & publish readiness (M38)
+
+`sdkt package pack` bundles the **fully resolved** project into a portable,
+network-free artifact so it can be reconstructed and rebuilt on another machine
+without contacting any remote:
+
+- the manifest (`.sdkt.toml`),
+- the lockfile (`sdkt.lock`),
+- the cached git dependency checkouts under `.sdkt-cache/git/<cache_key>`.
+
+Each artifact carries a `package.json` descriptor (`PackageBundle`) recording the
+package `name`/`version`, the chosen `format`, the `sdkt.lock` sha256, and a
+per-dependency entry (`source`, `git_url`, `commit_sha`, `integrity`,
+`cache_key`, `version`) so the bundle can be verified offline.
+
+Flags:
+
+- `--out <DIR>` — output directory (default `./dist`).
+- `--format tar.zst|dir` — `tar.zst` writes a compressed tarball
+  `<out>/<name>-<version>.tar.zst`; `dir` writes a directory tree
+  `<out>/<name>-<version>/`. Any other value is rejected with a clear error.
+
+`sdkt package publish --dry-run` validates **publish readiness** using the
+existing manifest/lock/cache/integrity infrastructure. It detects missing cache,
+lock drift, integrity mismatch, commit mismatch, reference change, and invalid
+package state — all read-only, no network, nothing is published. `--broadcast` is
+explicitly opt-in and is rejected because M38 defines no registry source; the
+workflow remains fully offline.
+
+Round-trip: a bundle can be reconstructed (`sdkt_core::package::unpack`) and the
+reconstructed tree verified to reproduce the original `sdkt.lock` sha256 and
+per-git-dependency integrity exactly (`verify_bundle_equivalence`) — no hashing
+or git logic is duplicated; the same `compute_dependency_integrity` /
+`git_cache_key` primitives are reused.
 
 ├── project
 │   └── deploy                Deploy all contracts defined in the workspace (.sdkt.toml),

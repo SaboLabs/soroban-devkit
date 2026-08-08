@@ -130,6 +130,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   selection, update detection, up-to-date, and unsatisfied-constraint; new CLI
   integration tests cover fetch/update picking the highest satisfying tag and a
   clear error on an unsatisfiable constraint.
+- **Offline packaging & publish readiness (M38).** New `sdkt package pack`
+  bundles the fully resolved project (`.sdkt.toml` + `sdkt.lock` + cached git
+  checkouts under `.sdkt-cache/git/<key>`) into a portable offline artifact,
+  either a compressed tarball (`--format tar.zst`) or a directory tree
+  (`--format dir`), into `--out` (default `./dist`). Each artifact embeds a
+  `package.json` `PackageBundle` descriptor recording the package name/version,
+  chosen format, the `sdkt.lock` sha256, and per-dependency `source`/`git_url`/
+  `commit_sha`/`integrity`/`cache_key`/`version` so the bundle is verifiable
+  offline. New `sdkt package publish --dry-run` validates publish readiness
+  (read-only) reusing the existing `verify_dependencies` / manifest-validation /
+  cache / integrity primitives; it detects missing cache, lock drift, integrity
+  mismatch, commit mismatch, reference change, and invalid package state.
+  `--broadcast` is opt-in and rejected because M38 defines no registry source
+  (no network, nothing published). New `unpack` + `verify_bundle_equivalence`
+  prove a reconstructed tree reproduces the original lock sha256 and per-git
+  integrity exactly. Adds `tar` / `zstd` deps. New unit tests cover pack
+  round-trip (dir + tar.zst), unknown-format rejection, and publish readiness
+  (ready / missing-cache drift); new CLI integration tests cover `pack`,
+  `pack --out`, format handling, pack→unpack→lock/integrity equivalence,
+  `publish --dry-run` success, `publish --dry-run` failure on drift, and fully
+  offline operation. No version bump, no tag, no publish, no registry server.
 
 ### Planned
 - Post-2.0 mainnet-focused tooling, SCF grant alignment, and a plugin marketplace.
