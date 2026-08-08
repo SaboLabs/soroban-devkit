@@ -242,7 +242,29 @@ Pipe the output to a file your shell reads at startup (see the README
 "Shell completions" section for per-shell install paths). Tab-completion then
 covers commands, subcommands, and flag names.
 
-## Notes
+## Plugin management (M40)
+
+M40 introduces a **local, offline-first** plugin store. All operations are local;
+there is no hosted registry and no remote source. Plugins are referenced by a
+stable `id` declared in their `plugin.toml`.
+
+```bash
+sdkt plugin list                                   # list installed plugins
+sdkt plugin show <id>                              # show a plugin's metadata
+sdkt plugin install ./path/to/artifact.wasm        # install from a local file
+sdkt plugin remove <id>                            # remove (idempotent)
+sdkt plugin update <id> ./path/to/artifact.wasm    # local-only update
+sdkt audit contract.rs --rules <id>                # resolve id → stored artifact
+```
+
+`sdkt audit --rules <id>` resolves a plugin `id` to its stored artifact and runs
+the existing loader; passing a filesystem path keeps the pre-M40 behavior.
+Installing a `native` plugin prints a warning: native plugins run **unsandboxed**
+(unchanged M18 behavior). See `docs/plugin-authoring.md` for the `plugin.toml`
+schema and the install-validation rules.
+
+Store root precedence (lowest → highest): `<cwd>/.sdkt/plugins`,
+`<config-dir>/sdkt/plugins`, `$SDKT_PLUGIN_DIR`.
 
 - `--format json` is supported on all read-style commands and on `diff`, `audit`, `deploy`, `init` for scripting / CI.
 - `diff --upgrade-safety` and `deploy --deny-breaking` implement the Milestone 14 Upgrade Safety Guard (see `ROADMAP.md`).

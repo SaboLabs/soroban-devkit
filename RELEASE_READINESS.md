@@ -146,8 +146,11 @@ sdkt-core → sdkt-xdr → sdkt-wasm → sdkt-rpc → sdkt-storage → sdkt-audi
 - **Hosted package registry** — a remote index/server that the `DependencyFetcher`
   trait (M35.1) can target; explicitly deferred past M38 (see "Future Work" in
   `ROADMAP.md`).
-- **Third-party audit-rule marketplace** — tooling/conventions for sharing
-  community-authored rules (native + WASM) built on M17–M19.
+- **Remote plugin marketplace layer** — the hosted index/server, remote `https`
+  plugin sources, `sdkt plugin update` from a remote, plugin signing / checksum
+  verification, and a `.sdktplugin` bundle format. The *local* plugin ecosystem
+  (store + install/remove/list/update from local sources, identity-based
+  `--rules <id>`) shipped in M40; the remote layer remains unscheduled backlog.
 - **Broader Soroban ecosystem integration** — deeper compatibility and
   first-class support for the contracts developers actually deploy.
 
@@ -155,3 +158,9 @@ sdkt-core → sdkt-xdr → sdkt-wasm → sdkt-rpc → sdkt-storage → sdkt-audi
 > mainnet-safety guards on mutating RPC commands, SCF grant positioning
 > (`docs/scf.md`), and opt-in `--version` provenance behind the `provenance`
 > feature. These items are removed from the deferred list above.
+
+> Done in M40: local offline plugin store (`plugin.toml` metadata), `sdkt plugin
+> list/show/install/remove/update` (local-only), and identity-based
+> `sdkt audit --rules <id>` resolution. The existing `RuleRegistry`, native
+> loader, and WASM (Extism) sandbox are reused unchanged; no hosted registry was
+> introduced.

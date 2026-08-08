@@ -529,6 +529,11 @@ enum Commands {
         #[command(flatten)]
         net: NetworkArgs,
     },
+    /// Manage local audit plugins (install/remove/list/show/update) — M40
+    Plugin {
+        #[command(subcommand)]
+        action: PluginAction,
+    },
     /// Generate shell completion scripts for your shell
     Completions {
         /// Shell to generate completions for (bash, zsh, fish, powershell, elvish)
@@ -545,6 +550,33 @@ enum IdentityAction {
     Show { name: String },
     Delete { name: String },
     Default { name: String },
+}
+
+#[derive(Subcommand)]
+enum PluginAction {
+    /// List installed plugins
+    List,
+    /// Show metadata for an installed plugin
+    Show { id: String },
+    /// Install a plugin from a local artifact + sibling plugin.toml
+    Install {
+        /// Path to the local plugin artifact (.so/.dylib/.dll/.wasm)
+        source: String,
+        /// Override the plugin id from metadata (rarely needed)
+        #[arg(long)]
+        id: Option<String>,
+        /// Overwrite an existing install of the same id
+        #[arg(long)]
+        force: bool,
+    },
+    /// Remove an installed plugin by id (idempotent)
+    Remove { id: String },
+    /// Update an installed plugin from a new local artifact (local-only)
+    Update {
+        id: String,
+        /// Path to the new local plugin artifact
+        source: String,
+    },
 }
 
 #[derive(Subcommand)]
@@ -2425,11 +2457,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         } => {
             let fmt = parse_format_str(&format);
 
-            // Validate any --rules paths up front (Phase A: rule code must be
-            // compiled into the binary; this flag validates the provided paths
-            // and runs all registered rules, built-ins plus any linked plugins).
+            // Validate/resolve each --rules entry. A bare filesystem path keeps
+            // the M17/M18/M19 behavior unchanged. A plugin *id* (not an existing
+            // file) is resolved through the local store (M40) to its artifact
+            // path; if the store has it, we use that path for the existing loader.
             for r in &rules {
-                if !std::path::Path::new(r).exists() {
+                let resolved = sdkt_audit::plugin_store::resolve(r)
+                    .unwrap_or_else(|| std::path::PathBuf::from(r));
+                if !resolved.exists() {
                     eprintln!("Error: rule path '{}' does not exist", r);
                     process::exit(1);
                 }
@@ -2439,7 +2474,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 .map_err(|e| format!("Failed to read source '{}': {}", path, e))?;
 
             for r in &rules {
-                let path_r = std::path::Path::new(r);
+                // Re-resolve: a plugin id maps to its stored artifact path; a raw
+                // path is used verbatim. This preserves the M17–M19 loader flow.
+                let resolved = sdkt_audit::plugin_store::resolve(r)
+                    .unwrap_or_else(|| std::path::PathBuf::from(r));
+                let path_r = resolved.as_path();
 
                 // Directories pass through as M17 no-ops (validated for existence above).
                 if path_r.is_dir() {
@@ -3553,6 +3592,77 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     Err(e) => {
                         eprintln!("Error resolving project: {}", e);
                         std::process::exit(1);
+                    }
+                }
+            }
+        },
+        Commands::Plugin { action } => match action {
+            PluginAction::List => {
+                let plugins = sdkt_audit::plugin_store::list();
+                if plugins.is_empty() {
+                    println!("No plugins installed.");
+                } else {
+                    for p in plugins {
+                        println!("{}  v{}  ({})  {}", p.id, p.version, p.kind, p.description);
+                    }
+                }
+            }
+            PluginAction::Show { id } => match sdkt_audit::plugin_store::show(&id) {
+                Some(p) => {
+                    println!("id: {}", p.id);
+                    println!("name: {}", p.name);
+                    println!("version: {}", p.version);
+                    println!("author: {}", p.author);
+                    println!("kind: {}", p.kind);
+                    println!("artifact: {}", p.artifact);
+                    println!("abi: {}.{}", p.abi_major, p.abi_minor);
+                    println!("description: {}", p.description);
+                }
+                None => {
+                    eprintln!("Error: plugin '{}' is not installed", id);
+                    process::exit(1);
+                }
+            },
+            PluginAction::Install { source, id, force } => {
+                let opts = sdkt_audit::plugin_store::InstallOpts { id, force };
+                match sdkt_audit::plugin_store::install(std::path::Path::new(&source), &opts) {
+                    Ok(meta) => {
+                        if meta.kind == "native" {
+                            eprintln!(
+                                    "Warning: native plugins run UNSANDBOXED. Only install from trusted sources."
+                                );
+                        }
+                        println!(
+                            "Installed plugin '{}' ({} v{})",
+                            meta.id, meta.kind, meta.version
+                        );
+                    }
+                    Err(e) => {
+                        eprintln!("Error installing plugin: {}", e);
+                        process::exit(1);
+                    }
+                }
+            }
+            PluginAction::Remove { id } => {
+                if let Err(e) = sdkt_audit::plugin_store::remove(&id) {
+                    eprintln!("Error removing plugin: {}", e);
+                    process::exit(1);
+                }
+                println!("Removed plugin '{}' (if it was installed).", id);
+            }
+            PluginAction::Update { id, source } => {
+                match sdkt_audit::plugin_store::update(&id, std::path::Path::new(&source)) {
+                    Ok(meta) => {
+                        if meta.kind == "native" {
+                            eprintln!(
+                                    "Warning: native plugins run UNSANDBOXED. Only install from trusted sources."
+                                );
+                        }
+                        println!("Updated plugin '{}' to v{}", meta.id, meta.version);
+                    }
+                    Err(e) => {
+                        eprintln!("Error updating plugin: {}", e);
+                        process::exit(1);
                     }
                 }
             }
