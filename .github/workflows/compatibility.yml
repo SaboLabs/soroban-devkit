@@ -108,7 +108,7 @@ jobs:
 
           # 1) Fixture is always validated (no network needed): it must parse as
           #    the enriched ContractInspection schema with a non-empty ABI.
-          python3 - <<'PY'
+          python3 - <<PY
           import json, sys
           with open("$FIXTURE") as f:
               d = json.load(f)
