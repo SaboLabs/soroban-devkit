@@ -123,9 +123,34 @@ pub fn encode_ledger_key(params: &LedgerKeyParams) -> Result<String, DecodeError
 
 /// Extracts the WASM hash from a Base64 encoded `LedgerEntry`.
 /// Traverses: LedgerEntry -> LedgerEntryData::ContractData -> ScVal::ContractInstance -> ContractExecutable::Wasm -> Hash
+///
+/// Compatibility bridge: some live Stellar/Soroban RPC endpoints (e.g. the current
+/// testnet) serialize `LedgerEntry` with the `data` union FIRST, whereas stellar-xdr
+/// 28.0.0 decodes `lastModifiedLedgerSeq` first. When the standard decode fails we
+/// fall back to [`extract_wasm_hash_from_live_ledger_entry`], which reads the
+/// `LedgerEntryData` union first and ignores the trailing ledger-seq/ext fields. This
+/// is intentionally scoped to ContractData/Wasm extraction only — it does NOT replace
+/// stellar-xdr's generic `LedgerEntry` decoder used elsewhere.
 pub fn extract_wasm_hash(base64_ledger_entry: &str) -> Result<String, DecodeError> {
     let raw = detect_and_decode(base64_ledger_entry)?;
-    let mut cursor = std::io::Cursor::new(&raw);
+
+    // Fast path: standard stellar-xdr 28.0.0 layout.
+    match extract_wasm_hash_standard(&raw) {
+        Ok(hash) => Ok(hash),
+        // Compatibility bridge: live data-first `LedgerEntry` wire layout.
+        // On failure, keep the original (standard) error so callers still see the
+        // expected `Extraction`/`XdrParse` classification for non-Wasm/non-contract
+        // entries.
+        Err(e) => match e {
+            DecodeError::XdrParse(..) => extract_wasm_hash_from_live_ledger_entry(&raw),
+            _ => Err(e),
+        },
+    }
+}
+
+/// Standard (stellar-xdr 28.0.0) `LedgerEntry` decode: lastModifiedLedgerSeq first.
+fn extract_wasm_hash_standard(raw: &[u8]) -> Result<String, DecodeError> {
+    let mut cursor = std::io::Cursor::new(raw);
     let mut l = Limited::new(&mut cursor, Limits::none());
     let entry = LedgerEntry::read_xdr(&mut l)
         .map_err(|e| DecodeError::XdrParse("LedgerEntry".to_string(), e))?;
@@ -134,7 +159,29 @@ pub fn extract_wasm_hash(base64_ledger_entry: &str) -> Result<String, DecodeErro
         LedgerEntryData::ContractData(d) => d,
         _ => return Err(DecodeError::Extraction("Not a ContractData entry".into())),
     };
+    extract_hash_from_contract_data(data)
+}
 
+/// Live-wire compatibility decoder: reads the `LedgerEntryData` union FIRST (the order
+/// the live testnet RPC uses), then ignores any trailing `lastModifiedLedgerSeq`/ext
+/// bytes. Scope is strictly ContractData/Wasm hash extraction.
+pub fn extract_wasm_hash_from_live_ledger_entry(raw: &[u8]) -> Result<String, DecodeError> {
+    let mut cursor = std::io::Cursor::new(raw);
+    let mut l = Limited::new(&mut cursor, Limits::none());
+    let data = LedgerEntryData::read_xdr(&mut l)
+        .map_err(|e| DecodeError::XdrParse("LedgerEntryData(live)".to_string(), e))?;
+
+    let cd = match data {
+        LedgerEntryData::ContractData(d) => d,
+        _ => return Err(DecodeError::Extraction("Not a ContractData entry".into())),
+    };
+    extract_hash_from_contract_data(cd)
+}
+
+/// Shared tail of both decoders: ContractData -> ContractInstance -> Wasm hash.
+fn extract_hash_from_contract_data(
+    data: stellar_xdr::ContractDataEntry,
+) -> Result<String, DecodeError> {
     let instance = match data.val {
         ScVal::ContractInstance(i) => i,
         _ => return Err(DecodeError::Extraction("Not a ContractInstance".into())),
@@ -149,19 +196,46 @@ pub fn extract_wasm_hash(base64_ledger_entry: &str) -> Result<String, DecodeErro
 }
 
 /// Extracts the raw WASM bytecode from a Base64 encoded `LedgerEntry` containing a `ContractCode` entry.
+///
+/// Same compatibility bridge as [`extract_wasm_hash`]: tries the standard
+/// stellar-xdr 28.0.0 layout first, then falls back to the live data-first wire layout.
 pub fn extract_wasm_bytecode(base64_ledger_entry: &str) -> Result<Vec<u8>, DecodeError> {
     let raw = detect_and_decode(base64_ledger_entry)?;
-    let mut cursor = std::io::Cursor::new(&raw);
+
+    match extract_wasm_bytecode_standard(&raw) {
+        Ok(code) => Ok(code),
+        Err(e) => match e {
+            DecodeError::XdrParse(..) => extract_wasm_bytecode_from_live_ledger_entry(&raw),
+            _ => Err(e),
+        },
+    }
+}
+
+fn extract_wasm_bytecode_standard(raw: &[u8]) -> Result<Vec<u8>, DecodeError> {
+    let mut cursor = std::io::Cursor::new(raw);
     let mut l = Limited::new(&mut cursor, Limits::none());
     let entry = LedgerEntry::read_xdr(&mut l)
         .map_err(|e| DecodeError::XdrParse("LedgerEntry".to_string(), e))?;
 
-    let data = match entry.data {
+    let code = match entry.data {
         LedgerEntryData::ContractCode(c) => c,
         _ => return Err(DecodeError::Extraction("Not a ContractCode entry".into())),
     };
+    Ok(code.code.to_vec())
+}
 
-    Ok(data.code.to_vec())
+/// Live-wire compatibility decoder for `ContractCode` entries (data-first layout).
+pub fn extract_wasm_bytecode_from_live_ledger_entry(raw: &[u8]) -> Result<Vec<u8>, DecodeError> {
+    let mut cursor = std::io::Cursor::new(raw);
+    let mut l = Limited::new(&mut cursor, Limits::none());
+    let data = LedgerEntryData::read_xdr(&mut l)
+        .map_err(|e| DecodeError::XdrParse("LedgerEntryData(live)".to_string(), e))?;
+
+    let code = match data {
+        LedgerEntryData::ContractCode(c) => c,
+        _ => return Err(DecodeError::Extraction("Not a ContractCode entry".into())),
+    };
+    Ok(code.code.to_vec())
 }
 
 /// Decode a base64- or hex-encoded XDR payload to JSON.
@@ -441,6 +515,66 @@ mod tests {
     fn test_extract_wasm_hash_malformed_base64() {
         let err = extract_wasm_hash("invalid base64!!!").unwrap_err();
         assert!(matches!(err, DecodeError::Hex(_))); // detect_and_decode falls back to Hex and fails there
+    }
+
+    // Captured real `LedgerEntry` XDR from the live Stellar/Soroban testnet.
+    //
+    // CAE3U7JKESRWZHPEQ72DVNGOQ6WPA7HSPQZL5YV46NPCE4TMUPAGYMEC — a deployed Wasm
+    // (Soroban) contract. Its `LedgerEntry` uses the LIVE wire layout where
+    // `LedgerEntryData` is serialized FIRST (data union discriminant 6 =
+    // CONTRACT_DATA), unlike stellar-xdr 28.0.0's lastModifiedLedgerSeq-first
+    // `LedgerEntry`. The `val` is a `ContractInstance` whose `executable` is
+    // `ContractExecutable::Wasm`, so the compatibility bridge must extract the Wasm
+    // hash `60cddae6...`. Used to prove `extract_wasm_hash_from_live_ledger_entry`
+    // works without network access.
+    const LIVE_WASM_LEDGER_ENTRY_B64: &str = "AAAABgAAAAAAAAABCbp9KiSjbJ3kh/Q6tM6HrPB88nwyvuK8814icmyjwGwAAAAUAAAAAQAAABMAAAAAYM3a5n8gLBnuewAMiU/RKqi0TeCatlL14Yi8DGOmzwIAAAABAAAABwAAABAAAAABAAAAAQAAAA8AAAAFQWRtaW4AAAAAAAASAAAAAAAAAACUijpq22w97c0/5wJEUlkFddoMBv/zyTHhNMr9T4FBBQAAABAAAAABAAAAAQAAAA8AAAAGQ29uZmlnAAAAAAARAAAAAQAAAAsAAAAPAAAAFWJhc2VfZnVuZGluZ19yYXRlX2JwcwAAAAAAAAMAAAABAAAADwAAABJiYXNlX21ha2VyX2ZlZV9icHMAAAAAAAMAAAACAAAADwAAABJiYXNlX3Rha2VyX2ZlZV9icHMAAAAAAAMAAAAFAAAADwAAABNsaXF1aWRhdGlvbl9mZWVfYnBzAAAAAAMAAAH0AAAADwAAABZtYWludGVuYW5jZV9tYXJnaW5fYnBzAAAAAAADAAAAZAAAAA8AAAAMbWF4X2xldmVyYWdlAAAAAwAAAAoAAAAPAAAAGG1heF9vcmFjbGVfZGV2aWF0aW9uX2JwcwAAAAMAAABkAAAADwAAABFtYXhfcG9zaXRpb25fc2l6ZQAAAAAAAAoAAAAAAAAAAAAAAOjUpRAAAAAADwAAABNtYXhfcHJpY2Vfc3RhbGVuZXNzAAAAAAUAAAAAAAAAPAAAAA8AAAAObWluX2NvbGxhdGVyYWwAAAAAAAoAAAAAAAAAAAAAAAAF9eEAAAAADwAAAA90cmFkaW5nX2ZlZV9icHMAAAAAAwAAAAoAAAAQAAAAAQAAAAEAAAAPAAAAC0luaXRpYWxpemVkAAAAAAAAAAABAAAAEAAAAAEAAAABAAAADwAAAA1PcmFjbGVBZGFwdGVyAAAAAAAAEgAAAAFxzC34I3pmV4llcmFKnN7k7qZkMKXvGRPZMuobQm6naQAAABAAAAABAAAAAQAAAA8AAAAGUGF1c2VkAAAAAAAAAAAAAQAAABAAAAABAAAAAQAAAA8AAAAJVXNkY1Rva2VuAAAAAAAAEgAAAAE9sj2cIS9K0A0viwokid/jaOEXECNi3xRj3/ivNitXOgAAABAAAAABAAAAAQAAAA8AAAAFVmF1bHQAAAAAAAASAAAAAVdc5734Fh3zRgwQwWibRi6egIv95VY++/CqtURwMM+t";
+
+    // Captured real `LedgerEntry` XDR for a Stellar Asset Contract (SAC) on testnet
+    // (CDLZFC3SYJYDZT7K67VZ75HPJVIEUVNIXF47ZG2FB2RMQQVU2HHGCYSC). It uses the same
+    // live data-first wire layout, but its `executable` is `ContractExecutable::
+    // StellarAsset`, NOT `Wasm`. Proves the bridge correctly identifies a non-Wasm
+    // contract and returns a controlled `Extraction` error (not an XDR panic).
+    const LIVE_SAC_LEDGER_ENTRY_B64: &str = "AAAABgAAAAAAAAAB15KLcsJwPM/q9+uf9O9NUEpVqLl5/JtFDqLIQrTRzmEAAAAUAAAAAQAAABMAAAABAAAAAQAAAAIAAAAPAAAACE1FVEFEQVRBAAAAEQAAAAEAAAADAAAADwAAAAdkZWNpbWFsAAAAAAMAAAAHAAAADwAAAARuYW1lAAAADgAAAAZuYXRpdmUAAAAAAA8AAAAGc3ltYm9sAAAAAAAOAAAABm5hdGl2ZQAAAAAAEAAAAAEAAAABAAAADwAAAAlBc3NldEluZm8AAAAAAAAQAAAAAQAAAAEAAAAPAAAABk5hdGl2ZQAA";
+
+    #[test]
+    fn test_extract_wasm_hash_live_wasm_wire_layout() {
+        // The live entry must NOT decode via the standard (lastModifiedLedgerSeq-first)
+        // path, proving the captured wire layout genuinely differs.
+        let raw = detect_and_decode(LIVE_WASM_LEDGER_ENTRY_B64).unwrap();
+        assert!(extract_wasm_hash_standard(&raw).is_err());
+
+        // The compatibility bridge decodes it and extracts the correct Wasm hash.
+        let hash = extract_wasm_hash_from_live_ledger_entry(&raw).unwrap();
+        assert_eq!(
+            hash,
+            "60cddae67f202c19ee7b000c894fd12aa8b44de09ab652f5e188bc0c63a6cf02"
+        );
+
+        // And the public entry point falls back to the bridge automatically.
+        let via_public = extract_wasm_hash(LIVE_WASM_LEDGER_ENTRY_B64).unwrap();
+        assert_eq!(via_public, hash);
+    }
+
+    #[test]
+    fn test_extract_wasm_hash_live_sac_is_controlled_error() {
+        // A live SAC (StellarAsset executable) decodes structurally but yields a
+        // controlled `Extraction` error — never an XDR panic or a wrong hash.
+        let raw = detect_and_decode(LIVE_SAC_LEDGER_ENTRY_B64).unwrap();
+        let err = extract_wasm_hash_from_live_ledger_entry(&raw).unwrap_err();
+        assert!(matches!(err, DecodeError::Extraction(e) if e.contains("Not a Wasm")));
+
+        // The public entry point returns the same controlled error.
+        let err = extract_wasm_hash(LIVE_SAC_LEDGER_ENTRY_B64).unwrap_err();
+        assert!(matches!(err, DecodeError::Extraction(e) if e.contains("Not a Wasm")));
+    }
+
+    #[test]
+    fn test_extract_wasm_hash_live_wire_truncated_fails_controlled() {
+        // Drop the last 4 base64 chars -> partial trailing bytes -> controlled XdrParse,
+        // never a panic.
+        let truncated = &LIVE_WASM_LEDGER_ENTRY_B64[..LIVE_WASM_LEDGER_ENTRY_B64.len() - 4];
+        let err = extract_wasm_hash(truncated).unwrap_err();
+        assert!(matches!(err, DecodeError::XdrParse(_, _)));
     }
 
     #[test]

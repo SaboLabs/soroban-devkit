@@ -16,7 +16,7 @@ and deploy — into a single MIT-licensed binary and reusable crate set.
 - **Repository:** https://github.com/naninu123/soroban-devkit
 - **License:** MIT
 - **Language / edition:** Rust 2021, MSRV pinned to `1.88.0`
-- **Current version:** `2.4.0`
+- **Current version:** `2.5.0`
 - **Crates:** 8 (`sdkt-cli` + 7 supporting crates)
 - **CI:** GitHub Actions (fmt, clippy `-D warnings`, test on Ubuntu/macOS/Windows,
   MSRV gate, install-script validation, real-world `stellar/soroban-examples`
@@ -33,9 +33,13 @@ and deploy — into a single MIT-licensed binary and reusable crate set.
    bit-for-bit deterministically (no git/date embedded unless the opt-in
    `provenance` feature is enabled at release time). This aligns with the
    supply-chain and reproducibility expectations grant reviewers favor.
-3. **MIT-licensed and extensible.** A plugin architecture (`M17`–`M19`) lets the
-   community author and share additional static-analysis rules (native and
-   sandboxed WASM), lowering the barrier to ecosystem contribution.
+3. **MIT-licensed and extensible.** A plugin system across **M17–M19** provides the
+   architecture and loaders (native `.so`/`.dylib`/`.dll` via `libloading`, and
+   sandboxed `.wasm` via `extism`), letting the community author and share additional
+   static-analysis rules. **M40** adds a local plugin store and management
+   (`sdkt plugin list/show/install/remove/update`, all local-only; identity-based
+   `--rules <id>` resolution). A hosted/remote plugin registry is **not** part of M40
+   and remains an explicitly deferred backlog item.
 4. **Security-minded by default.** Mutating commands (submit, deploy) ship with
    a conservative mainnet-safety guard (M39) that refuses to sign for mainnet
    unless the operator explicitly selects the network, protecting against the
@@ -74,8 +78,18 @@ and deploy — into a single MIT-licensed binary and reusable crate set.
 
 ## Current maturity
 
-- 30+ milestones merged to `main` (storage/inspect foundation through the
-  package-manager line up to M38).
+- 40+ milestones merged to `main` (storage/inspect foundation through M44 — the
+  on-chain ABI for storage decode). Recent milestones specifically deepen Soroban
+  integration:
+  - **M40** — local plugin store & management (no hosted registry).
+  - **M41** — on-chain contract interface & instance inspection (`sdkt wasm
+    metadata --contract <id>`).
+  - **M42** — on-chain-vs-local upgrade-safety verification (`sdkt verify
+    --contract <id> --wasm <candidate> --upgrade-safety`).
+  - **M43** — live-contract ABI for events decode (`sdkt events <id>
+    --abi-contract <id>`).
+  - **M44** — on-chain ABI for storage decode (`sdkt storage analyze <id>
+    --abi-contract <id>`).
 - All four mandatory quality gates (fmt, clippy `-D warnings`, workspace test
   suite, MSRV) are enforced on every pull request.
 - The CLI command surface is stable; no command has been removed or renamed in
@@ -84,14 +98,16 @@ and deploy — into a single MIT-licensed binary and reusable crate set.
 ## Roadmap alignment (honest)
 
 What is **shipped**: the full decode/inspect/analyze/build/simulate/submit/audit/deploy
-lifecycle, static analysis with a plugin system, network profiles, and an
-offline package/lock workflow.
+lifecycle, static analysis with a plugin system (M17–M19 architecture + M40 local
+store), on-chain contract inspection (M41), on-chain-vs-local upgrade-safety
+verification (M42), live-contract ABI for events decode (M43), and on-chain ABI for
+storage decode (M44). Network profiles and an offline package/lock workflow are also
+shipped.
 
-What is **scheduled but not yet started**: M39 (this milestone — release polish
-and SCF readiness) is in progress. Future backlog items explicitly **not yet
-implemented** include a hosted package registry, a third-party audit-rule
-marketplace, and deeper first-class support for the broader Soroban contract
-ecosystem. None of those are claimed as done here.
+What is **explicitly not yet implemented** (deferred backlog, not claimed as done):
+a hosted package registry / remote plugin marketplace, deeper first-class support for
+the broader Soroban contract ecosystem, and deployed-vs-deployed upgrade safety. None
+of those are claimed as done here.
 
 ## What a grant would accelerate
 

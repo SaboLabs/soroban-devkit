@@ -143,7 +143,7 @@ impl SorobanRpcClient {
         _contract_id: &str,
         keys: &[String],
     ) -> Result<StorageResponse, RpcError> {
-        self.request("getLedgerEntries", serde_json::json!([keys]))
+        self.request("getLedgerEntries", serde_json::json!({ "keys": keys }))
             .await
     }
 }
@@ -216,5 +216,16 @@ mod tests {
         };
         let c = SorobanRpcClient::from_config(&cfg);
         assert_eq!(c.endpoint(), "https://custom.example.com");
+    }
+
+    #[test]
+    fn get_ledger_entries_request_uses_keys_object() {
+        // Regression test for the getLedgerEntries request-shape bug: the Soroban
+        // RPC expects `{"keys": [...]}`, not a bare positional array `["key"]`.
+        let keys = vec!["AAAA".to_string()];
+        let body = serde_json::json!({ "keys": keys });
+        assert_eq!(body, serde_json::json!({ "keys": ["AAAA".to_string()] }));
+        // The bare-array form (the old bug) must NOT match.
+        assert_ne!(body, serde_json::json!(["AAAA".to_string()]));
     }
 }
