@@ -4,6 +4,10 @@
 [![Release](https://img.shields.io/github/v/release/naninu123/soroban-devkit?label=release)](https://github.com/naninu123/soroban-devkit/releases)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
+> **Website:** a static landing page lives in [`website/`](website/) — open
+> `website/index.html` directly or serve the folder (`python3 -m http.server`
+> from `website/`) to preview it.
+
 `sdkt` is a unified, offline-capable toolkit for Stellar / Soroban development. It consolidates the fragmented developer lifecycle—contract inspection, XDR decoding, storage TTL analysis, static security analysis, WASM diffing, and multi-contract deployment orchestration—into a single, production-grade CLI.
 
 ## The Problem

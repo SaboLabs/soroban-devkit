@@ -1,0 +1,456 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Soroban DevKit — The CLI Toolkit for Stellar Soroban Developers</title>
+<meta name="description" content="Soroban DevKit (sdkt) is an open-source, Rust-powered CLI toolkit for Stellar Soroban developers. Inspect, analyze, test, build, and deploy contracts from one CLI.">
+<meta name="theme-color" content="#05060a">
+<meta property="og:title" content="Soroban DevKit — Build. Analyze. Deploy. All in One CLI.">
+<meta property="og:description" content="The CLI Toolkit for Stellar Soroban Developers. Open-source, Rust-powered, unified CLI for the Soroban developer lifecycle.">
+<meta property="og:type" content="website">
+<meta property="og:url" content="https://github.com/naninu123/soroban-devkit">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='8' fill='%23a06bff'/%3E%3Ctext x='16' y='22' font-size='16' text-anchor='middle' font-family='monospace' font-weight='bold' fill='%2305060a'%3Esd%3C/text%3E%3C/svg%3E">
+<link rel="stylesheet" href="base.css">
+<link rel="stylesheet" href="sections.css">
+<link rel="stylesheet" href="layout.css">
+</head>
+<body>
+<a class="skip" href="#main">Skip to content</a>
+
+<header class="nav">
+  <div class="wrap nav-in">
+    <a class="brand" href="#top" aria-label="Soroban DevKit home">
+      <span class="mark" aria-hidden="true">sd</span>
+      <span>Soroban DevKit</span>
+    </a>
+    <nav class="nav-links" aria-label="Primary">
+      <a href="#features" class="hide-sm">Features</a>
+      <a href="#workflow" class="hide-sm">Workflow</a>
+      <a href="#why" class="hide-sm">Why sdkt</a>
+      <a href="#install">Install</a>
+      <a href="#community">Community</a>
+      <a class="nav-ver" href="https://github.com/naninu123/soroban-devkit/releases" rel="noopener">v2.5.0</a>
+    </nav>
+  </div>
+</header>
+
+<main id="main">
+<!-- ================= HERO ================= -->
+<section class="hero" id="top">
+  <div class="wrap hero-grid">
+    <div>
+      <p class="ver-chip">Soroban DevKit v2.5.0</p>
+      <h1>Soroban DevKit</h1>
+      <p class="eyebrow" style="margin-bottom:0.6rem;color:#c3a4ff">The CLI Toolkit for Stellar Soroban Developers</p>
+      <p class="sub"><strong>Build. Analyze. Deploy. All in One CLI.</strong><br>
+        An open-source, Rust-powered CLI toolkit designed to make Stellar Soroban
+        development workflows easier to inspect, analyze, test, and deploy.</p>
+      <div class="btns">
+        <a class="btn btn-primary" href="#install">Get Started</a>
+        <a class="btn btn-ghost" href="https://github.com/naninu123/soroban-devkit" rel="noopener">GitHub</a>
+      </div>
+      <p class="note" style="margin-top:1.6rem;color:var(--muted)">
+            MIT licensed · Rust 1.88+ · 8-crate workspace · most commands run fully offline
+          </p>
+    </div>
+
+    <div class="term-wrap">
+      <div class="term-glow" aria-hidden="true"></div>
+      <div class="term" role="img" aria-label="Terminal session showing sdkt version, help output, and an offline WASM inspection">
+        <div class="term-bar">
+          <span class="dot dot-r"></span><span class="dot dot-y"></span><span class="dot dot-g"></span>
+          <span class="term-title">sdkt — soroban devkit</span>
+        </div>
+        <div class="term-body">
+<div class="t-cmd">sdkt --version</div>
+<div class="t-out">sdkt <span class="t-v">2.5.0</span></div>
+<div class="t-out">&nbsp;</div>
+<div class="t-cmd">sdkt wasm inspect contract.wasm</div>
+<div class="t-out">WASM Inspection Report: contract.wasm
+========================================
+Size: 198 bytes
+SHA-256 Hash: 05befa136e7f0829a5051d97b032f355a…
+Version: 1
+
+Custom Sections (1):
+  - contractspecv0
+
+<span class="t-k">Contract Spec Available: Yes</span>
+  Functions: 2
+    - fn transfer(1) -&gt; 0
+    - fn mint(1) -&gt; 0
+  Custom Types: 1
+  Events: 1</div>
+<div class="t-out">&nbsp;</div>
+<div class="t-cmd">sdkt diff --old-wasm old.wasm --new-wasm new.wasm --upgrade-safety</div>
+<div class="t-out">Upgrade Safety
+==============
+
+Compatible: <span class="t-bad">NO</span>
+
+<span class="t-bad">Breaking:</span>
+  - Changed signature: mint()
+  - Removed event: Transfer
+
+<span class="t-v">Non-breaking:</span>
+  - Added function: balance()
+  - Added event: Mint<span class="blink">▋</span></div>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+<!-- ================= FEATURES ================= -->
+<section id="features">
+  <div class="wrap">
+    <p class="eyebrow">Features</p>
+    <h2 class="h2">Everything a Soroban dev needs, in one CLI</h2>
+    <p class="lead">sdkt consolidates the fragmented developer lifecycle — contract
+      inspection, XDR decoding, storage TTL analysis, static security analysis,
+      WASM diffing, and multi-contract deployment orchestration — into a single,
+      production-grade CLI.</p>
+    <div class="feature-grid">
+      <div class="card">
+        <h3><svg class="card-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="M20 20l-4.5-4.5"/></svg> Contract Inspection</h3>
+        <p>Read a contract's ABI, functions, events, and metadata from any compiled
+          WASM, fully offline. <code>sdkt wasm inspect</code></p>
+      </div>
+      <div class="card">
+        <h3><svg class="card-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M8 6l-5 6 5 6"/><path d="M16 6l5 6-5 6"/></svg> XDR Decoding</h3>
+        <p>Decode base64 XDR to JSON for <code>ScVal</code>, transaction envelopes,
+          and contract events. <code>sdkt decode</code></p>
+      </div>
+      <div class="card">
+        <h3><svg class="card-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><ellipse cx="12" cy="6" rx="8" ry="3"/><path d="M4 6v12c0 1.7 3.6 3 8 3s8-1.3 8-3V6"/><path d="M4 12c0 1.7 3.6 3 8 3s8-1.3 8-3"/></svg> Storage TTL &amp; Rent Analysis</h3>
+        <p>Check storage TTL / rent visibility and classify Instance, Persistent,
+          and Temporary entries. <code>sdkt storage analyze</code></p>
+      </div>
+      <div class="card">
+        <h3><svg class="card-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3l8 3v6c0 5-3.4 8-8 9-4.6-1-8-4-8-9V6z"/><path d="M9 12l2.2 2.2L15.5 10"/></svg> Static Security Audit</h3>
+        <p>Static analysis of contract source against AUTH-001/002/003 and
+          MOVE-001 rules — no network, no secrets. <code>sdkt audit</code></p>
+      </div>
+      <div class="card">
+        <h3><svg class="card-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 8h11a4 4 0 010 8H9"/><path d="M12 5l3 3-3 3"/><path d="M12 13l-3 3 3 3"/></svg> Upgrade Safety Diff</h3>
+        <p>Diff two WASM files offline and get a breaking-change verdict before
+          deploying. <code>sdkt diff --upgrade-safety</code></p>
+      </div>
+      <div class="card">
+        <h3><svg class="card-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 7h13l-3-3"/><path d="M20 17H7l3 3"/></svg> Transaction Workflow</h3>
+        <p>Build, validate, simulate, sign, and submit Soroban transactions — with
+          fully offline ED25519 signing. <code>sdkt tx sign</code></p>
+      </div>
+      <div class="card">
+        <h3><svg class="card-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 2l9 5-9 5-9-5z"/><path d="M3 12l9 5 9-5"/><path d="M3 17l9 5 9-5"/></svg> Build &amp; Deploy</h3>
+        <p>Compile workspace contracts into optimized WASMs and deploy with a
+          <code>--deny-breaking</code> upgrade guard. <code>sdkt deploy</code></p>
+      </div>
+      <div class="card">
+        <h3><svg class="card-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 12h4l2-5 3 10 2.5-5H21"/></svg> Contract Health Reports</h3>
+        <p>Unified read-only posture report covering WASM, storage, TTL, and a
+          health verdict. <code>sdkt health</code></p>
+      </div>
+      <div class="card">
+        <h3><svg class="card-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="3" width="7" height="7" rx="1.5"/><rect x="8.5" y="14" width="7" height="7" rx="1.5"/><path d="M6.5 10v2h11v-2"/><path d="M12 12v2"/></svg> Multi-Contract Projects</h3>
+        <p>Workspace orchestration with topological deploy ordering, lock files,
+          and reproducible dependency fetches. <code>sdkt project deploy</code></p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ================= WORKFLOW ================= -->
+<section id="workflow">
+  <div class="wrap">
+    <p class="eyebrow">Developer Workflow</p>
+    <h2 class="h2">From contract to chain, one flow</h2>
+    <p class="lead">Every stage maps to real sdkt commands — most of them running
+      offline, only on-chain reads need an RPC endpoint.</p>
+    <div class="flow">
+      <div class="flow-step">
+        <div class="flow-n">01 · INSPECT</div>
+        <div class="flow-t">Inspect</div>
+        <div class="flow-c">sdkt inspect<br>sdkt wasm inspect</div>
+      </div>
+      <div class="flow-step">
+        <div class="flow-n">02 · ANALYZE</div>
+        <div class="flow-t">Analyze</div>
+        <div class="flow-c">sdkt storage analyze<br>sdkt events</div>
+      </div>
+      <div class="flow-step">
+        <div class="flow-n">03 · VALIDATE</div>
+        <div class="flow-t">Validate</div>
+        <div class="flow-c">sdkt audit<br>sdkt diff --upgrade-safety</div>
+      </div>
+      <div class="flow-step">
+        <div class="flow-n">04 · BUILD</div>
+        <div class="flow-t">Build</div>
+        <div class="flow-c">sdkt build<br>sdkt lock generate</div>
+      </div>
+      <div class="flow-step">
+        <div class="flow-n">05 · DEPLOY</div>
+        <div class="flow-t">Deploy</div>
+        <div class="flow-c">sdkt deploy<br>sdkt verify</div>
+      </div>
+    </div>
+  </div>
+</section><!-- ================= TERMINAL DEMO ================= -->
+<section id="demo">
+  <div class="wrap">
+    <p class="eyebrow">Terminal</p>
+    <h2 class="h2">Real commands, real output</h2>
+    <p class="lead">Every command and output block below is taken from the sdkt CLI
+      surface in this repository.</p>
+
+    <div class="install-grid" style="margin-top:2rem">
+      <div class="term">
+        <div class="term-bar">
+          <span class="dot dot-r"></span><span class="dot dot-y"></span><span class="dot dot-g"></span>
+          <span class="term-title">static security audit</span>
+        </div>
+        <div class="term-body">
+<div class="t-cmd">sdkt audit contracts/token/src/lib.rs</div>
+<div class="t-out">Static Analysis Report: contracts/token/src/lib.rs
+Severity: 0 critical, 1 warning, 0 info (1 total)
+
+  [<span class="t-warn">warning</span>] MOVE-001  [Token::transfer:e]:
+  Local `e` in `Token::transfer` is used as a
+  call argument 4 times — possible move-after-use</div>
+<div class="t-out">&nbsp;</div>
+<div class="t-cmd">sdkt audit contracts/token/src/lib.rs --format json</div>
+<div class="t-out">{"findings":[{"rule_id":"<span class="t-k">MOVE-001</span>",
+"severity":"warning","message":"…",
+"location":"Token::transfer:e"}],
+"summary":{"critical":0,"warning":1,
+"info":0,"total":1}}</div>
+        </div>
+      </div>
+
+      <div class="term">
+        <div class="term-bar">
+          <span class="dot dot-r"></span><span class="dot dot-y"></span><span class="dot dot-g"></span>
+          <span class="term-title">build → sign → submit</span>
+        </div>
+        <div class="term-body">
+<div class="t-comment"># 1. create a local signing identity (offline)</div>
+<div class="t-cmd">sdkt identity generate alice</div>
+<div class="t-comment"># 2. build an unsigned envelope (offline)</div>
+<div class="t-cmd">sdkt tx build \
+  --source &lt;SOURCE_ACCOUNT&gt; \
+  --sequence &lt;SEQ&gt; \
+  --contract &lt;CONTRACT_ID&gt; \
+  --function hello \
+  --output unsigned.xdr</div>
+<div class="t-comment"># 3. validate the envelope offline</div>
+<div class="t-cmd">sdkt tx validate --envelope unsigned.xdr</div>
+<div class="t-comment"># 4. simulate against the network (RPC)</div>
+<div class="t-cmd">sdkt tx simulate --envelope unsigned.xdr</div>
+<div class="t-comment"># 5. sign with the local identity (offline)</div>
+<div class="t-cmd">sdkt tx sign --input unsigned.xdr \
+  --output signed.xdr --identity alice \
+  --network testnet</div>
+<div class="t-comment"># 6. submit the signed envelope (RPC)</div>
+<div class="t-cmd">sdkt tx submit --envelope signed.xdr<span class="blink">▋</span></div>
+        </div>
+      </div>
+    </div>
+
+    <p class="note">Most commands accept <code>--format json</code> for scripting and CI
+      integration. Commands that need an RPC endpoint accept
+      <code>--rpc-url</code>, <code>--network-passphrase</code>, or a saved
+      <code>--network-profile</code>.</p>
+  </div>
+</section>
+
+<!-- ================= WHY ================= -->
+<section id="why">
+  <div class="wrap">
+    <p class="eyebrow">Why Soroban DevKit</p>
+    <h2 class="h2">One CLI instead of a pile of scripts</h2>
+    <div class="two-col">
+      <div>
+        <p>Soroban developers work across multiple development workflows including
+          contract inspection, XDR handling, storage and TTL analysis, static
+          security review, transaction simulation and signing, and deployment.</p>
+        <p>In practice that means context-switching across several CLI tools and
+          hand-written RPC scripts. Soroban DevKit brings the supported workflows
+          into a unified CLI with consistent flags, consistent
+          <code>--format json</code> output, and an offline-first default.</p>
+      </div>
+      <div>
+        <ul class="plain-list">
+          <li><strong>Offline-first.</strong> <code>decode</code>, <code>diff</code>,
+            <code>audit</code>, <code>wasm inspect</code>, and <code>tx sign</code>
+            need no RPC and no secrets leaving your machine.</li>
+          <li><strong>Upgrade safety as a gate.</strong> Breaking-change verdicts you
+            can run in CI before a contract upgrade ships.</li>
+          <li><strong>Scriptable.</strong> JSON output on most commands, plus shell
+            completions for bash, zsh, fish, powershell, and elvish.</li>
+          <li><strong>Extensible.</strong> The audit engine loads third-party rules as
+            sandboxed WASM plugins or native shared libraries.</li>
+        </ul>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ================= STELLAR / SOROBAN ================= -->
+<section id="stellar">
+  <div class="wrap">
+    <p class="eyebrow">Stellar / Soroban</p>
+    <h2 class="h2">Built for the Soroban ecosystem</h2>
+    <div class="two-col">
+      <div>
+        <p>Soroban DevKit is built specifically for the Stellar Soroban developer
+          ecosystem. It speaks Stellar XDR natively, reads contract state through
+          the Soroban RPC interface, and enriches account data via Horizon.</p>
+        <p>Networks are addressed by named profile or explicit endpoint, with a
+          built-in testnet default and an explicit guard when targeting mainnet.</p>
+      </div>
+      <div>
+        <ul class="plain-list">
+          <li><strong>Soroban RPC.</strong> Contract inspection, storage and TTL
+            reads, events, transaction simulate/submit, fee statistics, and on-chain
+            WASM metadata.</li>
+          <li><strong>Stellar XDR.</strong> <code>ScVal</code>,
+            <code>TransactionEnvelope</code>, and <code>ContractEvent</code> decoding,
+            plus typed envelope construction and ED25519 signing.</li>
+          <li><strong>Horizon.</strong> Account balances and signers via
+            <code>sdkt account</code>.</li>
+          <li><strong>Network profiles.</strong> Save an RPC URL and passphrase once,
+            reuse it from any RPC command.</li>
+        </ul>
+      </div>
+    </div>
+  </div>
+</section><!-- ================= INSTALL ================= -->
+<section id="install">
+  <div class="wrap">
+    <p class="eyebrow">Installation</p>
+    <h2 class="h2">Running in under five minutes</h2>
+    <p class="lead">Pick an install method, verify, then run your first command.</p>
+
+    <div class="install-grid">
+      <div class="snip">
+        <div class="snip-head">
+          <span class="tag">curl · install.sh</span>
+          <button class="copy" data-copy="curl -fsSL https://raw.githubusercontent.com/naninu123/soroban-devkit/main/install.sh | bash">copy</button>
+        </div>
+        <pre><span class="c"># downloads the release binary for your OS/arch,
+# verifies its SHA-256 checksum, installs to ~/.local/bin</span>
+curl -fsSL https://raw.githubusercontent.com/naninu123/soroban-devkit/main/install.sh | bash</pre>
+      </div>
+      <div class="snip">
+        <div class="snip-head">
+          <span class="tag">crates.io · cargo install sdkt-cli</span>
+          <button class="copy" data-copy="cargo install sdkt-cli">copy</button>
+        </div>
+        <pre><span class="c"># requires Rust 1.88.0+</span>
+cargo install sdkt-cli
+
+<span class="c"># build from source</span>
+git clone https://github.com/naninu123/soroban-devkit
+cd soroban-devkit
+cargo install --path crates/sdkt-cli</pre>
+      </div>
+    </div>
+
+    <p class="note">Verify the install with <code>sdkt --version</code>, then explore
+      the full command set with <code>sdkt --help</code>. Shell completions for
+      bash, zsh, fish, powershell, and elvish are generated with
+      <code>sdkt completions</code>. The crates.io package is named
+      <code>sdkt-cli</code>; when its published version trails the GitHub release,
+      use <code>install.sh</code> or build from source to get v2.5.0.</p>
+  </div>
+</section>
+
+<!-- ================= OPEN SOURCE ================= -->
+<section id="opensource">
+  <div class="wrap">
+    <p class="eyebrow">Open Source</p>
+    <h2 class="h2">Transparent by default</h2>
+    <p class="lead">A public repository, MIT license, an 8-crate Rust workspace,
+      documented milestones, and a CI pipeline that runs the full test suite on
+      every change. No telemetry, no account, no SaaS dependency — the CLI is a
+      standalone binary.</p>
+    <div class="pills">
+      <span class="pill"><span class="k">lang</span> Rust (edition 2021, MSRV 1.88)</span>
+      <span class="pill"><span class="k">ecosystem</span> Stellar Soroban</span>
+      <span class="pill"><span class="k">license</span> MIT</span>
+      <span class="pill"><span class="k">crates</span> 8-crate workspace</span>
+      <span class="pill"><span class="k">mode</span> offline-first CLI</span>
+      <span class="pill"><span class="k">install</span> curl / cargo</span>
+    </div>
+  </div>
+</section>
+
+<!-- ================= COMMUNITY ================= -->
+<section id="community">
+  <div class="wrap">
+    <div class="cta">
+      <p class="eyebrow" style="margin-bottom:0.4rem">Community &amp; Contribution</p>
+      <h3>Try sdkt. Break it. Tell us what you found.</h3>
+      <p>Real developer usage and feedback is exactly what this project needs right
+        now. Open an issue for a bug or a missing feature, submit feedback on the
+        workflows, and contribute — docs, tests, and small fixes all count.</p>
+      <div class="btns">
+        <a class="btn btn-primary" href="https://github.com/naninu123/soroban-devkit" rel="noopener">View the Repository</a>
+        <a class="btn btn-ghost" href="https://github.com/naninu123/soroban-devkit/issues" rel="noopener">Open an Issue</a>
+        <a class="btn btn-ghost" href="https://github.com/naninu123/soroban-devkit/blob/main/CONTRIBUTING.md" rel="noopener">CONTRIBUTING.md</a>
+      </div>
+    </div>
+  </div>
+</section></main>
+
+<footer>
+  <div class="wrap">
+    <div class="foot-in">
+      <div class="foot-brand">
+        Soroban DevKit
+        <p>Open-source developer tooling for Stellar Soroban.</p>
+      </div>
+      <div class="foot-links">
+        <div class="foot-col">
+          <h4>Project</h4>
+          <a href="https://github.com/naninu123/soroban-devkit" rel="noopener">GitHub</a>
+          <a href="https://github.com/naninu123/soroban-devkit/releases" rel="noopener">Releases</a>
+          <a href="https://github.com/naninu123/soroban-devkit/blob/main/CHANGELOG.md" rel="noopener">Changelog</a>
+          <a href="https://github.com/naninu123/soroban-devkit/blob/main/LICENSE" rel="noopener">License (MIT)</a>
+        </div>
+        <div class="foot-col">
+          <h4>Documentation</h4>
+          <a href="https://github.com/naninu123/soroban-devkit/blob/main/docs/quick-start.md" rel="noopener">Quick Start</a>
+          <a href="https://github.com/naninu123/soroban-devkit/blob/main/docs/installation.md" rel="noopener">Installation</a>
+          <a href="https://github.com/naninu123/soroban-devkit/blob/main/docs/cli.md" rel="noopener">CLI Reference</a>
+          <a href="https://github.com/naninu123/soroban-devkit/blob/main/docs/examples.md" rel="noopener">Examples</a>
+        </div>
+        <div class="foot-col">
+          <h4>Community</h4>
+          <a href="https://github.com/naninu123/soroban-devkit/issues" rel="noopener">Issues</a>
+          <a href="https://github.com/naninu123/soroban-devkit/blob/main/CONTRIBUTING.md" rel="noopener">Contributing</a>
+          <a href="https://github.com/naninu123/soroban-devkit/blob/main/SECURITY.md" rel="noopener">Security Policy</a>
+          <a href="https://github.com/naninu123/soroban-devkit/blob/main/CODE_OF_CONDUCT.md" rel="noopener">Code of Conduct</a>
+        </div>
+      </div>
+    </div>
+    <div class="foot-bot">
+      <span>Soroban DevKit v2.5.0 · MIT License</span>
+      <span>Not affiliated with the Stellar Development Foundation.</span>
+    </div>
+  </div>
+</footer>
+
+<script>
+document.addEventListener('click', function (e) {
+  var b = e.target.closest('.copy');
+  if (!b) return;
+  navigator.clipboard.writeText(b.dataset.copy).then(function () {
+    var t = b.textContent;
+    b.textContent = 'copied';
+    setTimeout(function () { b.textContent = t; }, 1200);
+  });
+});
+</script>
+</body>
+</html>
