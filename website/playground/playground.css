@@ -81,11 +81,14 @@ code, kbd, pre { font-family: var(--mono); }
   font-weight: 700;
   color: var(--fg);
 }
-.nav-links { margin-left: auto; display: flex; align-items: center; gap: 0.35rem; }
-.nav-links a {
+.nav-links { margin-left: auto; display: flex; align-items: center; gap: 0.15rem; }
+/* Links and the disabled entries share one box model, otherwise the disabled
+   spans get no padding and read as a single run of words. */
+.nav-links a,
+.nav-links .soon {
   color: var(--muted);
   font-size: 0.88rem;
-  padding: 0.35rem 0.7rem;
+  padding: 0.35rem 0.65rem;
   border-radius: 6px;
 }
 .nav-links a:hover { color: var(--fg); text-decoration: none; }
@@ -162,9 +165,23 @@ code, kbd, pre { font-family: var(--mono); }
   font-size: 0.84rem;
   color: var(--dim);
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   justify-content: center;
-  gap: 0.45rem;
+  gap: 0.5rem;
+}
+/* Text-and-border tag instead of an emoji: renders identically everywhere and
+   does not depend on an installed emoji font. */
+.privacy-tag {
+  font-family: var(--mono);
+  font-size: 0.68rem;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--muted);
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  padding: 0.05rem 0.4rem;
+  white-space: nowrap;
 }
 
 /* ---------- file bar ---------- */
@@ -230,7 +247,10 @@ code, kbd, pre { font-family: var(--mono); }
   vertical-align: top;
 }
 .r-table th { color: var(--dim); font-weight: 500; width: 12rem; font-family: var(--mono); }
-.r-table td { color: var(--fg); font-family: var(--mono); word-break: break-all; }
+.r-table td { color: var(--fg); font-family: var(--mono); overflow-wrap: anywhere; }
+/* Only the 64-char digest needs mid-token breaking; other values ("198 B (198
+   bytes)") must not split inside a word. */
+.r-table td.hash { word-break: break-all; }
 .r-table tr:last-child td, .r-table tr:last-child th { border-bottom: 0; }
 .kv-row { display: flex; flex-wrap: wrap; gap: 0.4rem; }
 .kv-row .kv {
@@ -248,7 +268,15 @@ code, kbd, pre { font-family: var(--mono); }
 .kv .k { color: var(--dim); }
 
 /* ---------- contract specification ---------- */
-.spec-group { padding: 0.7rem 1rem; border-bottom: 1px solid var(--line-soft); }
+/* Signatures are short, so a full-width column on a wide viewport is mostly
+   empty space. Cap the whole group — heading, count, divider and entries share
+   one right edge, so the narrower measure reads as deliberate. Below the cap the
+   group shrinks normally, so narrow viewports are unaffected. */
+.spec-group {
+  padding: 0.7rem 1rem;
+  border-bottom: 1px solid var(--line-soft);
+  max-width: 46rem;
+}
 .spec-group:last-child { border-bottom: 0; }
 .spec-group > h3 {
   font-family: var(--mono);
@@ -258,6 +286,17 @@ code, kbd, pre { font-family: var(--mono); }
   letter-spacing: 0.06em;
   color: var(--dim);
   margin: 0 0 0.55rem;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+}
+.spec-group > h3 .count {
+  color: var(--dim);
+  font-family: var(--mono);
+  font-size: 0.72rem;
+  text-transform: none;
+  letter-spacing: 0;
 }
 .spec-list { display: grid; gap: 0.4rem; }
 .spec-item {
@@ -265,6 +304,12 @@ code, kbd, pre { font-family: var(--mono); }
   border-radius: 6px;
   background: var(--bg-soft);
   padding: 0.5rem 0.7rem;
+}
+/* An entry with no detail rows does not need card chrome around a single name. */
+.spec-item.is-bare {
+  border-color: transparent;
+  background: none;
+  padding: 0.15rem 0.7rem;
 }
 .spec-name {
   font-family: var(--mono);

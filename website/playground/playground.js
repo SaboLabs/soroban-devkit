@@ -106,16 +106,19 @@
     return sec;
   }
 
+  // rows: [label, value] or [label, value, valueClass]. `valueClass` lets a
+  // single cell opt into different wrapping (the SHA-256 digest).
   function kvTable(rows) {
     const t = document.createElement('table');
     t.className = 'r-table';
     const body = document.createElement('tbody');
-    for (const [k, v] of rows) {
+    for (const [k, v, cls] of rows) {
       const tr = document.createElement('tr');
       const th = document.createElement('th');
       th.scope = 'row';
       th.textContent = k;
       const td = document.createElement('td');
+      if (cls) td.className = cls;
       td.textContent = v;
       tr.appendChild(th); tr.appendChild(td);
       body.appendChild(tr);
@@ -142,12 +145,18 @@
 
   /* ---------- contract-spec rendering ---------- */
 
-  // A titled group inside the Contract Specification section.
+  // A titled group inside the Contract Specification section. The count uses the
+  // same `.count` badge treatment as the top-level section headings, so the two
+  // heading levels read consistently.
   function specGroup(title, count) {
     const g = document.createElement('div');
     g.className = 'spec-group';
     const h = document.createElement('h3');
-    h.textContent = title + ' (' + count + ')';
+    h.textContent = title;
+    const c = document.createElement('span');
+    c.className = 'count';
+    c.textContent = count + (count === 1 ? ' item' : ' items');
+    h.appendChild(c);
     g.appendChild(h);
     return g;
   }
@@ -207,6 +216,13 @@
     return l;
   }
 
+  // An entry with no doc, parameters, or members carries no detail rows, so a
+  // full bordered card is pure chrome. Mark it for the flat treatment.
+  function markIfBare(item) {
+    if (item.childElementCount <= 1) item.classList.add('is-bare');
+    return item;
+  }
+
   function renderFunctions(fns) {
     const g = specGroup('Functions', fns.length);
     if (!fns.length) { g.appendChild(specNone('none')); return g; }
@@ -237,7 +253,7 @@
         });
         item.appendChild(dl);
       }
-      list.appendChild(item);
+      list.appendChild(markIfBare(item));
     });
     g.appendChild(list);
     return g;
@@ -262,7 +278,7 @@
         });
         item.appendChild(ul);
       }
-      list.appendChild(item);
+      list.appendChild(markIfBare(item));
     });
     g.appendChild(list);
     return g;
@@ -275,7 +291,7 @@
     events.forEach((ev) => {
       const item = specItem(ev.name);
       if (ev.doc) item.appendChild(specDoc(ev.doc));
-      list.appendChild(item);
+      list.appendChild(markIfBare(item));
     });
     g.appendChild(list);
     return g;
@@ -292,7 +308,7 @@
     const metaSec = section('Metadata', '');
     const metaRows = [
       ['File', currentFile ? currentFile.name : '—'],
-      ['SHA-256', meta.hash || '—'],
+      ['SHA-256', meta.hash || '—', 'hash'],
       ['Size', (meta.size_bytes !== undefined ? fmtSize(meta.size_bytes) : '—') +
         (meta.size_bytes !== undefined ? ' (' + meta.size_bytes + ' bytes)' : '')],
       ['Version', meta.version !== undefined ? String(meta.version) : '—'],
@@ -306,7 +322,7 @@
     const metaTable = kvTable(metaRows);
     // Copy button for the hash (the one value developers actually copy).
     if (meta.hash) {
-      const hashCell = metaTable.querySelectorAll('td')[1];
+      const hashCell = metaTable.querySelector('td.hash');
       if (hashCell) hashCell.appendChild(copyBtn(meta.hash));
     }
     metaSec.appendChild(metaTable);
