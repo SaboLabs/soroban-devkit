@@ -40,31 +40,30 @@
 <section class="hero" id="top">
   <div class="wrap hero-grid">
     <div>
-      <p class="ver-chip">Soroban DevKit v2.5.0</p>
       <h1>Soroban DevKit</h1>
-      <p class="eyebrow" style="margin-bottom:0.6rem;color:#c3a4ff">The CLI Toolkit for Stellar Soroban Developers</p>
-      <p class="sub"><strong>Build. Analyze. Deploy. All in One CLI.</strong><br>
-        An open-source, Rust-powered CLI toolkit designed to make Stellar Soroban
-        development workflows easier to inspect, analyze, test, and deploy.</p>
+      <p class="tagline">The CLI toolkit for Stellar Soroban developers.</p>
+      <p class="sub">Build, inspect, analyze, simulate, and deploy Soroban
+        contracts from one developer-focused CLI.</p>
       <div class="btns">
         <a class="btn btn-primary" href="#install">Get Started</a>
-        <a class="btn btn-ghost" href="https://github.com/naninu123/soroban-devkit" rel="noopener">GitHub</a>
+        <a class="btn btn-ghost" href="https://github.com/naninu123/soroban-devkit" rel="noopener">View on GitHub</a>
       </div>
-      <p class="note" style="margin-top:1.6rem;color:var(--muted)">
-            MIT licensed · Rust 1.88+ · 8-crate workspace · most commands run fully offline
-          </p>
+      <p class="hero-meta">
+        <span>v2.5.0</span><span class="sep">·</span>
+        <span>Open Source</span><span class="sep">·</span>
+        <span>Rust</span><span class="sep">·</span>
+        <span>MIT</span>
+      </p>
     </div>
 
     <div class="term-wrap">
-      <div class="term-glow" aria-hidden="true"></div>
-      <div class="term" role="img" aria-label="Terminal session showing sdkt version, help output, and an offline WASM inspection">
+      <div class="term" role="img" aria-label="Terminal session showing sdkt version, an offline WASM inspection, and an upgrade-safety diff">
         <div class="term-bar">
-          <span class="dot dot-r"></span><span class="dot dot-y"></span><span class="dot dot-g"></span>
           <span class="term-title">sdkt — soroban devkit</span>
         </div>
         <div class="term-body">
 <div class="t-cmd">sdkt --version</div>
-<div class="t-out">sdkt <span class="t-v">2.5.0</span></div>
+<div class="t-out">sdkt 2.5.0</div>
 <div class="t-out">&nbsp;</div>
 <div class="t-cmd">sdkt wasm inspect contract.wasm</div>
 <div class="t-out">WASM Inspection Report: contract.wasm
@@ -76,12 +75,14 @@ Version: 1
 Custom Sections (1):
   - contractspecv0
 
-<span class="t-k">Contract Spec Available: Yes</span>
+Contract Spec Available: Yes
   Functions: 2
     - fn transfer(1) -&gt; 0
     - fn mint(1) -&gt; 0
   Custom Types: 1
   Events: 1</div>
+<div class="t-out">&nbsp;</div>
+<div class="t-rule">──────────────────────────</div>
 <div class="t-out">&nbsp;</div>
 <div class="t-cmd">sdkt diff --old-wasm old.wasm --new-wasm new.wasm --upgrade-safety</div>
 <div class="t-out">Upgrade Safety
@@ -95,7 +96,7 @@ Compatible: <span class="t-bad">NO</span>
 
 <span class="t-v">Non-breaking:</span>
   - Added function: balance()
-  - Added event: Mint<span class="blink">▋</span></div>
+  - Added event: Mint</div>
         </div>
       </div>
     </div>
@@ -169,29 +170,29 @@ Compatible: <span class="t-bad">NO</span>
       offline; only the deployed-contract reads and stage 05 need an RPC endpoint.</p>
     <div class="flow">
       <div class="flow-step">
-        <div class="flow-n">01 · INSPECT</div>
+        <div class="flow-n">01</div>
         <div class="flow-t">Inspect</div>
-        <div class="flow-c">sdkt wasm inspect &lt;file&gt;<br>sdkt inspect &lt;contract-id&gt;</div>
+        <div class="flow-c"><span>sdkt wasm inspect &lt;file&gt;</span><span>sdkt inspect &lt;contract-id&gt;</span></div>
       </div>
       <div class="flow-step">
-        <div class="flow-n">02 · ANALYZE</div>
+        <div class="flow-n">02</div>
         <div class="flow-t">Analyze</div>
-        <div class="flow-c">sdkt audit &lt;path.rs&gt;<br>sdkt storage analyze &lt;contract-id&gt;</div>
+        <div class="flow-c"><span>sdkt audit &lt;path.rs&gt;</span><span>sdkt storage analyze &lt;contract-id&gt;</span></div>
       </div>
       <div class="flow-step">
-        <div class="flow-n">03 · VALIDATE</div>
+        <div class="flow-n">03</div>
         <div class="flow-t">Validate</div>
-        <div class="flow-c">sdkt diff --upgrade-safety<br>sdkt tx simulate --envelope</div>
+        <div class="flow-c"><span>sdkt diff --upgrade-safety</span><span>sdkt tx simulate --envelope</span></div>
       </div>
       <div class="flow-step">
-        <div class="flow-n">04 · BUILD</div>
+        <div class="flow-n">04</div>
         <div class="flow-t">Build</div>
-        <div class="flow-c">sdkt build<br>sdkt lock generate</div>
+        <div class="flow-c"><span>sdkt build</span><span>sdkt lock generate</span></div>
       </div>
       <div class="flow-step">
-        <div class="flow-n">05 · DEPLOY</div>
+        <div class="flow-n">05</div>
         <div class="flow-t">Deploy</div>
-        <div class="flow-c">sdkt deploy --wasm --salt<br>sdkt verify --contract</div>
+        <div class="flow-c"><span>sdkt deploy --wasm --salt</span><span>sdkt verify --contract</span></div>
       </div>
     </div>
   </div>
@@ -206,7 +207,6 @@ Compatible: <span class="t-bad">NO</span>
     <div class="install-grid" style="margin-top:2rem">
       <div class="term">
         <div class="term-bar">
-          <span class="dot dot-r"></span><span class="dot dot-y"></span><span class="dot dot-g"></span>
           <span class="term-title">static security audit</span>
         </div>
         <div class="term-body">
@@ -229,7 +229,6 @@ Severity: 0 critical, 1 warning, 0 info (1 total)
 
       <div class="term">
         <div class="term-bar">
-          <span class="dot dot-r"></span><span class="dot dot-y"></span><span class="dot dot-g"></span>
           <span class="term-title">build → sign → submit</span>
         </div>
         <div class="term-body">
@@ -251,7 +250,7 @@ Severity: 0 critical, 1 warning, 0 info (1 total)
   --output signed.xdr --identity alice \
   --network testnet</div>
 <div class="t-comment"># 6. submit the signed envelope (RPC)</div>
-<div class="t-cmd">sdkt tx submit --envelope signed.xdr<span class="blink">▋</span></div>
+<div class="t-cmd">sdkt tx submit --envelope signed.xdr</div>
         </div>
       </div>
     </div>
@@ -339,7 +338,9 @@ Severity: 0 critical, 1 warning, 0 info (1 total)
         </div>
         <pre><span class="c"># downloads the release binary for your OS/arch,
 # verifies its SHA-256 checksum, installs to ~/.local/bin</span>
-curl -fsSL https://raw.githubusercontent.com/naninu123/soroban-devkit/main/install.sh | bash</pre>
+curl -fsSL https://raw.githubusercontent.com/naninu123/soroban-devkit/main/install.sh | bash
+<span class="c"># verify</span>
+sdkt --version</pre>
       </div>
       <div class="snip">
         <div class="snip-head">
