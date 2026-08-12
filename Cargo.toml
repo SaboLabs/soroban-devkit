@@ -8,6 +8,10 @@ members = [
     "crates/sdkt-audit",
     "crates/sdkt-audit-example-rule",
 ]
+# Browser-only glue crate for the Web Playground. Excluded so that
+# `cargo build/clippy/test --workspace` stays a pure native build; it is built
+# explicitly for wasm32-unknown-unknown via website/playground/build.sh.
+exclude = ["crates/sdkt-playground"]
 resolver = "2"
 
 [workspace.package]

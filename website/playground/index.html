@@ -1,0 +1,104 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Contract Inspector — Soroban DevKit Web Playground</title>
+<meta name="description" content="Inspect a Soroban WASM contract in your browser using the same Rust inspection logic as the sdkt CLI. Runs fully locally — contracts are never uploaded.">
+<meta name="theme-color" content="#09090b">
+<meta name="robots" content="index,follow">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='8' fill='%23101014' stroke='%2326262c'/%3E%3Ctext x='16' y='22' font-size='15' text-anchor='middle' font-family='monospace' font-weight='bold' fill='%23e8e8ec'%3Esd%3C/text%3E%3C/svg%3E">
+<link rel="stylesheet" href="playground.css">
+</head>
+<body>
+<a class="skip" href="#main">Skip to content</a>
+
+<header class="site-nav">
+  <div class="wrap site-nav-in">
+    <a class="brand" href="../" aria-label="Soroban DevKit home">
+      <span class="mark" aria-hidden="true">sd</span>
+      <span>Soroban DevKit</span>
+      <span style="color:var(--dim);font-weight:400">/ Web Playground</span>
+    </a>
+    <nav class="nav-links" aria-label="Playground sections">
+      <a href="#main" class="active" aria-current="page">Inspector</a>
+      <span class="soon" role="link" aria-disabled="true" title="Coming soon — not implemented yet">Analyze</span>
+      <span class="soon" role="link" aria-disabled="true" title="Coming soon — not implemented yet">XDR</span>
+      <span class="soon" role="link" aria-disabled="true" title="Coming soon — not implemented yet">Diff</span>
+      <span class="soon" role="link" aria-disabled="true" title="Coming soon — not implemented yet">Health</span>
+      <span class="nav-ver">v2.5.0</span>
+    </nav>
+  </div>
+</header>
+
+<main id="main" class="page">
+  <div class="wrap">
+
+    <div class="page-head">
+      <div>
+        <h1>Contract Inspector</h1>
+        <p>Analyze a Soroban WASM contract directly in your browser.</p>
+      </div>
+      <span class="local-chip" id="modeChip">Local analysis — no RPC required</span>
+    </div>
+
+    <!-- Upload -->
+    <div class="dropzone" id="dropzone" role="button" tabindex="0"
+         aria-label="Drop a .wasm contract file here, or press Enter to choose a file">
+      <p class="dz-title">Drop <code>.wasm</code> here</p>
+      <p class="dz-or">or</p>
+      <label class="dz-btn" for="fileInput">Choose WASM File</label>
+      <input type="file" id="fileInput" accept=".wasm,application/wasm">
+    </div>
+    <p class="privacy-note">
+      <span aria-hidden="true">🔒</span>
+      Runs locally in your browser. Your contract is not uploaded.
+    </p>
+
+    <!-- Selected file / status -->
+    <div class="filebar" id="filebar" hidden>
+      <div>
+        <div class="fname" id="fname"></div>
+        <div class="fmeta" id="fmeta"></div>
+      </div>
+      <div class="status" id="status" role="status" aria-live="polite"></div>
+      <button class="reset-btn" id="resetBtn" type="button">reset</button>
+    </div>
+
+    <!-- Error -->
+    <div class="error-box" id="errorBox" hidden role="alert">
+      <div class="err-title">Inspection failed</div>
+      <p id="errorMsg"></p>
+    </div>
+
+    <!-- Results -->
+    <div class="results hidden" id="results" aria-live="polite"></div>
+
+    <!-- CLI -->
+    <section class="cli-note">
+      <div>
+        <h2>Prefer the terminal?</h2>
+        <p>The Web Playground is a browser convenience. The <code>sdkt</code> CLI
+          is the primary developer interface and the source of truth — it exposes
+          the full command set, JSON output, and CI integration.</p>
+      </div>
+      <a class="btn btn-primary" href="../#install">Use sdkt CLI</a>
+    </section>
+
+  </div>
+</main>
+
+<footer class="site-foot">
+  <div class="wrap" style="display:flex;flex-wrap:wrap;gap:0.75rem;justify-content:space-between;width:100%">
+    <span>Soroban DevKit v2.5.0 · Web Playground · MIT License</span>
+    <span>
+      <a href="https://github.com/naninu123/soroban-devkit" rel="noopener">GitHub</a> ·
+      <a href="../">Landing page</a> ·
+      Not affiliated with the Stellar Development Foundation.
+    </span>
+  </div>
+</footer>
+
+<script src="playground.js"></script>
+</body>
+</html>

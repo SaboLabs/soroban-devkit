@@ -2894,7 +2894,6 @@ name = "sdkt-wasm"
 version = "2.5.0"
 dependencies = [
  "hex",
- "sdkt-core",
  "serde",
  "sha2",
  "stellar-xdr",

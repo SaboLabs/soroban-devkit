@@ -14,7 +14,10 @@ keywords = ["soroban", "stellar", "sdk", "toolkit", "wasm"]
 categories = ["development-tools", "wasm"]
 
 [dependencies]
-sdkt-core = { version = "2.4.0", path = "../sdkt-core" }
+# NOTE: sdkt-core is intentionally NOT a dependency here. This crate never
+# referenced it (verified: no `sdkt_core` path in src/), and sdkt-core pulls in
+# zstd/tar, whose C sources block compiling this crate for
+# wasm32-unknown-unknown (needed by the Web Playground glue crate).
 wasmparser = "0.255"
 sha2 = "0.10"
 serde = { version = "1", features = ["derive"] }

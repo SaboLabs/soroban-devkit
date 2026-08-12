@@ -1,0 +1,40 @@
+# Browser-only glue crate for the Soroban DevKit Web Playground.
+#
+# This crate is EXCLUDED from the root workspace (see root Cargo.toml
+# `exclude`) so that `cargo build/clippy/test --workspace` remains a pure
+# native build with no wasm-bindgen in the dependency graph. Because it sits
+# outside that workspace it declares its own `[workspace]` root and cannot use
+# `field.workspace = true` inheritance — the values below intentionally mirror
+# the root `[workspace.package]` table and must be kept in sync on release.
+[workspace]
+
+[package]
+name = "sdkt-playground"
+description = "WASM glue crate for the Soroban DevKit Web Playground — exposes the sdkt-wasm inspector to the browser via wasm-bindgen."
+version = "2.5.0"
+edition = "2021"
+rust-version = "1.88.0"
+license = "MIT"
+authors = ["naninu123"]
+repository = "https://github.com/naninu123/soroban-devkit"
+homepage = "https://github.com/naninu123/soroban-devkit"
+publish = false
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dev-dependencies]
+serde_json = "1"
+
+[dependencies]
+sdkt-wasm = { path = "../sdkt-wasm" }
+serde = { version = "1", features = ["derive"] }
+wasm-bindgen = "0.2.127"
+serde-wasm-bindgen = "0.6.5"
+
+[profile.release]
+opt-level = "s"
+lto = true
+codegen-units = 1
+panic = "abort"
+strip = true

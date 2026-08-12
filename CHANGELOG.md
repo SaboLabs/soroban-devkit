@@ -480,4 +480,14 @@ the release pipeline fully green end-to-end.
 
 ## [Unreleased]
 
+### Changed
+- **`sdkt-wasm` no longer depends on `sdkt-core`.** The dependency was declared
+  but never used — `crates/sdkt-wasm/src/` contains no reference to `sdkt_core`,
+  and no `sdkt-core` type appears in `sdkt-wasm`'s public API, so this is **not**
+  a breaking change for `sdkt-wasm` consumers. Removing it lets `sdkt-wasm`
+  compile for `wasm32-unknown-unknown`, which the declared-but-unused dependency
+  previously blocked (`sdkt-core` transitively pulls in `zstd`/`tar` C sources).
+  CLI behaviour is unchanged: `sdkt wasm inspect` produces byte-identical pretty
+  and `--format json` output before and after.
+
 ### Planned
