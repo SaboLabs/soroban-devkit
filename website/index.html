@@ -165,23 +165,23 @@ Compatible: <span class="t-bad">NO</span>
   <div class="wrap">
     <p class="eyebrow">Developer Workflow</p>
     <h2 class="h2">From contract to chain, one flow</h2>
-    <p class="lead">Every stage maps to real sdkt commands — most of them running
-      offline, only on-chain reads need an RPC endpoint.</p>
+    <p class="lead">Every stage maps to real sdkt commands. Stages 01–04 run
+      offline; only the deployed-contract reads and stage 05 need an RPC endpoint.</p>
     <div class="flow">
       <div class="flow-step">
         <div class="flow-n">01 · INSPECT</div>
         <div class="flow-t">Inspect</div>
-        <div class="flow-c">sdkt inspect<br>sdkt wasm inspect</div>
+        <div class="flow-c">sdkt wasm inspect &lt;file&gt;<br>sdkt inspect &lt;contract-id&gt;</div>
       </div>
       <div class="flow-step">
         <div class="flow-n">02 · ANALYZE</div>
         <div class="flow-t">Analyze</div>
-        <div class="flow-c">sdkt storage analyze<br>sdkt events</div>
+        <div class="flow-c">sdkt audit &lt;path.rs&gt;<br>sdkt storage analyze &lt;contract-id&gt;</div>
       </div>
       <div class="flow-step">
         <div class="flow-n">03 · VALIDATE</div>
         <div class="flow-t">Validate</div>
-        <div class="flow-c">sdkt audit<br>sdkt diff --upgrade-safety</div>
+        <div class="flow-c">sdkt diff --upgrade-safety<br>sdkt tx simulate --envelope</div>
       </div>
       <div class="flow-step">
         <div class="flow-n">04 · BUILD</div>
@@ -191,7 +191,7 @@ Compatible: <span class="t-bad">NO</span>
       <div class="flow-step">
         <div class="flow-n">05 · DEPLOY</div>
         <div class="flow-t">Deploy</div>
-        <div class="flow-c">sdkt deploy<br>sdkt verify</div>
+        <div class="flow-c">sdkt deploy --wasm --salt<br>sdkt verify --contract</div>
       </div>
     </div>
   </div>
