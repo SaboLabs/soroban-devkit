@@ -1,0 +1,49 @@
+name: Deploy website to GitHub Pages
+
+# Publishes the static landing page in `website/` to GitHub Pages.
+# Build-free: the folder is uploaded as-is, so `website/index.html` becomes the
+# site root and the sibling CSS files resolve via their existing relative paths.
+#
+# Scope: this workflow touches nothing outside `website/`. It does not build,
+# test, or publish the Rust workspace — `ci.yml` and `release.yml` own that.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'website/**'
+      - '.github/workflows/pages.yml'
+  workflow_dispatch:
+
+# Read-only on contents; `pages`/`id-token` are the minimum required to publish.
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+# Never run two Pages deploys at once; let a newer push finish instead.
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Configure Pages
+        uses: actions/configure-pages@v5
+
+      - name: Upload website/ as the Pages artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: website
+
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4
