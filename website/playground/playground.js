@@ -75,12 +75,6 @@
     });
   }
 
-  function esc(s) {
-    return String(s).replace(/[&<>"']/g, (c) => ({
-      '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;',
-    }[c]));
-  }
-
   function copyBtn(value) {
     const b = document.createElement('button');
     b.type = 'button';
@@ -144,6 +138,147 @@
       wrap.appendChild(chip);
     }
     return wrap;
+  }
+
+  /* ---------- contract-spec rendering ---------- */
+
+  // A titled group inside the Contract Specification section.
+  function specGroup(title, count) {
+    const g = document.createElement('div');
+    g.className = 'spec-group';
+    const h = document.createElement('h3');
+    h.textContent = title + ' (' + count + ')';
+    g.appendChild(h);
+    return g;
+  }
+
+  function specNone(label) {
+    const p = document.createElement('p');
+    p.className = 'spec-none';
+    p.textContent = label;
+    return p;
+  }
+
+  // One "name: type" row. `meta` mutes the value (used for return types).
+  function paramRow(name, value, meta) {
+    const row = document.createElement('div');
+    row.className = 'param' + (meta ? ' is-meta' : '');
+    const dt = document.createElement('dt');
+    dt.textContent = name;
+    const dd = document.createElement('dd');
+    dd.textContent = value;
+    row.appendChild(dt);
+    row.appendChild(dd);
+    return row;
+  }
+
+  function specDoc(text) {
+    const p = document.createElement('p');
+    p.className = 'spec-doc';
+    p.textContent = text;
+    return p;
+  }
+
+  // <article> per entry: bold name, optional kind badge, then detail rows.
+  function specItem(name, kind) {
+    const item = document.createElement('article');
+    item.className = 'spec-item';
+    const head = document.createElement('div');
+    const strong = document.createElement('strong');
+    strong.className = 'spec-name';
+    strong.textContent = name || '?';
+    head.appendChild(strong);
+    if (kind) {
+      // Explicit whitespace so the name and kind stay separate for text
+      // extraction / screen readers, not just visually via margin.
+      head.appendChild(document.createTextNode(' '));
+      const k = document.createElement('span');
+      k.className = 'spec-kind';
+      k.textContent = kind;
+      head.appendChild(k);
+    }
+    item.appendChild(head);
+    return item;
+  }
+
+  function specList() {
+    const l = document.createElement('div');
+    l.className = 'spec-list';
+    return l;
+  }
+
+  function renderFunctions(fns) {
+    const g = specGroup('Functions', fns.length);
+    if (!fns.length) { g.appendChild(specNone('none')); return g; }
+    const list = specList();
+    fns.forEach((f) => {
+      const item = specItem(f.name);
+      if (f.doc) item.appendChild(specDoc(f.doc));
+      const params = f.parameters || [];
+      const outputs = f.outputs || [];
+      if (params.length || outputs.length) {
+        const dl = document.createElement('dl');
+        dl.className = 'params';
+        params.forEach((p) => {
+          dl.appendChild(paramRow(
+            p.name || '?',
+            (p.type_ && p.type_.name) || '?',
+            false
+          ));
+          if (p.doc) {
+            // Indented under its own parameter so ownership is unambiguous.
+            const d = specDoc(p.doc);
+            d.classList.add('param-doc');
+            dl.appendChild(d);
+          }
+        });
+        outputs.forEach((o) => {
+          dl.appendChild(paramRow('returns', o.name || '?', true));
+        });
+        item.appendChild(dl);
+      }
+      list.appendChild(item);
+    });
+    g.appendChild(list);
+    return g;
+  }
+
+  function renderTypes(types) {
+    const g = specGroup('Custom Types', types.length);
+    if (!types.length) { g.appendChild(specNone('none')); return g; }
+    const list = specList();
+    types.forEach((t) => {
+      const item = specItem(t.name, t.kind || '');
+      if (t.doc) item.appendChild(specDoc(t.doc));
+      const members = t.members || [];
+      if (members.length) {
+        const ul = document.createElement('ul');
+        ul.className = 'params spec-members';
+        members.forEach((m) => {
+          const li = document.createElement('li');
+          li.textContent = m.name || '?';
+          if (m.doc) li.title = m.doc;
+          ul.appendChild(li);
+        });
+        item.appendChild(ul);
+      }
+      list.appendChild(item);
+    });
+    g.appendChild(list);
+    return g;
+  }
+
+  function renderEvents(events) {
+    const g = specGroup('Events', events.length);
+    if (!events.length) { g.appendChild(specNone('none')); return g; }
+    const list = specList();
+    events.forEach((ev) => {
+      const item = specItem(ev.name);
+      if (ev.doc) item.appendChild(specDoc(ev.doc));
+      list.appendChild(item);
+    });
+    g.appendChild(list);
+    return g;
   }
 
   function render(data) {
@@ -210,78 +345,9 @@
     // 5. Contract specification (optional)
     const specSec = section('Contract Specification', spec ? 'available' : 'not present');
     if (spec) {
-      // Functions
-      const fnWrap = document.createElement('div');
-      fnWrap.style.padding = '0.7rem 1rem';
-      const fnHead = document.createElement('div');
-      fnHead.className = 'count';
-      fnHead.style.paddingBottom = '0.5rem';
-      fnHead.textContent = 'Functions (' + (spec.functions || []).length + ')';
-      fnWrap.appendChild(fnHead);
-      (spec.functions || []).forEach((f) => {
-        const line = document.createElement('div');
-        line.className = 'kv';
-        line.style.display = 'inline-flex';
-        line.style.margin = '0 0.4rem 0.4rem 0';
-        const params = (f.parameters || [])
-          .map((p) => (p.name ? p.name + ': ' : '') + ((p.type_ && p.type_.name) || '?'))
-          .join(', ');
-        const outs = (f.outputs || []).map((o) => o.name || '?').join(', ');
-        line.innerHTML = '<span class="k">fn</span> ' + esc(f.name) +
-          '(' + esc(params) + ')' + (outs ? ' → ' + esc(outs) : '');
-        fnWrap.appendChild(line);
-      });
-      if (!(spec.functions || []).length) {
-        fnWrap.appendChild(kvTable([['Functions', 'none']]));
-      }
-      specSec.appendChild(fnWrap);
-
-      // Custom types
-      const types = (spec.custom_types || []);
-      const typeSec = document.createElement('div');
-      typeSec.style.padding = '0.7rem 1rem';
-      const typeHead = document.createElement('div');
-      typeHead.className = 'count';
-      typeHead.style.paddingBottom = '0.5rem';
-      typeHead.textContent = 'Custom Types (' + types.length + ')';
-      typeSec.appendChild(typeHead);
-      types.forEach((t) => {
-        const line = document.createElement('div');
-        line.className = 'kv';
-        line.style.display = 'inline-flex';
-        line.style.margin = '0 0.4rem 0.4rem 0';
-        line.innerHTML = '<span class="k">type</span> ' + esc(t.name || '?') +
-          ' <span class="k">' + esc(t.kind || '') + '</span>';
-        if (t.members && t.members.length) {
-          const mem = document.createElement('span');
-          mem.className = 'k';
-          mem.textContent = ' {' + t.members.map((m) => m.name || '?').join(', ') + '}';
-          line.appendChild(mem);
-        }
-        typeSec.appendChild(line);
-      });
-      if (!types.length) typeSec.appendChild(kvTable([['Types', 'none']]));
-      specSec.appendChild(typeSec);
-
-      // Events
-      const events = (spec.events || []);
-      const evSec = document.createElement('div');
-      evSec.style.padding = '0.7rem 1rem';
-      const evHead = document.createElement('div');
-      evHead.className = 'count';
-      evHead.style.paddingBottom = '0.5rem';
-      evHead.textContent = 'Events (' + events.length + ')';
-      evSec.appendChild(evHead);
-      events.forEach((ev) => {
-        const line = document.createElement('div');
-        line.className = 'kv';
-        line.style.display = 'inline-flex';
-        line.style.margin = '0 0.4rem 0.4rem 0';
-        line.innerHTML = '<span class="k">event</span> ' + esc(ev.name || '?');
-        evSec.appendChild(line);
-      });
-      if (!events.length) evSec.appendChild(kvTable([['Events', 'none']]));
-      specSec.appendChild(evSec);
+      specSec.appendChild(renderFunctions(spec.functions || []));
+      specSec.appendChild(renderTypes(spec.custom_types || []));
+      specSec.appendChild(renderEvents(spec.events || []));
     } else {
       const note = document.createElement('div');
       note.style.padding = '0.7rem 1rem';
