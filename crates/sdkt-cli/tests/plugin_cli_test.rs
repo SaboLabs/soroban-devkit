@@ -44,7 +44,7 @@ fn fixture_plugin(store: &std::path::Path) -> std::path::PathBuf {
 id = "example-rule"
 name = "Example Rule"
 version = "1.0.0"
-author = "naninu123"
+author = "SaboLabs"
 description = "Reference audit rule."
 kind = "wasm"
 artifact = "ex_rule.wasm"

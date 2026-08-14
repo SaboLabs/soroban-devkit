@@ -40,7 +40,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Static security audit
-        uses: naninu123/soroban-devkit/.github/actions/sdkt@main
+        uses: SaboLabs/soroban-devkit/.github/actions/sdkt@main
         with:
           command: audit
           sdkt-version: v2.1.1
@@ -67,7 +67,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Check upgrade compatibility
-        uses: naninu123/soroban-devkit/.github/actions/sdkt@main
+        uses: SaboLabs/soroban-devkit/.github/actions/sdkt@main
         with:
           command: upgrade-safety
           sdkt-version: v2.1.1
@@ -85,7 +85,7 @@ asserted to **fail**, and an **identical** diff is asserted to **pass**.
 ## Notes
 
 - The Action installs `sdkt` from a pinned git tag via
-  `cargo install --git https://github.com/naninu123/soroban-devkit --tag <sdkt-version> sdkt-cli --locked`
+  `cargo install --git https://github.com/SaboLabs/soroban-devkit --tag <sdkt-version> sdkt-cli --locked`
   (or, when run inside the sdkt workspace itself, from the local path). For
   faster, reproducible CI, pin to a released tag and consider a prebuilt-binary
   install mode (future optimization).

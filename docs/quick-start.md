@@ -6,7 +6,7 @@ Every command is copy-pasteable and runs **offline** (no RPC, no account, no
 network) unless stated otherwise.
 
 If you have not installed `sdkt` yet, follow
-[README § Quick Start](https://github.com/naninu123/soroban-devkit#quick-start)
+[README § Quick Start](https://github.com/SaboLabs/soroban-devkit#quick-start)
 first. This document assumes `sdkt` is on your `PATH` and reports a version
 when you run `sdkt --version`.
 
@@ -18,7 +18,7 @@ Choose **one** of the following.
 
 **A. GitHub Release binary (no Rust toolchain required):**
 
-1. Open the [Releases](https://github.com/naninu123/soroban-devkit/releases)
+1. Open the [Releases](https://github.com/SaboLabs/soroban-devkit/releases)
    page and download the asset for your platform:
 
    | Platform | Asset |
@@ -40,7 +40,7 @@ Choose **one** of the following.
 **B. Build from source (requires Rust 1.88.0+):**
 
 ```bash
-git clone https://github.com/naninu123/soroban-devkit
+git clone https://github.com/SaboLabs/soroban-devkit
 cd soroban-devkit
 cargo install --path crates/sdkt-cli
 ```

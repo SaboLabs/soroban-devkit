@@ -6,7 +6,7 @@
 # its SHA-256 checksum, and installs it to ~/.local/bin/sdkt by default.
 #
 # Usage:
-#   curl -fsSL https://raw.githubusercontent.com/naninu123/soroban-devkit/main/install.sh | bash
+#   curl -fsSL https://raw.githubusercontent.com/SaboLabs/soroban-devkit/main/install.sh | bash
 #   ./install.sh                 # or run locally
 #   SDKT_INSTALL_DIR=/usr/local/bin ./install.sh   # custom destination
 #   bash install.sh --selftest   # offline regression test (no network)
@@ -19,7 +19,7 @@
 
 set -euo pipefail
 
-REPO="naninu123/soroban-devkit"
+REPO="SaboLabs/soroban-devkit"
 INSTALL_DIR="${SDKT_INSTALL_DIR:-$HOME/.local/bin}"
 BINARY_NAME="sdkt"
 

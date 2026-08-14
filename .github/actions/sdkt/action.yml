@@ -1,13 +1,13 @@
 name: "Soroban DevKit (sdkt) Action"
 description: "Run sdkt capabilities in CI: static security audit (sdkt audit) and contract upgrade-safety check (sdkt diff --upgrade-safety)."
-author: "naninu123"
+author: "SaboLabs"
 
 inputs:
   command:
     description: "Which check to run: 'audit' or 'upgrade-safety'."
     required: true
   sdkt-version:
-    description: "sdkt git tag to install (e.g. v1.0.0). Must be a published tag in naninu123/soroban-devkit."
+    description: "sdkt git tag to install (e.g. v1.0.0). Must be a published tag in SaboLabs/soroban-devkit."
     required: false
     default: "v1.0.0"
   target:
@@ -46,7 +46,7 @@ runs:
           cargo install --path crates/sdkt-cli --locked
         else
           echo "External consumer — installing from git tag ${{ inputs.sdkt-version }}."
-          cargo install --git https://github.com/naninu123/soroban-devkit --tag "${{ inputs.sdkt-version }}" sdkt-cli --locked
+          cargo install --git https://github.com/SaboLabs/soroban-devkit --tag "${{ inputs.sdkt-version }}" sdkt-cli --locked
         fi
 
         INSTALL_DIR="${CARGO_HOME:-$HOME/.cargo}/bin"

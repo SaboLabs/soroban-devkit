@@ -213,7 +213,7 @@ parameters, custom types, and events.
 
 The Playground is deployed to GitHub Pages:
 
-**https://naninu123.github.io/soroban-devkit/playground/**
+**https://SaboLabs.github.io/soroban-devkit/playground/**
 
 The Pages workflow (`.github/workflows/pages.yml`) uploads `website/` verbatim on
 pushes that touch `website/**` or the workflow itself. Because it performs no

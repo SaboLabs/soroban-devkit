@@ -1,7 +1,7 @@
 # Soroban DevKit (`sdkt`)
 
-[![CI](https://github.com/naninu123/soroban-devkit/actions/workflows/ci.yml/badge.svg)](https://github.com/naninu123/soroban-devkit/actions/workflows/ci.yml)
-[![Release](https://img.shields.io/github/v/release/naninu123/soroban-devkit?label=release)](https://github.com/naninu123/soroban-devkit/releases)
+[![CI](https://github.com/SaboLabs/soroban-devkit/actions/workflows/ci.yml/badge.svg)](https://github.com/SaboLabs/soroban-devkit/actions/workflows/ci.yml)
+[![Release](https://img.shields.io/github/v/release/SaboLabs/soroban-devkit?label=release)](https://github.com/SaboLabs/soroban-devkit/releases)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
 > **Website:** a static landing page lives in [`website/`](website/) — open
@@ -54,7 +54,7 @@ run your first command.
 **Recommended — install.sh (no Rust toolchain needed):**
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/naninu123/soroban-devkit/main/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/SaboLabs/soroban-devkit/main/install.sh | bash
 ```
 
 The script detects your OS/arch, downloads the matching release binary,
@@ -62,7 +62,7 @@ verifies its SHA-256 checksum, and installs `sdkt` to `~/.local/bin/sdkt`.
 
 **Option A — Manual GitHub Release download:**
 
-1. Open the [Releases](https://github.com/naninu123/soroban-devkit/releases)
+1. Open the [Releases](https://github.com/SaboLabs/soroban-devkit/releases)
    page and download the latest release for your platform:
 
    | Platform | Asset |
@@ -84,7 +84,7 @@ verifies its SHA-256 checksum, and installs `sdkt` to `~/.local/bin/sdkt`.
 **Option B — Build from source (requires Rust 1.88.0+):**
 
 ```bash
-git clone https://github.com/naninu123/soroban-devkit
+git clone https://github.com/SaboLabs/soroban-devkit
 cd soroban-devkit
 cargo install --path crates/sdkt-cli
 sdkt --version

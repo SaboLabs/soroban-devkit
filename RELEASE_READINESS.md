@@ -4,7 +4,7 @@
 **Rust edition:** 2021
 **MSRV:** `1.88.0` (pinned)
 **License:** MIT
-**Repository:** https://github.com/naninu123/soroban-devkit
+**Repository:** https://github.com/SaboLabs/soroban-devkit
 **Default branch:** `main`
 
 This document is the release-readiness snapshot for the current milestone closure.

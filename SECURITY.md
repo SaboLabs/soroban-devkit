@@ -13,7 +13,7 @@ Only the latest minor version is actively maintained. Security fixes are backpor
 
 ## Reporting a Vulnerability
 
-Report suspected security vulnerabilities by opening a **Private Security Advisory** on the project's GitHub repository (primary method): https://github.com/naninu123/soroban-devkit/security/advisories/new.
+Report suspected security vulnerabilities by opening a **Private Security Advisory** on the project's GitHub repository (primary method): https://github.com/SaboLabs/soroban-devkit/security/advisories/new.
 
 As an optional secondary contact, you may email the maintainer at **security@naninu123.dev**. The Private Security Advisory remains the preferred channel; use email only if you cannot open an advisory. Do not include exploit code in public issues — publicly disclosing active exploits before a fix is released harms users.
 

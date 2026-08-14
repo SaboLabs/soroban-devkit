@@ -27,11 +27,11 @@ impl WasmCache {
     /// Creates a new `WasmCache` instance.
     /// Uses the standard OS cache directory:
     /// - Linux: `~/.cache/soroban-devkit/`
-    /// - macOS: `~/Library/Caches/org.naninu123.soroban-devkit/`
-    /// - Windows: `%LOCALAPPDATA%\naninu123\soroban-devkit\cache\`
+    /// - macOS: `~/Library/Caches/org.SaboLabs.soroban-devkit/`
+    /// - Windows: `%LOCALAPPDATA%\SaboLabs\soroban-devkit\cache\`
     pub fn new() -> Result<Self, StorageError> {
         let proj_dirs =
-            ProjectDirs::from("org", "naninu123", "soroban-devkit").ok_or_else(|| {
+            ProjectDirs::from("org", "SaboLabs", "soroban-devkit").ok_or_else(|| {
                 StorageError::Io(std::io::Error::new(
                     std::io::ErrorKind::NotFound,
                     "Could not determine OS cache directory",

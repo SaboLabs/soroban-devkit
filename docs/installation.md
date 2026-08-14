@@ -10,7 +10,7 @@ and installs `sdkt` to `~/.local/bin/sdkt` by default. No Rust toolchain
 required.
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/naninu123/soroban-devkit/main/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/SaboLabs/soroban-devkit/main/install.sh | bash
 ```
 
 The script:
@@ -30,19 +30,19 @@ Custom install directory:
 
 ```bash
 SDKT_INSTALL_DIR=/usr/local/bin curl -fsSL \
-  https://raw.githubusercontent.com/naninu123/soroban-devkit/main/install.sh | bash
+  https://raw.githubusercontent.com/SaboLabs/soroban-devkit/main/install.sh | bash
 ```
 
 Pin a specific version:
 
 ```bash
 SDKT_VERSION=v2.4.0 curl -fsSL \
-  https://raw.githubusercontent.com/naninu123/soroban-devkit/main/install.sh | bash
+  https://raw.githubusercontent.com/SaboLabs/soroban-devkit/main/install.sh | bash
 ```
 
 ## Option A — Manual GitHub Release download
 
-1. Open the [Releases](https://github.com/naninu123/soroban-devkit/releases)
+1. Open the [Releases](https://github.com/SaboLabs/soroban-devkit/releases)
    page and download the latest release for your platform:
 
    | Platform | Asset |
@@ -63,7 +63,7 @@ SDKT_VERSION=v2.4.0 curl -fsSL \
 ## Option B — Build from source (recommended for development)
 
 ```bash
-git clone https://github.com/naninu123/soroban-devkit
+git clone https://github.com/SaboLabs/soroban-devkit
 cd soroban-devkit
 cargo install --path crates/sdkt-cli
 ```
@@ -83,12 +83,12 @@ cargo build --bin sdkt
 cargo install sdkt-cli
 ```
 
-> The crate is published on the `v2.4.0` tag and later. If `cargo install
+> The crate is published on the `v2.5.0` tag and later. If `cargo install
 > sdkt-cli` reports "no matching package", build from source (Option B) or
 > pin a released tag:
 >
 > ```bash
-> cargo install --git https://github.com/naninu123/soroban-devkit --tag v2.4.0 sdkt-cli --locked
+> cargo install --git https://github.com/SaboLabs/soroban-devkit --tag v2.5.0 sdkt-cli --locked
 > ```
 
 ## Features

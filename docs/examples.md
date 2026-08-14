@@ -169,7 +169,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: naninu123/soroban-devkit/.github/actions/sdkt@main
+      - uses: SaboLabs/soroban-devkit/.github/actions/sdkt@main
         with:
           command: audit
           sdkt-version: v2.1.1
@@ -190,7 +190,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: naninu123/soroban-devkit/.github/actions/sdkt@main
+      - uses: SaboLabs/soroban-devkit/.github/actions/sdkt@main
         with:
           command: upgrade-safety
           sdkt-version: v2.1.1

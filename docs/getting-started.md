@@ -10,7 +10,7 @@ See [installation.md](installation.md). The fastest path:
 
 ```bash
 # From source
-git clone https://github.com/naninu123/soroban-devkit
+git clone https://github.com/SaboLabs/soroban-devkit
 cd soroban-devkit
 cargo install --path crates/sdkt-cli
 

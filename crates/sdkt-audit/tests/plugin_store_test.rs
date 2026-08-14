@@ -26,7 +26,7 @@ fn meta_toml(kind: &str, abi_major: u32, artifact: &str) -> String {
 id = "example-rule"
 name = "Example Rule"
 version = "1.0.0"
-author = "naninu123"
+author = "SaboLabs"
 description = "Reference audit rule."
 kind = "{kind}"
 artifact = "{artifact}"

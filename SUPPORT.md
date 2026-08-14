@@ -6,8 +6,8 @@ Need help with `sdkt`? This guide points you to the right place.
 
 | Topic | Where |
 |-------|-------|
-| Bug reports, crashes, wrong output | [GitHub Issues](https://github.com/naninu123/soroban-devkit/issues) |
-| General questions, usage help, "how do I…" | [GitHub Discussions](https://github.com/naninu123/soroban-devkit/discussions) |
+| Bug reports, crashes, wrong output | [GitHub Issues](https://github.com/SaboLabs/soroban-devkit/issues) |
+| General questions, usage help, "how do I…" | [GitHub Discussions](https://github.com/SaboLabs/soroban-devkit/discussions) |
 | Security vulnerabilities | [SECURITY.md](SECURITY.md) — Private Security Advisory |
 | Contributing code/docs | [CONTRIBUTING.md](CONTRIBUTING.md) |
 

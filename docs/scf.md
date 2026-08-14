@@ -13,7 +13,7 @@ Stellar / Soroban smart-contract development. It consolidates the fragmented
 contract lifecycle — decode, inspect, analyze, build, simulate, submit, audit,
 and deploy — into a single MIT-licensed binary and reusable crate set.
 
-- **Repository:** https://github.com/naninu123/soroban-devkit
+- **Repository:** https://github.com/SaboLabs/soroban-devkit
 - **License:** MIT
 - **Language / edition:** Rust 2021, MSRV pinned to `1.88.0`
 - **Current version:** `2.5.0`
