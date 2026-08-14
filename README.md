@@ -70,8 +70,11 @@ verifies its SHA-256 checksum, and installs `sdkt` to `~/.local/bin/sdkt`.
    | Linux (x86_64) | `sdkt-x86_64-unknown-linux-gnu.tar.gz` |
    | macOS (Intel) | `sdkt-x86_64-apple-darwin.tar.gz` |
    | macOS (Apple Silicon) | `sdkt-aarch64-apple-darwin.tar.gz` |
+   | Windows (x86_64) | `sdkt-x86_64-pc-windows-msvc.zip` |
 
 2. Extract and run:
+
+   **Linux/macOS:**
 
    ```bash
    tar -xzf sdkt-x86_64-unknown-linux-gnu.tar.gz   # Linux x86_64
@@ -79,6 +82,15 @@ verifies its SHA-256 checksum, and installs `sdkt` to `~/.local/bin/sdkt`.
    ./sdkt --version
    # Optional: make it available system-wide
    sudo mv sdkt /usr/local/bin/
+   ```
+
+   **Windows (PowerShell):**
+
+   ```powershell
+   Expand-Archive -Path sdkt-x86_64-pc-windows-msvc.zip -DestinationPath .
+   .\sdkt.exe --version
+   # Optional: add the directory to your PATH
+   $env:Path += ";C:\path\to\sdkt-directory"
    ```
 
 **Option B — Build from source (requires Rust 1.88.0+):**

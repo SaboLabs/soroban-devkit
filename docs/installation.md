@@ -60,7 +60,45 @@ SDKT_VERSION=v2.5.0 curl -fsSL \
    ./sdkt --version
    ```
 
-## Option B — Build from source (recommended for development)
+## Windows
+
+`sdkt` ships a prebuilt **Windows x86_64** binary. No Rust toolchain required.
+
+### Option A — Prebuilt binary (recommended)
+
+1. Open the [Releases](https://github.com/SaboLabs/soroban-devkit/releases)
+   page and download the latest Windows asset:
+   `sdkt-x86_64-pc-windows-msvc.zip`
+
+2. Extract and run (PowerShell):
+
+   ```powershell
+   Expand-Archive -Path sdkt-x86_64-pc-windows-msvc.zip -DestinationPath .
+   .\sdkt.exe --version
+   ```
+
+3. Optional: add the directory containing `sdkt.exe` to your `PATH`:
+
+   ```powershell
+   $env:Path += ";C:\path\to\sdkt-directory"
+   ```
+
+   To make the change permanent, add it in **System Properties → Environment Variables**.
+
+### Option B — Build from source
+
+Requires Rust 1.88.0+:
+
+```powershell
+git clone https://github.com/SaboLabs/soroban-devkit
+cd soroban-devkit
+cargo install --path crates/sdkt-cli
+sdkt --version
+```
+
+This installs `sdkt.exe` into `%USERPROFILE%\.cargo\bin`. Make sure it's on your `PATH`.
+
+## Option B (cross-platform) — Build from source
 
 ```bash
 git clone https://github.com/SaboLabs/soroban-devkit

@@ -81,6 +81,16 @@ how we review changes, and how releases are produced.
 - Documentation and onboarding improvements.
 - Test coverage improvements.
 
+## Platform Support
+
+`sdkt` is tested on:
+
+- **Linux** (x86_64, aarch64)
+- **macOS** (Intel, Apple Silicon)
+- **Windows** (x86_64)
+
+Release binaries are provided for all three platforms on GitHub Releases.
+
 ## Good First Issues
 
 Looking for a place to start? Self-contained, low-risk tasks:
@@ -91,6 +101,7 @@ Looking for a place to start? Self-contained, low-risk tasks:
   `crates/sdkt-cli/src/main.rs` (no behavior change).
 - **Tests**: add an integration test under `crates/sdkt-cli/tests/` for an
   existing subcommand.
+- **Windows**: verify a command or documentation path works on Windows (PowerShell).
 - **CI**: tighten a workflow without changing release behavior.
 
 Use the **Good First Issue** issue template and label so we can triage.
