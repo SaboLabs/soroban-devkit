@@ -303,4 +303,34 @@ mod tests {
         let info = cache.cache_info("nonexistent-network").unwrap();
         assert_eq!(info.entry_count, 0);
     }
+
+    // ---------------------------------------------------------------------------
+    // Windows-specific regression tests
+    // ---------------------------------------------------------------------------
+
+    /// Verifies the production WasmCache::new() constructor resolves a
+    /// platform-appropriate cache directory on Windows.
+    ///
+    /// The test is read-only against the production constructor: it does not
+    /// write any cache data. It only verifies the resolved base directory
+    /// contains the expected OS-managed namespace.
+    #[cfg(windows)]
+    #[test]
+    fn test_new_resolves_windows_cache_path() {
+        let cache = WasmCache::new().expect("WasmCache::new() must succeed on Windows");
+
+        // Windows: %LOCALAPPDATA%\SaboLabs\soroban-devkit\cache\
+        // We do not assert an absolute path (OS-managed); only the namespace.
+        let path_str = cache.base_dir.to_string_lossy().to_lowercase();
+        assert!(
+            path_str.contains("sabolabs"),
+            "Windows cache path should contain the 'SaboLabs' namespace, got: {}",
+            cache.base_dir.display()
+        );
+        assert!(
+            path_str.contains("soroban-devkit"),
+            "Windows cache path should contain the 'soroban-devkit' app name, got: {}",
+            cache.base_dir.display()
+        );
+    }
 }

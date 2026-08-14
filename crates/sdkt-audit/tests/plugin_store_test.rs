@@ -111,3 +111,33 @@ fn kind_extension_mismatch_rejected() {
     let err = install(&src, &InstallOpts::default()).unwrap_err();
     assert!(matches!(err, StoreError::KindExtMismatch { .. }));
 }
+
+/// Verifies resolve_store_root() fallback behavior when SDKT_PLUGIN_DIR is absent.
+///
+/// The implementation falls back to:
+///   1. `<config-dir>/sdkt/plugins` if it exists, otherwise
+///   2. `<cwd>/.sdkt/plugins`
+///
+/// This test ensures the fallback produces a sensible path ending in the
+/// expected `sdkt/plugins` suffix.
+#[test]
+fn store_root_fallback_without_env() {
+    let _g = ENV_LOCK.lock().unwrap();
+    // Remove the env var to exercise the fallback path
+    std::env::remove_var("SDKT_PLUGIN_DIR");
+
+    let root = sdkt_audit::plugin_store::resolve_store_root();
+
+    let path_str = root.to_string_lossy();
+    assert!(
+        path_str.ends_with("sdkt")
+            || path_str.ends_with("sdkt/plugins")
+            || path_str.ends_with("sdkt\\plugins"),
+        "Fallback store root should end with 'sdkt/plugins' or 'sdkt', got: {}",
+        path_str
+    );
+    assert!(
+        !path_str.is_empty(),
+        "Fallback store root should not be empty"
+    );
+}

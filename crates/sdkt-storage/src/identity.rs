@@ -370,4 +370,69 @@ mod tests {
         assert_eq!(def.name, "alice");
         assert_eq!(def.public_key, alice.public_key);
     }
+
+    // ---------------------------------------------------------------------------
+    // Windows-specific regression tests
+    // ---------------------------------------------------------------------------
+
+    /// Verifies the production IdentityStore::new() constructor resolves a
+    /// platform-appropriate config directory on Windows.
+    ///
+    /// Read-only against production constructor — does not create identities
+    /// in the real config directory.
+    #[cfg(windows)]
+    #[test]
+    fn test_new_resolves_windows_config_path() {
+        let store = IdentityStore::new().expect("IdentityStore::new() must succeed on Windows");
+
+        // Windows: %APPDATA%\SorobanDevKit\sdkt\identities\
+        let path_str = store.dir.to_string_lossy().to_lowercase();
+        assert!(
+            path_str.contains("sorobandevkit"),
+            "Windows config path should contain the 'SorobanDevKit' namespace, got: {}",
+            store.dir.display()
+        );
+        assert!(
+            path_str.contains("sdkt"),
+            "Windows config path should contain the 'sdkt' app name, got: {}",
+            store.dir.display()
+        );
+    }
+
+    /// Verifies that set_default/get_default works on Windows using the
+    /// Windows-specific symlink implementation.
+    ///
+    /// This test exercises the existing:
+    ///     #[cfg(windows)] std::os::windows::fs::symlink_file
+    /// path which is never exercised on Linux or macOS CI.
+    #[cfg(windows)]
+    #[test]
+    fn test_default_identity_windows_symlink() {
+        let dir = tempdir().unwrap();
+        let store = IdentityStore::with_dir(dir.path()).unwrap();
+
+        // Generate an identity
+        let alice = store.generate("alice").unwrap();
+        assert_eq!(alice.name, "alice");
+        assert!(alice.public_key.starts_with('G'));
+
+        // Verify no default is set initially
+        assert!(
+            store.get_default().is_err(),
+            "no default should be set initially"
+        );
+
+        // Set default — this calls #[cfg(windows)] symlink_file on Windows
+        store
+            .set_default("alice")
+            .expect("set_default must succeed on Windows");
+
+        // Get default — this reads the symlink on Windows
+        let def = store
+            .get_default()
+            .expect("get_default must succeed after set_default on Windows");
+
+        assert_eq!(def.name, "alice");
+        assert_eq!(def.public_key, alice.public_key);
+    }
 }
