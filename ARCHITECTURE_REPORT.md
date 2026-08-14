@@ -1,7 +1,7 @@
 # Soroban DevKit — Architecture Report
 
-**As of:** 2026-08-02  
-**Baseline:** v0.1.0  
+**As of:** 2026-08-14
+**Version:** v2.5.0
 **Prepared by:** IronClaw Agent
 
 ---
@@ -10,243 +10,214 @@
 
 ### Layout
 
-The project is a Cargo virtual workspace with three crates:
+The project is a Cargo virtual workspace with 8 publishable crates plus 1 excluded browser-only crate:
 
 ```
 soroban-devkit/
-├── Cargo.toml              # Workspace root (no package, resolver = "2")
+├── Cargo.toml              # Workspace root (resolver = "2")
 ├── Cargo.lock
-├── GAP_ANALYSIS.md
 ├── README.md
 ├── CHANGELOG.md
 ├── CONTRIBUTING.md
 ├── SECURITY.md
 ├── CODE_OF_CONDUCT.md
 ├── LICENSE
-├── .gitignore
-├── .sdkt.toml              # Optional default user config
-└── crates/
-    ├── sdkt-core/          # Configuration engine
-    ├── sdkt-xdr/           # XDR decoding engine
-    └── sdkt-cli/           # CLI binary (entry point)
+├── ROADMAP.md
+├── RELEASE_READINESS.md
+├── ARCHITECTURE_REPORT.md
+├── crates/
+│   ├── sdkt-core/          # Shared types, config, validation
+│   ├── sdkt-xdr/           # XDR decode/encode
+│   ├── sdkt-wasm/          # WASM parsing, ABI, offline diff
+│   ├── sdkt-rpc/           # Soroban RPC client
+│   ├── sdkt-storage/       # WASM cache, identity/keystore
+│   ├── sdkt-audit/         # Static security analysis
+│   ├── sdkt-audit-example-rule/  # Reference plugin
+│   ├── sdkt-cli/           # CLI binary (entry point)
+│   └── sdkt-playground/    # Browser-only glue (excluded from workspace)
+├── docs/
+├── website/
+└── .github/
 ```
 
 ### Crate Map
 
-| Crate | Purpose | Public API | Dependencies |
-|-------|---------|------------|--------------|
-| `sdkt-core` | Config parsing + network/decode settings | `DevKitConfig`, `NetworkConfig`, `DecodeConfig` | `serde`, `toml` |
-| `sdkt-xdr` | Base64/hex → JSON XDR decoding | `decode()`, `decode_bytes()`, `decode_single()`, `auto_detect()`, `detect_and_decode()`, `format_json()`, `DecodeError`, `OutputFormat` | `stellar-xdr`, `base64`, `hex`, `thiserror`, `serde_json`, `sdkt-core` (path dep) |
-| `sdkt-cli` | Clap-based CLI binary | `main()` entrypoint | `clap` (derive), `sdkt-core` (path), `sdkt-xdr` (path), `serde_json` |
+| Crate | Role | Dependencies |
+|-------|------|--------------|
+| `sdkt-core` | Configuration, validation, shared types | None internal |
+| `sdkt-xdr` | XDR decode/encode (ScVal, TransactionEnvelope, ContractEvent) | `sdkt-core`, `sdkt-wasm` |
+| `sdkt-wasm` | WASM parsing, ContractSpec, offline diff, UpgradeVerdict | `sdkt-core` |
+| `sdkt-rpc` | Soroban RPC client (reqwest) | `sdkt-core`, `sdkt-xdr`, `sdkt-wasm` |
+| `sdkt-storage` | WASM cache, ED25519 identity/keystore, StorageAnalyzer | `sdkt-rpc`, `sdkt-wasm` |
+| `sdkt-audit` | Static security analysis (AUTH-001/002/003, MOVE-001) | `sdkt-wasm` |
+| `sdkt-audit-example-rule` | Reference plugin rule (loadable as `.so`/`.wasm`) | `sdkt-audit` |
+| `sdkt-cli` | CLI binary (clap derive) | All 7 supporting crates |
+| `sdkt-playground` | Browser-only wasm-bindgen wrapper (excluded from workspace) | `sdkt-wasm` |
 
 ---
 
-## 2. Module Responsibilities
-
-### sdkt-core (`crates/sdkt-core/src/`)
-
-#### `lib.rs`
-- Re-exports `config` module and `DevKitConfig`.
-
-#### `config.rs`  
-- **Responsibility**: Workspace-wide configuration structures and TOML file parsing.
-- **Structures**: `DevKitConfig`, `NetworkConfig`, `DecodeConfig`
-- **Key methods**:
-  - `DevKitConfig::default()` — returns testnet defaults
-  - `DevKitConfig::from_toml(&str)` — parse TOML string
-  - `DevKitConfig::from_file<P: AsRef<Path>>(P)` — load from file, fallback to default
-
-### sdkt-xdr (`crates/sdkt-xdr/src/`)
-
-#### `lib.rs` (entire file is the module)
-- **Responsibility**: XDR decode engine. Base64/hex string + raw bytes → JSON.
-- **Pipeline**:
-  1. `detect_and_decode(payload: &str) -> Vec<u8>` — tries base64 first, then hex
-  2. `decode_bytes(raw: &[u8], type_hint: Option<&str>) -> serde_json::Value` — dispatches to typed decoder or auto-detect
-  3. `decode_single<T: ReadXdr + Serialize>()` — generic XDR reader
-  4. `auto_detect()` — tries `ScVal`, `TransactionEnvelope`, `ContractEvent` in order
-  5. `format_json()` — serialize to compact JSON or pretty JSON
-
-- **Supported XDR types** (via `stellar-xdr` crate v28):
-  - `ScVal`, `TransactionEnvelope`, `TransactionResult`
-  - `TransactionMeta`, `LedgerKey`, `LedgerEntry`, `ContractEvent`
-
-- **Public types**: `DecodeError` (enum, thiserror), `OutputFormat` (enum, Default = Pretty)
-
-#### Test Coverage
-6 unit tests + 1 doc test:
-- `test_invalid_base64`
-- `test_valid_scval_integer_base64`
-- `test_auto_decode_scval`
-- `test_empty_payload`
-- `test_unknown_type`
-- `test_json_vs_pretty`
-
-### sdkt-cli (`crates/sdkt-cli/src/`)
-
-#### `main.rs` (77 lines)
-- **Responsibility**: CLI entrypoint. Parses arguments via Clap derive.
-- **Current subcommand**: `decode`
-- **Arguments**: `payload` (positional), `--type`, `--format`, `--file`
-- **Flow**: Read input (from arg or file) → call `sdkt_xdr::decode()` → println
-
----
-
-## 3. Public API Map
+## 2. Dependency Graph
 
 ```
-sdkt-core
-├── DevKitConfig
-│   ├── network: NetworkConfig
-│   │   ├── rpc_url: String
-│   │   └── passphrase: String
-│   └── decode: DecodeConfig
-│       ├── max_depth: usize (default 32)
-│       └── allow_fallback_hex: bool (default true)
-├── NetworkConfig
-├── DecodeConfig
-└── from_toml(), from_file(), default()
-
-sdkt-xdr
-├── decode(payload, type_hint, format) -> Result<String, DecodeError>
-├── decode_bytes(raw, type_hint) -> Result<Value, DecodeError>
-├── format_json(value, format) -> Result<String, DecodeError>
-├── OutputFormat { Json, Pretty }
-└── DecodeError {
-    Base64(DecodeError),
-    Hex(FromHexError),
-    XdrParse(String, stellar_xdr::Error),
-    TypeUnknown(String),
-    EmptyPayload,
-    Json(serde_json::Error)
-}
-
-sdkt-cli
-└── main() — CLI with `decode` subcommand
+sdkt-core  → (nothing internal)
+sdkt-xdr   → sdkt-core, sdkt-wasm
+sdkt-wasm  → sdkt-core
+sdkt-rpc   → sdkt-core, sdkt-xdr, sdkt-wasm
+sdkt-storage → sdkt-rpc, sdkt-wasm
+sdkt-audit → sdkt-wasm
+sdkt-audit-example-rule → sdkt-audit
+sdkt-cli   → sdkt-core, sdkt-xdr, sdkt-wasm, sdkt-rpc, sdkt-storage, sdkt-audit, sdkt-audit-example-rule
+sdkt-playground → sdkt-wasm (excluded from workspace)
 ```
 
 ---
 
-## 4. Dependency Graph
+## 3. Crate Responsibilities
 
-```
-sdkt-cli
-├── sdkt-core  (path: ../sdkt-core)
-├── sdkt-xdr   (path: ../sdkt-xdr)
-└── serde_json
+### sdkt-core
+- `DevKitConfig`, `NetworkConfig`, `DecodeConfig`, `ContractConfig`
+- `OutputFormat`, `FeeConfig`, `FeeEstimator`
+- `DependencyFetcher`, `GitFetcher`, `PathResolver` (M35.1)
+- Package validation (`validate_manifest`, `validate_dependencies`)
+- `resolve_deploy_order`, `validate_project` (topological sort)
+- Network safety guards (`guard_mutating_network`, M39)
 
-sdkt-xdr
-├── sdkt-core  (path: ../sdkt-core)
-├── stellar-xdr v28
-├── base64
-├── hex
-├── thiserror
-├── serde
-└── serde_json
+### sdkt-xdr
+- Base64/hex → JSON XDR decoding
+- `decode()`, `decode_bytes()`, `auto_detect()`
+- Supported types: ScVal, TransactionEnvelope, TransactionResult, TransactionMeta, LedgerKey, LedgerEntry, ContractEvent
+- `DecodeError` enum, `OutputFormat`
 
-sdkt-core
-├── serde
-└── toml
-```
+### sdkt-wasm
+- WASM module parsing (metadata, exports, imports, custom sections)
+- `parse_metadata()`, `parse_contract_spec()`
+- `ContractSpec`, `FunctionSignature`, `CustomType`, `EventSpec`
+- `SpecDiff`, `UpgradeVerdict` (M14 upgrade safety)
+- `WasmError` enum
+
+### sdkt-rpc
+- `SorobanRpcClient` (persistent pooled reqwest)
+- `inspect_contract`, `get_wasm_bytecode`
+- Transaction simulate/submit, events, account, fee estimation
+- `RpcError` enum
+
+### sdkt-storage
+- `WasmCache` (atomic tempfile rename, per-network isolation)
+- `IdentityStore` (ED25519 keystore, key generate/import/list/show/delete/default)
+- `StorageAnalyzer` (Instance/Persistent/Temporary classification)
+- `CacheInfo`, `StorageError`
+
+### sdkt-audit
+- `scan_all_functions()`, `AuditContext`, `FnScan`
+- `RuleRegistry`, `AuditRule` trait
+- Built-in rules: AUTH-001/002/003, MOVE-001
+- Plugin loaders: native (.so/.dylib/.dll) via libloading, WASM via extism
+- `PluginStore` (M40 local offline store)
+
+### sdkt-audit-example-rule
+- Reference plugin crate (EXAMPLE-001)
+- Loadable as native `.so` or `.wasm`
+
+### sdkt-cli
+- CLI entrypoint using clap derive
+- Routes commands to internal crates
+- Feature flags: `plugins`, `wasm-plugins`, `provenance`
+- Error handling via `eprintln!` + non-zero exit
+
+### sdkt-playground
+- Browser-only wasm-bindgen wrapper
+- Excluded from workspace (built separately for wasm32-unknown-unknown)
 
 ---
 
-## 5. Current CLI Commands
+## 4. CLI Commands (v2.5.0)
 
-| Command | Subcommand | Args | Status |
-|---------|------------|------|--------|
-| `sdkt` | `decode` | `payload`, `--type`, `--format`, `--file` | Implemented (v0.1.0) |
+| Command | Subcommand | Purpose | Network |
+|---------|------------|---------|---------|
+| `decode` | `<xdr>` | Base64/hex → JSON | No |
+| `inspect` | `<contract-id>` | Contract ABI + storage | Yes |
+| `storage` | `check/analyze/estimate` | Storage TTL analysis | Yes/No |
+| `verify` | `--contract <id>` | On-chain vs local WASM hash | Yes |
+| `health` | `--contract <id>` | Unified posture report | Yes |
+| `tx` | `inspect/validate/simulate/sign/submit/build` | Transaction lifecycle | Mixed |
+| `events` | `<contract-id>` | Event explorer | Yes |
+| `account` | `<address>` | Balances + signers | Yes |
+| `fee` | `estimate` | Fee estimation | Yes |
+| `wasm` | `inspect/metadata/cache` | WASM management | Mixed |
+| `diff` | `--old-wasm/--new-wasm` | Offline WASM diff | No |
+| `audit` | `<path.rs>` | Static security analysis | No |
+| `identity` | `generate/import/list/show/delete/default` | Keystore management | No |
+| `network` | `add/list/show/remove` | Named profiles | No |
+| `init` | `<name>` | Scaffold project | No |
+| `deploy` | `--wasm/--salt` | Upload + instantiate | Yes |
+| `build` | | Compile workspace contracts | No |
+| `lock` | `generate/verify/show` | Lock file management | No |
+| `package` | `validate/fetch/update/pack/publish` | Package manifests | Mixed |
+| `project` | `deploy` | Multi-contract workspace deploy | Yes |
+| `plugin` | `list/show/install/remove/update` | Local plugin store | No |
+| `completions` | `<shell>` | Shell completion scripts | No |
 
 ---
 
-## 6. Decode Pipeline (Current)
+## 5. Feature Flags
 
-```
-Input (String or File)
-   │
-   ▼
-detect_and_decode() ── tries base64 → hex fallback
-   │
-   ▼
-raw bytes
-   │
-   ▼
-decode_bytes() ── dispatch by type_hint or auto_detect()
-   │            ├── scval       → decode_single::<ScVal>()
-   │            ├── transactionenvelope → decode_single::<TransactionEnvelope>()
-   │            └── auto → tries ScVal, TransactionEnvelope, ContractEvent
-   │
-   ▼
-serde_json::Value
-   │
-   ▼
-format_json() ── OutputFormat::Json or Pretty
-   │
-   ▼
-println!
-```
+| Flag | Crate | Effect |
+|------|-------|--------|
+| `plugins` | sdkt-cli | Load native shared-library plugins |
+| `wasm-plugins` | sdkt-cli | Load sandboxed WASM plugins |
+| `provenance` | sdkt-cli | Append git commit + build date to version |
+| `plugins` | sdkt-audit | Enable native plugin loader |
+| `wasm-plugins` | sdkt-audit | Enable WASM plugin loader |
+
+---
+
+## 6. Testing Strategy
+
+- Unit tests: `#[cfg(test)] mod tests` in each crate
+- Integration tests: `crates/sdkt-cli/tests/` (assert_cmd)
+- Fixtures: `crates/sdkt-cli/tests/fixtures/` (us_old.wasm, us_new.wasm)
+- CI: `.github/workflows/ci.yml` (fmt, clippy, test on Linux/macOS/MSRV/Windows)
+- Compatibility: `.github/workflows/compatibility.yml` (real stellar/soroban-examples)
+- Release: `.github/workflows/release.yml` (cross-platform binaries + crates.io publish)
 
 ---
 
 ## 7. Extension Points
 
-| Area | Current State | Future Impact |
-|------|--------------|---------------|
-| Config | `DevKitConfig` struct | Can add new config sections (e.g., `[storage]`, `[audit]`) |
-| XDR decode | `decode_bytes()` match statement | Add new XDR type arms easily |
-| CLI | Clap derive `enum Commands` | Add new variants easily |
-| Types | `OutputFormat` enum | Currently in `sdkt-xdr`; **Milestone 3A will migrate to `sdkt-core`** with re-export from `sdkt-xdr` for backward compat |
-| Error handling | `DecodeError` enum | Add new error variants via enum |
-| RPC layer | **Does not exist** | **Milestone 3A will add `sdkt-rpc` crate** as abstraction boundary
+| Area | Current State |
+|------|---------------|
+| New XDR type | Add arm in `sdkt-xdr/src/lib.rs` `decode_bytes()` |
+| New CLI command | Add variant in `sdkt-cli/src/main.rs` + handler function |
+| New audit rule | Implement `AuditRule` trait + register in `RuleRegistry` |
+| Plugin | Build `.so` or `.wasm` with C-ABI/wasm-bindgen export |
+| New config section | Add struct in `sdkt-core/src/config.rs` |
+| New network | Add named profile via `sdkt network add` |
 
 ---
 
-## 8. Technical Debt
+## 8. Security
 
-| Issue | Severity | Description |
-|-------|----------|-------------|
-| **No config integration** | Medium | `DevKitConfig` exists but `sdkt-cli` never loads it; config from `.sdkt.toml` is ignored at CLI level |
-| **No network interaction** | Low | `sdkt-core::NetworkConfig::rpc_url` is never used — no RPC client in any crate |
-| **Limited auto-detection** | Medium | `auto_detect()` only tries 3 types; `TransactionResult`, `TransactionMeta`, `LedgerKey`, `LedgerEntry` are unsupported in auto mode |
-| **No error recovery** | Medium | If base64 decode fails, hex attempt isn't made — it returns immediately (due to `detect_and_decode` early-return on base64 failure) |
-| **CLI format is a string** | Low | `format: String` should ideally be an enum to enforce valid values at parse time |
-| **No logging** | Low | No `tracing` or `log` crate integrated — debugging requires manual instrumentation |
-| **No subcommand traits/traits pattern** | Low | CLI is flat; adding complex subcommands will grow `main.rs` significantly |
+- Mainnet safety (M39): mutating commands refuse mainnet without explicit `--network-profile`/`--rpc-url`
+- Plugin sandboxing: WASM plugins run in Extism sandbox
+- Checksum verification: install.sh verifies SHA-256 before extraction
+- Atomic writes: cache uses tempfile rename to prevent corruption
+- Identity: ED25519 keys stored locally, never transmitted
 
 ---
 
-## 9. Risks
+## 9. Current Maturity
 
-| Risk | Impact | Mitigation |
-|------|--------|------------|
-| **stellar-xdr upgrade** | Medium | v28 pinned; upgrading to newer stellar-xdr versions could break API |
-| **Config drift** | Medium | If `.sdkt.toml` isn't loaded by CLI, config values diverge from user intent |
-| **Type explosion** | Low | Each new XDR type requires a match arm + decoder function — mechanical but error-prone |
-| **Offline-only** | Low | Current `decode` works offline; adding `storage`/`inspect` requires network — must handle offline gracefully |
-
----
-
-## 10. Key Observations for Milestone 3A
-
-1. **Gap B (Storage)** and **Gap E (Inspect)** both require RPC interaction — `sdkt-xdr` crate would need to be split or a new `sdkt-rpc` crate created.
-2. **GAP_ANALYSIS.md** explicitly lists planned commands: `sdkt storage` (check, estimate) and `sdkt inspect` (contract ID).
-3. `NetworkConfig` already exists but is unused — this is the natural place to start for RPC interaction.
-4. Current architecture cleanly separates config/core/xdr/cli — adding an `sdkt-rpc` crate follows the same pattern.
+- 40+ milestones merged to `main`
+- All 8 crates published to crates.io at v2.5.0
+- GitHub release: macOS (x86_64, aarch64), Linux (x86_64)
+- Web Playground deployed to GitHub Pages
+- CI pipeline green on Linux/macOS/Windows
 
 ---
 
-## Appendix: File Inventory
+## 10. Known Gaps
 
-| File | Lines | Purpose |
-|------|-------|---------|
-| `/Cargo.toml` | 7 | Workspace root |
-| `/crates/sdkt-core/Cargo.toml` | 8 | Core crate manifest |
-| `/crates/sdkt-core/src/lib.rs` | 7 | Core re-exports |
-| `/crates/sdkt-core/src/config.rs` | 100 | Config structures + tests |
-| `/crates/sdkt-xdr/Cargo.toml` | 13 | XDR crate manifest |
-| `/crates/sdkt-xdr/src/lib.rs` | 231 | XDR decoding engine + tests |
-| `/crates/sdkt-cli/Cargo.toml` | 10 | CLI crate manifest |
-| `/crates/sdkt-cli/src/main.rs` | 77 | CLI entrypoint |
-
-**Total source lines (non-test)**: ~162  
-**Total test lines**: ~74
+- Windows binary not yet available (no release asset, no install docs)
+- No Windows-specific path tests (cache namespace, identity keystore)
+- Hosted package registry / remote plugin marketplace deferred
+- CI does not cover sdkt-playground crate
