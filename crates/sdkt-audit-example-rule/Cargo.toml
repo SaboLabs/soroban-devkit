@@ -19,7 +19,7 @@ serde = { version = "1", optional = true, features = ["derive"] }
 serde_json = { version = "1", optional = true }
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
-sdkt-audit = { version = "2.4.0", path = "../sdkt-audit" }
+sdkt-audit = { version = "2.5.0", path = "../sdkt-audit" }
 
 [features]
 # Produce a loadable shared library exporting the C-ABI plugin symbols

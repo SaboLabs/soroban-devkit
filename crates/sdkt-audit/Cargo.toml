@@ -18,7 +18,7 @@ serde_json = { version = "1", optional = true }
 thiserror = "2"
 dirs = "5"
 toml = "0.8"
-sdkt-wasm = { version = "2.4.0", path = "../sdkt-wasm" }
+sdkt-wasm = { version = "2.5.0", path = "../sdkt-wasm" }
 libloading = { version = "0.8", optional = true }
 extism = { version = "1.30.0", optional = true }
 
