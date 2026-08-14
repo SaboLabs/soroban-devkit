@@ -73,6 +73,8 @@ jobs:
             target: x86_64-apple-darwin
           - os: macos-latest
             target: aarch64-apple-darwin
+          - os: windows-latest
+            target: x86_64-pc-windows-msvc
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v7
@@ -82,64 +84,91 @@ jobs:
       - name: Build release binary
         run: cargo build --release --target ${{ matrix.target }} --bin sdkt
       - name: Smoke test binary
+        shell: bash
         run: |
-          BIN=target/${{ matrix.target }}/release/sdkt
-          chmod +x "$BIN"
-
-          # Native platforms: verify the binary actually runs offline commands.
-          if [[ "${{ matrix.target }}" == "x86_64-unknown-linux-gnu" && "${{ matrix.os }}" == "ubuntu-latest" ]]; then
-            RUN="$BIN"
-          elif [[ "${{ matrix.target }}" == "aarch64-apple-darwin" && "$(uname -m)" == "arm64" ]]; then
-            RUN="$BIN"
-          elif [[ "${{ matrix.target }}" == "x86_64-apple-darwin" && "${{ matrix.os }}" == "macos-latest" ]]; then
-            # Cross-compiled on an arm64 runner; run under Rosetta if available.
-            RUN="arch -x86_64 $BIN"
-          else
-            echo "Skipping execution smoke test on cross-compiled target."
-            RUN=""
-          fi
-
-          if [[ -n "$RUN" ]]; then
-            echo "Running smoke test on native architecture..."
-            VERSION=$($RUN --version)
+          if [[ "${{ matrix.target }}" == "x86_64-pc-windows-msvc" ]]; then
+            BIN=target/${{ matrix.target }}/release/sdkt.exe
+            echo "Running Windows smoke test on native runner..."
+            VERSION=$($BIN --version)
             echo "Version reported: $VERSION"
 
-            # Guardrail: the built binary MUST report the release tag version.
             TAG_VER="${{ github.ref_name }}"
             TAG_VER="${TAG_VER#v}"
             BIN_VER="$(echo "$VERSION" | awk '{print $2}')"
             if [[ "$BIN_VER" != "$TAG_VER" ]]; then
               echo "error: binary version '$BIN_VER' != release tag '$TAG_VER'" >&2
-              echo "The package version was not bumped to match the tag." >&2
               exit 1
             fi
             echo "OK: binary version $BIN_VER matches tag $TAG_VER"
 
-            $RUN help
-            # Real offline command against repo fixtures — proves the shipped
-            # binary is functional, not just that it starts.
-            $RUN wasm inspect crates/sdkt-cli/tests/fixtures/us_old.wasm
+            $BIN help
+            $BIN wasm inspect crates/sdkt-cli/tests/fixtures/us_old.wasm
+          else
+            BIN=target/${{ matrix.target }}/release/sdkt
+            chmod +x "$BIN"
+
+            # Native platforms: verify the binary actually runs offline commands.
+            if [[ "${{ matrix.target }}" == "x86_64-unknown-linux-gnu" && "${{ matrix.os }}" == "ubuntu-latest" ]]; then
+              RUN="$BIN"
+            elif [[ "${{ matrix.target }}" == "aarch64-apple-darwin" && "$(uname -m)" == "arm64" ]]; then
+              RUN="$BIN"
+            elif [[ "${{ matrix.target }}" == "x86_64-apple-darwin" && "${{ matrix.os }}" == "macos-latest" ]]; then
+              # Cross-compiled on an arm64 runner; run under Rosetta if available.
+              RUN="arch -x86_64 $BIN"
+            else
+              echo "Skipping execution smoke test on cross-compiled target."
+              RUN=""
+            fi
+
+            if [[ -n "$RUN" ]]; then
+              echo "Running smoke test on native architecture..."
+              VERSION=$($RUN --version)
+              echo "Version reported: $VERSION"
+
+              # Guardrail: the built binary MUST report the release tag version.
+              TAG_VER="${{ github.ref_name }}"
+              TAG_VER="${TAG_VER#v}"
+              BIN_VER="$(echo "$VERSION" | awk '{print $2}')"
+              if [[ "$BIN_VER" != "$TAG_VER" ]]; then
+                echo "error: binary version '$BIN_VER' != release tag '$TAG_VER'" >&2
+                echo "The package version was not bumped to match the tag." >&2
+                exit 1
+              fi
+              echo "OK: binary version $BIN_VER matches tag $TAG_VER"
+
+              $RUN help
+              # Real offline command against repo fixtures — proves the shipped
+              # binary is functional, not just that it starts.
+              $RUN wasm inspect crates/sdkt-cli/tests/fixtures/us_old.wasm
+            fi
           fi
 
       - name: Generate Checksums
+        shell: bash
         run: |
-          BIN=target/${{ matrix.target }}/release/sdkt
           cd target/${{ matrix.target }}/release
-          if command -v shasum &> /dev/null; then
-            shasum -a 256 sdkt > sdkt.sha256
+          if [[ "${{ matrix.target }}" == "x86_64-pc-windows-msvc" ]]; then
+            BIN=sdkt.exe
           else
-            sha256sum sdkt > sdkt.sha256
+            BIN=sdkt
+          fi
+          if command -v shasum &> /dev/null; then
+            shasum -a 256 "$BIN" > sdkt.sha256
+          else
+            sha256sum "$BIN" > sdkt.sha256
           fi
           # Standalone per-target checksum asset for release verification.
           cp sdkt.sha256 "sdkt-${{ matrix.target }}.sha256"
           cd -
 
-      - name: Package (tar.gz)
+      - name: Package (Unix)
+        if: matrix.os != 'windows-latest'
         run: |
           tar -czf "sdkt-${{ matrix.target }}.tar.gz" \
             -C "target/${{ matrix.target }}/release" sdkt sdkt.sha256
 
-      - name: Verify tarball contents
+      - name: Verify tarball contents (Unix)
+        if: matrix.os != 'windows-latest'
         run: |
           # Regression guard: the release tarball MUST contain both the binary
           # and its checksum (sdkt + sdkt.sha256), per M16 / README.
@@ -151,12 +180,36 @@ jobs:
             || { echo "FAIL: sdkt.sha256 missing from tarball"; exit 1; }
           echo "OK: tarball contains sdkt and sdkt.sha256"
 
+      - name: Package (Windows)
+        if: matrix.os == 'windows-latest'
+        shell: powershell
+        run: |
+          cd target/${{ env.TARGET }}/release
+          Compress-Archive -Path sdkt.exe, sdkt.sha256 -DestinationPath "sdkt-${{ env.TARGET }}.zip" -Force
+        env:
+          TARGET: ${{ matrix.target }}
+
+      - name: Verify zip contents (Windows)
+        if: matrix.os == 'windows-latest'
+        shell: powershell
+        run: |
+          $zip = Get-Content "sdkt-${{ env.TARGET }}.zip" -Raw
+          $entries = [System.IO.Compression.ZipFile]::OpenRead("sdkt-${{ env.TARGET }}.zip").Entries.Name
+          Write-Host "Contents of sdkt-${{ env.TARGET }}.zip:"
+          $entries | ForEach-Object { Write-Host "  $_" }
+          if ($entries -notcontains "sdkt.exe") { Write-Error "FAIL: sdkt.exe missing from zip"; exit 1 }
+          if ($entries -notcontains "sdkt.sha256") { Write-Error "FAIL: sdkt.sha256 missing from zip"; exit 1 }
+          Write-Host "OK: zip contains sdkt.exe and sdkt.sha256"
+        env:
+          TARGET: ${{ matrix.target }}
+
       - name: Upload artifact
         uses: actions/upload-artifact@v7
         with:
           name: sdkt-${{ matrix.target }}
           path: |
             sdkt-${{ matrix.target }}.tar.gz
+            sdkt-${{ matrix.target }}.zip
             sdkt-${{ matrix.target }}.sha256
           if-no-files-not-found: error
 
@@ -173,6 +226,7 @@ jobs:
         with:
           files: |
             artifacts/sdkt-*.tar.gz
+            artifacts/sdkt-*.zip
             artifacts/sdkt-*.sha256
           generate_release_notes: true
 
