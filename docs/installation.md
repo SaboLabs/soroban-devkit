@@ -36,7 +36,7 @@ SDKT_INSTALL_DIR=/usr/local/bin curl -fsSL \
 Pin a specific version:
 
 ```bash
-SDKT_VERSION=v2.4.0 curl -fsSL \
+SDKT_VERSION=v2.5.0 curl -fsSL \
   https://raw.githubusercontent.com/SaboLabs/soroban-devkit/main/install.sh | bash
 ```
 
