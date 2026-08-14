@@ -24,7 +24,6 @@ soroban-devkit/
 ├── LICENSE
 ├── ROADMAP.md
 ├── RELEASE_READINESS.md
-├── ARCHITECTURE_REPORT.md
 ├── crates/
 │   ├── sdkt-core/          # Shared types, config, validation
 │   ├── sdkt-xdr/           # XDR decode/encode
@@ -36,6 +35,8 @@ soroban-devkit/
 │   ├── sdkt-cli/           # CLI binary (entry point)
 │   └── sdkt-playground/    # Browser-only glue (excluded from workspace)
 ├── docs/
+│   └── internal/
+│       └── ARCHITECTURE_REPORT.md
 ├── website/
 └── .github/
 ```
