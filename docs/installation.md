@@ -115,19 +115,26 @@ cargo build --bin sdkt
 # run via: ./target/debug/sdkt --help
 ```
 
-## Option C — From crates.io (when published)
+## Option C — From crates.io (published)
+
+All workspace crates are published to crates.io (current release `v2.5.0`):
+`sdkt-cli`, `sdkt-core`, `sdkt-xdr`, `sdkt-wasm`, `sdkt-rpc`, `sdkt-storage`,
+`sdkt-audit`, and `sdkt-audit-example-rule`. Install the CLI binary directly:
 
 ```bash
 cargo install sdkt-cli
+sdkt --version
 ```
 
-> The crate is published on the `v2.5.0` tag and later. If `cargo install
-> sdkt-cli` reports "no matching package", build from source (Option B) or
-> pin a released tag:
->
-> ```bash
-> cargo install --git https://github.com/SaboLabs/soroban-devkit --tag v2.5.0 sdkt-cli --locked
-> ```
+To pin a released version:
+
+```bash
+cargo install sdkt-cli --version 2.5.0
+```
+
+The `sdkt` binary name is reserved by `sdkt-cli` (the published package name is
+`sdkt-cli`); `cargo install sdkt-cli` installs the `sdkt` binary. Building from
+source (Options A/B) remains supported and is equivalent.
 
 ## Features
 

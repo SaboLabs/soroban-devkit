@@ -78,7 +78,7 @@ and deploy — into a single MIT-licensed binary and reusable crate set.
 
 ## Current maturity
 
-- 40+ milestones merged to `main` (storage/inspect foundation through M44 — the
+- 37 milestones merged to `main` (storage/inspect foundation through M44 — the
   on-chain ABI for storage decode). Recent milestones specifically deepen Soroban
   integration:
   - **M40** — local plugin store & management (no hosted registry).
@@ -115,6 +115,56 @@ of those are claimed as done here.
 - Broader real-world contract compatibility coverage in CI.
 - Developer-onboarding material and a hosted (optional) package index for the
   package-manager workflow.
+
+## Honest current traction (verified)
+
+All figures below were verified directly from the package registry and the
+repository's GitHub API on 2026-08-15. No external adoption, production usage,
+testimonials, or partnerships are claimed.
+
+- **Crates published:** all 8 workspace crates are published to crates.io at
+  `v2.5.0` (verified via `crates.io/api/v1/crates/<name>`).
+- **Crates.io downloads (cumulative, verified):** sdkt-core 125, sdkt-xdr 107,
+  sdkt-wasm 107, sdkt-rpc 101, sdkt-storage 87, sdkt-cli 68, sdkt-audit 73,
+  sdkt-audit-example-rule 52. These are early-stage install counts, not active
+  user counts.
+- **GitHub repository (verified via API):** 2 stars, 1 fork, 1 open issue.
+- **Releases:** 14 GitHub releases (per prior M49 verification); release
+  downloads are minimal/zero on GitHub assets (binaries distributed via
+  crates.io + install.sh).
+- **External dependency usage / ecosystem adoption:** NOT VERIFIED. The following
+  checks were performed on 2026-08-15 and found no external usage:
+  - **crates.io reverse dependencies:** every reverse dependency for all 8 crates
+    resolves to an internal workspace sibling (sdkt-cli, sdkt-core, sdkt-xdr,
+    sdkt-wasm, sdkt-rpc, sdkt-storage, sdkt-audit, sdkt-audit-example-rule). No
+    external crate depends on any of them.
+  - **GitHub code search** for `SaboLabs/soroban-devkit` in `Cargo.toml` requires
+    authentication (401 unauthenticated) and could not be run; the unauthenticated
+    **repository search** for the quoted string `"SaboLabs/soroban-devkit"` returns
+    exactly 1 result — the project itself. No external public repository references it.
+  - **Forks:** 1 (Shadow-MMN/soroban-devkit) — a fork of this repo, not external
+    adoption.
+  - **Name-collision note:** generic searches for "soroban-devkit" surface unrelated
+    projects (e.g. `sorocore/soroban-devkit`, a 0-star TypeScript toolkit). These
+    are FALSE POSITIVES, not adoption of this Rust/CLI project.
+  - This is marked **UNKNOWN → verified absent** for external *dependency* usage
+    (no evidence found via available unauthenticated methods), not assumed present.
+
+This is an early-stage, single-maintainer developer tool. The evidence above is
+technical and distribution-level, not usage-based.
+
+## Maintainer / credibility (verified, no claims of employment or affiliation)
+
+- The project is developed by a single maintainer (GitHub `naninu123`, public as
+  `sabo`; git history shows one human author). The associated `SaboLabs` GitHub
+  organization describes itself as "Independent security research & automation.
+  Web3 audits, bug bounties, autonomous agents."
+- The maintainer has multiple **public** Stellar/Soroban repositories
+  (e.g. `Soroban-Contract-Explorer`, `soroban-security-portal`,
+  `Grainlify-Stellar-Contracts`, `Stellar-forge`), indicating prior ecosystem
+  involvement. These are cited as capability/context evidence only — not as
+  adoption, partnership, or endorsement of `sdkt`.
+- No corporate affiliation, funding, or Stellar Foundation endorsement is claimed.
 
 This document will be updated as scope and maturity change; it deliberately
 avoids overstating current capability.

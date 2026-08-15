@@ -5,15 +5,52 @@ network (a contract id, account, or RPC) are marked **(network)** and require
 an RPC endpoint configured in `.sdkt.toml` or via the default testnet/public
 RPC. Offline commands work anywhere.
 
+## Committed example (recommended starting point)
+
+The repository ships a self-contained, offline-runnable example so you can
+reproduce the core workflow without creating `/tmp` files:
+
+```
+examples/
+  sample_token/src/lib.rs   # minimal Soroban contract (intentionally has an AUTH-001 finding)
+  sample_scval.b64          # a valid base64-encoded ScVal for `sdkt decode`
+```
+
+Build `sdkt` first, then run the deterministic smoke test (no network, no
+secrets):
+
+```bash
+cargo build --bin sdkt
+bash scripts/smoke_examples.sh
+```
+
+The script verifies, against the actual binary:
+
+1. `sdkt --version` reports `2.5.0`.
+2. `sdkt wasm inspect crates/sdkt-cli/tests/fixtures/us_old.wasm` shows a
+   contract spec with `fn transfer`.
+3. `sdkt audit examples/sample_token/src/lib.rs` reports `AUTH-001` on
+   `admin_action` (the example's deliberate, unguarded privileged function).
+4. `sdkt decode` on `examples/sample_scval.b64` returns `{"bool": false}`.
+
+All four checks must pass for the smoke test to exit 0.
+
 ## Offline (no network)
 
 ### Decode a base64 XDR `ScVal`
 
+A real, copy-paste example (offline — no network):
+
 ```bash
-sdkt decode <BASE64> --type ScVal
-sdkt decode <BASE64> --type ScVal --format json
+sdkt decode AAAAAAAAAAIAAAAAAAAABHRlc3Q= --type ScVal
+# → { "bool": false }
+
+sdkt decode AAAAAAAAAAIAAAAAAAAABHRlc3Q= --type ScVal --format json
 sdkt decode --file payload.b64 --type TransactionEnvelope
 ```
+
+The decoder also handles `TransactionEnvelope` and `ContractEvent` payloads the
+same way.
 
 ### Offline WASM diff with upgrade-safety verdict
 
@@ -24,10 +61,27 @@ sdkt diff --old-wasm deployed.wasm --new-wasm candidate.wasm --format json
 
 ### Static security audit of a contract
 
+`sdkt audit` runs on contract **Rust source**. Write a tiny throwaway contract to
+a temp file, then point the auditor at it — no project scaffold required:
+
 ```bash
-sdkt audit contracts/token/src/lib.rs
-sdkt audit contracts/token/src/lib.rs --format json
-sdkt audit contracts/token/src/lib.rs --disable MOVE-001
+cat > /tmp/token.rs <<'EOF'
+use soroban_sdk::{contract, contractimpl, Address};
+
+#[contract]
+pub struct Token;
+
+#[contractimpl]
+impl Token {
+    pub fn transfer(_from: Address, _to: Address) {}
+    // NOTE: admin_action is privileged but missing require_auth() — audit flags it
+    pub fn admin_action(_admin: Address) {}
+}
+EOF
+
+sdkt audit /tmp/token.rs
+sdkt audit /tmp/token.rs --format json
+sdkt audit /tmp/token.rs --disable MOVE-001
 ```
 
 ### WASM metadata + cache (offline cache inspection)
@@ -156,7 +210,7 @@ sdkt deploy --wasm new.wasm --salt <SALT> --deny-breaking --old-wasm deployed.wa
 ## CI gating (copy-paste)
 
 Gate a PR on the static audit and a release on upgrade-safety. See
-[ci-cd.md](ci-cd.md) for the full workflows.
+[ci-cd.md](docs/ci-cd.md) for the full workflows.
 
 ### Audit on PR Workflow
 Ensure privileged functions have authentication barriers:
@@ -172,7 +226,7 @@ jobs:
       - uses: SaboLabs/soroban-devkit/.github/actions/sdkt@main
         with:
           command: audit
-          sdkt-version: v2.1.1
+          sdkt-version: v2.5.0
           target: contracts/token/src/lib.rs
           severity-threshold: critical
 ```
@@ -193,7 +247,7 @@ jobs:
       - uses: SaboLabs/soroban-devkit/.github/actions/sdkt@main
         with:
           command: upgrade-safety
-          sdkt-version: v2.1.1
+          sdkt-version: v2.5.0
           old-wasm: builds/current.wasm
           new-wasm: builds/candidate.wasm
 ```

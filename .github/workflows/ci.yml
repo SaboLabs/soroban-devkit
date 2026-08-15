@@ -121,3 +121,20 @@ jobs:
 
     - name: Check MSRV
       run: cargo check --workspace
+
+  onboarding-smoke:
+    name: offline onboarding smoke test
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v7
+
+    - name: Set up Rust
+      uses: dtolnay/rust-toolchain@stable
+
+    - uses: Swatinem/rust-cache@v2
+
+    - name: Build sdkt
+      run: cargo build --bin sdkt
+
+    - name: Run committed offline example smoke test
+      run: bash scripts/smoke_examples.sh
