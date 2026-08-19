@@ -5,6 +5,9 @@ working inspection, audit, and upgrade-safety comparison in under five minutes.
 Every command is copy-pasteable and runs **offline** (no RPC, no account, no
 network) unless stated otherwise.
 
+If you only want to inspect a WASM, skip install:
+[Web Playground](https://sabolabs.github.io/soroban-devkit/playground/).
+
 If you have not installed `sdkt` yet, follow
 [README § Quick Start](https://github.com/SaboLabs/soroban-devkit#quick-start)
 first. This document assumes `sdkt` is on your `PATH` and reports a version
@@ -26,6 +29,15 @@ Choose **one** of the following.
    | Linux (x86_64) | `sdkt-x86_64-unknown-linux-gnu.tar.gz` |
    | macOS (Intel) | `sdkt-x86_64-apple-darwin.tar.gz` |
    | macOS (Apple Silicon) | `sdkt-aarch64-apple-darwin.tar.gz` |
+
+   Windows: `cargo install sdkt-cli` (v2.5.0 has no Windows GitHub Release zip).
+
+**A2. crates.io (Rust 1.88.0+):**
+
+```bash
+cargo install sdkt-cli
+sdkt --version
+```
 
 2. Extract and run:
 
@@ -244,6 +256,8 @@ itself uses only the local keystore — no RPC call is made.
 
 You now know the three core offline workflows. Continue with:
 
+- **[Web Playground](https://sabolabs.github.io/soroban-devkit/playground/)** —
+  inspect your own `.wasm` in the browser (no install).
 - **[docs/examples.md](examples.md)** — copy-paste recipes for every subcommand
   (decode, storage, tx, deploy) and CI gating patterns.
 - **[docs/compatibility.md](compatibility.md)** — which real-world Soroban

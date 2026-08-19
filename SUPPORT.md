@@ -34,7 +34,7 @@ A good bug report looks like:
 
 ```
 sdkt --version
-# sdkt 2.4.0
+# sdkt 2.5.0
 
 OS: macOS arm64 (Apple Silicon)
 Installed via: install.sh

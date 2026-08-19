@@ -83,13 +83,15 @@ how we review changes, and how releases are produced.
 
 ## Platform Support
 
-`sdkt` is tested on:
+`sdkt` is tested on CI (`ubuntu-latest`, `macos-latest`, `windows-latest`):
 
-- **Linux** (x86_64, aarch64)
+- **Linux** (x86_64; aarch64 via CI/source)
 - **macOS** (Intel, Apple Silicon)
 - **Windows** (x86_64)
 
-Release binaries are provided for all three platforms on GitHub Releases.
+GitHub Release **v2.5.0** ships linux-x86_64 and both macOS tarballs.
+Windows is installable via `cargo install sdkt-cli` (or source). A Windows
+Release zip is produced by `release.yml` on the next `v*` tag, not on v2.5.0.
 
 ## Good First Issues
 

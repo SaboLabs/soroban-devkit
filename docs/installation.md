@@ -62,13 +62,15 @@ SDKT_VERSION=v2.5.0 curl -fsSL \
 
 ## Windows
 
-`sdkt` ships a prebuilt **Windows x86_64** binary. No Rust toolchain required.
+Windows x86_64 is tested in CI. **v2.5.0 GitHub Release does not include**
+`sdkt-x86_64-pc-windows-msvc.zip` (linux + macOS tarballs only). Use crates.io
+or source until the next tag, whose `release.yml` builds that zip.
 
-### Option A — Prebuilt binary (recommended)
+### Option A — Prebuilt binary (next tagged release)
 
 1. Open the [Releases](https://github.com/SaboLabs/soroban-devkit/releases)
-   page and download the latest Windows asset:
-   `sdkt-x86_64-pc-windows-msvc.zip`
+   page. If a `sdkt-x86_64-pc-windows-msvc.zip` asset exists for that tag,
+   download it. If not, skip to Option B (`cargo install sdkt-cli`).
 
 2. Extract and run (PowerShell):
 

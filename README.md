@@ -4,11 +4,14 @@
 [![Release](https://img.shields.io/github/v/release/SaboLabs/soroban-devkit?label=release)](https://github.com/SaboLabs/soroban-devkit/releases)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
-> **Website:** a static landing page lives in [`website/`](website/) — open
-> `website/index.html` directly or serve the folder (`python3 -m http.server`
-> from `website/`) to preview it.
+> **Website:** https://sabolabs.github.io/soroban-devkit/ — landing +
+> [in-browser WASM inspector](https://sabolabs.github.io/soroban-devkit/playground/)
+> (contract bytes stay in the tab). Source: [`website/`](website/).
 
-`sdkt` is a unified, offline-capable toolkit for Stellar / Soroban development. It consolidates the fragmented developer lifecycle—contract inspection, XDR decoding, storage TTL analysis, static security analysis, WASM diffing, and multi-contract deployment orchestration—into a single, production-grade CLI.
+`sdkt` is an offline-capable toolkit for inspecting, analyzing, validating, and
+safely shipping Soroban smart contracts. It consolidates contract inspection,
+XDR decoding, storage TTL analysis, static security analysis, WASM diffing, and
+multi-contract deployment orchestration into a single CLI.
 
 ## The Problem
 Developing on Soroban often requires context-switching across multiple CLI tools and manual RPC scripts to securely build, audit, and deploy contracts. `sdkt` solves this by providing a unified interface that emphasizes **offline-first** analysis, **upgrade safety**, and **production deployment orchestration**.
@@ -70,7 +73,10 @@ verifies its SHA-256 checksum, and installs `sdkt` to `~/.local/bin/sdkt`.
    | Linux (x86_64) | `sdkt-x86_64-unknown-linux-gnu.tar.gz` |
    | macOS (Intel) | `sdkt-x86_64-apple-darwin.tar.gz` |
    | macOS (Apple Silicon) | `sdkt-aarch64-apple-darwin.tar.gz` |
-   | Windows (x86_64) | `sdkt-x86_64-pc-windows-msvc.zip` |
+
+   Windows x86_64 is covered by CI and `cargo install sdkt-cli`. A
+   `sdkt-x86_64-pc-windows-msvc.zip` GitHub Release asset is **not** in
+   v2.5.0; it is wired in `release.yml` for the next tagged release.
 
 2. Extract and run:
 
@@ -84,13 +90,11 @@ verifies its SHA-256 checksum, and installs `sdkt` to `~/.local/bin/sdkt`.
    sudo mv sdkt /usr/local/bin/
    ```
 
-   **Windows (PowerShell):**
+   **Windows (v2.5.0):** no GitHub Release zip yet. Use crates.io or source:
 
    ```powershell
-   Expand-Archive -Path sdkt-x86_64-pc-windows-msvc.zip -DestinationPath .
-   .\sdkt.exe --version
-   # Optional: add the directory to your PATH
-   $env:Path += ";C:\path\to\sdkt-directory"
+   cargo install sdkt-cli
+   sdkt --version
    ```
 
 **Option B — Build from source (requires Rust 1.88.0+):**
@@ -141,7 +145,11 @@ Supported shells: `bash`, `zsh`, `fish`, `powershell` (also `elvish`).
 
 ### 3. Your first command (offline)
 
-Inspect a compiled contract WASM that ships with the repo:
+**No install:** drop a `.wasm` on the
+[Web Playground](https://sabolabs.github.io/soroban-devkit/playground/)
+(ContractSpec / exports / hash; bytes never leave the browser).
+
+**CLI:** inspect a compiled contract WASM that ships with the repo:
 
 ```bash
 sdkt wasm inspect crates/sdkt-cli/tests/fixtures/us_old.wasm
