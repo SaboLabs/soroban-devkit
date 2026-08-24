@@ -23,7 +23,7 @@ production-grade binary.
 | **Crates** | 8 (`sdkt-cli` + 7 supporting crates) |
 | **Completed milestones** | 37 (M3A, M3B, M5–M29, M35.0, M35.1, M35.2, M36.0, M37, M38, M39, M40, M41, M42, M43, M44) |
 | **Current focus** | Post-2.0 direction — mainnet tooling, plugin ecosystem, SCF alignment (see §6) |
-| **Original gap analysis** | [`GAP_ANALYSIS.md`](GAP_ANALYSIS.md) — market-gap justification |
+| **Original gap analysis** | [`docs/archive/2026-07-gap-analysis.md`](docs/archive/2026-07-gap-analysis.md) — market-gap justification |
 
 A new contributor should be able to understand the project from this summary
 alone: a mature, test-covered Soroban toolchain with a clear path toward
@@ -35,7 +35,7 @@ mainnet readiness and an extensible plugin architecture.
 
 `sdkt` unifies the Soroban developer lifecycle — inspect, decode, analyze,
 build, simulate, and submit — into one modular, offline-capable Rust toolkit,
-instead of juggling 5+ separate CLIs. See [`GAP_ANALYSIS.md`](GAP_ANALYSIS.md)
+instead of juggling 5+ separate CLIs. See [`docs/archive/2026-07-gap-analysis.md`](docs/archive/2026-07-gap-analysis.md)
 for the original market-gap justification.
 
 ---
@@ -144,7 +144,7 @@ is preserved. Milestones **M16–M27** were merged to `main` across the
 | M36.0 | Package update & synchronization | `sdkt package update` (`--check`/`--dry-run`/`--format`); closes `validate → fetch → update → verify` | main |
 | M37 | Dependency Version Resolution | Semver `version` constraints on deps; `VersionResolver` picks best satisfying tag/commit; `--check` reports constraint state | main (scheduled) |
 | M38 | Packaging & Publishing Workflow | `sdkt package pack` (offline bundle of manifest+lock+cache); `sdkt package publish --dry-run` readiness check | main (scheduled) |
-| M39 | Release Polish & SCF Readiness | `Dockerfile` distribution, mainnet-safety guards, SCF positioning doc, `RELEASE_READINESS.md` refresh, opt-in `--version` provenance | main (scheduled) |
+| M39 | Release Polish & SCF Readiness | `Dockerfile` distribution, mainnet-safety guards, SCF positioning doc, `docs/archive/release-readiness-v2.5.0.md` refresh, opt-in `--version` provenance | main (scheduled) |
 
 ### RPC & Simulation
 
@@ -209,7 +209,7 @@ The following remain tracked as backlog, not yet assigned milestone IDs:
 
 ## 7. Gap Closure Matrix
 
-Status of the original gaps identified in `GAP_ANALYSIS.md`. Every row reflects
+Status of the original gaps identified in `docs/archive/2026-07-gap-analysis.md`. Every row reflects
 the actual repository state (all Plugin System phases are merged).
 
 | Original Gap | State |
