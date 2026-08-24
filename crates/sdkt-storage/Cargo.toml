@@ -16,7 +16,8 @@ categories = ["development-tools", "network-programming"]
 [dependencies]
 directories = "6.0.0"
 ed25519-dalek = { version = "3.0.0", features = ["rand_core"] }
-rand = "0.8"
+rand_core = "0.10"
+getrandom = "0.4"
 sdkt-rpc = { version = "2.5.0", path = "../sdkt-rpc" }
 sdkt-wasm = { version = "2.5.0", path = "../sdkt-wasm" }
 serde = { version = "1", features = ["derive"] }
