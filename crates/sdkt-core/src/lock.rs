@@ -168,7 +168,7 @@ pub fn compute_sha256(path: &Path) -> Result<String, LockError> {
     let mut hasher = sha2::Sha256::new();
     hasher.update(&bytes);
     let digest = hasher.finalize();
-    Ok(format!("{:x}", digest))
+    Ok(digest.iter().map(|b| format!("{b:02x}")).collect())
 }
 
 /// Locate the single `*.wasm` artifact for a contract, matching the same logic
@@ -594,7 +594,9 @@ pub fn compute_dependency_integrity(base_dir: &Path, dep: &crate::config::Depend
         total.push(0);
     }
     hasher.update(&total);
-    format!("sha256:{:x}", hasher.finalize())
+    let digest = hasher.finalize();
+    let hex: String = digest.iter().map(|b| format!("{b:02x}")).collect();
+    format!("sha256:{hex}")
 }
 
 /// Verify locked package dependencies against the live manifest and disk.

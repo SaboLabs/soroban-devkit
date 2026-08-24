@@ -6,7 +6,6 @@
 use crate::error::StorageError;
 use directories::ProjectDirs;
 use ed25519_dalek::SigningKey;
-use rand::rngs::OsRng;
 use serde::{Deserialize, Serialize};
 use std::fs::{self, OpenOptions};
 use std::io::Write;
@@ -64,8 +63,11 @@ impl IdentityStore {
     pub fn generate(&self, name: &str) -> Result<Identity, StorageError> {
         self.ensure_name_valid(name)?;
 
-        let mut csprng = OsRng;
-        let signing_key = SigningKey::generate(&mut csprng);
+        let mut secret = [0u8; 32];
+        getrandom::fill(&mut secret)
+            .map_err(|e| StorageError::Io(std::io::Error::other(e.to_string())))?;
+        let signing_key = SigningKey::from_bytes(&secret);
+        secret.fill(0);
 
         self.save_key(name, &signing_key)
     }
