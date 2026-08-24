@@ -418,8 +418,8 @@ upgrade-safety-on-release).
 Additional references: [docs/cli.md](docs/cli.md) (full command reference),
 [docs/faq.md](docs/faq.md) (FAQ),
 [docs/plugin-authoring.md](docs/plugin-authoring.md) (write your own audit
-rules), and [ROADMAP.md](ROADMAP.md) · [CHANGELOG.md](CHANGELOG.md) ·
-[GAP_ANALYSIS.md](GAP_ANALYSIS.md).
+rules), and [ROADMAP.md](ROADMAP.md) · [CHANGELOG.md](CHANGELOG.md). Historical
+planning documents live in [docs/archive/](docs/archive/).
 
 ## Contributing
 
