@@ -12,7 +12,7 @@
 //! - Error message in consistent envelope on parse failure
 //!
 //! ### `sdkt wasm inspect --format json`
-//! - `file`: string (currently absolute path — use only basename at call sites)
+//! - `file`: string (basename only, not absolute path)
 //! - `metadata.hash`: hex string
 //! - `metadata.size_bytes`: u64
 //! - `spec`: object with functions/events/custom_types arrays
@@ -157,10 +157,10 @@ mod wasm_inspect {
         let v = assert_valid_json(&String::from_utf8_lossy(&out));
         let file = v.get("file").and_then(|f| f.as_str()).expect("file field");
 
-        // Compatibility: `file` is a non-empty string.
-        // Ponytail: if upstream normalizes to basename later, switch this to
-        // assert!(!file.starts_with('/')) to enforce relative paths.
-        assert!(!file.is_empty(), "file field should not be empty");
+        assert!(
+            !file.starts_with('/'),
+            "file should be basename (no absolute path), got: {file}"
+        );
     }
 
     #[test]

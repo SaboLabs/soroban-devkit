@@ -2774,8 +2774,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 let spec = parse_contract_spec(&wasm_bytes).ok();
 
                 if fmt == OutputFormat::Json {
+                    // Compatibility: emit basename only — callers must not
+                    // depend on directory layout (issue #33 acceptance).
+                    let file_basename = std::path::Path::new(&file)
+                        .file_name()
+                        .and_then(|s| s.to_str())
+                        .unwrap_or(&file);
                     let json = serde_json::json!({
-                        "file": file,
+                        "file": file_basename,
                         "metadata": metadata,
                         "spec": spec,
                     });
