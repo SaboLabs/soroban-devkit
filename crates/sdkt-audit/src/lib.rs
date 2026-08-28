@@ -31,7 +31,10 @@ pub use audit::{
     scan_all_functions_str, AuditContext, AuditRule, FnScan,
 };
 pub use error::AuditError;
-pub use plugin_store::{InstallOpts, PluginMeta, StoreError};
+pub use plugin_store::{
+    install_bundle, pack_bundle, verify_bundle, BundleVerification, InstallOpts, PluginMeta,
+    StoreError,
+};
 pub use registry::{
     register_builtin_rules, register_rule, run_registered, BoxedRule, RuleRegistry,
 };
