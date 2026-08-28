@@ -26,17 +26,21 @@
 //! obtained out-of-band. No third-party trust is assumed. Install validates the
 //! metadata, the `abi_major` constant, and the kind/extension match, and performs
 //! an optional dry-run load via the existing loader (when the corresponding
-//! feature is compiled in). Signature/checksum verification is an explicit
-//! NON-GOAL for M40.
+//! feature is compiled in). `.sdktplugin` bundles add deterministic digest and
+//! optional signature verification without requiring a hosted registry.
 
 use std::path::{Path, PathBuf};
 
-use serde::Deserialize;
+use ed25519_dalek::{Signature, Signer, SigningKey, Verifier, VerifyingKey};
+use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
+use std::collections::BTreeMap;
+use std::io::Read;
 
 use crate::plugin_abi::SDKT_AUDIT_ABI_MAJOR;
 
 /// Metadata stored in each plugin's `plugin.toml`.
-#[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct PluginMeta {
     /// Stable, namespaced plugin id (e.g. `author/name`).
     pub id: String,
@@ -74,6 +78,19 @@ impl PluginMeta {
         if self.artifact.trim().is_empty() {
             return Err(StoreError::InvalidMetadata(
                 "artifact must not be empty".into(),
+            ));
+        }
+        if !is_safe_relative_path(Path::new(&self.artifact)) {
+            return Err(StoreError::InvalidMetadata(
+                "artifact must be a safe relative path".into(),
+            ));
+        }
+        if matches!(
+            self.artifact.as_str(),
+            "plugin.toml" | "manifest.sha256" | "signature.ed25519" | "public_key.ed25519"
+        ) {
+            return Err(StoreError::InvalidMetadata(
+                "artifact uses a reserved bundle path".into(),
             ));
         }
         if self.abi_major != SDKT_AUDIT_ABI_MAJOR {
@@ -116,6 +133,232 @@ pub enum StoreError {
     DryRunLoad(String),
     #[error("remote sources are not supported in M40 (local paths only)")]
     RemoteUnsupported,
+    #[error("invalid plugin bundle: {0}")]
+    InvalidBundle(String),
+    #[error("plugin bundle signature verification failed")]
+    InvalidSignature,
+}
+
+/// Result returned after a bundle has been verified. `signed` is false for a
+/// deliberately unsigned local bundle; callers should report that fact.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct BundleVerification {
+    pub metadata: PluginMeta,
+    pub signed: bool,
+}
+
+fn is_safe_relative_path(path: &Path) -> bool {
+    !path.is_absolute()
+        && path
+            .components()
+            .all(|c| matches!(c, std::path::Component::Normal(_)))
+}
+
+fn digest_hex(bytes: &[u8]) -> String {
+    Sha256::digest(bytes)
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect()
+}
+
+fn stable_header(size: u64) -> tar::Header {
+    let mut h = tar::Header::new_gnu();
+    h.set_size(size);
+    h.set_mode(0o644);
+    h.set_mtime(0);
+    h.set_cksum();
+    h
+}
+
+/// Pack one plugin artifact and its metadata into a deterministic tar-based
+/// `.sdktplugin` bundle. The archive contains `plugin.toml`, the artifact, and
+/// `manifest.sha256`; optional Ed25519 signature files are also included.
+pub fn pack_bundle(
+    output: &Path,
+    meta: &PluginMeta,
+    artifact: &Path,
+    signing_key: Option<&SigningKey>,
+) -> Result<(), StoreError> {
+    meta.validate()?;
+    validate_kind_ext(meta, artifact)?;
+    let artifact_bytes = std::fs::read(artifact)?;
+    let metadata = toml::to_string(meta).map_err(|e| StoreError::InvalidBundle(e.to_string()))?;
+    let mut manifest = BTreeMap::new();
+    manifest.insert("plugin.toml", digest_hex(metadata.as_bytes()));
+    manifest.insert(meta.artifact.as_str(), digest_hex(&artifact_bytes));
+    let manifest_bytes = manifest
+        .iter()
+        .map(|(p, d)| format!("{}  {}\n", d, p))
+        .collect::<String>()
+        .into_bytes();
+    let mut file = std::fs::File::create(output)?;
+    let mut archive = tar::Builder::new(&mut file);
+    for (name, bytes) in [
+        ("plugin.toml", metadata.into_bytes()),
+        ("manifest.sha256", manifest_bytes.clone()),
+        (meta.artifact.as_str(), artifact_bytes),
+    ] {
+        let mut h = stable_header(bytes.len() as u64);
+        archive.append_data(&mut h, name, bytes.as_slice())?;
+    }
+    if let Some(key) = signing_key {
+        let sig = key.sign(&manifest_bytes).to_bytes().to_vec();
+        let pubkey = key.verifying_key().to_bytes().to_vec();
+        let mut h = stable_header(sig.len() as u64);
+        archive.append_data(&mut h, "signature.ed25519", sig.as_slice())?;
+        let mut h = stable_header(pubkey.len() as u64);
+        archive.append_data(&mut h, "public_key.ed25519", pubkey.as_slice())?;
+    }
+    archive.finish()?;
+    Ok(())
+}
+
+/// Verify a bundle and extract it only after all metadata, digest, signature,
+/// and path-safety checks pass. `verifying_key` is optional only for unsigned
+/// bundles; signed bundles always verify against the embedded public key and,
+/// when supplied, the caller's key must match it.
+pub fn verify_bundle(
+    bundle: &Path,
+    destination: &Path,
+    verifying_key: Option<&VerifyingKey>,
+) -> Result<BundleVerification, StoreError> {
+    let file = std::fs::File::open(bundle)?;
+    let mut archive = tar::Archive::new(file);
+    let mut entries = BTreeMap::<String, Vec<u8>>::new();
+    for item in archive.entries()? {
+        let mut entry = item?;
+        if !entry.header().entry_type().is_file() {
+            return Err(StoreError::InvalidBundle(
+                "bundle contains a non-file entry".into(),
+            ));
+        }
+        let path = entry.path()?.to_path_buf();
+        if !is_safe_relative_path(&path) {
+            return Err(StoreError::InvalidBundle("path traversal rejected".into()));
+        }
+        let name = path.to_string_lossy().into_owned();
+        if entries.contains_key(&name) {
+            return Err(StoreError::InvalidBundle("duplicate archive entry".into()));
+        }
+        let mut bytes = Vec::new();
+        entry.read_to_end(&mut bytes)?;
+        entries.insert(name, bytes);
+    }
+    let raw_meta = entries
+        .get("plugin.toml")
+        .ok_or_else(|| StoreError::InvalidBundle("missing plugin.toml".into()))?;
+    let meta = parse_meta(
+        std::str::from_utf8(raw_meta)
+            .map_err(|_| StoreError::InvalidBundle("plugin.toml is not UTF-8".into()))?,
+    )?;
+    let manifest = entries
+        .get("manifest.sha256")
+        .ok_or_else(|| StoreError::InvalidBundle("missing manifest.sha256".into()))?;
+    let text = std::str::from_utf8(manifest)
+        .map_err(|_| StoreError::InvalidBundle("manifest is not UTF-8".into()))?;
+    let mut expected = BTreeMap::new();
+    for line in text.lines() {
+        let (digest, path) = line
+            .split_once("  ")
+            .ok_or_else(|| StoreError::InvalidBundle("invalid manifest line".into()))?;
+        if digest.len() != 64
+            || !digest.bytes().all(|b| b.is_ascii_hexdigit())
+            || !is_safe_relative_path(Path::new(path))
+        {
+            return Err(StoreError::InvalidBundle(
+                "invalid manifest path or digest".into(),
+            ));
+        }
+        if expected
+            .insert(path.to_string(), digest.to_string())
+            .is_some()
+        {
+            return Err(StoreError::InvalidBundle("duplicate manifest entry".into()));
+        }
+    }
+    if expected.get("plugin.toml").is_none() || expected.get(meta.artifact.as_str()).is_none() {
+        return Err(StoreError::InvalidBundle(
+            "manifest does not cover metadata and artifact".into(),
+        ));
+    }
+    for (path, digest) in &expected {
+        let bytes = entries
+            .get(path)
+            .ok_or_else(|| StoreError::InvalidBundle(format!("manifest entry missing: {path}")))?;
+        if digest != &digest_hex(bytes) {
+            return Err(StoreError::InvalidBundle(format!(
+                "digest mismatch: {path}"
+            )));
+        }
+    }
+    for name in entries.keys() {
+        if !expected.contains_key(name)
+            && !matches!(
+                name.as_str(),
+                "manifest.sha256" | "signature.ed25519" | "public_key.ed25519"
+            )
+        {
+            return Err(StoreError::InvalidBundle(format!(
+                "unlisted bundle entry: {name}"
+            )));
+        }
+    }
+    let signed = entries.contains_key("signature.ed25519");
+    if signed {
+        let sig = Signature::from_slice(entries.get("signature.ed25519").unwrap())
+            .map_err(|_| StoreError::InvalidSignature)?;
+        let embedded = VerifyingKey::from_bytes(
+            entries
+                .get("public_key.ed25519")
+                .ok_or(StoreError::InvalidSignature)?
+                .as_slice()
+                .try_into()
+                .map_err(|_| StoreError::InvalidSignature)?,
+        )
+        .map_err(|_| StoreError::InvalidSignature)?;
+        if let Some(key) = verifying_key {
+            if key != &embedded {
+                return Err(StoreError::InvalidSignature);
+            }
+        }
+        embedded
+            .verify(manifest, &sig)
+            .map_err(|_| StoreError::InvalidSignature)?;
+    }
+    std::fs::create_dir_all(destination)?;
+    for (name, bytes) in entries {
+        let path = destination.join(&name);
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent)?;
+        }
+        std::fs::write(path, bytes)?;
+    }
+    Ok(BundleVerification {
+        metadata: meta,
+        signed,
+    })
+}
+
+/// Verify a `.sdktplugin` bundle before installing its artifact into the local
+/// store. Unsigned bundles are accepted for local use, but the returned
+/// metadata lets callers report that the bundle was unsigned.
+pub fn install_bundle(bundle: &Path, opts: &InstallOpts) -> Result<BundleVerification, StoreError> {
+    let staging = std::env::temp_dir().join(format!(
+        "sdkt-plugin-{}-{}",
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_nanos()
+    ));
+    let result = (|| {
+        let verified = verify_bundle(bundle, &staging, None)?;
+        let source = staging.join(&verified.metadata.artifact);
+        install(&source, opts)?;
+        Ok(verified)
+    })();
+    let _ = std::fs::remove_dir_all(&staging);
+    result
 }
 
 /// Resolve the plugin store root using the documented precedence.
@@ -328,4 +571,84 @@ pub fn update(id: &str, local_source: &Path) -> Result<PluginMeta, StoreError> {
         force: true,
     };
     install(local_source, &opts)
+}
+
+#[cfg(test)]
+mod bundle_tests {
+    use super::*;
+    use std::fs;
+
+    fn meta() -> PluginMeta {
+        PluginMeta {
+            id: "example-rule".into(),
+            name: "Example Rule".into(),
+            version: "1.0.0".into(),
+            author: "SaboLabs".into(),
+            description: "test".into(),
+            kind: "wasm".into(),
+            artifact: "rule.wasm".into(),
+            abi_major: SDKT_AUDIT_ABI_MAJOR,
+            abi_minor: 0,
+        }
+    }
+
+    #[test]
+    fn bundle_is_reproducible_and_verifies() {
+        let dir = tempfile::tempdir().unwrap();
+        let artifact = dir.path().join("rule.wasm");
+        fs::write(&artifact, b"wasm").unwrap();
+        let a = dir.path().join("a.sdktplugin");
+        let b = dir.path().join("b.sdktplugin");
+        pack_bundle(&a, &meta(), &artifact, None).unwrap();
+        pack_bundle(&b, &meta(), &artifact, None).unwrap();
+        assert_eq!(fs::read(&a).unwrap(), fs::read(&b).unwrap());
+        let out = dir.path().join("out");
+        let verified = verify_bundle(&a, &out, None).unwrap();
+        assert!(!verified.signed);
+        assert_eq!(fs::read(out.join("rule.wasm")).unwrap(), b"wasm");
+    }
+
+    #[test]
+    fn tampered_bundle_fails_before_extraction() {
+        let dir = tempfile::tempdir().unwrap();
+        let artifact = dir.path().join("rule.wasm");
+        fs::write(&artifact, b"wasm").unwrap();
+        let bundle = dir.path().join("plugin.sdktplugin");
+        pack_bundle(&bundle, &meta(), &artifact, None).unwrap();
+        let mut bytes = fs::read(&bundle).unwrap();
+        let digest = digest_hex(b"wasm").into_bytes();
+        let offset = bytes
+            .windows(digest.len())
+            .position(|window| window == digest)
+            .unwrap();
+        bytes[offset] = if bytes[offset] == b'0' { b'1' } else { b'0' };
+        fs::write(&bundle, bytes).unwrap();
+        let out = dir.path().join("out");
+        assert!(verify_bundle(&bundle, &out, None).is_err());
+        assert!(!out.exists());
+    }
+
+    #[test]
+    fn signed_bundle_verifies_and_wrong_key_fails() {
+        let dir = tempfile::tempdir().unwrap();
+        let artifact = dir.path().join("rule.wasm");
+        fs::write(&artifact, b"wasm").unwrap();
+        let key = SigningKey::from_bytes(&[7u8; 32]);
+        let bundle = dir.path().join("plugin.sdktplugin");
+        pack_bundle(&bundle, &meta(), &artifact, Some(&key)).unwrap();
+        assert!(
+            verify_bundle(&bundle, &dir.path().join("out"), Some(&key.verifying_key()))
+                .unwrap()
+                .signed
+        );
+        let wrong = SigningKey::from_bytes(&[8u8; 32]);
+        assert!(matches!(
+            verify_bundle(
+                &bundle,
+                &dir.path().join("wrong"),
+                Some(&wrong.verifying_key())
+            ),
+            Err(StoreError::InvalidSignature)
+        ));
+    }
 }
