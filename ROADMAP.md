@@ -174,17 +174,10 @@ is preserved. Milestones **M16–M27** were merged to `main` across the
 ## 6. Next Priorities
 
 The package-manager line is fully scheduled and completed through M39; M40 (plugin
-local store), M41 (on-chain inspection), M42 (on-chain upgrade-safety), and M43
-(Live-Contract ABI for Events Decode) are merged and shipped in `v2.5.0`. The next
-scheduled milestone is **M44 (On-Chain ABI for Storage Decode)** — see
-`docs/archive/milestone-44-plan.md`. The remaining backlog items below are explicitly
+local store), M41 (on-chain inspection), M42 (on-chain upgrade-safety), M43
+(Live-Contract ABI for Events Decode), and M44 (On-Chain ABI for Storage Decode)
+are merged and shipped in `v2.5.0`. The remaining backlog items below are explicitly
 unscheduled:
-
-- **M44 — On-Chain ABI for Storage Decode.** Extend `sdkt storage` with
-  `--abi-contract <id>` so a deployed contract's on-chain WASM (fetched via the M41
-  `inspect_contract`/`get_wasm_bytecode` path, parsed by `parse_contract_spec`) supplies
-  the ABI for the existing storage analyzer's decode path — mirroring M43, no local
-  WASM artifact required. (archived: `docs/archive/milestone-44-plan.md`).
 
 ### Future Work (unscheduled backlog)
 
