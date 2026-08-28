@@ -2823,12 +2823,15 @@ name = "sdkt-audit"
 version = "2.5.0"
 dependencies = [
  "dirs",
+ "ed25519-dalek",
  "extism",
  "libloading",
  "sdkt-wasm",
  "serde",
  "serde_json",
+ "sha2 0.11.0",
  "syn 3.0.4",
+ "tar",
  "tempfile",
  "thiserror 2.0.20",
  "toml 1.1.4+spec-1.1.0",
