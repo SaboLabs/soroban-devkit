@@ -1,19 +1,30 @@
-# Soroban DevKit (`sdkt`)
+<h1 align="center">Soroban DevKit (<code>sdkt</code>)</h1>
 
-[![CI](https://github.com/SaboLabs/soroban-devkit/actions/workflows/ci.yml/badge.svg)](https://github.com/SaboLabs/soroban-devkit/actions/workflows/ci.yml)
-[![Release](https://img.shields.io/github/v/release/SaboLabs/soroban-devkit?label=release)](https://github.com/SaboLabs/soroban-devkit/releases)
-[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+<p align="center">
+  <a href="https://github.com/SaboLabs/soroban-devkit/actions/workflows/ci.yml"><img src="https://img.shields.io/github/actions/workflow/status/SaboLabs/soroban-devkit/ci.yml?branch=main&label=CI" alt="CI"></a>
+  <a href="https://github.com/SaboLabs/soroban-devkit/actions/workflows/release.yml"><img src="https://img.shields.io/github/actions/workflow/status/SaboLabs/soroban-devkit/release.yml?branch=main&label=Release" alt="Release"></a>
+  <a href="https://img.shields.io/crates/v/sdkt-cli"><img src="https://img.shields.io/crates/v/sdkt-cli?label=crates.io" alt="crates.io"></a>
+  <a href="https://github.com/SaboLabs/soroban-devkit/releases"><img src="https://img.shields.io/github/v/release/SaboLabs/soroban-devkit?label=release" alt="release"></a>
+  <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue.svg" alt="License: MIT"></a>
+</p>
 
-> **Website:** https://sabolabs.github.io/soroban-devkit/ — landing +
-> [in-browser WASM inspector](https://sabolabs.github.io/soroban-devkit/playground/)
-> (contract bytes stay in the tab). Source: [`website/`](website/).
+<p align="center">
+  Offline-first CLI &amp; Rust toolkit for <strong>Stellar/Soroban</strong>.<br>
+  Inspect, decode, analyze, audit, diff, build, and deploy smart contracts with upgrade safety.
+</p>
 
-`sdkt` is an offline-capable toolkit for inspecting, analyzing, validating, and
-safely shipping Soroban smart contracts. It consolidates contract inspection,
-XDR decoding, storage TTL analysis, static security analysis, WASM diffing, and
-multi-contract deployment orchestration into a single CLI.
+<p align="center">
+  <strong>Website:</strong> <a href="https://sabolabs.github.io/soroban-devkit/">sabolabs.github.io/soroban-devkit</a> — landing +
+  <a href="https://sabolabs.github.io/soroban-devkit/playground/">in-browser WASM inspector</a>
+  (contract bytes stay in the tab). Source: <a href="website/"><code>website/</code></a>.
+</p>
+
+---
+
+`sdkt` is a production-grade, offline-first toolkit for inspecting, analyzing, validating, and safely shipping Soroban smart contracts. It consolidates contract inspection, XDR decoding, storage TTL analysis, static security analysis, WASM diffing, and multi-contract deployment orchestration into a single CLI — so developers stop juggling 5+ separate tools.
 
 ## The Problem
+
 Developing on Soroban often requires context-switching across multiple CLI tools and manual RPC scripts to securely build, audit, and deploy contracts. `sdkt` solves this by providing a unified interface that emphasizes **offline-first** analysis, **upgrade safety**, and **production deployment orchestration**.
 
 ## Capabilities
