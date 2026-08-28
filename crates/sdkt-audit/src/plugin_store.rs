@@ -276,7 +276,7 @@ pub fn verify_bundle(
             return Err(StoreError::InvalidBundle("duplicate manifest entry".into()));
         }
     }
-    if expected.get("plugin.toml").is_none() || expected.get(meta.artifact.as_str()).is_none() {
+    if !expected.contains_key("plugin.toml") || !expected.contains_key(meta.artifact.as_str()) {
         return Err(StoreError::InvalidBundle(
             "manifest does not cover metadata and artifact".into(),
         ));
