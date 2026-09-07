@@ -58,7 +58,7 @@ fn registry_executes_builtins_and_external_rule() {
     let mut reg = RuleRegistry::new();
     reg.register_builtin_rules();
     reg.register_rule(Box::new(Probe { id: "PROBE-1" }) as BoxedRule);
-    assert_eq!(reg.registered_rules().len(), 5);
+    assert_eq!(reg.registered_rules().len(), 6);
 
     // Feed a source that triggers AUTH-001 (builtin) plus run the probe.
     let scans = sdkt_audit::scan_all_functions(

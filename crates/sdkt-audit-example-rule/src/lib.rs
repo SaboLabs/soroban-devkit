@@ -71,6 +71,7 @@ mod tests {
             fn_name: "sdkt_example_trigger_admin".to_string(),
             require_auth: 0,
             invoke_contract: 0,
+            token_transfer: 0,
             bound: Default::default(),
             usage: Default::default(),
         }];
@@ -87,6 +88,7 @@ mod tests {
             fn_name: "balance_of".to_string(),
             require_auth: 0,
             invoke_contract: 0,
+            token_transfer: 0,
             bound: Default::default(),
             usage: Default::default(),
         }];
