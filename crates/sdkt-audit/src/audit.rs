@@ -36,6 +36,8 @@ pub struct FnScan {
     pub fn_name: String,
     pub require_auth: usize,
     pub invoke_contract: usize,
+    /// Count of `transfer`/`transfer_from` calls detected in this function.
+    pub token_transfer: usize,
     /// Local bindings (let-bindings + parameters) eligible for move tracking.
     pub bound: HashSet<String>,
     /// Argument-usage count per bound local (move heuristic signal).
@@ -48,6 +50,7 @@ impl FnScan {
             fn_name,
             require_auth: 0,
             invoke_contract: 0,
+            token_transfer: 0,
             bound: HashSet::new(),
             usage: HashMap::new(),
         }
@@ -141,6 +144,9 @@ impl<'ast, 'a> Visit<'ast> for FnVisitor<'a> {
         if method == "invoke_contract" {
             self.scan.invoke_contract += 1;
         }
+        if method == "transfer" || method == "transfer_from" {
+            self.scan.token_transfer += 1;
+        }
         self.count_ident(&node.receiver);
         for arg in &node.args {
             self.count_ident(arg);
@@ -233,6 +239,7 @@ pub fn all_rules() -> Vec<Box<dyn AuditRule>> {
         Box::new(crate::rules::Auth001),
         Box::new(crate::rules::Auth002),
         Box::new(crate::rules::Auth003),
+        Box::new(crate::rules::Auth004),
         Box::new(crate::rules::Move001),
     ]
 }
@@ -276,7 +283,7 @@ pub fn audit_source_with_spec(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::rules::{Auth001, Auth002, Auth003, Move001};
+    use crate::rules::{Auth001, Auth002, Auth003, Auth004, Move001};
 
     fn report_for(src: &str) -> AuditReport {
         audit_source(src).unwrap()
@@ -377,6 +384,7 @@ mod tests {
         assert_rule(&Auth001);
         assert_rule(&Auth002);
         assert_rule(&Auth003);
+        assert_rule(&Auth004);
         assert_rule(&Move001);
     }
 }

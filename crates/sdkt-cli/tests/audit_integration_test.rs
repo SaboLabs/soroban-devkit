@@ -99,6 +99,52 @@ fn audit_json_output_is_valid_report() {
 }
 
 #[test]
+fn audit_flags_transfer_without_auth() {
+    let dir = TempDir::new().unwrap();
+    let path = write_fixture(
+        &dir,
+        "xfer.rs",
+        "pub fn move_tokens(from: Address, to: Address, amount: i128) { token.transfer(&from, &to, &amount); }\n",
+    );
+    sdkt()
+        .args(["audit", path.to_str().unwrap()])
+        .assert()
+        .success()
+        .stdout(predicates::str::contains("AUTH-004"))
+        .stdout(predicates::str::contains("critical"));
+}
+
+#[test]
+fn audit_clean_with_guarded_transfer() {
+    let dir = TempDir::new().unwrap();
+    let path = write_fixture(
+        &dir,
+        "ok_xfer.rs",
+        "pub fn move_tokens(from: Address, to: Address, amount: i128) { require_auth(); token.transfer(&from, &to, &amount); }\n",
+    );
+    sdkt()
+        .args(["audit", path.to_str().unwrap()])
+        .assert()
+        .success()
+        .stdout(predicates::str::contains("No issues found."));
+}
+
+#[test]
+fn audit_disable_auth004_suppresses_finding() {
+    let dir = TempDir::new().unwrap();
+    let path = write_fixture(
+        &dir,
+        "xfer.rs",
+        "pub fn move_tokens(from: Address, to: Address, amount: i128) { token.transfer(&from, &to, &amount); }\n",
+    );
+    sdkt()
+        .args(["audit", path.to_str().unwrap(), "--disable", "AUTH-004"])
+        .assert()
+        .success()
+        .stdout(predicates::str::contains("No issues found."));
+}
+
+#[test]
 fn audit_rules_flag_accepted_and_default_unchanged() {
     // `--rules` is additive: providing a valid (existing) path must not change
     // the built-in audit output. temp_dir() always exists on the runner.
