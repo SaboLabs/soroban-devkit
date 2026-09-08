@@ -388,6 +388,7 @@ upgrade-safety-on-release).
 - [docs/installation.md](docs/installation.md) — build / install / features.
 - [docs/compatibility.md](docs/compatibility.md) — real-world contract compatibility matrix.
 - [docs/ci-cd.md](docs/ci-cd.md) — CI/CD with the reusable Action.
+- [docs/adoption.md](docs/adoption.md) — ecosystem adoption and integration evidence.
 - [SECURITY.md](SECURITY.md) — supported versions and vulnerability reporting.
 - [CONTRIBUTING.md](CONTRIBUTING.md) — how to contribute.
 
