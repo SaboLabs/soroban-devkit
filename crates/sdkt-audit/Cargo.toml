@@ -16,7 +16,7 @@ syn = { version = "3", features = ["full", "visit"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = { version = "1", optional = true }
 thiserror = "2"
-dirs = "6"
+dirs = "7"
 toml = "1.1"
 tar = "0.4"
 sha2 = "0.11"
