@@ -41,12 +41,13 @@ impl RuleRegistry {
         self.rules.push(rule);
     }
 
-    /// Register the four built-in `sdkt-audit` rules (AUTH-001/002/003, MOVE-001)
+    /// Register the five built-in `sdkt-audit` rules (AUTH-001/002/003/004, MOVE-001)
     /// in their canonical order.
     pub fn register_builtin_rules(&mut self) {
         self.register_rule(Box::new(crate::rules::Auth001) as BoxedRule);
         self.register_rule(Box::new(crate::rules::Auth002) as BoxedRule);
         self.register_rule(Box::new(crate::rules::Auth003) as BoxedRule);
+        self.register_rule(Box::new(crate::rules::Auth004) as BoxedRule);
         self.register_rule(Box::new(crate::rules::Move001) as BoxedRule);
     }
 
@@ -170,9 +171,12 @@ mod tests {
     fn builtin_registration_count() {
         let mut reg = RuleRegistry::new();
         reg.register_builtin_rules();
-        assert_eq!(reg.registered_rules().len(), 4, "four built-in rules");
+        assert_eq!(reg.registered_rules().len(), 5, "five built-in rules");
         let ids: Vec<&str> = reg.registered_rules().iter().map(|r| r.id()).collect();
-        assert_eq!(ids, vec!["AUTH-001", "AUTH-002", "AUTH-003", "MOVE-001"]);
+        assert_eq!(
+            ids,
+            vec!["AUTH-001", "AUTH-002", "AUTH-003", "AUTH-004", "MOVE-001"]
+        );
     }
 
     #[test]

@@ -266,6 +266,8 @@ sdkt plugin show <id>                              # show a plugin's metadata
 sdkt plugin install ./path/to/artifact.wasm        # install from a local file
 sdkt plugin remove <id>                            # remove (idempotent)
 sdkt plugin update <id> ./path/to/artifact.wasm    # local-only update
+sdkt plugin pack ./path/to/plugin-dir              # pack into .sdktplugin bundle
+sdkt plugin verify-bundle ./bundle.sdktplugin      # verify bundle integrity
 sdkt audit contract.rs --rules <id>                # resolve id → stored artifact
 ```
 
@@ -280,7 +282,7 @@ Store root precedence (lowest → highest): `<cwd>/.sdkt/plugins`,
 
 - `--format json` is supported on all read-style commands and on `diff`, `audit`, `deploy`, `init` for scripting / CI.
 - `diff --upgrade-safety` and `deploy --deny-breaking` implement the Milestone 14 Upgrade Safety Guard (see `ROADMAP.md`).
-- `audit` implements the Milestone 13 static-analysis rules (AUTH-001/002/003, MOVE-001).
+- `audit` implements the Milestone 13 static-analysis rules (AUTH-001/002/003/004, MOVE-001).
 - **Mainnet safety (M39).** Mutating commands (`tx submit`, `deploy`, `project deploy`) refuse to target mainnet unless you explicitly select the network — via `--network-profile`, `--rpc-url`, or `--network-passphrase`. A testnet-default passphrase pointed at a mainnet endpoint is rejected before any request is sent, protecting against signing for the wrong network.
 
 ## Error Handling

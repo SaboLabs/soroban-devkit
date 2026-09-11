@@ -65,9 +65,9 @@ sdkt diff \
 sdkt audit path/to/contract/src/lib.rs
 ```
 
-It flags `AUTH-001/002/003` (missing `require_auth` on privileged functions,
-unauthenticated `invoke_contract`, unguarded `initialize`) and `MOVE-001`
-(suspicious move-after-use, warning only). To skip a rule:
+It flags `AUTH-001/002/003/004` (missing `require_auth` on privileged functions,
+unauthenticated `invoke_contract`, unguarded `initialize`, unguarded token
+transfers) and `MOVE-001` (suspicious move-after-use, warning only). To skip a rule:
 
 ```bash
 sdkt audit contract/src/lib.rs --disable MOVE-001

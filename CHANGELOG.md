@@ -480,14 +480,19 @@ the release pipeline fully green end-to-end.
 
 ## [Unreleased]
 
-### Changed
-- **`sdkt-wasm` no longer depends on `sdkt-core`.** The dependency was declared
-  but never used — `crates/sdkt-wasm/src/` contains no reference to `sdkt_core`,
-  and no `sdkt-core` type appears in `sdkt-wasm`'s public API, so this is **not**
-  a breaking change for `sdkt-wasm` consumers. Removing it lets `sdkt-wasm`
-  compile for `wasm32-unknown-unknown`, which the declared-but-unused dependency
-  previously blocked (`sdkt-core` transitively pulls in `zstd`/`tar` C sources).
-  CLI behaviour is unchanged: `sdkt wasm inspect` produces byte-identical pretty
-  and `--format json` output before and after.
+### Added
+- **AUTH-004 static analysis rule.** New built-in rule `AUTH-004` flags Soroban
+  token-transfer functions (`transfer`, `transfer_from`, `withdraw`, `burn`) that
+  don't call `require_auth()`. The rule was previously defined and unit-tested
+  but never registered in `RuleRegistry::register_builtin_rules()` — it now
+  registers alongside AUTH-001/002/003 and MOVE-001. New CLI integration tests
+  cover positive, negative, and `--disable` paths.
+- **Plugin bundle CLI (M39 bundles).** `sdkt plugin pack` packs a plugin
+  directory into a `.sdktplugin` bundle (tar with `manifest.sha256` + optional
+  Ed25519 signature); `sdkt plugin verify-bundle` verifies a bundle's integrity
+  and signature. Backed by the existing `pack_bundle`/`verify_bundle` library
+  functions.
 
-### Planned
+### Changed
+- `register_builtin_rules()` now registers all **five** built-in rules
+  (`AUTH-001/002/003/004`, `MOVE-001`).

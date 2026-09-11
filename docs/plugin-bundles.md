@@ -24,3 +24,16 @@ should report that they are unsigned.
 No hosted registry or central trust root is required. A caller that has an
 expected author key can pass it to `verify_bundle`; signed bundles whose
 embedded key differs are rejected.
+
+## CLI
+
+```bash
+# Pack a plugin directory into a bundle
+sdkt plugin pack ./path/to/plugin-dir --output my-plugin.sdktplugin
+
+# Pack with Ed25519 signing
+sdkt plugin pack ./path/to/plugin-dir --secret-key ./secret.key
+
+# Verify a bundle
+sdkt plugin verify-bundle my-plugin.sdktplugin --public-key ./public.key
+```

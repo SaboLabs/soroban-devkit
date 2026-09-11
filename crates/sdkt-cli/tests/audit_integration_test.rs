@@ -1,4 +1,5 @@
 use assert_cmd::Command;
+use predicates::prelude::*;
 use std::io::Write;
 use tempfile::TempDir;
 
@@ -134,12 +135,55 @@ fn audit_rules_missing_path_errors() {
         .stderr(predicates::str::contains("does not exist"));
 }
 
+#[test]
+fn audit_flags_transfer_without_auth() {
+    let dir = TempDir::new().unwrap();
+    let path = write_fixture(
+        &dir,
+        "transfer_no_auth.rs",
+        "pub fn transfer(from: Address, to: Address, amount: i128) { }\n",
+    );
+    sdkt()
+        .args(["audit", path.to_str().unwrap()])
+        .assert()
+        .success()
+        .stdout(predicates::str::contains("AUTH-004"))
+        .stdout(predicates::str::contains("critical"));
+}
+
+#[test]
+fn audit_transfer_with_auth_not_flagged() {
+    let dir = TempDir::new().unwrap();
+    let path = write_fixture(
+        &dir,
+        "transfer_auth.rs",
+        "pub fn transfer(from: Address, to: Address, amount: i128) { require_auth(); }\n",
+    );
+    sdkt()
+        .args(["audit", path.to_str().unwrap()])
+        .assert()
+        .success()
+        .stdout(predicates::str::contains("AUTH-004").not());
+}
+
+#[test]
+fn audit_disable_auth004_suppresses_finding() {
+    let dir = TempDir::new().unwrap();
+    let path = write_fixture(
+        &dir,
+        "transfer_no_auth.rs",
+        "pub fn transfer(from: Address, to: Address, amount: i128) { }\n",
+    );
+    sdkt()
+        .args(["audit", path.to_str().unwrap(), "--disable", "AUTH-004"])
+        .assert()
+        .success()
+        .stdout(predicates::str::contains("No issues found."));
+}
+
 #[cfg(feature = "plugins")]
 #[test]
 fn audit_example_plugin_rule_fires_with_plugins_feature() {
-    // This test only runs when sdkt-cli is built with `--features plugins`,
-    // which links the reference example rule (EXAMPLE-001) into the registry.
-    use std::process::Command;
     let dir = TempDir::new().unwrap();
     let path = write_fixture(
         &dir,

@@ -159,7 +159,7 @@ Interpreting the output:
 
 - `Severity: 0 critical, 0 warning, 0 info (0 total)` with `No issues found.`
   means the analyzer found nothing to flag.
-- `critical` findings (e.g. `AUTH-001/002/003` — missing auth checks) should
+- `critical` findings (e.g. `AUTH-001/002/003/004` — missing auth checks) should
   block a deploy.
 - `warning` findings (e.g. `MOVE-001` — a possible move-after-use of a local)
   are heuristic and worth a look but are not necessarily bugs.

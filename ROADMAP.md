@@ -52,7 +52,7 @@ The workspace is a Cargo virtual workspace. The `sdkt` binary is produced by
 | `sdkt-wasm` | Contract WASM inspection & offline analysis | `ContractSpec` parser, `WasmModule` inspector, `SpecDiff`, `UpgradeVerdict`. Offline only. |
 | `sdkt-rpc` | Soroban RPC client & on-chain aggregation | `SorobanRpcClient` (persistent pooled `reqwest`), `TtlInfo`, `ContractInspection`; `simulate` / `submission` / `builder` modules. **The only network-I/O crate.** |
 | `sdkt-storage` | Storage analysis, WASM caching, keystore | `StorageAnalyzer`, `StorageReport`, `WasmCache`, `IdentityStore` (ED25519, `~/.sdkt/identities`). |
-| `sdkt-audit` | Offline static security analysis | `Severity`, `Finding`, `AuditReport`, `AuditRule`, `RuleRegistry`, `register_rule!`; built-in rules `AUTH-001/002/003`, `MOVE-001`; plugin author API. |
+| `sdkt-audit` | Offline static security analysis | `Severity`, `Finding`, `AuditReport`, `AuditRule`, `RuleRegistry`, `register_rule!`; built-in rules `AUTH-001/002/003/004`, `MOVE-001`; plugin author API. |
 | `sdkt-audit-example-rule` | Reference plugin crate | Rule `EXAMPLE-001`; produces `libsdkt_audit_example_rule` (native) and `sdkt_audit_example_rule.wasm` behind the `plugins` / `wasm-plugins` features. |
 | `sdkt-cli` | User-facing CLI | `Cli`, `Commands`; routes arguments to crates and formats output (pretty + `--format json`). Builds the `sdkt` binary. |
 

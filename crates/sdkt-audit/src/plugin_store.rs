@@ -31,6 +31,7 @@
 
 use std::path::{Path, PathBuf};
 
+pub use ed25519_dalek;
 use ed25519_dalek::{Signature, Signer, SigningKey, Verifier, VerifyingKey};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
