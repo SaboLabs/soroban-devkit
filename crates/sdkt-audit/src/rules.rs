@@ -107,6 +107,41 @@ impl AuditRule for Auth003 {
     }
 }
 
+/// AUTH-004 — Token transfer without `require_auth()` on source/destination.
+pub struct Auth004;
+
+impl AuditRule for Auth004 {
+    fn id(&self) -> &'static str {
+        "AUTH-004"
+    }
+    fn severity(&self) -> Severity {
+        Severity::Critical
+    }
+    fn description(&self) -> &'static str {
+        "Token transfer function must call require_auth() on source or destination"
+    }
+    fn check(&self, scans: &[FnScan], _ctx: &AuditContext, report: &mut AuditReport) {
+        for s in scans {
+            let name = s.fn_name.to_lowercase();
+            let is_transfer = matches!(
+                name.as_str(),
+                "transfer" | "transfer_from" | "transferfrom" | "withdraw" | "burn"
+            );
+            if is_transfer && s.require_auth == 0 {
+                report.add(Finding {
+                    rule_id: self.id().to_string(),
+                    severity: self.severity(),
+                    message: format!(
+                        "Transfer-style function `{}` does not call require_auth()",
+                        s.fn_name
+                    ),
+                    location: Some(s.fn_name.clone()),
+                });
+            }
+        }
+    }
+}
+
 /// MOVE-001 — Suspicious move-after-use heuristic (Warning only).
 pub struct Move001;
 
@@ -136,5 +171,119 @@ impl AuditRule for Move001 {
                 }
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::types::AuditReport;
+
+    fn has(report: &AuditReport, rule_id: &str) -> bool {
+        report.findings.iter().any(|f| f.rule_id == rule_id)
+    }
+
+    #[test]
+    fn auth004_flags_transfer_without_auth() {
+        let scans = vec![FnScan {
+            fn_name: "transfer".into(),
+            require_auth: 0,
+            invoke_contract: 0,
+            bound: Default::default(),
+            usage: Default::default(),
+        }];
+        let mut rep = AuditReport::default();
+        Auth004.check(&scans, &crate::audit::AuditContext { spec: None }, &mut rep);
+        assert!(
+            has(&rep, "AUTH-004"),
+            "transfer without auth should trigger AUTH-004"
+        );
+    }
+
+    #[test]
+    fn auth004_flags_transfer_from_without_auth() {
+        let scans = vec![FnScan {
+            fn_name: "transfer_from".into(),
+            require_auth: 0,
+            invoke_contract: 0,
+            bound: Default::default(),
+            usage: Default::default(),
+        }];
+        let mut rep = AuditReport::default();
+        Auth004.check(&scans, &crate::audit::AuditContext { spec: None }, &mut rep);
+        assert!(
+            has(&rep, "AUTH-004"),
+            "transfer_from without auth should trigger AUTH-004"
+        );
+    }
+
+    #[test]
+    fn auth004_does_not_flag_transfer_with_auth() {
+        let scans = vec![FnScan {
+            fn_name: "transfer".into(),
+            require_auth: 1,
+            invoke_contract: 0,
+            bound: Default::default(),
+            usage: Default::default(),
+        }];
+        let mut rep = AuditReport::default();
+        Auth004.check(&scans, &crate::audit::AuditContext { spec: None }, &mut rep);
+        assert!(
+            !has(&rep, "AUTH-004"),
+            "transfer with auth should not trigger AUTH-004"
+        );
+    }
+
+    #[test]
+    fn auth004_does_not_flag_non_transfer() {
+        let scans = vec![FnScan {
+            fn_name: "balance_of".into(),
+            require_auth: 0,
+            invoke_contract: 0,
+            bound: Default::default(),
+            usage: Default::default(),
+        }];
+        let mut rep = AuditReport::default();
+        Auth004.check(&scans, &crate::audit::AuditContext { spec: None }, &mut rep);
+        assert!(
+            !has(&rep, "AUTH-004"),
+            "non-transfer function should not trigger AUTH-004"
+        );
+    }
+
+    #[test]
+    fn auth004_does_not_flag_transfer_ownership() {
+        // `transfer_ownership` is an admin-management function, not a token
+        // transfer — it must not trigger AUTH-004.
+        let scans = vec![FnScan {
+            fn_name: "transfer_ownership".into(),
+            require_auth: 0,
+            invoke_contract: 0,
+            bound: Default::default(),
+            usage: Default::default(),
+        }];
+        let mut rep = AuditReport::default();
+        Auth004.check(&scans, &crate::audit::AuditContext { spec: None }, &mut rep);
+        assert!(
+            !has(&rep, "AUTH-004"),
+            "transfer_ownership should not trigger AUTH-004"
+        );
+    }
+
+    #[test]
+    fn auth004_does_not_flag_admin_transfer() {
+        let scans = vec![FnScan {
+            fn_name: "admin_transfer".into(),
+            require_auth: 0,
+            invoke_contract: 0,
+            bound: Default::default(),
+            usage: Default::default(),
+        }];
+        let mut rep = AuditReport::default();
+        Auth004.check(&scans, &crate::audit::AuditContext { spec: None }, &mut rep);
+        assert!(
+            !has(&rep, "AUTH-004"),
+            "admin_transfer should not trigger AUTH-004"
+        );
     }
 }

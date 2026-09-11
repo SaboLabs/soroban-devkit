@@ -82,7 +82,7 @@ graph TD
 - **Purpose**: Offline static security analysis of Soroban contract source.
 - **Key types**: `Severity`, `Finding`, `AuditReport`, `AuditRule` trait, `RuleRegistry`, `register_rule!` macro; plugin author API (`AuditContext`, `scan_all_functions_str`).
 - **Dependencies**: `sdkt-wasm`.
-- **Rules**: Built-in rules `AUTH-001/002/003` and `MOVE-001`. Native (`.so`/`.dylib`/`.dll`) and WASM plugins load behind the `plugins` / `wasm-plugins` features (off by default). ABI major-version mismatch is rejected (see `SECURITY.md`).
+- **Rules**: Built-in rules `AUTH-001/002/003/004` and `MOVE-001`. Native (`.so`/`.dylib`/`.dll`) and WASM plugins load behind the `plugins` / `wasm-plugins` features (off by default). ABI major-version mismatch is rejected (see `SECURITY.md`).
 
 ### 7. `sdkt-audit-example-rule`
 

@@ -33,7 +33,7 @@ Developing on Soroban often requires context-switching across multiple CLI tools
 
 - **Inspect & decode** — base64 XDR decoding, contract ABI + storage inspection, event exploration.
 - **Analyze** — storage TTL / rent visibility, Instance / Persistent / Temporary classification, offline ABI/function/event/type WASM diffing.
-- **Secure** — static analysis of contract source (`AUTH-001/002/003`, `MOVE-001`) and an upgrade-safety verdict for safe contract upgrades.
+- **Secure** — static analysis of contract source (`AUTH-001/002/003/004`, `MOVE-001`) and an upgrade-safety verdict for safe contract upgrades.
 - **Build & ship** — typed transaction envelope builder, simulate, **native transaction signing (M27)**, submit, identity/keystore management, multi-contract workspace topological deployments, and upgrade breaking-change guards.
 
 Most commands are **offline**; only on-chain reads (`inspect`, `storage`, `tx`, `events`, `account`, `fee`, `wasm metadata`) need an RPC endpoint.
@@ -224,7 +224,7 @@ See [`docs/plugin-authoring.md`](docs/plugin-authoring.md) for how to build or u
 | `sdkt wasm inspect <file>` | Inspect offline WASM metadata, sections, and specifications. |
 | `sdkt wasm metadata --contract <contract>` | WASM metadata for a deployed contract (cached). |
 | `sdkt wasm cache` | Manage the WASM cache (`info` / `remove` / `clear`). |
-| `sdkt audit <path.rs>` | Static security analysis (AUTH-001/002/003, MOVE-001). `--disable <RULE_ID>` to skip a rule. `--rules <path>` (repeatable) to load external rule paths. |
+| `sdkt audit <path.rs>` | Static security analysis (AUTH-001/002/003/004, MOVE-001). `--disable <RULE_ID>` to skip a rule. `--rules <path>` (repeatable) to load external rule paths. |
 | `sdkt identity <generate\|import\|list\|show\|delete\|default>` | ED25519 keystore management. |
 | `sdkt network <add\|list\|show\|remove>` | Named network profiles (RPC URL + passphrase). Combine with `--network-profile <NAME>` on any RPC command to avoid repeating endpoints; `--rpc-url` / `--network-passphrase` override. |
 | `sdkt init <name>` | Scaffold a new Soroban project (`--minimal`, `--force`). |

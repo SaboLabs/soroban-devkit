@@ -589,8 +589,27 @@ enum PluginAction {
     /// Update an installed plugin from a new local artifact (local-only)
     Update {
         id: String,
-        /// Path to the new local plugin artifact
+        /// Path to the new local artifact
         source: String,
+    },
+    /// Pack a plugin directory into a `.sdktplugin` bundle
+    Pack {
+        /// Path to the plugin directory (must contain plugin.toml + artifact)
+        source: String,
+        /// Output bundle path (defaults to <id>-<version>.sdktplugin in current dir)
+        #[arg(long)]
+        output: Option<String>,
+        /// Optional Ed25519 secret key file for signing (32 bytes, raw)
+        #[arg(long)]
+        secret_key: Option<String>,
+    },
+    /// Verify a `.sdktplugin` bundle's integrity and signature
+    VerifyBundle {
+        /// Path to the `.sdktplugin` bundle
+        bundle: String,
+        /// Optional Ed25519 public key file for signature verification (32 bytes, raw)
+        #[arg(long)]
+        public_key: Option<String>,
     },
 }
 
@@ -3905,6 +3924,131 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                         process::exit(1);
                     }
                 }
+            }
+            PluginAction::Pack {
+                source,
+                output,
+                secret_key,
+            } => {
+                let src = std::path::Path::new(&source);
+                let meta_path = src.join("plugin.toml");
+                if !meta_path.exists() {
+                    eprintln!(
+                        "Error: plugin.toml not found in plugin directory '{}'",
+                        source
+                    );
+                    process::exit(1);
+                }
+                let raw_meta = std::fs::read_to_string(&meta_path)
+                    .map_err(|e| {
+                        eprintln!("Error reading plugin.toml: {}", e);
+                        process::exit(1);
+                    })
+                    .unwrap();
+                let meta: sdkt_audit::plugin_store::PluginMeta =
+                    match sdkt_audit::plugin_store::parse_meta(&raw_meta) {
+                        Ok(m) => m,
+                        Err(e) => {
+                            eprintln!("Error parsing plugin.toml: {}", e);
+                            process::exit(1);
+                        }
+                    };
+                let artifact = src.join(&meta.artifact);
+                if !artifact.exists() {
+                    eprintln!(
+                        "Error: artifact '{}' not found in plugin directory",
+                        meta.artifact
+                    );
+                    process::exit(1);
+                }
+                let out =
+                    output.unwrap_or_else(|| format!("{}-{}.sdktplugin", meta.id, meta.version));
+                let signing_key = if let Some(key_path) = secret_key {
+                    let bytes = std::fs::read(key_path)
+                        .map_err(|e| {
+                            eprintln!("Error reading secret key: {}", e);
+                            process::exit(1);
+                        })
+                        .unwrap();
+                    let arr: [u8; 32] = bytes
+                        .try_into()
+                        .map_err(|_| {
+                            eprintln!("Error: secret key must be exactly 32 bytes");
+                            process::exit(1);
+                        })
+                        .unwrap();
+                    Some(sdkt_audit::plugin_store::ed25519_dalek::SigningKey::from_bytes(&arr))
+                } else {
+                    None
+                };
+                match sdkt_audit::plugin_store::pack_bundle(
+                    std::path::Path::new(&out),
+                    &meta,
+                    &artifact,
+                    signing_key.as_ref(),
+                ) {
+                    Ok(()) => {
+                        println!("Packed plugin to '{}'", out);
+                        if signing_key.is_none() {
+                            eprintln!("Note: bundle was NOT signed (pass --secret-key to sign)");
+                        }
+                    }
+                    Err(e) => {
+                        eprintln!("Error packing plugin bundle: {}", e);
+                        process::exit(1);
+                    }
+                }
+            }
+            PluginAction::VerifyBundle { bundle, public_key } => {
+                let pubkey = if let Some(key_path) = public_key {
+                    let bytes = std::fs::read(key_path)
+                        .map_err(|e| {
+                            eprintln!("Error reading public key: {}", e);
+                            process::exit(1);
+                        })
+                        .unwrap();
+                    let arr: [u8; 32] = bytes
+                        .try_into()
+                        .map_err(|_| {
+                            eprintln!("Error: public key must be exactly 32 bytes");
+                            process::exit(1);
+                        })
+                        .unwrap();
+                    Some(
+                        sdkt_audit::plugin_store::ed25519_dalek::VerifyingKey::from_bytes(&arr)
+                            .map_err(|_| {
+                                eprintln!("Error: invalid Ed25519 public key");
+                                process::exit(1);
+                            })
+                            .unwrap(),
+                    )
+                } else {
+                    None
+                };
+                let staging =
+                    std::env::temp_dir().join(format!("sdkt-verify-bundle-{}", std::process::id()));
+                match sdkt_audit::plugin_store::verify_bundle(
+                    std::path::Path::new(&bundle),
+                    &staging,
+                    pubkey.as_ref(),
+                ) {
+                    Ok(result) => {
+                        println!("Bundle is valid.");
+                        println!("  id: {}", result.metadata.id);
+                        println!("  version: {}", result.metadata.version);
+                        println!("  kind: {}", result.metadata.kind);
+                        if result.signed {
+                            println!("  signature: VERIFIED");
+                        } else {
+                            println!("  signature: UNSIGNED");
+                        }
+                    }
+                    Err(e) => {
+                        eprintln!("Error verifying bundle: {}", e);
+                        process::exit(1);
+                    }
+                }
+                let _ = std::fs::remove_dir_all(&staging);
             }
         },
         Commands::Completions { shell } => {

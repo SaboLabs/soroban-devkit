@@ -233,6 +233,7 @@ pub fn all_rules() -> Vec<Box<dyn AuditRule>> {
         Box::new(crate::rules::Auth001),
         Box::new(crate::rules::Auth002),
         Box::new(crate::rules::Auth003),
+        Box::new(crate::rules::Auth004),
         Box::new(crate::rules::Move001),
     ]
 }
