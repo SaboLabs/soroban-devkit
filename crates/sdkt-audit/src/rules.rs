@@ -107,6 +107,41 @@ impl AuditRule for Auth003 {
     }
 }
 
+/// AUTH-004 — Token transfer without `require_auth()` on source/destination.
+///
+/// Detects functions that invoke `transfer` or `transfer_from` on a token
+/// client without a preceding `require_auth()` call in the same function
+/// scope — a common vulnerability pattern in Soroban token implementations
+/// where the caller's authority over the source funds is never verified.
+pub struct Auth004;
+
+impl AuditRule for Auth004 {
+    fn id(&self) -> &'static str {
+        "AUTH-004"
+    }
+    fn severity(&self) -> Severity {
+        Severity::Critical
+    }
+    fn description(&self) -> &'static str {
+        "Token transfer must be guarded by require_auth()"
+    }
+    fn check(&self, scans: &[FnScan], _ctx: &AuditContext, report: &mut AuditReport) {
+        for s in scans {
+            if s.token_transfer > 0 && s.require_auth == 0 {
+                report.add(Finding {
+                    rule_id: self.id().to_string(),
+                    severity: self.severity(),
+                    message: format!(
+                        "Function `{}` performs token transfer without require_auth()",
+                        s.fn_name
+                    ),
+                    location: Some(s.fn_name.clone()),
+                });
+            }
+        }
+    }
+}
+
 /// MOVE-001 — Suspicious move-after-use heuristic (Warning only).
 pub struct Move001;
 
@@ -136,5 +171,72 @@ impl AuditRule for Move001 {
                 }
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn report_for(src: &str) -> AuditReport {
+        let ast = syn::parse_file(src).unwrap();
+        let scans = crate::audit::scan_all_functions(&ast);
+        let ctx = AuditContext { spec: None };
+        let mut report = AuditReport::default();
+        let rules: Vec<Box<dyn AuditRule>> = vec![
+            Box::new(Auth001),
+            Box::new(Auth002),
+            Box::new(Auth003),
+            Box::new(Auth004),
+            Box::new(Move001),
+        ];
+        for rule in &rules {
+            rule.check(&scans, &ctx, &mut report);
+        }
+        report
+    }
+
+    fn has(rep: &AuditReport, id: &str) -> bool {
+        rep.findings.iter().any(|f| f.rule_id == id)
+    }
+
+    #[test]
+    fn auth004_fires_on_transfer_without_auth() {
+        let src = "pub fn move_tokens(from: Address, to: Address, amount: i128) { token.transfer(&from, &to, &amount); }";
+        let rep = report_for(src);
+        assert!(
+            has(&rep, "AUTH-004"),
+            "transfer without auth should trigger AUTH-004"
+        );
+    }
+
+    #[test]
+    fn auth004_fires_on_transfer_from_without_auth() {
+        let src = "pub fn move_tokens(from: Address, to: Address, amount: i128) { token.transfer_from(&from, &to, &amount); }";
+        let rep = report_for(src);
+        assert!(
+            has(&rep, "AUTH-004"),
+            "transfer_from without auth should trigger AUTH-004"
+        );
+    }
+
+    #[test]
+    fn auth004_silent_when_auth_present() {
+        let src = "pub fn move_tokens(from: Address, to: Address, amount: i128) { require_auth(); token.transfer(&from, &to, &amount); }";
+        let rep = report_for(src);
+        assert!(
+            !has(&rep, "AUTH-004"),
+            "transfer with auth should not trigger AUTH-004"
+        );
+    }
+
+    #[test]
+    fn auth004_silent_on_non_transfer_fn() {
+        let src = "pub fn balance_of(who: Address) -> u32 { 0 }";
+        let rep = report_for(src);
+        assert!(
+            !has(&rep, "AUTH-004"),
+            "non-transfer function should not trigger AUTH-004"
+        );
     }
 }
