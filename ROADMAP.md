@@ -100,7 +100,7 @@ is preserved. Milestones **M16–M27** were merged to `main` across the
 | Milestone | Theme | Highlights | Release |
 |-----------|-------|-----------|---------|
 | M12 | Contract ABI/WASM Diff (Candidate C) | `sdkt diff --old-wasm --new-wasm` offline comparison | v0.12.0-alpha |
-| M13 | Gap C — Static Security Analysis (`sdkt audit`) | New `sdkt-audit` crate; `AUTH-001/002/003`, `MOVE-001`; `sdkt audit <path>` | v0.13.0-alpha |
+| M13 | Gap C — Static Security Analysis (`sdkt audit`) | New `sdkt-audit` crate; `AUTH-001/002/003/004`, `MOVE-001`; `sdkt audit <path>` | v0.13.0-alpha |
 | M14 | Upgrade Safety Guard (Candidate A) | `UpgradeVerdict`; `sdkt diff --upgrade-safety`; `sdkt deploy --deny-breaking` | v0.14.0-alpha |
 
 ### Plugin System
@@ -142,9 +142,9 @@ is preserved. Milestones **M16–M27** were merged to `main` across the
 | M35.1 | Git dependency sources | `git` deps (`tag`/`branch`/`rev`); `sdkt package fetch` into `.sdkt-cache`; `DependencyFetcher` trait | main |
 | M35.2 | Lock dependency resolution & reproducible verification | `sdkt.lock` records resolved commit/integrity; `verify_dependencies` + `sdkt lock verify` cover deps | main |
 | M36.0 | Package update & synchronization | `sdkt package update` (`--check`/`--dry-run`/`--format`); closes `validate → fetch → update → verify` | main |
-| M37 | Dependency Version Resolution | Semver `version` constraints on deps; `VersionResolver` picks best satisfying tag/commit; `--check` reports constraint state | main (scheduled) |
-| M38 | Packaging & Publishing Workflow | `sdkt package pack` (offline bundle of manifest+lock+cache); `sdkt package publish --dry-run` readiness check | main (scheduled) |
-| M39 | Release Polish & SCF Readiness | `Dockerfile` distribution, mainnet-safety guards, SCF positioning doc, `docs/archive/release-readiness-v2.5.0.md` refresh, opt-in `--version` provenance | main (scheduled) |
+| M37 | Dependency Version Resolution | Semver `version` constraints on deps; `VersionResolver` picks best satisfying tag/commit; `--check` reports constraint state | main (merged in v2.5.0) |
+| M38 | Packaging & Publishing Workflow | `sdkt package pack` (offline bundle of manifest+lock+cache); `sdkt package publish --dry-run` readiness check | main (merged in v2.5.0) |
+| M39 | Release Polish & SCF Readiness | `Dockerfile` distribution, mainnet-safety guards, SCF positioning doc, `docs/archive/release-readiness-v2.5.0.md` refresh, opt-in `--version` provenance | main (merged in v2.5.0) |
 
 ### RPC & Simulation
 
@@ -163,7 +163,7 @@ is preserved. Milestones **M16–M27** were merged to `main` across the
 
 **Where is this project today?**
 
-- **Completed milestones:** 37 — M3A, M3B, M5, M6, M7, M8, M9, M10, M11, M12, M13, M14, M15, M16, M17, M18, M19, M20, M21, M22, M23, M24, M25, M26, M27, M28, M29, M35.0, M35.1, M35.2, M36.0, M37, M38, M39, M40, M41, M42, M43, M44.
+- **Completed milestones:** 42 — M3A, M3B, M5, M6, M7, M8, M9, M10, M11, M12, M13, M14, M15, M16, M17, M18, M19, M20, M21, M22, M23, M24, M25, M26, M27, M28, M29, M35.0, M35.1, M35.2, M36.0, M37, M38, M39, M40, M41, M42, M43, M44.
 - **Latest milestone:** **M44 (On-Chain ABI for Storage Decode)** is merged to `main` and shipped in `v2.5.0`; plan archived at `docs/archive/milestone-44-plan.md`. It extends `sdkt storage` with `--abi-contract <id>` so a deployed contract's on-chain WASM (fetched via the M41 `inspect_contract`/`get_wasm_bytecode` path, parsed by `parse_contract_spec`) supplies the ABI for the existing storage analyzer's decode path — mirroring M43, no local WASM artifact required. Reuses M41 retrieval + existing storage analyzer; no new RPC method, no new decoder. M43 (Live-Contract ABI for Events Decode), M42 (On-Chain Upgrade-Safety Verification), M41 (On-Chain Contract Interface & Instance Inspection), and M40 (Plugin Ecosystem — Local Store & Distribution) are also merged and shipped in `v2.5.0`.
 - **Current release:** `v2.5.0` (tagged). Prior tagged releases: `v2.4.0`, `v2.3.0`, `v2.2.0`, `v2.1.1`, `v2.1.0`, `v2.0.0`.
 - **Repository health:** Healthy. 8 crates, all quality gates enforced in CI (`cargo fmt`, `cargo clippy --workspace --all-targets -- -D warnings` default + all-features, `cargo test --workspace`).

@@ -266,8 +266,10 @@ sdkt plugin show <id>                              # show a plugin's metadata
 sdkt plugin install ./path/to/artifact.wasm        # install from a local file
 sdkt plugin remove <id>                            # remove (idempotent)
 sdkt plugin update <id> ./path/to/artifact.wasm    # local-only update
-sdkt plugin pack ./path/to/plugin-dir              # pack into .sdktplugin bundle
-sdkt plugin verify-bundle ./bundle.sdktplugin      # verify bundle integrity
+sdkt plugin pack ./path/to/plugin-dir --output ./myrule.sdktplugin              # pack into .sdktplugin bundle
+sdkt plugin pack ./path/to/plugin-dir --secret-key ./secret.key                 # sign bundle with Ed25519 secret key (32 bytes, raw)
+sdkt plugin verify-bundle ./bundle.sdktplugin                                                # verify unsigned bundle integrity
+sdkt plugin verify-bundle ./bundle.sdktplugin --public-key ./pubkey.key                      # verify signed bundle against a specific public key
 sdkt audit contract.rs --rules <id>                # resolve id → stored artifact
 ```
 

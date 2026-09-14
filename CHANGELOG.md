@@ -480,19 +480,5 @@ the release pipeline fully green end-to-end.
 
 ## [Unreleased]
 
-### Added
-- **AUTH-004 static analysis rule.** New built-in rule `AUTH-004` flags Soroban
-  token-transfer functions (`transfer`, `transfer_from`, `withdraw`, `burn`) that
-  don't call `require_auth()`. The rule was previously defined and unit-tested
-  but never registered in `RuleRegistry::register_builtin_rules()` — it now
-  registers alongside AUTH-001/002/003 and MOVE-001. New CLI integration tests
-  cover positive, negative, and `--disable` paths.
-- **Plugin bundle CLI (M39 bundles).** `sdkt plugin pack` packs a plugin
-  directory into a `.sdktplugin` bundle (tar with `manifest.sha256` + optional
-  Ed25519 signature); `sdkt plugin verify-bundle` verifies a bundle's integrity
-  and signature. Backed by the existing `pack_bundle`/`verify_bundle` library
-  functions.
-
-### Changed
-- `register_builtin_rules()` now registers all **five** built-in rules
-  (`AUTH-001/002/003/004`, `MOVE-001`).
+No unreleased changes. AUTH-004 registration and the plugin bundle CLI (`pack` /
+`verify-bundle`) shipped in `v2.5.0`.

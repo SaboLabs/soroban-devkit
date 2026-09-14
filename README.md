@@ -224,11 +224,10 @@ See [`docs/plugin-authoring.md`](docs/plugin-authoring.md) for how to build or u
 | `sdkt wasm inspect <file>` | Inspect offline WASM metadata, sections, and specifications. |
 | `sdkt wasm metadata --contract <contract>` | WASM metadata for a deployed contract (cached). |
 | `sdkt wasm cache` | Manage the WASM cache (`info` / `remove` / `clear`). |
-| `sdkt audit <path.rs>` | Static security analysis (AUTH-001/002/003/004, MOVE-001). `--disable <RULE_ID>` to skip a rule. `--rules <path>` (repeatable) to load external rule paths. |
+|| `sdkt audit <path.rs>` | Static security analysis (AUTH-001/002/003/004, MOVE-001). `--disable <RULE_ID>` to skip a rule. `--rules <path|id>` (repeatable) to load external rule paths or resolve installed plugin IDs. |
 | `sdkt identity <generate\|import\|list\|show\|delete\|default>` | ED25519 keystore management. |
 | `sdkt network <add\|list\|show\|remove>` | Named network profiles (RPC URL + passphrase). Combine with `--network-profile <NAME>` on any RPC command to avoid repeating endpoints; `--rpc-url` / `--network-passphrase` override. |
-| `sdkt init <name>` | Scaffold a new Soroban project (`--minimal`, `--force`). |
-| `sdkt build` | Compile workspace Rust contracts into optimized WASMs. |
+|| `sdkt init <name>` | Scaffold a new Soroban project (`--minimal`, `--force`). |
 | `sdkt lock generate` | Write `sdkt.lock` recording each built artifact's SHA-256 + deploy order (after `sdkt build`). |
 | `sdkt lock verify` | Verify `sdkt.lock` against current on-disk artifacts **and** package dependencies (lock matches manifest, git commits, path existence). Advisory; never fails the build. Prints `✓ lock file verified` / `✓ package dependencies verified` or lists drift. |
 | `sdkt lock show` | Print the current `sdkt.lock` contents. |
