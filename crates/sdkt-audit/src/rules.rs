@@ -184,7 +184,177 @@ mod tests {
     }
 
     #[test]
-    fn auth004_flags_transfer_without_auth() {
+    fn auth001_flags_mint_without_auth() {
+        let scans = vec![FnScan {
+            fn_name: "mint_token".into(),
+            require_auth: 0,
+            invoke_contract: 0,
+            bound: Default::default(),
+            usage: Default::default(),
+        }];
+        let mut rep = AuditReport::default();
+        Auth001.check(&scans, &crate::audit::AuditContext { spec: None }, &mut rep);
+        assert!(
+            has(&rep, "AUTH-001"),
+            "mint_token without auth should trigger AUTH-001"
+        );
+    }
+
+    #[test]
+    fn auth001_flags_initialize_without_auth() {
+        let scans = vec![FnScan {
+            fn_name: "initialize".into(),
+            require_auth: 0,
+            invoke_contract: 0,
+            bound: Default::default(),
+            usage: Default::default(),
+        }];
+        let mut rep = AuditReport::default();
+        Auth001.check(&scans, &crate::audit::AuditContext { spec: None }, &mut rep);
+        assert!(
+            has(&rep, "AUTH-001"),
+            "initialize without auth should trigger AUTH-001"
+        );
+    }
+
+    #[test]
+    fn auth001_does_not_flag_non_privileged() {
+        let scans = vec![FnScan {
+            fn_name: "balance_of".into(),
+            require_auth: 0,
+            invoke_contract: 0,
+            bound: Default::default(),
+            usage: Default::default(),
+        }];
+        let mut rep = AuditReport::default();
+        Auth001.check(&scans, &crate::audit::AuditContext { spec: None }, &mut rep);
+        assert!(
+            !has(&rep, "AUTH-001"),
+            "balance_of should not trigger AUTH-001"
+        );
+    }
+
+    #[test]
+    fn auth001_does_not_flag_privileged_with_auth() {
+        let scans = vec![FnScan {
+            fn_name: "mint_token".into(),
+            require_auth: 1,
+            invoke_contract: 0,
+            bound: Default::default(),
+            usage: Default::default(),
+        }];
+        let mut rep = AuditReport::default();
+        Auth001.check(&scans, &crate::audit::AuditContext { spec: None }, &mut rep);
+        assert!(
+            !has(&rep, "AUTH-001"),
+            "mint_token with auth should not trigger AUTH-001"
+        );
+    }
+
+    #[test]
+    fn auth002_flags_invoke_contract_without_auth() {
+        let scans = vec![FnScan {
+            fn_name: "cross_call".into(),
+            require_auth: 0,
+            invoke_contract: 1,
+            bound: Default::default(),
+            usage: Default::default(),
+        }];
+        let mut rep = AuditReport::default();
+        Auth002.check(&scans, &crate::audit::AuditContext { spec: None }, &mut rep);
+        assert!(
+            has(&rep, "AUTH-002"),
+            "invoke_contract without auth should trigger AUTH-002"
+        );
+    }
+
+    #[test]
+    fn auth002_does_not_flag_invoke_contract_with_auth() {
+        let scans = vec![FnScan {
+            fn_name: "cross_call".into(),
+            require_auth: 1,
+            invoke_contract: 1,
+            bound: Default::default(),
+            usage: Default::default(),
+        }];
+        let mut rep = AuditReport::default();
+        Auth002.check(&scans, &crate::audit::AuditContext { spec: None }, &mut rep);
+        assert!(
+            !has(&rep, "AUTH-002"),
+            "invoke_contract with auth should not trigger AUTH-002"
+        );
+    }
+
+    #[test]
+    fn auth002_does_not_flag_without_invoke_contract() {
+        let scans = vec![FnScan {
+            fn_name: "local_call".into(),
+            require_auth: 0,
+            invoke_contract: 0,
+            bound: Default::default(),
+            usage: Default::default(),
+        }];
+        let mut rep = AuditReport::default();
+        Auth002.check(&scans, &crate::audit::AuditContext { spec: None }, &mut rep);
+        assert!(
+            !has(&rep, "AUTH-002"),
+            "no invoke_contract should not trigger AUTH-002"
+        );
+    }
+
+    #[test]
+    fn auth003_flags_initialize_without_auth() {
+        let scans = vec![FnScan {
+            fn_name: "initialize".into(),
+            require_auth: 0,
+            invoke_contract: 0,
+            bound: Default::default(),
+            usage: Default::default(),
+        }];
+        let mut rep = AuditReport::default();
+        Auth003.check(&scans, &crate::audit::AuditContext { spec: None }, &mut rep);
+        assert!(
+            has(&rep, "AUTH-003"),
+            "initialize without auth should trigger AUTH-003"
+        );
+    }
+
+    #[test]
+    fn auth003_flags_init_token_without_auth() {
+        let scans = vec![FnScan {
+            fn_name: "init_token".into(),
+            require_auth: 0,
+            invoke_contract: 0,
+            bound: Default::default(),
+            usage: Default::default(),
+        }];
+        let mut rep = AuditReport::default();
+        Auth003.check(&scans, &crate::audit::AuditContext { spec: None }, &mut rep);
+        assert!(
+            has(&rep, "AUTH-003"),
+            "init_token without auth should trigger AUTH-003"
+        );
+    }
+
+    #[test]
+    fn auth003_does_not_flag_initialize_with_auth() {
+        let scans = vec![FnScan {
+            fn_name: "initialize".into(),
+            require_auth: 1,
+            invoke_contract: 0,
+            bound: Default::default(),
+            usage: Default::default(),
+        }];
+        let mut rep = AuditReport::default();
+        Auth003.check(&scans, &crate::audit::AuditContext { spec: None }, &mut rep);
+        assert!(
+            !has(&rep, "AUTH-003"),
+            "initialize with auth should not trigger AUTH-003"
+        );
+    }
+
+    #[test]
+    fn auth003_does_not_flag_non_initialize() {
         let scans = vec![FnScan {
             fn_name: "transfer".into(),
             require_auth: 0,
@@ -193,13 +363,69 @@ mod tests {
             usage: Default::default(),
         }];
         let mut rep = AuditReport::default();
-        Auth004.check(&scans, &crate::audit::AuditContext { spec: None }, &mut rep);
+        Auth003.check(&scans, &crate::audit::AuditContext { spec: None }, &mut rep);
         assert!(
-            has(&rep, "AUTH-004"),
-            "transfer without auth should trigger AUTH-004"
+            !has(&rep, "AUTH-003"),
+            "non-initialize function should not trigger AUTH-003"
         );
     }
 
+    #[test]
+    fn move001_flags_reused_local() {
+        use std::collections::HashMap;
+        let mut usage = HashMap::new();
+        usage.insert("amount".to_string(), 2);
+        let scans = vec![FnScan {
+            fn_name: "do_swap".into(),
+            require_auth: 0,
+            invoke_contract: 0,
+            bound: Default::default(),
+            usage,
+        }];
+        let mut rep = AuditReport::default();
+        Move001.check(&scans, &crate::audit::AuditContext { spec: None }, &mut rep);
+        assert!(
+            has(&rep, "MOVE-001"),
+            "local used 2x as arg should trigger MOVE-001"
+        );
+    }
+
+    #[test]
+    fn move001_does_not_flag_single_use() {
+        use std::collections::HashMap;
+        let mut usage = HashMap::new();
+        usage.insert("amount".to_string(), 1);
+        let scans = vec![FnScan {
+            fn_name: "do_swap".into(),
+            require_auth: 0,
+            invoke_contract: 0,
+            bound: Default::default(),
+            usage,
+        }];
+        let mut rep = AuditReport::default();
+        Move001.check(&scans, &crate::audit::AuditContext { spec: None }, &mut rep);
+        assert!(
+            !has(&rep, "MOVE-001"),
+            "local used once should not trigger MOVE-001"
+        );
+    }
+
+    #[test]
+    fn move001_does_not_flag_no_usage() {
+        let scans = vec![FnScan {
+            fn_name: "do_nothing".into(),
+            require_auth: 0,
+            invoke_contract: 0,
+            bound: Default::default(),
+            usage: Default::default(),
+        }];
+        let mut rep = AuditReport::default();
+        Move001.check(&scans, &crate::audit::AuditContext { spec: None }, &mut rep);
+        assert!(
+            !has(&rep, "MOVE-001"),
+            "no usage should not trigger MOVE-001"
+        );
+    }
     #[test]
     fn auth004_flags_transfer_from_without_auth() {
         let scans = vec![FnScan {
