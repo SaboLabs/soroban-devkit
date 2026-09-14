@@ -85,9 +85,8 @@ verifies its SHA-256 checksum, and installs `sdkt` to `~/.local/bin/sdkt`.
    | macOS (Intel) | `sdkt-x86_64-apple-darwin.tar.gz` |
    | macOS (Apple Silicon) | `sdkt-aarch64-apple-darwin.tar.gz` |
 
-   Windows x86_64 is covered by CI and `cargo install sdkt-cli`. A
-   `sdkt-x86_64-pc-windows-msvc.zip` GitHub Release asset is **not** in
-   v2.5.0; it is wired in `release.yml` for the next tagged release.
+   Windows x86_64 is not included in the v2.5.0 GitHub Release. Windows
+   users can install via `cargo install sdkt-cli` or build from source.
 
 2. Extract and run:
 
