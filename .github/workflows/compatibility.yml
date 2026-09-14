@@ -94,11 +94,11 @@ jobs:
 
           echo "All compatibility checks passed."
 
-      # M45 — On-chain plugin bundle pack/verify round-trip (network-guarded).
+      # M45 — Plugin bundle pack/verify round-trip.
       # Exercises `sdkt plugin pack` + `sdkt plugin verify-bundle` against the
       # example rule crate, proving the bundle integrity + signature path
       # works end-to-end on real tooling. Runs fully offline (no RPC needed).
-      - name: On-chain plugin bundle pack/verify coverage (M45)
+      - name: Plugin bundle pack/verify coverage (M45)
         run: |
           set -euo pipefail
           SDKT="${{ github.workspace }}/target/debug/sdkt"
@@ -134,7 +134,7 @@ jobs:
           "$SDKT" plugin verify-bundle "$BUNDLE"
           echo "::endgroup::"
 
-      # M45b — On-chain audit with bundled --rules <id> resolution (network-guarded).
+      # M45b — Plugin install/resolve/audit round-trip.
       # Validates the full install → resolve-by-id → audit flow against a real
       # example contract source. Fully offline.
       - name: Plugin install/resolve/audit round-trip (M45b)

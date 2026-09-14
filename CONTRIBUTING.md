@@ -13,6 +13,7 @@ A `Makefile` provides common developer targets:
 make build          # build all crates
 make test           # run all tests
 make ci             # fmt-check + clippy + test (local CI)
+make check          # same as 'ci' — shorter alias for quick verification
 make audit-example  # build the example plugin rule (.so)
 make plugin-pack    # pack example-rule-1.0.0.sdktplugin
 make plugin-verify  # verify the bundle
@@ -40,7 +41,11 @@ make compat         # run compatibility CI matrix locally
    ```
 7. **Test**:
    ```bash
+   # Run the full workspace suite
    cargo test --workspace
+
+   # Or test a single crate (faster for iteration)
+   cargo test -p sdkt-cli
    ```
 
 ### Plugin Bundle Workflow (M40)
