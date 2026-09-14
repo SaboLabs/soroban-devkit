@@ -94,6 +94,89 @@ jobs:
 
           echo "All compatibility checks passed."
 
+      # M45 — On-chain plugin bundle pack/verify round-trip (network-guarded).
+      # Exercises `sdkt plugin pack` + `sdkt plugin verify-bundle` against the
+      # example rule crate, proving the bundle integrity + signature path
+      # works end-to-end on real tooling. Runs fully offline (no RPC needed).
+      - name: On-chain plugin bundle pack/verify coverage (M45)
+        run: |
+          set -euo pipefail
+          SDKT="${{ github.workspace }}/target/debug/sdkt"
+
+          # Build the example plugin rule crate (produces a real .so/.wasm artifact).
+          echo "::group::build example plugin rule"
+          cargo build -p sdkt-audit-example-rule --features plugins
+          echo "::endgroup::"
+
+          PLUGIN_DIR="${{ runner.temp }}/example-plugin"
+          mkdir -p "$PLUGIN_DIR"
+          cp "${{ github.workspace }}/target/debug/libsdkt_audit_example_rule.so" "$PLUGIN_DIR/example.so"
+
+          cat > "$PLUGIN_DIR/plugin.toml" <<'TOML'
+          id = "example-rule"
+          name = "Example Rule"
+          version = "1.0.0"
+          author = "SaboLabs"
+          description = "Reference audit rule."
+          kind = "native"
+          artifact = "example.so"
+          abi_major = 1
+          abi_minor = 0
+          TOML
+
+          BUNDLE="${{ runner.temp }}/example-rule-1.0.0.sdktplugin"
+
+          echo "::group::pack plugin bundle"
+          "$SDKT" plugin pack "$PLUGIN_DIR" --output "$BUNDLE"
+          echo "::endgroup::"
+
+          echo "::group::verify unsigned bundle"
+          "$SDKT" plugin verify-bundle "$BUNDLE"
+          echo "::endgroup::"
+
+      # M45b — On-chain audit with bundled --rules <id> resolution (network-guarded).
+      # Validates the full install → resolve-by-id → audit flow against a real
+      # example contract source. Fully offline.
+      - name: Plugin install/resolve/audit round-trip (M45b)
+        run: |
+          set -euo pipefail
+          SDKT="${{ github.workspace }}/target/debug/sdkt"
+
+          PLUGIN_DIR="${{ runner.temp }}/roundtrip-plugin"
+          mkdir -p "$PLUGIN_DIR"
+          cp "${{ github.workspace }}/target/debug/libsdkt_audit_example_rule.so" "$PLUGIN_DIR/example.so"
+
+          cat > "$PLUGIN_DIR/plugin.toml" <<'TOML'
+          id = "rt-rule"
+          name = "RT Rule"
+          version = "1.0.0"
+          author = "SaboLabs"
+          description = "RT test."
+          kind = "native"
+          artifact = "example.so"
+          abi_major = 1
+          abi_minor = 0
+          TOML
+
+          STORE="${{ runner.temp }}/plugin-store"
+          mkdir -p "$STORE"
+
+          # Write a minimal .rs so `sdkt audit <path>` works offline.
+          AUDIT_SRC="$STORE/trigger.rs"
+          echo 'pub fn sdkt_example_trigger_admin() {}' > "$AUDIT_SRC"
+
+          echo "::group::install plugin via store root"
+          SDKT_PLUGIN_DIR="$STORE" "$SDKT" plugin install "$PLUGIN_DIR/example.so" --id rt-rule
+          echo "::endgroup::"
+
+          echo "::group::list installed plugins"
+          SDKT_PLUGIN_DIR="$STORE" "$SDKT" plugin list
+          echo "::endgroup::"
+
+          echo "::group::audit with --rules <id> resolution"
+          SDKT_PLUGIN_DIR="$STORE" "$SDKT" audit "$AUDIT_SRC" --rules rt-rule
+          echo "::endgroup::"
+
       # M41 — On-chain contract interface inspection coverage (network-guarded).
       # Exercises the `sdkt wasm metadata --contract <id>` path. It attempts a live
       # testnet lookup of a known contract; if the RPC is unreachable (CI sandbox

@@ -5,6 +5,22 @@ how we review changes, and how releases are produced.
 
 ## Development Workflow
 
+### Quick Start (with Makefile)
+
+A `Makefile` provides common developer targets:
+
+```bash
+make build          # build all crates
+make test           # run all tests
+make ci             # fmt-check + clippy + test (local CI)
+make audit-example  # build the example plugin rule (.so)
+make plugin-pack    # pack example-rule-1.0.0.sdktplugin
+make plugin-verify  # verify the bundle
+make compat         # run compatibility CI matrix locally
+```
+
+### Manual Workflow
+
 1. **Fork and clone** the repository.
 2. **Install Rust** (stable toolchain, edition 2021):
    ```bash
@@ -26,6 +42,33 @@ how we review changes, and how releases are produced.
    ```bash
    cargo test --workspace
    ```
+
+### Plugin Bundle Workflow (M40)
+
+To pack and verify a plugin bundle locally:
+
+```bash
+# Build the example plugin
+cargo build -p sdkt-audit-example-rule --features plugins
+
+# Pack
+sdkt plugin pack crates/sdkt-audit-example-rule --output myrule.sdktplugin
+
+# Verify (unsigned — fine for local dev)
+sdkt plugin verify-bundle myrule.sdktplugin
+
+# Sign with Ed25519 secret key (32 raw bytes)
+sdkt plugin pack <plugin-dir> --output myrule.signed.sdktplugin --secret-key key.bin
+
+# Verify signed bundle
+sdkt plugin verify-bundle myrule.signed.sdktplugin --public-key pubkey.bin
+
+# Install into local store
+sdkt plugin install <artifact.so> --id my-rule
+
+# Audit with --rules <id>
+sdkt audit src/lib.rs --rules my-rule
+```
 ## Supply Chain, MSRV & Dependencies
 
 `sdkt` relies on `Cargo.lock` being checked into source control at the workspace root to ensure strictly reproducible builds. 
@@ -103,6 +146,9 @@ Looking for a place to start? Self-contained, low-risk tasks:
   `crates/sdkt-cli/src/main.rs` (no behavior change).
 - **Tests**: add an integration test under `crates/sdkt-cli/tests/` for an
   existing subcommand.
+- **Plugin bundle tests**: add a round-trip test in
+  `crates/sdkt-cli/tests/plugin_bundle_cli_test.rs` (e.g. signed bundle
+  with `--force` overwrite, or `plugin update` after pack).
 - **Windows**: verify a command or documentation path works on Windows (PowerShell).
 - **CI**: tighten a workflow without changing release behavior.
 
