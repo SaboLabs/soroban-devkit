@@ -15,32 +15,32 @@ use crate::{parse_contract_spec, parse_metadata, ContractFunction, ContractSpec,
 /// The full comparison result between two contract WASM binaries.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
 pub struct SpecDiff {
- /// Metadata of the "old" (baseline) WASM.
+    /// Metadata of the "old" (baseline) WASM.
     pub old: WasmSummary,
- /// Metadata of the "new" (candidate) WASM.
+    /// Metadata of the "new" (candidate) WASM.
     pub new: WasmSummary,
- /// Functions present in `new` but absent from `old`.
+    /// Functions present in `new` but absent from `old`.
     pub added_functions: Vec<ContractFunction>,
- /// Functions present in `old` but absent from `new`.
+    /// Functions present in `old` but absent from `new`.
     pub removed_functions: Vec<ContractFunction>,
- /// Functions present in both whose signature (inputs + outputs) changed.
+    /// Functions present in both whose signature (inputs + outputs) changed.
     pub changed_functions: Vec<FunctionSignatureChange>,
- /// Events present in `new` but absent from `old`.
+    /// Events present in `new` but absent from `old`.
     pub added_events: Vec<String>,
- /// Events present in `old` but absent from `new`.
+    /// Events present in `old` but absent from `new`.
     pub removed_events: Vec<String>,
- /// Custom types present in `new` but absent from `old`.
+    /// Custom types present in `new` but absent from `old`.
     pub added_types: Vec<String>,
- /// Custom types present in `old` but absent from `new`.
+    /// Custom types present in `old` but absent from `new`.
     pub removed_types: Vec<String>,
 }
 
 /// Lightweight WASM identity summary for diff context.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
 pub struct WasmSummary {
- /// SHA-256 hex of the raw WASM bytes.
+    /// SHA-256 hex of the raw WASM bytes.
     pub hash: String,
- /// Size in bytes.
+    /// Size in bytes.
     pub size_bytes: usize,
 }
 
@@ -53,8 +53,8 @@ pub struct FunctionSignatureChange {
 }
 
 impl SpecDiff {
- /// True when the two WASM binaries declare an identical ABI surface
- /// (same functions, signatures, events, and custom types).
+    /// True when the two WASM binaries declare an identical ABI surface
+    /// (same functions, signatures, events, and custom types).
     pub fn is_identical(&self) -> bool {
         self.added_functions.is_empty()
             && self.removed_functions.is_empty()
@@ -65,8 +65,8 @@ impl SpecDiff {
             && self.removed_types.is_empty()
     }
 
- /// Total number of breaking/non-breaking deltas (a single count used for
- /// quick pass/fail triage in CI).
+    /// Total number of breaking/non-breaking deltas (a single count used for
+    /// quick pass/fail triage in CI).
     pub fn total_changes(&self) -> usize {
         self.added_functions.len()
             + self.removed_functions.len()
@@ -120,7 +120,7 @@ pub fn diff_specs(
         ..Default::default()
     };
 
- // Index old by name for O(n) lookups.
+    // Index old by name for O(n) lookups.
     let old_fns: std::collections::BTreeMap<&str, &ContractFunction> =
         old.functions.iter().map(|f| (f.name.as_str(), f)).collect();
     let new_fns: std::collections::BTreeMap<&str, &ContractFunction> =
@@ -209,16 +209,16 @@ pub enum ChangeKind {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct VerdictChange {
     pub kind: ChangeKind,
- /// Item name (function/event/type). Functions are stored bare; the
- /// human label adds `()` for call-style rendering.
+    /// Item name (function/event/type). Functions are stored bare; the
+    /// human label adds `()` for call-style rendering.
     pub name: String,
- /// Optional human-readable detail (e.g. old/new signature for a change).
+    /// Optional human-readable detail (e.g. old/new signature for a change).
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub detail: String,
 }
 
 impl VerdictChange {
- /// Human-readable `Kind: name()` label for pretty output.
+    /// Human-readable `Kind: name()` label for pretty output.
     pub fn label(&self) -> String {
         let kind = match self.kind {
             ChangeKind::RemovedFunction => "Removed function",
@@ -253,10 +253,10 @@ pub struct UpgradeVerdict {
 }
 
 impl UpgradeVerdict {
- /// Classify a [`SpecDiff`] into an upgrade-safety verdict.
- ///
- /// This deliberately reuses the existing diff output; no comparison logic
- /// is duplicated.
+    /// Classify a [`SpecDiff`] into an upgrade-safety verdict.
+    ///
+    /// This deliberately reuses the existing diff output; no comparison logic
+    /// is duplicated.
     pub fn from_diff(diff: &SpecDiff) -> Self {
         let mut breaking = Vec::new();
         let mut non_breaking = Vec::new();
@@ -359,7 +359,7 @@ mod tests {
     use crate::spec::tests::spec_section;
     use stellar_xdr::ScSpecTypeDef;
 
- // Re-create small WASM blobs with the helper from spec.rs tests.
+    // Re-create small WASM blobs with the helper from spec.rs tests.
 
     #[test]
     fn identical_specs_diff_empty() {
@@ -428,14 +428,14 @@ mod tests {
 
     #[test]
     fn parse_error_propagates() {
- // "old" is valid but has no contract spec; "new" is a valid spec.
+        // "old" is valid but has no contract spec; "new" is a valid spec.
         let old = vec![0x00, 0x61, 0x73, 0x6d, 0x01, 0x00, 0x00, 0x00];
         let new = spec_section(&[func_entry("a", vec![])]);
         let err = diff_wasm(&old, &new);
         assert!(matches!(err, Err(WasmError::NoContractSpec)));
     }
 
- // ---- Upgrade-safety verdict tests (reuse diff_specs, no new comparison) ----
+    // ---- Upgrade-safety verdict tests (reuse diff_specs, no new comparison) ----
 
     #[test]
     fn verdict_flags_removed_function_breaking() {

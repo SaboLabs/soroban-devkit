@@ -27,8 +27,8 @@ fn sdkt() -> Command {
 
 #[test]
 fn wasm_metadata_contract_offline_is_graceful() {
- // Unreachable RPC endpoint: the command must fail cleanly (exit != 0) with an
- // "Error" line, never a Rust panic / unwrap crash.
+    // Unreachable RPC endpoint: the command must fail cleanly (exit != 0) with an
+    // "Error" line, never a Rust panic / unwrap crash.
     sdkt()
         .env("SDKT_NETWORK_DIR", std::env::temp_dir())
         .args([
@@ -47,9 +47,9 @@ fn wasm_metadata_contract_offline_is_graceful() {
 
 #[test]
 fn wasm_metadata_contract_json_schema_has_abi_field() {
- // Even on the offline failure path, the inspection report type carries the
- // -enriched fields. We validate the (de)serialization contract here using
- // the same struct the CLI prints, proving the schema is stable.
+    // Even on the offline failure path, the inspection report type carries the
+    // -enriched fields. We validate the (de)serialization contract here using
+    // the same struct the CLI prints, proving the schema is stable.
     use sdkt_rpc::inspect::ContractInspection;
     let json = r#"{
         "contract_id": "CABC",

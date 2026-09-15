@@ -5,18 +5,18 @@ use std::path::Path;
 /// Configuration for project scaffolding.
 #[derive(Debug, Clone)]
 pub struct ScaffoldConfig {
- /// Project name (also used as directory name).
+    /// Project name (also used as directory name).
     pub name: String,
- /// If true, generate only Cargo.toml, src/lib.rs, .sdkt.toml.
+    /// If true, generate only Cargo.toml, src/lib.rs, .sdkt.toml.
     pub minimal: bool,
- /// If true, overwrite existing directory.
+    /// If true, overwrite existing directory.
     pub force: bool,
 }
 
 /// Result of a successful scaffold operation.
 #[derive(Debug)]
 pub struct ScaffoldResult {
- /// Files that were created.
+    /// Files that were created.
     pub files_created: Vec<String>,
 }
 
@@ -27,7 +27,7 @@ pub struct ScaffoldResult {
 pub fn generate_project(config: &ScaffoldConfig) -> io::Result<ScaffoldResult> {
     let root = Path::new(&config.name);
 
- // Extract just the directory name for the Rust package name
+    // Extract just the directory name for the Rust package name
     let package_name = root
         .file_name()
         .and_then(|n| n.to_str())
@@ -48,7 +48,7 @@ pub fn generate_project(config: &ScaffoldConfig) -> io::Result<ScaffoldResult> {
 
     let mut created = Vec::new();
 
- // --- Always generated ---
+    // --- Always generated ---
 
     let crate_name = package_name.replace('-', "_");
 
@@ -106,7 +106,7 @@ target = "wasm32-unknown-unknown"
 "#;
     write_template(root, ".sdkt.toml", sdkt_toml, &mut created)?;
 
- // --- Full mode only ---
+    // --- Full mode only ---
 
     if !config.minimal {
         let readme = format!(
@@ -217,7 +217,7 @@ mod tests {
         fs::write(p.join("user_file.txt"), "keep me").unwrap();
         let res = generate_project(&cfg(&p, false, true)).unwrap();
         assert!(res.files_created.len() >= 6);
- // User file not deleted
+        // User file not deleted
         assert!(p.join("user_file.txt").exists());
         let _ = fs::remove_dir_all(&p);
     }
@@ -247,7 +247,7 @@ mod tests {
         let p = tmp_dir("hyphen-test");
         generate_project(&cfg(&p, false, false)).unwrap();
         let test_content = fs::read_to_string(p.join("tests/basic.rs")).unwrap();
- // Rust crate names use underscores
+        // Rust crate names use underscores
         assert!(test_content.contains("sdkt_test_hyphen_test"));
         let _ = fs::remove_dir_all(&p);
     }

@@ -26,14 +26,14 @@ impl Default for RuleRegistry {
 }
 
 impl RuleRegistry {
- /// Create an empty registry.
+    /// Create an empty registry.
     pub fn new() -> Self {
         Self { rules: Vec::new() }
     }
 
- /// Register a rule. If a rule with the same `id()` is already present it is
- /// ignored (last-writer does not clobber; first registration wins). This
- /// makes repeated `register_builtin_rules` / plugin registration idempotent.
+    /// Register a rule. If a rule with the same `id()` is already present it is
+    /// ignored (last-writer does not clobber; first registration wins). This
+    /// makes repeated `register_builtin_rules` / plugin registration idempotent.
     pub fn register_rule(&mut self, rule: BoxedRule) {
         if self.rules.iter().any(|r| r.id() == rule.id()) {
             return;
@@ -42,7 +42,7 @@ impl RuleRegistry {
     }
 
     /// Register the five built-in `sdkt-audit` rules (AUTH-001/002/003/004, MOVE-001)
- /// in their canonical order.
+    /// in their canonical order.
     pub fn register_builtin_rules(&mut self) {
         self.register_rule(Box::new(crate::rules::Auth001) as BoxedRule);
         self.register_rule(Box::new(crate::rules::Auth002) as BoxedRule);
@@ -51,13 +51,13 @@ impl RuleRegistry {
         self.register_rule(Box::new(crate::rules::Move001) as BoxedRule);
     }
 
- /// Snapshot of currently registered rules (in registration order).
+    /// Snapshot of currently registered rules (in registration order).
     pub fn registered_rules(&self) -> &[BoxedRule] {
         &self.rules
     }
 
- /// Run every registered rule that is not disabled, appending findings to
- /// `report`. Rules execute in registration order so output is deterministic.
+    /// Run every registered rule that is not disabled, appending findings to
+    /// `report`. Rules execute in registration order so output is deterministic.
     pub fn run_all(
         &self,
         scans: &[FnScan],

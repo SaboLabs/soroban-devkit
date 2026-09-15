@@ -60,8 +60,8 @@ fn test_cli_health_invalid_wasm() {
 
 #[test]
 fn test_cli_health_json_format_accepted() {
- // --format json must be parsed; an invalid local WASM still fails
- // offline, proving the JSON path is reachable without a network.
+    // --format json must be parsed; an invalid local WASM still fails
+    // offline, proving the JSON path is reachable without a network.
     let tmp = tempfile::NamedTempFile::new().unwrap();
     std::fs::write(tmp.path(), b"not a wasm file").unwrap();
 
@@ -82,9 +82,9 @@ fn test_cli_health_json_format_accepted() {
 
 #[test]
 fn test_cli_health_onchain_error_path() {
- // Valid local WASM + bogus contract id → reaches the RPC layer and exits
- // non-zero (offline this surfaces as a network/contract error), exercising
- // the on-chain fetch + error branch.
+    // Valid local WASM + bogus contract id → reaches the RPC layer and exits
+    // non-zero (offline this surfaces as a network/contract error), exercising
+    // the on-chain fetch + error branch.
     let tmp = tempfile::NamedTempFile::new().unwrap();
     std::fs::write(tmp.path(), MINIMAL_WASM).unwrap();
 

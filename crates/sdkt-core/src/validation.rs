@@ -18,37 +18,37 @@ pub const MAX_XDR_SIZE: usize = 100 * 1024;
 /// The result of running [`validate`].
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
 pub struct TransactionValidationReport {
- /// True when there are no errors (warnings are allowed).
+    /// True when there are no errors (warnings are allowed).
     pub valid: bool,
- /// Hard failures that must be fixed before submission.
+    /// Hard failures that must be fixed before submission.
     pub errors: Vec<ValidationError>,
- /// Non-blocking observations.
+    /// Non-blocking observations.
     pub warnings: Vec<ValidationWarning>,
 }
 
 /// A hard validation failure.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub enum ValidationError {
- /// An empty base64/raw payload was supplied.
+    /// An empty base64/raw payload was supplied.
     EmptyTransaction,
- /// The payload could not be decoded as a `TransactionEnvelope`.
+    /// The payload could not be decoded as a `TransactionEnvelope`.
     MalformedEnvelope(String),
- /// The envelope has zero operations.
+    /// The envelope has zero operations.
     EmptyOperations,
- /// The base fee is below the network minimum.
+    /// The base fee is below the network minimum.
     FeeTooLow { fee: u32, min: u32 },
- /// The sequence number is not a positive value.
+    /// The sequence number is not a positive value.
     InvalidSequence(i64),
- /// The transaction has no source account (cannot be expressed).
+    /// The transaction has no source account (cannot be expressed).
     MissingSourceAccount,
- /// The serialized envelope exceeds [`MAX_XDR_SIZE`].
+    /// The serialized envelope exceeds [`MAX_XDR_SIZE`].
     XdrTooLarge { size: usize, max: usize },
- /// An `InvokeHostFunction` references a contract but the function name is empty.
+    /// An `InvokeHostFunction` references a contract but the function name is empty.
     MissingFunctionName,
 }
 
 impl ValidationError {
- /// Human-readable message (used by CLI pretty output).
+    /// Human-readable message (used by CLI pretty output).
     pub fn message(&self) -> String {
         match self {
             ValidationError::EmptyTransaction => "transaction is empty".into(),
@@ -72,9 +72,9 @@ impl ValidationError {
 /// A soft, non-blocking observation.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub enum ValidationWarning {
- /// Memo is of kind `Hash` or `Return` — unusual but valid.
+    /// Memo is of kind `Hash` or `Return` — unusual but valid.
     UnusualMemo(String),
- /// Operation type is not commonly seen on Soroban contracts.
+    /// Operation type is not commonly seen on Soroban contracts.
     NonContractOperation(String),
 }
 
@@ -90,7 +90,7 @@ pub fn validate(envelope: &TransactionEnvelope) -> TransactionValidationReport {
         TransactionEnvelope::Tx(tx) => validate_tx(&tx.tx, &mut errors, &mut warnings),
         TransactionEnvelope::TxV0(tx) => validate_v0(&tx.tx, &mut errors, &mut warnings),
         TransactionEnvelope::TxFeeBump(fb) => {
- // Fee-bump envelopes wrap a nested transaction; validate the inner one.
+            // Fee-bump envelopes wrap a nested transaction; validate the inner one.
             let stellar_xdr::FeeBumpTransactionInnerTx::Tx(v1) = &fb.tx.inner_tx;
             validate_tx(&v1.tx, &mut errors, &mut warnings);
         }
@@ -210,8 +210,8 @@ fn validate_operation(
                 }
             }
         }
- // Soroban allows only a small set of operations; flag the rest as a
- // warning rather than an error (transactions can mix classic + Soroban ops).
+        // Soroban allows only a small set of operations; flag the rest as a
+        // warning rather than an error (transactions can mix classic + Soroban ops).
         OperationBody::BumpSequence(_)
         | OperationBody::ManageData(_)
         | OperationBody::SetOptions(_)

@@ -34,75 +34,75 @@ use std::process::Command;
 /// Outcome state for a single dependency during an update plan/apply.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum UpdateStatus {
- /// No newer commit is available; lock already matches.
+    /// No newer commit is available; lock already matches.
     Unchanged,
- /// A newer commit was available and applied (or would be, in check/dry-run).
+    /// A newer commit was available and applied (or would be, in check/dry-run).
     Updated,
- /// A `rev` dependency — immutably pinned, never updated.
+    /// A `rev` dependency — immutably pinned, never updated.
     Pinned,
- /// A `version` constraint () is declared but no remote tag satisfies it.
+    /// A `version` constraint () is declared but no remote tag satisfies it.
     Constraint,
- /// Could not be resolved (missing cache, unknown reference, git error, ...).
+    /// Could not be resolved (missing cache, unknown reference, git error, ...).
     Error,
 }
 
 /// One dependency's update result.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct UpdateChange {
- /// Dependency name (key under `[dependencies]`).
+    /// Dependency name (key under `[dependencies]`).
     pub name: String,
- /// Source kind (`local` / `git`).
+    /// Source kind (`local` / `git`).
     pub source: String,
- /// What happened to this dependency.
+    /// What happened to this dependency.
     pub status: UpdateStatus,
- /// Previously locked commit SHA (empty if none / not a git dep).
+    /// Previously locked commit SHA (empty if none / not a git dep).
     pub old_commit: String,
- /// Newly resolved/available commit SHA (empty for local / pinned-with-no-remote).
+    /// Newly resolved/available commit SHA (empty for local / pinned-with-no-remote).
     pub new_commit: String,
- /// Human-readable detail (old→new, reason, or error message).
+    /// Human-readable detail (old→new, reason, or error message).
     pub detail: String,
- /// The tag selected by the version resolver (when a `version` constraint
- /// matched). Empty otherwise. Carried so `apply_updates` can fetch the exact
- /// resolved tag without re-querying the remote.
+    /// The tag selected by the version resolver (when a `version` constraint
+    /// matched). Empty otherwise. Carried so `apply_updates` can fetch the exact
+    /// resolved tag without re-querying the remote.
     pub resolved_tag: Option<String>,
 }
 
 /// Aggregate report for `sdkt package update` (check / dry-run / apply).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct UpdateReport {
- /// How many dependencies were inspected.
+    /// How many dependencies were inspected.
     pub checked: usize,
- /// How many were (or would be) updated.
+    /// How many were (or would be) updated.
     pub updated: usize,
- /// How many were unchanged.
+    /// How many were unchanged.
     pub unchanged: usize,
- /// Per-dependency detail.
+    /// Per-dependency detail.
     pub changes: Vec<UpdateChange>,
 }
 
 /// Errors that abort an update before producing a partial result.
 #[derive(Debug)]
 pub enum SyncError {
- /// The `.sdkt.toml` manifest is invalid.
+    /// The `.sdkt.toml` manifest is invalid.
     InvalidManifest(String),
- /// No `sdkt.lock` exists (run `sdkt package fetch` first).
+    /// No `sdkt.lock` exists (run `sdkt package fetch` first).
     MissingLock,
- /// The system `git` executable is required but unavailable.
+    /// The system `git` executable is required but unavailable.
     GitUnavailable,
- /// A `git` operation exited non-zero.
+    /// A `git` operation exited non-zero.
     Git {
         args: String,
         status: Option<i32>,
         stderr: String,
     },
- /// A `git` remote reference (tag/branch) does not exist.
+    /// A `git` remote reference (tag/branch) does not exist.
     UnknownReference(String),
- /// A network failure while contacting a git remote.
+    /// A network failure while contacting a git remote.
     NetworkFailure(String),
- /// A `branch` dependency's local cache checkout is in a detached HEAD
- /// (not on the declared branch).
+    /// A `branch` dependency's local cache checkout is in a detached HEAD
+    /// (not on the declared branch).
     DetachedBranch(String),
- /// A general I/O or lock-write failure.
+    /// A general I/O or lock-write failure.
     Io {
         context: String,
         source: std::io::Error,
@@ -232,7 +232,7 @@ fn resolve_available_commit(
     branch: &Option<String>,
     rev: &Option<String>,
 ) -> Result<String, SyncError> {
- // rev is immutable and already pinned — the "available" commit is itself.
+    // rev is immutable and already pinned — the "available" commit is itself.
     if let Some(r) = rev {
         return Ok(r.clone());
     }
@@ -248,7 +248,7 @@ fn resolve_available_commit(
         ));
     }
 
- // Probe git availability first for a clear error.
+    // Probe git availability first for a clear error.
     let probe = Command::new(crate::fetch::git_bin())
         .arg("--version")
         .output();
@@ -266,7 +266,7 @@ fn resolve_available_commit(
             if line.is_empty() {
                 return Err(SyncError::UnknownReference(reference));
             }
- // Format: "<sha>\t<ref>".
+            // Format: "<sha>\t<ref>".
             let sha = line.split('\t').next().unwrap_or("").trim().to_string();
             if sha.is_empty() {
                 return Err(SyncError::UnknownReference(reference));
@@ -302,7 +302,7 @@ fn resolve_available_commit(
 /// annotated-tag peel targets are resolved; lightweight tags are commits) are
 /// returned with their peeled commit SHA.
 fn list_remote_tags(url: &str) -> Result<Vec<(String, String)>, SyncError> {
- // Probe git availability first for a clear error.
+    // Probe git availability first for a clear error.
     let probe = Command::new(crate::fetch::git_bin())
         .arg("--version")
         .output();
@@ -318,8 +318,8 @@ fn list_remote_tags(url: &str) -> Result<Vec<(String, String)>, SyncError> {
             let stdout = String::from_utf8_lossy(&o.stdout);
             let mut tags = Vec::new();
             for line in stdout.lines() {
- // Format: "<sha>\trefs/tags/<tag>" (annotated tags also emit
- // "<sha>^{}\trefs/tags/<tag>" peeled lines — skip those).
+                // Format: "<sha>\trefs/tags/<tag>" (annotated tags also emit
+                // "<sha>^{}\trefs/tags/<tag>" peeled lines — skip those).
                 let (sha, r#ref) = match line.split_once('\t') {
                     Some(x) => x,
                     None => continue,
@@ -427,7 +427,7 @@ pub fn plan_updates(base: &Path, config: &DevKitConfig) -> Result<UpdateReport, 
 
         let url = dep.git.clone().unwrap_or_default();
 
- // rev: immutably pinned.
+        // rev: immutably pinned.
         if dep.rev.is_some() {
             changes.push(UpdateChange {
                 name: name.clone(),
@@ -441,8 +441,8 @@ pub fn plan_updates(base: &Path, config: &DevKitConfig) -> Result<UpdateReport, 
             continue;
         }
 
- // — version-constraint resolution: a `version` constraint with no
- // explicit tag/branch/rev resolves against the remote's tags.
+        // — version-constraint resolution: a `version` constraint with no
+        // explicit tag/branch/rev resolves against the remote's tags.
         if dep.version.is_some() && dep.tag.is_none() && dep.branch.is_none() && dep.rev.is_none() {
             let constraint = dep.version.clone().unwrap();
             match resolve_version_constraint(&url, &constraint) {
@@ -511,7 +511,7 @@ pub fn plan_updates(base: &Path, config: &DevKitConfig) -> Result<UpdateReport, 
             continue;
         }
 
- // Resolve what the remote currently offers.
+        // Resolve what the remote currently offers.
         let available = match resolve_available_commit(&url, &dep.tag, &dep.branch, &dep.rev) {
             Ok(c) => c,
             Err(e) => {
@@ -524,8 +524,8 @@ pub fn plan_updates(base: &Path, config: &DevKitConfig) -> Result<UpdateReport, 
                     detail: e.to_string(),
                     resolved_tag: None,
                 });
- // Missing cache is a fatal-ish condition for check/dry-run:
- // we cannot fetch in those modes, so report it clearly.
+                // Missing cache is a fatal-ish condition for check/dry-run:
+                // we cannot fetch in those modes, so report it clearly.
                 if !git_cache_exists(base, dep) {
                     changes.last_mut().unwrap().detail =
                         format!("missing cache (run `sdkt package fetch`): {}", e);
@@ -587,11 +587,11 @@ pub fn apply_updates(
     }
     let plan = plan_updates(base, config)?;
 
- // Only git tag/branch deps flagged as Updated need a real fetch.
+    // Only git tag/branch deps flagged as Updated need a real fetch.
     let mut fetched: Vec<FetchOutcome> = Vec::new();
- // Cache is rooted at `base` (the project/workspace root), consistent with
- // every other cache-resolution path — NOT the process cwd, which would drop
- // the cache inside a library crate when running unit tests from there.
+    // Cache is rooted at `base` (the project/workspace root), consistent with
+    // every other cache-resolution path — NOT the process cwd, which would drop
+    // the cache inside a library crate when running unit tests from there.
     let cache = cache_root(base);
     let fetcher = GitFetcher::new(cache);
 
@@ -605,10 +605,10 @@ pub fn apply_updates(
         if dep.git.is_none() {
             continue;
         }
- // — a `version`-constrained dep resolved to a specific tag during
- // planning. Override the dep's ref with the resolved tag so the existing
- // `GitFetcher` (which requires exactly one ref) fetches the right commit,
- // without re-implementing fetch logic.
+        // — a `version`-constrained dep resolved to a specific tag during
+        // planning. Override the dep's ref with the resolved tag so the existing
+        // `GitFetcher` (which requires exactly one ref) fetches the right commit,
+        // without re-implementing fetch logic.
         let fetch_dep = if let Some(tag) = &change.resolved_tag {
             Dependency {
                 git: dep.git.clone(),
@@ -621,8 +621,8 @@ pub fn apply_updates(
         } else {
             dep.clone()
         };
- // Detached-branch guard for branch deps: if the cache checkout exists
- // but is not on the declared branch, flag it rather than silently moving.
+        // Detached-branch guard for branch deps: if the cache checkout exists
+        // but is not on the declared branch, flag it rather than silently moving.
         if fetch_dep.branch.is_some() {
             let checkout = {
                 let url = fetch_dep.git.clone().unwrap_or_default();
@@ -640,12 +640,12 @@ pub fn apply_updates(
                 }
             }
         }
- // Refresh the cached checkout (force: pull latest). rev is never here.
+        // Refresh the cached checkout (force: pull latest). rev is never here.
         let outcome = fetcher.fetch(&change.name, &fetch_dep, true)?;
         fetched.push(outcome);
     }
 
- // Rebuild dependency lock entries, overlaying freshly fetched outcomes.
+    // Rebuild dependency lock entries, overlaying freshly fetched outcomes.
     let mut lock = read_lock(base).map_err(|_| SyncError::MissingLock)?;
     let new_deps = lock_dependencies_resolved(base, config, &fetched);
     lock.dependencies = new_deps;
@@ -687,7 +687,7 @@ mod tests {
     use std::collections::HashMap;
     use std::io::Write;
 
- // --- local git repo helpers (offline, no network) ------------------------
+    // --- local git repo helpers (offline, no network) ------------------------
 
     fn git_cmd(dir: &Path) -> Command {
         let mut c = Command::new("git");
@@ -788,8 +788,8 @@ mod tests {
         }
     }
 
- /// A `git` dependency constrained only by a `version` semver constraint
- /// () — no explicit `tag`/`branch`/`rev`.
+    /// A `git` dependency constrained only by a `version` semver constraint
+    /// () — no explicit `tag`/`branch`/`rev`.
     fn git_dep_version(url: &str, version: &str) -> Dependency {
         Dependency {
             git: Some(url.to_string()),
@@ -798,14 +798,14 @@ mod tests {
         }
     }
 
- // --- tests ---------------------------------------------------------------
+    // --- tests ---------------------------------------------------------------
 
     #[test]
     fn plan_pinned_rev_never_updates() {
         let src = make_repo();
         let url = src.to_string_lossy().to_string();
         let pin = head(&src);
- // Move the remote so a branch/tag WOULD see a change, but rev stays put.
+        // Move the remote so a branch/tag WOULD see a change, but rev stays put.
         commit(&src, b"pub fn answer() -> u32 { 43 }");
 
         let cfg = config_with("dep", git_dep(&url, None, None, Some(&pin)));
@@ -841,11 +841,11 @@ mod tests {
     fn plan_tag_update_detected() {
         let src = make_repo();
         let url = src.to_string_lossy().to_string();
- // First commit is tagged v1.0.0 (from make_repo via tag below).
+        // First commit is tagged v1.0.0 (from make_repo via tag below).
         git_cmd(&src).args(["tag", "v1.0.0"]).output().unwrap();
         let v1 = head(&src);
- // Move HEAD forward (the tag still points at v1, but we simulate the tag
- // being moved by re-tagging after a new commit).
+        // Move HEAD forward (the tag still points at v1, but we simulate the tag
+        // being moved by re-tagging after a new commit).
         commit(&src, b"pub fn answer() -> u32 { 43 }");
         let v2 = head(&src);
         git_cmd(&src)
@@ -863,7 +863,7 @@ mod tests {
         ));
         let _ = std::fs::remove_dir_all(&base);
         std::fs::create_dir_all(&base).unwrap();
- // Lock records the OLD tag commit.
+        // Lock records the OLD tag commit.
         write_lock_with(
             &base,
             vec![DependencyLock {
@@ -887,7 +887,7 @@ mod tests {
     fn plan_branch_update_detected() {
         let src = make_repo();
         let url = src.to_string_lossy().to_string();
- // Ensure a `main` branch exists (default branch may vary).
+        // Ensure a `main` branch exists (default branch may vary).
         git_cmd(&src)
             .args(["branch", "-M", "main"])
             .output()
@@ -980,7 +980,7 @@ mod tests {
 
     #[test]
     fn version_resolver_picks_highest_satisfying() {
- // Pure selection logic (no git): reuse crate::package::best_version_match.
+        // Pure selection logic (no git): reuse crate::package::best_version_match.
         let tags = vec![
             ("v1.0.0".to_string(), "c1".to_string()),
             ("v1.5.0".to_string(), "c2".to_string()),
@@ -988,15 +988,15 @@ mod tests {
             ("latest".to_string(), "c9".to_string()),
             ("not-semver".to_string(), "cX".to_string()),
         ];
- // Caret/range picks highest 1.x.
+        // Caret/range picks highest 1.x.
         let (tag, commit) =
             crate::package::best_version_match(&tags, ">=1.0, <2").expect("should satisfy");
         assert_eq!(tag, "v1.5.0");
         assert_eq!(commit, "c2");
- // Exact match.
+        // Exact match.
         let (tag, _) = crate::package::best_version_match(&tags, "=2.0.0").expect("exact");
         assert_eq!(tag, "v2.0.0");
- // No match available.
+        // No match available.
         assert!(
             crate::package::best_version_match(&tags, ">=3.0").is_none(),
             "constraint >=3.0 must be unsatisfied"
@@ -1007,7 +1007,7 @@ mod tests {
     fn plan_version_update_detected() {
         let src = make_repo();
         let url = src.to_string_lossy().to_string();
- // Tags v1.0.0, v1.5.0, v2.0.0 (v2.0.0 is outside the constraint).
+        // Tags v1.0.0, v1.5.0, v2.0.0 (v2.0.0 is outside the constraint).
         git_cmd(&src).args(["tag", "v1.0.0"]).output().unwrap();
         let v1 = head(&src);
         commit(&src, b"pub fn answer() -> u32 { 43 }");
@@ -1016,7 +1016,7 @@ mod tests {
         commit(&src, b"pub fn answer() -> u32 { 44 }");
         git_cmd(&src).args(["tag", "v2.0.0"]).output().unwrap();
 
- // Constraint ">=1.0, <2" should resolve to v1.5.0 (highest 1.x).
+        // Constraint ">=1.0, <2" should resolve to v1.5.0 (highest 1.x).
         let cfg = config_with("dep", git_dep_version(&url, ">=1.0, <2"));
         let base = std::env::temp_dir().join(format!(
             "sdkt-sync-ver-{}-{}",
@@ -1055,7 +1055,7 @@ mod tests {
         let url = src.to_string_lossy().to_string();
         git_cmd(&src).args(["tag", "v1.0.0"]).output().unwrap();
 
- // Constraint ">=3.0" cannot be satisfied by the available tags.
+        // Constraint ">=3.0" cannot be satisfied by the available tags.
         let cfg = config_with("dep", git_dep_version(&url, ">=3.0"));
         let base = std::env::temp_dir().join(format!(
             "sdkt-sync-verbad-{}-{}",
@@ -1092,10 +1092,10 @@ mod tests {
         let url = src.to_string_lossy().to_string();
         git_cmd(&src).args(["tag", "v1.0.0"]).output().unwrap();
         git_cmd(&src).args(["tag", "v1.5.0"]).output().unwrap();
- // After tagging v1.5.0, HEAD is the commit that tag points at.
+        // After tagging v1.5.0, HEAD is the commit that tag points at.
         let v15 = head(&src);
 
- // Lock already records v1.5.0 (the constraint's best) → unchanged.
+        // Lock already records v1.5.0 (the constraint's best) → unchanged.
         let cfg = config_with("dep", git_dep_version(&url, ">=1.0, <2"));
         let base = std::env::temp_dir().join(format!(
             "sdkt-sync-verok-{}-{}",
@@ -1148,13 +1148,13 @@ mod tests {
         ));
         let _ = std::fs::remove_dir_all(&base);
         std::fs::create_dir_all(&base).unwrap();
- // Simulate a prior fetch: write lock with the OLD commit and a cache dir
- // that contains the OLD checkout (so apply_updates fetches the new one).
+        // Simulate a prior fetch: write lock with the OLD commit and a cache dir
+        // that contains the OLD checkout (so apply_updates fetches the new one).
         let cache_key = crate::fetch::git_cache_key(&git_dep(&url, Some("v1.0.0"), None, None));
         let checkout = base.join(".sdkt-cache").join("git").join(&cache_key);
         let _ = std::fs::remove_dir_all(&checkout);
         std::fs::create_dir_all(&checkout).unwrap();
- // Clone the OLD revision into the cache so apply_updates has something to update.
+        // Clone the OLD revision into the cache so apply_updates has something to update.
         let clone = Command::new(crate::fetch::git_bin())
             .args(["clone", "-q", &url, checkout.to_string_lossy().as_ref()])
             .output()
@@ -1175,10 +1175,10 @@ mod tests {
         let (rep, lock) = apply_updates(&base, &cfg).unwrap();
         assert_eq!(rep.changes[0].status, UpdateStatus::Updated);
         assert_eq!(rep.changes[0].new_commit, v2);
- // Lock must now record the new commit.
+        // Lock must now record the new commit.
         let updated = lock.dependencies.iter().find(|d| d.name == "dep").unwrap();
         assert_eq!(updated.commit_sha, v2);
- // Cache checkout must now be at the new commit.
+        // Cache checkout must now be at the new commit.
         let cur = head(&checkout);
         assert_eq!(cur, v2);
         let _ = std::fs::remove_dir_all(&base);

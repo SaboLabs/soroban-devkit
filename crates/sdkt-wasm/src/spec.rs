@@ -22,76 +22,76 @@ pub const CONTRACT_ENV_META_V0: &str = "contractenvmetav0";
 /// The full contract ABI, as declared in the compiled WASM.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct ContractSpec {
- /// Contract-level metadata (from `contractenvmetav0`, currently the
- /// interface version integer).
+    /// Contract-level metadata (from `contractenvmetav0`, currently the
+    /// interface version integer).
     pub env_meta: Option<EnvMetaSpec>,
- /// All declared functions.
+    /// All declared functions.
     pub functions: Vec<ContractFunction>,
- /// All user-defined types (structs, unions, enums, error enums).
+    /// All user-defined types (structs, unions, enums, error enums).
     pub custom_types: Vec<ContractType>,
- /// Declared events.
+    /// Declared events.
     pub events: Vec<ContractEvent>,
 }
 
 /// Parsed `contractenvmetav0` payload.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct EnvMetaSpec {
- /// Interface version reported by the contract.
+    /// Interface version reported by the contract.
     pub interface_version: u64,
 }
 
 /// A single exported contract function.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct ContractFunction {
- /// Function name (the scSymbol).
+    /// Function name (the scSymbol).
     pub name: String,
- /// Doc comment attached to the function, if any.
+    /// Doc comment attached to the function, if any.
     pub doc: String,
- /// Ordered input parameters.
+    /// Ordered input parameters.
     pub parameters: Vec<ContractParameter>,
- /// Ordered output types.
+    /// Ordered output types.
     pub outputs: Vec<ContractType>,
 }
 
 /// A named input parameter of a contract function.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct ContractParameter {
- /// Parameter name.
+    /// Parameter name.
     pub name: String,
- /// Doc comment, if any.
+    /// Doc comment, if any.
     pub doc: String,
- /// Type, expressed as a [`ContractType`].
+    /// Type, expressed as a [`ContractType`].
     pub type_: ContractType,
 }
 
 /// A user-defined type declaration (struct / union / enum / error enum).
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct ContractType {
- /// Type name.
+    /// Type name.
     pub name: String,
- /// XDR kind (Struct / Union / Enum / ErrorEnum).
+    /// XDR kind (Struct / Union / Enum / ErrorEnum).
     pub kind: String,
- /// Doc comment, if any.
+    /// Doc comment, if any.
     pub doc: String,
- /// Members (fields for structs, variants for enums/unions).
+    /// Members (fields for structs, variants for enums/unions).
     pub members: Vec<TypeMember>,
 }
 
 /// A member of a user-defined type.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct TypeMember {
- /// Member name.
+    /// Member name.
     pub name: String,
- /// Doc comment, if any.
+    /// Doc comment, if any.
     pub doc: String,
 }
 
 /// A declared Soroban event.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct ContractEvent {
- /// Event name.
+    /// Event name.
     pub name: String,
- /// Doc comment, if any.
+    /// Doc comment, if any.
     pub doc: String,
 }
 
@@ -159,9 +159,9 @@ fn decode_spec_section(
     events: &mut Vec<ContractEvent>,
 ) -> Result<(), WasmError> {
     let mut items = data;
- // A spec section may be either a single ScSpecEntry or a set of
- // concatenated entries. `ScSpecEntry::read_xdr` consumes one entry at a
- // time, so we loop over the buffer until no bytes remain (or an XDR error).
+    // A spec section may be either a single ScSpecEntry or a set of
+    // concatenated entries. `ScSpecEntry::read_xdr` consumes one entry at a
+    // time, so we loop over the buffer until no bytes remain (or an XDR error).
     while !items.is_empty() {
         let mut cursor = Cursor::new(items);
         let mut limited = Limited::new(&mut cursor, Limits::none());
@@ -208,7 +208,7 @@ fn decode_env_meta_section(data: &[u8]) -> Result<EnvMetaSpec, WasmError> {
     let raw = [
         data[0], data[1], data[2], data[3], data[4], data[5], data[6], data[7],
     ];
- // ReadXdr for Uint64 is big-endian like Stellar XDR.
+    // ReadXdr for Uint64 is big-endian like Stellar XDR.
     let mut cursor = Cursor::new(&raw[..]);
     let mut limited = Limited::new(&mut cursor, Limits::none());
     let v = stellar_xdr::Uint64::read_xdr(&mut limited).map_err(WasmError::SpecXdr)?;
@@ -218,8 +218,8 @@ fn decode_env_meta_section(data: &[u8]) -> Result<EnvMetaSpec, WasmError> {
 }
 
 fn map_type_def(t: &ScSpecTypeDef) -> ContractType {
- // For simple type definitions there is no doc/members; we encode the
- // variant name into `name` and `kind` for introspection.
+    // For simple type definitions there is no doc/members; we encode the
+    // variant name into `name` and `kind` for introspection.
     let mut udt_name: Option<String> = None;
     let (name, kind, members) = match t {
         ScSpecTypeDef::Val => ("val", "primitive", vec![]),
@@ -349,12 +349,12 @@ pub(crate) mod tests {
     use super::*;
     use stellar_xdr::WriteXdr;
 
- /// Minimal valid WASM (magic + version 1).
+    /// Minimal valid WASM (magic + version 1).
     const VALID_WASM: &[u8] = &[0x00, 0x61, 0x73, 0x6d, 0x01, 0x00, 0x00, 0x00];
 
- /// Encodes `ScSpecEntry` values into a `contractspecv0` custom section.
+    /// Encodes `ScSpecEntry` values into a `contractspecv0` custom section.
     pub(crate) fn spec_section(entries: &[ScSpecEntry]) -> Vec<u8> {
- // Build the custom section payload: name + encoded XDR entries.
+        // Build the custom section payload: name + encoded XDR entries.
         let mut section = Vec::new();
         section.push(CONTRACT_SPEC_V0.len() as u8);
         section.extend_from_slice(CONTRACT_SPEC_V0.as_bytes());
@@ -365,7 +365,7 @@ pub(crate) mod tests {
             e.write_xdr(&mut l).unwrap();
             section.extend_from_slice(&buf);
         }
- // Assemble: WASM magic + version, custom-section id(0), uleb128 size, payload.
+        // Assemble: WASM magic + version, custom-section id(0), uleb128 size, payload.
         let mut result = vec![0x00, 0x61, 0x73, 0x6d, 0x01, 0x00, 0x00, 0x00];
         result.push(0); // section id
         let mut sz = section.len() as u32;
@@ -438,7 +438,7 @@ pub(crate) mod tests {
 
     #[test]
     fn no_contract_spec() {
- // Valid WASM without a `contractspecv0` section.
+        // Valid WASM without a `contractspecv0` section.
         let res = parse_contract_spec(VALID_WASM);
         assert!(matches!(res, Err(WasmError::NoContractSpec)));
     }

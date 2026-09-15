@@ -24,11 +24,11 @@ pub struct WasmCache {
 }
 
 impl WasmCache {
- /// Creates a new `WasmCache` instance.
- /// Uses the standard OS cache directory:
- /// - Linux: `~/.cache/soroban-devkit/`
- /// - macOS: `~/Library/Caches/org.SaboLabs.soroban-devkit/`
- /// - Windows: `%LOCALAPPDATA%\SaboLabs\soroban-devkit\cache\`
+    /// Creates a new `WasmCache` instance.
+    /// Uses the standard OS cache directory:
+    /// - Linux: `~/.cache/soroban-devkit/`
+    /// - macOS: `~/Library/Caches/org.SaboLabs.soroban-devkit/`
+    /// - Windows: `%LOCALAPPDATA%\SaboLabs\soroban-devkit\cache\`
     pub fn new() -> Result<Self, StorageError> {
         let proj_dirs =
             ProjectDirs::from("org", "SaboLabs", "soroban-devkit").ok_or_else(|| {
@@ -42,15 +42,15 @@ impl WasmCache {
         Ok(Self { base_dir })
     }
 
- /// Creates a cache instance targeting a specific directory (useful for testing).
+    /// Creates a cache instance targeting a specific directory (useful for testing).
     pub fn with_dir<P: AsRef<Path>>(path: P) -> Self {
         Self {
             base_dir: path.as_ref().to_path_buf(),
         }
     }
 
- /// Returns the directory for a specific network (e.g., `testnet`).
- /// Creates the directory if it doesn't exist.
+    /// Returns the directory for a specific network (e.g., `testnet`).
+    /// Creates the directory if it doesn't exist.
     fn network_dir(&self, network: &str) -> Result<PathBuf, StorageError> {
         let net_dir = self.base_dir.join("wasm").join(network);
         if !net_dir.exists() {
@@ -59,17 +59,17 @@ impl WasmCache {
         Ok(net_dir)
     }
 
- /// Returns `true` if metadata for the `wasm_hash` exists in the given `network`.
+    /// Returns `true` if metadata for the `wasm_hash` exists in the given `network`.
     pub fn contains(&self, network: &str, wasm_hash: &str) -> Result<bool, StorageError> {
         let net_dir = self.network_dir(network)?;
         let meta_path = net_dir.join(format!("{}.json", wasm_hash));
         Ok(meta_path.exists())
     }
 
- /// Retrieves parsed metadata from the cache.
- ///
- /// # Errors
- /// Returns `StorageError::CorruptCache` if the JSON is malformed.
+    /// Retrieves parsed metadata from the cache.
+    ///
+    /// # Errors
+    /// Returns `StorageError::CorruptCache` if the JSON is malformed.
     pub fn get(
         &self,
         network: &str,
@@ -90,7 +90,7 @@ impl WasmCache {
         Ok(Some(metadata))
     }
 
- /// Writes both metadata and raw WASM to the cache using atomic tempfile renaming.
+    /// Writes both metadata and raw WASM to the cache using atomic tempfile renaming.
     pub fn put(
         &self,
         network: &str,
@@ -106,15 +106,15 @@ impl WasmCache {
         let meta_temp = net_dir.join(format!("{}.json.tmp", hash));
         let wasm_temp = net_dir.join(format!("{}.wasm.tmp", hash));
 
- // Serialize JSON to string
+        // Serialize JSON to string
         let json = serde_json::to_string(metadata)
             .map_err(|e| StorageError::Parse(format!("Failed to serialize metadata: {}", e)))?;
 
- // Write to temporary files first to prevent corruption
+        // Write to temporary files first to prevent corruption
         fs::write(&meta_temp, json).map_err(StorageError::Io)?;
         fs::write(&wasm_temp, wasm_bytes).map_err(StorageError::Io)?;
 
- // Atomic rename
+        // Atomic rename
         fs::rename(&meta_temp, &meta_path).map_err(StorageError::Io)?;
         fs::rename(&wasm_temp, &wasm_path).map_err(StorageError::Io)?;
 
@@ -137,7 +137,7 @@ impl WasmCache {
         Ok(())
     }
 
- /// Clears all cached WASM entries for a specific network.
+    /// Clears all cached WASM entries for a specific network.
     pub fn clear(&self, network: &str) -> Result<(), StorageError> {
         let net_dir = self.network_dir(network)?;
         if net_dir.exists() {
@@ -147,11 +147,11 @@ impl WasmCache {
         Ok(())
     }
 
- /// Retrieves usage statistics for a specific network.
- /// A missing or unreadable cache directory is treated as an empty cache
- /// (zero entries / zero size) on every platform. This keeps `cache info`
- /// working on fresh CI runners (Linux/macOS/Windows) where the cache path
- /// does not yet exist.
+    /// Retrieves usage statistics for a specific network.
+    /// A missing or unreadable cache directory is treated as an empty cache
+    /// (zero entries / zero size) on every platform. This keeps `cache info`
+    /// working on fresh CI runners (Linux/macOS/Windows) where the cache path
+    /// does not yet exist.
     pub fn cache_info(&self, network: &str) -> Result<CacheInfo, StorageError> {
         let net_dir = self.base_dir.join("wasm").join(network);
 
@@ -159,10 +159,10 @@ impl WasmCache {
         let mut total_metadata_size_bytes = 0;
         let mut total_wasm_size_bytes = 0;
 
- // A missing or unreadable directory is an empty cache, not an error.
- // Swallowing the error (instead of `.map_err`) prevents ENOENT from
- // propagating on platforms where the path is absent or a symlink
- // target is missing (e.g. a fresh macOS runner).
+        // A missing or unreadable directory is an empty cache, not an error.
+        // Swallowing the error (instead of `.map_err`) prevents ENOENT from
+        // propagating on platforms where the path is absent or a symlink
+        // target is missing (e.g. a fresh macOS runner).
         if let Ok(entries) = fs::read_dir(&net_dir) {
             for entry in entries {
                 let entry = match entry {
@@ -243,7 +243,7 @@ mod tests {
         cache.remove("mainnet", "test_hash").unwrap();
         assert!(!cache.contains("mainnet", "test_hash").unwrap());
 
- // ensure files are physically gone
+        // ensure files are physically gone
         let info = cache.cache_info("mainnet").unwrap();
         assert_eq!(info.entry_count, 0);
         assert_eq!(info.total_metadata_size_bytes, 0);
@@ -272,7 +272,7 @@ mod tests {
         let network = "testnet";
         let hash = "corrupt";
 
- // Create network dir and write garbage to the JSON file
+        // Create network dir and write garbage to the JSON file
         let net_dir = cache.network_dir(network).unwrap();
         fs::write(net_dir.join(format!("{}.json", hash)), b"{ invalid_json").unwrap();
 
@@ -282,11 +282,11 @@ mod tests {
 
     #[test]
     fn test_missing_cache_dir_is_empty() {
- // Simulate a fresh runner where the cache base dir does not exist yet
- // (the macOS CI failure scenario). cache_info must succeed with zero
- // counts instead of returning ENOENT.
+        // Simulate a fresh runner where the cache base dir does not exist yet
+        // (the macOS CI failure scenario). cache_info must succeed with zero
+        // counts instead of returning ENOENT.
         let tmp = TempDir::new().unwrap();
- // Point at a sub-path that does NOT exist.
+        // Point at a sub-path that does NOT exist.
         let cache = WasmCache::with_dir(tmp.path().join("does-not-exist-yet"));
 
         let info = cache.cache_info("testnet").unwrap();
@@ -298,29 +298,29 @@ mod tests {
 
     #[test]
     fn test_cache_info_empty_network_dir() {
- // Base dir exists but the per-network subdir does not.
+        // Base dir exists but the per-network subdir does not.
         let (cache, _dir) = get_temp_cache();
         let info = cache.cache_info("nonexistent-network").unwrap();
         assert_eq!(info.entry_count, 0);
     }
 
- // ---------------------------------------------------------------------------
- // Windows-specific regression tests
- // ---------------------------------------------------------------------------
+    // ---------------------------------------------------------------------------
+    // Windows-specific regression tests
+    // ---------------------------------------------------------------------------
 
- /// Verifies the production WasmCache::new() constructor resolves a
- /// platform-appropriate cache directory on Windows.
- ///
- /// The test is read-only against the production constructor: it does not
- /// write any cache data. It only verifies the resolved base directory
- /// contains the expected OS-managed namespace.
+    /// Verifies the production WasmCache::new() constructor resolves a
+    /// platform-appropriate cache directory on Windows.
+    ///
+    /// The test is read-only against the production constructor: it does not
+    /// write any cache data. It only verifies the resolved base directory
+    /// contains the expected OS-managed namespace.
     #[cfg(windows)]
     #[test]
     fn test_new_resolves_windows_cache_path() {
         let cache = WasmCache::new().expect("WasmCache::new() must succeed on Windows");
 
- // Windows: %LOCALAPPDATA%\SaboLabs\soroban-devkit\cache\
- // We do not assert an absolute path (OS-managed); only the namespace.
+        // Windows: %LOCALAPPDATA%\SaboLabs\soroban-devkit\cache\
+        // We do not assert an absolute path (OS-managed); only the namespace.
         let path_str = cache.base_dir.to_string_lossy().to_lowercase();
         assert!(
             path_str.contains("sabolabs"),

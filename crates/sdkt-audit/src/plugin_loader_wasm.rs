@@ -52,7 +52,7 @@ const MAX_FINDINGS: usize = 64;
 /// What the host serialises and sends into `sdkt_plugin_check`.
 #[derive(Debug, Serialize)]
 pub struct WasmCheckInput<'a> {
- /// Pre-scanned functions from the audit pipeline.
+    /// Pre-scanned functions from the audit pipeline.
     pub scans: &'a [FnScan],
 }
 
@@ -71,7 +71,7 @@ impl WasmFinding {
             s if s == SEVERITY_CRITICAL => Severity::Critical,
             s if s == SEVERITY_WARNING => Severity::Warning,
             s if s == SEVERITY_INFO => Severity::Info,
- // Unknown values fall back to Info (least alarming safe default).
+            // Unknown values fall back to Info (least alarming safe default).
             _ => Severity::Info,
         }
     }
@@ -82,20 +82,20 @@ impl WasmFinding {
 /// Errors that can occur while loading or running a WASM plugin.
 #[derive(Debug)]
 pub enum WasmPluginLoadError {
- /// I/O error reading the plugin path.
+    /// I/O error reading the plugin path.
     Io(std::io::Error),
- /// Runtime failed to load or compile the WASM module.
+    /// Runtime failed to load or compile the WASM module.
     Runtime(String),
- /// A required ABI symbol / export was missing from the plugin.
+    /// A required ABI symbol / export was missing from the plugin.
     SymbolMissing(String),
- /// Plugin ABI major version does not match the host.
+    /// Plugin ABI major version does not match the host.
     AbiMismatch {
- /// Plugin's reported major version.
+        /// Plugin's reported major version.
         plugin_major: u32,
- /// Host's expected major version.
+        /// Host's expected major version.
         host_major: u32,
     },
- /// Plugin execution panicked, trapped, or exhausted resources.
+    /// Plugin execution panicked, trapped, or exhausted resources.
     Trap(String),
 }
 
@@ -137,37 +137,37 @@ pub struct WasmPluginRule {
     id: &'static str,
     severity: Severity,
     description: &'static str,
- // The compiled + instantiated plugin, ready to call.
+    // The compiled + instantiated plugin, ready to call.
     plugin: Mutex<extism::Plugin>,
 }
 
 impl WasmPluginRule {
- /// Load and validate a WASM plugin from `path`.
- ///
- /// Steps:
- /// 1. Read WASM bytes from disk.
- /// 2. Build a capability-free Extism manifest (no fs, no net).
- /// 3. Instantiate the plugin.
- /// 4. Verify `sdkt_plugin_abi_version` matches [`SDKT_AUDIT_WASM_ABI_MAJOR`].
- /// 5. Read `id`, `severity`, `description` from named exports.
+    /// Load and validate a WASM plugin from `path`.
+    ///
+    /// Steps:
+    /// 1. Read WASM bytes from disk.
+    /// 2. Build a capability-free Extism manifest (no fs, no net).
+    /// 3. Instantiate the plugin.
+    /// 4. Verify `sdkt_plugin_abi_version` matches [`SDKT_AUDIT_WASM_ABI_MAJOR`].
+    /// 5. Read `id`, `severity`, `description` from named exports.
     pub fn load(path: &Path, _source: &str) -> Result<Self, WasmPluginLoadError> {
- // 1. Read bytes.
+        // 1. Read bytes.
         let wasm_bytes = std::fs::read(path)?;
 
- // 2. Build a capability-free manifest. Extism's default denies all
- // host capabilities (filesystem, network, environment variables),
- // so we just need to supply the module bytes.
+        // 2. Build a capability-free manifest. Extism's default denies all
+        // host capabilities (filesystem, network, environment variables),
+        // so we just need to supply the module bytes.
         let manifest = extism::Manifest::new([extism::Wasm::data(wasm_bytes)])
             .with_timeout(std::time::Duration::from_millis(15000));
 
- // 3. Instantiate. `with_wasi = true` is required because the plugin is compiled
- // for `wasm32-wasip1` (to satisfy standard library dependencies like `getrandom`),
- // but Extism will restrict WASI access according to the empty manifest
- // (no filesystem, network, or env vars).
+        // 3. Instantiate. `with_wasi = true` is required because the plugin is compiled
+        // for `wasm32-wasip1` (to satisfy standard library dependencies like `getrandom`),
+        // but Extism will restrict WASI access according to the empty manifest
+        // (no filesystem, network, or env vars).
         let mut plugin = extism::Plugin::new(&manifest, [], true)
             .map_err(|e| WasmPluginLoadError::Runtime(e.to_string()))?;
 
- // 4. Verify ABI version.
+        // 4. Verify ABI version.
         let abi_version_raw: i64 = plugin
             .call::<(), i64>("sdkt_plugin_abi_version", ())
             .map_err(|_| WasmPluginLoadError::SymbolMissing("sdkt_plugin_abi_version".into()))?;
@@ -180,7 +180,7 @@ impl WasmPluginRule {
             });
         }
 
- // 5. Read metadata exports.
+        // 5. Read metadata exports.
         let id: String = plugin
             .call::<(), String>("sdkt_plugin_id", ())
             .map_err(|_| WasmPluginLoadError::SymbolMissing("sdkt_plugin_id".into()))?;
@@ -193,7 +193,7 @@ impl WasmPluginRule {
         let severity = match severity_raw as u32 {
             s if s == SEVERITY_CRITICAL => Severity::Critical,
             s if s == SEVERITY_WARNING => Severity::Warning,
- // Default unknown severity to Info (safe fallback).
+            // Default unknown severity to Info (safe fallback).
             _ => Severity::Info,
         };
 
@@ -225,13 +225,13 @@ impl AuditRule for WasmPluginRule {
     }
 
     fn check(&self, scans: &[FnScan], _ctx: &AuditContext, report: &mut AuditReport) {
- // Build the JSON input payload.
+        // Build the JSON input payload.
         let input = WasmCheckInput { scans };
         let input_json = match serde_json::to_string(&input) {
             Ok(j) => j,
             Err(e) => {
- // This is an internal failure (serialising our own types), not a
- // plugin failure. Emit one finding so the operator knows.
+                // This is an internal failure (serialising our own types), not a
+                // plugin failure. Emit one finding so the operator knows.
                 report.findings.push(Finding {
                     rule_id: self.id.to_string(),
                     severity: Severity::Warning,
@@ -242,7 +242,7 @@ impl AuditRule for WasmPluginRule {
             }
         };
 
- // Call the plugin. Lock is always released before we push findings.
+        // Call the plugin. Lock is always released before we push findings.
         let output_json = {
             let mut guard = match self.plugin.lock() {
                 Ok(g) => g,
@@ -270,7 +270,7 @@ impl AuditRule for WasmPluginRule {
             }
         };
 
- // Parse and validate plugin output. Never trust plugin-supplied data.
+        // Parse and validate plugin output. Never trust plugin-supplied data.
         let raw_findings: Vec<WasmFinding> = match serde_json::from_str(&output_json) {
             Ok(v) => v,
             Err(e) => {
@@ -284,8 +284,8 @@ impl AuditRule for WasmPluginRule {
             }
         };
 
- // Clamp: never process more than MAX_FINDINGS, regardless of what the
- // plugin reports. Mirrors the F1 fix from the native ABI audit.
+        // Clamp: never process more than MAX_FINDINGS, regardless of what the
+        // plugin reports. Mirrors the F1 fix from the native ABI audit.
         let safe_count = raw_findings.len().min(MAX_FINDINGS);
         for wf in &raw_findings[..safe_count] {
             report.findings.push(Finding {
@@ -357,7 +357,7 @@ mod tests {
         };
         assert_eq!(f.severity_enum(), Severity::Info);
 
- // Unknown code → Info (safe fallback).
+        // Unknown code → Info (safe fallback).
         let f = WasmFinding { severity: 99, ..f };
         assert_eq!(f.severity_enum(), Severity::Info);
     }

@@ -89,14 +89,14 @@ pub unsafe extern "C" fn sdkt_plugin_init(src: *const c_char) -> i32 {
 /// `report` must point to a valid, mutable `SdktAuditReportC`.
 #[no_mangle]
 pub unsafe extern "C" fn sdkt_plugin_check(report: *mut SdktAuditReportC) -> i32 {
- // F2 fixed: Handle internal panics gracefully inside the plugin.
- // Host catch_unwind is UB over FFI.
+    // F2 fixed: Handle internal panics gracefully inside the plugin.
+    // Host catch_unwind is UB over FFI.
     let res = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
         if report.is_null() {
             return 1;
         }
 
- // Extract source, releasing the lock quickly
+        // Extract source, releasing the lock quickly
         let src = {
             let lock = match SOURCE.lock() {
                 Ok(l) => l,
@@ -108,9 +108,9 @@ pub unsafe extern "C" fn sdkt_plugin_check(report: *mut SdktAuditReportC) -> i32
             }
         };
 
- // Run ONLY this plugin's own rule (via the in-crate `ExampleRule`), never the
- // global registry, to avoid re-entrant recursion when the host invokes this
- // symbol during an `audit_source_with` run.
+        // Run ONLY this plugin's own rule (via the in-crate `ExampleRule`), never the
+        // global registry, to avoid re-entrant recursion when the host invokes this
+        // symbol during an `audit_source_with` run.
         let scans = match sdkt_audit::scan_all_functions_str(&src) {
             Some(s) => s,
             None => return 3,

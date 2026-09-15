@@ -86,7 +86,7 @@ impl TransactionStatusResponse {
 #[serde(rename_all = "camelCase")]
 pub struct SubmissionResult {
     pub hash: String,
- /// The settled status, or `Pending` if the caller did not wait.
+    /// The settled status, or `Pending` if the caller did not wait.
     pub status: TransactionStatus,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub result_xdr: Option<String>,

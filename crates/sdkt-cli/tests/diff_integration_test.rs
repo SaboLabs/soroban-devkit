@@ -32,8 +32,8 @@ fn diff_missing_old_file_errors() {
 
 #[test]
 fn diff_accepts_json_format_flag() {
- // Flag parses; it will fail on the (missing) file, but proves the
- // --format json path is wired without needing valid WASM fixtures.
+    // Flag parses; it will fail on the (missing) file, but proves the
+    // --format json path is wired without needing valid WASM fixtures.
     sdkt()
         .args([
             "diff",

@@ -54,7 +54,7 @@ fn abi_and_abi_contract_are_mutually_exclusive() {
 
 #[test]
 fn abi_contract_offline_is_graceful() {
- // No RPC reachable -> clean failure (no panic), actionable error message.
+    // No RPC reachable -> clean failure (no panic), actionable error message.
     sdkt()
         .args([
             "events",
@@ -70,9 +70,9 @@ fn abi_contract_offline_is_graceful() {
 
 #[test]
 fn existing_abi_local_path_still_resolves() {
- // `--abi <missing file>` must still hit the local-ABI branch and fail with a
- // controlled "Failed to read WASM" error (not a panic), proving the existing
- // behavior is preserved.
+    // `--abi <missing file>` must still hit the local-ABI branch and fail with a
+    // controlled "Failed to read WASM" error (not a panic), proving the existing
+    // behavior is preserved.
     sdkt()
         .args([
             "events",
@@ -104,14 +104,14 @@ fn deployed_spec_decodes_event_label() {
         }],
     };
 
- // The decoder's first topic is the event symbol (ScVal::Symbol). Event-based
- // labeling is applied to the data values (hinted with the event name), so we
- // pass a data ScVal alongside the topic to exercise the labeled decode path.
+    // The decoder's first topic is the event symbol (ScVal::Symbol). Event-based
+    // labeling is applied to the data values (hinted with the event name), so we
+    // pass a data ScVal alongside the topic to exercise the labeled decode path.
     let topic = stellar_xdr::ScVal::Symbol(stellar_xdr::ScSymbol("Mint".try_into().unwrap()));
     let data = vec![stellar_xdr::ScVal::U64(100)];
     let decoded = sdkt_xdr::abi_decode::decode_event_topics(&spec, &[topic], &data);
 
- // The data value must be labeled with the matched event name ("event[Mint]").
+    // The data value must be labeled with the matched event name ("event[Mint]").
     assert!(
         decoded.iter().any(|d| d.label.contains("event[Mint]")),
         "expected an 'event[Mint]' labeled decode from the deployed-spec decode path; got: {:?}",

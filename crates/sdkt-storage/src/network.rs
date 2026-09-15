@@ -31,20 +31,20 @@ use crate::error::StorageError;
 /// A named network profile with RPC endpoint and network passphrase.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct NetworkProfile {
- /// Human-readable name for this profile
+    /// Human-readable name for this profile
     pub name: String,
- /// RPC endpoint URL
+    /// RPC endpoint URL
     pub rpc_url: String,
- /// Network passphrase (e.g., "Test SDF Network ; September 2015")
+    /// Network passphrase (e.g., "Test SDF Network ; September 2015")
     pub network_passphrase: String,
- /// Optional: default friendbot URL for test networks
+    /// Optional: default friendbot URL for test networks
     pub friendbot_url: Option<String>,
- /// Optional: description or notes
+    /// Optional: description or notes
     pub description: Option<String>,
 }
 
 impl NetworkProfile {
- /// Create a new network profile.
+    /// Create a new network profile.
     pub fn new(
         name: impl Into<String>,
         rpc_url: impl Into<String>,
@@ -59,24 +59,24 @@ impl NetworkProfile {
         }
     }
 
- /// Set the friendbot URL.
+    /// Set the friendbot URL.
     pub fn with_friendbot(mut self, url: impl Into<String>) -> Self {
         self.friendbot_url = Some(url.into());
         self
     }
 
- /// Set the description.
+    /// Set the description.
     pub fn with_description(mut self, desc: impl Into<String>) -> Self {
         self.description = Some(desc.into());
         self
     }
 
- /// Validate the profile's required fields.
- ///
- /// Returns [`StorageError::ConfigError`] if the name or RPC URL is empty,
- /// or if the name contains a path separator (which would break the
- /// on-disk filename). The network passphrase is allowed to be empty only
- /// for local dev networks, but a missing RPC URL is always invalid.
+    /// Validate the profile's required fields.
+    ///
+    /// Returns [`StorageError::ConfigError`] if the name or RPC URL is empty,
+    /// or if the name contains a path separator (which would break the
+    /// on-disk filename). The network passphrase is allowed to be empty only
+    /// for local dev networks, but a missing RPC URL is always invalid.
     pub fn validate(&self) -> Result<(), StorageError> {
         if self.name.is_empty() {
             return Err(StorageError::ConfigError(
@@ -110,16 +110,16 @@ pub struct NetworkStore {
 }
 
 impl NetworkStore {
- /// Create a new network store.
- ///
- /// If the `SDKT_NETWORK_DIR` environment variable is set to a non-empty value,
- /// it is used as the base directory. This is the canonical cross-platform way for
- /// tests and CI to isolate the network store (mirrors `SDKT_IDENTITY_DIR`).
- ///
- /// Otherwise, falls back to the OS config directory via `directories::ProjectDirs`:
- /// - Linux: `$XDG_CONFIG_HOME/sdkt/networks` or `~/.config/sdkt/networks`
- /// - macOS: `~/Library/Application Support/sdkt/networks`
- /// - Windows: `%APPDATA%\sdkt\networks`
+    /// Create a new network store.
+    ///
+    /// If the `SDKT_NETWORK_DIR` environment variable is set to a non-empty value,
+    /// it is used as the base directory. This is the canonical cross-platform way for
+    /// tests and CI to isolate the network store (mirrors `SDKT_IDENTITY_DIR`).
+    ///
+    /// Otherwise, falls back to the OS config directory via `directories::ProjectDirs`:
+    /// - Linux: `$XDG_CONFIG_HOME/sdkt/networks` or `~/.config/sdkt/networks`
+    /// - macOS: `~/Library/Application Support/sdkt/networks`
+    /// - Windows: `%APPDATA%\sdkt\networks`
     pub fn new() -> Result<Self, StorageError> {
         if let Ok(dir) = std::env::var("SDKT_NETWORK_DIR") {
             if !dir.is_empty() {
@@ -134,11 +134,11 @@ impl NetworkStore {
         Self::with_dir(proj_dirs.config_dir().join("networks"))
     }
 
- /// Create a network store rooted at an explicit directory.
- ///
- /// The directory is created if it does not already exist. This is the
- /// injection point used by tests and by callers that want to manage
- /// profiles in a non-default location without touching environment state.
+    /// Create a network store rooted at an explicit directory.
+    ///
+    /// The directory is created if it does not already exist. This is the
+    /// injection point used by tests and by callers that want to manage
+    /// profiles in a non-default location without touching environment state.
     pub fn with_dir<P: AsRef<Path>>(dir: P) -> Result<Self, StorageError> {
         let base_dir = dir.as_ref().to_path_buf();
 
@@ -147,12 +147,12 @@ impl NetworkStore {
         Ok(Self { base_dir })
     }
 
- /// Get the path for a specific profile.
+    /// Get the path for a specific profile.
     fn profile_path(&self, name: &str) -> PathBuf {
         self.base_dir.join(format!("{}.json", name))
     }
 
- /// List all network profiles.
+    /// List all network profiles.
     pub fn list(&self) -> Result<Vec<NetworkProfile>, StorageError> {
         let mut profiles = Vec::new();
 
@@ -166,19 +166,19 @@ impl NetworkStore {
                 match self.load_profile_from_path(&path) {
                     Ok(profile) => profiles.push(profile),
                     Err(_) => {
- // Skip invalid profile files
+                        // Skip invalid profile files
                         continue;
                     }
                 }
             }
         }
 
- // Sort by name for consistent output
+        // Sort by name for consistent output
         profiles.sort_by(|a, b| a.name.cmp(&b.name));
         Ok(profiles)
     }
 
- /// Get a specific network profile by name.
+    /// Get a specific network profile by name.
     pub fn get(&self, name: &str) -> Result<NetworkProfile, StorageError> {
         let path = self.profile_path(name);
         if !path.exists() {
@@ -190,7 +190,7 @@ impl NetworkStore {
         self.load_profile_from_path(&path)
     }
 
- /// Load a profile from a specific path.
+    /// Load a profile from a specific path.
     fn load_profile_from_path(&self, path: &Path) -> Result<NetworkProfile, StorageError> {
         let content = fs::read_to_string(path).map_err(StorageError::Io)?;
 
@@ -201,7 +201,7 @@ impl NetworkStore {
         Ok(profile)
     }
 
- /// Add or update a network profile.
+    /// Add or update a network profile.
     pub fn add(&self, profile: NetworkProfile) -> Result<(), StorageError> {
         profile.validate()?;
 
@@ -214,7 +214,7 @@ impl NetworkStore {
         Ok(())
     }
 
- /// Remove a network profile.
+    /// Remove a network profile.
     pub fn remove(&self, name: &str) -> Result<(), StorageError> {
         let path = self.profile_path(name);
         if !path.exists() {
@@ -229,12 +229,12 @@ impl NetworkStore {
         Ok(())
     }
 
- /// Check if a profile exists.
+    /// Check if a profile exists.
     pub fn exists(&self, name: &str) -> bool {
         self.profile_path(name).exists()
     }
 
- /// Get all profiles as a map keyed by profile name.
+    /// Get all profiles as a map keyed by profile name.
     pub fn as_map(&self) -> Result<HashMap<String, NetworkProfile>, StorageError> {
         let profiles = self.list()?;
         let mut map = HashMap::new();
@@ -255,7 +255,7 @@ mod tests {
         let temp_dir = tempdir().unwrap();
         let store = NetworkStore::with_dir(temp_dir.path()).unwrap();
 
- // Add a profile
+        // Add a profile
         let profile = NetworkProfile::new(
             "testnet",
             "https://soroban-testnet.stellar.org",
@@ -266,12 +266,12 @@ mod tests {
 
         store.add(profile.clone()).unwrap();
 
- // List profiles
+        // List profiles
         let profiles = store.list().unwrap();
         assert_eq!(profiles.len(), 1);
         assert_eq!(profiles[0].name, "testnet");
 
- // Get profile
+        // Get profile
         let retrieved = store.get("testnet").unwrap();
         assert_eq!(retrieved.rpc_url, profile.rpc_url);
         assert_eq!(retrieved.network_passphrase, profile.network_passphrase);
@@ -281,7 +281,7 @@ mod tests {
         );
         assert_eq!(retrieved.description.as_deref(), Some("Stellar testnet"));
 
- // Exists + remove
+        // Exists + remove
         assert!(store.exists("testnet"));
         store.remove("testnet").unwrap();
         assert!(!store.exists("testnet"));
@@ -309,7 +309,7 @@ mod tests {
             .with_description("updated");
         store.add(updated).unwrap();
 
- // Still exactly one profile after overwrite.
+        // Still exactly one profile after overwrite.
         let profiles = store.list().unwrap();
         assert_eq!(profiles.len(), 1);
 
@@ -357,12 +357,12 @@ mod tests {
         let temp_dir = tempdir().unwrap();
         let store = NetworkStore::with_dir(temp_dir.path()).unwrap();
 
- // Write a valid profile.
+        // Write a valid profile.
         store
             .add(NetworkProfile::new("good", "https://good.example", "G"))
             .unwrap();
 
- // Write a corrupt profile file directly into the store directory.
+        // Write a corrupt profile file directly into the store directory.
         let bad_path = store.profile_path("corrupt");
         fs::write(&bad_path, "{ not valid json").unwrap();
 

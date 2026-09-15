@@ -22,12 +22,12 @@ fn abi_summary_from_real_fixture_lists_symbols() {
     let spec = parse_contract_spec(&bytes).expect("fixture parses as a contractspecv0 WASM");
     let summary = ContractAbiSummary::from_spec(&spec);
 
- // A real Soroban contract must declare at least one function.
+    // A real Soroban contract must declare at least one function.
     assert!(
         !summary.functions.is_empty(),
         "expected non-empty function list from real fixture"
     );
- // Print for visibility in `--nocapture`; not asserted on exact names.
+    // Print for visibility in `--nocapture`; not asserted on exact names.
     eprintln!(
         "fixture ABI: {} functions, {} events, {} types",
         summary.functions.len(),
@@ -38,8 +38,8 @@ fn abi_summary_from_real_fixture_lists_symbols() {
 
 #[test]
 fn inspection_without_abi_serializes_gracefully() {
- // Mirror the degraded state inspect_contract returns when on-chain code is
- // unavailable: id + hash recovered, abi/size left None/empty.
+    // Mirror the degraded state inspect_contract returns when on-chain code is
+    // unavailable: id + hash recovered, abi/size left None/empty.
     let inspection = ContractInspection {
         contract_id: "C123".to_string(),
         wasm_hash: "abcd".to_string(),

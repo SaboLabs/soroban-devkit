@@ -47,7 +47,7 @@ impl FromStr for NetworkKind {
 }
 
 impl NetworkKind {
- /// Platform-default fee multiplier applied on top of the ledger base fee.
+    /// Platform-default fee multiplier applied on top of the ledger base fee.
     pub fn fee_multiplier(self) -> f64 {
         match self {
             NetworkKind::Testnet => 1.0,
@@ -110,7 +110,7 @@ impl FeeConfig {
         }
     }
 
- /// Effective multiplier (override or network default).
+    /// Effective multiplier (override or network default).
     pub fn multiplier(&self) -> f64 {
         self.multiplier_override
             .unwrap_or_else(|| self.network.fee_multiplier())
@@ -133,19 +133,19 @@ impl FeeEstimator {
         Self { config }
     }
 
- /// Median base fee from a slice of ledger samples.
+    /// Median base fee from a slice of ledger samples.
     pub fn estimate_base_fee(samples: &[LedgerFeeSample]) -> Result<u32, FeeError> {
         if samples.is_empty() {
             return Err(FeeError::EmptyLedger);
         }
         let mut sorted: Vec<u32> = samples.iter().map(|s| s.base_fee).collect();
         sorted.sort_unstable();
- // lower median for even-length samples
+        // lower median for even-length samples
         let mid = (sorted.len() - 1) / 2;
         Ok(sorted[mid])
     }
 
- /// Final estimated fee in stroops = base_fee * multiplier.
+    /// Final estimated fee in stroops = base_fee * multiplier.
     pub fn estimate_stroops(&self, samples: &[LedgerFeeSample]) -> Result<u64, FeeError> {
         let base = Self::estimate_base_fee(samples)? as u64;
         let mult = self.config.multiplier();
@@ -156,7 +156,7 @@ impl FeeEstimator {
         Ok(fee.round() as u64)
     }
 
- /// Final estimated fee in XLM string (exact integer fraction).
+    /// Final estimated fee in XLM string (exact integer fraction).
     pub fn estimate_xlm(&self, samples: &[LedgerFeeSample]) -> Result<String, FeeError> {
         let stroops = self.estimate_stroops(samples)?;
         let whole = stroops / STROOPS_PER_XLM;
@@ -169,7 +169,7 @@ impl FeeEstimator {
         }
     }
 
- /// Single-call convenience returning both units.
+    /// Single-call convenience returning both units.
     pub fn estimate(&self, samples: &[LedgerFeeSample]) -> Result<(u64, String), FeeError> {
         let stroops = self.estimate_stroops(samples)?;
         let xlm = self.estimate_xlm(samples)?;

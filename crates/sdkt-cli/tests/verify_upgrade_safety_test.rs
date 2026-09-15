@@ -73,7 +73,7 @@ fn upgrade_safety_with_missing_candidate_file_is_controlled_error() {
 
 #[test]
 fn upgrade_safety_with_malformed_candidate_is_controlled_error() {
- // A text file is not valid WASM -> must fail cleanly, never panic.
+    // A text file is not valid WASM -> must fail cleanly, never panic.
     let dir = std::env::temp_dir().join(format!(
         "sdkt-m42-bad-{}",
         std::time::SystemTime::now()
@@ -103,7 +103,7 @@ fn upgrade_safety_with_malformed_candidate_is_controlled_error() {
 
 #[test]
 fn upgrade_safety_offline_contract_unreachable_is_graceful() {
- // No RPC reachable -> clean failure (no panic), even with a valid candidate.
+    // No RPC reachable -> clean failure (no panic), even with a valid candidate.
     sdkt()
         .args([
             "verify",
@@ -123,8 +123,8 @@ fn upgrade_safety_offline_contract_unreachable_is_graceful() {
 
 #[test]
 fn existing_verify_without_flag_still_runs() {
- // Regular `verify --contract` (no --wasm) must still behave (offline failure
- // is a clean error, not a crash) — backward compatibility preserved.
+    // Regular `verify --contract` (no --wasm) must still behave (offline failure
+    // is a clean error, not a crash) — backward compatibility preserved.
     sdkt()
         .args([
             "verify",
@@ -141,8 +141,8 @@ fn existing_verify_without_flag_still_runs() {
 
 #[test]
 fn breaking_change_verdict_matches_m14_engine() {
- // The same us_old -> us_new inputs through `diff --upgrade-safety` (which uses
- // the identical engine the verify command reuses) must yield NO / breaking.
+    // The same us_old -> us_new inputs through `diff --upgrade-safety` (which uses
+    // the identical engine the verify command reuses) must yield NO / breaking.
     sdkt()
         .args([
             "diff",
@@ -162,7 +162,7 @@ fn breaking_change_verdict_matches_m14_engine() {
 
 #[test]
 fn compatible_case_verdict_is_yes() {
- // us_old against itself is a no-op upgrade -> the engine reports YES.
+    // us_old against itself is a no-op upgrade -> the engine reports YES.
     sdkt()
         .args([
             "diff",

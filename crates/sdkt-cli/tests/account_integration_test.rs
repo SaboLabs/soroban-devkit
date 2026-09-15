@@ -10,7 +10,7 @@ fn test_account_format_json() {
         .arg("json");
 
     let output = cmd.output().unwrap();
- // Verify run success or network connection failure exit 1
+    // Verify run success or network connection failure exit 1
     assert!(output.status.success() || output.status.code().unwrap() == 1);
 }
 

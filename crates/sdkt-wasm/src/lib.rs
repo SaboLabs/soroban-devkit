@@ -122,10 +122,10 @@ pub fn parse_metadata(wasm_bytes: &[u8]) -> Result<WasmMetadata, WasmError> {
 mod tests {
     use super::*;
 
- // A minimal valid WASM binary (magic + version 1)
+    // A minimal valid WASM binary (magic + version 1)
     const VALID_EMPTY_WASM: &[u8] = &[0x00, 0x61, 0x73, 0x6d, 0x01, 0x00, 0x00, 0x00];
 
- // Minimal WASM with an empty export section (section id 7, size 1, 0 items)
+    // Minimal WASM with an empty export section (section id 7, size 1, 0 items)
     const WASM_WITH_EXPORTS: &[u8] = &[0x00, 0x61, 0x73, 0x6d, 0x01, 0x00, 0x00, 0x00, 7, 1, 0];
 
     #[test]
@@ -155,8 +155,8 @@ mod tests {
 
     #[test]
     fn test_wasm_exports_parsing() {
- // Just verify it doesn't crash on empty sections.
- // More complex WASM requires a real binary blob.
+        // Just verify it doesn't crash on empty sections.
+        // More complex WASM requires a real binary blob.
         let meta = parse_metadata(WASM_WITH_EXPORTS).unwrap();
         assert_eq!(meta.size_bytes, 11);
         assert!(meta.exports.is_empty());

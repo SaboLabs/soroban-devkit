@@ -27,12 +27,12 @@ pub struct IdentityStore {
 }
 
 impl IdentityStore {
- /// Initialize the keystore in the default OS-portable config directory (`~/.config/sdkt/identities/`).
- ///
- /// If the `SDKT_IDENTITY_DIR` environment variable is set, its value is used instead of the
- /// OS-default config directory. This provides a cross-platform override (works on macOS and
- /// Windows, where `XDG_CONFIG_HOME` is ignored by `directories::ProjectDirs`), and is the
- /// canonical way for tests and CI to isolate the identity store.
+    /// Initialize the keystore in the default OS-portable config directory (`~/.config/sdkt/identities/`).
+    ///
+    /// If the `SDKT_IDENTITY_DIR` environment variable is set, its value is used instead of the
+    /// OS-default config directory. This provides a cross-platform override (works on macOS and
+    /// Windows, where `XDG_CONFIG_HOME` is ignored by `directories::ProjectDirs`), and is the
+    /// canonical way for tests and CI to isolate the identity store.
     pub fn new() -> Result<Self, StorageError> {
         if let Ok(dir) = std::env::var("SDKT_IDENTITY_DIR") {
             if !dir.is_empty() {
@@ -50,7 +50,7 @@ impl IdentityStore {
         Self::with_dir(proj_dirs.config_dir().join("identities"))
     }
 
- /// Initialize the keystore in a custom directory.
+    /// Initialize the keystore in a custom directory.
     pub fn with_dir<P: AsRef<Path>>(dir: P) -> Result<Self, StorageError> {
         let dir = dir.as_ref().to_path_buf();
         if !dir.exists() {
@@ -59,7 +59,7 @@ impl IdentityStore {
         Ok(Self { dir })
     }
 
- /// Generate a new random ED25519 identity.
+    /// Generate a new random ED25519 identity.
     pub fn generate(&self, name: &str) -> Result<Identity, StorageError> {
         self.ensure_name_valid(name)?;
 
@@ -72,7 +72,7 @@ impl IdentityStore {
         self.save_key(name, &signing_key)
     }
 
- /// Import an identity from a secret key (S...) string.
+    /// Import an identity from a secret key (S...) string.
     pub fn import(&self, name: &str, secret_key: &str) -> Result<Identity, StorageError> {
         self.ensure_name_valid(name)?;
 
@@ -87,7 +87,7 @@ impl IdentityStore {
         self.save_key(name, &signing_key)
     }
 
- /// Load an identity by name.
+    /// Load an identity by name.
     pub fn get(&self, name: &str) -> Result<Identity, StorageError> {
         let path = self.dir.join(format!("{}.toml", name));
         if !path.exists() {
@@ -110,14 +110,14 @@ impl IdentityStore {
         })
     }
 
- /// Delete an identity.
+    /// Delete an identity.
     pub fn remove(&self, name: &str) -> Result<(), StorageError> {
         let path = self.dir.join(format!("{}.toml", name));
         if path.exists() {
             fs::remove_file(path).map_err(StorageError::Io)?;
         }
 
- // If it was the default identity, clear the default symlink.
+        // If it was the default identity, clear the default symlink.
         let default_path = self.dir.join("default");
         if default_path.exists() {
             if let Ok(target) = fs::read_link(&default_path) {
@@ -129,7 +129,7 @@ impl IdentityStore {
         Ok(())
     }
 
- /// List all stored identities.
+    /// List all stored identities.
     pub fn list(&self) -> Result<Vec<Identity>, StorageError> {
         let mut identities = Vec::new();
 
@@ -149,7 +149,7 @@ impl IdentityStore {
         Ok(identities)
     }
 
- /// Set an identity as the default.
+    /// Set an identity as the default.
     pub fn set_default(&self, name: &str) -> Result<(), StorageError> {
         let target_path = self.dir.join(format!("{}.toml", name));
         if !target_path.exists() {
@@ -176,7 +176,7 @@ impl IdentityStore {
         Ok(())
     }
 
- /// Load the default identity.
+    /// Load the default identity.
     pub fn get_default(&self) -> Result<Identity, StorageError> {
         let default_path = self.dir.join("default");
         if !default_path.exists() {
@@ -195,23 +195,23 @@ impl IdentityStore {
         self.get(name)
     }
 
- /// Load the signing key (`ed25519_dalek::SigningKey`) for a named identity.
- ///
- /// This is the keystore integration point used by transaction signing:
- /// the caller extracts the 32-byte seed via `signing_key.to_bytes()` and
- /// passes it to `sdkt_xdr::Ed25519Signer::from_seed`. The secret material
- /// is never exposed as a string; only the in-memory `SigningKey` is
- /// returned, and only for the duration the caller holds it.
- ///
- /// # Errors
- /// Returns [`StorageError`] if the identity does not exist or its secret
- /// cannot be loaded.
+    /// Load the signing key (`ed25519_dalek::SigningKey`) for a named identity.
+    ///
+    /// This is the keystore integration point used by transaction signing:
+    /// the caller extracts the 32-byte seed via `signing_key.to_bytes()` and
+    /// passes it to `sdkt_xdr::Ed25519Signer::from_seed`. The secret material
+    /// is never exposed as a string; only the in-memory `SigningKey` is
+    /// returned, and only for the duration the caller holds it.
+    ///
+    /// # Errors
+    /// Returns [`StorageError`] if the identity does not exist or its secret
+    /// cannot be loaded.
     pub fn load_signing_key(&self, name: &str) -> Result<SigningKey, StorageError> {
         let path = self.dir.join(format!("{}.toml", name));
         self.load_key(&path)
     }
 
- // --- Private Helpers ---
+    // --- Private Helpers ---
 
     fn ensure_name_valid(&self, name: &str) -> Result<(), StorageError> {
         if name.is_empty() || name == "default" || name.contains('/') || name.contains('\\') {
@@ -246,7 +246,7 @@ impl IdentityStore {
             name, secret_str
         );
 
- // Strict permissions 0600
+        // Strict permissions 0600
         let mut opts = OpenOptions::new();
         opts.write(true).create(true).truncate(true);
 
@@ -373,21 +373,21 @@ mod tests {
         assert_eq!(def.public_key, alice.public_key);
     }
 
- // ---------------------------------------------------------------------------
- // Windows-specific regression tests
- // ---------------------------------------------------------------------------
+    // ---------------------------------------------------------------------------
+    // Windows-specific regression tests
+    // ---------------------------------------------------------------------------
 
- /// Verifies the production IdentityStore::new() constructor resolves a
- /// platform-appropriate config directory on Windows.
- ///
- /// Read-only against production constructor — does not create identities
- /// in the real config directory.
+    /// Verifies the production IdentityStore::new() constructor resolves a
+    /// platform-appropriate config directory on Windows.
+    ///
+    /// Read-only against production constructor — does not create identities
+    /// in the real config directory.
     #[cfg(windows)]
     #[test]
     fn test_new_resolves_windows_config_path() {
         let store = IdentityStore::new().expect("IdentityStore::new() must succeed on Windows");
 
- // Windows: %APPDATA%\SorobanDevKit\sdkt\identities\
+        // Windows: %APPDATA%\SorobanDevKit\sdkt\identities\
         let path_str = store.dir.to_string_lossy().to_lowercase();
         assert!(
             path_str.contains("sorobandevkit"),
@@ -401,35 +401,35 @@ mod tests {
         );
     }
 
- /// Verifies that set_default/get_default works on Windows using the
- /// Windows-specific symlink implementation.
- ///
- /// This test exercises the existing:
- /// #[cfg(windows)] std::os::windows::fs::symlink_file
- /// path which is never exercised on Linux or macOS CI.
+    /// Verifies that set_default/get_default works on Windows using the
+    /// Windows-specific symlink implementation.
+    ///
+    /// This test exercises the existing:
+    /// #[cfg(windows)] std::os::windows::fs::symlink_file
+    /// path which is never exercised on Linux or macOS CI.
     #[cfg(windows)]
     #[test]
     fn test_default_identity_windows_symlink() {
         let dir = tempdir().unwrap();
         let store = IdentityStore::with_dir(dir.path()).unwrap();
 
- // Generate an identity
+        // Generate an identity
         let alice = store.generate("alice").unwrap();
         assert_eq!(alice.name, "alice");
         assert!(alice.public_key.starts_with('G'));
 
- // Verify no default is set initially
+        // Verify no default is set initially
         assert!(
             store.get_default().is_err(),
             "no default should be set initially"
         );
 
- // Set default — this calls #[cfg(windows)] symlink_file on Windows
+        // Set default — this calls #[cfg(windows)] symlink_file on Windows
         store
             .set_default("alice")
             .expect("set_default must succeed on Windows");
 
- // Get default — this reads the symlink on Windows
+        // Get default — this reads the symlink on Windows
         let def = store
             .get_default()
             .expect("get_default must succeed after set_default on Windows");

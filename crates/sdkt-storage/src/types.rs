@@ -4,19 +4,19 @@ use serde::{Deserialize, Serialize};
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "snake_case")]
 pub enum StorageClass {
- /// Contract instance storage (the `ContractInstance` singleton).
+    /// Contract instance storage (the `ContractInstance` singleton).
     #[default]
     Instance,
- /// Persistent `ContractData` entries.
+    /// Persistent `ContractData` entries.
     Persistent,
- /// Temporary `ContractData` entries.
+    /// Temporary `ContractData` entries.
     Temporary,
- /// Anything that is not a Soroban contract storage key (e.g. account, code).
+    /// Anything that is not a Soroban contract storage key (e.g. account, code).
     Other,
 }
 
 impl StorageClass {
- /// Human-readable singular label used in CLI pretty output.
+    /// Human-readable singular label used in CLI pretty output.
     pub fn label(&self) -> &'static str {
         match self {
             StorageClass::Instance => "instance",
@@ -30,9 +30,9 @@ impl StorageClass {
 /// A single classified storage entry produced by the analyzer.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct StorageEntry {
- /// The base64 XDR `LedgerKey` as returned by RPC.
+    /// The base64 XDR `LedgerKey` as returned by RPC.
     pub key: String,
- /// Classified storage type.
+    /// Classified storage type.
     pub class: StorageClass,
     pub current_ttl: u32,
     pub days_remaining: u32,
@@ -42,7 +42,7 @@ pub struct StorageEntry {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
 pub struct StorageReport {
     pub contract_id: String,
- /// Total number of storage entries observed.
+    /// Total number of storage entries observed.
     pub total_entries: usize,
     pub instance_entries: usize,
     pub persistent_entries: usize,
@@ -50,7 +50,7 @@ pub struct StorageReport {
     pub other_entries: usize,
     pub total_size_bytes: Option<usize>,
     pub ttl_summary: Option<TtlInfoSummary>,
- /// Per-entry detail (additive; absent in legacy serialized reports).
+    /// Per-entry detail (additive; absent in legacy serialized reports).
     #[serde(default)]
     pub entries: Vec<StorageEntry>,
 }

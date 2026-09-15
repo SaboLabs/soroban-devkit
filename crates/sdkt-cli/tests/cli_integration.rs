@@ -15,7 +15,7 @@ use predicates::prelude::*;
 /// Build a `sdkt` command with an isolated network-profile directory.
 fn sdkt_isolated() -> Command {
     let mut cmd = Command::cargo_bin("sdkt").expect("sdkt binary built");
- // Point network storage at a fresh temp dir for determinism.
+    // Point network storage at a fresh temp dir for determinism.
     let dir = std::env::temp_dir().join(format!(
         "sdkt-it-{}",
         std::time::SystemTime::now()
@@ -59,7 +59,7 @@ fn completions_bash_emits_script() {
         .stdout
         .clone();
     let text = String::from_utf8_lossy(&out);
- // bash completion scripts define a _sdkt completion function.
+    // bash completion scripts define a _sdkt completion function.
     assert!(
         text.contains("_sdkt") || text.contains("complete -F") || text.contains("sdkt"),
         "bash completion output did not look like a completion script:\n{}",
@@ -104,7 +104,7 @@ fn completions_rejects_unknown_shell() {
 
 #[test]
 fn network_add_then_list_then_show_then_remove_json() {
- // Shared, isolated network directory for the whole flow.
+    // Shared, isolated network directory for the whole flow.
     let dir = std::env::temp_dir().join(format!(
         "sdkt-it-flow-{}",
         std::time::SystemTime::now()
@@ -123,7 +123,7 @@ fn network_add_then_list_then_show_then_remove_json() {
         G(dir.clone())
     };
 
- // add
+    // add
     Command::cargo_bin("sdkt")
         .expect("sdkt binary built")
         .env("SDKT_NETWORK_DIR", &dir)
@@ -145,7 +145,7 @@ fn network_add_then_list_then_show_then_remove_json() {
             "\"rpc_url\":\"https://soroban-testnet.stellar.org\"",
         ));
 
- // list shows the profile
+    // list shows the profile
     Command::cargo_bin("sdkt")
         .expect("sdkt binary built")
         .env("SDKT_NETWORK_DIR", &dir)
@@ -154,7 +154,7 @@ fn network_add_then_list_then_show_then_remove_json() {
         .success()
         .stdout(predicate::str::contains("testnet"));
 
- // show
+    // show
     Command::cargo_bin("sdkt")
         .expect("sdkt binary built")
         .env("SDKT_NETWORK_DIR", &dir)
@@ -166,7 +166,7 @@ fn network_add_then_list_then_show_then_remove_json() {
             "\"rpc_url\":\"https://soroban-testnet.stellar.org\"",
         ));
 
- // remove
+    // remove
     Command::cargo_bin("sdkt")
         .expect("sdkt binary built")
         .env("SDKT_NETWORK_DIR", &dir)
@@ -175,7 +175,7 @@ fn network_add_then_list_then_show_then_remove_json() {
         .success()
         .stdout(predicate::str::contains("\"status\":\"removed\""));
 
- // after removal, list is empty again
+    // after removal, list is empty again
     Command::cargo_bin("sdkt")
         .expect("sdkt binary built")
         .env("SDKT_NETWORK_DIR", &dir)
@@ -196,7 +196,7 @@ fn network_list_empty_is_valid_json_array() {
 
 #[test]
 fn network_add_rejects_missing_required_args() {
- // Missing --rpc-url and --passphrase should fail.
+    // Missing --rpc-url and --passphrase should fail.
     sdkt_isolated()
         .args(["network", "add", "broken"])
         .assert()
@@ -205,7 +205,7 @@ fn network_add_rejects_missing_required_args() {
 
 #[test]
 fn offline_command_help_does_not_require_network() {
- // `sdkt diff --help` is fully offline and must succeed without RPC access.
+    // `sdkt diff --help` is fully offline and must succeed without RPC access.
     sdkt_isolated()
         .args(["diff", "--help"])
         .assert()
@@ -222,10 +222,10 @@ fn invalid_top_level_subcommand_fails() {
 #[cfg(unix)]
 #[test]
 fn completions_broken_pipe_exits_successfully() {
- // `sdkt completions bash | head -c 1` closes the pipe after one byte.
- // sdkt must NOT panic and must exit 0 (broken pipe is expected, not fatal).
- // `bash -O pipefail` ensures sdkt's own exit status propagates through the
- // pipeline (otherwise `head`'s success would mask a sdkt panic).
+    // `sdkt completions bash | head -c 1` closes the pipe after one byte.
+    // sdkt must NOT panic and must exit 0 (broken pipe is expected, not fatal).
+    // `bash -O pipefail` ensures sdkt's own exit status propagates through the
+    // pipeline (otherwise `head`'s success would mask a sdkt panic).
     let bin = env!("CARGO_BIN_EXE_sdkt");
     let script = format!("set -o pipefail; {:?} completions bash | head -c 1", bin);
     let output = std::process::Command::new("bash")
@@ -290,25 +290,25 @@ fn lock_generate_writes_sdkt_lock() {
     cmd.current_dir(&tmp).arg("lock").arg("generate");
     let assert = cmd.assert().success();
     let out = String::from_utf8_lossy(&assert.get_output().stdout);
- // token (no deps) is deployed before router.
+    // token (no deps) is deployed before router.
     assert!(out.contains("token"));
     assert!(out.contains("router"));
     assert!(out.contains("sha256"));
 
- // The lock file now exists on disk.
+    // The lock file now exists on disk.
     assert!(
         tmp.join("sdkt.lock").exists(),
         "sdkt.lock should have been written"
     );
 
- // `lock show` prints the same lock contents.
+    // `lock show` prints the same lock contents.
     let mut show = Command::cargo_bin("sdkt").expect("sdkt binary built");
     show.current_dir(&tmp).arg("lock").arg("show");
     let assert = show.assert().success();
     let out = String::from_utf8_lossy(&assert.get_output().stdout);
     assert!(out.contains("deploy_order"));
 
- // `lock verify` reports consistency (no drift).
+    // `lock verify` reports consistency (no drift).
     let mut verify = Command::cargo_bin("sdkt").expect("sdkt binary built");
     verify.current_dir(&tmp).arg("lock").arg("verify");
     let assert = verify.assert().success();
@@ -330,7 +330,7 @@ fn lock_verify_detects_drift() {
     let _ = std::fs::remove_dir_all(&tmp);
     make_lock_fixture(&tmp, b"token-bytes", b"router-bytes");
 
- // Generate the lock first.
+    // Generate the lock first.
     let mut gen = Command::cargo_bin("sdkt").expect("sdkt binary built");
     gen.current_dir(&tmp)
         .arg("lock")
@@ -338,7 +338,7 @@ fn lock_verify_detects_drift() {
         .assert()
         .success();
 
- // Now tamper with the token artifact.
+    // Now tamper with the token artifact.
     let token_wasm = tmp
         .join("contracts/token")
         .join("target/wasm32-unknown-unknown/release/token.wasm");
@@ -348,7 +348,7 @@ fn lock_verify_detects_drift() {
     verify.current_dir(&tmp).arg("lock").arg("verify");
     let assert = verify.assert().success();
     let out = String::from_utf8_lossy(&assert.get_output().stdout);
- // Advisory: drift is reported, but the command still exits 0 (non-fatal).
+    // Advisory: drift is reported, but the command still exits 0 (non-fatal).
     assert!(out.contains("drift") || out.contains("stale"));
 
     let _ = std::fs::remove_dir_all(&tmp);
@@ -365,11 +365,11 @@ fn lock_verify_without_lock_is_non_fatal() {
     ));
     let _ = std::fs::remove_dir_all(&tmp);
     make_lock_fixture(&tmp, b"token-bytes", b"router-bytes");
- // No `sdkt build` / `sdkt lock generate` run → no sdkt.lock.
+    // No `sdkt build` / `sdkt lock generate` run → no sdkt.lock.
 
     let mut verify = Command::cargo_bin("sdkt").expect("sdkt binary built");
     verify.current_dir(&tmp).arg("lock").arg("verify");
- // Must exit 0 (backward compatible): a missing lock is acceptable.
+    // Must exit 0 (backward compatible): a missing lock is acceptable.
     verify.assert().success();
 
     let _ = std::fs::remove_dir_all(&tmp);
@@ -575,7 +575,7 @@ fn package_validate_rejects_missing_path() {
         &tmp,
         "[package]\nname = \"my-token\"\nversion = \"0.1.0\"\n\n[dependencies.math]\n\n[dependencies.auth]\npath = \"auth\"\n",
     );
- // `math` dependency has no `path` -> unsupported/missing source.
+    // `math` dependency has no `path` -> unsupported/missing source.
 
     let mut cmd = Command::cargo_bin("sdkt").expect("sdkt binary built");
     cmd.current_dir(&tmp).arg("package").arg("validate");
@@ -770,7 +770,7 @@ fn package_fetch_git_dependency_offline() {
         ),
     );
 
- // Fetch the git dependency (clones the local repo, no real network).
+    // Fetch the git dependency (clones the local repo, no real network).
     let mut cmd = Command::cargo_bin("sdkt").expect("sdkt binary built");
     cmd.current_dir(&tmp).arg("package").arg("fetch");
     let assert = cmd.assert().success();
@@ -780,7 +780,7 @@ fn package_fetch_git_dependency_offline() {
         "fetch should report success: {}",
         out
     );
- // Cache entry must exist under .sdkt-cache/git/<key>/.
+    // Cache entry must exist under .sdkt-cache/git/<key>/.
     let cache = tmp.join(".sdkt-cache").join("git");
     assert!(cache.exists(), "git cache dir should exist");
     let mut found = false;
@@ -799,8 +799,8 @@ fn package_fetch_git_dependency_offline() {
 
 #[test]
 fn lock_verify_reports_dependency_mismatch() {
- // Offline: a manifest with a local path dependency whose path is missing
- // from disk must be reported by `sdkt lock verify` ().
+    // Offline: a manifest with a local path dependency whose path is missing
+    // from disk must be reported by `sdkt lock verify` ().
     let tmp = std::env::temp_dir().join(format!(
         "sdkt-it-m352-verify-{}",
         std::time::SystemTime::now()
@@ -809,7 +809,7 @@ fn lock_verify_reports_dependency_mismatch() {
             .as_nanos()
     ));
     let _ = std::fs::remove_dir_all(&tmp);
- // Claim a dependency path that does NOT exist on disk.
+    // Claim a dependency path that does NOT exist on disk.
     write_manifest(
         &tmp,
         "[package]\nname = \"my-app\"\nversion = \"0.1.0\"\n\n[dependencies.math]\npath = \"libs/math\"\n",
@@ -819,9 +819,9 @@ fn lock_verify_reports_dependency_mismatch() {
     cmd.current_dir(&tmp).arg("lock").arg("verify");
     let assert = cmd.assert().success();
     let out = String::from_utf8_lossy(&assert.get_output().stdout);
- // Dependency drift must be surfaced (no sdkt.lock yet => unverified, or the
- // path-missing condition once a lock is written). Either way the verify
- // command must not panic and must mention dependencies.
+    // Dependency drift must be surfaced (no sdkt.lock yet => unverified, or the
+    // path-missing condition once a lock is written). Either way the verify
+    // command must not panic and must mention dependencies.
     assert!(
         out.to_lowercase().contains("dependenc"),
         "lock verify should report dependency status: {}",
@@ -833,8 +833,8 @@ fn lock_verify_reports_dependency_mismatch() {
 
 #[test]
 fn package_fetch_writes_locked_dependencies() {
- // Offline: fetch a local git dependency; the run must record a
- // reproducible sdkt.lock with the resolved commit + cache location.
+    // Offline: fetch a local git dependency; the run must record a
+    // reproducible sdkt.lock with the resolved commit + cache location.
     let src = make_local_git_repo();
     let url = src.to_string_lossy().replace('\\', "\\\\");
     let tmp = std::env::temp_dir().join(format!(
@@ -857,7 +857,7 @@ fn package_fetch_writes_locked_dependencies() {
     cmd.current_dir(&tmp).arg("package").arg("fetch");
     cmd.assert().success();
 
- // sdkt.lock must now exist and record the dependency with a commit + cache.
+    // sdkt.lock must now exist and record the dependency with a commit + cache.
     let lock_path = tmp.join("sdkt.lock");
     assert!(lock_path.exists(), "sdkt.lock should be written by fetch");
     let content = std::fs::read_to_string(&lock_path).unwrap();
@@ -937,8 +937,8 @@ fn make_advancing_repo() -> (std::path::PathBuf, String, String) {
             .unwrap();
         String::from_utf8_lossy(&o.stdout).trim().to_string()
     };
- // A SECOND commit exists in the repo (HEAD) but is NOT yet tagged, so the
- // declared `tag = "v1.0.0"` still resolves to v1. Advancing re-tags to it.
+    // A SECOND commit exists in the repo (HEAD) but is NOT yet tagged, so the
+    // declared `tag = "v1.0.0"` still resolves to v1. Advancing re-tags to it.
     std::fs::write(dir.join("lib.rs"), "pub fn answer() -> u32 { 43 }\n").unwrap();
     run(&["add", "."]);
     run(&["commit", "-q", "-m", "second"]);
@@ -1052,7 +1052,7 @@ fn package_update_refreshes_lock() {
         ),
     );
 
- // 1) fetch records the OLD (v1) commit in the lock.
+    // 1) fetch records the OLD (v1) commit in the lock.
     Command::cargo_bin("sdkt")
         .expect("sdkt binary built")
         .current_dir(&tmp)
@@ -1068,7 +1068,7 @@ fn package_update_refreshes_lock() {
         lock1
     );
 
- // 2) update pulls the NEW commit and rewrites the lock.
+    // 2) update pulls the NEW commit and rewrites the lock.
     Command::cargo_bin("sdkt")
         .expect("sdkt binary built")
         .current_dir(&tmp)
@@ -1087,7 +1087,7 @@ fn package_update_refreshes_lock() {
         "old commit should be replaced"
     );
 
- // 3) a second update is a no-op (already current).
+    // 3) a second update is a no-op (already current).
     let out = Command::cargo_bin("sdkt")
         .expect("sdkt binary built")
         .current_dir(&tmp)
@@ -1149,7 +1149,7 @@ fn package_update_check_is_readonly() {
         "check should report an available update: {}",
         stdout
     );
- // Lock must be unchanged after --check.
+    // Lock must be unchanged after --check.
     let lock_after = std::fs::read_to_string(tmp.join("sdkt.lock")).unwrap();
     assert_eq!(lock_before, lock_after, "--check must not rewrite the lock");
 
@@ -1246,7 +1246,7 @@ fn package_update_json_reports_counts() {
         .unwrap();
     assert!(out.status.success());
     let stdout = String::from_utf8_lossy(&out.stdout);
- // JSON must carry the summary counters and at least one change entry.
+    // JSON must carry the summary counters and at least one change entry.
     assert!(
         stdout.contains("\"checked\""),
         "json missing checked: {}",
@@ -1262,7 +1262,7 @@ fn package_update_json_reports_counts() {
         "json missing changes: {}",
         stdout
     );
- // The lock should have been refreshed (apply mode, not check/dry-run).
+    // The lock should have been refreshed (apply mode, not check/dry-run).
     let lock = std::fs::read_to_string(tmp.join("sdkt.lock")).unwrap();
     assert!(
         lock.contains("commit_sha"),
@@ -1276,8 +1276,8 @@ fn package_update_json_reports_counts() {
 
 #[test]
 fn package_update_offline_local_path_unchanged() {
- // A local path dependency has no remote; update must report it unchanged
- // and stay fully offline.
+    // A local path dependency has no remote; update must report it unchanged
+    // and stay fully offline.
     let tmp = std::env::temp_dir().join(format!(
         "sdkt-it-m360-local-{}",
         std::time::SystemTime::now()
@@ -1292,7 +1292,7 @@ fn package_update_offline_local_path_unchanged() {
         "[package]\nname = \"my-app\"\nversion = \"0.1.0\"\n\n[dependencies.math]\npath = \"libs/math\"\n",
     );
 
- // Fetch first so a lock exists (path deps are recorded unchanged).
+    // Fetch first so a lock exists (path deps are recorded unchanged).
     Command::cargo_bin("sdkt")
         .expect("sdkt binary built")
         .current_dir(&tmp)
@@ -1320,9 +1320,9 @@ fn package_update_offline_local_path_unchanged() {
 
 #[test]
 fn package_update_version_constraint_picks_highest() {
- // A git dep constrained by `version = ">=1.0, <2"` must resolve to the
- // highest satisfying tag (v1.5.0), never v2.0.0 (which is outside the
- // range). Exercises the VersionResolver end-to-end via fetch+update.
+    // A git dep constrained by `version = ">=1.0, <2"` must resolve to the
+    // highest satisfying tag (v1.5.0), never v2.0.0 (which is outside the
+    // range). Exercises the VersionResolver end-to-end via fetch+update.
     let (src, _v1, v15, v2) = make_version_repo();
     let url = src.to_string_lossy().replace('\\', "\\\\");
     let tmp = std::env::temp_dir().join(format!(
@@ -1342,7 +1342,7 @@ fn package_update_version_constraint_picks_highest() {
         ),
     );
 
- // fetch materializes the resolved tag (v1.5.0) into the cache + lock.
+    // fetch materializes the resolved tag (v1.5.0) into the cache + lock.
     Command::cargo_bin("sdkt")
         .expect("sdkt binary built")
         .current_dir(&tmp)
@@ -1363,7 +1363,7 @@ fn package_update_version_constraint_picks_highest() {
         lock
     );
 
- // `package update` must report the dep as up-to-date (already at best).
+    // `package update` must report the dep as up-to-date (already at best).
     let out = Command::cargo_bin("sdkt")
         .expect("sdkt binary built")
         .current_dir(&tmp)
@@ -1385,8 +1385,8 @@ fn package_update_version_constraint_picks_highest() {
 
 #[test]
 fn package_update_version_constraint_unsatisfied_reports_error() {
- // A constraint with no satisfying tag must surface a clear error (not a
- // panic) during fetch. The remote only has v1.x/v2.x tags.
+    // A constraint with no satisfying tag must surface a clear error (not a
+    // panic) during fetch. The remote only has v1.x/v2.x tags.
     let (src, _v1, _v15, _v2) = make_version_repo();
     let url = src.to_string_lossy().replace('\\', "\\\\");
     let tmp = std::env::temp_dir().join(format!(
@@ -1479,7 +1479,7 @@ fn write_pack_manifest(tmp: &std::path::Path, url: &str) {
 
 #[test]
 fn package_pack_produces_artifact() {
- // `sdkt package pack` without --out must write to the default `./dist`.
+    // `sdkt package pack` without --out must write to the default `./dist`.
     let (src, url) = make_pack_repo();
     let tmp = std::env::temp_dir().join(format!(
         "sdkt-it-m38-pack-{}-{}",
@@ -1492,7 +1492,7 @@ fn package_pack_produces_artifact() {
     let _ = std::fs::remove_dir_all(&tmp);
     write_pack_manifest(&tmp, &url);
 
- // Fetch first so a cache + lock exist (pack requires sdkt.lock).
+    // Fetch first so a cache + lock exist (pack requires sdkt.lock).
     Command::cargo_bin("sdkt")
         .expect("sdkt binary built")
         .current_dir(&tmp)
@@ -1520,7 +1520,7 @@ fn package_pack_produces_artifact() {
         stdout
     );
 
- // Default output dir is ./dist; artifact is a .tar.zst.
+    // Default output dir is ./dist; artifact is a .tar.zst.
     let dist = tmp.join("dist");
     assert!(dist.exists(), "default dist/ must exist");
     let mut found = false;
@@ -1538,7 +1538,7 @@ fn package_pack_produces_artifact() {
 
 #[test]
 fn package_pack_with_out_dir() {
- // `--out` must direct the artifact to a chosen directory.
+    // `--out` must direct the artifact to a chosen directory.
     let (src, url) = make_pack_repo();
     let tmp = std::env::temp_dir().join(format!(
         "sdkt-it-m38-packout-{}-{}",
@@ -1586,7 +1586,7 @@ fn package_pack_with_out_dir() {
 
 #[test]
 fn package_pack_format_handling() {
- // `tar.zst` (default) and `dir` both work; an unknown format errors.
+    // `tar.zst` (default) and `dir` both work; an unknown format errors.
     let (src, url) = make_pack_repo();
     let tmp = std::env::temp_dir().join(format!(
         "sdkt-it-m38-fmt-{}-{}",
@@ -1606,7 +1606,7 @@ fn package_pack_format_handling() {
         .assert()
         .success();
 
- // dir format → <out>/<name>-<version>/ directory exists.
+    // dir format → <out>/<name>-<version>/ directory exists.
     let out = Command::cargo_bin("sdkt")
         .expect("sdkt binary built")
         .current_dir(&tmp)
@@ -1626,7 +1626,7 @@ fn package_pack_format_handling() {
         "descriptor missing in dir bundle"
     );
 
- // Unknown format → non-zero, clear error.
+    // Unknown format → non-zero, clear error.
     let bad = Command::cargo_bin("sdkt")
         .expect("sdkt binary built")
         .current_dir(&tmp)
@@ -1647,7 +1647,7 @@ fn package_pack_format_handling() {
 
 #[test]
 fn package_pack_roundtrip_preserves_lock_and_integrity() {
- // pack (tar.zst) → unpack → reconstructed tree reproduces lock + integrity.
+    // pack (tar.zst) → unpack → reconstructed tree reproduces lock + integrity.
     let (src, url) = make_pack_repo();
     let tmp = std::env::temp_dir().join(format!(
         "sdkt-it-m38-rt-{}-{}",
@@ -1675,7 +1675,7 @@ fn package_pack_roundtrip_preserves_lock_and_integrity() {
         .assert()
         .success();
 
- // Locate the produced tarball.
+    // Locate the produced tarball.
     let tarball = {
         let mut tb = None;
         for entry in std::fs::read_dir(&out_dir).unwrap() {
@@ -1687,7 +1687,7 @@ fn package_pack_roundtrip_preserves_lock_and_integrity() {
         tb.expect("tarball produced")
     };
 
- // Reconstruct + verify using the public library API (no double-pack).
+    // Reconstruct + verify using the public library API (no double-pack).
     use sdkt_core::package::{unpack, verify_bundle_equivalence, PackageBundle};
     let reconstruct = tmp.join("reconstruct");
     unpack(&tarball, &reconstruct).expect("unpack ok");
@@ -1704,7 +1704,7 @@ fn package_pack_roundtrip_preserves_lock_and_integrity() {
 
 #[test]
 fn package_publish_dry_run_reports_ready() {
- // A consistent, fully cached project must pass `--dry-run` (exit 0).
+    // A consistent, fully cached project must pass `--dry-run` (exit 0).
     let (src, url) = make_pack_repo();
     let tmp = std::env::temp_dir().join(format!(
         "sdkt-it-m38-ready-{}-{}",
@@ -1752,7 +1752,7 @@ fn package_publish_dry_run_reports_ready() {
 
 #[test]
 fn package_publish_dry_run_failure_on_drift() {
- // Removing the cached checkout must make `--dry-run` fail (exit non-zero).
+    // Removing the cached checkout must make `--dry-run` fail (exit non-zero).
     let (src, url) = make_pack_repo();
     let tmp = std::env::temp_dir().join(format!(
         "sdkt-it-m38-drift-{}-{}",
@@ -1772,7 +1772,7 @@ fn package_publish_dry_run_failure_on_drift() {
         .assert()
         .success();
 
- // Delete the cached git checkout (simulate cache/lock drift).
+    // Delete the cached git checkout (simulate cache/lock drift).
     let cache_root = tmp.join(".sdkt-cache").join("git");
     assert!(cache_root.exists());
     std::fs::remove_dir_all(&cache_root).unwrap();
@@ -1804,9 +1804,9 @@ fn package_publish_dry_run_failure_on_drift() {
 
 #[test]
 fn package_pack_and_publish_offline() {
- // Both commands must run with zero network: the "remote" is a local path
- // repo, and no git ls-remote to a real host is performed. This is the same
- // offline guarantee as fetch/update (/6/).
+    // Both commands must run with zero network: the "remote" is a local path
+    // repo, and no git ls-remote to a real host is performed. This is the same
+    // offline guarantee as fetch/update (/6/).
     let (src, url) = make_pack_repo();
     let tmp = std::env::temp_dir().join(format!(
         "sdkt-it-m38-offline-{}-{}",
@@ -1819,7 +1819,7 @@ fn package_pack_and_publish_offline() {
     let _ = std::fs::remove_dir_all(&tmp);
     write_pack_manifest(&tmp, &url);
 
- // fetch + pack + publish all offline.
+    // fetch + pack + publish all offline.
     Command::cargo_bin("sdkt")
         .expect("sdkt binary built")
         .current_dir(&tmp)

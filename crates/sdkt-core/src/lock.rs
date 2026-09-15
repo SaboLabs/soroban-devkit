@@ -22,15 +22,15 @@ use std::path::{Path, PathBuf};
 /// One locked contract entry.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct LockEntry {
- /// Contract alias (matches `[contracts.<alias>]` in `.sdkt.toml`).
+    /// Contract alias (matches `[contracts.<alias>]` in `.sdkt.toml`).
     pub alias: String,
- /// Source directory path (relative to the workspace root / `.sdkt.toml`).
+    /// Source directory path (relative to the workspace root / `.sdkt.toml`).
     pub path: String,
- /// Resolved WASM artifact path (relative to the workspace root).
+    /// Resolved WASM artifact path (relative to the workspace root).
     pub artifact: String,
- /// Lowercase hex SHA-256 of the artifact bytes.
+    /// Lowercase hex SHA-256 of the artifact bytes.
     pub sha256: String,
- /// Position in the deterministic deploy order (0 = first to deploy).
+    /// Position in the deterministic deploy order (0 = first to deploy).
     pub order: usize,
 }
 
@@ -44,34 +44,34 @@ pub struct LockEntry {
 /// would add its own fields.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
 pub struct DependencyLock {
- /// Dependency name (key under `[dependencies]`).
+    /// Dependency name (key under `[dependencies]`).
     pub name: String,
- /// Source kind: `local` or `git`.
+    /// Source kind: `local` or `git`.
     pub source: String,
- /// Original source specifier as declared in `.sdkt.toml`:
- /// the local path (path deps) or the git URL (git deps).
+    /// Original source specifier as declared in `.sdkt.toml`:
+    /// the local path (path deps) or the git URL (git deps).
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub original_source: String,
- /// Git remote URL (empty for local path deps).
+    /// Git remote URL (empty for local path deps).
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub git_url: String,
- /// Requested reference: `tag`/`branch`/`rev` value (empty for path deps).
+    /// Requested reference: `tag`/`branch`/`rev` value (empty for path deps).
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub resolved_reference: String,
- /// Resolved commit SHA (empty if not available / not a Git dep).
+    /// Resolved commit SHA (empty if not available / not a Git dep).
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub commit_sha: String,
- /// On-disk cache location for the resolved source (relative to the
- /// workspace root when sensible). Empty when not materialized.
+    /// On-disk cache location for the resolved source (relative to the
+    /// workspace root when sensible). Empty when not materialized.
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub cache_location: String,
- /// Integrity hash ("sha256:<hex>") of the cached checkout's tracked tree,
- /// when computed. Empty when not available (e.g. un-fetched path dep).
+    /// Integrity hash ("sha256:<hex>") of the cached checkout's tracked tree,
+    /// when computed. Empty when not available (e.g. un-fetched path dep).
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub integrity: String,
- /// Optional semver version constraint declared for this git dependency
- /// (). Empty when none. Recorded for reproducibility / audit; an explicit
- /// `tag`/`branch`/`rev` reference takes precedence over the constraint.
+    /// Optional semver version constraint declared for this git dependency
+    /// (). Empty when none. Recorded for reproducibility / audit; an explicit
+    /// `tag`/`branch`/`rev` reference takes precedence over the constraint.
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub version: String,
 }
@@ -79,13 +79,13 @@ pub struct DependencyLock {
 /// The on-disk `sdkt.lock` structure.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct LockFile {
- /// Schema version. Bump if the layout changes incompatibly.
+    /// Schema version. Bump if the layout changes incompatibly.
     pub version: u32,
- /// Deterministic deploy order (alias list, index 0 deploys first).
+    /// Deterministic deploy order (alias list, index 0 deploys first).
     pub deploy_order: Vec<String>,
- /// Per-contract locked artifacts.
+    /// Per-contract locked artifacts.
     pub contracts: Vec<LockEntry>,
- /// Locked package dependencies ( / ). Absent in older locks.
+    /// Locked package dependencies ( / ). Absent in older locks.
     #[serde(default)]
     pub dependencies: Vec<DependencyLock>,
 }
@@ -93,21 +93,21 @@ pub struct LockFile {
 /// Errors raised while generating or verifying the lock file.
 #[derive(Debug)]
 pub enum LockError {
- /// Underlying project resolution failure (e.g. unknown dependency).
+    /// Underlying project resolution failure (e.g. unknown dependency).
     Project(ProjectError),
- /// A contract's WASM artifact could not be located.
+    /// A contract's WASM artifact could not be located.
     ArtifactNotFound(String),
- /// Reading/hashing an artifact failed.
+    /// Reading/hashing an artifact failed.
     Io {
         alias: String,
         source: std::io::Error,
     },
- /// Serializing or writing the lock file failed.
+    /// Serializing or writing the lock file failed.
     Write {
         path: PathBuf,
         source: Box<dyn std::error::Error>,
     },
- /// Parsing an existing lock file failed.
+    /// Parsing an existing lock file failed.
     Parse {
         path: PathBuf,
         source: Box<dyn std::error::Error>,
@@ -213,8 +213,8 @@ pub fn generate_lock(base_dir: &Path, config: &DevKitConfig) -> Result<LockFile,
         let artifact = find_artifact(base_dir, &cfg.path)
             .ok_or_else(|| LockError::ArtifactNotFound(alias.clone()))?;
         let sha256 = compute_sha256(&artifact)?;
- // Persist the artifact path as given in the config (relative form is
- // what `.sdkt.toml` uses and what users expect in the lock).
+        // Persist the artifact path as given in the config (relative form is
+        // what `.sdkt.toml` uses and what users expect in the lock).
         let artifact_str = artifact.to_string_lossy().to_string();
         contracts.push(LockEntry {
             alias: alias.clone(),
@@ -269,8 +269,8 @@ pub fn lock_dependencies(
             });
         } else {
             let path = dep.path.clone().unwrap_or_default();
- // Record the local path resolved against the workspace root so
- // verification can check existence without assuming the cwd.
+            // Record the local path resolved against the workspace root so
+            // verification can check existence without assuming the cwd.
             let resolved = if path.is_empty() {
                 path.clone()
             } else {
@@ -341,9 +341,9 @@ pub fn lock_dependencies_resolved(
                 version: dep.version.clone().unwrap_or_default(),
             });
         } else {
- // No fetched outcome (e.g. a local path dep, or an unchanged git dep
- // whose lock entry is preserved separately). Fall back to the pure
- // manifest-derived record so the entry still exists in the lock.
+            // No fetched outcome (e.g. a local path dep, or an unchanged git dep
+            // whose lock entry is preserved separately). Fall back to the pure
+            // manifest-derived record so the entry still exists in the lock.
             out.push(
                 lock_dependencies(base_dir, &config.dependencies)
                     .into_iter()
@@ -401,13 +401,13 @@ pub fn read_lock(dir: &Path) -> Result<LockFile, LockError> {
 /// Outcome of a lock verification against the live artifacts.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct LockVerifyReport {
- /// Lock file was present and parsed successfully.
+    /// Lock file was present and parsed successfully.
     pub present: bool,
- /// True when every locked artifact still matches its recorded hash.
+    /// True when every locked artifact still matches its recorded hash.
     pub consistent: bool,
- /// Aliases whose hash differs from the lock (empty when consistent).
+    /// Aliases whose hash differs from the lock (empty when consistent).
     pub mismatched: Vec<String>,
- /// Aliases in the config that are absent from the lock.
+    /// Aliases in the config that are absent from the lock.
     pub missing_in_lock: Vec<String>,
 }
 
@@ -444,7 +444,7 @@ pub fn verify_lock(base_dir: &Path, config: &DevKitConfig) -> LockVerifyReport {
     for entry in &lock.contracts {
         let artifact = base_dir.join(&entry.artifact);
         let Ok(current) = compute_sha256(&artifact) else {
- // Artifact gone entirely — treat as mismatch.
+            // Artifact gone entirely — treat as mismatch.
             mismatched.push(entry.alias.clone());
             continue;
         };
@@ -465,32 +465,32 @@ pub fn verify_lock(base_dir: &Path, config: &DevKitConfig) -> LockVerifyReport {
 /// A single dependency-lock mismatch discovered during verification ().
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum DepMismatchKind {
- /// Dependency in the manifest is absent from the lock.
+    /// Dependency in the manifest is absent from the lock.
     MissingInLock,
- /// Dependency in the lock is absent from the manifest.
+    /// Dependency in the lock is absent from the manifest.
     NotInManifest,
- /// Source kind (`path` vs `git`) or the source locator changed.
+    /// Source kind (`path` vs `git`) or the source locator changed.
     SourceChanged,
- /// The requested `tag`/`branch`/`rev` reference changed.
+    /// The requested `tag`/`branch`/`rev` reference changed.
     ReferenceChanged,
- /// A Git dependency's local cache checkout is missing.
+    /// A Git dependency's local cache checkout is missing.
     CacheMissing,
- /// A local path dependency no longer exists on disk.
+    /// A local path dependency no longer exists on disk.
     PathMissing,
- /// A Git cache checkout resolves to a different commit than the lock.
+    /// A Git cache checkout resolves to a different commit than the lock.
     CommitMismatch,
- /// Optional integrity hash differs from the current checkout.
+    /// Optional integrity hash differs from the current checkout.
     IntegrityMismatch,
 }
 
 /// One dependency-lock drift record.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DepMismatch {
- /// Dependency name (key under `[dependencies]`).
+    /// Dependency name (key under `[dependencies]`).
     pub name: String,
- /// Which kind of drift was detected.
+    /// Which kind of drift was detected.
     pub kind: DepMismatchKind,
- /// Human-readable detail (paths, expected vs actual, etc.).
+    /// Human-readable detail (paths, expected vs actual, etc.).
     pub detail: String,
 }
 
@@ -498,13 +498,13 @@ pub struct DepMismatch {
 /// and on-disk state ().
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DepVerifyReport {
- /// A lock file was present and parsed successfully.
+    /// A lock file was present and parsed successfully.
     pub present: bool,
- /// True when every dependency matches the manifest and on-disk state.
+    /// True when every dependency matches the manifest and on-disk state.
     pub consistent: bool,
- /// How many dependencies were checked.
+    /// How many dependencies were checked.
     pub checked: usize,
- /// Every drift record (empty when consistent).
+    /// Every drift record (empty when consistent).
     pub mismatches: Vec<DepMismatch>,
 }
 
@@ -552,7 +552,7 @@ pub fn compute_dependency_integrity(base_dir: &Path, dep: &crate::config::Depend
         return String::new();
     }
 
- // Local path dependency: hash the directory tree deterministically.
+    // Local path dependency: hash the directory tree deterministically.
     let path = dep.path.clone().unwrap_or_default();
     if path.is_empty() {
         return String::new();
@@ -564,7 +564,7 @@ pub fn compute_dependency_integrity(base_dir: &Path, dep: &crate::config::Depend
     use sha2::Digest;
     let mut hasher = sha2::Sha256::new();
     let mut files = Vec::new();
- // Recursive directory walk with only stable std APIs (no extra deps).
+    // Recursive directory walk with only stable std APIs (no extra deps).
     fn collect(dir: &Path, out: &mut Vec<std::path::PathBuf>) {
         if let Ok(entries) = std::fs::read_dir(dir) {
             for e in entries.flatten() {
@@ -615,9 +615,9 @@ pub fn compute_dependency_integrity(base_dir: &Path, dep: &crate::config::Depend
 /// dependency listed as `MissingInLock`. Network/registry access is never
 /// required — Git resolution reads only the local `.sdkt-cache` checkout.
 pub fn verify_dependencies(base_dir: &Path, config: &DevKitConfig) -> DepVerifyReport {
- // Reuse the existing manifest validator rather than re-implementing
- // dependency validation. If the manifest is malformed we still report the
- // lock state; the validator's error surfaces through the normal CLI path.
+    // Reuse the existing manifest validator rather than re-implementing
+    // dependency validation. If the manifest is malformed we still report the
+    // lock state; the validator's error surfaces through the normal CLI path.
     let _ = crate::package::validate_dependencies(base_dir, config);
 
     let Ok(lock) = read_lock(base_dir) else {
@@ -666,7 +666,7 @@ pub fn verify_dependencies(base_dir: &Path, config: &DevKitConfig) -> DepVerifyR
             continue;
         };
 
- // Source kind + locator.
+        // Source kind + locator.
         let lock_is_git = entry.source == "git";
         if is_git != lock_is_git {
             mismatches.push(DepMismatch {
@@ -702,7 +702,7 @@ pub fn verify_dependencies(base_dir: &Path, config: &DevKitConfig) -> DepVerifyR
                     ),
                 });
             }
- // Git cache presence + commit match (only meaningful once fetched).
+            // Git cache presence + commit match (only meaningful once fetched).
             if !entry.commit_sha.is_empty() {
                 let key = crate::fetch::git_cache_key(dep);
                 let checkout = base_dir.join(".sdkt-cache").join("git").join(&key);
@@ -725,7 +725,7 @@ pub fn verify_dependencies(base_dir: &Path, config: &DevKitConfig) -> DepVerifyR
                             ),
                         });
                     }
- // Optional integrity check.
+                    // Optional integrity check.
                     if !entry.integrity.is_empty() {
                         let current = compute_dependency_integrity(base_dir, dep);
                         if !current.is_empty() && current != entry.integrity {
@@ -742,7 +742,7 @@ pub fn verify_dependencies(base_dir: &Path, config: &DevKitConfig) -> DepVerifyR
                 }
             }
         } else {
- // Local path dependency: locator match + existence.
+            // Local path dependency: locator match + existence.
             let resolved = base_dir
                 .join(dep.path.clone().unwrap_or_default())
                 .to_string_lossy()
@@ -766,7 +766,7 @@ pub fn verify_dependencies(base_dir: &Path, config: &DevKitConfig) -> DepVerifyR
         }
     }
 
- // Locked deps that no longer appear in the manifest.
+    // Locked deps that no longer appear in the manifest.
     for entry in &lock.dependencies {
         if !config.dependencies.contains_key(&entry.name) {
             mismatches.push(DepMismatch {
@@ -818,7 +818,7 @@ mod tests {
 
     #[test]
     fn compute_sha256_known_vector() {
- // SHA-256 of empty input.
+        // SHA-256 of empty input.
         let dir = std::env::temp_dir().join("sdkt_lock_test_empty");
         let _ = fs::remove_dir_all(&dir);
         fs::create_dir_all(&dir).unwrap();
@@ -865,7 +865,7 @@ mod tests {
 
         let lock = generate_lock(&root, &config).unwrap();
         assert_eq!(lock.version, LOCK_VERSION);
- // router depends on token => token deployed first.
+        // router depends on token => token deployed first.
         assert_eq!(
             lock.deploy_order,
             vec!["token".to_string(), "router".to_string()]
@@ -881,12 +881,12 @@ mod tests {
         assert_eq!(router_entry.order, 1);
         assert_eq!(router_entry.artifact, router_wasm.to_string_lossy());
 
- // Round-trip TOML.
+        // Round-trip TOML.
         let toml = lock_to_toml(&lock).unwrap();
         let parsed = lock_from_toml(&toml).unwrap();
         assert_eq!(parsed, lock);
 
- // Write + read round-trip.
+        // Write + read round-trip.
         let written = write_lock(&root, &lock).unwrap();
         assert!(written.exists());
         let reread = read_lock(&root).unwrap();
@@ -943,20 +943,20 @@ mod tests {
         let lock = generate_lock(&root, &config).unwrap();
         write_lock(&root, &lock).unwrap();
 
- // Initial verify: consistent.
+        // Initial verify: consistent.
         let report = verify_lock(&root, &config);
         assert!(report.present);
         assert!(report.consistent);
         assert!(report.mismatched.is_empty());
 
- // Mutate the artifact on disk => mismatch.
+        // Mutate the artifact on disk => mismatch.
         write_temp_wasm(&token, "token.wasm", b"tampered");
         let report = verify_lock(&root, &config);
         assert!(report.present);
         assert!(!report.consistent);
         assert_eq!(report.mismatched, vec!["token".to_string()]);
 
- // Remove the artifact entirely => mismatch.
+        // Remove the artifact entirely => mismatch.
         let _ = fs::remove_file(&token_wasm);
         let report = verify_lock(&root, &config);
         assert!(report.mismatched.contains(&"token".to_string()));
@@ -1022,7 +1022,7 @@ mod tests {
         assert_eq!(token.resolved_reference, "v1.2.0");
         assert!(token.commit_sha.is_empty());
 
- // Round-trips through the lock file TOML (empty commit_sha omitted).
+        // Round-trips through the lock file TOML (empty commit_sha omitted).
         let lock = LockFile {
             version: LOCK_VERSION,
             deploy_order: vec![],
@@ -1071,7 +1071,7 @@ mod tests {
             root.join("libs/math").to_string_lossy()
         );
 
- // Round-trip via lock file TOML, including new fields.
+        // Round-trip via lock file TOML, including new fields.
         let lock = LockFile {
             version: LOCK_VERSION,
             deploy_order: vec![],
@@ -1089,7 +1089,7 @@ mod tests {
         let _ = fs::remove_dir_all(&root);
         fs::create_dir_all(&root).unwrap();
 
- // Local path dependency that exists on disk.
+        // Local path dependency that exists on disk.
         let lp = root.join("libs/math");
         fs::create_dir_all(&lp).unwrap();
         fs::write(lp.join("lib.rs"), b"pub fn add(a:u32,b:u32)->u32{a+b}").unwrap();
@@ -1104,7 +1104,7 @@ mod tests {
         );
         let config = config_with_deps(deps);
 
- // No lock yet -> MissingInLock for every dependency.
+        // No lock yet -> MissingInLock for every dependency.
         let rep = verify_dependencies(&root, &config);
         assert!(!rep.present);
         assert!(!rep.consistent);
@@ -1112,7 +1112,7 @@ mod tests {
         assert_eq!(rep.mismatches.len(), 1);
         assert_eq!(rep.mismatches[0].kind, DepMismatchKind::MissingInLock);
 
- // Write a matching lock, then verification is consistent.
+        // Write a matching lock, then verification is consistent.
         let lock = LockFile {
             version: LOCK_VERSION,
             deploy_order: vec![],
@@ -1155,7 +1155,7 @@ mod tests {
         };
         write_lock(&root, &lock).unwrap();
 
- // Delete the path dependency -> PathMissing.
+        // Delete the path dependency -> PathMissing.
         let _ = fs::remove_dir_all(&lp);
         let rep = verify_dependencies(&root, &config);
         assert!(!rep.consistent);
@@ -1164,7 +1164,7 @@ mod tests {
             .iter()
             .any(|m| m.kind == DepMismatchKind::PathMissing));
 
- // Restore; then change the manifest path -> SourceChanged.
+        // Restore; then change the manifest path -> SourceChanged.
         fs::create_dir_all(&lp).unwrap();
         let mut deps2 = HashMap::new();
         deps2.insert(
@@ -1182,7 +1182,7 @@ mod tests {
             .iter()
             .any(|m| m.kind == DepMismatchKind::SourceChanged));
 
- // Lock records a dep absent from the manifest -> NotInManifest.
+        // Lock records a dep absent from the manifest -> NotInManifest.
         let mut deps3 = HashMap::new();
         deps3.insert(
             "stale".to_string(),
@@ -1219,7 +1219,7 @@ mod tests {
         );
         let config = config_with_deps(deps);
 
- // Lock claims a resolved commit but cache is absent -> CacheMissing.
+        // Lock claims a resolved commit but cache is absent -> CacheMissing.
         let mut lock_dep = lock_dependencies(&root, &config.dependencies);
         lock_dep[0].commit_sha = "deadbeef".repeat(5); // 40 hex chars
         let lock = LockFile {
@@ -1240,8 +1240,8 @@ mod tests {
         let _ = fs::remove_dir_all(&root);
     }
 
- // Helper: build a DevKitConfig with only package dependencies (no contracts),
- // reusing the existing minimal config builder.
+    // Helper: build a DevKitConfig with only package dependencies (no contracts),
+    // reusing the existing minimal config builder.
     fn config_with_deps(dependencies: HashMap<String, Dependency>) -> DevKitConfig {
         DevKitConfig {
             network: NetworkConfig::default(),

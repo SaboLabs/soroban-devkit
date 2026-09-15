@@ -38,18 +38,18 @@ pub async fn deploy_contract(
         return Err(RpcError::Rpc("WASM bytes are empty".into()));
     }
 
- // Parse metadata to get hash (reuse sdkt-wasm)
+    // Parse metadata to get hash (reuse sdkt-wasm)
     let meta = parse_metadata(wasm_bytes)
         .map_err(|e| RpcError::Rpc(format!("Failed to parse WASM metadata: {}", e)))?;
     let wasm_hash = meta.hash.clone();
 
- // For , we run the upload + instantiate workflow.
- // Real implementation would build `UploadContractWasm` + `InstantiateContract`
- // envelopes via sdkt-xdr, submit via submission.rs, poll for settlement.
- // Here we produce the structured result representing the deployment engine output.
+    // For , we run the upload + instantiate workflow.
+    // Real implementation would build `UploadContractWasm` + `InstantiateContract`
+    // envelopes via sdkt-xdr, submit via submission.rs, poll for settlement.
+    // Here we produce the structured result representing the deployment engine output.
     let upload_hash = wasm_hash.clone();
 
- // Instantiate result derived from salt + wasm hash (mock contract id)
+    // Instantiate result derived from salt + wasm hash (mock contract id)
     let contract_id = format!(
         "C{}{}",
         salt_hex,

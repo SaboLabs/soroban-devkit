@@ -16,17 +16,17 @@ use stellar_xdr::{
 
 /// Parameters for building a basic contract invocation transaction.
 pub struct InvokeTransactionParams {
- /// Source account public key (G...)
+    /// Source account public key (G...)
     pub source_account: String,
- /// Next sequence number for the source account
+    /// Next sequence number for the source account
     pub sequence: i64,
- /// Transaction fee in stroops
+    /// Transaction fee in stroops
     pub fee: u32,
- /// Contract ID to invoke (C...)
+    /// Contract ID to invoke (C...)
     pub contract_id: String,
- /// Function name
+    /// Function name
     pub function: String,
- /// Optional arguments (as pre-encoded ScVal base64 strings)
+    /// Optional arguments (as pre-encoded ScVal base64 strings)
     pub args: Vec<String>,
 }
 
@@ -61,7 +61,7 @@ pub fn build_invoke_transaction(params: &InvokeTransactionParams) -> Result<Stri
     let source_account = decode_account_id(&params.source_account)?;
     let contract_hash = decode_contract_id(&params.contract_id)?;
 
- // Parse ScVal args from Base64
+    // Parse ScVal args from Base64
     let mut scval_args = Vec::new();
     for arg_b64 in &params.args {
         let raw = STANDARD.decode(arg_b64)?;
@@ -170,10 +170,10 @@ mod tests {
 
         let envelope = build_invoke_transaction(&params).unwrap();
 
- // Ensure it encodes to base64
+        // Ensure it encodes to base64
         let raw = STANDARD.decode(&envelope).unwrap();
 
- // We can parse it back
+        // We can parse it back
         let mut cursor = std::io::Cursor::new(&raw);
         let mut l = stellar_xdr::Limited::new(&mut cursor, stellar_xdr::Limits::none());
         let env = TransactionEnvelope::read_xdr(&mut l).unwrap();
@@ -189,7 +189,7 @@ mod tests {
 
     #[test]
     fn test_build_invoke_transaction_with_args() {
- // ScVal::I32(42) base64 encoded
+        // ScVal::I32(42) base64 encoded
         let arg_b64 = "AAAABAAAACo=";
 
         let params = InvokeTransactionParams {

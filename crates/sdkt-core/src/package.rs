@@ -21,41 +21,41 @@ use std::path::{Path, PathBuf};
 /// Errors raised while validating a local package manifest/dependency graph.
 #[derive(Debug, PartialEq)]
 pub enum PackageError {
- /// The `[package]` section is absent, but a manifest operation needs it.
+    /// The `[package]` section is absent, but a manifest operation needs it.
     MissingPackage,
- /// `[package]` has no `name`.
+    /// `[package]` has no `name`.
     MissingName,
- /// `[package]` has no `version`.
+    /// `[package]` has no `version`.
     MissingVersion,
- /// `[package].version` is not a valid semver (`MAJOR.MINOR.PATCH[...]`).
+    /// `[package].version` is not a valid semver (`MAJOR.MINOR.PATCH[...]`).
     InvalidVersion(String),
- /// A `[dependencies]` entry has no `path` (the only supported source).
+    /// A `[dependencies]` entry has no `path` (the only supported source).
     MissingPath(String),
- /// A `[dependencies]` entry references an unknown/non-path key (e.g. `git`).
+    /// A `[dependencies]` entry references an unknown/non-path key (e.g. `git`).
     UnsupportedSource(String),
- /// A dependency name is also a declared package (self-dependency).
+    /// A dependency name is also a declared package (self-dependency).
     SelfDependency(String),
- /// The dependency graph contains a cycle.
+    /// The dependency graph contains a cycle.
     CircularDependency(String),
- /// The dependency graph declares the same dependency more than once.
+    /// The dependency graph declares the same dependency more than once.
     DuplicateDependency(String),
- /// A dependency's `path` does not exist on disk.
+    /// A dependency's `path` does not exist on disk.
     PathNotFound(String),
- /// A dependency declares both a `path` and a `git` source.
+    /// A dependency declares both a `path` and a `git` source.
     MixedSources(String),
- /// A `git` dependency is missing its URL.
+    /// A `git` dependency is missing its URL.
     MissingGitUrl(String),
- /// A `git` dependency URL is not a valid URL.
+    /// A `git` dependency URL is not a valid URL.
     InvalidGitUrl(String),
- /// A `git` dependency URL uses an unsupported scheme (only `https`/`http`/`git`/`ssh`).
+    /// A `git` dependency URL uses an unsupported scheme (only `https`/`http`/`git`/`ssh`).
     UnsupportedUrlScheme(String),
- /// A `git` dependency specifies more than one of `branch`/`tag`/`rev`.
+    /// A `git` dependency specifies more than one of `branch`/`tag`/`rev`.
     MultipleGitRefs(String),
- /// A `git` dependency specifies none of `branch`/`tag`/`rev`.
+    /// A `git` dependency specifies none of `branch`/`tag`/`rev`.
     MissingGitRef(String),
- /// A `git` dependency's `branch`/`tag`/`rev` value is empty.
+    /// A `git` dependency's `branch`/`tag`/`rev` value is empty.
     EmptyGitRef(String),
- /// Generic error carrying a free-form message (used by packaging I/O).
+    /// Generic error carrying a free-form message (used by packaging I/O).
     Other(String),
 }
 
@@ -180,7 +180,7 @@ pub fn best_version_match(tags: &[(String, String)], constraint: &str) -> Option
     let req = VersionReq::parse(constraint).ok()?;
     let mut best: Option<(Version, (String, String))> = None;
     for (tag, commit) in tags {
- // Strip a leading "v" so `v1.2.0` parses as `1.2.0`.
+        // Strip a leading "v" so `v1.2.0` parses as `1.2.0`.
         let bare = tag.strip_prefix('v').unwrap_or(tag);
         let ver = match Version::parse(bare) {
             Ok(v) => v,
@@ -216,7 +216,7 @@ pub fn validate_version_format(version: &str) -> Result<(), PackageError> {
         if p.is_empty() || !p.chars().all(|c| c.is_ascii_digit()) {
             return Err(PackageError::InvalidVersion(version.to_string()));
         }
- // Reject leading zeros (semver: "01" is invalid, "0" is fine).
+        // Reject leading zeros (semver: "01" is invalid, "0" is fine).
         if p.len() > 1 && p.starts_with('0') {
             return Err(PackageError::InvalidVersion(version.to_string()));
         }
@@ -339,17 +339,17 @@ pub fn validate_dependencies(base_dir: &Path, config: &DevKitConfig) -> Result<(
                 }
                 validate_git_url(url)?;
 
- // Exactly one of branch/tag/rev, none empty — UNLESS a
- // `version` constraint is declared (), in which case the
- // constraint resolves against remote tags and no explicit ref
- // is required. An explicit ref always takes precedence and
- // makes the `version` constraint inert.
+                // Exactly one of branch/tag/rev, none empty — UNLESS a
+                // `version` constraint is declared (), in which case the
+                // constraint resolves against remote tags and no explicit ref
+                // is required. An explicit ref always takes precedence and
+                // makes the `version` constraint inert.
                 let has_ref = dep.branch.is_some() || dep.tag.is_some() || dep.rev.is_some();
                 if !has_ref {
                     if let Some(ver) = &dep.version {
- // A `version` constraint (), e.g. ">=1.0, <2". It is
- // a semver *requirement* (VersionReq), NOT a fixed
- // MAJOR.MINOR.PATCH version — validate it parses as such.
+                        // A `version` constraint (), e.g. ">=1.0, <2". It is
+                        // a semver *requirement* (VersionReq), NOT a fixed
+                        // MAJOR.MINOR.PATCH version — validate it parses as such.
                         if semver::VersionReq::parse(ver).is_err() {
                             return Err(PackageError::InvalidVersion(ver.clone()));
                         }
@@ -357,10 +357,10 @@ pub fn validate_dependencies(base_dir: &Path, config: &DevKitConfig) -> Result<(
                         return Err(PackageError::MissingGitRef(name.clone()));
                     }
                 } else {
- // Exactly one of branch/tag/rev may be set. A `version`
- // constraint co-declared with a ref is allowed (the ref
- // wins and the constraint becomes inert); only ref + ref
- // is rejected.
+                    // Exactly one of branch/tag/rev may be set. A `version`
+                    // constraint co-declared with a ref is allowed (the ref
+                    // wins and the constraint becomes inert); only ref + ref
+                    // is rejected.
                     let ref_count = dep.branch.is_some() as u8
                         + dep.tag.is_some() as u8
                         + dep.rev.is_some() as u8;
@@ -412,7 +412,7 @@ pub fn validate_git_url(url: &str) -> Result<(), PackageError> {
         return Err(PackageError::InvalidGitUrl(url.to_string()));
     }
 
- // SCP-like form: git@host:org/repo
+    // SCP-like form: git@host:org/repo
     if let Some(rest) = trimmed.strip_prefix("git@") {
         let (host, _) = rest
             .split_once(':')
@@ -423,7 +423,7 @@ pub fn validate_git_url(url: &str) -> Result<(), PackageError> {
         return Ok(());
     }
 
- // scheme://host/... form.
+    // scheme://host/... form.
     if let Some((scheme, rest)) = trimmed.split_once("://") {
         match scheme {
             "https" | "http" | "git" | "ssh" => {}
@@ -436,12 +436,12 @@ pub fn validate_git_url(url: &str) -> Result<(), PackageError> {
         return Ok(());
     }
 
- // Local path form: an absolute filesystem path (platform-native, e.g.
- // `/abs/path` on Unix or `C:\abs\path` on Windows), or a relative /
- // home-anchored path (`./rel`, `../rel`, `~/path`). `git clone` accepts
- // these directly. Reject bare hosts with no scheme and no path anchor
- // (e.g. `github.com/org/repo` without a scheme), which `git` would not
- // interpret as a local repository.
+    // Local path form: an absolute filesystem path (platform-native, e.g.
+    // `/abs/path` on Unix or `C:\abs\path` on Windows), or a relative /
+    // home-anchored path (`./rel`, `../rel`, `~/path`). `git clone` accepts
+    // these directly. Reject bare hosts with no scheme and no path anchor
+    // (e.g. `github.com/org/repo` without a scheme), which `git` would not
+    // interpret as a local repository.
     if Path::new(trimmed).is_absolute() || trimmed.starts_with('.') || trimmed.starts_with('~') {
         return Ok(());
     }
@@ -491,23 +491,23 @@ use std::time::{SystemTime, UNIX_EPOCH};
 /// hash computed by [`crate::lock::compute_dependency_integrity`].
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
 pub struct BundleEntry {
- /// Dependency name (key under `[dependencies]`).
+    /// Dependency name (key under `[dependencies]`).
     pub name: String,
- /// Source kind: `local` or `git`.
+    /// Source kind: `local` or `git`.
     pub source: String,
- /// Git remote URL (empty for local path deps).
+    /// Git remote URL (empty for local path deps).
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub git_url: String,
- /// Resolved commit SHA (empty for local path deps / not-yet-fetched).
+    /// Resolved commit SHA (empty for local path deps / not-yet-fetched).
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub commit_sha: String,
- /// Integrity hash ("sha256:<hex>") of the cached checkout's tracked tree.
+    /// Integrity hash ("sha256:<hex>") of the cached checkout's tracked tree.
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub integrity: String,
- /// Cache key used by [`crate::fetch::git_cache_key`] (git deps only).
+    /// Cache key used by [`crate::fetch::git_cache_key`] (git deps only).
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub cache_key: String,
- /// Declared `version` constraint (), if any.
+    /// Declared `version` constraint (), if any.
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub version: String,
 }
@@ -519,21 +519,21 @@ pub struct BundleEntry {
 /// `sdkt.lock` and per-dependency integrity hashes exactly.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
 pub struct PackageBundle {
- /// Schema marker for the descriptor.
+    /// Schema marker for the descriptor.
     pub schema: String,
- /// Package name (from `[package]`).
+    /// Package name (from `[package]`).
     pub name: String,
- /// Package version (from `[package]`).
+    /// Package version (from `[package]`).
     pub version: String,
- /// Artifact format: `tar.zst` or `dir`.
+    /// Artifact format: `tar.zst` or `dir`.
     pub format: String,
- /// Path to the produced artifact (file or directory).
+    /// Path to the produced artifact (file or directory).
     pub out_path: String,
- /// sha256 of the bundled `sdkt.lock` bytes (verifies lock equivalence).
+    /// sha256 of the bundled `sdkt.lock` bytes (verifies lock equivalence).
     pub lock_sha256: String,
- /// Per-dependency resolved entries (for offline reconstruct + verify).
+    /// Per-dependency resolved entries (for offline reconstruct + verify).
     pub entries: Vec<BundleEntry>,
- /// Bundle creation timestamp (Unix seconds; no external time crate).
+    /// Bundle creation timestamp (Unix seconds; no external time crate).
     pub created_at: u64,
 }
 
@@ -543,9 +543,9 @@ pub struct PackageBundle {
 /// its pass state and a human-readable detail, so the CLI can render a plan.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PublishReadiness {
- /// True when the package is ready to publish (all checks passed).
+    /// True when the package is ready to publish (all checks passed).
     pub ready: bool,
- /// `(check_name, passed, detail)` for every readiness gate.
+    /// `(check_name, passed, detail)` for every readiness gate.
     pub checks: Vec<(String, bool, String)>,
 }
 
@@ -646,7 +646,7 @@ pub fn pack(base: &Path, out: &Path, format: &str) -> Result<PackageBundle, Pack
         .map_err(|e| PackageError::Other(format!("parse sdkt.lock: {}", e)))?;
 
     let staging = out.join(format!("{}-{}", name, version));
- // Clean any prior staging dir of the same name.
+    // Clean any prior staging dir of the same name.
     if staging.exists() {
         std::fs::remove_dir_all(&staging).map_err(|e| {
             PackageError::Other(format!("clean staging {}: {}", staging.display(), e))
@@ -655,7 +655,7 @@ pub fn pack(base: &Path, out: &Path, format: &str) -> Result<PackageBundle, Pack
     std::fs::create_dir_all(&staging)
         .map_err(|e| PackageError::Other(format!("create staging {}: {}", staging.display(), e)))?;
 
- // Copy manifest + lock into the staging root.
+    // Copy manifest + lock into the staging root.
     std::fs::copy(base.join(".sdkt.toml"), staging.join(".sdkt.toml"))
         .map_err(|e| PackageError::Other(format!("copy .sdkt.toml: {}", e)))?;
     std::fs::write(staging.join("sdkt.lock"), &lock_bytes)
@@ -676,8 +676,8 @@ pub fn pack(base: &Path, out: &Path, format: &str) -> Result<PackageBundle, Pack
             }
             _ => (String::new(), None),
         };
- // Stage the git checkout (local path deps are not in the cache; the plan
- // bundles only the resolved git checkouts — see milestone-38-plan.md §2).
+        // Stage the git checkout (local path deps are not in the cache; the plan
+        // bundles only the resolved git checkouts — see milestone-38-plan.md §2).
         if let Some(checkout) = src_checkout {
             if checkout.join(".git").exists() {
                 let dst = staging.join(".sdkt-cache").join("git").join(&cache_key);
@@ -711,7 +711,7 @@ pub fn pack(base: &Path, out: &Path, format: &str) -> Result<PackageBundle, Pack
     };
     bundle.write_descriptor(&staging)?;
 
- // Materialize the final artifact.
+    // Materialize the final artifact.
     let final_out_path: PathBuf = if format == "tar.zst" {
         let tar_path = out.join(format!("{}-{}.tar.zst", bundle.name, bundle.version));
         {
@@ -732,7 +732,7 @@ pub fn pack(base: &Path, out: &Path, format: &str) -> Result<PackageBundle, Pack
                     .map_err(|e| PackageError::Other(format!("zstd finish: {}", e)))?;
             }
         }
- // Remove the staging dir; keep only the tarball.
+        // Remove the staging dir; keep only the tarball.
         std::fs::remove_dir_all(&staging).map_err(|e| {
             PackageError::Other(format!("clean staging {}: {}", staging.display(), e))
         })?;
@@ -754,7 +754,7 @@ pub fn pack(base: &Path, out: &Path, format: &str) -> Result<PackageBundle, Pack
 pub fn publish_plan(base: &Path, config: &DevKitConfig) -> Result<PublishReadiness, PackageError> {
     let mut checks: Vec<(String, bool, String)> = Vec::new();
 
- // 1) Manifest validity (reuses the existing validator).
+    // 1) Manifest validity (reuses the existing validator).
     match validate_manifest(base, config) {
         Ok(()) => checks.push((
             "manifest-valid".to_string(),
@@ -768,7 +768,7 @@ pub fn publish_plan(base: &Path, config: &DevKitConfig) -> Result<PublishReadine
         )),
     }
 
- // 2) Lock presence + consistency (reuses verify_dependencies).
+    // 2) Lock presence + consistency (reuses verify_dependencies).
     let report = crate::lock::verify_dependencies(base, config);
     checks.push((
         "lock-present".to_string(),
@@ -789,7 +789,7 @@ pub fn publish_plan(base: &Path, config: &DevKitConfig) -> Result<PublishReadine
         },
     ));
 
- // 3) Per-dependency drift detail (cache missing / integrity / commit / ref).
+    // 3) Per-dependency drift detail (cache missing / integrity / commit / ref).
     for m in &report.mismatches {
         let detail = match m.kind {
             crate::lock::DepMismatchKind::CacheMissing => {
@@ -883,7 +883,7 @@ pub fn unpack(artifact: &Path, dest: &Path) -> Result<PathBuf, PackageError> {
         ar.unpack(dest)
             .map_err(|e| PackageError::Other(format!("tar extract: {}", e)))?;
     } else {
- // Directory-format bundle: copy its contents into `dest`.
+        // Directory-format bundle: copy its contents into `dest`.
         copy_dir_contents(artifact, dest)?;
     }
     Ok(dest.to_path_buf())
@@ -1069,8 +1069,8 @@ mod tests {
 
     #[test]
     fn test_unsupported_source_no_longer_rejected_at_parse() {
- // Since `git` is a known dependency field, so the manifest
- // parses. Validation then rejects it because it lacks a reference.
+        // Since `git` is a known dependency field, so the manifest
+        // parses. Validation then rejects it because it lacks a reference.
         let toml_data = "\
 [package]\nname = \"my-token\"\nversion = \"0.1.0\"\n\n[dependencies.math]\ngit = \"https://github.com/example/math\"\n";
         let parsed = parse_manifest(toml_data);
@@ -1096,7 +1096,7 @@ mod tests {
 
     #[test]
     fn test_validate_git_url_accepts_and_rejects() {
- // A platform-absolute local path (used by offline/hermetic tests).
+        // A platform-absolute local path (used by offline/hermetic tests).
         let abs_local = std::env::temp_dir()
             .join("sdkt-local-repo")
             .to_string_lossy()
@@ -1312,7 +1312,7 @@ mod tests {
         let _ = std::fs::remove_dir_all(&tmp);
     }
 
- // --- packaging / publish-readiness tests ----------------------------
+    // --- packaging / publish-readiness tests ----------------------------
 
     fn git_repo_with_tag(dir: &Path, tag: &str) -> String {
         std::fs::create_dir_all(dir)
@@ -1348,8 +1348,8 @@ mod tests {
         String::from_utf8_lossy(&o.stdout).trim().to_string()
     }
 
- /// Build a project at `base` with one git dependency (tagged local repo),
- /// fetch it into `.sdkt-cache`, and write `sdkt.lock`. Returns the config.
+    /// Build a project at `base` with one git dependency (tagged local repo),
+    /// fetch it into `.sdkt-cache`, and write `sdkt.lock`. Returns the config.
     fn setup_packed_project(base: &Path, dep_url: &str) -> DevKitConfig {
         let pkg = DevKitConfig {
             package: Some(PackageConfig {
@@ -1379,13 +1379,13 @@ mod tests {
         )
         .unwrap();
 
- // Fetch the dependency into the project cache.
+        // Fetch the dependency into the project cache.
         let cache = crate::fetch::GitFetcher::new(base.join(".sdkt-cache"));
         let outcome = cache
             .fetch("math", &pkg.dependencies["math"], false)
             .unwrap();
 
- // Write the lock (reuses the single lock writer).
+        // Write the lock (reuses the single lock writer).
         let lock = crate::lock::LockFile {
             version: crate::lock::LOCK_VERSION,
             deploy_order: vec![],
@@ -1418,7 +1418,7 @@ mod tests {
         assert!(reconstructed.join("sdkt.lock").exists());
         assert!(reconstructed.join("package.json").exists());
 
- // The reconstructed tree must reproduce the lock + per-dep integrity.
+        // The reconstructed tree must reproduce the lock + per-dep integrity.
         assert!(
             verify_bundle_equivalence(&reconstructed, &bundle).unwrap(),
             "dir round-trip must preserve lock + integrity"
@@ -1445,7 +1445,7 @@ mod tests {
         assert!(tarball.exists(), "tarball must exist");
         assert!(tarball.to_string_lossy().ends_with(".tar.zst"));
 
- // Reconstruct from the tarball and verify equivalence via the embedded
+        // Reconstruct from the tarball and verify equivalence via the embedded
         // `package.json` descriptor (no double-pack).
         let reconstruct = temp_dir("m38-reconstruct-tar");
         let _ = crate::package::unpack(tarball, &reconstruct).expect("unpack");
@@ -1492,7 +1492,7 @@ mod tests {
             "consistent project must be ready: {:?}",
             readiness.checks
         );
- // Every gate passes.
+        // Every gate passes.
         assert!(readiness.checks.iter().all(|(_, ok, _)| *ok));
 
         let _ = std::fs::remove_dir_all(&src);
@@ -1507,7 +1507,7 @@ mod tests {
         let base = temp_dir("m38-base-drift");
         let cfg = setup_packed_project(&base, &url);
 
- // Remove the cached git checkout to simulate drift.
+        // Remove the cached git checkout to simulate drift.
         let key = crate::fetch::git_cache_key(&cfg.dependencies["math"]);
         let checkout = base.join(".sdkt-cache").join("git").join(&key);
         assert!(checkout.exists());

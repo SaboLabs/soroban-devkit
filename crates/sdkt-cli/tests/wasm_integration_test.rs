@@ -81,7 +81,7 @@ fn test_cli_wasm_inspect_invalid_wasm() {
 #[test]
 fn test_cli_wasm_inspect_valid_empty_wasm() {
     let tmp = tempfile::NamedTempFile::new().unwrap();
- // A minimal valid WASM binary (magic + version 1)
+    // A minimal valid WASM binary (magic + version 1)
     std::fs::write(tmp.path(), [0x00, 0x61, 0x73, 0x6d, 0x01, 0x00, 0x00, 0x00]).unwrap();
 
     let mut cmd = Command::cargo_bin("sdkt").unwrap();
@@ -116,7 +116,7 @@ fn test_cli_wasm_metadata_missing_contract() {
     let assert = cmd
         .arg("wasm")
         .arg("metadata")
- // No --contract
+        // No --contract
         .assert();
     assert.failure();
 }

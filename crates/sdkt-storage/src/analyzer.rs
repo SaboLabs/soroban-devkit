@@ -163,7 +163,7 @@ mod tests {
     }
 
     fn contract_address() -> ScAddress {
- // All-zero contract address (valid XDR shape, value irrelevant for classification).
+        // All-zero contract address (valid XDR shape, value irrelevant for classification).
         ScAddress::Contract(stellar_xdr::ContractId(stellar_xdr::Hash([0u8; 32])))
     }
 

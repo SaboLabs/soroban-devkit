@@ -64,7 +64,7 @@ fn store_root_precedence_env_over_config_and_cwd() {
     set_store_root(tmp.path());
     let root = sdkt_audit::plugin_store::resolve_store_root();
     assert_eq!(root, tmp.path().to_path_buf());
- // Do NOT unset; other tests rely on the env being set.
+    // Do NOT unset; other tests rely on the env being set.
 }
 
 #[test]
@@ -123,7 +123,7 @@ fn kind_extension_mismatch_rejected() {
 #[test]
 fn store_root_fallback_without_env() {
     let _g = ENV_LOCK.lock().unwrap();
- // Remove the env var to exercise the fallback path
+    // Remove the env var to exercise the fallback path
     std::env::remove_var("SDKT_PLUGIN_DIR");
 
     let root = sdkt_audit::plugin_store::resolve_store_root();

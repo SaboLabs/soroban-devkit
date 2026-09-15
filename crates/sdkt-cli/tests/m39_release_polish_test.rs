@@ -18,7 +18,7 @@ fn sdkt() -> Command {
 
 /// Absolute path to the workspace root (parent of the crate manifest dir).
 fn workspace_root() -> PathBuf {
- // CARGO_MANIFEST_DIR for this integration test is crates/sdkt-cli.
+    // CARGO_MANIFEST_DIR for this integration test is crates/sdkt-cli.
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .parent()
         .expect("crate dir has parent")
@@ -29,23 +29,23 @@ fn workspace_root() -> PathBuf {
 
 #[test]
 fn version_is_semver_without_provenance() {
- // Default build: --version must be exactly the semantic version (no commit/date).
+    // Default build: --version must be exactly the semantic version (no commit/date).
     sdkt()
         .arg("--version")
         .assert()
         .success()
         .stdout(predicate::str::contains("2.5.0"))
         .stdout(predicate::function(|s: &str| {
- // No provenance suffix leaked into the default build.
+            // No provenance suffix leaked into the default build.
             !s.contains("commit") && !s.contains("built")
         }));
 }
 
 #[test]
 fn mutating_submit_refuses_mainnet_rpc_with_testnet_passphrase() {
- // Point at mainnet RPC but keep the default testnet passphrase. The guard
- // must reject before any network call (bogus envelope => only the guard
- // path is exercised, since the guard runs first).
+    // Point at mainnet RPC but keep the default testnet passphrase. The guard
+    // must reject before any network call (bogus envelope => only the guard
+    // path is exercised, since the guard runs first).
     sdkt()
         .args([
             "tx",
@@ -79,9 +79,9 @@ fn mutating_deploy_refuses_mainnet_rpc_with_testnet_passphrase() {
 
 #[test]
 fn mutating_submit_allows_testnet_default() {
- // Default network is testnet; with no explicit network the guard passes.
- // The command should then fail for a different, expected reason (bad
- // envelope / network) — not the mainnet-safety guard.
+    // Default network is testnet; with no explicit network the guard passes.
+    // The command should then fail for a different, expected reason (bad
+    // envelope / network) — not the mainnet-safety guard.
     let out = sdkt()
         .args(["tx", "submit", "--envelope", "AAAA"])
         .output()
@@ -100,9 +100,9 @@ fn mutating_submit_allows_testnet_default() {
 
 #[test]
 fn mutating_submit_allows_explicit_mainnet_with_matching_passphrase() {
- // Explicitly selecting mainnet with the matching passphrase is permitted by
- // the guard (the command may still fail downstream for other reasons, but
- // not due to the safety guard).
+    // Explicitly selecting mainnet with the matching passphrase is permitted by
+    // the guard (the command may still fail downstream for other reasons, but
+    // not due to the safety guard).
     let out = sdkt()
         .args([
             "tx",
@@ -130,13 +130,10 @@ fn mutating_submit_allows_explicit_mainnet_with_matching_passphrase() {
 
 #[test]
 fn m39_deliverable_files_present() {
- // The deliverables include a Dockerfile + .dockerignore. The SCF
- // positioning doc was later archived to docs/archive/ (see #29).
+    // The deliverables include a Dockerfile + .dockerignore. The SCF
+    // positioning doc was later archived to docs/archive/ (see #29).
     let root = workspace_root();
-    assert!(
-        root.join("Dockerfile").exists(),
-        "Dockerfile must exist "
-    );
+    assert!(root.join("Dockerfile").exists(), "Dockerfile must exist ");
     assert!(
         root.join(".dockerignore").exists(),
         ".dockerignore must exist "

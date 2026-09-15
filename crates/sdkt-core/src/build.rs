@@ -54,8 +54,8 @@ pub fn build_workspace(config: &DevKitConfig) -> Result<Vec<BuildResult>, BuildE
         return Err(BuildError::MissingConfig);
     }
 
- // 4.2 — validate + order via the single shared resolver. This ensures
- // build, deploy, and lock generation all use the same resolved graph.
+    // 4.2 — validate + order via the single shared resolver. This ensures
+    // build, deploy, and lock generation all use the same resolved graph.
     let ordered = crate::project::resolve_deploy_order(config)
         .map_err(|e| BuildError::InvalidProject(e.to_string()))?;
 
@@ -72,7 +72,7 @@ pub fn build_workspace(config: &DevKitConfig) -> Result<Vec<BuildResult>, BuildE
             return Err(BuildError::PathNotFound(contract_cfg.path.clone()));
         }
 
- // Execute cargo build
+        // Execute cargo build
         let output = Command::new("cargo")
             .arg("build")
             .arg("--target")
@@ -92,11 +92,11 @@ pub fn build_workspace(config: &DevKitConfig) -> Result<Vec<BuildResult>, BuildE
             });
         }
 
- // We assume a standard Soroban project structure where Cargo.toml has a package name.
- // For sdkt build, we will attempt to extract the expected artifact name from Cargo.toml,
+        // We assume a standard Soroban project structure where Cargo.toml has a package name.
+        // For sdkt build, we will attempt to extract the expected artifact name from Cargo.toml,
         // or just glob the target/wasm32-unknown-unknown/release/*.wasm dir.
         // For stability without adding `cargo-metadata` dependency, we will look for any .wasm file
- // generated in the release directory.
+        // generated in the release directory.
         let target_dir = path
             .join("target")
             .join("wasm32-unknown-unknown")
@@ -125,10 +125,10 @@ pub fn build_workspace(config: &DevKitConfig) -> Result<Vec<BuildResult>, BuildE
         });
     }
 
- // 4.1 — generate `sdkt.lock` next to `.sdkt.toml` recording every built
- // artifact's SHA-256 and the deterministic deploy order. Advisory only:
- // if lock generation fails (e.g. an artifact vanished between build and
- // hashing), surface a warning but do not fail the build.
+    // 4.1 — generate `sdkt.lock` next to `.sdkt.toml` recording every built
+    // artifact's SHA-256 and the deterministic deploy order. Advisory only:
+    // if lock generation fails (e.g. an artifact vanished between build and
+    // hashing), surface a warning but do not fail the build.
     if let Ok(lock) = crate::lock::generate_lock(Path::new("."), config) {
         match crate::lock::write_lock(Path::new("."), &lock) {
             Ok(path) => {

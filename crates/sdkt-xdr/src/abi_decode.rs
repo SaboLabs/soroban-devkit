@@ -9,13 +9,13 @@ use stellar_xdr::ScVal;
 /// Result of ABI-aware decoding.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AbiDecodedValue {
- /// Raw ScVal debug representation.
+    /// Raw ScVal debug representation.
     pub raw: String,
- /// Human-readable label (e.g., "event[transfer] -> from: G..., to: G..., amount: 100").
+    /// Human-readable label (e.g., "event[transfer] -> from: G..., to: G..., amount: 100").
     pub label: String,
- /// If matched to a specific ContractType/Event.
+    /// If matched to a specific ContractType/Event.
     pub matched_type: Option<String>,
- /// Structured key-value fields if decodable as a compound type.
+    /// Structured key-value fields if decodable as a compound type.
     pub fields: Option<Vec<(String, String)>>,
 }
 
@@ -31,10 +31,10 @@ pub fn decode_with_abi(
 ) -> AbiDecodedValue {
     let raw = format!("{:?}", val);
 
- // Try event-based decoding first
+    // Try event-based decoding first
     if let Some(event_name) = event_hint {
         if spec.events.iter().any(|e| e.name == event_name) {
- // Event found in ABI - we can provide better labeling
+            // Event found in ABI - we can provide better labeling
             return AbiDecodedValue {
                 raw: raw.clone(),
                 label: format!(
@@ -48,7 +48,7 @@ pub fn decode_with_abi(
         }
     }
 
- // Try to match against custom types (UDTs)
+    // Try to match against custom types (UDTs)
     for custom_type in &spec.custom_types {
         if let Some(fields) = extract_scval_fields(val, spec) {
             if !fields.is_empty() {
@@ -70,7 +70,7 @@ pub fn decode_with_abi(
         }
     }
 
- // Fallback: basic ScVal string representation
+    // Fallback: basic ScVal string representation
     AbiDecodedValue {
         raw: raw.clone(),
         label: decode_scval_to_string(val, spec),
@@ -108,7 +108,7 @@ fn decode_scval_to_string(val: &ScVal, _spec: &ContractSpec) -> String {
             let len = v.as_ref().map(|items| items.len()).unwrap_or(0);
             format!("vec(len={})", len)
         }
- // Note: MuxedAddress, Option, Result, Timepoint, Duration, Error are not direct ScVal variants in stellar-xdr 28; omitted for minimal scope.
+        // Note: MuxedAddress, Option, Result, Timepoint, Duration, Error are not direct ScVal variants in stellar-xdr 28; omitted for minimal scope.
         _ => format!("scval({:?})", val),
     }
 }
@@ -164,19 +164,19 @@ pub fn decode_event_topics(
 ) -> Vec<AbiDecodedValue> {
     let mut results = Vec::new();
 
- // Topic 0 is typically the event name (Symbol)
+    // Topic 0 is typically the event name (Symbol)
     let event_name = topics.first().and_then(|t| match t {
         ScVal::Symbol(s) => Some(s.to_utf8_string_lossy()),
         _ => None,
     });
 
- // Decode topics with event hint
+    // Decode topics with event hint
     for (i, topic) in topics.iter().enumerate() {
         let hint = if i == 0 { None } else { event_name.as_deref() };
         results.push(decode_with_abi(spec, topic, hint));
     }
 
- // Decode data values
+    // Decode data values
     for val in data {
         results.push(decode_with_abi(spec, val, event_name.as_deref()));
     }

@@ -43,29 +43,29 @@ use crate::plugin_abi::SDKT_AUDIT_ABI_MAJOR;
 /// Metadata stored in each plugin's `plugin.toml`.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct PluginMeta {
- /// Stable, namespaced plugin id (e.g. `author/name`).
+    /// Stable, namespaced plugin id (e.g. `author/name`).
     pub id: String,
- /// Human-readable name.
+    /// Human-readable name.
     pub name: String,
- /// Semver version of the plugin.
+    /// Semver version of the plugin.
     pub version: String,
- /// Plugin author / maintainer.
+    /// Plugin author / maintainer.
     pub author: String,
- /// Short description.
+    /// Short description.
     pub description: String,
     /// Artifact kind: `native` (`.so`/`.dylib`/`.dll`) or `wasm` (`.wasm`).
     pub kind: String,
- /// Artifact filename inside the plugin directory.
+    /// Artifact filename inside the plugin directory.
     pub artifact: String,
- /// Plugin ABI major version. Must equal the host [`SDKT_AUDIT_ABI_MAJOR`].
+    /// Plugin ABI major version. Must equal the host [`SDKT_AUDIT_ABI_MAJOR`].
     pub abi_major: u32,
- /// Plugin ABI minor version (informational).
+    /// Plugin ABI minor version (informational).
     pub abi_minor: u32,
 }
 
 impl PluginMeta {
- /// Validate the metadata invariants that do not require touching the
- /// artifact: id non-empty, kind recognized, abi_major matches the host.
+    /// Validate the metadata invariants that do not require touching the
+    /// artifact: id non-empty, kind recognized, abi_major matches the host.
     pub fn validate(&self) -> Result<(), StoreError> {
         if self.id.trim().is_empty() {
             return Err(StoreError::InvalidMetadata("id must not be empty".into()));
@@ -103,7 +103,7 @@ impl PluginMeta {
         Ok(())
     }
 
- /// Expected artifact extension for this kind.
+    /// Expected artifact extension for this kind.
     pub fn expected_ext(&self) -> &'static str {
         match self.kind.as_str() {
             "native" => "so", // validated loosely; see validate_kind_ext
@@ -379,7 +379,7 @@ pub fn resolve_store_root() -> PathBuf {
             return cfg;
         }
     }
- // Fallback to cwd/.sdkt/plugins (always computable, may not exist yet).
+    // Fallback to cwd/.sdkt/plugins (always computable, may not exist yet).
     std::env::current_dir()
         .unwrap_or_else(|_| PathBuf::from("."))
         .join(".sdkt")
@@ -486,9 +486,9 @@ fn validate_kind_ext(meta: &PluginMeta, artifact_path: &Path) -> Result<(), Stor
 /// Options for [`install`].
 #[derive(Debug, Default, Clone)]
 pub struct InstallOpts {
- /// Override the plugin id from metadata (rarely needed).
+    /// Override the plugin id from metadata (rarely needed).
     pub id: Option<String>,
- /// Overwrite an existing install of the same id.
+    /// Overwrite an existing install of the same id.
     pub force: bool,
 }
 
@@ -505,8 +505,8 @@ pub fn install(local_source: &Path, opts: &InstallOpts) -> Result<PluginMeta, St
         return Err(StoreError::RemoteUnsupported);
     }
 
- // Locate the plugin.toml: either next to the artifact, or the artifact
- // itself is the manifest? No — artifact is the binary; manifest is separate.
+    // Locate the plugin.toml: either next to the artifact, or the artifact
+    // itself is the manifest? No — artifact is the binary; manifest is separate.
     let source_dir = local_source
         .parent()
         .map(|p| p.to_path_buf())
@@ -526,8 +526,8 @@ pub fn install(local_source: &Path, opts: &InstallOpts) -> Result<PluginMeta, St
         return Err(StoreError::AlreadyInstalled(id));
     }
 
- // Optional dry-run load using the EXISTING loaders (feature-gated). This
- // reuses, never replaces, the / loading paths.
+    // Optional dry-run load using the EXISTING loaders (feature-gated). This
+    // reuses, never replaces, the / loading paths.
     #[cfg(feature = "plugins")]
     if meta.kind == "native" {
         crate::plugin_loader::PluginRule::load(local_source, "")
@@ -539,7 +539,7 @@ pub fn install(local_source: &Path, opts: &InstallOpts) -> Result<PluginMeta, St
             .map_err(|e| StoreError::DryRunLoad(e.to_string()))?;
     }
 
- // Commit: create dir, copy artifact + manifest.
+    // Commit: create dir, copy artifact + manifest.
     std::fs::create_dir_all(&dir)?;
     let dest_artifact = dir.join(&meta.artifact);
     std::fs::copy(local_source, &dest_artifact)?;
@@ -566,7 +566,7 @@ pub fn update(id: &str, local_source: &Path) -> Result<PluginMeta, StoreError> {
     {
         return Err(StoreError::RemoteUnsupported);
     }
- // Reuse install with force semantics.
+    // Reuse install with force semantics.
     let opts = InstallOpts {
         id: Some(id.to_string()),
         force: true,

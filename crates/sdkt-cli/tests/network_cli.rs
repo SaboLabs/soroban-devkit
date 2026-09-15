@@ -195,9 +195,9 @@ fn network_list_empty_message() {
 fn network_profile_not_found_fails_before_rpc() {
     let dir = tempdir().unwrap();
 
- // A profile that does not exist must be rejected at resolution time,
- // before any RPC call is attempted. This is deterministic: it touches only
- // the local network store (via SDKT_NETWORK_DIR) and never reaches the network.
+    // A profile that does not exist must be rejected at resolution time,
+    // before any RPC call is attempted. This is deterministic: it touches only
+    // the local network store (via SDKT_NETWORK_DIR) and never reaches the network.
     sdkt(dir.path())
         .args(["account", "GABC", "--network-profile", "ghost"])
         .assert()
@@ -207,8 +207,8 @@ fn network_profile_not_found_fails_before_rpc() {
 
 #[test]
 fn rpc_commands_expose_network_profile_flag() {
- // Backward compatibility: the flag is present on RPC commands, and the
- // help output still parses (existing interface unchanged). No network used.
+    // Backward compatibility: the flag is present on RPC commands, and the
+    // help output still parses (existing interface unchanged). No network used.
     for cmd in ["inspect", "account", "events", "health", "verify", "deploy"] {
         sdkt(std::path::Path::new("/dev/null"))
             .args([cmd, "--help"])
@@ -222,9 +222,9 @@ fn rpc_commands_expose_network_profile_flag() {
 fn existing_commands_work_without_profiles() {
     let dir = tempdir().unwrap();
 
- // Commands without --network-profile must still parse and behave exactly
- // as before. `sdkt build --help` is a non-RPC command that must succeed
- // offline; `sdkt network list` is the profile manager itself.
+    // Commands without --network-profile must still parse and behave exactly
+    // as before. `sdkt build --help` is a non-RPC command that must succeed
+    // offline; `sdkt network list` is the profile manager itself.
     sdkt(dir.path())
         .args(["build", "--help"])
         .assert()

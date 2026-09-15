@@ -126,7 +126,7 @@ mod tests {
     #[test]
     fn mainnet_explicit_passphrase_is_allowed() {
         let cfg = mainnet_cfg();
- // Operator explicitly selected the network (flag/profile).
+        // Operator explicitly selected the network (flag/profile).
         assert!(guard_mutating_network(&cfg, true).is_ok());
     }
 
@@ -145,14 +145,14 @@ mod tests {
             timeout_secs: Some(15),
             pool_max_idle_per_host: Some(100),
         };
- // No explicit flag needed to trigger: the mismatch itself is the foot-gun.
+        // No explicit flag needed to trigger: the mismatch itself is the foot-gun.
         let err = guard_mutating_network(&cfg, true).unwrap_err();
         assert!(err.to_string().contains("not the mainnet passphrase"));
     }
 
     #[test]
     fn mainnet_rpc_with_testnet_default_is_refused() {
- // User passed --rpc-url mainnet but forgot --network-passphrase.
+        // User passed --rpc-url mainnet but forgot --network-passphrase.
         let cfg = NetworkConfig {
             rpc_url: "https://soroban-rpc.stellar.org".to_string(),
             passphrase: TESTNET_PASSPHRASE.to_string(),

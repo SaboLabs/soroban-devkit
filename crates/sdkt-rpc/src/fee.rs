@@ -173,7 +173,7 @@ mod tests {
         };
         let samples = parse_fee_stats(&stats).unwrap();
         assert_eq!(samples.len(), 7);
- // fallback fee distribution got parsed, meaning some are > 0
+        // fallback fee distribution got parsed, meaning some are > 0
         assert!(samples.iter().any(|s| s.base_fee > 0));
     }
 

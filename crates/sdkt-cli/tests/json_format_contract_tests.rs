@@ -101,7 +101,7 @@ mod wasm_inspect {
         let v = assert_valid_json(&String::from_utf8_lossy(&out));
         let meta = v.get("metadata").expect("metadata field");
 
- // Hash is a hex string
+        // Hash is a hex string
         let hash = meta
             .get("hash")
             .and_then(|h| h.as_str())
@@ -111,14 +111,14 @@ mod wasm_inspect {
             "hash should be hex: {hash}"
         );
 
- // size_bytes is a number
+        // size_bytes is a number
         let size = meta
             .get("size_bytes")
             .and_then(|s| s.as_u64())
             .expect("metadata.size_bytes");
         assert!(size > 0, "size_bytes must be > 0");
 
- // exports is an array
+        // exports is an array
         assert!(
             meta.get("exports").is_some_and(|e| e.is_array()),
             "metadata.exports should be an array"
@@ -145,8 +145,8 @@ mod wasm_inspect {
 
     #[test]
     fn json_file_field_is_basename_not_absolute() {
- // Ponytail: future — add path normalization here if upstream changes
- // to emit full paths. Today we assert no '/' in the value.
+        // Ponytail: future — add path normalization here if upstream changes
+        // to emit full paths. Today we assert no '/' in the value.
         let out = sdkt()
             .args(["wasm", "inspect", WASM_NEW, "--format", "json"])
             .assert()
@@ -211,7 +211,7 @@ mod diff_upgrade_safety {
             .get("compatible")
             .and_then(|c| c.as_bool())
             .expect("compatible field");
- // Our fixtures have breaking changes (removed event + type + signature change)
+        // Our fixtures have breaking changes (removed event + type + signature change)
         assert!(!compatible, "fixture pair should be incompatible");
     }
 
@@ -442,7 +442,7 @@ mod package_validate {
 
     #[test]
     fn json_invalid_manifest_has_valid_false_and_error() {
- // Run in a temp dir with no .sdkt.toml
+        // Run in a temp dir with no .sdkt.toml
         let dir = TempDir::new().unwrap();
         let out = sdkt()
             .current_dir(dir.path())
@@ -495,7 +495,7 @@ mod decode {
 
     #[test]
     fn json_error_on_invalid_xdr() {
- // Invalid base64 / truncated XDR → error envelope
+        // Invalid base64 / truncated XDR → error envelope
         let out = sdkt()
             .args([
                 "decode",
@@ -519,14 +519,14 @@ mod decode {
 
     #[test]
     fn json_output_is_valid_for_ledger_key_type() {
- // Use a known-valid base64 LedgerKey (pre-encoded offline).
- // This is a minimal valid LedgerKey for a AccountEntry.
- // If this fixture is unavailable, the test still validates JSON shape
- // by checking that ANY successful decode produces valid JSON.
- //
- // Ponytail: add a static base64 fixture here once a stable one is
- // committed to tests/fixtures/. For now we only assert the error path
- // above, which is the deterministic offline case.
+        // Use a known-valid base64 LedgerKey (pre-encoded offline).
+        // This is a minimal valid LedgerKey for a AccountEntry.
+        // If this fixture is unavailable, the test still validates JSON shape
+        // by checking that ANY successful decode produces valid JSON.
+        //
+        // Ponytail: add a static base64 fixture here once a stable one is
+        // committed to tests/fixtures/. For now we only assert the error path
+        // above, which is the deterministic offline case.
     }
 }
 
@@ -539,10 +539,10 @@ mod cross_cutting {
 
     #[test]
     fn all_json_output_is_parseable() {
- // Run each command with --format json and verify stdout is valid JSON.
- // This catches accidental println! or debug output mixed into JSON streams.
+        // Run each command with --format json and verify stdout is valid JSON.
+        // This catches accidental println! or debug output mixed into JSON streams.
 
- // wasm inspect
+        // wasm inspect
         let out = sdkt()
             .args(["wasm", "inspect", WASM_NEW, "--format", "json"])
             .assert()
@@ -552,7 +552,7 @@ mod cross_cutting {
             .clone();
         assert_valid_json(&String::from_utf8_lossy(&out));
 
- // diff --upgrade-safety
+        // diff --upgrade-safety
         let out = sdkt()
             .args([
                 "diff",
@@ -571,7 +571,7 @@ mod cross_cutting {
             .clone();
         assert_valid_json(&String::from_utf8_lossy(&out));
 
- // audit (clean source)
+        // audit (clean source)
         let dir = TempDir::new().unwrap();
         let path = write_fixture(
             &dir,

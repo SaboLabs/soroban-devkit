@@ -66,14 +66,14 @@ fn sdkt_version_string() -> &'static str {
 /// semantics stay identical everywhere (no copy/paste).
 #[derive(Args, Clone, Debug, Default)]
 struct NetworkArgs {
- /// Use a saved network profile (see `sdkt network add`) for the RPC URL and
- /// network passphrase. Overrides .sdkt.toml defaults.
+    /// Use a saved network profile (see `sdkt network add`) for the RPC URL and
+    /// network passphrase. Overrides .sdkt.toml defaults.
     #[arg(long, value_name = "NAME")]
     network_profile: Option<String>,
- /// Explicit RPC endpoint URL. Overrides any profile and .sdkt.toml value.
+    /// Explicit RPC endpoint URL. Overrides any profile and .sdkt.toml value.
     #[arg(long, value_name = "URL")]
     rpc_url: Option<String>,
- /// Explicit network passphrase. Overrides any profile and .sdkt.toml value.
+    /// Explicit network passphrase. Overrides any profile and .sdkt.toml value.
     #[arg(long, value_name = "PASSPHRASE")]
     network_passphrase: Option<String>,
 }
@@ -278,7 +278,7 @@ mod resolver_tests {
             None,
         );
         assert_eq!(cfg.rpc_url, "http://override.example");
- // passphrase comes from the profile when no passphrase flag is given
+        // passphrase comes from the profile when no passphrase flag is given
         assert_eq!(cfg.passphrase, "Standalone");
     }
 
@@ -334,105 +334,105 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Commands {
- /// Decode base64-encoded XDR to JSON
+    /// Decode base64-encoded XDR to JSON
     Decode {
- /// Base64 XDR string to decode. Optional when --file is provided.
+        /// Base64 XDR string to decode. Optional when --file is provided.
         #[arg(value_name = "XDR")]
         payload: Option<String>,
         #[arg(short, long, value_name = "TYPE")]
         r#type: Option<String>,
         #[arg(short, long, value_name = "FORMAT", default_value = "pretty")]
         format: String,
- /// Read the XDR payload from a file instead of the positional argument.
+        /// Read the XDR payload from a file instead of the positional argument.
         #[arg(short = 'i', long, value_name = "FILE")]
         file: Option<String>,
     },
- /// Inspect storage TTL for a contract
+    /// Inspect storage TTL for a contract
     Storage {
         #[command(subcommand)]
         action: StorageAction,
- /// Path to contract WASM for ABI-aware storage decoding
+        /// Path to contract WASM for ABI-aware storage decoding
         #[arg(long, value_name = "WASM", global = true)]
         abi: Option<String>,
- /// Use the ABI of a deployed contract (fetched on-chain via path) for
- /// storage decoding. Mutually exclusive with `--abi`.
+        /// Use the ABI of a deployed contract (fetched on-chain via path) for
+        /// storage decoding. Mutually exclusive with `--abi`.
         #[arg(long, value_name = "CONTRACT_ID", global = true)]
         abi_contract: Option<String>,
         #[command(flatten)]
         net: NetworkArgs,
     },
- /// Inspect a contract's ABI and storage
+    /// Inspect a contract's ABI and storage
     Inspect {
         contract_id: String,
         #[arg(short, long, default_value = "pretty")]
         format: String,
- /// Path to contract WASM for ABI-aware storage inspection
+        /// Path to contract WASM for ABI-aware storage inspection
         #[arg(long, value_name = "WASM")]
         abi: Option<String>,
         #[command(flatten)]
         net: NetworkArgs,
     },
- /// Verify a deployed contract matches a local WASM binary ()
+    /// Verify a deployed contract matches a local WASM binary ()
     Verify {
- /// Stellar contract ID (C...)
+        /// Stellar contract ID (C...)
         #[arg(short, long, value_name = "CONTRACT_ID")]
         contract: String,
- /// Path to a local WASM file to compare against the on-chain code
+        /// Path to a local WASM file to compare against the on-chain code
         #[arg(long, value_name = "WASM")]
         wasm: Option<String>,
- /// Network to fetch the on-chain contract from
+        /// Network to fetch the on-chain contract from
         #[arg(short, long, default_value = "testnet")]
         network: String,
- /// Output format
+        /// Output format
         #[arg(short, long, default_value = "pretty")]
         format: String,
- /// Emit an upgrade-safety verdict comparing the live deployed contract
- /// (fetched on-chain) against the local `--wasm` candidate. Requires `--wasm`.
+        /// Emit an upgrade-safety verdict comparing the live deployed contract
+        /// (fetched on-chain) against the local `--wasm` candidate. Requires `--wasm`.
         #[arg(long, default_value_t = false)]
         upgrade_safety: bool,
         #[command(flatten)]
         net: NetworkArgs,
     },
- /// Unified read-only contract posture report ()
+    /// Unified read-only contract posture report ()
     Health {
- /// Stellar contract ID (C...)
+        /// Stellar contract ID (C...)
         #[arg(short, long, value_name = "CONTRACT_ID")]
         contract: String,
- /// Optional local WASM to verify against the on-chain hash
+        /// Optional local WASM to verify against the on-chain hash
         #[arg(long, value_name = "WASM")]
         wasm: Option<String>,
- /// Network label for the report
+        /// Network label for the report
         #[arg(short, long, default_value = "testnet")]
         network: String,
- /// Output format
+        /// Output format
         #[arg(short, long, default_value = "pretty")]
         format: String,
         #[command(flatten)]
         net: NetworkArgs,
     },
- /// Inspect a Soroban transaction
+    /// Inspect a Soroban transaction
     Tx {
         #[command(subcommand)]
         action: TxAction,
         #[command(flatten)]
         net: NetworkArgs,
     },
- /// Event explorer
+    /// Event explorer
     Events {
         contract_id: String,
         #[arg(short, long, default_value = "pretty")]
         format: String,
- /// Path to contract WASM for ABI-aware decoding
+        /// Path to contract WASM for ABI-aware decoding
         #[arg(long, value_name = "WASM")]
         abi: Option<String>,
- /// Use the ABI of a deployed contract (fetched on-chain via path) for
- /// decoding. Mutually exclusive with `--abi`.
+        /// Use the ABI of a deployed contract (fetched on-chain via path) for
+        /// decoding. Mutually exclusive with `--abi`.
         #[arg(long, value_name = "CONTRACT_ID")]
         abi_contract: Option<String>,
         #[command(flatten)]
         net: NetworkArgs,
     },
- /// Inspect an account's balances and signers
+    /// Inspect an account's balances and signers
     Account {
         address: String,
         #[arg(short, long, default_value = "pretty")]
@@ -440,74 +440,74 @@ enum Commands {
         #[command(flatten)]
         net: NetworkArgs,
     },
- /// Estimate transaction fee from recent ledger base fees
+    /// Estimate transaction fee from recent ledger base fees
     Fee {
         #[command(subcommand)]
         action: FeeAction,
         #[command(flatten)]
         net: NetworkArgs,
     },
- /// Manage WASM metadata and caching
+    /// Manage WASM metadata and caching
     Wasm {
         #[command(subcommand)]
         action: WasmAction,
         #[command(flatten)]
         net: NetworkArgs,
     },
- /// Offline diff of two contract WASM files (ABI/function/event/type changes)
+    /// Offline diff of two contract WASM files (ABI/function/event/type changes)
     Diff {
- /// Path to the OLD (baseline) WASM file
+        /// Path to the OLD (baseline) WASM file
         #[arg(long, value_name = "WASM")]
         old_wasm: String,
- /// Path to the NEW (candidate) WASM file
+        /// Path to the NEW (candidate) WASM file
         #[arg(long, value_name = "WASM")]
         new_wasm: String,
         #[arg(short, long, default_value = "pretty")]
         format: String,
- /// Emit an upgrade-safety verdict (breaking vs non-breaking changes)
+        /// Emit an upgrade-safety verdict (breaking vs non-breaking changes)
         #[arg(long, default_value_t = false)]
         upgrade_safety: bool,
     },
- /// Static security analysis of a Soroban contract source file (Gap C)
+    /// Static security analysis of a Soroban contract source file (Gap C)
     Audit {
- /// Path to the Rust source file (.rs) to analyze
+        /// Path to the Rust source file (.rs) to analyze
         path: String,
         #[arg(short, long, default_value = "pretty")]
         format: String,
         /// Disable a rule by id (repeatable), e.g. --disable MOVE-001
         #[arg(long, value_name = "RULE_ID", action = clap::ArgAction::Append)]
         disable: Vec<String>,
- /// Path to an external rule crate or local rule source directory to load.
- /// Repeatable. (Phase A: the rule must be compiled into the binary; this
- /// flag validates the path and runs the registered rules.)
+        /// Path to an external rule crate or local rule source directory to load.
+        /// Repeatable. (Phase A: the rule must be compiled into the binary; this
+        /// flag validates the path and runs the registered rules.)
         #[arg(long, value_name = "PATH", action = clap::ArgAction::Append)]
         rules: Vec<String>,
     },
- /// Manage Soroban identities (keys)
+    /// Manage Soroban identities (keys)
     Identity {
         #[command(subcommand)]
         action: IdentityAction,
     },
- /// Manage named network profiles (RPC endpoint + passphrase)
+    /// Manage named network profiles (RPC endpoint + passphrase)
     Network {
         #[command(subcommand)]
         action: NetworkAction,
     },
- /// Initialize a new Soroban contract project
+    /// Initialize a new Soroban contract project
     Init {
- /// Project name (directory)
+        /// Project name (directory)
         name: String,
- /// Generate only essential files
+        /// Generate only essential files
         #[arg(long, default_value_t = false)]
         minimal: bool,
- /// Overwrite existing directory
+        /// Overwrite existing directory
         #[arg(long, default_value_t = false)]
         force: bool,
- /// Output format (pretty or json)
+        /// Output format (pretty or json)
         #[arg(short, long, default_value = "pretty")]
         format: String,
     },
- /// Deploy a contract (Upload WASM + Instantiate)
+    /// Deploy a contract (Upload WASM + Instantiate)
     Deploy {
         #[arg(short, long)]
         wasm: String,
@@ -515,43 +515,43 @@ enum Commands {
         salt: String,
         #[arg(short, long, default_value = "pretty")]
         format: String,
- /// Abort deployment if the upgrade is not backwards-compatible.
- /// Requires --old-wasm (the currently deployed WASM) to be supplied.
+        /// Abort deployment if the upgrade is not backwards-compatible.
+        /// Requires --old-wasm (the currently deployed WASM) to be supplied.
         #[arg(long, default_value_t = false)]
         deny_breaking: bool,
- /// Path to the currently deployed (baseline) WASM, used with --deny-breaking.
+        /// Path to the currently deployed (baseline) WASM, used with --deny-breaking.
         #[arg(long, value_name = "WASM")]
         old_wasm: Option<String>,
         #[command(flatten)]
         net: NetworkArgs,
     },
- /// Compile Rust contracts into WASM artifacts
+    /// Compile Rust contracts into WASM artifacts
     Build,
- /// Generate or inspect the project lock file (`sdkt.lock`)
+    /// Generate or inspect the project lock file (`sdkt.lock`)
     Lock {
         #[command(subcommand)]
         action: LockCommand,
     },
- /// Validate and inspect local package manifests ()
+    /// Validate and inspect local package manifests ()
     Package {
         #[command(subcommand)]
         action: PackageCommand,
     },
- /// Manage multi-contract projects
+    /// Manage multi-contract projects
     Project {
         #[command(subcommand)]
         action: ProjectCommand,
         #[command(flatten)]
         net: NetworkArgs,
     },
- /// Manage local audit plugins (install/remove/list/show/update) —
+    /// Manage local audit plugins (install/remove/list/show/update) —
     Plugin {
         #[command(subcommand)]
         action: PluginAction,
     },
- /// Generate shell completion scripts for your shell
+    /// Generate shell completion scripts for your shell
     Completions {
- /// Shell to generate completions for (bash, zsh, fish, powershell, elvish)
+        /// Shell to generate completions for (bash, zsh, fish, powershell, elvish)
         #[arg(value_enum)]
         shell: Shell,
     },
@@ -569,45 +569,45 @@ enum IdentityAction {
 
 #[derive(Subcommand)]
 enum PluginAction {
- /// List installed plugins
+    /// List installed plugins
     List,
- /// Show metadata for an installed plugin
+    /// Show metadata for an installed plugin
     Show { id: String },
- /// Install a plugin from a local artifact + sibling plugin.toml
+    /// Install a plugin from a local artifact + sibling plugin.toml
     Install {
         /// Path to the local plugin artifact (.so/.dylib/.dll/.wasm)
         source: String,
- /// Override the plugin id from metadata (rarely needed)
+        /// Override the plugin id from metadata (rarely needed)
         #[arg(long)]
         id: Option<String>,
- /// Overwrite an existing install of the same id
+        /// Overwrite an existing install of the same id
         #[arg(long)]
         force: bool,
     },
- /// Remove an installed plugin by id (idempotent)
+    /// Remove an installed plugin by id (idempotent)
     Remove { id: String },
- /// Update an installed plugin from a new local artifact (local-only)
+    /// Update an installed plugin from a new local artifact (local-only)
     Update {
         id: String,
- /// Path to the new local artifact
+        /// Path to the new local artifact
         source: String,
     },
- /// Pack a plugin directory into a `.sdktplugin` bundle
+    /// Pack a plugin directory into a `.sdktplugin` bundle
     Pack {
- /// Path to the plugin directory (must contain plugin.toml + artifact)
+        /// Path to the plugin directory (must contain plugin.toml + artifact)
         source: String,
- /// Output bundle path (defaults to <id>-<version>.sdktplugin in current dir)
+        /// Output bundle path (defaults to <id>-<version>.sdktplugin in current dir)
         #[arg(long)]
         output: Option<String>,
- /// Optional Ed25519 secret key file for signing (32 bytes, raw)
+        /// Optional Ed25519 secret key file for signing (32 bytes, raw)
         #[arg(long)]
         secret_key: Option<String>,
     },
- /// Verify a `.sdktplugin` bundle's integrity and signature
+    /// Verify a `.sdktplugin` bundle's integrity and signature
     VerifyBundle {
- /// Path to the `.sdktplugin` bundle
+        /// Path to the `.sdktplugin` bundle
         bundle: String,
- /// Optional Ed25519 public key file for signature verification (32 bytes, raw)
+        /// Optional Ed25519 public key file for signature verification (32 bytes, raw)
         #[arg(long)]
         public_key: Option<String>,
     },
@@ -615,45 +615,45 @@ enum PluginAction {
 
 #[derive(Subcommand)]
 enum NetworkAction {
- /// Add or update a named network profile
+    /// Add or update a named network profile
     Add {
- /// Profile name (referenced by other commands)
+        /// Profile name (referenced by other commands)
         name: String,
- /// RPC endpoint URL (e.g. https://soroban-testnet.stellar.org)
+        /// RPC endpoint URL (e.g. https://soroban-testnet.stellar.org)
         #[arg(short, long, value_name = "URL")]
         rpc_url: String,
- /// Network passphrase (e.g. "Test SDF Network ; September 2015")
+        /// Network passphrase (e.g. "Test SDF Network ; September 2015")
         #[arg(short, long, value_name = "PASSPHRASE")]
         passphrase: String,
- /// Optional friendbot URL for test networks
+        /// Optional friendbot URL for test networks
         #[arg(long, value_name = "URL")]
         friendbot: Option<String>,
- /// Optional human-readable description
+        /// Optional human-readable description
         #[arg(short, long)]
         description: Option<String>,
- /// Output format (pretty or json)
+        /// Output format (pretty or json)
         #[arg(short, long, default_value = "pretty")]
         format: String,
     },
- /// List all saved network profiles
+    /// List all saved network profiles
     List {
- /// Output format (pretty or json)
+        /// Output format (pretty or json)
         #[arg(short, long, default_value = "pretty")]
         format: String,
     },
- /// Show a single network profile by name
+    /// Show a single network profile by name
     Show {
- /// Profile name
+        /// Profile name
         name: String,
- /// Output format (pretty or json)
+        /// Output format (pretty or json)
         #[arg(short, long, default_value = "pretty")]
         format: String,
     },
- /// Remove a network profile by name
+    /// Remove a network profile by name
     Remove {
- /// Profile name
+        /// Profile name
         name: String,
- /// Output format (pretty or json)
+        /// Output format (pretty or json)
         #[arg(short, long, default_value = "pretty")]
         format: String,
     },
@@ -661,26 +661,26 @@ enum NetworkAction {
 
 #[derive(Subcommand)]
 enum WasmAction {
- /// Inspect a local WASM contract file offline
+    /// Inspect a local WASM contract file offline
     Inspect {
- /// Path to the WASM file to inspect
+        /// Path to the WASM file to inspect
         file: String,
         #[arg(short, long, default_value = "pretty")]
         format: String,
     },
- /// Inspect WASM metadata for a deployed contract
+    /// Inspect WASM metadata for a deployed contract
     Metadata {
         #[arg(short, long)]
         contract: String,
         #[arg(short, long, default_value = "testnet")]
         network: String,
- /// Force bypass the cache and fetch fresh from RPC
+        /// Force bypass the cache and fetch fresh from RPC
         #[arg(long, default_value_t = false)]
         refresh: bool,
         #[arg(short, long, default_value = "pretty")]
         format: String,
     },
- /// Manage the local WASM cache
+    /// Manage the local WASM cache
     Cache {
         #[command(subcommand)]
         action: CacheAction,
@@ -689,20 +689,20 @@ enum WasmAction {
 
 #[derive(Subcommand)]
 enum CacheAction {
- /// Show stats about the cache (size, item count)
+    /// Show stats about the cache (size, item count)
     Info {
         #[arg(short, long, default_value = "testnet")]
         network: String,
         #[arg(short, long, default_value = "pretty")]
         format: String,
     },
- /// Remove a specific hash from the cache
+    /// Remove a specific hash from the cache
     Remove {
         hash: String,
         #[arg(short, long, default_value = "testnet")]
         network: String,
     },
- /// Clear all items in the cache for the network
+    /// Clear all items in the cache for the network
     Clear {
         #[arg(short, long, default_value = "testnet")]
         network: String,
@@ -712,13 +712,13 @@ enum CacheAction {
 #[derive(Subcommand)]
 enum FeeAction {
     Estimate {
- /// Network: testnet, mainnet, standalone
+        /// Network: testnet, mainnet, standalone
         #[arg(short, long, default_value = "testnet")]
         network: String,
- /// Comma-separated recent base fees in stroops (e.g. "100,120,110"). Optional if --rpc is used.
+        /// Comma-separated recent base fees in stroops (e.g. "100,120,110"). Optional if --rpc is used.
         #[arg(short, long, value_name = "FEES")]
         base_fees: Option<String>,
- /// Fetch fee statistics directly from Soroban RPC instead of manual base fees
+        /// Fetch fee statistics directly from Soroban RPC instead of manual base fees
         #[arg(long, default_value_t = false)]
         rpc: bool,
         #[arg(short, long, default_value = "pretty")]
@@ -733,40 +733,40 @@ enum TxAction {
         #[arg(short, long, default_value = "pretty")]
         format: String,
     },
- /// Validate a transaction envelope offline (pre-flight checks)
+    /// Validate a transaction envelope offline (pre-flight checks)
     Validate {
- /// Base64 XDR transaction envelope or path to a file containing it
+        /// Base64 XDR transaction envelope or path to a file containing it
         #[arg(short, long)]
         envelope: String,
         #[arg(short, long, default_value = "pretty")]
         format: String,
     },
- /// Simulate a transaction envelope without submitting it
+    /// Simulate a transaction envelope without submitting it
     Simulate {
- /// Base64 XDR transaction envelope or path to a file containing it
+        /// Base64 XDR transaction envelope or path to a file containing it
         #[arg(short, long)]
         envelope: String,
         #[arg(short, long, default_value = "pretty")]
         format: String,
     },
- /// Submit a transaction envelope to the network, optionally waiting
+    /// Submit a transaction envelope to the network, optionally waiting
     Submit {
- /// Base64 XDR transaction envelope or path to a file containing it
+        /// Base64 XDR transaction envelope or path to a file containing it
         #[arg(short, long)]
         envelope: String,
- /// Wait and poll until the transaction settles
+        /// Wait and poll until the transaction settles
         #[arg(short, long)]
         wait: bool,
- /// Timeout in seconds while waiting
+        /// Timeout in seconds while waiting
         #[arg(short = 't', long, default_value = "60")]
         timeout: u64,
- /// Polling interval in seconds while waiting
+        /// Polling interval in seconds while waiting
         #[arg(short, long, default_value = "2")]
         interval: u64,
         #[arg(short, long, default_value = "pretty")]
         format: String,
     },
- /// Build a Soroban transaction envelope XDR
+    /// Build a Soroban transaction envelope XDR
     Build {
         #[arg(long)]
         source: String,
@@ -778,32 +778,32 @@ enum TxAction {
         contract: String,
         #[arg(long)]
         function: String,
- /// Optional arguments: `type:value` (e.g. `u32:100`, `string:hello`,
- /// `bool:true`, `bytes:0a0b`). Base64-encoded ScVal strings are also
- /// accepted as-is (passthrough).
+        /// Optional arguments: `type:value` (e.g. `u32:100`, `string:hello`,
+        /// `bool:true`, `bytes:0a0b`). Base64-encoded ScVal strings are also
+        /// accepted as-is (passthrough).
         #[arg(long)]
         arg: Vec<String>,
         #[arg(short, long, default_value = "pretty")]
         format: String,
- /// Optional file path to write the output envelope XDR
+        /// Optional file path to write the output envelope XDR
         #[arg(short, long)]
         output: Option<String>,
     },
- /// Sign a transaction envelope using a local identity ( / PR2)
+    /// Sign a transaction envelope using a local identity ( / PR2)
     Sign {
- /// Input: base64 XDR envelope, or a path to a file containing it
+        /// Input: base64 XDR envelope, or a path to a file containing it
         #[arg(short, long, value_name = "INPUT")]
         input: String,
- /// Output file to write the signed base64 envelope. Prints to stdout if omitted.
+        /// Output file to write the signed base64 envelope. Prints to stdout if omitted.
         #[arg(short, long, value_name = "OUTPUT")]
         output: Option<String>,
- /// Identity name to sign with. Defaults to "default".
+        /// Identity name to sign with. Defaults to "default".
         #[arg(short = 'I', long, default_value = "default")]
         identity: String,
- /// Network: testnet | mainnet | futurenet | custom:<passphrase>
+        /// Network: testnet | mainnet | futurenet | custom:<passphrase>
         #[arg(short, long, default_value = "testnet")]
         network: String,
- /// Output format
+        /// Output format
         #[arg(short, long, default_value = "pretty")]
         format: String,
     },
@@ -811,9 +811,9 @@ enum TxAction {
 
 #[derive(Subcommand)]
 enum ProjectCommand {
- /// Deploy all contracts defined in the workspace
+    /// Deploy all contracts defined in the workspace
     Deploy {
- /// Optional deployment salt base
+        /// Optional deployment salt base
         #[arg(short, long, default_value = "deploy")]
         salt: String,
         #[arg(short, long, default_value = "pretty")]
@@ -823,19 +823,19 @@ enum ProjectCommand {
 
 #[derive(Subcommand)]
 enum LockCommand {
- /// Generate `sdkt.lock` from the current build artifacts (next to
- /// `.sdkt.toml`). Requires `sdkt build` to have run first.
+    /// Generate `sdkt.lock` from the current build artifacts (next to
+    /// `.sdkt.toml`). Requires `sdkt build` to have run first.
     Generate {
         #[arg(short, long, default_value = "pretty")]
         format: String,
     },
- /// Verify the lock file against the current on-disk artifacts.
- /// Advisory: reports drift but never fails the build.
+    /// Verify the lock file against the current on-disk artifacts.
+    /// Advisory: reports drift but never fails the build.
     Verify {
         #[arg(short, long, default_value = "pretty")]
         format: String,
     },
- /// Print the contents of `sdkt.lock` if present.
+    /// Print the contents of `sdkt.lock` if present.
     Show {
         #[arg(short, long, default_value = "pretty")]
         format: String,
@@ -844,56 +844,56 @@ enum LockCommand {
 
 #[derive(Subcommand)]
 enum PackageCommand {
- /// Validate the local package manifest (metadata + dependency graph).
- /// Offline: never performs network or registry operations.
+    /// Validate the local package manifest (metadata + dependency graph).
+    /// Offline: never performs network or registry operations.
     Validate {
         #[arg(short, long, default_value = "pretty")]
         format: String,
     },
- /// Fetch declared dependencies into the local cache.
- /// Git deps are cloned/checked out; local `path` deps are passed through.
- /// Never builds automatically. Use `--force` to update existing checkouts.
+    /// Fetch declared dependencies into the local cache.
+    /// Git deps are cloned/checked out; local `path` deps are passed through.
+    /// Never builds automatically. Use `--force` to update existing checkouts.
     Fetch {
         #[arg(short, long, default_value = "pretty")]
         format: String,
- /// Re-fetch / update existing checkouts instead of reusing them.
+        /// Re-fetch / update existing checkouts instead of reusing them.
         #[arg(long)]
         force: bool,
     },
- /// Synchronize dependencies with what is available upstream and refresh the
- /// lock. `rev` deps stay pinned; `tag`/`branch` deps update when the remote
- /// commit changed. Use `--check` to report only, `--dry-run` to preview
- /// changes without touching the cache or lock.
+    /// Synchronize dependencies with what is available upstream and refresh the
+    /// lock. `rev` deps stay pinned; `tag`/`branch` deps update when the remote
+    /// commit changed. Use `--check` to report only, `--dry-run` to preview
+    /// changes without touching the cache or lock.
     Update {
         #[arg(short, long, default_value = "pretty")]
         format: String,
- /// Only report available updates; do not fetch or rewrite the lock.
+        /// Only report available updates; do not fetch or rewrite the lock.
         #[arg(long)]
         check: bool,
- /// Compute and preview changes; do not modify the cache or lock.
+        /// Compute and preview changes; do not modify the cache or lock.
         #[arg(long)]
         dry_run: bool,
     },
- /// Bundle the resolved project into a portable offline artifact: the
- /// manifest, the lockfile, and the cached git dependency checkouts. The
- /// artifact can be unpacked on another machine and rebuilt without network.
+    /// Bundle the resolved project into a portable offline artifact: the
+    /// manifest, the lockfile, and the cached git dependency checkouts. The
+    /// artifact can be unpacked on another machine and rebuilt without network.
     Pack {
- /// Output directory for the artifact (default: `./dist`).
+        /// Output directory for the artifact (default: `./dist`).
         #[arg(short, long, default_value = "dist")]
         out: String,
- /// Artifact format: `tar.zst` (compressed tarball) or `dir` (directory tree).
+        /// Artifact format: `tar.zst` (compressed tarball) or `dir` (directory tree).
         #[arg(long, default_value = "tar.zst")]
         format: String,
     },
- /// Validate publish readiness (read-only): manifest valid, lock consistent,
- /// all cached commits present, integrity hashes match. Default is
- /// `--dry-run`; nothing is published. `--broadcast` is opt-in and only acts
- /// when a registry source is configured (none in , so it stays offline).
+    /// Validate publish readiness (read-only): manifest valid, lock consistent,
+    /// all cached commits present, integrity hashes match. Default is
+    /// `--dry-run`; nothing is published. `--broadcast` is opt-in and only acts
+    /// when a registry source is configured (none in , so it stays offline).
     Publish {
- /// Perform a read-only readiness check (default: true). No publish.
+        /// Perform a read-only readiness check (default: true). No publish.
         #[arg(long, default_value_t = true)]
         dry_run: bool,
- /// Actually publish. Opt-in only; requires a configured registry source.
+        /// Actually publish. Opt-in only; requires a configured registry source.
         #[arg(long)]
         broadcast: bool,
     },
@@ -909,8 +909,8 @@ enum StorageAction {
     Estimate {
         wasm: String,
     },
- /// Analyze a contract's storage layout (Instance/Persistent/Temporary
- /// categorization, TTL summary, and per-entry detail).
+    /// Analyze a contract's storage layout (Instance/Persistent/Temporary
+    /// categorization, TTL summary, and per-entry detail).
     Analyze {
         contract_id: String,
         #[arg(short, long, default_value = "pretty")]
@@ -947,9 +947,9 @@ struct VerificationReport {
 struct ContractHealthReport {
     contract_id: String,
     network: String,
- /// "healthy" | "at_risk" | "critical" (snake_case for stable parsing)
+    /// "healthy" | "at_risk" | "critical" (snake_case for stable parsing)
     health: String,
- /// bool when --wasm supplied, null otherwise
+    /// bool when --wasm supplied, null otherwise
     #[serde(rename = "verified", skip_serializing_if = "Option::is_none")]
     verified: Option<bool>,
     on_chain_wasm_hash: String,
@@ -958,7 +958,7 @@ struct ContractHealthReport {
     #[serde(skip_serializing_if = "Option::is_none")]
     local_wasm_size_bytes: Option<usize>,
     storage: HealthStorage,
- /// Human-readable verdict reasons (empty when healthy)
+    /// Human-readable verdict reasons (empty when healthy)
     #[serde(default)]
     reasons: Vec<String>,
 }
@@ -1042,7 +1042,7 @@ async fn contract_health(
     local_wasm: Option<&[u8]>,
     network: &str,
 ) -> Result<ContractHealthReport, String> {
- // Optional local WASM — hashed fully offline FIRST (fail fast).
+    // Optional local WASM — hashed fully offline FIRST (fail fast).
     let local_hash = match local_wasm {
         Some(bytes) => {
             let meta = sdkt_wasm::parse_metadata(bytes).map_err(|e| format!("{}", e))?;
@@ -1051,7 +1051,7 @@ async fn contract_health(
         None => None,
     };
 
- // On-chain WASM hash only (read-only, existing RPC).
+    // On-chain WASM hash only (read-only, existing RPC).
     let inspection = inspect_contract(client, contract_id)
         .await
         .map_err(|e| match e {
@@ -1062,13 +1062,13 @@ async fn contract_health(
         })?;
     let on_chain_hash = inspection.wasm_hash;
 
- // Storage posture (read-only, existing RPC via StorageAnalyzer).
+    // Storage posture (read-only, existing RPC via StorageAnalyzer).
     let storage_report = sdkt_storage::StorageAnalyzer::new(client.clone())
         .inspect_contract_storage(contract_id)
         .await
         .map_err(|e| format!("{}", e))?;
 
- // Optional -style verification (reuse existing helper, no duplicate logic).
+    // Optional -style verification (reuse existing helper, no duplicate logic).
     let verified = local_hash
         .as_ref()
         .and_then(|(h, s)| verification_outcome(&on_chain_hash, Some((h.clone(), *s))).0);
@@ -1152,8 +1152,8 @@ async fn verify_contract(
     local_wasm: Option<&[u8]>,
     network: &str,
 ) -> Result<VerificationReport, String> {
- // Hash the local WASM fully offline FIRST (fail fast on bad/missing files
- // before touching the network), per _PLAN.md "Offline hashing".
+    // Hash the local WASM fully offline FIRST (fail fast on bad/missing files
+    // before touching the network), per _PLAN.md "Offline hashing".
     let local_hash = match local_wasm {
         Some(bytes) => {
             let meta = sdkt_wasm::parse_metadata(bytes).map_err(|e| format!("{}", e))?;
@@ -1162,15 +1162,15 @@ async fn verify_contract(
         None => None,
     };
 
- // On-chain hash only — never download the bytecode.
+    // On-chain hash only — never download the bytecode.
     let inspection = inspect_contract(client, contract_id)
         .await
         .map_err(|e| format!("{}", e))?;
 
     let on_chain_hash = inspection.wasm_hash;
 
- // Capture report fields from the (still-owned) local hash before the
- // comparison consumes it.
+    // Capture report fields from the (still-owned) local hash before the
+    // comparison consumes it.
     let local_wasm_hash = local_hash.as_ref().map(|(h, _)| h.clone());
     let local_wasm_size_bytes = local_hash.as_ref().map(|(_, s)| *s);
 
@@ -1298,11 +1298,11 @@ async fn run_upgrade_safety(
     network: &str,
     fmt: OutputFormat,
 ) -> Result<(), String> {
- // Candidate WASM is parsed offline first (fail-fast on malformed input).
+    // Candidate WASM is parsed offline first (fail-fast on malformed input).
     let _candidate_meta = sdkt_wasm::parse_metadata(candidate_bytes)
         .map_err(|e| format!("{} is not valid WASM: {}", "<candidate>", e))?;
 
- // On-chain WASM hash ( path).
+    // On-chain WASM hash ( path).
     let inspection = inspect_contract(client, contract_id)
         .await
         .map_err(|e| match e {
@@ -1313,14 +1313,14 @@ async fn run_upgrade_safety(
         })?;
     let wasm_hash = inspection.wasm_hash;
 
- // Fetch the raw on-chain WASM bytecode ( path) — reuse existing extractor.
+    // Fetch the raw on-chain WASM bytecode ( path) — reuse existing extractor.
     let deployed_bytes = get_wasm_bytecode(client, &wasm_hash)
         .await
         .map_err(|e| format!("could not fetch on-chain WASM for {}: {}", contract_id, e))?;
 
- // Compare the two ContractSpecs with the engine (raw entry point reuses
- // diff_specs internally). The "old" side is the deployed contract; the "new"
- // side is the candidate local WASM.
+    // Compare the two ContractSpecs with the engine (raw entry point reuses
+    // diff_specs internally). The "old" side is the deployed contract; the "new"
+    // side is the candidate local WASM.
     let diff = sdkt_wasm::diff_wasm(&deployed_bytes, candidate_bytes)
         .map_err(|e| format!("failed to diff contracts: {}", e))?;
 
@@ -1377,9 +1377,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 net.network_profile.clone(),
             );
 
- // Load ABI spec if provided. Two mutually exclusive sources:
- // a local WASM file (`--abi`) or a deployed contract's on-chain WASM
- // fetched via the path (`--abi-contract`).
+            // Load ABI spec if provided. Two mutually exclusive sources:
+            // a local WASM file (`--abi`) or a deployed contract's on-chain WASM
+            // fetched via the path (`--abi-contract`).
             if abi.is_some() && abi_contract.is_some() {
                 eprintln!("Error: specify only one of --abi or --abi-contract");
                 process::exit(1);
@@ -1394,8 +1394,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                             .map_err(|e| format!("Failed to parse ABI: {}", e))?,
                     )
                 } else if let Some(id) = abi_contract.as_ref() {
- // on-chain retrieval: inspect_contract -> wasm hash, then
- // get_wasm_bytecode -> raw bytes, then parse_contract_spec.
+                    // on-chain retrieval: inspect_contract -> wasm hash, then
+                    // get_wasm_bytecode -> raw bytes, then parse_contract_spec.
                     let inspection = inspect_contract(&client, id).await.map_err(|e| match e {
                         sdkt_rpc::RpcError::ContractNotFound => {
                             format!("contract {} not found", id)
@@ -1425,7 +1425,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                         net.network_profile.clone(),
                     );
 
- // Load ABI spec if provided for storage decoding
+                    // Load ABI spec if provided for storage decoding
                     match get_ttl_info(&client, &contract_id).await {
                         Ok(ttl_info) => {
                             if fmt == OutputFormat::Json {
@@ -1559,7 +1559,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 net.network_profile.clone(),
             );
 
- // Load ABI spec if provided for storage decoding
+            // Load ABI spec if provided for storage decoding
             let contract_spec = if let Some(wasm_path) = abi.as_ref() {
                 let wasm_bytes =
                     fs::read(wasm_path).map_err(|e| format!("Failed to read WASM: {}", e))?;
@@ -1635,8 +1635,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 net.network_profile.clone(),
             );
 
- // On-chain upgrade-safety verification: compare the live deployed
- // contract's interface against a local candidate WASM.
+            // On-chain upgrade-safety verification: compare the live deployed
+            // contract's interface against a local candidate WASM.
             if upgrade_safety {
                 match wasm.as_ref() {
                     None => {
@@ -1667,7 +1667,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 }
             }
 
- // Read + hash the local WASM fully offline (no RPC).
+            // Read + hash the local WASM fully offline (no RPC).
             let local_bytes = match wasm.as_ref() {
                 Some(path) => {
                     let bytes = fs::read(path).unwrap_or_else(|e| {
@@ -1714,7 +1714,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     }
                 }
                 Err(e) => {
- // Surface actionable messages per _PLAN.md §9.
+                    // Surface actionable messages per _PLAN.md §9.
                     if let Some(path) = wasm.as_ref() {
                         if e.contains("WASM parse error") {
                             eprintln!("Error: {} is not valid WASM", path);
@@ -1744,7 +1744,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 net.network_profile.clone(),
             );
 
- // Read + hash the local WASM fully offline (no RPC).
+            // Read + hash the local WASM fully offline (no RPC).
             let local_bytes = match wasm.as_ref() {
                 Some(path) => {
                     let bytes = fs::read(path).unwrap_or_else(|e| {
@@ -1821,7 +1821,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     }
                 }
                 Err(e) => {
- // Surface actionable messages per _PLAN.md §11.
+                    // Surface actionable messages per _PLAN.md §11.
                     if let Some(path) = wasm.as_ref() {
                         if e.contains("WASM parse error") {
                             eprintln!("Error: {} is not valid WASM", path);
@@ -2055,7 +2055,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             } => {
                 let fmt = parse_format_str(&format);
 
- // If source doesn't start with 'G' and isn't 56 chars, try to load it as an identity
+                // If source doesn't start with 'G' and isn't 56 chars, try to load it as an identity
                 let mut source_account = source.clone();
                 if !source_account.starts_with('G') || source_account.len() != 56 {
                     use sdkt_storage::IdentityStore;
@@ -2173,7 +2173,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             } => {
                 let fmt = parse_format_str(&format);
 
- // --- Network resolution (strict; reject unknown labels) ---
+                // --- Network resolution (strict; reject unknown labels) ---
                 let network = match network.trim().to_ascii_lowercase().as_str() {
                     "testnet" => Network::Testnet,
                     "mainnet" => Network::Mainnet,
@@ -2188,7 +2188,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     }
                 };
 
- // --- Input resolution (file or inline base64) ---
+                // --- Input resolution (file or inline base64) ---
                 let env_data = match resolve_tx_input(&input) {
                     Ok(s) => s,
                     Err(e) => {
@@ -2197,7 +2197,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     }
                 };
 
- // --- Identity resolution (keystore) ---
+                // --- Identity resolution (keystore) ---
                 if identity.trim().is_empty() {
                     eprintln!("Error: missing identity (use --identity <name>)");
                     process::exit(1);
@@ -2272,9 +2272,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 net.network_profile.clone(),
             );
 
- // Resolve the ABI ContractSpec from one of two sources (mutually
- // exclusive): a local WASM file (`--abi`) or a deployed contract's
- // on-chain WASM fetched via the path (`--abi-contract`).
+            // Resolve the ABI ContractSpec from one of two sources (mutually
+            // exclusive): a local WASM file (`--abi`) or a deployed contract's
+            // on-chain WASM fetched via the path (`--abi-contract`).
             if abi.is_some() && abi_contract.is_some() {
                 eprintln!("Error: specify only one of --abi or --abi-contract");
                 process::exit(1);
@@ -2289,8 +2289,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                             .map_err(|e| format!("Failed to parse ABI: {}", e))?,
                     )
                 } else if let Some(id) = abi_contract.as_ref() {
- // on-chain retrieval: inspect_contract -> wasm hash, then
- // get_wasm_bytecode -> raw bytes, then parse_contract_spec.
+                    // on-chain retrieval: inspect_contract -> wasm hash, then
+                    // get_wasm_bytecode -> raw bytes, then parse_contract_spec.
                     let inspection = inspect_contract(&client, id).await.map_err(|e| match e {
                         sdkt_rpc::RpcError::ContractNotFound => {
                             format!("contract {} not found", id)
@@ -2311,8 +2311,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             match get_contract_events(&client, &contract_id).await {
                 Ok(events) => {
                     if let Some(spec) = contract_spec {
- // ABI-aware decoding: topics[0] is the event symbol,
- // remaining topics + the data value carry the payload.
+                        // ABI-aware decoding: topics[0] is the event symbol,
+                        // remaining topics + the data value carry the payload.
                         if fmt == OutputFormat::Json {
                             let decoded_events: Vec<serde_json::Value> = events
                                 .iter()
@@ -2358,7 +2358,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                                     println!("Topics: {:?}", ev.topics);
                                     println!("Value: {}", ev.value.as_deref().unwrap_or("N/A"));
 
- // Decode with ABI using the real topics/value
+                                    // Decode with ABI using the real topics/value
                                     let topic_scvals: Vec<stellar_xdr::ScVal> = ev
                                         .topics
                                         .iter()
@@ -2384,7 +2384,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                             }
                         }
                     } else {
- // Original raw output
+                        // Original raw output
                         if fmt == OutputFormat::Json {
                             let json_str = serde_json::to_string(&events)?;
                             println!("{}", json_str);
@@ -2559,7 +2559,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             match sdkt_wasm::diff_wasm(&old_bytes, &new_bytes) {
                 Ok(report) => {
                     if upgrade_safety {
- // Upgrade-safety verdict mode: reuse the diff, classify.
+                        // Upgrade-safety verdict mode: reuse the diff, classify.
                         let verdict = sdkt_wasm::UpgradeVerdict::from_diff(&report);
                         if fmt == OutputFormat::Json {
                             println!("{}", serde_json::to_string(&verdict)?);
@@ -2650,10 +2650,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         } => {
             let fmt = parse_format_str(&format);
 
- // Validate/resolve each --rules entry. A bare filesystem path keeps
- // the // behavior unchanged. A plugin *id* (not an existing
- // file) is resolved through the local store () to its artifact
- // path; if the store has it, we use that path for the existing loader.
+            // Validate/resolve each --rules entry. A bare filesystem path keeps
+            // the // behavior unchanged. A plugin *id* (not an existing
+            // file) is resolved through the local store () to its artifact
+            // path; if the store has it, we use that path for the existing loader.
             for r in &rules {
                 let resolved = sdkt_audit::plugin_store::resolve(r)
                     .unwrap_or_else(|| std::path::PathBuf::from(r));
@@ -2667,13 +2667,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 .map_err(|e| format!("Failed to read source '{}': {}", path, e))?;
 
             for r in &rules {
- // Re-resolve: a plugin id maps to its stored artifact path; a raw
- // path is used verbatim. This preserves the – loader flow.
+                // Re-resolve: a plugin id maps to its stored artifact path; a raw
+                // path is used verbatim. This preserves the – loader flow.
                 let resolved = sdkt_audit::plugin_store::resolve(r)
                     .unwrap_or_else(|| std::path::PathBuf::from(r));
                 let path_r = resolved.as_path();
 
- // Directories pass through as no-ops (validated for existence above).
+                // Directories pass through as no-ops (validated for existence above).
                 if path_r.is_dir() {
                     continue;
                 }
@@ -2722,8 +2722,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                         }
                     }
                     "rs" => {
- // semantic: source files passed in --rules are existence-validated
- // above but not loaded at runtime (built-in rules register themselves).
+                        // semantic: source files passed in --rules are existence-validated
+                        // above but not loaded at runtime (built-in rules register themselves).
                     }
                     _ => {
                         eprintln!(
@@ -2735,8 +2735,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 }
             }
 
- // When the `plugins` feature is enabled, link the reference example
- // rule into the registry. Off by default → -identical behavior.
+            // When the `plugins` feature is enabled, link the reference example
+            // rule into the registry. Off by default → -identical behavior.
             #[cfg(feature = "plugins")]
             sdkt_audit_example_rule::register();
 
@@ -2789,12 +2789,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     process::exit(1);
                 });
 
- // Attempt to parse contract spec, but it's optional
+                // Attempt to parse contract spec, but it's optional
                 let spec = parse_contract_spec(&wasm_bytes).ok();
 
                 if fmt == OutputFormat::Json {
- // Compatibility: emit basename only — callers must not
- // depend on directory layout (issue #33 acceptance).
+                    // Compatibility: emit basename only — callers must not
+                    // depend on directory layout (issue #33 acceptance).
                     let file_basename = std::path::Path::new(&file)
                         .file_name()
                         .and_then(|s| s.to_str())
@@ -2853,7 +2853,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     net.network_profile.clone(),
                 );
 
- // Initialize cache
+                // Initialize cache
                 let cache = match WasmCache::new() {
                     Ok(c) => c,
                     Err(e) => {
@@ -2862,7 +2862,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     }
                 };
 
- // First, inspect the contract to get its WASM hash
+                // First, inspect the contract to get its WASM hash
                 let inspection = match inspect_contract(&client, &contract).await {
                     Ok(ins) => ins,
                     Err(e) => {
@@ -2873,7 +2873,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
                 let wasm_hash = &inspection.wasm_hash;
 
- // Check cache if not forcing refresh
+                // Check cache if not forcing refresh
                 let mut metadata = None;
                 let mut cache_status = "Miss";
 
@@ -2890,7 +2890,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     }
                 }
 
- // If no metadata from cache, fetch it
+                // If no metadata from cache, fetch it
                 let meta = if let Some(m) = metadata {
                     m
                 } else {
@@ -2902,7 +2902,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                         }
                     };
 
- // Put into cache for future
+                    // Put into cache for future
                     if let Err(e) = cache.put(&network, &fetched, &[]) {
                         eprintln!("Warning: Failed to write to cache: {}", e);
                     }
@@ -2910,10 +2910,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     fetched
                 };
 
- // Enrich with storage/TTL/storage-key posture using the existing
- // StorageAnalyzer (available in the CLI layer). This populates the
- // remaining ContractInspection fields without adding a circular
- // sdkt-rpc -> sdkt-storage dependency.
+                // Enrich with storage/TTL/storage-key posture using the existing
+                // StorageAnalyzer (available in the CLI layer). This populates the
+                // remaining ContractInspection fields without adding a circular
+                // sdkt-rpc -> sdkt-storage dependency.
                 let mut inspection = inspection;
                 if let Ok(report) = StorageAnalyzer::new(client.clone())
                     .inspect_contract_storage(&contract)
@@ -2986,8 +2986,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 }
             }
             WasmAction::Cache { action } => {
- // Initialize cache; fall back to a temp dir if the OS cache
- // directory cannot be resolved (e.g. fresh CI runner).
+                // Initialize cache; fall back to a temp dir if the OS cache
+                // directory cannot be resolved (e.g. fresh CI runner).
                 let cache = match WasmCache::new() {
                     Ok(c) => c,
                     Err(e) => {
@@ -3002,8 +3002,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                         match cache.cache_info(&network) {
                             Ok(info) => {
                                 if fmt == OutputFormat::Json {
- // In a real app we'd derive Serialize for CacheInfo,
- // but we can manually output JSON here or derive it in sdkt-storage
+                                    // In a real app we'd derive Serialize for CacheInfo,
+                                    // but we can manually output JSON here or derive it in sdkt-storage
                                     println!(
                                         "{{\"network\":\"{}\",\"entry_count\":{},\"total_metadata_size_bytes\":{},\"total_wasm_size_bytes\":{}}}",
                                         info.network,
@@ -3226,7 +3226,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         } => {
             let fmt = parse_format_str(&format);
 
- // Optional deploy guard: abort on a backwards-incompatible upgrade.
+            // Optional deploy guard: abort on a backwards-incompatible upgrade.
             if deny_breaking {
                 let baseline = old_wasm.ok_or_else(|| {
                     "The --deny-breaking flag requires --old-wasm <deployed.wasm> (the currently deployed contract)".to_string()
@@ -3259,7 +3259,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 net.network_passphrase.clone(),
                 net.network_profile.clone(),
             );
- // For CLI demo, read wasm file; if file missing, use empty bytes
+            // For CLI demo, read wasm file; if file missing, use empty bytes
             let wasm_bytes = fs::read(&wasm).unwrap_or_default();
             match deploy_contract(&client, &wasm_bytes, &salt).await {
                 Ok(res) => {
@@ -3331,7 +3331,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 let report = sdkt_core::lock::verify_lock(base, &config);
                 let dep_report = sdkt_core::lock::verify_dependencies(base, &config);
                 if fmt != OutputFormat::Json {
- // --- Contract artifact verification (existing behavior) ---
+                    // --- Contract artifact verification (existing behavior) ---
                     if report.present {
                         if report.consistent {
                             println!("✓ sdkt.lock is consistent with current artifacts");
@@ -3353,7 +3353,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                         println!("⚠ No sdkt.lock found; run `sdkt build` to generate one");
                     }
 
- // --- Package dependency verification () ---
+                    // --- Package dependency verification () ---
                     if dep_report.present {
                         if dep_report.consistent {
                             println!("✓ package dependencies verified");
@@ -3471,18 +3471,18 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             PackageCommand::Fetch { format, force } => {
                 let fmt = parse_format_str(&format);
                 let config = load_config();
- // Validation first, so a malformed manifest never triggers a fetch.
+                // Validation first, so a malformed manifest never triggers a fetch.
                 let base = Path::new(".");
                 if let Err(e) = sdkt_core::package::validate_manifest(base, &config) {
                     eprintln!("Package validation failed: {}", e);
                     std::process::exit(1);
                 }
 
- // Deterministic cache at `.sdkt-cache` (workspace-local).
- // Use an absolute path so `git clone <url> <checkout>` is not
- // resolved relative to the fetcher's working dir (which would
- // double the path). Fall back to the relative form only if the
- // current dir cannot be resolved.
+                // Deterministic cache at `.sdkt-cache` (workspace-local).
+                // Use an absolute path so `git clone <url> <checkout>` is not
+                // resolved relative to the fetcher's working dir (which would
+                // double the path). Fall back to the relative form only if the
+                // current dir cannot be resolved.
                 let cache = std::env::current_dir()
                     .map(|c| c.join(".sdkt-cache"))
                     .unwrap_or_else(|_| std::path::PathBuf::from(".sdkt-cache"));
@@ -3513,10 +3513,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     }
                 }
 
- // — record resolved dependency state into sdkt.lock so
- // `sdkt lock verify` can enforce reproducibility offline. We
- // update the lock in place (preserving contract artifacts) when
- // one already exists; otherwise we generate a fresh lock.
+                // — record resolved dependency state into sdkt.lock so
+                // `sdkt lock verify` can enforce reproducibility offline. We
+                // update the lock in place (preserving contract artifacts) when
+                // one already exists; otherwise we generate a fresh lock.
                 {
                     use sdkt_core::lock::LockFile;
                     let mut lock = sdkt_core::lock::read_lock(base).unwrap_or_else(|_| LockFile {
@@ -3525,7 +3525,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                         contracts: vec![],
                         dependencies: vec![],
                     });
- // Single source of truth shared with `sdkt package update`.
+                    // Single source of truth shared with `sdkt package update`.
                     lock.dependencies =
                         sdkt_core::lock::lock_dependencies_resolved(base, &config, &fetched);
                     if let Err(e) = sdkt_core::lock::write_lock(base, &lock) {
@@ -3575,8 +3575,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 let config = load_config();
                 let base = Path::new(".");
 
- // Build the update plan (read-only: resolves available commits via
- // git ls-remote; never fetches, never writes the lock).
+                // Build the update plan (read-only: resolves available commits via
+                // git ls-remote; never fetches, never writes the lock).
                 let plan = match sdkt_core::sync::plan_updates(base, &config) {
                     Ok(p) => p,
                     Err(e) => {
@@ -3604,9 +3604,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                         .unwrap()
                     );
                 } else if check {
- // --check: report available updates only; exit 0 (errors are
- // listed, but a non-zero exit is reserved for hard failures
- // which already surfaced above via process::exit).
+                    // --check: report available updates only; exit 0 (errors are
+                    // listed, but a non-zero exit is reserved for hard failures
+                    // which already surfaced above via process::exit).
                     println!("Checking dependencies...");
                     let mut available = 0;
                     for c in &plan.changes {
@@ -3638,7 +3638,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                         println!("All dependencies up to date.");
                     }
                 } else if dry_run {
- // --dry-run: preview the changes without modifying anything.
+                    // --dry-run: preview the changes without modifying anything.
                     let mut would = 0;
                     println!("Would update:");
                     for c in &plan.changes {
@@ -3679,8 +3679,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                         println!("Nothing to change.");
                     }
                 } else {
- // Real apply: refresh cache + rewrite lock (the plan is already
- // computed; apply_updates performs the actual fetch).
+                    // Real apply: refresh cache + rewrite lock (the plan is already
+                    // computed; apply_updates performs the actual fetch).
                     let report = match sdkt_core::sync::apply_updates(base, &config) {
                         Ok((r, _lock)) => r,
                         Err(e) => {
@@ -3741,8 +3741,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             PackageCommand::Publish { dry_run, broadcast } => {
                 let base = Path::new(".");
                 let config = load_config();
- // `--broadcast` is opt-in; defines no registry source, so it is
- // rejected (stays offline / dry-run only). No network is ever used.
+                // `--broadcast` is opt-in; defines no registry source, so it is
+                // rejected (stays offline / dry-run only). No network is ever used.
                 if broadcast {
                     eprintln!(
                         "Error: `--broadcast` requires a configured registry source; none is defined in packaging."
@@ -3776,10 +3776,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 let fmt = parse_format_str(&format);
                 let config = load_config();
 
- // 4.1 — advisory lock check. If an `sdkt.lock` exists, warn
- // (non-fatally) when it has drifted from the current artifacts.
- // This never blocks deployment; it simply surfaces a stale-lock
- // signal so operators can re-run `sdkt build` if needed.
+                // 4.1 — advisory lock check. If an `sdkt.lock` exists, warn
+                // (non-fatally) when it has drifted from the current artifacts.
+                // This never blocks deployment; it simply surfaces a stale-lock
+                // signal so operators can re-run `sdkt build` if needed.
                 let lock_report = sdkt_core::lock::verify_lock(Path::new("."), &config);
                 if lock_report.present && !lock_report.consistent && fmt != OutputFormat::Json {
                     eprintln!("⚠ Warning: sdkt.lock is stale — run `sdkt build` to refresh it.");
@@ -3811,7 +3811,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                                 );
                             }
 
- // Use alias + base salt to keep deployments unique per contract
+                            // Use alias + base salt to keep deployments unique per contract
                             let contract_salt = format!("{}_{}", salt, contract.alias);
                             let wasm_bytes =
                                 fs::read(&contract.wasm_artifact).unwrap_or_else(|e| {
@@ -4053,9 +4053,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         },
         Commands::Completions { shell } => {
             let mut cmd = Cli::command();
- // Wrap stdout so a consumer that closes the pipe early
- // (`sdkt completions bash | head`) yields EPIPE, which we treat as
- // success instead of letting clap_complete panic on it.
+            // Wrap stdout so a consumer that closes the pipe early
+            // (`sdkt completions bash | head`) yields EPIPE, which we treat as
+            // success instead of letting clap_complete panic on it.
             let mut out = BrokenPipeOk(std::io::stdout());
             clap_complete::generate(shell, &mut cmd, "sdkt", &mut out);
         }
@@ -4095,7 +4095,7 @@ mod m22_tests {
 
     #[test]
     fn verification_report_json_schema() {
- // Verified case
+        // Verified case
         let r = VerificationReport {
             contract_id: "CABCDEFG".to_string(),
             network: "testnet".to_string(),
@@ -4114,7 +4114,7 @@ mod m22_tests {
         assert!(json.contains("\"match\":true"));
         assert!(json.contains("\"verification_status\":\"Verified\""));
 
- // OnChainOnly case — local fields must be absent (null/omitted)
+        // OnChainOnly case — local fields must be absent (null/omitted)
         let r2 = VerificationReport {
             contract_id: "CABCDEFG".to_string(),
             network: "testnet".to_string(),
@@ -4151,7 +4151,7 @@ mod m23_tests {
 
     #[test]
     fn derive_verdict_critical_mismatch() {
- // Mismatch wins over TTL, regardless of expiring count.
+        // Mismatch wins over TTL, regardless of expiring count.
         let (h, reasons) = derive_verdict(Some(false), 5, 12);
         assert_eq!(h, "critical");
         assert!(reasons.iter().any(|r| r.contains("does NOT match")));
@@ -4166,7 +4166,7 @@ mod m23_tests {
 
     #[test]
     fn derive_verdict_onchain_only_healthy() {
- // No --wasm supplied (verified == None), nothing expiring → healthy.
+        // No --wasm supplied (verified == None), nothing expiring → healthy.
         let (h, reasons) = derive_verdict(None, 0, 7);
         assert_eq!(h, "healthy");
         assert!(reasons.is_empty());
@@ -4174,7 +4174,7 @@ mod m23_tests {
 
     #[test]
     fn health_report_json_schema() {
- // Healthy with --wasm verified
+        // Healthy with --wasm verified
         let r = ContractHealthReport {
             contract_id: "CABCDEFG".to_string(),
             network: "testnet".to_string(),
@@ -4208,7 +4208,7 @@ mod m23_tests {
         assert!(json.contains("\"ttl\""));
         assert!(json.contains("\"expiring_entries_count\":0"));
 
- // OnChainOnly (no --wasm) → verified/local fields null/omitted
+        // OnChainOnly (no --wasm) → verified/local fields null/omitted
         let r2 = ContractHealthReport {
             contract_id: "CABCDEFG".to_string(),
             network: "testnet".to_string(),

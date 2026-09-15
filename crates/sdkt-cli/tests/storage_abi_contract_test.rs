@@ -54,7 +54,7 @@ fn storage_abi_and_abi_contract_are_mutually_exclusive() {
 
 #[test]
 fn storage_abi_contract_offline_is_graceful() {
- // No RPC reachable -> clean failure (no panic), actionable error message.
+    // No RPC reachable -> clean failure (no panic), actionable error message.
     sdkt()
         .args([
             "storage",
@@ -71,9 +71,9 @@ fn storage_abi_contract_offline_is_graceful() {
 
 #[test]
 fn existing_storage_abi_local_path_still_resolves() {
- // `--abi <missing file>` must still hit the local-ABI branch and fail with a
- // controlled "Failed to read WASM" error (not a panic), proving the existing
- // behavior is preserved.
+    // `--abi <missing file>` must still hit the local-ABI branch and fail with a
+    // controlled "Failed to read WASM" error (not a panic), proving the existing
+    // behavior is preserved.
     sdkt()
         .args([
             "storage",
@@ -117,9 +117,9 @@ fn deployed_spec_feeds_storage_abi_fields() {
         }],
     };
 
- // The storage analyzer surfaces these names when a spec is present; the
- // on-chain path must produce exactly this shape. Assert the spec carries the
- // ABI fields the storage command would emit.
+    // The storage analyzer surfaces these names when a spec is present; the
+    // on-chain path must produce exactly this shape. Assert the spec carries the
+    // ABI fields the storage command would emit.
     assert_eq!(spec.functions[0].name, "mint");
     assert_eq!(spec.custom_types[0].name, "Circle");
     assert_eq!(spec.events[0].name, "Mint");

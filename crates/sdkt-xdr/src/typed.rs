@@ -13,11 +13,11 @@ use stellar_xdr::{Int128Parts, ReadXdr, ScAddress, ScBytes, ScString, ScVal, UIn
 /// back.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ScValError {
- /// The byte buffer exceeded the Soroban `BytesM`/`StringM` limit.
+    /// The byte buffer exceeded the Soroban `BytesM`/`StringM` limit.
     TooLong,
- /// The value could not be decoded as the requested Rust type.
+    /// The value could not be decoded as the requested Rust type.
     TypeMismatch(&'static str),
- /// Numeric value out of range for the target scalar.
+    /// Numeric value out of range for the target scalar.
     OutOfRange,
 }
 
@@ -34,13 +34,13 @@ impl std::error::Error for ScValError {}
 
 /// Converts an owned Rust value into a [`stellar_xdr::ScVal`].
 pub trait IntoScVal {
- /// Consume `self` and produce an [`ScVal`].
+    /// Consume `self` and produce an [`ScVal`].
     fn into_scval(self) -> Result<ScVal, ScValError>;
 }
 
 /// Converts a [`stellar_xdr::ScVal`] reference back into a Rust value.
 pub trait FromScVal: Sized {
- /// Try to interpret `v` as `Self`.
+    /// Try to interpret `v` as `Self`.
     fn from_scval(v: &ScVal) -> Result<Self, ScValError>;
 }
 
@@ -241,8 +241,8 @@ impl FromScVal for Address {
 }
 
 impl Address {
- /// Build an `Address` from a Stellar public key (`G...`) or contract (`C...`)
- /// strkey.
+    /// Build an `Address` from a Stellar public key (`G...`) or contract (`C...`)
+    /// strkey.
     pub fn from_strkey(key: &str) -> Result<Self, ScValError> {
         let parsed = stellar_strkey::Strkey::from_string(key)
             .map_err(|_| ScValError::TypeMismatch("address strkey"))?;
@@ -338,7 +338,7 @@ mod tests {
         assert_eq!(42u32.into_scval().unwrap(), ScVal::U32(42));
         assert_eq!((-7i32).into_scval().unwrap(), ScVal::I32(-7));
 
- // Bounds
+        // Bounds
         assert_eq!(u32::MAX.into_scval().unwrap(), ScVal::U32(u32::MAX));
         assert_eq!(u32::MIN.into_scval().unwrap(), ScVal::U32(u32::MIN));
         assert_eq!(i32::MAX.into_scval().unwrap(), ScVal::I32(i32::MAX));
@@ -349,7 +349,7 @@ mod tests {
             ScVal::U64(9_000_000_000)
         );
         assert_eq!((-5i64).into_scval().unwrap(), ScVal::I64(-5));
- // wide integers
+        // wide integers
         let u = 0x_0123_4567_89ab_cdef_0000_0000_0000_0001u128;
         let sv = u.into_scval().unwrap();
         assert_eq!(u128::from_scval(&sv).unwrap(), u);
@@ -381,7 +381,7 @@ mod tests {
 
     #[test]
     fn invalid_typed_value() {
- // Can't decode a u32 from an i32.
+        // Can't decode a u32 from an i32.
         let sv = ScVal::I32(5);
         assert_eq!(u32::from_scval(&sv), Err(ScValError::TypeMismatch("u32")));
     }
@@ -396,11 +396,11 @@ mod tests {
 
     #[test]
     fn address_from_strkey() {
- // Test account G...
+        // Test account G...
         let addr = Address::from_strkey("GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF")
             .unwrap();
         assert!(matches!(addr.0, ScAddress::Account(_)));
- // Test contract C...
+        // Test contract C...
         let addr2 =
             Address::from_strkey("CAAQCAIBAEAQCAIBAEAQCAIBAEAQCAIBAEAQCAIBAEAQCAIBAEAQC526")
                 .unwrap();

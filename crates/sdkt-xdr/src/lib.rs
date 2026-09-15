@@ -74,9 +74,9 @@ pub enum DecodeError {
 
 /// Parameters for constructing a `LedgerKey`.
 pub enum LedgerKeyParams {
- /// A contract's instance data key. Takes the contract ID as a hex string.
+    /// A contract's instance data key. Takes the contract ID as a hex string.
     ContractData(String),
- /// A contract's WASM code key. Takes the WASM hash as a hex string.
+    /// A contract's WASM code key. Takes the WASM hash as a hex string.
     ContractCode(String),
 }
 
@@ -134,13 +134,13 @@ pub fn encode_ledger_key(params: &LedgerKeyParams) -> Result<String, DecodeError
 pub fn extract_wasm_hash(base64_ledger_entry: &str) -> Result<String, DecodeError> {
     let raw = detect_and_decode(base64_ledger_entry)?;
 
- // Fast path: standard stellar-xdr 28.0.0 layout.
+    // Fast path: standard stellar-xdr 28.0.0 layout.
     match extract_wasm_hash_standard(&raw) {
         Ok(hash) => Ok(hash),
- // Compatibility bridge: live data-first `LedgerEntry` wire layout.
- // On failure, keep the original (standard) error so callers still see the
- // expected `Extraction`/`XdrParse` classification for non-Wasm/non-contract
- // entries.
+        // Compatibility bridge: live data-first `LedgerEntry` wire layout.
+        // On failure, keep the original (standard) error so callers still see the
+        // expected `Extraction`/`XdrParse` classification for non-Wasm/non-contract
+        // entries.
         Err(e) => match e {
             DecodeError::XdrParse(..) => extract_wasm_hash_from_live_ledger_entry(&raw),
             _ => Err(e),
@@ -365,8 +365,8 @@ pub fn format_json(value: &Value, format: OutputFormat) -> Result<String, Decode
 pub fn estimate_xdr_size<T: WriteXdr>(value: &T) -> usize {
     let mut buf = Vec::new();
     let mut l = Limited::new(&mut buf, Limits::none());
- // Best-effort: if serialization fails (e.g. value too large), report the
- // buffer length so far. Callers use this only for pre-flight checks.
+    // Best-effort: if serialization fails (e.g. value too large), report the
+    // buffer length so far. Callers use this only for pre-flight checks.
     let _ = value.write_xdr(&mut l);
     buf.len()
 }
@@ -403,7 +403,7 @@ mod tests {
 
     #[test]
     fn test_valid_base64_but_invalid_xdr() {
- // Base64 for "hello world" which is not valid XDR
+        // Base64 for "hello world" which is not valid XDR
         let result = decode("aGVsbG8gd29ybGQ=", None, OutputFormat::default());
         assert!(matches!(result, Err(DecodeError::TypeUnknown(_))));
     }
@@ -453,7 +453,7 @@ mod tests {
         let contract_id = "0000000000000000000000000000000000000000000000000000000000000000";
         let res =
             encode_ledger_key(&LedgerKeyParams::ContractData(contract_id.to_string())).unwrap();
- // Decode it back to verify it's a LedgerKey::ContractData with ScVal::LedgerKeyContractInstance
+        // Decode it back to verify it's a LedgerKey::ContractData with ScVal::LedgerKeyContractInstance
         let decoded = detect_and_decode(&res).unwrap();
         let mut cursor = std::io::Cursor::new(&decoded);
         let mut l = Limited::new(&mut cursor, Limits::none());
@@ -505,7 +505,7 @@ mod tests {
 
     #[test]
     fn test_extract_wasm_hash_non_ledger_entry() {
- // Just an ScVal
+        // Just an ScVal
         let b64 = "AAAABAAAAAE=";
         let err = extract_wasm_hash(b64).unwrap_err();
         assert!(matches!(err, DecodeError::XdrParse(_, _)));
@@ -517,61 +517,61 @@ mod tests {
         assert!(matches!(err, DecodeError::Hex(_))); // detect_and_decode falls back to Hex and fails there
     }
 
- // Captured real `LedgerEntry` XDR from the live Stellar/Soroban testnet.
- //
- // CAE3U7JKESRWZHPEQ72DVNGOQ6WPA7HSPQZL5YV46NPCE4TMUPAGYMEC — a deployed Wasm
- // (Soroban) contract. Its `LedgerEntry` uses the LIVE wire layout where
- // `LedgerEntryData` is serialized FIRST (data union discriminant 6 =
- // CONTRACT_DATA), unlike stellar-xdr 28.0.0's lastModifiedLedgerSeq-first
- // `LedgerEntry`. The `val` is a `ContractInstance` whose `executable` is
- // `ContractExecutable::Wasm`, so the compatibility bridge must extract the Wasm
- // hash `60cddae6...`. Used to prove `extract_wasm_hash_from_live_ledger_entry`
- // works without network access.
+    // Captured real `LedgerEntry` XDR from the live Stellar/Soroban testnet.
+    //
+    // CAE3U7JKESRWZHPEQ72DVNGOQ6WPA7HSPQZL5YV46NPCE4TMUPAGYMEC — a deployed Wasm
+    // (Soroban) contract. Its `LedgerEntry` uses the LIVE wire layout where
+    // `LedgerEntryData` is serialized FIRST (data union discriminant 6 =
+    // CONTRACT_DATA), unlike stellar-xdr 28.0.0's lastModifiedLedgerSeq-first
+    // `LedgerEntry`. The `val` is a `ContractInstance` whose `executable` is
+    // `ContractExecutable::Wasm`, so the compatibility bridge must extract the Wasm
+    // hash `60cddae6...`. Used to prove `extract_wasm_hash_from_live_ledger_entry`
+    // works without network access.
     const LIVE_WASM_LEDGER_ENTRY_B64: &str = "AAAABgAAAAAAAAABCbp9KiSjbJ3kh/Q6tM6HrPB88nwyvuK8814icmyjwGwAAAAUAAAAAQAAABMAAAAAYM3a5n8gLBnuewAMiU/RKqi0TeCatlL14Yi8DGOmzwIAAAABAAAABwAAABAAAAABAAAAAQAAAA8AAAAFQWRtaW4AAAAAAAASAAAAAAAAAACUijpq22w97c0/5wJEUlkFddoMBv/zyTHhNMr9T4FBBQAAABAAAAABAAAAAQAAAA8AAAAGQ29uZmlnAAAAAAARAAAAAQAAAAsAAAAPAAAAFWJhc2VfZnVuZGluZ19yYXRlX2JwcwAAAAAAAAMAAAABAAAADwAAABJiYXNlX21ha2VyX2ZlZV9icHMAAAAAAAMAAAACAAAADwAAABJiYXNlX3Rha2VyX2ZlZV9icHMAAAAAAAMAAAAFAAAADwAAABNsaXF1aWRhdGlvbl9mZWVfYnBzAAAAAAMAAAH0AAAADwAAABZtYWludGVuYW5jZV9tYXJnaW5fYnBzAAAAAAADAAAAZAAAAA8AAAAMbWF4X2xldmVyYWdlAAAAAwAAAAoAAAAPAAAAGG1heF9vcmFjbGVfZGV2aWF0aW9uX2JwcwAAAAMAAABkAAAADwAAABFtYXhfcG9zaXRpb25fc2l6ZQAAAAAAAAoAAAAAAAAAAAAAAOjUpRAAAAAADwAAABNtYXhfcHJpY2Vfc3RhbGVuZXNzAAAAAAUAAAAAAAAAPAAAAA8AAAAObWluX2NvbGxhdGVyYWwAAAAAAAoAAAAAAAAAAAAAAAAF9eEAAAAADwAAAA90cmFkaW5nX2ZlZV9icHMAAAAAAwAAAAoAAAAQAAAAAQAAAAEAAAAPAAAAC0luaXRpYWxpemVkAAAAAAAAAAABAAAAEAAAAAEAAAABAAAADwAAAA1PcmFjbGVBZGFwdGVyAAAAAAAAEgAAAAFxzC34I3pmV4llcmFKnN7k7qZkMKXvGRPZMuobQm6naQAAABAAAAABAAAAAQAAAA8AAAAGUGF1c2VkAAAAAAAAAAAAAQAAABAAAAABAAAAAQAAAA8AAAAJVXNkY1Rva2VuAAAAAAAAEgAAAAE9sj2cIS9K0A0viwokid/jaOEXECNi3xRj3/ivNitXOgAAABAAAAABAAAAAQAAAA8AAAAFVmF1bHQAAAAAAAASAAAAAVdc5734Fh3zRgwQwWibRi6egIv95VY++/CqtURwMM+t";
 
- // Captured real `LedgerEntry` XDR for a Stellar Asset Contract (SAC) on testnet
- // (CDLZFC3SYJYDZT7K67VZ75HPJVIEUVNIXF47ZG2FB2RMQQVU2HHGCYSC). It uses the same
- // live data-first wire layout, but its `executable` is `ContractExecutable::
- // StellarAsset`, NOT `Wasm`. Proves the bridge correctly identifies a non-Wasm
- // contract and returns a controlled `Extraction` error (not an XDR panic).
+    // Captured real `LedgerEntry` XDR for a Stellar Asset Contract (SAC) on testnet
+    // (CDLZFC3SYJYDZT7K67VZ75HPJVIEUVNIXF47ZG2FB2RMQQVU2HHGCYSC). It uses the same
+    // live data-first wire layout, but its `executable` is `ContractExecutable::
+    // StellarAsset`, NOT `Wasm`. Proves the bridge correctly identifies a non-Wasm
+    // contract and returns a controlled `Extraction` error (not an XDR panic).
     const LIVE_SAC_LEDGER_ENTRY_B64: &str = "AAAABgAAAAAAAAAB15KLcsJwPM/q9+uf9O9NUEpVqLl5/JtFDqLIQrTRzmEAAAAUAAAAAQAAABMAAAABAAAAAQAAAAIAAAAPAAAACE1FVEFEQVRBAAAAEQAAAAEAAAADAAAADwAAAAdkZWNpbWFsAAAAAAMAAAAHAAAADwAAAARuYW1lAAAADgAAAAZuYXRpdmUAAAAAAA8AAAAGc3ltYm9sAAAAAAAOAAAABm5hdGl2ZQAAAAAAEAAAAAEAAAABAAAADwAAAAlBc3NldEluZm8AAAAAAAAQAAAAAQAAAAEAAAAPAAAABk5hdGl2ZQAA";
 
     #[test]
     fn test_extract_wasm_hash_live_wasm_wire_layout() {
- // The live entry must NOT decode via the standard (lastModifiedLedgerSeq-first)
- // path, proving the captured wire layout genuinely differs.
+        // The live entry must NOT decode via the standard (lastModifiedLedgerSeq-first)
+        // path, proving the captured wire layout genuinely differs.
         let raw = detect_and_decode(LIVE_WASM_LEDGER_ENTRY_B64).unwrap();
         assert!(extract_wasm_hash_standard(&raw).is_err());
 
- // The compatibility bridge decodes it and extracts the correct Wasm hash.
+        // The compatibility bridge decodes it and extracts the correct Wasm hash.
         let hash = extract_wasm_hash_from_live_ledger_entry(&raw).unwrap();
         assert_eq!(
             hash,
             "60cddae67f202c19ee7b000c894fd12aa8b44de09ab652f5e188bc0c63a6cf02"
         );
 
- // And the public entry point falls back to the bridge automatically.
+        // And the public entry point falls back to the bridge automatically.
         let via_public = extract_wasm_hash(LIVE_WASM_LEDGER_ENTRY_B64).unwrap();
         assert_eq!(via_public, hash);
     }
 
     #[test]
     fn test_extract_wasm_hash_live_sac_is_controlled_error() {
- // A live SAC (StellarAsset executable) decodes structurally but yields a
- // controlled `Extraction` error — never an XDR panic or a wrong hash.
+        // A live SAC (StellarAsset executable) decodes structurally but yields a
+        // controlled `Extraction` error — never an XDR panic or a wrong hash.
         let raw = detect_and_decode(LIVE_SAC_LEDGER_ENTRY_B64).unwrap();
         let err = extract_wasm_hash_from_live_ledger_entry(&raw).unwrap_err();
         assert!(matches!(err, DecodeError::Extraction(e) if e.contains("Not a Wasm")));
 
- // The public entry point returns the same controlled error.
+        // The public entry point returns the same controlled error.
         let err = extract_wasm_hash(LIVE_SAC_LEDGER_ENTRY_B64).unwrap_err();
         assert!(matches!(err, DecodeError::Extraction(e) if e.contains("Not a Wasm")));
     }
 
     #[test]
     fn test_extract_wasm_hash_live_wire_truncated_fails_controlled() {
- // Drop the last 4 base64 chars -> partial trailing bytes -> controlled XdrParse,
- // never a panic.
+        // Drop the last 4 base64 chars -> partial trailing bytes -> controlled XdrParse,
+        // never a panic.
         let truncated = &LIVE_WASM_LEDGER_ENTRY_B64[..LIVE_WASM_LEDGER_ENTRY_B64.len() - 4];
         let err = extract_wasm_hash(truncated).unwrap_err();
         assert!(matches!(err, DecodeError::XdrParse(_, _)));
@@ -580,7 +580,7 @@ mod tests {
     #[test]
     fn test_estimate_xdr_size() {
         let val = ScVal::U32(42);
- // Tag(4) + U32(4) = 8 bytes
+        // Tag(4) + U32(4) = 8 bytes
         assert_eq!(estimate_xdr_size(&val), 8);
     }
 }
