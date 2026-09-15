@@ -5,12 +5,12 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Soroban DevKit — The CLI Toolkit for Stellar Soroban Developers</title>
 <meta name="description" content="Soroban DevKit (sdkt) is an open-source, Rust-powered CLI toolkit for Stellar Soroban developers. Inspect, analyze, test, build, and deploy contracts from one CLI.">
-<meta name="theme-color" content="#05060a">
-<meta property="og:title" content="Soroban DevKit — Build. Analyze. Deploy. All in One CLI.">
-<meta property="og:description" content="The CLI Toolkit for Stellar Soroban Developers. Open-source, Rust-powered, unified CLI for the Soroban developer lifecycle.">
+<meta name="theme-color" content="#0a0a0c">
+<meta property="og:title" content="Soroban DevKit — Developer Tooling for Stellar Soroban">
+<meta property="og:description" content="Offline-first CLI toolkit for Soroban contract inspection, static analysis, and upgrade safety.">
 <meta property="og:type" content="website">
 <meta property="og:url" content="https://github.com/SaboLabs/soroban-devkit">
-<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='8' fill='%23a06bff'/%3E%3Ctext x='16' y='22' font-size='16' text-anchor='middle' font-family='monospace' font-weight='bold' fill='%2305060a'%3Esd%3C/text%3E%3C/svg%3E">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='4' fill='%23f77100'/%3E%3Ctext x='16' y='22' font-size='14' text-anchor='middle' font-family='monospace' font-weight='bold' fill='%230a0a0c'%3Esd%3C/text%3E%3C/svg%3E">
 <link rel="stylesheet" href="base.css">
 <link rel="stylesheet" href="sections.css">
 <link rel="stylesheet" href="layout.css">
@@ -107,7 +107,7 @@ Compatible: <span class="t-bad">NO</span>
 <!-- ================= FEATURES ================= -->
 <section id="features">
   <div class="wrap">
-    <p class="eyebrow">Features</p>
+    <div class="section-num">01</div><p class="eyebrow">Features</p>
     <h2 class="h2">Everything a Soroban dev needs, in one CLI</h2>
     <p class="lead">sdkt consolidates the fragmented developer lifecycle — contract
       inspection, XDR decoding, storage TTL analysis, static security analysis,
@@ -133,6 +133,28 @@ Compatible: <span class="t-bad">NO</span>
         <h3><svg class="card-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3l8 3v6c0 5-3.4 8-8 9-4.6-1-8-4-8-9V6z"/><path d="M9 12l2.2 2.2L15.5 10"/></svg> Static Security Audit</h3>
         <p>Static analysis of contract source against AUTH-001/002/003/004 and
           MOVE-001 rules — no network, no secrets. <code>sdkt audit</code></p>
+        <div class="rules-grid">
+          <div class="rule-card">
+            <div class="rule-id">AUTH-001</div>
+            <div class="rule-desc">Privileged/admin function missing require_auth()</div>
+          </div>
+          <div class="rule-card">
+            <div class="rule-id">AUTH-002</div>
+            <div class="rule-desc">Cross-contract invoke_contract() without require_auth()</div>
+          </div>
+          <div class="rule-card">
+            <div class="rule-id">AUTH-003</div>
+            <div class="rule-desc">Unguarded initialize() entrypoint</div>
+          </div>
+          <div class="rule-card">
+            <div class="rule-id">AUTH-004</div>
+            <div class="rule-desc">Token transfer without require_auth() on source or destination</div>
+          </div>
+          <div class="rule-card">
+            <div class="rule-id">MOVE-001</div>
+            <div class="rule-desc">Suspicious move-after-use heuristic (Warning)</div>
+          </div>
+        </div>
       </div>
       <div class="card">
         <h3><svg class="card-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 8h11a4 4 0 010 8H9"/><path d="M12 5l3 3-3 3"/><path d="M12 13l-3 3 3 3"/></svg> Upgrade Safety Diff</h3>
@@ -173,7 +195,7 @@ Compatible: <span class="t-bad">NO</span>
 <!-- ================= WORKFLOW ================= -->
 <section id="workflow">
   <div class="wrap">
-    <p class="eyebrow">Developer Workflow</p>
+    <div class="section-num">02</div><p class="eyebrow">Developer Workflow</p>
     <h2 class="h2">From contract to chain, one flow</h2>
     <p class="lead">Every stage maps to real sdkt commands. Stages 01–04 run
       offline; only the deployed-contract reads and stage 05 need an RPC endpoint.</p>
@@ -208,7 +230,7 @@ Compatible: <span class="t-bad">NO</span>
 </section><!-- ================= TERMINAL DEMO ================= -->
 <section id="demo">
   <div class="wrap">
-    <p class="eyebrow">Terminal</p>
+    <div class="section-num">03</div><p class="eyebrow">Terminal</p>
     <h2 class="h2">Real commands, real output</h2>
     <p class="lead">Every command and output block below is taken from the sdkt CLI
       surface in this repository.</p>
@@ -274,7 +296,7 @@ Severity: 0 critical, 1 warning, 0 info (1 total)
 <!-- ================= WHY ================= -->
 <section id="why">
   <div class="wrap">
-    <p class="eyebrow">Why Soroban DevKit</p>
+    <div class="section-num">04</div><p class="eyebrow">Why Soroban DevKit</p>
     <h2 class="h2">One CLI instead of a pile of scripts</h2>
     <div class="two-col">
       <div>
@@ -306,7 +328,7 @@ Severity: 0 critical, 1 warning, 0 info (1 total)
 <!-- ================= STELLAR / SOROBAN ================= -->
 <section id="stellar">
   <div class="wrap">
-    <p class="eyebrow">Stellar / Soroban</p>
+    <div class="section-num">05</div><p class="eyebrow">Stellar / Soroban</p>
     <h2 class="h2">Built for the Soroban ecosystem</h2>
     <div class="two-col">
       <div>
@@ -335,7 +357,7 @@ Severity: 0 critical, 1 warning, 0 info (1 total)
 </section><!-- ================= INSTALL ================= -->
 <section id="install">
   <div class="wrap">
-    <p class="eyebrow">Installation</p>
+    <div class="section-num">06</div><p class="eyebrow">Installation</p>
     <h2 class="h2">Running in under five minutes</h2>
     <p class="lead">Pick an install method, verify, then run your first command.</p>
 
@@ -378,7 +400,7 @@ cargo install --path crates/sdkt-cli</pre>
 <!-- ================= OPEN SOURCE ================= -->
 <section id="opensource">
   <div class="wrap">
-    <p class="eyebrow">Open Source</p>
+    <div class="section-num">07</div><p class="eyebrow">Open Source</p>
     <h2 class="h2">Transparent by default</h2>
     <p class="lead">A public repository, MIT license, an 8-crate Rust workspace,
       documented milestones, and a CI pipeline that runs the full test suite on
@@ -402,7 +424,7 @@ cargo install --path crates/sdkt-cli</pre>
 <section id="community">
   <div class="wrap">
     <div class="cta">
-      <p class="eyebrow" style="margin-bottom:0.4rem">Community &amp; Contribution</p>
+      <div class="section-num">08</div><p class="eyebrow" style="margin-bottom:0.4rem">Community &amp; Contribution</p>
       <h3>Try sdkt. Break it. Tell us what you found.</h3>
       <p>Real developer usage and feedback is exactly what this project needs right
         now. Open an issue for a bug or a missing feature, submit feedback on the

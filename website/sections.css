@@ -1,23 +1,23 @@
 /* ---------- hero ---------- */
-.hero { padding: 5.5rem 0 5rem; border-top: 0; }
-.hero-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 4rem; align-items: center; }
+.hero { padding: 6rem 0 5rem; border-top: 0; }
+.hero-grid { display: grid; grid-template-columns: 1fr 1.15fr; gap: 3.5rem; align-items: center; }
 .hero h1 {
-  font-size: clamp(2.1rem, 4.5vw, 2.9rem);
+  font-size: clamp(2.25rem, 5vw, 3rem);
   font-weight: 700;
   letter-spacing: -0.04em;
-  margin: 0 0 1.25rem;
-  line-height: 1.1;
+  margin: 0 0 1.5rem;
+  line-height: 1.05;
 }
-.hero .tagline { font-size: 1.15rem; color: var(--fg); margin: 0 0 1rem; font-weight: 500; }
-.hero .sub { font-size: 1rem; color: var(--muted); max-width: 46ch; margin: 0 0 2rem; }
+.hero .tagline { font-size: 1.1rem; color: var(--fg); margin: 0 0 1rem; font-weight: 450; }
+.hero .sub { font-size: 0.95rem; color: var(--muted); max-width: 44ch; margin: 0 0 2.25rem; }
 .hero-meta {
-  margin-top: 2rem;
+  margin-top: 2.25rem;
   font-family: var(--mono);
-  font-size: 0.78rem;
+  font-size: 0.72rem;
   color: var(--muted);
   display: flex;
   flex-wrap: wrap;
-  gap: 0.65rem;
+  gap: 0.5rem;
   align-items: center;
 }
 .hero-meta .sep { color: var(--dim); }
@@ -30,19 +30,20 @@
   border: 1px solid var(--line);
   border-radius: var(--radius);
   overflow: hidden;
-  box-shadow: 0 4px 24px rgba(0, 0, 0, 0.3);
+  box-shadow: 0 4px 32px rgba(0, 0, 0, 0.5);
 }
 .term-bar {
   display: flex;
   align-items: center;
   gap: 0.5rem;
-  padding: 0.65rem 1rem;
+  padding: 0.7rem 1rem;
   border-bottom: 1px solid var(--line-soft);
+  background: rgba(0, 0, 0, 0.3);
 }
-.term-title { font-family: var(--mono); font-size: 0.72rem; color: var(--muted); letter-spacing: 0.02em; }
-.term-body { padding: 1.1rem 1.25rem 1.3rem; font-family: var(--mono); font-size: 0.8rem; line-height: 1.65; overflow-x: auto; }
+.term-title { font-family: var(--mono); font-size: 0.68rem; color: var(--muted); letter-spacing: 0.02em; }
+.term-body { padding: 1.1rem 1.2rem 1.3rem; font-family: var(--mono); font-size: 0.76rem; line-height: 1.65; overflow-x: auto; }
 .t-cmd { color: #f4f4f5; white-space: pre-wrap; }
-.t-cmd::before { content: "$ "; color: var(--dim); }
+.t-cmd::before { content: "$ "; color: var(--accent); }
 .t-comment { color: var(--muted); white-space: pre-wrap; }
 .t-out { color: #b4b4bd; white-space: pre-wrap; }
 .t-k { color: var(--fg); }
@@ -53,7 +54,7 @@
 @media (max-width: 900px) {
   .hero-grid { grid-template-columns: 1fr; gap: 3rem; }
   .hero { padding: 3.5rem 0 4rem; }
-  .hero h1 { font-size: clamp(1.85rem, 6vw, 2.4rem); }
+  .hero h1 { font-size: clamp(1.75rem, 6vw, 2.25rem); }
 }
 
 /* ---------- features ---------- */
@@ -67,27 +68,27 @@
 .card {
   border-right: 1px solid var(--line-soft);
   border-bottom: 1px solid var(--line-soft);
-  padding: 1.6rem 1.5rem;
+  padding: 1.5rem 1.35rem;
   background: transparent;
-  transition: background 0.2s ease;
+  transition: background 0.15s ease;
 }
-.card:hover { background: rgba(255, 255, 255, 0.02); }
+.card:hover { background: rgba(255, 255, 255, 0.015); }
 .card h3 {
-  font-size: 0.95rem;
+  font-size: 0.88rem;
   font-weight: 600;
   display: flex;
   align-items: center;
-  gap: 0.65rem;
+  gap: 0.55rem;
   letter-spacing: -0.01em;
 }
-.card-ico { width: 1.1rem; height: 1.1rem; flex: 0 0 auto; color: var(--accent); opacity: 0.9; }
-.card p { color: var(--muted); font-size: 0.88rem; margin: 0.75rem 0 0; line-height: 1.6; }
+.card-ico { width: 1rem; height: 1rem; flex: 0 0 auto; color: var(--accent); opacity: 0.85; }
+.card p { color: var(--muted); font-size: 0.82rem; margin: 0.65rem 0 0; line-height: 1.55; }
 .card code {
-  font-size: 0.74rem;
+  font-size: 0.7rem;
   color: var(--fg);
-  background: rgba(255, 255, 255, 0.05);
-  padding: 0.1rem 0.35rem;
-  border-radius: 4px;
+  background: rgba(255, 255, 255, 0.04);
+  padding: 0.08rem 0.3rem;
+  border-radius: 2px;
   white-space: nowrap;
   border: 1px solid var(--line-soft);
 }
@@ -106,23 +107,75 @@
   grid-template-columns: 3.5rem 10rem 1fr;
   gap: 1.5rem;
   align-items: baseline;
-  padding: 1.15rem 1.4rem;
+  padding: 1rem 1.3rem;
   border-bottom: 1px solid var(--line-soft);
   transition: background 0.15s ease;
 }
-.flow-step:hover { background: rgba(255, 255, 255, 0.02); }
+.flow-step:hover { background: rgba(255, 255, 255, 0.015); }
 .flow-step:last-child { border-bottom: 0; }
-.flow-n { font-family: var(--mono); font-size: 0.78rem; color: var(--muted); }
-.flow-t { font-weight: 600; font-size: 0.95rem; }
+.flow-n { font-family: var(--mono); font-size: 0.72rem; color: var(--accent); font-weight: 600; }
+.flow-t { font-weight: 600; font-size: 0.88rem; }
 .flow-c {
   font-family: var(--mono);
-  font-size: 0.78rem;
+  font-size: 0.74rem;
   color: var(--muted);
   display: flex;
   flex-direction: column;
-  gap: 0.3rem;
+  gap: 0.25rem;
 }
 @media (max-width: 700px) {
-  .flow-step { grid-template-columns: 1fr; row-gap: 0.5rem; }
+  .flow-step { grid-template-columns: 1fr; row-gap: 0.4rem; }
   .flow-c { grid-column: auto; }
+}
+
+/* ---------- security rules ---------- */
+.rules-grid {
+  display: grid;
+  grid-template-columns: repeat(5, 1fr);
+  gap: 0;
+  margin-top: 2rem;
+  border: 1px solid var(--line-soft);
+  border-radius: var(--radius);
+  overflow: hidden;
+}
+.rule-card {
+  padding: 1.1rem 1rem;
+  border-right: 1px solid var(--line-soft);
+  border-bottom: 1px solid var(--line-soft);
+  background: transparent;
+  transition: background 0.15s ease;
+}
+.rule-card:last-child { border-right: 0; }
+.rule-card:hover { background: rgba(255, 255, 255, 0.015); }
+.rule-id {
+  font-family: var(--mono);
+  font-size: 0.78rem;
+  font-weight: 700;
+  color: var(--accent);
+  margin-bottom: 0.4rem;
+}
+.rule-desc {
+  font-size: 0.76rem;
+  color: var(--muted);
+  line-height: 1.45;
+}
+@media (max-width: 900px) { .rules-grid { grid-template-columns: repeat(3, 1fr); } }
+@media (max-width: 620px) { .rules-grid { grid-template-columns: 1fr 1fr; } }
+
+/* ---------- section numbering ---------- */
+.section-num {
+  font-family: var(--mono);
+  font-size: 0.68rem;
+  color: var(--dim);
+  letter-spacing: 0.1em;
+  margin-bottom: 0.5rem;
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+.section-num::after {
+  content: "";
+  flex: 1;
+  height: 1px;
+  background: var(--line-soft);
 }
