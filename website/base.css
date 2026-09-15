@@ -74,17 +74,18 @@ code, kbd, pre { font-family: var(--mono); }
 .brand { display: flex; align-items: center; gap: 0.55rem; color: var(--fg); font-weight: 650; font-size: 0.9rem; }
 .brand:hover { text-decoration: none; }
 .mark {
-  width: 22px;
-  height: 22px;
-  border-radius: 2px;
-  border: 1px solid var(--accent-dim);
-  background: var(--accent-soft);
+  width: 28px;
+  height: 28px;
+  border-radius: 3px;
+  border: 1px solid var(--accent);
+  background: var(--accent);
   display: grid;
   place-items: center;
   font-family: var(--mono);
-  font-size: 0.62rem;
+  font-size: 0.68rem;
   font-weight: 700;
-  color: var(--accent);
+  color: #0a0a0c;
+  flex: 0 0 auto;
 }
 .nav-links { margin-left: auto; display: flex; align-items: center; gap: 1.75rem; }
 .nav-links a { color: var(--muted); font-size: 0.82rem; transition: color 0.15s ease; }
