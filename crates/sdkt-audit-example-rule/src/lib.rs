@@ -3,7 +3,7 @@
 //! This crate demonstrates the plugin author workflow:
 //! 1. Implement [`sdkt_audit::AuditRule`].
 //! 2. Register the rule into the process-wide registry via
-//! [`sdkt_audit::register_rule`] (or the `register_rule!` macro).
+//!    [`sdkt_audit::register_rule`] (or the `register_rule!` macro).
 //! 3. Produce a [`sdkt_audit::Finding`] when your condition holds.
 //!
 //! It is compiled in only when `sdkt-cli` is built with the `plugins` feature,

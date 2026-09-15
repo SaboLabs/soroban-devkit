@@ -2,10 +2,10 @@
 //!
 //! Covers:
 //! 1. `sdkt --version` shape (plain build has no provenance; provenance only
-//! appears when the `provenance` feature is compiled in).
+//!    appears when the `provenance` feature is compiled in).
 //! 2. Mutating commands refuse an unsafe mainnet configuration with a clear,
-//! actionable error (reusing the existing network resolution + the new
-//! `sdkt_core::guard_mutating_network` guard).
+//!    actionable error (reusing the existing network resolution + the new
+//!    `sdkt_core::guard_mutating_network` guard).
 //! 3. deliverable files exist at the workspace root.
 
 use assert_cmd::Command;

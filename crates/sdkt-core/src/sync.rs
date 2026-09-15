@@ -6,19 +6,19 @@
 //!
 //! Design goals (reuse, no duplication):
 //! * `GitFetcher` / `git_cache_key` / `git_bin` do all git I/O — this module
-//! only decides *what* to fetch and *what* to write.
+//!   only decides *what* to fetch and *what* to write.
 //! * `lock_dependencies_resolved` (in `lock.rs`) is the single writer of
-//! `DependencyLock` entries, shared with `sdkt package fetch`.
+//!   `DependencyLock` entries, shared with `sdkt package fetch`.
 //! * `read_lock` / `write_lock` keep `sdkt.lock` stable; contract artifacts and
-//! deploy order are never touched.
+//!   deploy order are never touched.
 //! * `validate_manifest` is reused for manifest sanity before any work.
 //!
 //! Reference semantics:
 //! * `rev` — immutable, already pinned; never updated.
 //! * `tag` — resolve the tag's current commit; if it differs from the lock,
-//! update.
+//!   update.
 //! * `branch` — fetch the latest branch head; if it differs from the lock,
-//! update.
+//!   update.
 //!
 //! Offline-first: available commits are resolved via `git ls-remote` against
 //! the declared `git` URL. For a local-path "remote" (used in tests and for

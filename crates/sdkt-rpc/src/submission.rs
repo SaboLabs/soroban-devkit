@@ -141,7 +141,7 @@ pub async fn get_transaction_status(
 ///
 /// - `status` on return reflects the final state reached.
 /// - If `--wait` is not requested (`timeout == 0`), submits and returns
-/// immediately with status `Pending`.
+///   immediately with status `Pending`.
 pub async fn submit_and_wait(
     client: &SorobanRpcClient,
     envelope: &str,

@@ -1220,7 +1220,7 @@ fn load_config() -> DevKitConfig {
 /// Filesystem rules (matching the rest of the `tx` subcommands):
 /// - If the path exists, read it as a file.
 /// - If it does not exist but looks like a (missing) path, report a clear
-/// "invalid file" error instead of silently mis-parsing it as base64.
+///   "invalid file" error instead of silently mis-parsing it as base64.
 /// - Otherwise treat the value as an inline base64 string.
 fn resolve_tx_input(input: &str) -> Result<String, String> {
     if fs::metadata(input).is_ok() {

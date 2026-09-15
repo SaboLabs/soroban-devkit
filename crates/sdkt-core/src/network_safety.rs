@@ -62,11 +62,11 @@ fn rpc_host_is_mainnet(rpc_url: &str) -> bool {
 /// The guard refuses in two clearly-wrong situations:
 ///
 /// 1. The effective passphrase is the mainnet passphrase but the network was
-/// *not* explicitly selected (e.g. a stray default that happens to match
-/// mainnet). Operators must opt in deliberately.
+///    *not* explicitly selected (e.g. a stray default that happens to match
+///    mainnet). Operators must opt in deliberately.
 /// 2. The RPC URL points at mainnet while the passphrase is *not* the mainnet
-/// passphrase — i.e. someone aimed the tool at mainnet but forgot to set the
-/// matching passphrase, which would sign an envelope for the wrong network.
+///    passphrase — i.e. someone aimed the tool at mainnet but forgot to set the
+///    matching passphrase, which would sign an envelope for the wrong network.
 ///
 /// Everything else (testnet by default, or mainnet with both an explicit,
 /// matching passphrase) is allowed through.

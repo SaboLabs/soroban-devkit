@@ -11,9 +11,9 @@ const EXPIRING_SOON_LEDGERS: u32 = 17280;
 /// Classify a storage entry from its base64 XDR `LedgerKey`.
 ///
 /// - `LedgerKey::ContractData` whose `key` is `ScVal::LedgerKeyContractInstance`
-/// is the contract **instance** singleton.
+///   is the contract **instance** singleton.
 /// - Other `LedgerKey::ContractData` entries are categorized by their
-/// `durability` (`Persistent` / `Temporary`).
+///   `durability` (`Persistent` / `Temporary`).
 /// - Anything else (account, trustline, contract code, etc.) is `Other`.
 ///
 /// Returns `StorageClass::Other` if the key cannot be decoded — never errors,

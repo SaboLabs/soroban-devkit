@@ -4,10 +4,10 @@
 //! and exit codes. They are fully deterministic and offline:
 //!
 //! * Network-profile tests point `SDKT_NETWORK_DIR` at a per-test temporary
-//! directory so they never touch the developer's real profile store and never
-//! collide with each other.
+//!   directory so they never touch the developer's real profile store and never
+//!   collide with each other.
 //! * "Offline" commands (`--help`, `--version`, `completions`, `network list`
-//! against an empty store) are exercised without any network access.
+//!   against an empty store) are exercised without any network access.
 
 use assert_cmd::Command;
 use predicates::prelude::*;

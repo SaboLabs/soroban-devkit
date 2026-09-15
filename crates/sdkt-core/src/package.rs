@@ -290,7 +290,7 @@ pub fn topo_sort(graph: &HashMap<String, Vec<String>>) -> Result<Vec<String>, St
 /// * exactly one source per dependency — a `path` OR a `git` URL (not both),
 /// * for `path` deps: the path is non-empty and resolves to an existing dir,
 /// * for `git` deps: a URL is present and a valid, supported-scheme URL;
-/// exactly one of `branch`/`tag`/`rev` (none empty),
+///   exactly one of `branch`/`tag`/`rev` (none empty),
 /// * no self-dependency (a dependency key equal to the package name),
 /// * no duplicate dependency name,
 /// * the dependency graph is acyclic (reuses [`topo_sort`]).
@@ -398,9 +398,9 @@ pub fn validate_dependencies(base_dir: &Path, config: &DevKitConfig) -> Result<(
 /// * SCP-like `git@host:org/repo` (no scheme),
 /// * URL forms with scheme `https`, `http`, `git`, or `ssh`,
 /// * Local repository paths (an absolute path on the current platform, e.g.
-/// `/abs/path` on Unix or `C:\abs\path` on Windows, plus `./rel`, `../rel`,
-/// `~/path`), which `git clone` accepts directly and are used by
-/// offline/hermetic tests.
+///   `/abs/path` on Unix or `C:\abs\path` on Windows, plus `./rel`, `../rel`,
+///   `~/path`), which `git clone` accepts directly and are used by
+///   offline/hermetic tests.
 ///
 /// The URL/reference must be non-empty. A bare host with no scheme and no path
 /// separator (e.g. `github.com/org/repo` without a scheme) is rejected as an

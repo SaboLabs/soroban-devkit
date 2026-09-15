@@ -8,13 +8,13 @@
 //! # Security model
 //!
 //! - Secret key material is handled only as `&[u8; 32]` seeds or `ed25519_dalek`
-//! `SigningKey` values that live for the duration of a single `sign_*` call.
+//!   `SigningKey` values that live for the duration of a single `sign_*` call.
 //! - No secret bytes are ever written to logs, `stdout`, `stderr`, or error
-//! messages. [`SigningError`] carries only human-readable, key-free text.
+//!   messages. [`SigningError`] carries only human-readable, key-free text.
 //! - The envelope hash is computed via `stellar_xdr`'s own
-//! [`TransactionEnvelope::hash`], which encodes the correct
-//! `TransactionSignaturePayload` for this crate version. We never hand-roll
-//! the preimage.
+//!   [`TransactionEnvelope::hash`], which encodes the correct
+//!   `TransactionSignaturePayload` for this crate version. We never hand-roll
+//!   the preimage.
 
 use base64::engine::general_purpose::STANDARD;
 use base64::Engine;

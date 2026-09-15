@@ -525,9 +525,9 @@ fn git_head_commit(checkout: &Path) -> String {
 /// Compute a deterministic integrity string for a dependency's on-disk source.
 ///
 /// * Git deps: `sha256:<tree-hash>` via `git rev-parse HEAD^{tree}` of the
-/// cached checkout (stable across machines for the same tree).
+///   cached checkout (stable across machines for the same tree).
 /// * Local path deps: `sha256:<hash>` over the sorted relative file paths and
-/// their contents (so a byte change anywhere in the tree is detected).
+///   their contents (so a byte change anywhere in the tree is detected).
 ///
 /// Returns an empty string when the source cannot be read (e.g. not fetched
 /// yet). This is purely offline — no network, no registry.

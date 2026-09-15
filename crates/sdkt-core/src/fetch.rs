@@ -9,11 +9,11 @@
 //! Design goals:
 //! * No network during tests — tests use on-the-fly local git repositories.
 //! * Deterministic cache layout: `<cache_root>/git/<stable-hash>/` so repeated
-//! fetches are idempotent.
+//!   fetches are idempotent.
 //! * No authentication helpers, no registry. The Git backend shells out to the
-//! system `git` binary (assumed present, like `cargo`/`rustc`).
+//!   system `git` binary (assumed present, like `cargo`/`rustc`).
 //! * Never builds — `fetch` only materializes source; building is the caller's
-//! responsibility.
+//!   responsibility.
 
 use crate::config::Dependency;
 use crate::sync::resolve_version_constraint;
