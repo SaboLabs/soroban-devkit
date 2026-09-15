@@ -207,7 +207,7 @@ See [`docs/plugin-authoring.md`](docs/plugin-authoring.md) for how to build or u
 | `sdkt storage analyze <contract-id>` | Classify Instance / Persistent / Temporary storage entries + TTL summary. |
 | `sdkt storage estimate <wasm-path>` | Estimate storage cost for a WASM. |
 | `sdkt tx inspect <hash>` | Transaction status / ledger inclusion. |
-| `sdkt tx validate <xdr>` | Offline pre-flight validation of an envelope (parses + structural checks). |
+| `sdkt tx validate --envelope <xdr>` | Offline pre-flight validation of an envelope (parses + structural checks). |
 | `sdkt tx simulate <xdr>` | Offline pre-flight via `simulateTransaction` (RPC). |
 | `sdkt tx sign --input <xdr> --identity <name>` | Sign an envelope with a local ED25519 identity — fully offline. |
 | `sdkt tx submit <xdr>` | Submit a transaction (with optional poll; RPC). |
