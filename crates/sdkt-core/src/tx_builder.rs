@@ -51,7 +51,7 @@ impl TxBuilder {
         Self::default()
     }
 
-    /// Set the source account from a public key (G...)
+ /// Set the source account from a public key (G...)
     pub fn source_account(mut self, address: &str) -> Result<Self, BuilderError> {
         let key = Strkey::from_string(address)
             .map_err(|e| BuilderError::InvalidSourceAccount(e.to_string()))?;
@@ -66,19 +66,19 @@ impl TxBuilder {
         }
     }
 
-    /// Set the sequence number
+ /// Set the sequence number
     pub fn sequence_number(mut self, seq: i64) -> Self {
         self.sequence_number = Some(seq);
         self
     }
 
-    /// Set the base fee
+ /// Set the base fee
     pub fn fee(mut self, fee: u32) -> Self {
         self.fee = fee;
         self
     }
 
-    /// Set a text memo
+ /// Set a text memo
     pub fn memo_text(mut self, text: &str) -> Result<Self, BuilderError> {
         let bytes = text.as_bytes();
         let vec_m = bytes
@@ -88,27 +88,27 @@ impl TxBuilder {
         Ok(self)
     }
 
-    /// Set an ID memo
+ /// Set an ID memo
     pub fn memo_id(mut self, id: u64) -> Self {
         self.memo = Memo::Id(id);
         self
     }
 
-    /// Add a pre-built Operation
+ /// Add a pre-built Operation
     pub fn add_operation(mut self, op: Operation) -> Self {
         self.operations.push(op);
         self
     }
 
-    /// Add an `InvokeHostFunction` operation for a smart-contract call.
-    ///
-    /// This is a convenience that wraps a [`HostFunction::InvokeContract`] op
-    /// without requiring the caller to hand-assemble the XDR [`Operation`].
-    ///
-    /// # Errors
-    ///
-    /// Returns [`BuilderError::InvalidOperation`] if the contract ID (`C...`)
-    /// or function name is invalid.
+ /// Add an `InvokeHostFunction` operation for a smart-contract call.
+ ///
+ /// This is a convenience that wraps a [`HostFunction::InvokeContract`] op
+ /// without requiring the caller to hand-assemble the XDR [`Operation`].
+ ///
+ /// # Errors
+ ///
+ /// Returns [`BuilderError::InvalidOperation`] if the contract ID (`C...`)
+ /// or function name is invalid.
     pub fn invoke_contract(
         mut self,
         contract_id: &str,
@@ -143,14 +143,14 @@ impl TxBuilder {
         Ok(self)
     }
 
-    /// Set ext to V1 with SorobanTransactionData (for host functions)
+ /// Set ext to V1 with SorobanTransactionData (for host functions)
     pub fn set_ext(mut self, ext: TransactionExt) -> Self {
         self.ext = ext;
         self
     }
 
-    /// Set timebounds timeout (from now to `0` means unbounded for now, or we can just leave None)
-    /// Real implementations might take a minTime and maxTime. We provide a basic max_time setter.
+ /// Set timebounds timeout (from now to `0` means unbounded for now, or we can just leave None)
+ /// Real implementations might take a minTime and maxTime. We provide a basic max_time setter.
     pub fn max_time(mut self, max_time: u64) -> Self {
         self.preconditions = Preconditions::Time(TimeBounds {
             min_time: stellar_xdr::TimePoint(0),
@@ -159,7 +159,7 @@ impl TxBuilder {
         self
     }
 
-    /// Build the `TransactionEnvelope` (unsigned).
+ /// Build the `TransactionEnvelope` (unsigned).
     pub fn build(self) -> Result<TransactionEnvelope, BuilderError> {
         let source_account = self
             .source_account
@@ -195,7 +195,7 @@ impl TxBuilder {
         Ok(TransactionEnvelope::Tx(env_v1))
     }
 
-    /// Build and encode to base64
+ /// Build and encode to base64
     pub fn build_base64(self) -> Result<String, BuilderError> {
         let envelope = self.build()?;
         let b64 = envelope.to_xdr_base64(Limits::none())?;
@@ -266,7 +266,7 @@ mod tests {
             .build_base64()
             .unwrap();
 
-        // Valid base64 output that decodes back
+ // Valid base64 output that decodes back
         let envelope = TransactionEnvelope::from_xdr_base64(b64, Limits::none()).unwrap();
         match envelope {
             TransactionEnvelope::Tx(env) => {

@@ -1,4 +1,4 @@
-//! M40 — plugin store integration tests (external test crate).
+//! — plugin store integration tests (external test crate).
 //!
 //! Covers metadata parsing, store-root precedence, ABI-major rejection,
 //! kind/extension mismatch rejection, remove idempotency, and id resolution.
@@ -64,7 +64,7 @@ fn store_root_precedence_env_over_config_and_cwd() {
     set_store_root(tmp.path());
     let root = sdkt_audit::plugin_store::resolve_store_root();
     assert_eq!(root, tmp.path().to_path_buf());
-    // Do NOT unset; other tests rely on the env being set.
+ // Do NOT unset; other tests rely on the env being set.
 }
 
 #[test]
@@ -115,15 +115,15 @@ fn kind_extension_mismatch_rejected() {
 /// Verifies resolve_store_root() fallback behavior when SDKT_PLUGIN_DIR is absent.
 ///
 /// The implementation falls back to:
-///   1. `<config-dir>/sdkt/plugins` if it exists, otherwise
-///   2. `<cwd>/.sdkt/plugins`
+/// 1. `<config-dir>/sdkt/plugins` if it exists, otherwise
+/// 2. `<cwd>/.sdkt/plugins`
 ///
 /// This test ensures the fallback produces a sensible path ending in the
 /// expected `sdkt/plugins` suffix.
 #[test]
 fn store_root_fallback_without_env() {
     let _g = ENV_LOCK.lock().unwrap();
-    // Remove the env var to exercise the fallback path
+ // Remove the env var to exercise the fallback path
     std::env::remove_var("SDKT_PLUGIN_DIR");
 
     let root = sdkt_audit::plugin_store::resolve_store_root();

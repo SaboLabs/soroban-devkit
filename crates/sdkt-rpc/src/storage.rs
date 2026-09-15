@@ -49,13 +49,13 @@ pub async fn get_ttl_info(
     let ledger_info = client.get_ledger().await?;
     let current_ledger = ledger_info.sequence;
 
-    // Soroban RPC `getLedgerEntries` requires explicit keys — it cannot enumerate all
-    // storage for a contract. The one key that is ALWAYS present for a deployed
-    // contract is its instance singleton (see [`instance_ledger_key`]). Querying it
-    // returns the contract's instance entry (real, decodable) and avoids the
-    // "no keys specified in request" error that an empty key set causes. Further
-    // storage data entries (persistent/temporary) would require explicit keys the
-    // caller must supply; the instance entry is the guaranteed baseline.
+ // Soroban RPC `getLedgerEntries` requires explicit keys — it cannot enumerate all
+ // storage for a contract. The one key that is ALWAYS present for a deployed
+ // contract is its instance singleton (see [`instance_ledger_key`]). Querying it
+ // returns the contract's instance entry (real, decodable) and avoids the
+ // "no keys specified in request" error that an empty key set causes. Further
+ // storage data entries (persistent/temporary) would require explicit keys the
+ // caller must supply; the instance entry is the guaranteed baseline.
     let instance_key = instance_ledger_key(contract_id)?;
 
     let storage_resp = client
@@ -70,7 +70,7 @@ pub async fn get_ttl_info(
             0
         };
 
-        // Rough estimation: 1 ledger ≈ 5 seconds
+ // Rough estimation: 1 ledger ≈ 5 seconds
         let days_remaining = (current_ttl * 5) / (24 * 3600);
         let extension_cost_stroops = calculate_extension_cost(current_ttl);
 
@@ -105,10 +105,10 @@ mod tests {
         assert_eq!(calculate_extension_cost(0), 0);
     }
 
-    /// Proves the instance-ledger-key derivation never produces an empty/placeholder
-    /// key: for a real contract id it returns a non-empty base64 XDR `LedgerKey`
-    /// encoding the contract's instance singleton, and the StrKey and hex forms of the
-    /// same contract yield an identical key.
+ /// Proves the instance-ledger-key derivation never produces an empty/placeholder
+ /// key: for a real contract id it returns a non-empty base64 XDR `LedgerKey`
+ /// encoding the contract's instance singleton, and the StrKey and hex forms of the
+ /// same contract yield an identical key.
     #[test]
     fn test_instance_ledger_key_is_valid_and_stable() {
         let c = "CAE3U7JKESRWZHPEQ72DVNGOQ6WPA7HSPQZL5YV46NPCE4TMUPAGYMEC";
@@ -117,14 +117,14 @@ mod tests {
         let key_from_strkey = instance_ledger_key(c).expect("StrKey C... should derive a key");
         let key_from_hex = instance_ledger_key(hex).expect("hex should derive a key");
 
-        // Never empty / never a placeholder.
+ // Never empty / never a placeholder.
         assert!(!key_from_strkey.is_empty());
         assert_eq!(
             key_from_strkey, key_from_hex,
             "StrKey and hex must map to the same contract instance key"
         );
 
-        // Decodes to a ContractData ledger key (the instance singleton).
+ // Decodes to a ContractData ledger key (the instance singleton).
         let bytes = base64::engine::general_purpose::STANDARD
             .decode(key_from_strkey.trim())
             .expect("key must be valid base64");
@@ -144,7 +144,7 @@ mod tests {
 
     #[test]
     fn test_instance_ledger_key_rejects_garbage() {
-        // Garbage must error rather than silently yielding an empty/placeholder key.
+ // Garbage must error rather than silently yielding an empty/placeholder key.
         assert!(instance_ledger_key("not-a-contract-id").is_err());
     }
 }

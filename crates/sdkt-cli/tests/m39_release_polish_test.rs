@@ -1,12 +1,12 @@
-//! M39 — Release Polish & SCF Readiness integration tests.
+//! — Release Polish & SCF Readiness integration tests.
 //!
 //! Covers:
 //! 1. `sdkt --version` shape (plain build has no provenance; provenance only
-//!    appears when the `provenance` feature is compiled in).
+//! appears when the `provenance` feature is compiled in).
 //! 2. Mutating commands refuse an unsafe mainnet configuration with a clear,
-//!    actionable error (reusing the existing M29 network resolution + the new
-//!    `sdkt_core::guard_mutating_network` guard).
-//! 3. M39 deliverable files exist at the workspace root.
+//! actionable error (reusing the existing network resolution + the new
+//! `sdkt_core::guard_mutating_network` guard).
+//! 3. deliverable files exist at the workspace root.
 
 use assert_cmd::Command;
 use predicates::prelude::*;
@@ -18,7 +18,7 @@ fn sdkt() -> Command {
 
 /// Absolute path to the workspace root (parent of the crate manifest dir).
 fn workspace_root() -> PathBuf {
-    // CARGO_MANIFEST_DIR for this integration test is crates/sdkt-cli.
+ // CARGO_MANIFEST_DIR for this integration test is crates/sdkt-cli.
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .parent()
         .expect("crate dir has parent")
@@ -29,23 +29,23 @@ fn workspace_root() -> PathBuf {
 
 #[test]
 fn version_is_semver_without_provenance() {
-    // Default build: --version must be exactly the semantic version (no commit/date).
+ // Default build: --version must be exactly the semantic version (no commit/date).
     sdkt()
         .arg("--version")
         .assert()
         .success()
         .stdout(predicate::str::contains("2.5.0"))
         .stdout(predicate::function(|s: &str| {
-            // No provenance suffix leaked into the default build.
+ // No provenance suffix leaked into the default build.
             !s.contains("commit") && !s.contains("built")
         }));
 }
 
 #[test]
 fn mutating_submit_refuses_mainnet_rpc_with_testnet_passphrase() {
-    // Point at mainnet RPC but keep the default testnet passphrase. The guard
-    // must reject before any network call (bogus envelope => only the guard
-    // path is exercised, since the guard runs first).
+ // Point at mainnet RPC but keep the default testnet passphrase. The guard
+ // must reject before any network call (bogus envelope => only the guard
+ // path is exercised, since the guard runs first).
     sdkt()
         .args([
             "tx",
@@ -79,9 +79,9 @@ fn mutating_deploy_refuses_mainnet_rpc_with_testnet_passphrase() {
 
 #[test]
 fn mutating_submit_allows_testnet_default() {
-    // Default network is testnet; with no explicit network the guard passes.
-    // The command should then fail for a different, expected reason (bad
-    // envelope / network) — not the mainnet-safety guard.
+ // Default network is testnet; with no explicit network the guard passes.
+ // The command should then fail for a different, expected reason (bad
+ // envelope / network) — not the mainnet-safety guard.
     let out = sdkt()
         .args(["tx", "submit", "--envelope", "AAAA"])
         .output()
@@ -100,9 +100,9 @@ fn mutating_submit_allows_testnet_default() {
 
 #[test]
 fn mutating_submit_allows_explicit_mainnet_with_matching_passphrase() {
-    // Explicitly selecting mainnet with the matching passphrase is permitted by
-    // the guard (the command may still fail downstream for other reasons, but
-    // not due to the safety guard).
+ // Explicitly selecting mainnet with the matching passphrase is permitted by
+ // the guard (the command may still fail downstream for other reasons, but
+ // not due to the safety guard).
     let out = sdkt()
         .args([
             "tx",
@@ -130,16 +130,16 @@ fn mutating_submit_allows_explicit_mainnet_with_matching_passphrase() {
 
 #[test]
 fn m39_deliverable_files_present() {
-    // The M39 deliverables include a Dockerfile + .dockerignore. The SCF
-    // positioning doc was later archived to docs/archive/ (see #29).
+ // The deliverables include a Dockerfile + .dockerignore. The SCF
+ // positioning doc was later archived to docs/archive/ (see #29).
     let root = workspace_root();
     assert!(
         root.join("Dockerfile").exists(),
-        "Dockerfile must exist (M39 deliverable)"
+        "Dockerfile must exist "
     );
     assert!(
         root.join(".dockerignore").exists(),
-        ".dockerignore must exist (M39 deliverable)"
+        ".dockerignore must exist "
     );
     assert!(
         root.join("docs/archive/scf-positioning-v2.5.0.md").exists(),

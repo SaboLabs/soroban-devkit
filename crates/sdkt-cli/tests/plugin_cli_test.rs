@@ -1,4 +1,4 @@
-//! M40 — CLI plugin subcommand integration tests (hermetic, temp store).
+//! — CLI plugin subcommand integration tests (hermetic, temp store).
 //!
 //! Uses a temp directory as the plugin store via `SDKT_PLUGIN_DIR` so it never
 //! touches the developer's real profile. Verifies the local lifecycle
@@ -21,7 +21,7 @@ fn sdkt() -> Command {
     ));
     let _ = fs::create_dir_all(&dir);
     cmd.env("SDKT_PLUGIN_DIR", &dir);
-    // Avoid any real network profile lookups during these offline tests.
+ // Avoid any real network profile lookups during these offline tests.
     cmd.env("SDKT_NETWORK_DIR", &dir);
     cmd
 }
@@ -35,7 +35,7 @@ fn dummy_src(store: &std::path::Path) -> std::path::PathBuf {
 }
 
 fn fixture_plugin(store: &std::path::Path) -> std::path::PathBuf {
-    // Dummy artifact (not a real loadable plugin; default build skips dry-run load).
+ // Dummy artifact (not a real loadable plugin; default build skips dry-run load).
     let src = store.join("ex_rule.wasm");
     fs::write(&src, b"dummy-wasm-bytes").unwrap();
     fs::write(
@@ -68,7 +68,7 @@ fn plugin_install_list_show_remove_lifecycle() {
     let _ = fs::create_dir_all(&store);
     let src = fixture_plugin(&store);
 
-    // list empty
+ // list empty
     sdkt()
         .env("SDKT_PLUGIN_DIR", &store)
         .args(["plugin", "list"])
@@ -76,7 +76,7 @@ fn plugin_install_list_show_remove_lifecycle() {
         .success()
         .stdout(predicate::str::contains("No plugins installed"));
 
-    // install
+ // install
     sdkt()
         .env("SDKT_PLUGIN_DIR", &store)
         .args(["plugin", "install", src.to_str().unwrap()])
@@ -84,7 +84,7 @@ fn plugin_install_list_show_remove_lifecycle() {
         .success()
         .stdout(predicate::str::contains("Installed plugin 'example-rule'"));
 
-    // list shows it
+ // list shows it
     sdkt()
         .env("SDKT_PLUGIN_DIR", &store)
         .args(["plugin", "list"])
@@ -92,7 +92,7 @@ fn plugin_install_list_show_remove_lifecycle() {
         .success()
         .stdout(predicate::str::contains("example-rule"));
 
-    // show
+ // show
     sdkt()
         .env("SDKT_PLUGIN_DIR", &store)
         .args(["plugin", "show", "example-rule"])
@@ -100,7 +100,7 @@ fn plugin_install_list_show_remove_lifecycle() {
         .success()
         .stdout(predicate::str::contains("kind: wasm"));
 
-    // audit --rules <id> resolves the id (default build: hits wasm-plugins feature branch)
+ // audit --rules <id> resolves the id (default build: hits wasm-plugins feature branch)
     let src = dummy_src(&store);
     sdkt()
         .env("SDKT_PLUGIN_DIR", &store)
@@ -109,7 +109,7 @@ fn plugin_install_list_show_remove_lifecycle() {
         .failure()
         .stderr(predicate::str::contains("wasm-plugins"));
 
-    // remove
+ // remove
     sdkt()
         .env("SDKT_PLUGIN_DIR", &store)
         .args(["plugin", "remove", "example-rule"])
@@ -117,7 +117,7 @@ fn plugin_install_list_show_remove_lifecycle() {
         .success()
         .stdout(predicate::str::contains("Removed plugin"));
 
-    // audit --rules <id> now fails as unresolved path
+ // audit --rules <id> now fails as unresolved path
     let src = dummy_src(&store);
     sdkt()
         .env("SDKT_PLUGIN_DIR", &store)
@@ -131,7 +131,7 @@ fn plugin_install_list_show_remove_lifecycle() {
 
 #[test]
 fn audit_raw_path_still_works_backward_compat() {
-    // A raw existing path must NOT be treated as a plugin id.
+ // A raw existing path must NOT be treated as a plugin id.
     let store = std::env::temp_dir().join(format!(
         "sdkt-plugin-raw-{}",
         std::time::SystemTime::now()
@@ -154,7 +154,7 @@ fn audit_raw_path_still_works_backward_compat() {
         ])
         .assert()
         .failure()
-        // hits the loader branch for a raw path (not "does not exist")
+ // hits the loader branch for a raw path (not "does not exist")
         .stderr(predicate::str::contains("wasm-plugins"));
 
     let _ = fs::remove_dir_all(&store);

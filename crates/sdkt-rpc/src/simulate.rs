@@ -16,10 +16,10 @@ pub struct SimulateTransactionRequest {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct SimulateOperationResult {
-    /// List of base64 `SorobanAuthorizationEntry` XDR blobs (may be empty).
+ /// List of base64 `SorobanAuthorizationEntry` XDR blobs (may be empty).
     #[serde(default)]
     pub auth: Vec<String>,
-    /// Base64 XDR of the `SorobanTransactionMeta` entry for the operation.
+ /// Base64 XDR of the `SorobanTransactionMeta` entry for the operation.
     #[serde(default)]
     pub xdr: String,
 }
@@ -44,32 +44,32 @@ pub struct SimulateRestorePreamble {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct SimulateResponse {
-    /// Base64 XDR `SorobanTransactionData` returned for building the real transaction.
+ /// Base64 XDR `SorobanTransactionData` returned for building the real transaction.
     #[serde(default)]
     pub transaction_data: String,
-    /// Minimum resource fee in stroops.
+ /// Minimum resource fee in stroops.
     #[serde(default)]
     pub min_resource_fee: String,
-    /// State restoration preamble data if the transaction requires expired state restoration.
+ /// State restoration preamble data if the transaction requires expired state restoration.
     #[serde(default)]
     pub restore_preamble: Option<SimulateRestorePreamble>,
-    /// Per-operation results (present for host-function invocation transactions).
+ /// Per-operation results (present for host-function invocation transactions).
     #[serde(default)]
     pub results: Vec<SimulateOperationResult>,
-    /// CPU and memory resource cost.
+ /// CPU and memory resource cost.
     #[serde(default)]
     pub cost: Option<SimulateCost>,
-    /// Ledger sequence the simulation was run against.
+ /// Ledger sequence the simulation was run against.
     #[serde(default)]
     pub latest_ledger: Option<String>,
-    /// Diagnostic events emitted during simulation.
+ /// Diagnostic events emitted during simulation.
     #[serde(default)]
     pub events: Vec<serde_json::Value>,
-    /// State changes emitted during simulation.
+ /// State changes emitted during simulation.
     #[serde(default)]
     pub state_changes: Vec<serde_json::Value>,
-    /// Optional simulation error (e.g. host function failure). A populated
-    /// `error` field indicates the simulation did not fully succeed.
+ /// Optional simulation error (e.g. host function failure). A populated
+ /// `error` field indicates the simulation did not fully succeed.
     #[serde(default)]
     pub error: Option<String>,
 }
@@ -154,7 +154,7 @@ mod tests {
 
     #[test]
     fn test_response_deserialize_minimal() {
-        // Minimal valid response with only transactionData present.
+ // Minimal valid response with only transactionData present.
         let raw = r#"{"transactionData": "AAAAAdata"}"#;
         let response: SimulateResponse = serde_json::from_str(raw).unwrap();
         assert_eq!(response.min_resource_fee, "");

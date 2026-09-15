@@ -39,6 +39,6 @@ fn storage_analyze_accepts_json_format_flag() {
             "json",
         ])
         .assert()
-        // Network call will fail (no RPC), but the flag parses and we reach execution.
+ // Network call will fail (no RPC), but the flag parses and we reach execution.
         .failure();
 }

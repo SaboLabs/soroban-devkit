@@ -12,26 +12,26 @@ use std::time::Duration;
 /// Holds the RPC endpoint URL and a reusable HTTP client.
 #[derive(Clone)]
 pub struct SorobanRpcClient {
-    /// Base URL of the Soroban RPC endpoint (e.g. `https://soroban-testnet.stellar.org`).
+ /// Base URL of the Soroban RPC endpoint (e.g. `https://soroban-testnet.stellar.org`).
     endpoint: String,
     http_client: reqwest::Client,
 }
 
 impl SorobanRpcClient {
-    /// Create a client from an explicit endpoint URL.
-    ///
-    /// Configures a 15-second default timeout and basic connection pooling.
-    ///
-    /// # Example
-    /// ```
-    /// use sdkt_rpc::SorobanRpcClient;
-    /// let client = SorobanRpcClient::new("https://soroban-testnet.stellar.org");
-    /// ```
+ /// Create a client from an explicit endpoint URL.
+ ///
+ /// Configures a 15-second default timeout and basic connection pooling.
+ ///
+ /// # Example
+ /// ```
+ /// use sdkt_rpc::SorobanRpcClient;
+ /// let client = SorobanRpcClient::new("https://soroban-testnet.stellar.org");
+ /// ```
     pub fn new(endpoint: &str) -> Self {
         Self::with_options(endpoint, Some(15), Some(100))
     }
 
-    /// Create a client with explicit pool and timeout settings.
+ /// Create a client with explicit pool and timeout settings.
     pub fn with_options(
         endpoint: &str,
         timeout_secs: Option<u64>,
@@ -58,7 +58,7 @@ impl SorobanRpcClient {
         }
     }
 
-    /// Create a client from [`NetworkConfig`].
+ /// Create a client from [`NetworkConfig`].
     pub fn from_config(config: &NetworkConfig) -> Self {
         Self::with_options(
             &config.rpc_url,
@@ -67,12 +67,12 @@ impl SorobanRpcClient {
         )
     }
 
-    /// Return the configured endpoint URL.
+ /// Return the configured endpoint URL.
     pub fn endpoint(&self) -> &str {
         &self.endpoint
     }
 
-    /// Helper for making JSON-RPC calls with basic timeout retry logic.
+ /// Helper for making JSON-RPC calls with basic timeout retry logic.
     pub async fn request<T: serde::de::DeserializeOwned>(
         &self,
         method: &str,
@@ -85,7 +85,7 @@ impl SorobanRpcClient {
             "params": params,
         });
 
-        // Simple single-retry logic for network-level timeouts or transient failures
+ // Simple single-retry logic for network-level timeouts or transient failures
         let mut attempt = 0;
         let mut last_err = None;
 
@@ -115,7 +115,7 @@ impl SorobanRpcClient {
                     if e.is_timeout() || e.is_connect() {
                         last_err = Some(e);
                         attempt += 1;
-                        // short backoff
+ // short backoff
                         tokio::time::sleep(Duration::from_millis(500)).await;
                         continue;
                     }
@@ -127,17 +127,17 @@ impl SorobanRpcClient {
         Err(RpcError::Reqwest(last_err.unwrap()))
     }
 
-    /// Check the health of the Soroban RPC node.
+ /// Check the health of the Soroban RPC node.
     pub async fn get_health(&self) -> Result<HealthCheck, RpcError> {
         self.request("getHealth", ()).await
     }
 
-    /// Get the latest ledger info from the Soroban RPC node.
+ /// Get the latest ledger info from the Soroban RPC node.
     pub async fn get_ledger(&self) -> Result<LedgerInfo, RpcError> {
         self.request("getLatestLedger", ()).await
     }
 
-    /// Get contract storage entries.
+ /// Get contract storage entries.
     pub async fn get_contract_storage(
         &self,
         _contract_id: &str,
@@ -162,7 +162,7 @@ struct JsonRpcError {
 /// Health check response from the node.
 #[derive(Debug, Deserialize, PartialEq)]
 pub struct HealthCheck {
-    /// Status string (e.g. `"ok"`, `"error"`).
+ /// Status string (e.g. `"ok"`, `"error"`).
     pub status: String,
 }
 
@@ -170,7 +170,7 @@ pub struct HealthCheck {
 #[derive(Debug, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct LedgerInfo {
-    /// Current ledger sequence number.
+ /// Current ledger sequence number.
     #[serde(default)]
     pub id: String,
     #[serde(default)]
@@ -220,20 +220,20 @@ mod tests {
 
     #[test]
     fn get_ledger_entries_request_uses_keys_object() {
-        // Regression test for the getLedgerEntries request-shape bug: the Soroban
-        // RPC expects `{"keys": [...]}`, not a bare positional array `["key"]`.
+ // Regression test for the getLedgerEntries request-shape bug: the Soroban
+ // RPC expects `{"keys": [...]}`, not a bare positional array `["key"]`.
         let keys = vec!["AAAA".to_string()];
         let body = serde_json::json!({ "keys": keys });
         assert_eq!(body, serde_json::json!({ "keys": ["AAAA".to_string()] }));
-        // The bare-array form (the old bug) must NOT match.
+ // The bare-array form (the old bug) must NOT match.
         assert_ne!(body, serde_json::json!(["AAAA".to_string()]));
     }
 
-    // Regression test for the M43 HTTP/gzip transport blocker: when the Soroban RPC
-    // answers with `Content-Encoding: gzip`, the reqwest client (with the `gzip`
-    // feature enabled) must transparently decode the body and parse the JSON-RPC
-    // response. This is hermetic — it stands up a local gzip-speaking server and
-    // never touches the Stellar testnet.
+ // Regression test for the HTTP/gzip transport blocker: when the Soroban RPC
+ // answers with `Content-Encoding: gzip`, the reqwest client (with the `gzip`
+ // feature enabled) must transparently decode the body and parse the JSON-RPC
+ // response. This is hermetic — it stands up a local gzip-speaking server and
+ // never touches the Stellar testnet.
     #[tokio::test]
     async fn request_decodes_gzip_response_body() {
         use flate2::write::GzEncoder;
@@ -253,7 +253,7 @@ mod tests {
         let server = tokio::spawn(async move {
             let (mut sock, _) = listener.accept().await.unwrap();
             let mut buf = [0u8; 8192];
-            // Drain the incoming HTTP request so the client doesn't block on write.
+ // Drain the incoming HTTP request so the client doesn't block on write.
             let _ = sock.read(&mut buf).await.unwrap();
             let header = format!(
                 "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Encoding: gzip\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",

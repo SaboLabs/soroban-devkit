@@ -101,8 +101,8 @@ fn audit_json_output_is_valid_report() {
 
 #[test]
 fn audit_rules_flag_accepted_and_default_unchanged() {
-    // `--rules` is additive: providing a valid (existing) path must not change
-    // the built-in audit output. temp_dir() always exists on the runner.
+ // `--rules` is additive: providing a valid (existing) path must not change
+ // the built-in audit output. temp_dir() always exists on the runner.
     let dir = TempDir::new().unwrap();
     let path = write_fixture(
         &dir,

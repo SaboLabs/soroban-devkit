@@ -1,9 +1,9 @@
-//! Mainnet-safety guards for mutating RPC commands (M39).
+//! Mainnet-safety guards for mutating RPC commands ().
 //!
 //! These helpers are deliberately small and pure: they consume the already
 //! resolved [`NetworkConfig`] (whose precedence — explicit flags, then a saved
 //! profile, then `.sdkt.toml`, then built-in defaults — is computed entirely by
-//! the CLI's existing M29 resolution path) and enforce a single conservative
+//! the CLI's existing resolution path) and enforce a single conservative
 //! rule on mutating operations.
 //!
 //! A mutating command may only touch mainnet when the operator has explicitly
@@ -62,11 +62,11 @@ fn rpc_host_is_mainnet(rpc_url: &str) -> bool {
 /// The guard refuses in two clearly-wrong situations:
 ///
 /// 1. The effective passphrase is the mainnet passphrase but the network was
-///    *not* explicitly selected (e.g. a stray default that happens to match
-///    mainnet). Operators must opt in deliberately.
+/// *not* explicitly selected (e.g. a stray default that happens to match
+/// mainnet). Operators must opt in deliberately.
 /// 2. The RPC URL points at mainnet while the passphrase is *not* the mainnet
-///    passphrase — i.e. someone aimed the tool at mainnet but forgot to set the
-///    matching passphrase, which would sign an envelope for the wrong network.
+/// passphrase — i.e. someone aimed the tool at mainnet but forgot to set the
+/// matching passphrase, which would sign an envelope for the wrong network.
 ///
 /// Everything else (testnet by default, or mainnet with both an explicit,
 /// matching passphrase) is allowed through.
@@ -126,7 +126,7 @@ mod tests {
     #[test]
     fn mainnet_explicit_passphrase_is_allowed() {
         let cfg = mainnet_cfg();
-        // Operator explicitly selected the network (flag/profile).
+ // Operator explicitly selected the network (flag/profile).
         assert!(guard_mutating_network(&cfg, true).is_ok());
     }
 
@@ -145,14 +145,14 @@ mod tests {
             timeout_secs: Some(15),
             pool_max_idle_per_host: Some(100),
         };
-        // No explicit flag needed to trigger: the mismatch itself is the foot-gun.
+ // No explicit flag needed to trigger: the mismatch itself is the foot-gun.
         let err = guard_mutating_network(&cfg, true).unwrap_err();
         assert!(err.to_string().contains("not the mainnet passphrase"));
     }
 
     #[test]
     fn mainnet_rpc_with_testnet_default_is_refused() {
-        // User passed --rpc-url mainnet but forgot --network-passphrase.
+ // User passed --rpc-url mainnet but forgot --network-passphrase.
         let cfg = NetworkConfig {
             rpc_url: "https://soroban-rpc.stellar.org".to_string(),
             passphrase: TESTNET_PASSPHRASE.to_string(),

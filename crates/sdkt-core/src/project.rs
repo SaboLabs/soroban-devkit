@@ -78,18 +78,18 @@ pub fn resolve_deploy_order(config: &DevKitConfig) -> Result<Vec<String>, Projec
         return Err(ProjectError::MissingConfig);
     }
 
-    // Build the dependency graph (alias -> the contracts it depends on),
-    // validating as we go. The shared topo_sort detects cycles; the other
-    // graph errors are checked here so the original error messages are kept.
+ // Build the dependency graph (alias -> the contracts it depends on),
+ // validating as we go. The shared topo_sort detects cycles; the other
+ // graph errors are checked here so the original error messages are kept.
     let mut graph: HashMap<String, Vec<String>> = HashMap::new();
     for alias in config.contracts.keys() {
         graph.entry(alias.clone()).or_default();
     }
 
     for (alias, contract_cfg) in &config.contracts {
-        // Merge both dependency spellings (M34.2: `depends_on` canonical,
-        // `deploy_after` legacy). De-duplicate so a contract listed twice
-        // does not inflate the in-degree.
+ // Merge both dependency spellings (4.2: `depends_on` canonical,
+ // `deploy_after` legacy). De-duplicate so a contract listed twice
+ // does not inflate the in-degree.
         let mut merged: Vec<String> = Vec::new();
         for dep in contract_cfg
             .deploy_after
@@ -99,22 +99,22 @@ pub fn resolve_deploy_order(config: &DevKitConfig) -> Result<Vec<String>, Projec
             if merged.contains(dep) {
                 return Err(ProjectError::DuplicateDependency(alias.clone()));
             }
-            // Self-dependency check.
+ // Self-dependency check.
             if dep == alias {
                 return Err(ProjectError::SelfDependency(alias.clone()));
             }
-            // Unknown dependency check.
+ // Unknown dependency check.
             if !config.contracts.contains_key(dep) {
                 return Err(ProjectError::UnknownDependency(dep.clone()));
             }
             merged.push(dep.clone());
         }
 
-        // Record `alias` depends on each `dep`.
+ // Record `alias` depends on each `dep`.
         graph.get_mut(alias).unwrap().extend(merged);
     }
 
-    // Delegate cycle detection + deterministic ordering to the shared core.
+ // Delegate cycle detection + deterministic ordering to the shared core.
     topo_sort(&graph).map_err(ProjectError::CircularDependency)
 }
 
@@ -138,7 +138,7 @@ pub fn resolve_project(config: &DevKitConfig) -> Result<Vec<ResolvedContract>, P
         let cfg = config.contracts.get(&alias).unwrap();
         let path = Path::new(&cfg.path);
 
-        // Attempt to locate the WASM artifact in the standard target directory
+ // Attempt to locate the WASM artifact in the standard target directory
         let target_dir = path
             .join("target")
             .join("wasm32-unknown-unknown")
@@ -150,7 +150,7 @@ pub fn resolve_project(config: &DevKitConfig) -> Result<Vec<ResolvedContract>, P
                 for entry in entries.flatten() {
                     let p = entry.path();
                     if p.extension().is_some_and(|ext| ext == "wasm") {
-                        // For determinism, if multiple exist, pick the first (or ideally, we'd enforce one).
+ // For determinism, if multiple exist, pick the first (or ideally, we'd enforce one).
                         found_wasm = Some(p);
                         break;
                     }
@@ -228,7 +228,7 @@ mod tests {
 
     #[test]
     fn test_depends_on_field() {
-        // M34.2 canonical field used instead of deploy_after.
+ // 4.2 canonical field used instead of deploy_after.
         let config = cfg(vec![
             ("router", vec![], vec!["token".to_string()]),
             ("token", vec![], vec![]),
@@ -239,7 +239,7 @@ mod tests {
 
     #[test]
     fn test_merged_deploy_after_and_depends_on() {
-        // A contract may split its dependencies across both spellings.
+ // A contract may split its dependencies across both spellings.
         let config = cfg(vec![
             ("router", vec!["token".to_string()], vec!["amm".to_string()]),
             ("token", vec![], vec![]),
@@ -272,7 +272,7 @@ mod tests {
 
     #[test]
     fn test_duplicate_dependency() {
-        // Same dependency declared twice (once per spelling) -> duplicate.
+ // Same dependency declared twice (once per spelling) -> duplicate.
         let config = cfg(vec![
             (
                 "router",
@@ -301,7 +301,7 @@ mod tests {
 
     #[test]
     fn test_deterministic_ordering() {
-        // Diamond: d -> {b, c}, b -> a, c -> a. Order must be stable.
+ // Diamond: d -> {b, c}, b -> a, c -> a. Order must be stable.
         let config = cfg(vec![
             ("d", vec!["b".to_string(), "c".to_string()], vec![]),
             ("b", vec!["a".to_string()], vec![]),
@@ -312,7 +312,7 @@ mod tests {
         for _ in 0..20 {
             assert_eq!(resolve_deploy_order(&config).unwrap(), first);
         }
-        // a before b and c; b and c before d.
+ // a before b and c; b and c before d.
         let pos = |s: &str| first.iter().position(|x| x == s).unwrap();
         assert!(pos("a") < pos("b"));
         assert!(pos("a") < pos("c"));

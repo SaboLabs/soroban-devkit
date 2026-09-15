@@ -34,15 +34,15 @@ struct GetEventsResponse {
 #[derive(Deserialize)]
 #[allow(non_snake_case, dead_code)]
 struct RpcEvent {
-    // The Soroban RPC `getEvents` response returns `ledger` as an integer, not a
-    // string (unlike some other RPC fields). Declared as `u32` to match the wire
-    // format; callers in `get_contract_events` map it into `ContractEvent.ledger`
-    // (Option<u32>) directly.
+ // The Soroban RPC `getEvents` response returns `ledger` as an integer, not a
+ // string (unlike some other RPC fields). Declared as `u32` to match the wire
+ // format; callers in `get_contract_events` map it into `ContractEvent.ledger`
+ // (Option<u32>) directly.
     ledger: u32,
     contractId: String,
     topic: Vec<String>,
-    // The RPC returns `value` as a base64-encoded XDR *string* (not an object with
-    // an `xdr` field), so it maps directly onto `ContractEvent.value: Option<String>`.
+ // The RPC returns `value` as a base64-encoded XDR *string* (not an object with
+ // an `xdr` field), so it maps directly onto `ContractEvent.value: Option<String>`.
     value: String,
 }
 
@@ -50,8 +50,8 @@ pub async fn get_contract_events(
     client: &SorobanRpcClient,
     contract_id: &str,
 ) -> Result<Vec<ContractEvent>, RpcError> {
-    // Determine a start ledger. For a robust tool, this should be configurable.
-    // Here we query the latest ledger and look back up to 1000 ledgers.
+ // Determine a start ledger. For a robust tool, this should be configurable.
+ // Here we query the latest ledger and look back up to 1000 ledgers.
     let latest_ledger_info =
         client
             .get_ledger()

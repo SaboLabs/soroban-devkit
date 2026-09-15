@@ -1,20 +1,20 @@
 //! Native transaction signing for Soroban / Stellar.
 //!
 //! This module provides a small, dependency-clean signing API that powers the
-//! future `sdkt tx sign` command (M27). It is intentionally free of any CLI
+//! future `sdkt tx sign` command (). It is intentionally free of any CLI
 //! types so it can be reused by the CLI (PR3) and, eventually, alternative
 //! signers (hardware wallets, remote signers — deferred to later milestones).
 //!
 //! # Security model
 //!
 //! - Secret key material is handled only as `&[u8; 32]` seeds or `ed25519_dalek`
-//!   `SigningKey` values that live for the duration of a single `sign_*` call.
+//! `SigningKey` values that live for the duration of a single `sign_*` call.
 //! - No secret bytes are ever written to logs, `stdout`, `stderr`, or error
-//!   messages. [`SigningError`] carries only human-readable, key-free text.
+//! messages. [`SigningError`] carries only human-readable, key-free text.
 //! - The envelope hash is computed via `stellar_xdr`'s own
-//!   [`TransactionEnvelope::hash`], which encodes the correct
-//!   `TransactionSignaturePayload` for this crate version. We never hand-roll
-//!   the preimage.
+//! [`TransactionEnvelope::hash`], which encodes the correct
+//! `TransactionSignaturePayload` for this crate version. We never hand-roll
+//! the preimage.
 
 use base64::engine::general_purpose::STANDARD;
 use base64::Engine;
@@ -32,18 +32,18 @@ use thiserror::Error;
 /// explicit passphrase.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Network {
-    /// `Test SDF Network ; September 2015`
+ /// `Test SDF Network ; September 2015`
     Testnet,
-    /// `Public Global Stellar Network ; September 2015`
+ /// `Public Global Stellar Network ; September 2015`
     Mainnet,
-    /// `Test SDF Future Network ; October 2022`
+ /// `Test SDF Future Network ; October 2022`
     Futurenet,
-    /// A private / standalone network with an explicit passphrase.
+ /// A private / standalone network with an explicit passphrase.
     Custom(String),
 }
 
 impl Network {
-    /// The Stellar network passphrase used to derive the network ID.
+ /// The Stellar network passphrase used to derive the network ID.
     pub fn passphrase(&self) -> &str {
         match self {
             Network::Testnet => "Test SDF Network ; September 2015",
@@ -53,10 +53,10 @@ impl Network {
         }
     }
 
-    /// Resolve a `--network` style string into a [`Network`].
-    ///
-    /// Accepts `testnet`, `mainnet`, `futurenet`, or `custom:<passphrase>`.
-    /// Anything else is treated as a custom passphrase (kept for convenience).
+ /// Resolve a `--network` style string into a [`Network`].
+ ///
+ /// Accepts `testnet`, `mainnet`, `futurenet`, or `custom:<passphrase>`.
+ /// Anything else is treated as a custom passphrase (kept for convenience).
     pub fn parse(s: &str) -> Network {
         match s.trim().to_ascii_lowercase().as_str() {
             "testnet" => Network::Testnet,
@@ -72,7 +72,7 @@ impl Network {
         }
     }
 
-    /// The 32-byte network ID: `Sha256(passphrase)`.
+ /// The 32-byte network ID: `Sha256(passphrase)`.
     pub fn network_id(&self) -> [u8; 32] {
         let mut h = Sha256::new();
         h.update(self.passphrase().as_bytes());
@@ -83,12 +83,12 @@ impl Network {
 /// Options controlling how a transaction is signed.
 #[derive(Debug, Clone)]
 pub struct SigningOptions {
-    /// Network whose passphrase seeds the signing hash.
+ /// Network whose passphrase seeds the signing hash.
     pub network: Network,
 }
 
 impl SigningOptions {
-    /// Build options for an explicit network.
+ /// Build options for an explicit network.
     pub fn with(network: Network) -> Self {
         SigningOptions { network }
     }
@@ -128,10 +128,10 @@ pub enum SigningError {
 /// wallets, remote/threshold signers) can implement it without pulling in
 /// `ed25519_dalek`. Only the local [`Ed25519Signer`] is shipped in PR1.
 pub trait Signer {
-    /// The ED25519 public key (32 bytes) of this signer.
+ /// The ED25519 public key (32 bytes) of this signer.
     fn public_key_bytes(&self) -> &[u8; 32];
 
-    /// Produce a 64-byte ED25519 signature over `hash`.
+ /// Produce a 64-byte ED25519 signature over `hash`.
     fn sign_hash(&self, hash: &[u8; 32]) -> Result<Vec<u8>, SigningError>;
 }
 
@@ -145,7 +145,7 @@ pub struct Ed25519Signer {
 }
 
 impl Ed25519Signer {
-    /// Create a signer from a raw 32-byte ED25519 seed.
+ /// Create a signer from a raw 32-byte ED25519 seed.
     pub fn from_seed(seed: &[u8; 32]) -> Self {
         let signing_key = SigningKey::from_bytes(seed);
         let pubkey_cache = signing_key.verifying_key().to_bytes();
@@ -155,14 +155,14 @@ impl Ed25519Signer {
         }
     }
 
-    /// Create a signer from a Stellar `S...` secret StrKey.
+ /// Create a signer from a Stellar `S...` secret StrKey.
     pub fn from_secret_str(secret: &str) -> Result<Self, SigningError> {
         let key = stellar_strkey::ed25519::PrivateKey::from_string(secret)
             .map_err(|e| SigningError::InvalidSecretKey(e.to_string()))?;
         Ok(Ed25519Signer::from_seed(&key.0))
     }
 
-    /// The public key (32 bytes) for this signer.
+ /// The public key (32 bytes) for this signer.
     pub fn public_key_bytes_owned(&self) -> [u8; 32] {
         self.pubkey_cache
     }
@@ -309,7 +309,7 @@ mod tests {
     use super::*;
     use std::io::Cursor;
 
-    // Deterministic test-only seed (non-zero so ed25519_dalek clamping is well-defined).
+ // Deterministic test-only seed (non-zero so ed25519_dalek clamping is well-defined).
     const TEST_SEED: [u8; 32] = [
         0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0a, 0x0b, 0x0c, 0x0d, 0x0e, 0x0f,
         0x10, 0x11, 0x12, 0x13, 0x14, 0x15, 0x16, 0x17, 0x18, 0x19, 0x1a, 0x1b, 0x1c, 0x1d, 0x1e,
@@ -386,8 +386,8 @@ mod tests {
         assert!(verify_signature(&signed, &signer, &opts));
     }
 
-    // Golden vector: a fixed seed + fixed envelope must always produce the same
-    // base64 output. This guards against XDR/codec drift in the signing path.
+ // Golden vector: a fixed seed + fixed envelope must always produce the same
+ // base64 output. This guards against XDR/codec drift in the signing path.
     #[test]
     fn test_golden_vector_deterministic() {
         let env_b64 = unsigned_envelope_b64();
@@ -397,7 +397,7 @@ mod tests {
         let b = sign_transaction(&env_b64, &signer, &opts).unwrap();
         assert_eq!(a, b, "signing must be deterministic for identical input");
 
-        // The signed envelope must still parse and carry exactly one signature.
+ // The signed envelope must still parse and carry exactly one signature.
         let raw = STANDARD.decode(&a).unwrap();
         let mut cursor = Cursor::new(&raw);
         let mut l = Limited::new(&mut cursor, Limits::none());
@@ -461,7 +461,7 @@ mod tests {
     fn test_invalid_secret_key() {
         let res = Ed25519Signer::from_secret_str("not-a-secret");
         assert!(matches!(res, Err(SigningError::InvalidSecretKey(_))));
-        // A public key (G...) must not be accepted as a secret.
+ // A public key (G...) must not be accepted as a secret.
         let res2 = Ed25519Signer::from_secret_str(SRC);
         assert!(matches!(res2, Err(SigningError::InvalidSecretKey(_))));
     }
@@ -471,7 +471,7 @@ mod tests {
         use stellar_strkey::ed25519::PrivateKey;
         let s = stellar_strkey::Unredacted(&PrivateKey(TEST_SEED)).to_string();
         let signer = Ed25519Signer::from_secret_str(&s).unwrap();
-        // The signer must be able to verify its own freshly-signed envelope.
+ // The signer must be able to verify its own freshly-signed envelope.
         let env_b64 = unsigned_envelope_b64();
         let opts = SigningOptions::default();
         let signed = sign_transaction(&env_b64, &signer, &opts).unwrap();

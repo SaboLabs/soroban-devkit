@@ -82,9 +82,9 @@ impl AuditRule for Auth003 {
             if !is_init || s.require_auth > 0 {
                 continue;
             }
-            // When an ABI is available, only flag if the function is actually
-            // exported (reuses sdkt-wasm ContractSpec). Without a spec we fall
-            // back to the name heuristic.
+ // When an ABI is available, only flag if the function is actually
+ // exported (reuses sdkt-wasm ContractSpec). Without a spec we fall
+ // back to the name heuristic.
             let exported = match ctx.spec {
                 Some(spec) => spec
                     .functions
@@ -479,7 +479,7 @@ mod tests {
 
     #[test]
     fn auth004_does_not_flag_transfer_ownership() {
-        // `transfer_ownership` is an admin-management function, not a token
+ // `transfer_ownership` is an admin-management function, not a token
         // transfer — it must not trigger AUTH-004.
         let scans = vec![FnScan {
             fn_name: "transfer_ownership".into(),

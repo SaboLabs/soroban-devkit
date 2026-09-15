@@ -1,4 +1,4 @@
-//! Dynamic plugin loading for `sdkt-audit` (M18, Phase B).
+//! Dynamic plugin loading for `sdkt-audit` (, Phase B).
 //!
 //! Native plugins are shared libraries (`.so` / `.dylib` / `.dll`) exporting the
 //! C-ABI symbols declared in [`plugin_abi`]. The host wraps each plugin in a
@@ -8,12 +8,12 @@
 //! # Safety boundary
 //!
 //! * Only `#[repr(C)]` flat data (`SdktAuditFindingC`, `SdktAuditReportC`) and
-//!   C strings cross the FFI.
+//! C strings cross the FFI.
 //! * Deallocation of plugin-owned memory always happens inside the plugin
-//!   (via its `sdkt_plugin_free` symbol), never in the host, avoiding
-//!   cross-allocator UB.
+//! (via its `sdkt_plugin_free` symbol), never in the host, avoiding
+//! cross-allocator UB.
 //! * The loaded [`Library`] is kept alive for the life of [`PluginRule`] via an
-//!   `Arc`, so symbols remain valid while the rule runs.
+//! `Arc`, so symbols remain valid while the rule runs.
 
 use std::ffi::{CStr, CString};
 use std::os::raw::{c_char, c_int};
@@ -32,22 +32,22 @@ use crate::types::{AuditReport, Finding, Severity};
 /// Errors that can occur while loading or running a dynamic plugin.
 #[derive(Debug)]
 pub enum PluginLoadError {
-    /// I/O error reading the plugin path.
+ /// I/O error reading the plugin path.
     Io(std::io::Error),
-    /// `libloading` failed to open the shared object.
+ /// `libloading` failed to open the shared object.
     DlOpen(String),
-    /// A required C-ABI symbol was missing from the plugin.
+ /// A required C-ABI symbol was missing from the plugin.
     SymbolMissing(String),
-    /// Plugin ABI major version does not match the host.
+ /// Plugin ABI major version does not match the host.
     AbiMismatch {
-        /// Plugin's reported major version.
+ /// Plugin's reported major version.
         plugin_major: u32,
-        /// Host's expected major version.
+ /// Host's expected major version.
         host_major: u32,
     },
-    /// Plugin `sdkt_plugin_init` returned a non-zero code.
+ /// Plugin `sdkt_plugin_init` returned a non-zero code.
     InitFailed(c_int),
-    /// Plugin panicked during execution (caught via `catch_unwind`).
+ /// Plugin panicked during execution (caught via `catch_unwind`).
     Panic,
 }
 
@@ -104,7 +104,7 @@ fn sev_to_enum(s: u32) -> Severity {
 
 /// A loaded plugin wrapped as an [`AuditRule`].
 pub struct PluginRule {
-    /// Keeps the shared library resident for the life of this rule.
+ /// Keeps the shared library resident for the life of this rule.
     _lib: Arc<Library>,
     id: &'static str,
     severity: Severity,
@@ -117,8 +117,8 @@ pub struct PluginRule {
 
 impl Drop for PluginRule {
     fn drop(&mut self) {
-        // SAFETY: FFI call into plugin to release internal resources.
-        // `_lib` guarantees the symbol is still valid.
+ // SAFETY: FFI call into plugin to release internal resources.
+ // `_lib` guarantees the symbol is still valid.
         unsafe {
             (self.free)();
         }
@@ -126,19 +126,19 @@ impl Drop for PluginRule {
 }
 
 impl PluginRule {
-    /// Load a plugin from `path`, initializing it with `source` (the contract
-    /// source to be analyzed). Fails fast on I/O, ABI, or init errors.
+ /// Load a plugin from `path`, initializing it with `source` (the contract
+ /// source to be analyzed). Fails fast on I/O, ABI, or init errors.
     pub fn load(path: &Path, source: &str) -> Result<Self, PluginLoadError> {
-        // SAFETY: `Library::new` opens a shared object; the resulting `Library`
-        // is kept alive via `Arc` for the rule's lifetime, so symbols stay valid.
+ // SAFETY: `Library::new` opens a shared object; the resulting `Library`
+ // is kept alive via `Arc` for the rule's lifetime, so symbols stay valid.
         let lib = Arc::new(
             unsafe { Library::new(path) }.map_err(|e| PluginLoadError::DlOpen(e.to_string()))?,
         );
 
-        // SAFETY: each `lib.get` borrows `lib`; we immediately copy the fn
-        // pointers out (fn pointers are `Copy`), so no `Symbol` borrow outlives
-        // this scope. `_lib` (the `Arc<Library>`) is stored to keep the library
-        // resident, so the copied pointers remain valid for the rule's lifetime.
+ // SAFETY: each `lib.get` borrows `lib`; we immediately copy the fn
+ // pointers out (fn pointers are `Copy`), so no `Symbol` borrow outlives
+ // this scope. `_lib` (the `Arc<Library>`) is stored to keep the library
+ // resident, so the copied pointers remain valid for the rule's lifetime.
         let abi_fn: Symbol<AbiVersionFn> = unsafe {
             lib.get(b"sdkt_plugin_abi_version\0")
                 .map_err(|e| PluginLoadError::SymbolMissing(e.to_string()))?
@@ -177,8 +177,8 @@ impl PluginRule {
             });
         }
 
-        // Leak the id/description once; `AuditRule::id`/`description` require
-        // `&'static str`. Plugins are loaded rarely, so the small leak is fine.
+ // Leak the id/description once; `AuditRule::id`/`description` require
+ // `&'static str`. Plugins are loaded rarely, so the small leak is fine.
         let id: &'static str = Box::leak(unsafe { cstr_to_string(id_fn()) }.into_boxed_str());
         let description: &'static str =
             Box::leak(unsafe { cstr_to_string(desc_fn()) }.into_boxed_str());
@@ -225,21 +225,21 @@ impl AuditRule for PluginRule {
 
     fn check(&self, _scans: &[FnScan], _ctx: &AuditContext, report: &mut AuditReport) {
         let mut buf = SdktAuditReportC::default();
-        // FFI boundary: invoke the plugin check.
-        // F2 fixed: catch_unwind over FFI is UB. The plugin MUST handle panics
-        // internally. We only catch normal return values.
+ // FFI boundary: invoke the plugin check.
+ // F2 fixed: catch_unwind over FFI is UB. The plugin MUST handle panics
+ // internally. We only catch normal return values.
         let code = unsafe { (self.check)(&mut buf) };
         if code != 0 {
             return;
         }
 
-        // F1 fixed: clamp plugin-provided count to MAX_FINDINGS to prevent out-of-bounds read
-        // if a malicious/buggy plugin sets count > MAX_FINDINGS.
+ // F1 fixed: clamp plugin-provided count to MAX_FINDINGS to prevent out-of-bounds read
+ // if a malicious/buggy plugin sets count > MAX_FINDINGS.
         let safe_count = buf.count.min(crate::plugin_abi::MAX_FINDINGS);
 
         for i in 0..safe_count {
-            // SAFETY: entries [0, count) were written by the plugin during the
-            // call above; we copy their C strings into owned `String`s now.
+ // SAFETY: entries [0, count) were written by the plugin during the
+ // call above; we copy their C strings into owned `String`s now.
             let f: SdktAuditFindingC = buf.findings[i];
             if f.rule_id.is_null() {
                 continue;
@@ -293,7 +293,7 @@ mod tests {
     fn severity_enum_mapping() {
         assert_eq!(sev_to_enum(SEVERITY_CRITICAL), Severity::Critical);
         assert_eq!(sev_to_enum(SEVERITY_INFO), Severity::Info);
-        // Default/unrecognized → Warning.
+ // Default/unrecognized → Warning.
         assert_eq!(sev_to_enum(99), Severity::Warning);
     }
 
@@ -305,19 +305,19 @@ mod tests {
 
     #[test]
     fn cstr_to_string_handles_null() {
-        // SAFETY: null pointer is explicitly handled.
+ // SAFETY: null pointer is explicitly handled.
         assert_eq!(unsafe { cstr_to_string(std::ptr::null()) }, "");
     }
 
     #[test]
     fn plugin_bounds_clamping() {
-        // F1: verify that the clamping logic is present in the source.
-        // Full integration coverage is in sdkt-cli/tests/plugin_loading.rs.
-        //
-        // Unit-level: confirm safe_count is bounded by MAX_FINDINGS regardless
-        // of what a plugin writes — since SdktAuditReportC::findings is a fixed
-        // [SdktAuditFindingC; MAX_FINDINGS], any buf.count > MAX_FINDINGS would
-        // produce an out-of-bounds index without the clamp.
+ // F1: verify that the clamping logic is present in the source.
+ // Full integration coverage is in sdkt-cli/tests/plugin_loading.rs.
+ //
+ // Unit-level: confirm safe_count is bounded by MAX_FINDINGS regardless
+ // of what a plugin writes — since SdktAuditReportC::findings is a fixed
+ // [SdktAuditFindingC; MAX_FINDINGS], any buf.count > MAX_FINDINGS would
+ // produce an out-of-bounds index without the clamp.
         let buf = SdktAuditReportC {
             count: 999999,
             ..Default::default()

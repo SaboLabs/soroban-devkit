@@ -23,8 +23,8 @@ fn test_cli_tx_simulate_invalid_envelope() {
         .arg("--envelope")
         .arg("not_real_base64_or_file")
         .assert();
-    // It should hit the network and the network returns an RPC error
-    // "Rpc error: Transaction envelope is invalid" or similar
+ // It should hit the network and the network returns an RPC error
+ // "Rpc error: Transaction envelope is invalid" or similar
     assert
         .failure()
         .stderr(predicates::str::contains("Error simulating transaction"));

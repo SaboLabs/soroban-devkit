@@ -3,10 +3,10 @@ use std::str::FromStr;
 /// Defines the output formatting style for CLI and RPC responses.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum OutputFormat {
-    /// Compact JSON format.
+ /// Compact JSON format.
     #[default]
     Json,
-    /// Human-readable, pretty-printed JSON.
+ /// Human-readable, pretty-printed JSON.
     Pretty,
 }
 

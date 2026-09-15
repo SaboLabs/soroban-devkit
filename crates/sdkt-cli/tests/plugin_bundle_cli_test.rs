@@ -1,7 +1,7 @@
-//! M40 — Plugin bundle pack / verify-bundle CLI integration tests.
+//! — Plugin bundle pack / verify-bundle CLI integration tests.
 //!
 //! Exercises the end-to-end CLI lifecycle for `.sdktplugin` bundles:
-//!   `sdkt plugin pack` → `sdkt plugin verify-bundle` → install → audit --rules <id>.
+//! `sdkt plugin pack` → `sdkt plugin verify-bundle` → install → audit --rules <id>.
 //!
 //! Tests run hermetically via `SDKT_PLUGIN_DIR` (temp store) and never touch the
 //! developer's real profile. The dummy artifact is not a real loadable plugin;
@@ -57,7 +57,7 @@ abi_minor = 0
 }
 
 fn abi_version() -> u32 {
-    // Mirror the host ABI version so metadata validation passes.
+ // Mirror the host ABI version so metadata validation passes.
     let major = env!("CARGO_PKG_VERSION_MAJOR");
     let _ = major; // abi_major is a constant
     1
@@ -69,7 +69,7 @@ fn bundle_pack_and_verify_roundtrip_unsigned() {
     let src_dir = make_plugin_dir(&root, "wasm", "wasm");
     let bundle = root.path().join("myrule-1.0.0.sdktplugin");
 
-    // pack
+ // pack
     sdkt()
         .args([
             "plugin",
@@ -82,7 +82,7 @@ fn bundle_pack_and_verify_roundtrip_unsigned() {
         .success()
         .stdout(predicate::str::contains("Packed plugin"));
 
-    // verify unsigned bundle
+ // verify unsigned bundle
     sdkt()
         .args(["plugin", "verify-bundle", bundle.to_str().unwrap()])
         .assert()
@@ -96,23 +96,23 @@ fn bundle_pack_and_verify_roundtrip_signed() {
     let root = TempDir::new().unwrap();
     let src_dir = make_plugin_dir(&root, "wasm", "wasm");
 
-    // Two distinct 32-byte signing seeds. Signing with seed A and verifying with
-    // seed B's public key must fail the signature check. Both seeds produce
-    // valid (but distinct) Ed25519 verifying keys.
+ // Two distinct 32-byte signing seeds. Signing with seed A and verifying with
+ // seed B's public key must fail the signature check. Both seeds produce
+ // valid (but distinct) Ed25519 verifying keys.
     let secret_a: [u8; 32] = [0xab; 32];
     let secret_b: [u8; 32] = [0xcd; 32];
     let secret_path = root.path().join("secret.key");
     fs::write(&secret_path, secret_a).unwrap();
-    // Precompute verifying key for seed B by signing+extracting via the CLI's
-    // own dependency is overkill; instead we point --public-key at a file
-    // containing seed B's raw 32 bytes. VerifyingKey::from_bytes accepts any
-    // 32-byte slice that is a valid compressed point — both seeds qualify.
+ // Precompute verifying key for seed B by signing+extracting via the CLI's
+ // own dependency is overkill; instead we point --public-key at a file
+ // containing seed B's raw 32 bytes. VerifyingKey::from_bytes accepts any
+ // 32-byte slice that is a valid compressed point — both seeds qualify.
     let pub_path = root.path().join("public.key");
     fs::write(pub_path.clone(), secret_b).unwrap();
 
     let bundle = root.path().join("signed.sdktplugin");
 
-    // pack with signing (seed A)
+ // pack with signing (seed A)
     sdkt()
         .args([
             "plugin",
@@ -127,7 +127,7 @@ fn bundle_pack_and_verify_roundtrip_signed() {
         .success()
         .stdout(predicate::str::contains("Packed plugin"));
 
-    // verify with seed B's public key → signature mismatch
+ // verify with seed B's public key → signature mismatch
     sdkt()
         .args([
             "plugin",
@@ -140,7 +140,7 @@ fn bundle_pack_and_verify_roundtrip_signed() {
         .failure()
         .stderr(predicate::str::contains("signature verification failed"));
 
-    // verify NO public key → signed bundle reports VERIFIED via embedded pubkey
+ // verify NO public key → signed bundle reports VERIFIED via embedded pubkey
     sdkt()
         .args(["plugin", "verify-bundle", bundle.to_str().unwrap()])
         .assert()
@@ -168,7 +168,7 @@ fn bundle_install_after_pack_roundtrip() {
     let src_dir = make_plugin_dir(&root, "wasm", "wasm");
     let bundle = root.path().join("pack-install.sdktplugin");
 
-    // pack
+ // pack
     sdkt()
         .args([
             "plugin",
@@ -180,41 +180,41 @@ fn bundle_install_after_pack_roundtrip() {
         .assert()
         .success();
 
-    // verify
+ // verify
     sdkt()
         .args(["plugin", "verify-bundle", bundle.to_str().unwrap()])
         .assert()
         .success();
 
-    // The bundle is unsigned; install_bundle accepts unsigned for local use.
-    // But `sdkt plugin install <bundle>` expects an artifact path, not a bundle.
-    // To round-trip fully we verify then install the *extracted* artifact. Instead,
-    // test that verify-bundle extracted nothing we can install directly — skip
-    // install here and rely on plugin_cli_test.rs for install lifecycle.
+ // The bundle is unsigned; install_bundle accepts unsigned for local use.
+ // But `sdkt plugin install <bundle>` expects an artifact path, not a bundle.
+ // To round-trip fully we verify then install the *extracted* artifact. Instead,
+ // test that verify-bundle extracted nothing we can install directly — skip
+ // install here and rely on plugin_cli_test.rs for install lifecycle.
     let _ = abi_version(); // touch to confirm constant usage
 }
 
 #[test]
 fn m40_deliverable_files_present() {
-    // Confirms the M40 deliverables exist: plugin_store.rs, plugin_loader.rs,
-    // plugin_cli_test.rs, and plugin_loading.rs.
+ // Confirms the deliverables exist: plugin_store.rs, plugin_loader.rs,
+ // plugin_cli_test.rs, and plugin_loading.rs.
     let root = workspace_root();
     assert!(
         root.join("crates/sdkt-audit/src/plugin_store.rs").exists(),
-        "plugin_store.rs must exist (M40)"
+        "plugin_store.rs must exist (plugin store)"
     );
     assert!(
         root.join("crates/sdkt-audit/src/plugin_loader.rs").exists(),
-        "plugin_loader.rs must exist (M40)"
+        "plugin_loader.rs must exist (plugin store)"
     );
     assert!(
         root.join("crates/sdkt-cli/tests/plugin_cli_test.rs")
             .exists(),
-        "plugin_cli_test.rs must exist (M40 CI)"
+        "plugin_cli_test.rs must exist "
     );
     assert!(
         root.join("crates/sdkt-cli/tests/plugin_loading.rs")
             .exists(),
-        "plugin_loading.rs must exist (M40 CI)"
+        "plugin_loading.rs must exist "
     );
 }

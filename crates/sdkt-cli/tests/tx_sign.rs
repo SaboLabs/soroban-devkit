@@ -1,4 +1,4 @@
-//! Integration tests for `sdkt tx sign` (M27 / PR2).
+//! Integration tests for `sdkt tx sign` ( / PR2).
 //!
 //! These exercise the full CLI binary against an isolated identity keystore
 //! (via a temporary `SDKT_IDENTITY_DIR`) so they never touch the developer's
@@ -88,7 +88,7 @@ fn successful_sign_to_file() {
     assert!(stdout.contains("written to"), "stdout: {}", stdout);
 
     let content = std::fs::read_to_string(&signed).unwrap();
-    // A signed envelope is longer than the unsigned one (a 64-byte sig + hint).
+ // A signed envelope is longer than the unsigned one (a 64-byte sig + hint).
     assert!(content.trim().len() > 50, "signed envelope too short");
     let _ = std::fs::remove_dir_all(&dir);
 }
@@ -233,7 +233,7 @@ fn invalid_envelope_errors() {
     std::fs::create_dir_all(&dir).unwrap();
     gen_identity(&dir, "alice");
 
-    // Valid base64 that is NOT a transaction envelope ("hello world" -> aGVsbG8gd29ybGQ=).
+ // Valid base64 that is NOT a transaction envelope ("hello world" -> aGVsbG8gd29ybGQ=).
     let tmp = dir.join("notenv.txt");
     let mut f = std::fs::File::create(&tmp).unwrap();
     write!(f, "aGVsbG8gd29ybGQ=").unwrap();

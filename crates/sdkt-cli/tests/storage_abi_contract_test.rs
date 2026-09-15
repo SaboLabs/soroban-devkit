@@ -1,8 +1,8 @@
-//! M44 — on-chain ABI for storage decode tests (hermetic).
+//! — on-chain ABI for storage decode tests (hermetic).
 //!
 //! `sdkt storage ... --abi-contract <id>` fetches a deployed contract's on-chain
-//! WASM (M41) and parses it to a `ContractSpec`, which is then used as the ABI
-//! source for the existing storage analyzer (mirroring M43's events path). This
+//! WASM () and parses it to a `ContractSpec`, which is then used as the ABI
+//! source for the existing storage analyzer (mirroring 's events path). This
 //! crate test proves the deterministic, network-free parts of that flow and the
 //! CLI behavior.
 
@@ -54,7 +54,7 @@ fn storage_abi_and_abi_contract_are_mutually_exclusive() {
 
 #[test]
 fn storage_abi_contract_offline_is_graceful() {
-    // No RPC reachable -> clean failure (no panic), actionable error message.
+ // No RPC reachable -> clean failure (no panic), actionable error message.
     sdkt()
         .args([
             "storage",
@@ -71,9 +71,9 @@ fn storage_abi_contract_offline_is_graceful() {
 
 #[test]
 fn existing_storage_abi_local_path_still_resolves() {
-    // `--abi <missing file>` must still hit the local-ABI branch and fail with a
-    // controlled "Failed to read WASM" error (not a panic), proving the existing
-    // behavior is preserved.
+ // `--abi <missing file>` must still hit the local-ABI branch and fail with a
+ // controlled "Failed to read WASM" error (not a panic), proving the existing
+ // behavior is preserved.
     sdkt()
         .args([
             "storage",
@@ -87,11 +87,11 @@ fn existing_storage_abi_local_path_still_resolves() {
         .stderr(predicate::str::contains("Failed to read WASM"));
 }
 
-/// Deterministically proves the M44 data flow: a `ContractSpec` (the exact shape
+/// Deterministically proves the data flow: a `ContractSpec` (the exact shape
 /// produced by `parse_contract_spec` on a deployed WASM) is what the storage
 /// analyzer consumes as its ABI source. The storage `Check`/`Analyze` handlers emit
 /// `spec.functions` / `spec.events` / `spec.custom_types` names, so a spec carrying
-/// those names is the contract the on-chain path must supply. This mirrors the M43
+/// those names is the contract the on-chain path must supply. This mirrors the
 /// events test and verifies the resolved spec shape is ABI-aware (not raw).
 #[test]
 fn deployed_spec_feeds_storage_abi_fields() {
@@ -117,9 +117,9 @@ fn deployed_spec_feeds_storage_abi_fields() {
         }],
     };
 
-    // The storage analyzer surfaces these names when a spec is present; the M44
-    // on-chain path must produce exactly this shape. Assert the spec carries the
-    // ABI fields the storage command would emit.
+ // The storage analyzer surfaces these names when a spec is present; the
+ // on-chain path must produce exactly this shape. Assert the spec carries the
+ // ABI fields the storage command would emit.
     assert_eq!(spec.functions[0].name, "mint");
     assert_eq!(spec.custom_types[0].name, "Circle");
     assert_eq!(spec.events[0].name, "Mint");

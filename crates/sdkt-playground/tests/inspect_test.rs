@@ -69,7 +69,7 @@ fn empty_input_is_rejected_with_friendly_message() {
 
 #[test]
 fn non_wasm_bytes_are_rejected() {
-    // Plain text — no WASM magic number.
+ // Plain text — no WASM magic number.
     let err =
         inspect_parts(b"this is definitely not webassembly").expect_err("non-wasm input must fail");
     let msg = user_message(&err);
@@ -79,7 +79,7 @@ fn non_wasm_bytes_are_rejected() {
 
 #[test]
 fn malformed_wasm_is_rejected() {
-    // Correct magic + version, then a truncated/garbage section header.
+ // Correct magic + version, then a truncated/garbage section header.
     let mut bytes = BARE_WASM.to_vec();
     bytes.extend_from_slice(&[0x07, 0xff, 0xff, 0xff]);
     let err = inspect_parts(&bytes).expect_err("malformed module must fail");
@@ -94,9 +94,9 @@ fn malformed_wasm_is_rejected() {
 
 #[test]
 fn valid_module_without_contract_spec_still_inspects() {
-    // A bare module is valid WebAssembly but is not a Soroban contract: metadata
-    // must succeed and the spec must be reported as absent (mirrors the CLI's
-    // "Contract Spec Available: No").
+ // A bare module is valid WebAssembly but is not a Soroban contract: metadata
+ // must succeed and the spec must be reported as absent (mirrors the CLI's
+ // "Contract Spec Available: No").
     let r = inspect_parts(BARE_WASM).expect("bare module is valid wasm");
     let (meta, spec, spec_err) = (r.metadata, r.spec, r.spec_error);
     assert_eq!(meta.size_bytes, 8);
@@ -118,9 +118,9 @@ fn repeated_inspection_is_deterministic() {
 
 #[test]
 fn larger_input_does_not_break_parsing() {
-    // Valid module followed by a large custom section (id 0) carrying padding.
-    // Exercises the "reasonably large WASM" path without needing a real big
-    // contract in the repo.
+ // Valid module followed by a large custom section (id 0) carrying padding.
+ // Exercises the "reasonably large WASM" path without needing a real big
+ // contract in the repo.
     let name = b"padding";
     let payload_len = 64 * 1024;
     let mut section = Vec::new();
@@ -130,7 +130,7 @@ fn larger_input_does_not_break_parsing() {
 
     let mut bytes = BARE_WASM.to_vec();
     bytes.push(0x00); // custom section id
-                      // LEB128 length
+ // LEB128 length
     let mut len = section.len();
     loop {
         let mut byte = (len & 0x7f) as u8;

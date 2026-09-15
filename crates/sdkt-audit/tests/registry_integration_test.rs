@@ -1,7 +1,7 @@
 //! Integration tests for the `sdkt-audit` rule registry and audit pipeline.
 //!
 //! These assert that:
-//! - built-in rules execute through the registry and behave identically to M16,
+//! - built-in rules execute through the registry and behave identically to ,
 //! - external rules registered into the registry also run,
 //! - the `--disable` mechanism still works end-to-end.
 

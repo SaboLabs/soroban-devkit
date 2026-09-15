@@ -1,4 +1,4 @@
-//! Dependency acquisition layer for the Soroban DevKit (sdkt), M35.1.
+//! Dependency acquisition layer for the Soroban DevKit (sdkt), .
 //!
 //! Provides a reusable abstraction for fetching package dependencies into a
 //! deterministic local cache. This milestone implements **Git** acquisition
@@ -9,11 +9,11 @@
 //! Design goals:
 //! * No network during tests — tests use on-the-fly local git repositories.
 //! * Deterministic cache layout: `<cache_root>/git/<stable-hash>/` so repeated
-//!   fetches are idempotent.
+//! fetches are idempotent.
 //! * No authentication helpers, no registry. The Git backend shells out to the
-//!   system `git` binary (assumed present, like `cargo`/`rustc`).
+//! system `git` binary (assumed present, like `cargo`/`rustc`).
 //! * Never builds — `fetch` only materializes source; building is the caller's
-//!   responsibility.
+//! responsibility.
 
 use crate::config::Dependency;
 use crate::sync::resolve_version_constraint;
@@ -43,26 +43,26 @@ pub fn git_bin() -> String {
             return candidate;
         }
     }
-    // Fall back to the bare name; callers surface a clear error if it truly fails.
+ // Fall back to the bare name; callers surface a clear error if it truly fails.
     "git".to_string()
 }
 
 /// Errors raised while acquiring a dependency.
 #[derive(Debug)]
 pub enum FetchError {
-    /// The system `git` binary is missing or not executable.
+ /// The system `git` binary is missing or not executable.
     GitUnavailable,
-    /// `git` exited non-zero while cloning/checking out.
+ /// `git` exited non-zero while cloning/checking out.
     Git {
         args: String,
         status: Option<i32>,
         stderr: String,
     },
-    /// A dependency declared neither a `path` nor a `git` source.
+ /// A dependency declared neither a `path` nor a `git` source.
     NoSource(String),
-    /// A `git` dependency is missing its URL.
+ /// A `git` dependency is missing its URL.
     MissingUrl(String),
-    /// Cache directory creation/relocation failed.
+ /// Cache directory creation/relocation failed.
     Io {
         context: String,
         source: std::io::Error,
@@ -107,20 +107,20 @@ impl std::error::Error for FetchError {}
 /// The outcome of a fetch operation for one dependency.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct FetchOutcome {
-    /// The dependency name (key in `[dependencies]`).
+ /// The dependency name (key in `[dependencies]`).
     pub name: String,
-    /// Where the source now lives on disk.
+ /// Where the source now lives on disk.
     pub local_path: PathBuf,
-    /// The resolved Git commit SHA, if this was a Git source (empty for path).
+ /// The resolved Git commit SHA, if this was a Git source (empty for path).
     pub resolved_rev: String,
-    /// True if the checkout was already present and up to date.
+ /// True if the checkout was already present and up to date.
     pub already_present: bool,
 }
 
 /// A source a dependency can be acquired from.
 pub trait DependencyFetcher {
-    /// Materialize `dep` (named `name`) into the cache and return its on-disk
-    /// location. `force` re-fetches/updates an existing checkout.
+ /// Materialize `dep` (named `name`) into the cache and return its on-disk
+ /// location. `force` re-fetches/updates an existing checkout.
     fn fetch(&self, name: &str, dep: &Dependency, force: bool) -> Result<FetchOutcome, FetchError>;
 }
 
@@ -136,7 +136,7 @@ pub fn git_cache_key(dep: &Dependency) -> String {
         .or_else(|| dep.branch.clone())
         .or_else(|| dep.rev.clone())
         .unwrap_or_else(|| "head".to_string());
-    // Cheap FNV-1a style hash; deterministic across platforms.
+ // Cheap FNV-1a style hash; deterministic across platforms.
     let mut h: u64 = 0xcbf29ce484222325;
     for b in url.as_bytes().iter().chain(reference.as_bytes()) {
         h ^= *b as u64;
@@ -152,12 +152,12 @@ pub fn git_cache_key(dep: &Dependency) -> String {
 /// When `force` is false and the checkout already exists at the right commit,
 /// it is reused without re-cloning.
 pub struct GitFetcher {
-    /// Root directory holding all cached dependencies (e.g. `.sdkt-cache`).
+ /// Root directory holding all cached dependencies (e.g. `.sdkt-cache`).
     pub cache_root: PathBuf,
 }
 
 impl GitFetcher {
-    /// Create a fetcher rooted at `cache_root`.
+ /// Create a fetcher rooted at `cache_root`.
     pub fn new(cache_root: impl Into<PathBuf>) -> Self {
         Self {
             cache_root: cache_root.into(),
@@ -172,7 +172,7 @@ impl GitFetcher {
         Ok(())
     }
 
-    /// Resolve the current HEAD commit SHA of a checkout (empty if unknown).
+ /// Resolve the current HEAD commit SHA of a checkout (empty if unknown).
     fn head_rev(checkout: &Path) -> String {
         let out = Command::new(git_bin())
             .current_dir(checkout)
@@ -184,7 +184,7 @@ impl GitFetcher {
         }
     }
 
-    /// The commit SHA that a given reference resolves to (empty on failure).
+ /// The commit SHA that a given reference resolves to (empty on failure).
     pub fn resolved_rev_for(dep: &Dependency, checkout: &Path) -> String {
         if let Some(rev) = &dep.rev {
             return rev.clone();
@@ -225,12 +225,12 @@ impl DependencyFetcher for GitFetcher {
 
         Self::git_available()?;
 
-        // M37 — version-constrained git dep: resolve the `version` semver
-        // constraint to a concrete tag before acquiring. Reuses the single
-        // `resolve_version_constraint` helper (which shells out via `git
-        // ls-remote --tags` and `crate::package::best_version_match`); no
-        // comparator logic is duplicated here. An explicit tag/branch/rev
-        // always wins and the constraint is ignored.
+ // — version-constrained git dep: resolve the `version` semver
+ // constraint to a concrete tag before acquiring. Reuses the single
+ // `resolve_version_constraint` helper (which shells out via `git
+ // ls-remote --tags` and `crate::package::best_version_match`); no
+ // comparator logic is duplicated here. An explicit tag/branch/rev
+ // always wins and the constraint is ignored.
         let effective_dep = if let Some(ver) = &dep.version {
             if dep.tag.is_none() && dep.branch.is_none() && dep.rev.is_none() {
                 match resolve_version_constraint(&url, ver) {
@@ -255,7 +255,7 @@ impl DependencyFetcher for GitFetcher {
                     }
                 }
             } else {
-                // An explicit ref wins; the constraint is inert.
+ // An explicit ref wins; the constraint is inert.
                 dep.clone()
             }
         } else {
@@ -264,11 +264,11 @@ impl DependencyFetcher for GitFetcher {
 
         let key = git_cache_key(&effective_dep);
         let checkout = self.cache_root.join("git").join(&key);
-        // Ensure the parent cache dir (`<cache_root>/git`) exists so `git clone`
-        // can create the destination checkout dir itself. The checkout dir
-        // must NOT be pre-created: cloning into an existing (even empty)
-        // directory with cwd set to it makes git silently fail to initialize
-        // `.git`, which then breaks the later checkout.
+ // Ensure the parent cache dir (`<cache_root>/git`) exists so `git clone`
+ // can create the destination checkout dir itself. The checkout dir
+ // must NOT be pre-created: cloning into an existing (even empty)
+ // directory with cwd set to it makes git silently fail to initialize
+ // `.git`, which then breaks the later checkout.
         let parent = checkout
             .parent()
             .ok_or_else(|| FetchError::Io {
@@ -283,7 +283,7 @@ impl DependencyFetcher for GitFetcher {
 
         let existing = checkout.join(".git").exists();
         if existing && !force {
-            // Verify the checkout already resolves to the requested ref.
+ // Verify the checkout already resolves to the requested ref.
             let want = Self::resolved_rev_for(&effective_dep, &checkout);
             if !want.is_empty() && want == Self::head_rev(&checkout) {
                 return Ok(FetchOutcome {
@@ -295,11 +295,11 @@ impl DependencyFetcher for GitFetcher {
             }
         }
 
-        // Clone or update. When `force` is set we use explicit refspecs so a
-        // moved tag (the core M36.0 update scenario) is actually pulled: a
-        // plain `git fetch` refuses to overwrite a local lightweight tag, so we
-        // pass `+refs/tags/*:refs/tags/*` to force the update; branches use the
-        // normal `origin/<branch>` remote-tracking mapping.
+ // Clone or update. When `force` is set we use explicit refspecs so a
+ // moved tag (the core update scenario) is actually pulled: a
+ // plain `git fetch` refuses to overwrite a local lightweight tag, so we
+ // pass `+refs/tags/*:refs/tags/*` to force the update; branches use the
+ // normal `origin/<branch>` remote-tracking mapping.
         let (workdir, clone_args) = if existing {
             let workdir = checkout.clone();
             let args = if force {
@@ -327,7 +327,7 @@ impl DependencyFetcher for GitFetcher {
         };
         run_git(&workdir, &clone_args)?;
 
-        // Checkout the requested reference.
+ // Checkout the requested reference.
         let checkout_ref: String = if let Some(rev) = &effective_dep.rev {
             rev.clone()
         } else if let Some(tag) = &effective_dep.tag {
@@ -407,22 +407,22 @@ mod tests {
     fn git_cmd(dir: &Path) -> Command {
         let mut c = Command::new("git");
         c.current_dir(dir)
-            // Treat the temp checkout as safe so git operations succeed even on
-            // CI runners (Windows/macOS) where the temp directory ownership can
-            // trip git's "dubious ownership" protection. Applied per-command via
-            // env (no global git-config mutation, no side effects).
+ // Treat the temp checkout as safe so git operations succeed even on
+ // CI runners (Windows/macOS) where the temp directory ownership can
+ // trip git's "dubious ownership" protection. Applied per-command via
+ // env (no global git-config mutation, no side effects).
             .env("GIT_CONFIG_COUNT", "1")
             .env("GIT_CONFIG_KEY_0", "safe.directory")
             .env("GIT_CONFIG_VALUE_0", "*");
         c
     }
 
-    // Build a collision-free temp directory for a throwaway git repo. A unique
-    // name (pid + nanosecond clock + per-process counter) guarantees every call
-    // gets a fresh path, even when tests run in parallel threads or a stale dir
-    // from a previous CI run lingers in the shared temp folder. This is what
-    // prevents `git init` from failing on macOS with ".git/info/exclude: File
-    // exists" (it was hitting a leftover/colliding directory).
+ // Build a collision-free temp directory for a throwaway git repo. A unique
+ // name (pid + nanosecond clock + per-process counter) guarantees every call
+ // gets a fresh path, even when tests run in parallel threads or a stale dir
+ // from a previous CI run lingers in the shared temp folder. This is what
+ // prevents `git init` from failing on macOS with ".git/info/exclude: File
+ // exists" (it was hitting a leftover/colliding directory).
     fn fresh_repo_dir() -> PathBuf {
         use std::sync::atomic::{AtomicU64, Ordering};
         static COUNTER: AtomicU64 = AtomicU64::new(0);
@@ -433,8 +433,8 @@ mod tests {
             .as_nanos();
         let pid = std::process::id();
         let dir = std::env::temp_dir().join(format!("sdkt-fetch-src-{}-{}-{}", pid, nanos, n));
-        // Remove any stale directory from a prior run (best effort) so git init
-        // always starts from a clean, unique path.
+ // Remove any stale directory from a prior run (best effort) so git init
+ // always starts from a clean, unique path.
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
         dir
@@ -457,10 +457,10 @@ mod tests {
         run(&["init", "-q"]);
         run(&["config", "user.email", "test@sdkt.local"]);
         run(&["config", "user.name", "sdkt test"]);
-        // v1.0.0 tag on first commit. The file handle is scoped so it is
-        // closed (dropped) before git stages the file — required on Windows,
-        // where an open handle can prevent `git add` from seeing the new
-        // content ("no changes added to commit").
+ // v1.0.0 tag on first commit. The file handle is scoped so it is
+ // closed (dropped) before git stages the file — required on Windows,
+ // where an open handle can prevent `git add` from seeing the new
+ // content ("no changes added to commit").
         {
             let f = dir.join("lib.rs");
             let mut fh = std::fs::File::create(&f).unwrap();
@@ -469,7 +469,7 @@ mod tests {
         run(&["add", "lib.rs"]);
         run(&["commit", "-q", "-m", "initial"]);
         run(&["tag", "v1.0.0"]);
-        // A second commit + main branch head.
+ // A second commit + main branch head.
         {
             let f = dir.join("lib.rs");
             let mut fh = std::fs::File::create(&f).unwrap();
@@ -531,11 +531,11 @@ mod tests {
         assert!(out.local_path.exists());
         assert!(out.local_path.join(".git").exists());
         assert!(!out.resolved_rev.is_empty());
-        // The checked-out content should be the v1.0.0 (answer() == 42) blob.
+ // The checked-out content should be the v1.0.0 (answer() == 42) blob.
         let lib = std::fs::read_to_string(out.local_path.join("lib.rs")).unwrap();
         assert!(lib.contains("42"), "expected tagged content, got: {}", lib);
 
-        // Idempotent: second fetch without force reuses, already_present true.
+ // Idempotent: second fetch without force reuses, already_present true.
         let out2 = fetcher.fetch("dep", dep, false).expect("fetch ok");
         assert!(out2.already_present);
 
@@ -549,7 +549,7 @@ mod tests {
         let url = src.to_string_lossy().to_string();
         let cfg = config_with_git(&url, None, None, None);
         let _dep = cfg.dependencies.get("dep").unwrap();
-        // Determine the second-commit SHA by rev-parsing origin/HEAD equiv.
+ // Determine the second-commit SHA by rev-parsing origin/HEAD equiv.
         let rev = {
             let o = git_cmd(&src).args(["rev-parse", "HEAD"]).output().unwrap();
             String::from_utf8_lossy(&o.stdout).trim().to_string()

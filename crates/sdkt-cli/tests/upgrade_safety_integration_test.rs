@@ -81,8 +81,8 @@ fn deploy_deny_breaking_aborts_on_incompatible() {
 
 #[test]
 fn deploy_without_deny_breaking_skips_guard() {
-    // Without --deny-breaking the upgrade-safety guard is skipped entirely,
-    // so it must never print the abort message (behavior unchanged).
+ // Without --deny-breaking the upgrade-safety guard is skipped entirely,
+ // so it must never print the abort message (behavior unchanged).
     sdkt()
         .args([
             "deploy",

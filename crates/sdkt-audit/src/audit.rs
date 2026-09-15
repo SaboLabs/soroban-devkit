@@ -22,11 +22,11 @@ pub struct AuditContext<'a> {
 pub trait AuditRule {
     /// Stable identifier, e.g. `AUTH-001`. Used by `--disable`.
     fn id(&self) -> &'static str;
-    /// Severity this rule emits at.
+ /// Severity this rule emits at.
     fn severity(&self) -> Severity;
-    /// Human-readable description of what the rule checks.
+ /// Human-readable description of what the rule checks.
     fn description(&self) -> &'static str;
-    /// Run the rule over the scanned functions and record findings.
+ /// Run the rule over the scanned functions and record findings.
     fn check(&self, scans: &[FnScan], ctx: &AuditContext, report: &mut AuditReport);
 }
 
@@ -36,9 +36,9 @@ pub struct FnScan {
     pub fn_name: String,
     pub require_auth: usize,
     pub invoke_contract: usize,
-    /// Local bindings (let-bindings + parameters) eligible for move tracking.
+ /// Local bindings (let-bindings + parameters) eligible for move tracking.
     pub bound: HashSet<String>,
-    /// Argument-usage count per bound local (move heuristic signal).
+ /// Argument-usage count per bound local (move heuristic signal).
     pub usage: HashMap<String, usize>,
 }
 
@@ -175,7 +175,7 @@ pub fn scan_all_functions(ast: &syn::File) -> Vec<FnScan> {
                 out.push(scan);
             }
             Item::Impl(imp) => {
-                // Best-effort type name for context in locations.
+ // Best-effort type name for context in locations.
                 let type_name = match &*imp.self_ty {
                     syn::Type::Path(p) => p
                         .path
@@ -245,8 +245,8 @@ fn run_rules(
 ) -> Result<AuditReport, AuditError> {
     let scans = scan_all_functions(ast);
     let mut report = AuditReport::default();
-    // Execute rules through the registry (built-ins + any linked plugins),
-    // preserving registration order so output stays identical to M16.
+ // Execute rules through the registry (built-ins + any linked plugins),
+ // preserving registration order so output stays identical to .
     crate::registry::run_registered(&scans, ctx, disabled, &mut report);
     Ok(report)
 }
@@ -371,7 +371,7 @@ mod tests {
         assert!(matches!(res, Err(AuditError::Parse(_))));
     }
 
-    // Compile-time guarantee that the rule structs implement the trait.
+ // Compile-time guarantee that the rule structs implement the trait.
     #[test]
     fn rules_implement_trait() {
         fn assert_rule(_r: &dyn AuditRule) {}

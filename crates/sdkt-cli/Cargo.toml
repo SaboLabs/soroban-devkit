@@ -35,17 +35,17 @@ tokio = { version = "1", features = ["rt-multi-thread", "macros"] }
 [features]
 default = []
 # Links the reference example plugin rule into the binary. Off by default so
-# `sdkt audit` output is byte-for-byte identical to M16 unless explicitly built
+# `sdkt audit` output is byte-for-byte identical to the pre-plugin state unless explicitly built
 # with the plugin feature.
 plugins = ["sdkt-audit-example-rule", "sdkt-audit/plugins"]
 
-# WebAssembly plugin loading (M19, Phase C). Off by default.
+# WebAssembly plugin loading (Phase C). Off by default.
 wasm-plugins = [
     "sdkt-audit/wasm-plugins",
     "sdkt-audit-example-rule/wasm-plugins",
 ]
 
-# Opt-in build provenance (M39). When enabled, `sdkt --version` appends the
+# Opt-in build provenance (). When enabled, `sdkt --version` appends the
 # git commit and build date. Disabled by default so the binary stays
 # reproducible (the version string depends only on CARGO_PKG_VERSION) and
 # `cargo install --path` / `cargo build` without extra env never varies.

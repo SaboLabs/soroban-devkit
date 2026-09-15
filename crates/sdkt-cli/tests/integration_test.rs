@@ -4,10 +4,10 @@ use predicates::prelude::*;
 #[test]
 fn test_decode_scval_integer() {
     let mut cmd = Command::cargo_bin("sdkt").unwrap();
-    // AAAAAgAAAAk= is base64 for ScVal (U32 9) but SeVal XDR parsing may fail if truncated.
-    // We will use an explicitly generated correct XDR base64 for ScVal_I32(42) instead.
-    // A quick valid test can be done for TransactionResult or LedgerEntry
-    // ScVal I32(1) = "AAAAAwAAAAE="
+ // AAAAAgAAAAk= is base64 for ScVal (U32 9) but SeVal XDR parsing may fail if truncated.
+ // We will use an explicitly generated correct XDR base64 for ScVal_I32(42) instead.
+ // A quick valid test can be done for TransactionResult or LedgerEntry
+ // ScVal I32(1) = "AAAAAwAAAAE="
     cmd.arg("decode")
         .arg("AAAAAwAAAAE=")
         .arg("--type")

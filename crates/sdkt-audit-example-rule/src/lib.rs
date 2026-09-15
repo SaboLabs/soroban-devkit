@@ -1,13 +1,13 @@
 //! Example `sdkt-audit` plugin rule — reference implementation only.
 //!
 //! This crate demonstrates the plugin author workflow:
-//!   1. Implement [`sdkt_audit::AuditRule`].
-//!   2. Register the rule into the process-wide registry via
-//!      [`sdkt_audit::register_rule`] (or the `register_rule!` macro).
-//!   3. Produce a [`sdkt_audit::Finding`] when your condition holds.
+//! 1. Implement [`sdkt_audit::AuditRule`].
+//! 2. Register the rule into the process-wide registry via
+//! [`sdkt_audit::register_rule`] (or the `register_rule!` macro).
+//! 3. Produce a [`sdkt_audit::Finding`] when your condition holds.
 //!
 //! It is compiled in only when `sdkt-cli` is built with the `plugins` feature,
-//! so default builds behave exactly like M16. See `docs/plugin-authoring.md`.
+//! so default builds behave exactly like . See `docs/plugin-authoring.md`.
 
 #[cfg(not(target_arch = "wasm32"))]
 use sdkt_audit::{
@@ -52,12 +52,12 @@ pub fn register() {
     register_rule(Box::new(ExampleRule) as BoxedRule);
 }
 
-/// C-ABI exports for dynamic loading (M18, Phase B). Compiled only with the
+/// C-ABI exports for dynamic loading (, Phase B). Compiled only with the
 /// `plugins` feature — produces a loadable shared library artifact.
 #[cfg(all(feature = "plugins", not(target_arch = "wasm32")))]
 mod plugin_abi;
 
-/// WASM JSON-ABI exports for sandboxed dynamic loading (M19, Phase C).
+/// WASM JSON-ABI exports for sandboxed dynamic loading (, Phase C).
 #[cfg(all(feature = "wasm-plugins", target_arch = "wasm32"))]
 mod plugin_abi_wasm;
 

@@ -1,4 +1,4 @@
-//! Integration test for M18 dynamic plugin loading (requires `--features plugins`).
+//! Integration test for dynamic plugin loading (requires `--features plugins`).
 //!
 //! Builds the example plugin cdylib on the fly, then drives `sdkt audit
 //! --rules <plugin.so>` and asserts the dynamic rule fires without breaking the
@@ -30,7 +30,7 @@ fn build_example_plugin() -> std::path::PathBuf {
         .expect("failed to spawn cargo build for example plugin");
     assert!(status.success(), "example plugin build failed");
 
-    // Find the produced cdylib in target/debug.
+ // Find the produced cdylib in target/debug.
     let patterns = [
         "libsdkt_audit_example_rule.so",
         "sdkt_audit_example_rule.dll",
@@ -67,9 +67,9 @@ fn dynamic_plugin_rule_fires() {
 #[test]
 fn plugin_bounds_clamping_prevents_read_overflow() {
     let plugin = build_example_plugin();
-    // 70 triggers > 64 MAX_FINDINGS. If not clamped, host loop would read
-    // past buffer end and segfault or read garbage. Clamping ensures only 64
-    // are processed safely.
+ // 70 triggers > 64 MAX_FINDINGS. If not clamped, host loop would read
+ // past buffer end and segfault or read garbage. Clamping ensures only 64
+ // are processed safely.
     let src = "
         pub fn sdkt_example_trigger_01() {}
         pub fn sdkt_example_trigger_02() {}
@@ -150,8 +150,8 @@ fn plugin_bounds_clamping_prevents_read_overflow() {
 
     cmd.assert()
         .success()
-        // The example plugin itself halts at MAX_FINDINGS, but even if it didn't,
-        // the host now clamps reads to 64.
+ // The example plugin itself halts at MAX_FINDINGS, but even if it didn't,
+ // the host now clamps reads to 64.
         .stdout(predicate::str::contains("(64 total)"));
 }
 
@@ -257,11 +257,11 @@ fn wasm_plugin_coexists_with_builtins() {
 
 #[test]
 fn plugin_without_feature_errors_clearly() {
-    // Build the CLI WITHOUT the plugins feature and confirm a `.so` rule path
-    // is rejected with a clear message. This mirrors the default-build guard.
-    // (We can't easily rebuild the bin here, so we assert the guard text exists
-    //  in the source instead — the actual runtime path is covered by CI with
-    //  and without the feature.)
+ // Build the CLI WITHOUT the plugins feature and confirm a `.so` rule path
+ // is rejected with a clear message. This mirrors the default-build guard.
+ // (We can't easily rebuild the bin here, so we assert the guard text exists
+ // in the source instead — the actual runtime path is covered by CI with
+ // and without the feature.)
     let guard = std::fs::read_to_string(
         std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/main.rs"),
     )

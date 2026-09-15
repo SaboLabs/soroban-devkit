@@ -33,7 +33,7 @@ pub struct Finding {
     pub rule_id: String,
     pub severity: Severity,
     pub message: String,
-    /// Optional human-readable location (function name, or `fn:binding`).
+ /// Optional human-readable location (function name, or `fn:binding`).
     pub location: Option<String>,
 }
 
@@ -54,7 +54,7 @@ pub struct AuditReport {
 }
 
 impl AuditReport {
-    /// Append a finding and update the severity counters.
+ /// Append a finding and update the severity counters.
     pub fn add(&mut self, f: Finding) {
         match f.severity {
             Severity::Critical => self.summary.critical += 1,
@@ -65,7 +65,7 @@ impl AuditReport {
         self.findings.push(f);
     }
 
-    /// True when no findings were produced.
+ /// True when no findings were produced.
     pub fn is_clean(&self) -> bool {
         self.findings.is_empty()
     }

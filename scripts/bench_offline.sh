@@ -1,28 +1,28 @@
 #!/usr/bin/env bash
-# M35 — offline sdkt performance benchmark (reproducible).
+# — offline sdkt performance benchmark (reproducible).
 #
 # Measures wall-clock time and peak resident set size (RSS) for the three
 # most important offline sdkt commands:
-#   - sdkt wasm inspect <wasm>
-#   - sdkt audit <src.rs>
-#   - sdkt diff --upgrade-safety --old-wasm A --new-wasm B
+# - sdkt wasm inspect <wasm>
+# - sdkt audit <src.rs>
+# - sdkt diff --upgrade-safety --old-wasm A --new-wasm B
 #
 # Methodology to avoid flaky numbers:
-#   * A release build of sdkt is used (debug builds are not representative).
-#   * Each command is run WARMUP (1, discarded) + RUNS (default 7) times.
-#   * Wall-clock measured with nanosecond `date`; peak RSS via /usr/bin/time -v.
-#   * Reports min / median / average wall time and median peak RSS per command.
-#   * Single-thread pinning via `taskset 0x1` when available to reduce
-#     scheduler noise.
+# * A release build of sdkt is used (debug builds are not representative).
+# * Each command is run WARMUP (1, discarded) + RUNS (default 7) times.
+# * Wall-clock measured with nanosecond `date`; peak RSS via /usr/bin/time -v.
+# * Reports min / median / average wall time and median peak RSS per command.
+# * Single-thread pinning via `taskset 0x1` when available to reduce
+# scheduler noise.
 #
 # Usage:
-#   SDKT=/path/to/sdkt WASM_DIR=/path/to/wasm AUDIT_SRC=/path/to/lib.rs \
-#     bash scripts/bench_offline.sh
+# SDKT=/path/to/sdkt WASM_DIR=/path/to/wasm AUDIT_SRC=/path/to/lib.rs \
+# bash scripts/bench_offline.sh
 #
-# Dataset (M33/M34 fixtures):
+# Dataset (3/4 fixtures):
 #   WASM_DIR should contain token.wasm, atomic_swap.wasm, liquidity_pool.wasm,
 #   timelock.wasm, single_offer.wasm (built from stellar/soroban-examples).
-#   AUDIT_SRC should be a real Soroban contract source (e.g. token/src/lib.rs).
+# AUDIT_SRC should be a real Soroban contract source (e.g. token/src/lib.rs).
 
 set -uo pipefail
 
@@ -45,10 +45,10 @@ fi
 
 # Collect N wall times (seconds, float) into an array via stdout capture.
 bench_time() {
-  # $1 = label, rest = command
+ # $1 = label, rest = command
   local label="$1"; shift
   local times=() rss=() i out wall rss_kb
-  # warmup
+ # warmup
   $PIN "$@" >/dev/null 2>&1 || true
   for ((i=0;i<RUNS;i++)); do
     local t0 t1
@@ -60,7 +60,7 @@ bench_time() {
     times+=("$wall")
     rss+=("${rss_kb:-0}")
   done
-  # stats: sort, median, avg
+ # stats: sort, median, avg
   local sorted
   sorted=$(printf '%s\n' "${times[@]}" | sort -n)
   local min avg med sum=0
@@ -74,7 +74,7 @@ bench_time() {
          "$label" "$min" "$med" "$avg" "$rss_med"
 }
 
-echo "=== M35 offline benchmark :: sdkt=$( "$SDKT" --version 2>/dev/null || echo unknown ) ==="
+echo "=== Offline benchmark :: sdkt=$( "$SDKT" --version 2>/dev/null || echo unknown ) ==="
 echo "RUNS=$RUNS  WASM_DIR=$WASM_DIR  AUDIT_SRC=$AUDIT_SRC"
 echo "pin=${PIN:-none}"
 echo

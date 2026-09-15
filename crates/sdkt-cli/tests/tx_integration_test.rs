@@ -6,12 +6,12 @@ fn test_tx_inspect_format_json() {
     let mut cmd = Command::cargo_bin("sdkt").unwrap();
     cmd.arg("tx")
         .arg("inspect")
-        // Just checking command structure and error propagation, not a real hash if offline
+ // Just checking command structure and error propagation, not a real hash if offline
         .arg("0000000000000000000000000000000000000000000000000000000000000000")
         .arg("--format")
         .arg("json");
 
-    // We don't assert success as RPC might fail, but ensure it runs without panicking on args
+ // We don't assert success as RPC might fail, but ensure it runs without panicking on args
     let output = cmd.output().unwrap();
     assert!(output.status.success() || output.status.code().unwrap() == 1);
 }

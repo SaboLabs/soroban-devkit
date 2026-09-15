@@ -1,6 +1,6 @@
 # syntax=docker/dockerfile:1
 #
-# Soroban DevKit (`sdkt`) — containerized distribution (M39).
+# Soroban DevKit (`sdkt`) — containerized distribution.
 #
 # Multi-stage build: a pinned Rust toolchain (MSRV 1.88.0) compiles the CLI,
 # then a minimal distroless/runtime image carries only the statically linked

@@ -16,11 +16,11 @@ pub struct SampleToken;
 #[contractimpl]
 impl SampleToken {
     pub fn transfer(_from: Address, _to: Address, _amount: i128) {
-        // Correctly guarded privileged entrypoint.
+ // Correctly guarded privileged entrypoint.
         _from.require_auth();
     }
 
-    /// Privileged admin action — intentionally missing `require_auth()` so that
+ /// Privileged admin action — intentionally missing `require_auth()` so that
     /// `sdkt audit` flags it with AUTH-001. This is the demonstration target.
     pub fn admin_action(_admin: Address) {
         // NOTE: no require_auth() — sdkt audit will flag this as AUTH-001.

@@ -4,7 +4,7 @@
 //! `wasm-bindgen` wrapper that forwards raw contract bytes to the same
 //! `sdkt-wasm` functions the `sdkt wasm inspect` CLI command uses:
 //!
-//! - [`sdkt_wasm::parse_metadata`]      — hash, size, version, exports, imports, custom sections
+//! - [`sdkt_wasm::parse_metadata`] — hash, size, version, exports, imports, custom sections
 //! - [`sdkt_wasm::parse_contract_spec`] — functions, custom types, events, env metadata
 //!
 //! Keeping the wrapper this small is deliberate: the CLI and the Web Playground
@@ -14,7 +14,7 @@
 //! ```text
 //! cargo build -p sdkt-playground --release --target wasm32-unknown-unknown
 //! wasm-bindgen --target web --no-typescript \
-//!   --out-dir website/playground/wasm \
+//! --out-dir website/playground/wasm \
 //!   target/wasm32-unknown-unknown/release/sdkt_playground.wasm
 //! ```
 
@@ -31,8 +31,8 @@ use wasm_bindgen::prelude::*;
 pub struct InspectionResult {
     pub metadata: sdkt_wasm::WasmMetadata,
     pub spec: Option<sdkt_wasm::ContractSpec>,
-    /// Present when metadata parsed but the contract spec did not. Purely
-    /// informational; never a stack trace.
+ /// Present when metadata parsed but the contract spec did not. Purely
+ /// informational; never a stack trace.
     pub spec_error: Option<String>,
 }
 
@@ -69,11 +69,11 @@ fn user_message(err: &WasmError) -> String {
 /// WebAssembly instance — no I/O, no network, no filesystem access.
 #[wasm_bindgen]
 pub fn inspect_wasm(bytes: &[u8]) -> Result<JsValue, JsValue> {
-    // Metadata is mandatory: if the module itself will not parse there is
-    // nothing meaningful to show.
+ // Metadata is mandatory: if the module itself will not parse there is
+ // nothing meaningful to show.
     let metadata = parse_metadata(bytes).map_err(|e| JsValue::from_str(&user_message(&e)))?;
 
-    // Spec is optional, exactly as in the CLI (`parse_contract_spec(..).ok()`).
+ // Spec is optional, exactly as in the CLI (`parse_contract_spec(..).ok()`).
     let (spec, spec_error) = match parse_contract_spec(bytes) {
         Ok(s) => (Some(s), None),
         Err(e) => (None, Some(user_message(&e))),

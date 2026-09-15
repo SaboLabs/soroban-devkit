@@ -1,4 +1,4 @@
-//! Build script for `sdkt-cli` (M39).
+//! Build script for `sdkt-cli` ().
 //!
 //! Captures optional build provenance into `cargo:` rustc-env directives so the
 //! binary can append a commit/date line to `sdkt --version` *only* when the
@@ -10,7 +10,7 @@
 //! `--features provenance` and supplies `SDKT_GIT_COMMIT` / `SDKT_BUILD_DATE`.
 
 fn main() {
-    // Out dir is provided by Cargo; re-exporting is unnecessary for our use.
+ // Out dir is provided by Cargo; re-exporting is unnecessary for our use.
     println!("cargo:rerun-if-env-changed=SDKT_GIT_COMMIT");
     println!("cargo:rerun-if-env-changed=SDKT_BUILD_DATE");
     println!("cargo:rerun-if-changed=build.rs");

@@ -18,13 +18,13 @@ use serde::Serialize;
 /// `C...` -> `Hash` -> hex. A value that is already valid 32-byte hex is passed
 /// through unchanged.
 pub(crate) fn contract_id_to_hex(contract_id: &str) -> Result<String, RpcError> {
-    // Fast path: already a 32-byte hex string.
+ // Fast path: already a 32-byte hex string.
     if let Ok(bytes) = hex::decode(contract_id) {
         if bytes.len() == 32 {
             return Ok(contract_id.to_string());
         }
     }
-    // Otherwise treat it as a StrKey `C...` and decode to the underlying hash.
+ // Otherwise treat it as a StrKey `C...` and decode to the underlying hash.
     let hash = decode_contract_id(contract_id)
         .map_err(|e| RpcError::Rpc(format!("Invalid contract ID '{contract_id}': {e}")))?;
     Ok(hex::encode(hash.0))
@@ -32,16 +32,16 @@ pub(crate) fn contract_id_to_hex(contract_id: &str) -> Result<String, RpcError> 
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
 pub struct ContractAbiSummary {
-    /// This reuses the existing `sdkt_wasm::parse_contract_spec` parser — it does NOT
-    /// introduce a new ABI decoder. It only lists the declared symbol names so the
-    /// on-chain inspection report can summarize a deployed contract's interface.
+ /// This reuses the existing `sdkt_wasm::parse_contract_spec` parser — it does NOT
+ /// introduce a new ABI decoder. It only lists the declared symbol names so the
+ /// on-chain inspection report can summarize a deployed contract's interface.
     pub functions: Vec<String>,
     pub events: Vec<String>,
     pub types: Vec<String>,
 }
 
 impl ContractAbiSummary {
-    /// Project a parsed [`ContractSpec`] into the name-only summary.
+ /// Project a parsed [`ContractSpec`] into the name-only summary.
     pub fn from_spec(spec: &ContractSpec) -> Self {
         Self {
             functions: spec.functions.iter().map(|f| f.name.clone()).collect(),
@@ -57,8 +57,8 @@ pub struct ContractInspection {
     pub contract_id: String,
     pub wasm_hash: String,
     pub wasm_size: Option<usize>,
-    /// Parsed on-chain ABI summary (functions / events / types). `None` when the
-    /// on-chain WASM code cannot be fetched or has no `contractspecv0` section.
+ /// Parsed on-chain ABI summary (functions / events / types). `None` when the
+ /// on-chain WASM code cannot be fetched or has no `contractspecv0` section.
     pub abi: Option<ContractAbiSummary>,
     pub storage_summary: StorageSummary,
     pub ttl_info: Option<TtlInfoSummary>,
@@ -120,9 +120,9 @@ pub async fn inspect_contract(
     let wasm_hash = extract_wasm_hash(&first_entry.xdr)
         .map_err(|e| RpcError::Rpc(format!("Failed to extract WASM hash: {e}")))?;
 
-    // Enrich with on-chain WASM size + parsed ABI. Both steps are best-effort:
-    // if the code entry is missing or unparseable, we keep what we have instead
-    // of failing the whole inspection.
+ // Enrich with on-chain WASM size + parsed ABI. Both steps are best-effort:
+ // if the code entry is missing or unparseable, we keep what we have instead
+ // of failing the whole inspection.
     let mut wasm_size = None;
     let mut abi = None;
     if let Ok(bytes) = get_wasm_bytecode(client, &wasm_hash).await {
@@ -149,7 +149,7 @@ mod tests {
 
     #[test]
     fn abi_summary_from_spec_lists_names() {
-        // A spec with one function, one event, one type.
+ // A spec with one function, one event, one type.
         let spec = ContractSpec {
             env_meta: None,
             functions: vec![sdkt_wasm::ContractFunction {
@@ -185,14 +185,14 @@ mod tests {
 
     #[test]
     fn contract_id_to_hex_accepts_strkey_c_address() {
-        // Real testnet contract StrKey `C...` used by the M43/M41 live validation.
+ // Real testnet contract StrKey `C...` used by the / live validation.
         let c = "CAE3U7JKESRWZHPEQ72DVNGOQ6WPA7HSPQZL5YV46NPCE4TMUPAGYMEC";
         let hex = contract_id_to_hex(c).expect("StrKey C... should decode");
-        // 32-byte hash -> 64 hex chars.
+ // 32-byte hash -> 64 hex chars.
         assert_eq!(hex.len(), 64);
-        // Re-decoding the hex must be a no-op (already hex, passed through).
+ // Re-decoding the hex must be a no-op (already hex, passed through).
         assert_eq!(contract_id_to_hex(&hex).unwrap(), hex);
-        // The decode must match the canonical hash of this contract.
+ // The decode must match the canonical hash of this contract.
         assert_eq!(
             hex,
             "09ba7d2a24a36c9de487f43ab4ce87acf07cf27c32bee2bcf35e22726ca3c06c"
@@ -202,7 +202,7 @@ mod tests {
     #[test]
     fn contract_id_to_hex_rejects_garbage() {
         assert!(contract_id_to_hex("not-a-contract-id").is_err());
-        // Valid-length hex but wrong type of strkey (account G...) must fail.
+ // Valid-length hex but wrong type of strkey (account G...) must fail.
         assert!(
             contract_id_to_hex("GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF").is_err()
         );

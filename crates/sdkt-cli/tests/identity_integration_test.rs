@@ -16,35 +16,35 @@ fn sdkt(dir: &std::path::Path) -> Command {
 fn test_cli_identity_lifecycle() {
     let dir = tempdir().unwrap();
 
-    // 1. Generate
+ // 1. Generate
     sdkt(dir.path())
         .args(["identity", "generate", "alice"])
         .assert()
         .success()
         .stdout(predicates::str::contains("generated successfully"));
 
-    // 2. Show
+ // 2. Show
     sdkt(dir.path())
         .args(["identity", "show", "alice"])
         .assert()
         .success()
         .stdout(predicates::str::contains("Public Key: G"));
 
-    // 3. List
+ // 3. List
     sdkt(dir.path())
         .args(["identity", "list"])
         .assert()
         .success()
         .stdout(predicates::str::contains("alice"));
 
-    // 4. Default
+ // 4. Default
     sdkt(dir.path())
         .args(["identity", "default", "alice"])
         .assert()
         .success()
         .stdout(predicates::str::contains("set as default"));
 
-    // 5. Delete
+ // 5. Delete
     sdkt(dir.path())
         .args(["identity", "delete", "alice"])
         .assert()

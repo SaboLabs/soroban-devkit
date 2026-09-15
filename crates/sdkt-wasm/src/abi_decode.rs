@@ -1,4 +1,4 @@
-//! ABI-aware ScVal decoding helpers for ENG-16.
+//! ABI-aware ScVal decoding helpers for .
 
 use crate::spec::{ContractEvent, ContractType};
 use stellar_xdr::ScVal;
@@ -6,11 +6,11 @@ use stellar_xdr::ScVal;
 /// Human-readable label for a ScVal given ABI context.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DecodedValue {
-    /// The raw ScVal representation.
+ /// The raw ScVal representation.
     pub raw: String,
-    /// ABI-derived type name, if found.
+ /// ABI-derived type name, if found.
     pub abi_type: Option<String>,
-    /// A shorter human-readable description.
+ /// A shorter human-readable description.
     pub label: String,
 }
 

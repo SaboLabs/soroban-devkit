@@ -7,8 +7,8 @@
 # asset alongside the playground page — no build step at deploy time.
 #
 # Requirements:
-#   rustup target add wasm32-unknown-unknown
-#   cargo install wasm-bindgen-cli --version 0.2.127 --locked
+# rustup target add wasm32-unknown-unknown
+# cargo install wasm-bindgen-cli --version 0.2.127 --locked
 #
 # Usage: bash website/playground/build.sh
 set -euo pipefail

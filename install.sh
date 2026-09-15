@@ -6,16 +6,16 @@
 # its SHA-256 checksum, and installs it to ~/.local/bin/sdkt by default.
 #
 # Usage:
-#   curl -fsSL https://raw.githubusercontent.com/SaboLabs/soroban-devkit/main/install.sh | bash
-#   ./install.sh                 # or run locally
-#   SDKT_INSTALL_DIR=/usr/local/bin ./install.sh   # custom destination
-#   bash install.sh --selftest   # offline regression test (no network)
+# curl -fsSL https://raw.githubusercontent.com/SaboLabs/soroban-devkit/main/install.sh | bash
+# ./install.sh # or run locally
+# SDKT_INSTALL_DIR=/usr/local/bin ./install.sh # custom destination
+# bash install.sh --selftest # offline regression test (no network)
 #
 # Security:
-#   - set -euo pipefail (strict mode)
-#   - the downloaded binary is NEVER executed before its checksum is verified
-#   - the checksum is verified, preferring the standalone release .sha256
-#     asset and falling back to the embedded sdkt.sha256 inside the tarball
+# - set -euo pipefail (strict mode)
+# - the downloaded binary is NEVER executed before its checksum is verified
+# - the checksum is verified, preferring the standalone release .sha256
+# asset and falling back to the embedded sdkt.sha256 inside the tarball
 
 set -euo pipefail
 
@@ -41,7 +41,7 @@ resolve_checksum_to() {
     cp "$standalone" "$out"
     return 0
   fi
-  # Fallback: extract the embedded sdkt.sha256 from the tarball (stdout).
+ # Fallback: extract the embedded sdkt.sha256 from the tarball (stdout).
   tar -xzf "$tb" sdkt.sha256 -O > "$out" 2>/dev/null \
     && [[ -s "$out" ]] \
     && return 0
@@ -67,7 +67,7 @@ selftest() {
   ( cd "$d" && $SHASUM sdkt > sdkt.sha256 )
   tar -czf "$d/sdkt-x86_64-unknown-linux-gnu.tar.gz" -C "$d" sdkt sdkt.sha256
 
-  # Case A: standalone checksum asset exists.
+ # Case A: standalone checksum asset exists.
   cp "$d/sdkt.sha256" "$d/sdkt-x86_64-unknown-linux-gnu.sha256"
   resolve_checksum_to "$d/sdkt-x86_64-unknown-linux-gnu.tar.gz" \
     "$d/sdkt-x86_64-unknown-linux-gnu.sha256" "$d/outA.sha256"
@@ -77,7 +77,7 @@ selftest() {
     err "SELFTEST A (standalone checksum) FAILED"
   fi
 
-  # Case B: standalone missing -> embedded checksum fallback.
+ # Case B: standalone missing -> embedded checksum fallback.
   rm -f "$d/sdkt-x86_64-unknown-linux-gnu.sha256"
   resolve_checksum_to "$d/sdkt-x86_64-unknown-linux-gnu.tar.gz" \
     "$d/does-not-exist.sha256" "$d/outB.sha256" \
@@ -93,7 +93,7 @@ selftest() {
 }
 
 if [[ "${1:-}" == "--selftest" ]]; then
-  # Pick a checksum tool for the offline test before any network logic.
+ # Pick a checksum tool for the offline test before any network logic.
   if command -v sha256sum >/dev/null 2>&1; then
     SHASUM="sha256sum"
   elif command -v shasum >/dev/null 2>&1; then

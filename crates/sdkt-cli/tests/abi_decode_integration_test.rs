@@ -3,7 +3,7 @@ use assert_cmd::Command;
 #[test]
 fn test_events_abi_flag_exists() {
     let mut cmd = Command::cargo_bin("sdkt").unwrap();
-    // Verify --abi flag is recognized (will fail for missing WASM, confirming wiring)
+ // Verify --abi flag is recognized (will fail for missing WASM, confirming wiring)
     cmd.arg("events")
         .arg("CXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX")
         .arg("--abi")

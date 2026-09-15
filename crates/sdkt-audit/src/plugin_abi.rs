@@ -1,4 +1,4 @@
-//! C-ABI boundary types for dynamic audit plugins (M18, Phase B).
+//! C-ABI boundary types for dynamic audit plugins (, Phase B).
 //!
 //! Only flat `#[repr(C)]` data crosses the FFI. No Rust trait objects, `Box`,
 //! `Vec`, or `FnScan` are passed across the boundary — the plugin performs its
@@ -54,11 +54,11 @@ pub const MAX_FINDINGS: usize = 64;
 pub struct SdktAuditFindingC {
     /// Stable rule id, e.g. `EXAMPLE-001`.
     pub rule_id: *const c_char,
-    /// One of [`SEVERITY_CRITICAL`], [`SEVERITY_WARNING`], [`SEVERITY_INFO`].
+ /// One of [`SEVERITY_CRITICAL`], [`SEVERITY_WARNING`], [`SEVERITY_INFO`].
     pub severity: u32,
-    /// Human-readable message.
+ /// Human-readable message.
     pub message: *const c_char,
-    /// Optional location (function or binding name); NUL ptr if absent.
+ /// Optional location (function or binding name); NUL ptr if absent.
     pub location: *const c_char,
 }
 
@@ -66,16 +66,16 @@ pub struct SdktAuditFindingC {
 /// `sdkt_plugin_check`. The host reads only the first `count` entries.
 #[repr(C)]
 pub struct SdktAuditReportC {
-    /// Finding slots.
+ /// Finding slots.
     pub findings: [SdktAuditFindingC; MAX_FINDINGS],
-    /// Number of valid entries in `findings`.
+ /// Number of valid entries in `findings`.
     pub count: usize,
 }
 
 impl Default for SdktAuditReportC {
     fn default() -> Self {
-        // SAFETY: zeroed pointers are valid (null) and `count = 0` means the
-        // host reads nothing. This type contains only POD fields.
+ // SAFETY: zeroed pointers are valid (null) and `count = 0` means the
+ // host reads nothing. This type contains only POD fields.
         unsafe { std::mem::zeroed() }
     }
 }

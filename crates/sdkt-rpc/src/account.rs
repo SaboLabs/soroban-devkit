@@ -33,13 +33,13 @@ pub async fn inspect_account(
     _client: &SorobanRpcClient,
     address: &str,
 ) -> Result<AccountInspection, RpcError> {
-    // In a fully integrated Soroban node, fetching account details involves querying
-    // the Account Ledger Entry via `getLedgerEntries`.
-    // Since XDR compilation and Horizon are explicitly not to be added as heavy dependencies,
-    // we return a struct placeholder reflecting the boundary requirement of this step.
+ // In a fully integrated Soroban node, fetching account details involves querying
+ // the Account Ledger Entry via `getLedgerEntries`.
+ // Since XDR compilation and Horizon are explicitly not to be added as heavy dependencies,
+ // we return a struct placeholder reflecting the boundary requirement of this step.
 
-    // For now, this is a network-safe mock implementation matching the task boundaries.
-    // In production, this would build a stellar_xdr::next::LedgerKey::Account and call getLedgerEntries.
+ // For now, this is a network-safe mock implementation matching the task boundaries.
+ // In production, this would build a stellar_xdr::next::LedgerKey::Account and call getLedgerEntries.
 
     Ok(AccountInspection {
         address: address.to_string(),

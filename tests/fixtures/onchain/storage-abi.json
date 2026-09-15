@@ -5,5 +5,5 @@
     "custom_types_contain": "Circle",
     "events_contain": "Mint"
   },
-  "note": "Deterministic, offline-provable assertion: the M44 on-chain ABI path (M41 retrieval -> parse_contract_spec) feeds exactly this ContractSpec shape to the storage analyzer, which surfaces functions/custom_types/events in `storage check`/`analyze` output. CI validates the source WASM declares these ABI fields via offline `sdkt wasm inspect` and that the deployed-spec decode yields the expected names."
+  "note": "Deterministic, offline-provable assertion: the M44 on-chain ABI path (on-chain retrieval -> parse_contract_spec) feeds exactly this ContractSpec shape to the storage analyzer, which surfaces functions/custom_types/events in `storage check`/`analyze` output. CI validates the source WASM declares these ABI fields via offline `sdkt wasm inspect` and that the deployed-spec decode yields the expected names."
 }

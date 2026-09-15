@@ -1,4 +1,4 @@
-//! Extism PDK exports for the M19 WASM plugin architecture.
+//! Extism PDK exports for the WASM plugin architecture.
 //!
 //! When built for a WASM target (`wasm32-unknown-unknown`), this module exports
 //! the required ABI functions so the `sdkt-audit` host can load it.
