@@ -116,7 +116,18 @@
 /* ---------- footer ---------- */
 footer { border-top: 1px solid var(--line-soft); padding: 2.5rem 0 3rem; }
 .foot-in { display: flex; flex-wrap: wrap; gap: 1.5rem; align-items: flex-start; justify-content: space-between; }
-.foot-brand { font-weight: 650; font-size: 0.9rem; }
+.foot-brand { font-weight: 650; font-size: 0.9rem; display: flex; align-items: center; gap: 0.55rem; }
+.foot-logo {
+  width: 22px;
+  height: 22px;
+  border-radius: 2px;
+  background-color: var(--accent);
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32' fill='none'%3E%3Cpath d='M10 12 L10 10 L22 10 L22 12 L14 12 L14 15 L20 15 L20 17 L14 17 L14 20 L22 20 L22 22 L10 22 L10 20 L18 20 L18 17 L12 17 L12 15 L18 15 L18 12 Z' fill='%230a0a0c'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: center;
+  background-size: 14px 14px;
+  flex: 0 0 auto;
+}
 .foot-brand p { color: var(--dim); font-size: 0.82rem; margin: 0.35rem 0 0; max-width: 32ch; font-weight: 400; }
 .foot-links { display: flex; gap: 2.5rem; }
 .foot-col h4 {

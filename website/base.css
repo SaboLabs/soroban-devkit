@@ -77,14 +77,11 @@ code, kbd, pre { font-family: var(--mono); }
   width: 28px;
   height: 28px;
   border-radius: 3px;
-  border: 1px solid var(--accent);
-  background: var(--accent);
-  display: grid;
-  place-items: center;
-  font-family: var(--mono);
-  font-size: 0.68rem;
-  font-weight: 700;
-  color: #0a0a0c;
+  background-color: var(--accent);
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32' fill='none'%3E%3Cpath d='M10 12 L10 10 L22 10 L22 12 L14 12 L14 15 L20 15 L20 17 L14 17 L14 20 L22 20 L22 22 L10 22 L10 20 L18 20 L18 17 L12 17 L12 15 L18 15 L18 12 Z' fill='%230a0a0c'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: center;
+  background-size: 18px 18px;
   flex: 0 0 auto;
 }
 .nav-links { margin-left: auto; display: flex; align-items: center; gap: 1.75rem; }
