@@ -21,11 +21,11 @@
 
 ---
 
-`sdkt` is a production-grade, offline-first toolkit for inspecting, analyzing, validating, and safely shipping Soroban smart contracts. It consolidates contract inspection, XDR decoding, storage TTL analysis, static security analysis, WASM diffing, and multi-contract deployment orchestration into a single CLI — so developers stop juggling 5+ separate tools.
+`sdkt` is an offline-first toolkit for inspecting, analyzing, validating, and safely shipping Soroban smart contracts. It consolidates contract inspection, XDR decoding, storage TTL analysis, static security analysis, WASM diffing, and multi-contract deployment orchestration into a single CLI — so developers stop juggling 5+ separate tools.
 
 ## The Problem
 
-Developing on Soroban often requires context-switching across multiple CLI tools and manual RPC scripts to securely build, audit, and deploy contracts. `sdkt` solves this by providing a unified interface that emphasizes **offline-first** analysis, **upgrade safety**, and **production deployment orchestration**.
+Developing on Soroban often requires context-switching across multiple CLI tools and manual RPC scripts to securely build, audit, and deploy contracts. `sdkt` solves this by providing a unified interface that emphasizes **offline-first** analysis, **upgrade safety**, and **deployment orchestration**.
 
 ## Capabilities
 
@@ -34,7 +34,7 @@ Developing on Soroban often requires context-switching across multiple CLI tools
 - **Inspect & decode** — base64 XDR decoding, contract ABI + storage inspection, event exploration.
 - **Analyze** — storage TTL / rent visibility, Instance / Persistent / Temporary classification, offline ABI/function/event/type WASM diffing.
 - **Secure** — static analysis of contract source (`AUTH-001/002/003/004`, `MOVE-001`) and an upgrade-safety verdict for safe contract upgrades.
-- **Build & ship** — typed transaction envelope builder, simulate, **native transaction signing (M27)**, submit, identity/keystore management, multi-contract workspace topological deployments, and upgrade breaking-change guards.
+- **Build & ship** — typed transaction envelope builder, simulate, **native transaction signing**, submit, identity/keystore management, multi-contract workspace topological deployments, and upgrade breaking-change guards.
 
 Most commands are **offline**; only on-chain reads (`inspect`, `storage`, `tx`, `events`, `account`, `fee`, `wasm metadata`) need an RPC endpoint.
 
@@ -238,7 +238,7 @@ See [`docs/plugin-authoring.md`](docs/plugin-authoring.md) for how to build or u
 
 A `.sdkt.toml` workspace declares contracts under `[contracts.<alias>]`. Each
 contract may declare dependencies using either the canonical `depends_on`
-(M34.2) or the legacy `deploy_after` field — both are merged during
+or the legacy `deploy_after` field — both are merged during
 resolution:
 
 ```toml
@@ -264,7 +264,7 @@ rejected up front with a clear error:
 - **Duplicate contract name** — two `[contracts.<alias>]` tables (TOML parse
   error, surfaced instead of silently defaulting to an empty config).
 
-### Local package manifests (M35.0)
+### Local package manifests
 
 `sdkt package validate` lays the groundwork for a future package registry
 **without** introducing any network or remote-registry functionality. It checks
@@ -302,7 +302,7 @@ Validation rules (all offline — never performs network or registry I/O):
 message; with `--format json` it emits `{"valid": true}` or
 `{"valid": false, "error": "..."}`.
 
-### Fetching dependencies (M35.1)
+### Fetching dependencies
 
 `sdkt package fetch` materializes declared dependencies into a deterministic
 local cache at `.sdkt-cache` (no registry, no authentication helpers, never
@@ -428,8 +428,7 @@ upgrade-safety-on-release).
 Additional references: [docs/cli.md](docs/cli.md) (full command reference),
 [docs/faq.md](docs/faq.md) (FAQ),
 [docs/plugin-authoring.md](docs/plugin-authoring.md) (write your own audit
-rules), and [ROADMAP.md](ROADMAP.md) · [CHANGELOG.md](CHANGELOG.md). Historical
-planning documents live in [docs/archive/](docs/archive/).
+rules), and [ROADMAP.md](ROADMAP.md) · [CHANGELOG.md](CHANGELOG.md).
 
 ## Contributing
 

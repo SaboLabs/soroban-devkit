@@ -8,29 +8,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [v2.5.0] - 2026-08-08
 
 ### Added
-- **Release polish & SCF readiness (M39).** Containerized distribution via a
+- **Release polish & SCF readiness. Containerized distribution via a
   maintained multi-stage `Dockerfile` (+ `.dockerignore`); a conservative
   mainnet-safety guard on mutating RPC commands (`tx submit`, `deploy`,
   `project deploy`) that refuses mainnet unless the operator explicitly selects
   the network; `docs/scf.md` positioning the project for SCF grant tracks;
   refreshed `RELEASE_READINESS.md`; and opt-in `--version` provenance behind the
   new `provenance` feature (default OFF, so builds stay reproducible).
-- **Shell completions (M32).** New `sdkt completions <shell>` command generates
+- **Shell completions. New `sdkt completions <shell>` command generates
   completion scripts for `bash`, `zsh`, `fish`, `powershell`, and `elvish`
   (via `clap_complete`). Documented in README and `docs/cli.md`.
-- **CLI integration tests (M32).** New `crates/sdkt-cli/tests/cli_integration.rs`
+- **CLI integration tests. New `crates/sdkt-cli/tests/cli_integration.rs`
   covers `--help`, `--version`, `completions`, the full `network`
   add/list/show/remove lifecycle with `--format json`, invalid-argument handling,
   and offline commands. Tests are deterministic and hermetic (per-test
   `SDKT_NETWORK_DIR`).
-- **Supply-chain audit (M32).** New `supply-chain` CI job runs `cargo audit`
+- **Supply-chain audit. New `supply-chain` CI job runs `cargo audit`
   directly (no third-party action) on `ubuntu-latest` with `continue-on-error`,
   so dependency advisories, advisory-DB, or network issues never break the
   build. Portable across the existing Linux/macOS/Windows test matrix.
-- **Runnable crate doc examples (M32).** Added `///` doc examples to
+- **Runnable crate doc examples. Added `///` doc examples to
   `sdkt_storage::NetworkProfile` and `sdkt_wasm::parse_metadata` so docs.rs
   renders verified, executable examples.
-- **Contract dependency graph resolution (M34.2).** `.sdkt.toml` now supports an
+- **Contract dependency graph resolution** `.sdkt.toml` now supports an
   explicit `depends_on` field per `[contracts.<alias>]` (legacy `deploy_after`
   remains accepted and is merged with it). A single topological sort
   (`resolve_deploy_order`) is the source of truth shared by `sdkt build`,
@@ -42,7 +42,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   of silently defaulting to an empty config). New unit tests cover each invalid
   case plus deterministic ordering; new CLI integration tests assert `sdkt build`
   fails fast on invalid graphs.
-- **Local package manifest foundation (M35.0).** Foundation for a future
+- **Local package manifest foundation. Foundation for a future
   package registry with **no** network or remote-registry functionality.
   `.sdkt.toml` now accepts a `[package]` section (`name`, `version`,
   optional `description`) and a `[dependencies]` table of **local path-only**
@@ -56,7 +56,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   breaking CLI changes, no version bump/tag/publish, no external services. New
   unit tests cover every validation error; new CLI integration tests cover valid
   and invalid manifests end-to-end.
-- **Git dependency sources (M35.1).** Package dependencies now support both
+- **Git dependency sources. Package dependencies now support both
   local `path` and `git` sources, exactly one per `[dependencies.<name>`. Git
   deps take a `git` URL plus exactly one of `tag` / `branch` / `rev`. Validation
   rejects `path` + `git` together, multiple git references, missing/empty git
@@ -74,7 +74,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   New unit tests cover parser/validation/lock serialization and fetch using
   on-the-fly local git repos (no network); new CLI integration tests cover
   validate-accept, validate-reject, and offline fetch end-to-end.
-- **Lock dependency resolution & reproducible verification (M35.2).**
+- **Lock dependency resolution & reproducible verification**
   `sdkt.lock` dependency entries now record the full resolved state for
   reproducibility: `name`, `source` (`local`/`git`), `original_source` (the
   resolved path or git URL), `git_url`, the requested `resolved_reference`
@@ -99,7 +99,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   new CLI integration tests cover `lock verify` dependency reporting and
   `package fetch` writing reproducible lock entries.
 
-- **Package update & synchronization (M36.0).** New `sdkt package update`
+- **Package update & synchronization. New `sdkt package update`
   closes the package loop (`validate → fetch → update → verify`). It resolves
   each git dependency's currently available commit via `git ls-remote`
   (offline for local URLs; contacts only the declared git remote when a
@@ -120,7 +120,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   new CLI integration tests cover `package update`, `--check`, `--dry-run`,
   `--format json`, and offline local-path behavior.
 
-- **Dependency version resolution (M37).** Git dependencies may now declare an
+- **Dependency version resolution. Git dependencies may now declare an
   optional semver `version` constraint (e.g. `version = ">=1.0, <2"`) instead
   of a fixed `tag`/`branch`/`rev`. When a constraint is set without an explicit
   ref, `sdkt package fetch` / `sdkt package update` resolve the **highest
@@ -137,7 +137,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   selection, update detection, up-to-date, and unsatisfied-constraint; new CLI
   integration tests cover fetch/update picking the highest satisfying tag and a
   clear error on an unsatisfiable constraint.
-- **Offline packaging & publish readiness (M38).** New `sdkt package pack`
+- **Offline packaging & publish readiness. New `sdkt package pack`
   bundles the fully resolved project (`.sdkt.toml` + `sdkt.lock` + cached git
   checkouts under `.sdkt-cache/git/<key>`) into a portable offline artifact,
   either a compressed tarball (`--format tar.zst`) or a directory tree
@@ -149,7 +149,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   (read-only) reusing the existing `verify_dependencies` / manifest-validation /
   cache / integrity primitives; it detects missing cache, lock drift, integrity
   mismatch, commit mismatch, reference change, and invalid package state.
-  `--broadcast` is opt-in and rejected because M38 defines no registry source
+  `--broadcast` is opt-in and rejected because this release defines no registry source
   (no network, nothing published). New `unpack` + `verify_bundle_equivalence`
   prove a reconstructed tree reproduces the original lock sha256 and per-git
   integrity exactly. Adds `tar` / `zstd` deps. New unit tests cover pack
@@ -165,19 +165,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [v2.4.0] - 2026-08-07
 
 ### Added
-- **Network Profiles (M28.1 / M28.2 / M29).** Named network profiles let you
+- **Network Profiles. Named network profiles let you
   save RPC URL + network passphrase once and reference them from any RPC
   command, instead of repeating full endpoints.
 
-  - **M28.1 — Network Profile Storage (`sdkt-storage`):** new `NetworkStore`
+  - **Network Profile Storage (`sdkt-storage`):** new `NetworkStore`
     (honors `SDKT_NETWORK_DIR`) and `NetworkProfile` types with `add` / `get` /
     `list` / `remove` / `exists`. Stored as JSON under the project config dir
     (`~/.config/sdkt/networks`, overridable via `SDKT_NETWORK_DIR`). Validation
     rejects empty names, path separators in names, and empty RPC URLs.
-  - **M28.2 — Network Profile CLI (`sdkt network`):** `sdkt network add |
+  - **Network Profile CLI (`sdkt network`):** `sdkt network add |
     list | show | remove` manage profiles; `show --format json` for scripting.
     Additive, no breaking changes to existing commands.
-  - **M29 — Network Profile Integration:** every RPC command now accepts
+  - **Network Profile Integration:** every RPC command now accepts
     `--network-profile <NAME>` plus explicit `--rpc-url <URL>` and
     `--network-passphrase <PASSPHRASE>` override flags. Resolution precedence
     (highest wins): explicit `--rpc-url` / `--network-passphrase` >
@@ -198,15 +198,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   surface and a deterministic profile-not-found path; all tests are CI-safe
   (no live RPC, no internet, no machine-specific config).
 
-> Note: the release-engineering items historically labelled "M28 / M38 / M39"
-> in the v2.2.0 entry are distinct from the Network Profiles milestone line
-> (M28.1 / M28.2 / M29) introduced here. Numbers overlapped; the network work
-> is the canonical M28/M29 going forward.
 
 ## [v2.2.0] - 2026-08-07
 
 ### Added
-- **Native transaction signing (M27).** `sdkt` can now sign Soroban transaction envelopes with a local ED25519 identity — completing the build → sign → submit lifecycle.
+- **Native transaction signing** `sdkt` can now sign Soroban transaction envelopes with a local ED25519 identity — completing the build → sign → submit lifecycle.
   - New `sdkt tx sign` command: signs a base64 `TransactionEnvelope` (or a file containing one) using an identity from the local keystore, appending a `DecoratedSignature`. Fully offline — no RPC, no secret exposure.
   - Flags: `--input <xdr|file>`, `--output <file>` (prints to stdout if omitted), `--identity <name>` (defaults to `default`), `--network testnet|mainnet|futurenet|custom:<passphrase>`, `--format json|pretty`.
   - Core signing library in `sdkt-xdr` (`sign_transaction`, `sign_envelope_with`, `verify_signature`, `Ed25519Signer`, `Network`, `Signer`, `SigningOptions`, `SigningError`) — dependency-clean and reusable by future signers (hardware/remote, deferred).
@@ -230,23 +226,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [v2.1.1] - 2026-08-06
 
 ### Fixed
-- **Release consistency hardening.** Aligned the workspace version (`[workspace.package].version`) and every crate's pinned version to `2.1.1`. Fixed a packaging drift where `Cargo.lock` still pinned crates to `2.0.0` after the workspace version was bumped.
+- **Release consistency hardening.. Aligned the workspace version (`[workspace.package].version`) and every crate's pinned version to `2.1.1`. Fixed a packaging drift where `Cargo.lock` still pinned crates to `2.0.0` after the workspace version was bumped.
 - Added CI guardrails in `release.yml` so a release tag must exactly match the Cargo workspace version, and the built binary's reported version must match the tag (catches version-drift regressions before publish).
 - `docs/*`: refreshed version references and benchmark dates to `2.1.1`.
 
 ## [v2.1.0] - 2026-08-06
 
 ### Added
-- **Transaction Simulation Enhancements (ENG-03):** Improved `sdkt tx simulate` to deserialize and display modern RPC metadata:
+- **Transaction Simulation Enhancements . Improved `sdkt tx simulate` to deserialize and display modern RPC metadata:
   - Added support for `restorePreamble` (surfaced when expired state restoration is required).
   - Added support for `stateChanges` tracking.
   - Enhanced human-readable CLI formatting to display these new fields along with operation counts. Backward compatibility with older RPC payloads is fully preserved.
-- **RPC Connection Pooling (ENG-01):** Replaced one-off HTTP clients with a single persistent, internally pooled `reqwest::Client` in `SorobanRpcClient`. This significantly improves performance during multi-contract orchestrated deployments (`sdkt project deploy`) by preventing socket exhaustion. Introduced configurable `timeout_secs` and `pool_max_idle_per_host` in `NetworkConfig`.
-- **Offline command benchmark suite (M35):** `scripts/bench_offline.sh` plus a documented regression baseline (`docs/performance.md`).
-- **Real-world Soroban compatibility matrix + workflow (M33/M34):** `docs/compatibility.md` validates `sdkt` against official `stellar/soroban-examples` contracts; `.github/workflows/compatibility.yml` clones the examples read-only, builds a representative subset to WASM, and runs `sdkt` offline commands against the real artifacts (fails on any non-zero exit).
-- **Project scaffolding hardening (M31/M32):** generated project `Cargo.toml` resolves cleanly and pins `soroban-sdk` to `21.0.0` for fresh builds.
-- **Release hardening (M28):** release smoke tests and SHA-256 checksums; GitHub Release distribution of binaries + checksums (M38); tarball-content regression guard (M38); `install.sh` checksum fallback for missing standalone `.sha256` assets (M39).
-- **Adoption / docs (M30/M36/M39):** expanded usage examples and security guidelines, mature OSS onboarding polish, and improved public install experience.
+- **RPC Connection Pooling . Replaced one-off HTTP clients with a single persistent, internally pooled `reqwest::Client` in `SorobanRpcClient`. This significantly improves performance during multi-contract orchestrated deployments (`sdkt project deploy`) by preventing socket exhaustion. Introduced configurable `timeout_secs` and `pool_max_idle_per_host` in `NetworkConfig`.
+- **Offline command benchmark suite** `scripts/bench_offline.sh` plus a documented regression baseline (`docs/performance.md`).
+- **Real-world Soroban compatibility matrix + workflow** `docs/compatibility.md` validates `sdkt` against official `stellar/soroban-examples` contracts; `.github/workflows/compatibility.yml` clones the examples read-only, builds a representative subset to WASM, and runs `sdkt` offline commands against the real artifacts (fails on any non-zero exit).
+- **Project scaffolding hardening** generated project `Cargo.toml` resolves cleanly and pins `soroban-sdk` to `21.0.0` for fresh builds.
+- **Release hardening** release smoke tests and SHA-256 checksums; GitHub Release distribution of binaries + checksums; tarball-content regression guard; `install.sh` checksum fallback for missing standalone `.sha256` assets
+- **Adoption / docs** expanded usage examples and security guidelines, mature OSS onboarding polish, and improved public install experience.
 
 ### Changed
 - Workspace version bumped `2.0.0` → `2.1.0`.
@@ -254,14 +250,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [v2.0.0] - 2026-08-06
 
 ### Changed
-- **BREAKING: CLI Rename.** The executable binary has been officially renamed from `sdkt-cli` to `sdkt`.
+- **BREAKING: CLI Rename.. The executable binary has been officially renamed from `sdkt-cli` to `sdkt`.
   - Automation scripts, alias configurations, and CI pipelines explicitly expecting `sdkt-cli` must be updated.
   - End-users running `cargo install` will now receive an executable named `sdkt`.
   - Documentation and CI references updated appropriately.
-- **WebAssembly (WASM) plugin loading** for `sdkt audit` (M19, Phase C). Sandboxed, platform-independent `.wasm` plugins can now be loaded via `sdkt audit <src> --rules <plugin.wasm>`.
+- **WebAssembly (WASM) plugin loading** for `sdkt audit` Phase C. Sandboxed, platform-independent `.wasm` plugins can now be loaded via `sdkt audit <src> --rules <plugin.wasm>`.
 - Extism runtime integration via the `wasm-plugins` feature (requires `wasm32-wasip1` target for plugin authors).
 - JSON-over-memory WASM ABI boundary ensuring memory safety and isolation.
-- **Native dynamic plugin loading** for `sdkt audit` (M18, Phase B). Native shared
+- **Native dynamic plugin loading** for `sdkt audit` Phase B. Native shared
   libraries (`.so` / `.dylib` / `.dll`) exporting the C-ABI plugin symbols can
   now be loaded at runtime via `sdkt audit <src> --rules <plugin.so>`.
 - `sdkt-audit` plugin ABI: `plugin_abi` module with `#[repr(C)]` types
@@ -280,7 +276,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **MSRV increased to `1.88.0`**. Required by transitive dependencies (`darling@0.23.x` via `serde_with`, and `stellar-strkey@0.0.18`), not by internal project code.
 - `sdkt-audit` exposes `scan_all_functions_str` (convenience for plugin authors).
 - No `AuditRule` public-API change. Default build is byte-for-byte identical to
-  v1.0.0 (M17) — the `plugins` feature is OFF by default.
+  v1.0.0 — the `plugins` feature is OFF by default.
 
 ### Security
 - Dynamic plugins run **in-process**; only load plugins you trust / built
@@ -289,11 +285,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [v1.0.0] - 2026-08-05 — First Stable Release
 
 This is the first stable, semver `1.0.0` release. No new features beyond
-M17; this milestone stabilizes the toolkit, unifies the version, and makes
+the previous release; this release stabilizes the toolkit, unifies the version, and makes
 the release pipeline fully green end-to-end.
 
 ### Added
-- Stable `1.0.0` release tag. The full feature set from M3A–M17 is now
+- Stable `1.0.0` release tag. The full feature set is now
   considered stable: inspect/decode, storage TTL + analysis, ABI-aware
   decoding, transaction simulate/submit/build, events, account, fee
   estimate, WASM metadata/cache, offline ABI/WASM diff with upgrade-safety
@@ -325,12 +321,12 @@ the release pipeline fully green end-to-end.
 
 ---
 
-## [v0.17.0-alpha] - 2026-08-05 (Milestone 17 — Plugin System Phase A)
+## [v0.17.0-alpha] - 2026-08-05 (Plugin System Phase A)
 
 ### Added (extensibility, no breaking changes)
 - **`RuleRegistry`** in `sdkt-audit`: `register_rule`, `register_builtin_rules`, `registered_rules`, `run_all`. Built-in rules (AUTH-001/002/003, MOVE-001) now register through the registry instead of a hardcoded list; finding order and IDs unchanged.
 - **Plugin author API**: stable `AuditRule`, `AuditContext`, `Finding`, plus a `register_rule!` macro and process-wide `register_rule()` for external/plugin rules.
-- **`sdkt audit --rules <PATH>`** (repeatable, additive): validates external rule paths and runs all registered rules. Omitted → behavior identical to M16. (Phase A: external rules must be compiled into the binary; dynamic loading is Phase B.)
+- **`sdkt audit --rules <PATH>`** (repeatable, additive): validates external rule paths and runs all registered rules. Omitted → behavior identical to the previous release. (Phase A: external rules must be compiled into the binary; dynamic loading is Phase B.)
 - **Example plugin crate** `sdkt-audit-example-rule` (rule `EXAMPLE-001`) demonstrating the authoring workflow; linked only when `sdkt-cli` is built with the `plugins` feature (off by default).
 - **`docs/plugin-authoring.md`**: architecture, rule lifecycle, authoring, registration, and testing guidance.
 
@@ -342,7 +338,7 @@ the release pipeline fully green end-to-end.
 
 ---
 
-## [v0.16.0-alpha] - 2026-08-05 (Milestone 16 — Release Engineering & Polish)
+## [v0.16.0-alpha] - 2026-08-05 (Release Engineering & Polish)
 
 ### Changed (release readiness, no new features)
 - **Unified workspace version** — added `[workspace.package]` as the single source of truth (`version = 0.16.0-alpha`, `edition`, `license`, `authors`, `repository`, `homepage`). All 7 crates inherit via `*.workspace = true`; internal path-dependencies pinned to the unified version. Removes the `0.6.0-alpha` vs `v0.15.0-alpha` drift.
@@ -352,24 +348,24 @@ the release pipeline fully green end-to-end.
 - **Docs** — `README.md` rewritten (real repo URL, all 13+ subcommands, install, CI link); `docs/cli.md` rewritten to the full current command tree.
 - **Panic audit** — replaced `unwrap()`/`expect()` on user-input execution paths (the `fee estimate` manual-arg parser and JSON-serialize `println!` sites) with `?`/`map_err` so malformed input returns a clean error instead of panicking. Internal invariants and test code untouched.
 
-## [v0.15.0-alpha] - 2026-08-05 (Milestone 15 — CI/CD GitHub Action)
+## [v0.15.0-alpha] - 2026-08-05 (CI/CD GitHub Action)
 
 ### Added
 - **Reusable GitHub composite Action** — `.github/actions/sdkt/action.yml` wraps existing `sdkt` capabilities for CI: `command: audit` runs `sdkt audit <target> --format json` and fails when findings meet `severity-threshold` (default `critical`, so `MOVE-001` warnings never break CI); `command: upgrade-safety` runs `sdkt diff --old-wasm <old> --new-wasm <new> --upgrade-safety --format json` and fails when `compatible == false`.
 - **Action self-validation workflow** — `.github/workflows/sdkt-action-ci.yml` exercises the composite Action against the committed WASM fixtures: a breaking diff (`us_old.wasm` → `us_new.wasm`) is asserted to fail, and an identical diff is asserted to pass.
 - **Documentation** — `docs/ci-cd.md` with copy-paste workflow examples (audit-on-PR, upgrade-safety-on-release, self-validation) plus install/threshold notes.
-- Packaging only: no new crate, no Rust changes, no breaking API changes. Reuses the M13 `sdkt audit` and M14 `sdkt diff --upgrade-safety` JSON contracts.
+- Packaging only: no new crate, no Rust changes, no breaking API changes. Reuses the existing `sdkt audit` and the existing `sdkt diff --upgrade-safety` JSON contracts.
 
-## [v0.14.0-alpha] - 2026-08-05 (Milestone 14 — Upgrade Safety Guard)
+## [v0.14.0-alpha] - 2026-08-05 (Upgrade Safety Guard)
 
 ### Added
-- **`sdkt diff --upgrade-safety`** — transforms the M12 `SpecDiff` into an actionable `UpgradeVerdict`: `breaking_changes` (removed function, changed signature, removed event, removed type) vs `non_breaking_changes` (additions). Pretty + JSON via existing `--format`.
+- **`sdkt diff --upgrade-safety`** — transforms the existing `SpecDiff` into an actionable `UpgradeVerdict`: `breaking_changes` (removed function, changed signature, removed event, removed type) vs `non_breaking_changes` (additions). Pretty + JSON via existing `--format`.
 - `sdkt-wasm`: `UpgradeVerdict`, `VerdictChange`, `ChangeKind`, `upgrade_safety()` / `upgrade_safety_wasm()` — all derived from the existing `diff_specs`/`SpecDiff` (no duplicated comparison logic).
 - **`sdkt deploy --deny-breaking --old-wasm <deployed.wasm>`** — optional deploy guard that aborts when the upgrade is not backwards-compatible. Off by default; existing `deploy` behavior unchanged when the flag is omitted.
 - 6 unit tests (`upgrade_safety`: removed fn, changed signature, removed event, removed type, additions-only, identical) + 5 `sdkt-cli` integration tests (pretty, JSON, `deploy --deny-breaking`).
 - Additive, backwards-compatible: new types + new flags only; no breaking API changes.
 
-## [v0.13.0-alpha] - 2026-08-05 (Milestone 13 — Gap C: Static Security Analysis)
+## [v0.13.0-alpha] - 2026-08-05 (Gap C: Static Security Analysis)
 
 ### Added
 - **`sdkt audit <path>`** — offline static security analysis of a Soroban contract Rust source. Flags `AUTH-001` (missing `require_auth` on privileged fns), `AUTH-002` (unauthenticated `invoke_contract`), `AUTH-003` (unguarded `initialize`), and `MOVE-001` (suspicious move-after-use, Warning only). Pretty + JSON via existing `--format`.
@@ -377,7 +373,7 @@ the release pipeline fully green end-to-end.
 - 13 unit tests (per-rule positives/negatives, disable, clean, parse-error) + 6 `sdkt-cli` integration tests for `audit`.
 - Additive, backwards-compatible: new crate + new CLI subcommand; no breaking API changes; `sdkt-core` remains networking-free.
 
-## [v0.12.0-alpha] - 2026-08-05 (Milestone 12 — Contract ABI/WASM Diff, Candidate C)
+## [v0.12.0-alpha] - 2026-08-05 (Contract ABI/WASM Diff, Candidate C)
 
 ### Added
 - **`sdkt diff --old-wasm <A> --new-wasm <B>`** — offline comparison of two contract WASM binaries. Reports added/removed functions, changed function signatures, added/removed events, and added/removed custom types. Pretty + JSON via existing `OutputFormat`.
@@ -385,7 +381,7 @@ the release pipeline fully green end-to-end.
 - 7 unit tests (added/removed/changed functions, events, types, identical-spec, parse-error propagation) + 3 `sdkt-cli` integration tests for `diff`.
 - Additive, backwards-compatible: new module + re-exports; no breaking API changes; no new crates.
 
-## [v0.11.0-alpha] - 2026-08-05 (Milestone 11 — StorageAnalyzer, Proposal B)
+## [v0.11.0-alpha] - 2026-08-05 (StorageAnalyzer, Proposal B)
 
 ### Added (Proposal B: finish `StorageAnalyzer`)
 - **`sdkt storage analyze <contract-id>`** — categorizes a contract's storage into Instance / Persistent / Temporary entries, with a TTL summary and per-entry detail. Pretty + JSON via existing `OutputFormat`.
@@ -393,11 +389,8 @@ the release pipeline fully green end-to-end.
 - 5 unit tests (classification round-trips for instance/persistent/temporary/invalid) + 3 `sdkt-cli` integration tests for `storage analyze`.
 - Additive, backwards-compatible: `StorageReport` gains `total_entries`, `other_entries`, `entries` (serde-defaulted) — no breaking changes.
 
-> Note: M11 was scoped to Proposal B only (per operator approval). `sdkt-audit` (Gap C)
-> and the plugin framework (M13) were explicitly excluded. See `docs/milestone-11-plan.md`
-> for the (unapproved) audit candidate design.
 
-## [v0.10.0-alpha] - 2026-08-05 (Milestone 10 / ENG-16 — MERGED to main)
+## [v0.10.0-alpha] - 2026-08-05 (ABI-aware decoding)
 
 ### Added
 - **ABI-aware decoding**: `--abi <WASM>` flag on `events`, `inspect`, and `storage check`.
@@ -411,7 +404,7 @@ the release pipeline fully green end-to-end.
 - Removed accidentally-committed 4.6 MB `gen_keys` binary; added to `.gitignore`.
 - Clippy-clean (`-D warnings`) across workspace.
 
-## [v0.9.0-alpha] - 2026-08-05 (Milestone 9)
+## [v0.9.0-alpha] - 2026-08-05
 
 ### Added
 - **WASM tooling**: `sdkt wasm metadata` and `sdkt wasm cache` (info/remove/clear).
@@ -420,7 +413,7 @@ the release pipeline fully green end-to-end.
 - WASM metadata caching in `sdkt-storage` (`WasmCache`).
 - Identity/keystore foundation reused by deploy/init flows.
 
-## [v0.8.0-alpha] - 2026-08-04 (Milestone 8 — Mutability Foundation)
+## [v0.8.0-alpha] - 2026-08-04 (Mutability Foundation)
 
 ### Added
 - **Transaction simulation**: `sdkt tx simulate` (offline pre-flight via `simulateTransaction`).
@@ -430,7 +423,7 @@ the release pipeline fully green end-to-end.
 - **Fee estimation**: `sdkt fee estimate` (RPC dynamic fee or manual base-fee samples).
 - Validation module (`sdkt_core::validation`) for offline envelope checks.
 
-## [v0.7.0-alpha] - 2026-08-04 (Milestone 7)
+## [v0.7.0-alpha] - 2026-08-04
 
 ### Added
 - **Horizon account enrichment**: `sdkt account` now pulls balances, signers, and associated assets via Stellar Horizon REST.
@@ -463,7 +456,7 @@ the release pipeline fully green end-to-end.
 ### Improved
 - **CLI Architecture**: Hardened separation between CLI output formatting and RPC business logic.
 - **RPC Abstraction**: Centralized API request formatting and internal error handling mapping inside the RPC crate.
-- **Documentation**: Substantial overhaul of README.md and internal milestone documentation outlining workspace boundaries.
+- **Documentation**: Substantial overhaul of README.md and internal documentation outlining workspace boundaries.
 
 ### Internal
 - Workspace cleanup, dependency deduplication, and module flattening.

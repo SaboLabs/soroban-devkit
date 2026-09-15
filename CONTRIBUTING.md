@@ -48,7 +48,7 @@ make compat         # run compatibility CI matrix locally
    cargo test -p sdkt-cli
    ```
 
-### Plugin Bundle Workflow (M40)
+### Plugin Bundle Workflow
 
 To pack and verify a plugin bundle locally:
 
