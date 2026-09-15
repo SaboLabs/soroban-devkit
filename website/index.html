@@ -131,7 +131,7 @@ Compatible: <span class="t-bad">NO</span>
       </div>
       <div class="card">
         <h3><svg class="card-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3l8 3v6c0 5-3.4 8-8 9-4.6-1-8-4-8-9V6z"/><path d="M9 12l2.2 2.2L15.5 10"/></svg> Static Security Audit</h3>
-        <p>Static analysis of contract source against AUTH-001/002/003 and
+        <p>Static analysis of contract source against AUTH-001/002/003/004 and
           MOVE-001 rules — no network, no secrets. <code>sdkt audit</code></p>
       </div>
       <div class="card">
@@ -158,6 +158,13 @@ Compatible: <span class="t-bad">NO</span>
         <h3><svg class="card-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="3" width="7" height="7" rx="1.5"/><rect x="8.5" y="14" width="7" height="7" rx="1.5"/><path d="M6.5 10v2h11v-2"/><path d="M12 12v2"/></svg> Multi-Contract Projects</h3>
         <p>Workspace orchestration with topological deploy ordering, lock files,
           and reproducible dependency fetches. <code>sdkt project deploy</code></p>
+      </div>
+      <div class="card">
+        <h3><svg class="card-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 3h6v6H9z"/><path d="M3 9h6v6H3z"/><path d="M15 9h6v6h-6z"/><path d="M9 15h6v6H9z"/><path d="M12 12h.01"/></svg> Plugin System</h3>
+        <p>Extend <code>sdkt audit</code> with custom rules. Pack, verify, install,
+          and manage plugins via <code>sdkt plugin pack</code>,
+          <code>sdkt plugin verify-bundle</code>, and <code>sdkt plugin install</code>.
+          Supports native (.so/.dylib/.dll) and sandboxed WASM plugins.</p>
       </div>
     </div>
   </div>
