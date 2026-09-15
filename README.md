@@ -21,11 +21,11 @@
 
 ---
 
-`sdkt` is an offline-first toolkit for inspecting, analyzing, validating, and safely shipping Soroban smart contracts. It consolidates contract inspection, XDR decoding, storage TTL analysis, static security analysis, WASM diffing, and multi-contract deployment orchestration into a single CLI — so developers stop juggling 5+ separate tools.
+`sdkt` is an offline-first toolkit for inspecting, analyzing, validating, and managing Soroban smart contracts. It consolidates contract inspection, XDR decoding, storage TTL analysis, static security analysis, WASM diffing, and multi-contract deployment orchestration into a single CLI — so developers stop juggling 5+ separate tools.
 
 ## The Problem
 
-Developing on Soroban often requires context-switching across multiple CLI tools and manual RPC scripts to securely build, audit, and deploy contracts. `sdkt` solves this by providing a unified interface that emphasizes **offline-first** analysis, **upgrade safety**, and **deployment orchestration**.
+Developing on Soroban often requires context-switching across multiple CLI tools and manual RPC scripts to build, audit, and deploy contracts. `sdkt` solves this by providing a unified interface that emphasizes **offline-first** analysis, **upgrade safety**, and **deployment orchestration**.
 
 ## Capabilities
 
