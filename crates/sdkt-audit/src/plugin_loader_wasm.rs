@@ -4,14 +4,14 @@
 //!
 //! Extism was chosen over raw Wasmtime for three reasons:
 //! 1. String/memory passing is handled by the Extism PDK — plugin authors
-//! write idiomatic Rust (or Go, TypeScript, etc.) with no manual memory
-//! management at the FFI boundary, which eliminates the F7-class of leaks
-//! that affect the native C-ABI.
+//!    write idiomatic Rust (or Go, TypeScript, etc.) with no manual memory
+//!    management at the FFI boundary, which eliminates the F7-class of leaks
+//!    that affect the native C-ABI.
 //! 2. Capability model is deny-by-default: filesystem, network, and env access
-//! are all off unless explicitly granted by the host. We never grant any.
+//!    are all off unless explicitly granted by the host. We never grant any.
 //! 3. Multi-language PDK support is required for the roadmap's plugin
-//! marketplace (Phase D), where third-party plugins in Go, TS, or Python
-//! must interoperate without a bespoke serialization layer.
+//!    marketplace (Phase D), where third-party plugins in Go, TS, or Python
+//!    must interoperate without a bespoke serialization layer.
 //!
 //! # Security model
 //!
@@ -19,7 +19,7 @@
 //! - No filesystem, network, or host-process access is granted.
 //! - No `unsafe` Rust in this module.
 //! - Findings returned by the plugin are strictly clamped and schema-validated
-//! before being pushed to the report.
+//!   before being pushed to the report.
 //!
 //! # ABI
 //!

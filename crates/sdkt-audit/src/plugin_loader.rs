@@ -8,12 +8,12 @@
 //! # Safety boundary
 //!
 //! * Only `#[repr(C)]` flat data (`SdktAuditFindingC`, `SdktAuditReportC`) and
-//! C strings cross the FFI.
+//!   C strings cross the FFI.
 //! * Deallocation of plugin-owned memory always happens inside the plugin
-//! (via its `sdkt_plugin_free` symbol), never in the host, avoiding
-//! cross-allocator UB.
+//!   (via its `sdkt_plugin_free` symbol), never in the host, avoiding
+//!   cross-allocator UB.
 //! * The loaded [`Library`] is kept alive for the life of [`PluginRule`] via an
-//! `Arc`, so symbols remain valid while the rule runs.
+//!   `Arc`, so symbols remain valid while the rule runs.
 
 use std::ffi::{CStr, CString};
 use std::os::raw::{c_char, c_int};

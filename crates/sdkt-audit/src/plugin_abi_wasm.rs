@@ -9,20 +9,20 @@
 //! WASM plugins must export the following functions to the host:
 //!
 //! - `sdkt_plugin_abi_version() -> i32`
-//! Returns the major ABI version. Must match `SDKT_AUDIT_WASM_ABI_MAJOR`.
+//!   Returns the major ABI version. Must match `SDKT_AUDIT_WASM_ABI_MAJOR`.
 //!
 //! - `sdkt_plugin_id() -> String` (or string-passing equivalent)
 //!   Returns the stable rule id, e.g., "EXAMPLE-001".
 //!
 //! - `sdkt_plugin_severity() -> i32`
-//! Returns the severity level (0 = Critical, 1 = Warning, 2 = Info).
+//!   Returns the severity level (0 = Critical, 1 = Warning, 2 = Info).
 //!
 //! - `sdkt_plugin_description() -> String` (or equivalent)
-//! Returns a human-readable description of the rule.
+//!   Returns a human-readable description of the rule.
 //!
 //! - `sdkt_plugin_check(source_json: String) -> String` (or equivalent)
-//! Receives the audit context/source as a JSON string and returns a JSON
-//! array of findings.
+//!   Receives the audit context/source as a JSON string and returns a JSON
+//!   array of findings.
 
 /// Plugin WASM ABI major version. BREAKING changes bump this.
 pub const SDKT_AUDIT_WASM_ABI_MAJOR: u32 = 1;
