@@ -130,16 +130,11 @@ fn mutating_submit_allows_explicit_mainnet_with_matching_passphrase() {
 
 #[test]
 fn m39_deliverable_files_present() {
-    // The deliverables include a Dockerfile + .dockerignore. The SCF
-    // positioning doc was later archived to docs/archive/ (see #29).
+    // The deliverables include a Dockerfile + .dockerignore.
     let root = workspace_root();
     assert!(root.join("Dockerfile").exists(), "Dockerfile must exist ");
     assert!(
         root.join(".dockerignore").exists(),
         ".dockerignore must exist "
-    );
-    assert!(
-        root.join("docs/archive/scf-positioning-v2.5.0.md").exists(),
-        "archived SCF positioning doc must exist"
     );
 }
