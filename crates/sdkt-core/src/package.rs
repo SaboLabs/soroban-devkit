@@ -677,7 +677,7 @@ pub fn pack(base: &Path, out: &Path, format: &str) -> Result<PackageBundle, Pack
             _ => (String::new(), None),
         };
         // Stage the git checkout (local path deps are not in the cache; the plan
-        // bundles only the resolved git checkouts — see milestone-38-plan.md §2).
+        // bundles only the resolved git checkouts).
         if let Some(checkout) = src_checkout {
             if checkout.join(".git").exists() {
                 let dst = staging.join(".sdkt-cache").join("git").join(&cache_key);

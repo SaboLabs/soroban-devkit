@@ -1,7 +1,6 @@
 name: Compatibility (Real-World Soroban)
 
-# M34: Automated real-world compatibility validation (extends M33).
-# Clones the official stellar/soroban-examples tree (shallow, read-only),
+# Compatibility validation against the official stellar/soroban-examples tree (shallow, read-only),
 # builds a representative subset of example contracts to WASM, and runs sdkt
 # offline commands against the real artifacts + sources. Fails immediately if
 # any sdkt command exits non-zero (catches panics / parse regressions on real
@@ -94,11 +93,11 @@ jobs:
 
           echo "All compatibility checks passed."
 
-      # M45 — Plugin bundle pack/verify round-trip.
+      # Plugin bundle pack/verify round-trip.
       # Exercises `sdkt plugin pack` + `sdkt plugin verify-bundle` against the
       # example rule crate, proving the bundle integrity + signature path
       # works end-to-end on real tooling. Runs fully offline (no RPC needed).
-      - name: Plugin bundle pack/verify coverage (M45)
+      - name: Plugin bundle pack/verify coverage
         run: |
           set -euo pipefail
           SDKT="${{ github.workspace }}/target/debug/sdkt"
@@ -134,10 +133,10 @@ jobs:
           "$SDKT" plugin verify-bundle "$BUNDLE"
           echo "::endgroup::"
 
-      # M45b — Plugin install/resolve/audit round-trip.
+      # Plugin install/resolve/audit round-trip.
       # Validates the full install → resolve-by-id → audit flow against a real
       # example contract source. Fully offline.
-      - name: Plugin install/resolve/audit round-trip (M45b)
+      - name: Plugin install/resolve/audit round-trip
         run: |
           set -euo pipefail
           SDKT="${{ github.workspace }}/target/debug/sdkt"
@@ -177,13 +176,13 @@ jobs:
           SDKT_PLUGIN_DIR="$STORE" "$SDKT" audit "$AUDIT_SRC" --rules rt-rule
           echo "::endgroup::"
 
-      # M41 — On-chain contract interface inspection coverage (network-guarded).
+      # On-chain contract interface inspection coverage (network-guarded).
       # Exercises the `sdkt wasm metadata --contract <id>` path. It attempts a live
       # testnet lookup of a known contract; if the RPC is unreachable (CI sandbox
       # has no network), it falls back to validating the committed fixture, which
       # captures the exact enriched schema the command emits. CI never depends on
       # live testnet, so this step can never be flaky.
-      - name: On-chain inspection coverage (M41)
+      - name: On-chain inspection coverage
         run: |
           set -euo pipefail
           SDKT="${{ github.workspace }}/target/debug/sdkt"
@@ -210,12 +209,12 @@ jobs:
             echo "live RPC unavailable in CI — fixture coverage already validated above (non-fatal)"
           fi
 
-      # M42 — On-chain upgrade-safety verification coverage (network-guarded).
+      # On-chain upgrade-safety verification coverage (network-guarded).
       # Exercises `sdkt verify --upgrade-safety --contract <id> --wasm <candidate>`.
       # The committed fixture captures the exact M14 verdict for the us_old ->
       # us_new sample; it is asserted ALWAYS (no network). A live testnet attempt
       # is made only if RPC is reachable, and never fails the workflow.
-      - name: On-chain upgrade-safety coverage (M42)
+      - name: On-chain upgrade-safety coverage
         run: |
           set -euo pipefail
           SDKT="${{ github.workspace }}/target/debug/sdkt"
@@ -243,13 +242,13 @@ jobs:
             echo "live RPC/candidate unavailable in CI — fixture coverage already validated above (non-fatal)"
           fi
 
-      # M43 — On-chain events ABI decoding coverage (network-guarded).
+      # On-chain events ABI decoding coverage (network-guarded).
       # Exercises `sdkt events <id> --abi-contract <id>`. The committed fixture
       # records the deterministic, offline-provable decode expectation for a deployed
       # contract's ABI (the M41 retrieval -> parse_contract_spec path feeding the M10
       # decoder). CI always validates the source WASM declares the expected event;
       # a live testnet attempt is made only if RPC is reachable and never fails.
-      - name: On-chain events ABI decoding coverage (M43)
+      - name: On-chain events ABI decoding coverage
         run: |
           set -euo pipefail
           SDKT="${{ github.workspace }}/target/debug/sdkt"
@@ -278,13 +277,13 @@ jobs:
             echo "live RPC unavailable in CI — fixture coverage already validated above (non-fatal)"
           fi
 
-      # M44 — On-chain storage ABI decoding coverage (network-guarded).
+      # On-chain storage ABI decoding coverage (network-guarded).
       # Exercises `sdkt storage analyze --abi-contract <id>`. The committed fixture
       # records the deterministic, offline-provable ABI fields the M44 path feeds
       # the storage analyzer (the M41 retrieval -> parse_contract_spec shape). CI
       # always validates the source WASM declares those ABI fields; a live testnet
       # attempt is made only if RPC is reachable and never fails.
-      - name: On-chain storage ABI decoding coverage (M44)
+      - name: On-chain storage ABI decoding coverage
         run: |
           set -euo pipefail
           SDKT="${{ github.workspace }}/target/debug/sdkt"
