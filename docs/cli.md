@@ -21,8 +21,8 @@ sdkt
 │   └── estimate <wasm-path>  [--format]
 │
 │   `--abi <wasm>` supplies the ABI from a local WASM; `--abi-contract <id>` fetches
-│   the deployed contract's on-chain WASM (M41 path) and uses it as the ABI source
-│   for storage decoding (M44). The two flags are mutually exclusive.
+│   the deployed contract's on-chain WASM and uses it as the ABI source
+│   for storage decoding. The two flags are mutually exclusive.
 │
 ├── tx
 │   ├── inspect <hash>        [--format]
@@ -36,9 +36,9 @@ sdkt
 │   ├── --format <json|pretty>
 │   ├── --abi <wasm>          (ABI-aware decode from a local WASM)
 │   └── --abi-contract <id>   (ABI-aware decode using the deployed contract's
-│                               on-chain WASM, fetched via M41 path; no local
-│                               artifact needed. Mutually exclusive with --abi.
-│                               See M43.)
+│                               on-chain WASM, fetched via the inspection path;
+│                               no local artifact needed. Mutually exclusive
+│                               with --abi.)
 │
 ├── account <address>         [--format]
 │
@@ -57,7 +57,7 @@ sdkt
 │   └── --upgrade-safety      (compare the live deployed contract's interface
 │                               against --wasm candidate; emits UpgradeVerdict.
 │                               Requires --wasm. Read-only; inherits mainnet-safety
-│                               guard. See M42.)
+│                               guard.)
 │
 ├── health --contract <contract-id>
 │   ├── --wasm <file.wasm>    (optional local artifact to verify against)
@@ -92,7 +92,7 @@ sdkt
 
 ├── build                     Compile Rust contracts in the workspace into WASM artifacts
 
-├── lock                      Generate or inspect `sdkt.lock` (M34.1, M35.2)
+├── lock                      Generate or inspect `sdkt.lock`
 │   ├── generate              Write `sdkt.lock` from current build artifacts (run `sdkt build` first)
 │   ├── verify                Verify `sdkt.lock` against on-disk contract artifacts AND package
 │   │                         dependencies (lock matches manifest, git commits, path existence).
@@ -100,20 +100,20 @@ sdkt
 │   │                         `✓ package dependencies verified` or lists every drift.
 │   └── show                  Print `sdkt.lock` contents
 
-├── package                   Validate local package manifests (M35.0)
+├── package                   Validate local package manifests
 │   ├── validate              Offline-validate `[package]` metadata + local `[dependencies]`
-│                             path graph (no network/registry; git/* sources rejected)
-│   ├── fetch                 Fetch deps into `.sdkt-cache` (M35.1): local path passthrough,
-│                             git clone/checkout. `--force` updates. Never builds.
-│   ├── update                Synchronize deps (M36.0): refresh git deps to latest available
-│                             commit and rewrite `sdkt.lock`. `rev` pinned; `tag`/`branch`
-│                             update on drift. `--check` reports; `--dry-run` previews.
+│   │                         path graph (no network/registry; git/* sources rejected)
+│   ├── fetch                 Fetch deps into `.sdkt-cache`: local path passthrough,
+│   │                         git clone/checkout. `--force` updates. Never builds.
+│   ├── update                Synchronize deps: refresh git deps to latest available
+│   │                         commit and rewrite `sdkt.lock`. `rev` pinned; `tag`/`branch`
+│   │                         update on drift. `--check` reports; `--dry-run` previews.
 │   ├── pack                  Bundle the resolved project into a portable offline artifact
-│                             (M38): manifest + lock + cached git checkouts. `--out`, `--format`.
-│   └── publish               Validate publish readiness (M38, `--dry-run` only, read-only);
+│   │                         manifest + lock + cached git checkouts. `--out`, `--format`.
+│   └── publish               Validate publish readiness (`--dry-run` only, read-only);
 │                             detects missing cache, lock drift, integrity mismatch.
 
-### Synchronizing dependencies (M36.0)
+### Synchronizing dependencies
 
 `sdkt package update` closes the package loop: `validate → fetch → update → verify`.
 
@@ -140,7 +140,7 @@ and `integrity` for git deps — contract entries, artifact hashes, and deploy o
 preserved. Clear errors are produced for: missing cache, git unavailable, invalid
 manifest, missing lock, detached branch, unknown reference, and network failure.
 
-### Version-constrained dependencies (M37)
+### Version-constrained dependencies
 
 A git dependency may declare an optional semver `version` constraint instead of a
 fixed `tag` / `branch` / `rev`:
@@ -160,7 +160,7 @@ tag. `--check` reports `constraint unsatisfied` when no tag matches. An explicit
 resolved `version` for audit. This reuses the existing fetch / cache / lock
 infrastructure; the only new logic is a single pure `VersionResolver`.
 
-### Offline packaging & publish readiness (M38)
+### Offline packaging & publish readiness
 
 `sdkt package pack` bundles the **fully resolved** project into a portable,
 network-free artifact so it can be reconstructed and rebuilt on another machine
@@ -186,7 +186,7 @@ Flags:
 existing manifest/lock/cache/integrity infrastructure. It detects missing cache,
 lock drift, integrity mismatch, commit mismatch, reference change, and invalid
 package state — all read-only, no network, nothing is published. `--broadcast` is
-explicitly opt-in and is rejected because M38 defines no registry source; the
+explicitly opt-in and is rejected because no registry source is defined; the
 workflow remains fully offline.
 
 Round-trip: a bundle can be reconstructed (`sdkt_core::package::unpack`) and the
@@ -199,7 +199,7 @@ or git logic is duplicated; the same `compute_dependency_integrity` /
 │   └── deploy                Deploy all contracts defined in the workspace (.sdkt.toml),
 │                             applying topological dependency sorting
 │
-│   Contracts declare dependencies via `depends_on` (canonical, M34.2) or the
+│   Contracts declare dependencies via `depends_on` (canonical) or the
 │   legacy `deploy_after` field in `[contracts.<alias>]`; both are merged. Build,
 │   deploy, and `sdkt lock generate` share one resolver, so order is deterministic.
 │   Invalid graphs (unknown/self/duplicate dependency, cycle, duplicate name)
@@ -254,9 +254,9 @@ Pipe the output to a file your shell reads at startup (see the README
 "Shell completions" section for per-shell install paths). Tab-completion then
 covers commands, subcommands, and flag names.
 
-## Plugin management (M40)
+## Plugin management
 
-M40 introduces a **local, offline-first** plugin store. All operations are local;
+A **local, offline-first** plugin store. All operations are local;
 there is no hosted registry and no remote source. Plugins are referenced by a
 stable `id` declared in their `plugin.toml`.
 
@@ -274,18 +274,18 @@ sdkt audit contract.rs --rules <id>                # resolve id → stored artif
 ```
 
 `sdkt audit --rules <id>` resolves a plugin `id` to its stored artifact and runs
-the existing loader; passing a filesystem path keeps the pre-M40 behavior.
+the existing loader; passing a filesystem path keeps the legacy behavior.
 Installing a `native` plugin prints a warning: native plugins run **unsandboxed**
-(unchanged M18 behavior). See `docs/plugin-authoring.md` for the `plugin.toml`
+(unmodified behavior). See `docs/plugin-authoring.md` for the `plugin.toml`
 schema and the install-validation rules.
 
 Store root precedence (lowest → highest): `<cwd>/.sdkt/plugins`,
 `<config-dir>/sdkt/plugins`, `$SDKT_PLUGIN_DIR`.
 
 - `--format json` is supported on all read-style commands and on `diff`, `audit`, `deploy`, `init` for scripting / CI.
-- `diff --upgrade-safety` and `deploy --deny-breaking` implement the Milestone 14 Upgrade Safety Guard (see `ROADMAP.md`).
-- `audit` implements the Milestone 13 static-analysis rules (AUTH-001/002/003/004, MOVE-001).
-- **Mainnet safety (M39).** Mutating commands (`tx submit`, `deploy`, `project deploy`) refuse to target mainnet unless you explicitly select the network — via `--network-profile`, `--rpc-url`, or `--network-passphrase`. A testnet-default passphrase pointed at a mainnet endpoint is rejected before any request is sent, protecting against signing for the wrong network.
+- `diff --upgrade-safety` and `deploy --deny-breaking` implement the Upgrade Safety Guard (see `ROADMAP.md`).
+- `audit` implements the static-analysis rules (AUTH-001/002/003/004, MOVE-001).
+- **Mainnet safety.** Mutating commands (`tx submit`, `deploy`, `project deploy`) refuse to target mainnet unless you explicitly select the network — via `--network-profile`, `--rpc-url`, or `--network-passphrase`. A testnet-default passphrase pointed at a mainnet endpoint is rejected before any request is sent, protecting against signing for the wrong network.
 
 ## Error Handling
 

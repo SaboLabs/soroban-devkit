@@ -152,7 +152,7 @@ source (Options A/B) remains supported and is equivalent.
 cargo install --path crates/sdkt-cli --features wasm-plugins
 ```
 
-## Containerized distribution (M39)
+## Containerized distribution
 
 A maintained `Dockerfile` builds a minimal, reproducible `sdkt` image. Build and
 smoke-test it locally:

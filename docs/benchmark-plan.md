@@ -1,4 +1,4 @@
-# Milestone 6: Benchmark Plan
+# Benchmark Plan
 
 This document outlines the criteria for performance testing Soroban DevKit. No premature optimization will occur until these baseline metrics are captured via std benchmarking or isolated test setups.
 

@@ -1,4 +1,4 @@
-# Compatibility Matrix — Real-World Soroban Projects (M33)
+# Compatibility Matrix — Real-World Soroban Projects
 
 Validated: 2026-08-06
 sdkt version: **2.1.1** (`sdkt --version` → 2.1.1)
@@ -6,7 +6,7 @@ Toolchain: rustc 1.97.1, target `wasm32v1-none`
 
 ## Purpose
 
-M33 validates that Soroban DevKit works against real, current open-source
+The validation described here works against real, current open-source
 Soroban contracts and establishes a baseline compatibility matrix to prevent
 regressions. Projects are cloned read-only into a temporary directory; they are
 **never modified**. Validation runs `sdkt` against their **compiled WASM
@@ -89,13 +89,12 @@ recommended follow-up (see Known Limitations).
 ## Known Limitations
 
 1. **Online command coverage.** `inspect`, `health`, `storage`, and `verify`
-   require a network RPC and a deployed contract. M33 validates only the
-   offline surface. A future CI job should exercise these against a persistent
-   testnet contract to close the gap.
+   require a network RPC and a deployed contract. The validation described here
+   covers only the offline surface. A future CI job should exercise these against
+   a persistent testnet contract to close the gap.
 2. **Build target coupling.** Current `soroban-sdk` (≥ 22) requires
    `wasm32v1-none` (not `wasm32-unknown-unknown`) on rustc ≥ 1.82. DevKit's
-   `init` scaffold uses `soroban-sdk = "21.0.0"` (see M32) which still builds on
-   the legacy target; contracts validated here used SDK 27 + `wasm32v1-none`.
+   `init` scaffold uses `soroban-sdk = "21.0.0"` which still builds on the legacy target;
 3. **`audit` is heuristic, not a full borrow-checker.** MOVE-001 flags locals
    passed as call arguments multiple times (a possible move-after-use). On
    `atomic_swap` and `timelock` it surfaces 2–5 warnings that are false

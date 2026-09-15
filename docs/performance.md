@@ -1,4 +1,4 @@
-# Performance Benchmark & Regression Baseline (M35)
+# Performance Benchmark & Regression Baseline
 
 Establishes repeatable performance baselines for the three most important
 offline `sdkt` commands so future releases can detect regressions.
@@ -56,7 +56,7 @@ RUNS=7 bash scripts/bench_offline.sh
 
 ## Dataset
 
-Reuses the M33/M34 real-world fixtures (compiled from the official
+Reuses the real-world fixtures (compiled from the official
 `stellar/soroban-examples` tree, `wasm32v1-none` release):
 
 | Artifact | Size | Type |
@@ -120,6 +120,6 @@ Second pass (RUNS=5, reproducibility) — `audit` against the heavier
 - A **> 2× median wall-time or > 50% peak-RSS increase** on any command vs
   this baseline is a suspected regression and must be investigated before
   shipping.
-- No code was optimized for M35 — the baseline reflects current behavior. Any
+- No code was optimized — the baseline reflects current behavior. Any
   future fix discovered here should add a focused regression check alongside
   this script.

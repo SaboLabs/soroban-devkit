@@ -83,7 +83,7 @@ infrastructure:
 
 **Repository:** [naninu123/soroban-devkit](https://github.com/naninu123/soroban-devkit)
 **sdkt version:** 2.5.0
-**Workflow:** `.github/workflows/compatibility.yml` (steps M41–M44)
+**Workflow:** `.github/workflows/compatibility.yml` (online steps)
 
 Committed JSON fixtures in `tests/fixtures/onchain/` capture the exact output
 of `sdkt` commands against a known testnet contract. CI validates these fixtures

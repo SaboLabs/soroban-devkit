@@ -1,13 +1,13 @@
-# Compatibility CI (M34)
+# Compatibility CI
 
 Automated real-world compatibility validation for Soroban DevKit. This workflow
-extends the manual M33 validation into GitHub Actions so that any regression in
+extends the manual compatibility validation into GitHub Actions so that any regression in
 `sdkt` against real Soroban contracts is caught on every PR and push to `main`.
 
 ## Purpose
 
 - Prevent `sdkt` from silently breaking on **real, current** Soroban contracts.
-- Run the same offline commands validated in M33 (`wasm inspect`,
+- Run the same offline commands validated in the compatibility matrix (`wasm inspect`,
   `diff --upgrade-safety`, `audit`) against compiled artifacts from the
   official `stellar/soroban-examples` repository.
 - Fail fast: any `sdkt` command exiting non-zero (panic, parse failure, IO

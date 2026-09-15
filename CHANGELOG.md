@@ -242,7 +242,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Real-world Soroban compatibility matrix + workflow** `docs/compatibility.md` validates `sdkt` against official `stellar/soroban-examples` contracts; `.github/workflows/compatibility.yml` clones the examples read-only, builds a representative subset to WASM, and runs `sdkt` offline commands against the real artifacts (fails on any non-zero exit).
 - **Project scaffolding hardening** generated project `Cargo.toml` resolves cleanly and pins `soroban-sdk` to `21.0.0` for fresh builds.
 - **Release hardening** release smoke tests and SHA-256 checksums; GitHub Release distribution of binaries + checksums; tarball-content regression guard; `install.sh` checksum fallback for missing standalone `.sha256` assets
-- **Adoption / docs** expanded usage examples and security guidelines, mature OSS onboarding polish, and improved public install experience.
+- **Adoption / docs** expanded usage examples and security guidelines, and improved the public install experience.
 
 ### Changed
 - Workspace version bumped `2.0.0` → `2.1.0`.
@@ -373,7 +373,7 @@ the release pipeline fully green end-to-end.
 - 13 unit tests (per-rule positives/negatives, disable, clean, parse-error) + 6 `sdkt-cli` integration tests for `audit`.
 - Additive, backwards-compatible: new crate + new CLI subcommand; no breaking API changes; `sdkt-core` remains networking-free.
 
-## [v0.12.0-alpha] - 2026-08-05 (Contract ABI/WASM Diff, Candidate C)
+## [v0.12.0-alpha] - 2026-08-05 (Contract ABI/WASM Diff)
 
 ### Added
 - **`sdkt diff --old-wasm <A> --new-wasm <B>`** — offline comparison of two contract WASM binaries. Reports added/removed functions, changed function signatures, added/removed events, and added/removed custom types. Pretty + JSON via existing `OutputFormat`.
@@ -381,9 +381,9 @@ the release pipeline fully green end-to-end.
 - 7 unit tests (added/removed/changed functions, events, types, identical-spec, parse-error propagation) + 3 `sdkt-cli` integration tests for `diff`.
 - Additive, backwards-compatible: new module + re-exports; no breaking API changes; no new crates.
 
-## [v0.11.0-alpha] - 2026-08-05 (StorageAnalyzer, Proposal B)
+## [v0.11.0-alpha] - 2026-08-05 (StorageAnalyzer)
 
-### Added (Proposal B: finish `StorageAnalyzer`)
+### Added (finish StorageAnalyzer)
 - **`sdkt storage analyze <contract-id>`** — categorizes a contract's storage into Instance / Persistent / Temporary entries, with a TTL summary and per-entry detail. Pretty + JSON via existing `OutputFormat`.
 - `sdkt-storage`: real Instance/Persistent/Temporary classification by decoding the XDR `LedgerKey` (`StorageClass`); `StorageEntry` per-entry detail added to `StorageReport`.
 - 5 unit tests (classification round-trips for instance/persistent/temporary/invalid) + 3 `sdkt-cli` integration tests for `storage analyze`.
