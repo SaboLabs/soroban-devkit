@@ -104,15 +104,14 @@ code, kbd, pre { font-family: var(--mono); }
   display: inline-flex;
   align-items: center;
   gap: 0.5rem;
-  padding: 0.65rem 1.15rem;
+  padding: 0.6rem 1.1rem;
   border-radius: var(--radius-sm);
   font-weight: 600;
-  font-size: 0.9rem;
+  font-size: 0.88rem;
   border: 1px solid transparent;
-  transition: background 0.15s ease, border-color 0.15s ease, transform 0.1s ease;
+  transition: background 0.15s ease, border-color 0.15s ease;
 }
-.btn:hover { text-decoration: none; transform: translateY(-1px); }
-.btn:active { transform: translateY(0); }
+.btn:hover { text-decoration: none; }
 .btn-primary { background: var(--fg); color: var(--bg); }
 .btn-primary:hover { background: #d4d4d8; }
 .btn-ghost { background: transparent; border-color: var(--line); color: var(--fg); }
