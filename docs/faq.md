@@ -29,7 +29,7 @@ change the signature of existing ones. The CI Action fails the step when
 `compatible == false`.
 
 ### Can I write my own audit rules?
-Yes — Phase A (shipped in M17) provides the `AuditRule` trait, a `RuleRegistry`,
+Yes — Phase A (shipped) provides the `AuditRule` trait, a `RuleRegistry`,
 and a `register_rule!` macro. External rules are compiled into the binary (the
 `plugins` feature links the reference `sdkt-audit-example-rule`). Dynamic
 loading is planned for Phase B (post-1.0). See

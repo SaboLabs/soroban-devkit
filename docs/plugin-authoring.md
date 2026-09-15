@@ -2,9 +2,9 @@
 
 The `sdkt-audit` static analysis engine supports three modes of extension:
 
-1. **Compiled-in Rules (M17, Phase A)** — Rules compiled directly into the binary.
-2. **Native Shared Libraries (M18, Phase B)** — Dynamically loaded native plugins (`.so` / `.dylib` / `.dll`). Fast but un-sandboxed. Requires the `plugins` feature flag.
-3. **WebAssembly Plugins (M19, Phase C)** — Dynamically loaded WASM plugins (`.wasm`). Sandboxed, cross-platform, safe. Requires the `wasm-plugins` feature flag.
+1. **Compiled-in Rules (Phase A)** — Rules compiled directly into the binary.
+2. **Native Shared Libraries (Phase B)** — Dynamically loaded native plugins (`.so` / `.dylib` / `.dll`). Fast but un-sandboxed. Requires the `plugins` feature flag.
+3. **WebAssembly Plugins (Phase C)** — Dynamically loaded WASM plugins (`.wasm`). Sandboxed, cross-platform, safe. Requires the `wasm-plugins` feature flag.
 
 ## Architecture
 
@@ -168,7 +168,7 @@ sdkt audit contracts/token/src/lib.rs --rules target/debug/libmy_rule.so
 > built yourself. A plugin whose ABI major version differs from the host is
 > rejected with a clear error.
 
-## WebAssembly Plugins (M19, Phase C)
+## WebAssembly Plugins (Phase C)
 
 To distribute a rule across platforms without native compilation overhead on the host, build it as a WebAssembly (`.wasm`) module.
 
@@ -254,9 +254,9 @@ that builds with your feature and asserts the rule id appears in output.
 
 ---
 
-## Publishing & Installing (M40 — Local Plugin Ecosystem)
+## Publishing & Installing (Local Plugin Ecosystem)
 
-M40 adds a **local, offline-first** plugin store. No hosted registry, no remote
+The plugin store is **local and offline-first**. No hosted registry, no remote
 sources, no crates.io plugin publishing. You package a plugin as:
 
 ```
@@ -299,8 +299,8 @@ sdkt audit contract.rs --rules <id>               # resolve id → artifact
   (`wasm-plugins` / `plugins`) is compiled in.
 - **Trust model:** provenance-by-path. You installed the artifact from a local
   file you obtained out-of-band; no third-party trust is assumed. Signature /
-  checksum verification is explicitly **not** part of M40. Native plugins run
-  unsandboxed (unchanged M18 behavior) — `sdkt plugin install` prints a warning.
+  checksum verification is explicitly **not** part of the local store design. Native plugins run
+  unsandboxed (unchanged Phase B behavior) — `sdkt plugin install` prints a warning.
 
 ### Store location (precedence, lowest → highest)
 
@@ -309,5 +309,5 @@ sdkt audit contract.rs --rules <id>               # resolve id → artifact
 3. `$SDKT_PLUGIN_DIR` (environment override)
 
 The existing `RuleRegistry`, native loader, and WASM (Extism) sandbox are reused
-verbatim — M40 only adds the management layer. The remote/marketplace layer
+verbatim — the local store only adds the management layer. The remote/marketplace layer
 (hosted index, signing, `.sdktplugin` bundles) remains unscheduled backlog.
