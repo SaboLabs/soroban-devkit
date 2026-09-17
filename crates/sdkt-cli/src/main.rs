@@ -3327,7 +3327,16 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             let source_account = identity_obj.public_key.clone();
 
             use sdkt_rpc::deploy_contract;
-            match deploy_contract(&client, &wasm_bytes, &source_account, &signer, network, Some(salt_bytes)).await {
+            match deploy_contract(
+                &client,
+                &wasm_bytes,
+                &source_account,
+                &signer,
+                network,
+                Some(salt_bytes),
+            )
+            .await
+            {
                 Ok(outcome) => match &outcome {
                     sdkt_rpc::DeployOutcome::Success(res) => {
                         if fmt == OutputFormat::Json {

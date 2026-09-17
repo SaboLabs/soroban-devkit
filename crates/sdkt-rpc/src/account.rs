@@ -2,9 +2,7 @@ use base64::engine::general_purpose::STANDARD;
 use base64::Engine;
 use serde::{Deserialize, Serialize};
 use stellar_strkey;
-use stellar_xdr::{
-    LedgerEntryData, Limited, Limits, ReadXdr, WriteXdr,
-};
+use stellar_xdr::{LedgerEntryData, Limited, Limits, ReadXdr, WriteXdr};
 
 use crate::client::SorobanRpcClient;
 use crate::error::RpcError;

@@ -197,14 +197,14 @@ pub async fn upload_wasm(
             String::new()
         };
         let events = if !submission_result.diagnostic_events.is_empty() {
-            format!(" | diagnostic_events={:?}", submission_result.diagnostic_events)
+            format!(
+                " | diagnostic_events={:?}",
+                submission_result.diagnostic_events
+            )
         } else {
             String::new()
         };
-        let code = submission_result
-            .error_code
-            .as_deref()
-            .unwrap_or("unknown");
+        let code = submission_result.error_code.as_deref().unwrap_or("unknown");
         return Err(RpcError::Rpc(format!(
             "Upload transaction failed: code={}{}{}",
             code, diag, events
@@ -326,14 +326,14 @@ pub async fn create_contract(
             String::new()
         };
         let events = if !submission_result.diagnostic_events.is_empty() {
-            format!(" | diagnostic_events={:?}", submission_result.diagnostic_events)
+            format!(
+                " | diagnostic_events={:?}",
+                submission_result.diagnostic_events
+            )
         } else {
             String::new()
         };
-        let code = submission_result
-            .error_code
-            .as_deref()
-            .unwrap_or("unknown");
+        let code = submission_result.error_code.as_deref().unwrap_or("unknown");
         return Err(RpcError::Rpc(format!(
             "Create transaction failed: code={}{}{}",
             code, diag, events
