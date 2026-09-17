@@ -234,6 +234,64 @@ See [`docs/plugin-authoring.md`](docs/plugin-authoring.md) for how to build or u
 | `sdkt package fetch [--force]` | Fetch declared dependencies into `.sdkt-cache` (local path passthrough; git clone/checkout). Never builds. `--force` updates existing checkouts. |
 | `sdkt package update [--check] [--dry-run] [--format pretty\|json]` | Synchronize dependencies: refresh git deps to the latest available commit, rewrite `sdkt.lock`. `rev` stays pinned; `tag`/`branch` update on drift. `--check` reports only; `--dry-run` previews without touching cache/lock. |
 
+### Deploy a single contract
+
+`sdkt deploy` uploads a Soroban WASM to the network and instantiates it as a
+new contract instance. It is the single-contract counterpart to
+`sdkt project deploy` (which orchestrates multi-contract workspaces).
+
+```bash
+sdkt deploy \
+  --wasm path/to/contract.wasm \
+  --salt <40-char-hex> \
+  --identity <name> \
+  --network-profile <profile>
+```
+
+#### Options
+- `--wasm` (required): Path to a compiled Soroban WASM (32kb+ after `stellar contract build`).
+- `--salt` (required): 40-character hex string (20 bytes). It salts the contract
+  ID derivation so the same deployer + WASM + salt always yields the same contract
+  address across networks.
+- `--identity <name>`: ED25519 identity from `sdkt identity` used to sign both
+  transactions (upload + instantiate). Defaults to `default`.
+- `--format <pretty|json>`: Output format (default `pretty`).
+- `--deny-breaking`: Abort if the new WASM is not backwards-compatible with the
+  currently deployed contract. Requires `--old-wasm`.
+- `--old-wasm <file>`: Path to the existing on-chain baseline WASM. Used only
+  with `--deny-breaking`.
+
+#### Flow
+1. Resolve the network (flag → profile → `.sdkt.toml` → built-in Testnet default).
+2. Apply the mainnet-safety guard (mainnet requires explicit network selection).
+3. Optionally run the `--deny-breaking` upgrade-safety check.
+4. Load the signing identity and its key.
+5. **Upload** — build an `UploadContractWasm` transaction, simulate, apply the
+   returned `SorobanTransactionData` and authorization entries, sign, submit,
+   and poll for confirmation.
+6. **Instantiate** — build a `CreateContract` transaction with the WASM hash from
+   the upload and the user-supplied salt, simulate, finalize, sign, submit,
+   and poll for confirmation.
+7. Derive the contract ID from `Hash(networkId || HashIdPreimage::ContractId{...})`
+   and report the deployment result.
+
+#### Safety
+- Mainnet deployments are refused unless the operator explicitly selects the
+  network (via `--rpc-url` + `--network-passphrase`, or `--network-profile` whose
+  passphrase is mainnet). Implicit Testnet defaults cannot touch mainnet.
+- The salt must be exactly 40 hex characters; any other length or non-hex input
+  is rejected before any network call.
+
+#### Output
+```
+Deployment Result:
+  WASM Hash: e71250b5...
+  Contract ID: 0bde4658...
+  Upload TX: c8599bb1...
+  Create TX: 1e934b4e...
+  Status: SUCCESS
+```
+
 ### Multi-contract dependency graphs
 
 A `.sdkt.toml` workspace declares contracts under `[contracts.<alias>]`. Each
@@ -328,7 +386,7 @@ The lock file (`sdkt.lock`) records each dependency's source, git URL,
 requested reference, and resolved commit SHA (when available), so fetches are
 reproducible. Local path deps remain unchanged in the lock.
 
-| `sdkt deploy --wasm <file> --salt <salt>` | Upload WASM + instantiate. Add `--deny-breaking --old-wasm <deployed.wasm>` to abort on a non-backwards-compatible upgrade. |
+| `sdkt deploy --wasm <file> --salt <salt>` | Upload WASM + instantiate (see [Deploy a single contract](#deploy-a-single-contract) below). Add `--deny-breaking --old-wasm <deployed.wasm>` to abort on a non-backwards-compatible upgrade. |
 ### Network profiles
 
 Save an RPC endpoint once and reference it from any RPC command instead of
