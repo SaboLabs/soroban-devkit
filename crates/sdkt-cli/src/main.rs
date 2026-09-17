@@ -3234,10 +3234,16 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             // Local helper: parse 40-char hex into 20-byte salt; validate strictly
             fn parse_salt_hex(s: &str) -> Result<[u8; 20], String> {
                 let sh = s.trim();
-                if sh.len() != 40 || !sh.chars().all(|c| c.is_ascii_hexdigit()) {
+                if sh.len() != 40 {
                     return Err(format!(
                         "Invalid --salt: must be 20-byte hex (40 hex chars), got length {}",
                         sh.len()
+                    ));
+                }
+                if let Some(pos) = sh.chars().position(|c| !c.is_ascii_hexdigit()) {
+                    return Err(format!(
+                        "Invalid --salt: character at index {} is not a hex digit",
+                        pos
                     ));
                 }
                 let mut out = [0u8; 20];
