@@ -3203,7 +3203,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                         for f in &result.files_created {
                             println!("  ✓ {}", f);
                         }
-                        println!("✓ Ready to build");
+                        println!("✓ Ready to build — run: sdkt build");
                     }
                 }
                 Err(e) => {

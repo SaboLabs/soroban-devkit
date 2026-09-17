@@ -18,7 +18,7 @@ fn init_full_creates_all_files() {
         .assert()
         .success()
         .stdout(predicate::str::contains("Project"))
-        .stdout(predicate::str::contains("Ready to build"));
+        .stdout(predicate::str::contains("Ready to build — run: sdkt build"));
 
     assert!(project.join("Cargo.toml").exists());
     assert!(project.join("src/lib.rs").exists());

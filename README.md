@@ -65,7 +65,9 @@ run your first command.
 
 ### 1. Install
 
-**Recommended — install.sh (no Rust toolchain needed):**
+Choose **one** of the following methods.
+
+#### Recommended — install.sh (no Rust toolchain needed)
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/SaboLabs/soroban-devkit/main/install.sh | bash
@@ -74,7 +76,7 @@ curl -fsSL https://raw.githubusercontent.com/SaboLabs/soroban-devkit/main/instal
 The script detects your OS/arch, downloads the matching release binary,
 verifies its SHA-256 checksum, and installs `sdkt` to `~/.local/bin/sdkt`.
 
-**Option A — Manual GitHub Release download:**
+#### Alternative — Manual GitHub Release download
 
 1. Open the [Releases](https://github.com/SaboLabs/soroban-devkit/releases)
    page and download the latest release for your platform:
@@ -82,6 +84,7 @@ verifies its SHA-256 checksum, and installs `sdkt` to `~/.local/bin/sdkt`.
    | Platform | Asset |
    |----------|-------|
    | Linux (x86_64) | `sdkt-x86_64-unknown-linux-gnu.tar.gz` |
+   | Linux (aarch64) | not in v2.5.0 Release — use `install.sh` or `cargo install sdkt-cli` |
    | macOS (Intel) | `sdkt-x86_64-apple-darwin.tar.gz` |
    | macOS (Apple Silicon) | `sdkt-aarch64-apple-darwin.tar.gz` |
 
@@ -107,7 +110,7 @@ verifies its SHA-256 checksum, and installs `sdkt` to `~/.local/bin/sdkt`.
    sdkt --version
    ```
 
-**Option B — Build from source (requires Rust 1.88.0+):**
+#### Alternative — Build from source (requires Rust 1.88.0+)
 
 ```bash
 git clone https://github.com/SaboLabs/soroban-devkit
@@ -182,6 +185,45 @@ upgrade-safety diff step by step.
 - **Deploy with upgrade protection** — upload and instantiate, aborting on a
   non-backwards-compatible upgrade (`sdkt deploy --deny-breaking`).
 
+### From scaffold to deployment
+
+A typical first-contract workflow:
+
+```bash
+# 1. Create a new contract project
+sdkt init my-contract --minimal
+cd my-contract
+
+# 2. Build the contract into a Soroban WASM
+#    Output: target/wasm32-unknown-unknown/release/<project>.wasm
+sdkt build
+
+# 3. Generate a local signing identity
+sdkt identity generate my-deployer
+
+# 4. Configure Testnet (one-time setup)
+sdkt network add testnet \
+  --rpc-url https://soroban-testnet.stellar.org \
+  --passphrase "Test SDF Network ; September 2015" \
+  --friendbot https://friendbot.stellar.org
+
+# 5. Fund your identity (Testnet only)
+#    Visit https://friendbot.stellar.org and paste your public key from:
+sdkt identity show my-deployer
+
+# 6. Generate a 20-byte salt (40 hex characters)
+openssl rand -hex 20
+
+# 7. Deploy to Testnet
+sdkt deploy \
+  --wasm target/wasm32-unknown-unknown/release/my_contract.wasm \
+  --salt <paste-hex-from-step-6> \
+  --identity my-deployer \
+  --network-profile testnet
+```
+
+For a detailed explanation of each step, see [Deploy a single contract](#deploy-a-single-contract).
+
 ## Installation (details)
 
 Full options — including the `wasm-plugins` / `plugins` feature flags,
@@ -240,13 +282,46 @@ See [`docs/plugin-authoring.md`](docs/plugin-authoring.md) for how to build or u
 new contract instance. It is the single-contract counterpart to
 `sdkt project deploy` (which orchestrates multi-contract workspaces).
 
+#### Deploy a contract to Testnet (step by step)
+
+A fresh deploy requires a built WASM, a funded signing identity, and a salt.
+Follow these steps in order:
+
 ```bash
+# 1. Build your contract into a Soroban WASM
+#    (from a project created with `sdkt init <name>`)
+sdkt build
+
+# 2. Generate a local ED25519 identity (used to sign the deploy transactions)
+sdkt identity generate my-deployer
+
+# 3. Configure the Testnet network profile
+sdkt network add testnet \
+  --rpc-url https://soroban-testnet.stellar.org \
+  --passphrase "Test SDF Network ; September 2015" \
+  --friendbot https://friendbot.stellar.org
+
+# 4. Fund your identity on Testnet
+#    Copy the public key from `sdkt identity show my-deployer` and paste it at:
+#    https://friendbot.stellar.org
+#    (Friendbot is a Testnet faucet — it does NOT work on Mainnet.)
+
+# 5. Generate a 20-byte salt (40 hex characters)
+#    This salt controls the derived contract address.
+openssl rand -hex 20
+
+# 6. Deploy
 sdkt deploy \
-  --wasm path/to/contract.wasm \
-  --salt <40-char-hex> \
-  --identity <name> \
-  --network-profile <profile>
+  --wasm target/wasm32-unknown-unknown/release/<project>.wasm \
+  --salt <paste-hex-from-step-5> \
+  --identity my-deployer \
+  --network-profile testnet
 ```
+
+Replace `<project>` with your crate name (the `name` field in `Cargo.toml`).
+The `--wasm` path follows the Cargo convention
+`target/<profile>/<crate>.wasm` — adjust if your build profile or target
+directory differs.
 
 #### Options
 - `--wasm` (required): Path to a compiled Soroban WASM (32kb+ after `stellar contract build`).

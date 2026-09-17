@@ -110,7 +110,7 @@ target = "wasm32-unknown-unknown"
 
     if !config.minimal {
         let readme = format!(
-            "# {name}\n\nA Soroban smart contract project.\n\n## Build\n\n```\ncargo build --target wasm32-unknown-unknown --release\n```\n\n## Test\n\n```\ncargo test\n```\n",
+            "# {name}\n\nA Soroban smart contract project.\n\n## Build\n\n```\nsdkt build\n```\n\n## Test\n\n```\ncargo test\n```\n",
             name = package_name,
         );
         write_template(root, "README.md", &readme, &mut created)?;

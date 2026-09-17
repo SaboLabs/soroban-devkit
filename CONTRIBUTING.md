@@ -28,7 +28,11 @@ make compat         # run compatibility CI matrix locally
    rustup toolchain install stable
    rustup default stable
    ```
-3. **Build** to verify your environment:
+3. **Install the WASM target** (required to build Soroban contracts):
+   ```bash
+   rustup target add wasm32-unknown-unknown
+   ```
+4. **Build** to verify your environment:
    ```bash
    cargo build
    ```
@@ -47,6 +51,7 @@ make compat         # run compatibility CI matrix locally
    # Or test a single crate (faster for iteration)
    cargo test -p sdkt-cli
    ```
+8. **Open a pull request** against `main` from your branch.
 
 ### Plugin Bundle Workflow
 
@@ -85,7 +90,6 @@ sdkt audit src/lib.rs --rules my-rule
   - Explain precisely why the bump was necessary in the pull request description.
 - **Adding Dependencies:** When adding a new library to `Cargo.toml`, ensure that the dependency is genuinely necessary (check if standard library solutions exist first). Use optional dependencies and features extensively to prevent artifact bloat.
 - **Pinning & Updating:** Our `Cargo.lock` is pinned manually and updated holistically during specific maintenance phases. Do not run `cargo update` indiscriminately in PRs unrelated to dependency updates.
-8. **Open a pull request** against `main` from your branch.
 
 ## Testing Instructions
 
@@ -112,7 +116,7 @@ sdkt audit src/lib.rs --rules my-rule
 - If adding dependencies, update the workspace root `Cargo.toml`
   (`[workspace.package]` / member crates inherit versions).
 - Ensure public API signatures are clear and documented (`///` doc comments).
-- Fill out the PR template checklist (fmt / clippy / test / docs).
+- Verify CI checks pass (fmt / clippy / test / docs) before requesting review.
 
 ## Code Style
 
