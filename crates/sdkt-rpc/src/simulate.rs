@@ -4,7 +4,22 @@
 //! the network without submitting it, returning resource usage and auth entries.
 
 use crate::{RpcError, SorobanRpcClient};
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Deserializer, Serialize};
+
+/// Helper to deserialize either a string or an integer into an Option<String>.
+fn deserialize_optional_string_or_int<'de, D>(deserializer: D) -> Result<Option<String>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    use serde::de::Error;
+    let value = Option::<serde_json::Value>::deserialize(deserializer)?;
+    Ok(match value {
+        Some(serde_json::Value::String(s)) => Some(s),
+        Some(serde_json::Value::Number(n)) => Some(n.to_string()),
+        Some(_) => return Err(Error::custom("expected string or number")),
+        None => None,
+    })
+}
 
 /// Wrapper for the `simulateTransaction` RPC call.
 #[derive(Debug, Serialize)]
@@ -60,7 +75,8 @@ pub struct SimulateResponse {
     #[serde(default)]
     pub cost: Option<SimulateCost>,
     /// Ledger sequence the simulation was run against.
-    #[serde(default)]
+    /// Accepts both string and integer values from Testnet.
+    #[serde(default, deserialize_with = "deserialize_optional_string_or_int")]
     pub latest_ledger: Option<String>,
     /// Diagnostic events emitted during simulation.
     #[serde(default)]
@@ -150,6 +166,17 @@ mod tests {
         assert_eq!(response.events.len(), 1);
         assert_eq!(response.state_changes.len(), 1);
         assert_eq!(response.error, None);
+    }
+
+    #[test]
+    fn test_response_deserialize_latest_ledger_as_integer() {
+        // Verify the fix: Testnet returns integer, not string.
+        let raw = r#"{
+            "transactionData": "AAAAAdata",
+            "latestLedger": 4718305
+        }"#;
+        let response: SimulateResponse = serde_json::from_str(raw).unwrap();
+        assert_eq!(response.latest_ledger, Some("4718305".to_string()));
     }
 
     #[test]

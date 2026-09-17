@@ -27,7 +27,10 @@ pub mod builder;
 pub mod sign;
 pub mod typed;
 pub use builder::{
-    build_invoke_transaction, decode_account_id, decode_contract_id, InvokeTransactionParams,
+    build_create_contract_tx, build_create_contract_tx_with_data, build_invoke_transaction,
+    build_upload_wasm_tx, build_upload_wasm_tx_with_data, decode_account_id, decode_contract_id,
+    derive_contract_id, parse_soroban_transaction_data, CreateContractParams,
+    InvokeTransactionParams, UploadWasmParams,
 };
 pub use sign::{
     sign_envelope_with, sign_transaction, verify_signature, Ed25519Signer, Network, Signer,

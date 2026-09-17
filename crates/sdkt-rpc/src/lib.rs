@@ -21,9 +21,13 @@ pub mod submission;
 pub mod transaction;
 pub mod wasm;
 
-pub use account::{inspect_account, AccountBalance, AccountInspection, AccountSigner};
+pub use account::{
+    get_next_sequence, inspect_account, AccountBalance, AccountInspection, AccountSigner,
+};
 pub use client::SorobanRpcClient;
-pub use deploy::{deploy_contract, format_json, format_pretty, DeployResult};
+pub use deploy::{
+    deploy_contract, format_json, format_pretty, DeployOutcome, DeployResult, PartialDeployResult,
+};
 pub use error::RpcError;
 pub use events::{get_contract_events, ContractEvent};
 pub use fee::{estimate_dynamic_fee, get_fee_stats, FeeDistribution, FeeStats};

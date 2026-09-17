@@ -515,6 +515,9 @@ enum Commands {
         salt: String,
         #[arg(short, long, default_value = "pretty")]
         format: String,
+        /// Identity name to sign deployment transactions
+        #[arg(short, long, default_value = "default")]
+        identity: String,
         /// Abort deployment if the upgrade is not backwards-compatible.
         /// Requires --old-wasm (the currently deployed WASM) to be supplied.
         #[arg(long, default_value_t = false)]
@@ -1947,6 +1950,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                             if let Some(err) = &sim.error {
                                 println!("  Status: FAILED");
                                 println!("  Error: {}", err);
+                                process::exit(1);
                             } else {
                                 println!("  Status: SUCCESS");
                             }
@@ -3220,11 +3224,59 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             wasm,
             salt,
             format,
+            identity,
             deny_breaking,
             old_wasm,
             net,
         } => {
             let fmt = parse_format_str(&format);
+
+            // Local helper: parse 40-char hex into 20-byte salt; validate strictly
+            fn parse_salt_hex(s: &str) -> Result<[u8; 20], String> {
+                let sh = s.trim();
+                if sh.len() != 40 || !sh.chars().all(|c| c.is_ascii_hexdigit()) {
+                    return Err(format!(
+                        "Invalid --salt: must be 20-byte hex (40 hex chars), got length {}",
+                        sh.len()
+                    ));
+                }
+                let mut out = [0u8; 20];
+                for i in 0..20 {
+                    out[i] = u8::from_str_radix(&sh[i * 2..i * 2 + 2], 16)
+                        .map_err(|e| format!("Invalid --salt hex at byte {}: {}", i, e))?;
+                }
+                Ok(out)
+            }
+
+            // Resolve network config FIRST for safety guard
+            let network_config = resolve_network_config(
+                net.rpc_url.clone(),
+                net.network_passphrase.clone(),
+                net.network_profile.clone(),
+            )?;
+
+            // Determine network from passphrase
+            let network = match network_config.passphrase.as_str() {
+                "Test SDF Network ; September 2015" => sdkt_xdr::sign::Network::Testnet,
+                "Public Global Stellar Network ; September 2015" => {
+                    sdkt_xdr::sign::Network::Mainnet
+                }
+                "Test SDF Future Network ; October 2022" => sdkt_xdr::sign::Network::Futurenet,
+                other => sdkt_xdr::sign::Network::Custom(other.to_string()),
+            };
+
+            // Apply network safety guard BEFORE loading identity
+            let network_is_explicit = net.rpc_url.is_some()
+                || net.network_passphrase.is_some()
+                || net.network_profile.is_some();
+            if let Err(e) = sdkt_core::guard_mutating_network(&network_config, network_is_explicit)
+            {
+                eprintln!("Error: {}", e);
+                std::process::exit(1);
+            }
+
+            // Parse and validate salt BEFORE identity lookup (fail fast on bad input)
+            let salt_bytes = parse_salt_hex(&salt)?;
 
             // Optional deploy guard: abort on a backwards-incompatible upgrade.
             if deny_breaking {
@@ -3253,25 +3305,59 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 }
             }
 
-            use sdkt_rpc::deploy_contract;
-            let client = resolve_rpc_client_mutating(
-                net.rpc_url.clone(),
-                net.network_passphrase.clone(),
-                net.network_profile.clone(),
-            );
-            // For CLI demo, read wasm file; if file missing, use empty bytes
+            // Load identity for signing
+            let identity_store = sdkt_storage::IdentityStore::new()
+                .map_err(|e| format!("Failed to access identity store: {}", e))?;
+            let identity_obj = identity_store
+                .get(&identity)
+                .map_err(|e| format!("Identity '{}' not found: {}", identity, e))?;
+
+            // Load signing key from storage
+            let signing_key = identity_store
+                .load_signing_key(&identity)
+                .map_err(|e| format!("Failed to load signing key for '{}': {}", identity, e))?;
+            let signer = sdkt_xdr::sign::Ed25519Signer::from_seed(&signing_key.to_bytes());
+
+            let client = SorobanRpcClient::from_config(&network_config);
+
+            // Read WASM file
             let wasm_bytes = fs::read(&wasm).unwrap_or_default();
-            match deploy_contract(&client, &wasm_bytes, &salt).await {
-                Ok(res) => {
-                    if fmt == OutputFormat::Json {
-                        println!("{}", sdkt_rpc::format_json(&res));
-                    } else {
-                        println!("{}", sdkt_rpc::format_pretty(&res));
+
+            // Source account is the identity's public key
+            let source_account = identity_obj.public_key.clone();
+
+            use sdkt_rpc::deploy_contract;
+            match deploy_contract(&client, &wasm_bytes, &source_account, &signer, network, Some(salt_bytes)).await {
+                Ok(outcome) => match &outcome {
+                    sdkt_rpc::DeployOutcome::Success(res) => {
+                        if fmt == OutputFormat::Json {
+                            println!("{}", sdkt_rpc::format_json(res));
+                        } else {
+                            println!("{}", sdkt_rpc::format_pretty(res));
+                        }
                     }
-                }
+                    sdkt_rpc::DeployOutcome::Partial(p) => {
+                        if fmt == OutputFormat::Json {
+                            println!(
+                                r#"{{"status":"partial","wasmHash":"{}","uploadHash":"{}","error":"{}"}}"#,
+                                p.wasm_hash, p.upload_hash, p.error
+                            );
+                        } else {
+                            eprintln!("Partial deployment: upload succeeded but create failed");
+                            eprintln!("  WASM Hash: {}", p.wasm_hash);
+                            eprintln!("  Upload TX: {}", p.upload_hash);
+                            eprintln!("  Error: {}", p.error);
+                        }
+                        process::exit(1);
+                    }
+                    sdkt_rpc::DeployOutcome::Failure(e) => {
+                        eprintln!("Deployment failed: {}", e);
+                        process::exit(1);
+                    }
+                },
                 Err(e) => {
                     eprintln!("Deployment error: {}", e);
-                    std::process::exit(1);
+                    process::exit(1);
                 }
             }
         }
@@ -3772,7 +3858,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             }
         },
         Commands::Project { action, net } => match action {
-            ProjectCommand::Deploy { salt, format } => {
+            ProjectCommand::Deploy { salt: _, format } => {
                 let fmt = parse_format_str(&format);
                 let config = load_config();
 
@@ -3811,8 +3897,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                                 );
                             }
 
-                            // Use alias + base salt to keep deployments unique per contract
-                            let contract_salt = format!("{}_{}", salt, contract.alias);
                             let wasm_bytes =
                                 fs::read(&contract.wasm_artifact).unwrap_or_else(|e| {
                                     eprintln!(
@@ -3822,14 +3906,67 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                                     std::process::exit(1);
                                 });
 
-                            match sdkt_rpc::deploy_contract(&client, &wasm_bytes, &contract_salt)
-                                .await
+                            // Resolve network config
+                            let network_config = resolve_network_config(
+                                net.rpc_url.clone(),
+                                net.network_passphrase.clone(),
+                                net.network_profile.clone(),
+                            )?;
+
+                            // Determine network from passphrase
+                            let network = match network_config.passphrase.as_str() {
+                                "Test SDF Network ; September 2015" => {
+                                    sdkt_xdr::sign::Network::Testnet
+                                }
+                                "Public Global Stellar Network ; September 2015" => {
+                                    sdkt_xdr::sign::Network::Mainnet
+                                }
+                                "Test SDF Future Network ; October 2022" => {
+                                    sdkt_xdr::sign::Network::Futurenet
+                                }
+                                other => sdkt_xdr::sign::Network::Custom(other.to_string()),
+                            };
+
+                            // Load identity for signing
+                            let identity_store = sdkt_storage::IdentityStore::new()
+                                .map_err(|e| format!("Failed to access identity store: {}", e))?;
+                            let identity_obj = identity_store
+                                .get("default")
+                                .map_err(|e| format!("Default identity not found: {}", e))?;
+                            let signing_key = identity_store
+                                .load_signing_key("default")
+                                .map_err(|e| format!("Failed to load signing key: {}", e))?;
+                            let signer =
+                                sdkt_xdr::sign::Ed25519Signer::from_seed(&signing_key.to_bytes());
+                            let source_account = identity_obj.public_key.clone();
+
+                            match sdkt_rpc::deploy_contract(
+                                &client,
+                                &wasm_bytes,
+                                &source_account,
+                                &signer,
+                                network,
+                                None,
+                            )
+                            .await
                             {
-                                Ok(res) => {
-                                    if fmt != OutputFormat::Json {
-                                        println!("    ✓ Contract ID: {}", res.contract_id);
+                                Ok(outcome) => {
+                                    match &outcome {
+                                        sdkt_rpc::DeployOutcome::Success(res) => {
+                                            if fmt != OutputFormat::Json {
+                                                println!("    ✓ Contract ID: {}", res.contract_id);
+                                            }
+                                            results.insert(contract.alias, res.contract_id.clone());
+                                        }
+                                        sdkt_rpc::DeployOutcome::Partial(p) => {
+                                            eprintln!("    ⚠ Partial: upload succeeded, create failed: {}", p.error);
+                                            std::process::exit(1);
+                                        }
+                                        sdkt_rpc::DeployOutcome::Failure(e) => {
+                                            eprintln!("    ✗ Failed: {}", e);
+                                            std::process::exit(1);
+                                        }
                                     }
-                                    results.insert(contract.alias, res.contract_id);
                                 }
                                 Err(e) => {
                                     eprintln!("Deployment failed for '{}': {}", contract.alias, e);

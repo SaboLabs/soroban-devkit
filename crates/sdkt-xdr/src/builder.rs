@@ -6,12 +6,15 @@
 use crate::DecodeError;
 use base64::engine::general_purpose::STANDARD;
 use base64::Engine;
+use sha2::{Digest, Sha256};
 use stellar_strkey::Strkey;
 use stellar_xdr::{
-    AccountId, ContractId, Hash, HostFunction, InvokeContractArgs, InvokeHostFunctionOp, Memo,
+    AccountId, BytesM, ContractExecutable, ContractId, ContractIdPreimage,
+    ContractIdPreimageFromAddress, CreateContractArgs, Hash, HashIdPreimage,
+    HashIdPreimageContractId, HostFunction, InvokeContractArgs, InvokeHostFunctionOp, Memo,
     MuxedAccount, Operation, OperationBody, Preconditions, PublicKey, ReadXdr, ScAddress, ScSymbol,
-    SequenceNumber, Transaction, TransactionEnvelope, TransactionV1Envelope, Uint256, VecM,
-    WriteXdr,
+    SequenceNumber, SorobanAuthorizationEntry, SorobanTransactionData, Transaction,
+    TransactionEnvelope, TransactionExt, TransactionV1Envelope, Uint256, VecM, WriteXdr,
 };
 
 /// Parameters for building a basic contract invocation transaction.
@@ -105,7 +108,7 @@ pub fn build_invoke_transaction(params: &InvokeTransactionParams) -> Result<Stri
         cond: Preconditions::None,
         memo: Memo::None,
         operations: VecM::try_from(vec![op]).unwrap(),
-        ext: stellar_xdr::TransactionExt::V0,
+        ext: TransactionExt::V0,
     };
 
     let envelope = TransactionEnvelope::Tx(TransactionV1Envelope {
@@ -120,9 +123,477 @@ pub fn build_invoke_transaction(params: &InvokeTransactionParams) -> Result<Stri
     Ok(STANDARD.encode(&buf))
 }
 
+/// Parameters for building a `UploadContractWasm` transaction.
+pub struct UploadWasmParams {
+    /// Source account public key (G...)
+    pub source_account: String,
+    /// Next sequence number for the source account
+    pub sequence: i64,
+    /// Transaction fee in stroops
+    pub fee: u32,
+    /// Raw WASM bytecode to upload
+    pub wasm_bytes: Vec<u8>,
+}
+
+/// Parameters for building a `CreateContract` transaction.
+pub struct CreateContractParams {
+    /// Source account public key (G...)
+    pub source_account: String,
+    /// Next sequence number for the source account
+    pub sequence: i64,
+    /// Transaction fee in stroops
+    pub fee: u32,
+    /// WASM hash (32 bytes) from a prior upload
+    pub wasm_hash: [u8; 32],
+    /// Source account address for contract ID derivation
+    pub deployer_address: String,
+    /// 20-byte salt for unique contract ID
+    pub salt: [u8; 20],
+}
+
+/// Builds an initial `TransactionEnvelope` for uploading a WASM binary.
+/// This is used for simulation; the final transaction uses `build_upload_wasm_tx_with_data`.
+pub fn build_upload_wasm_tx(params: &UploadWasmParams) -> Result<String, DecodeError> {
+    let source_account = decode_account_id(&params.source_account)?;
+
+    let wasm_bytes_m = BytesM::try_from(params.wasm_bytes.as_slice())
+        .map_err(|_| DecodeError::Extraction("WASM bytes exceed max length".into()))?;
+
+    let upload_op = InvokeHostFunctionOp {
+        host_function: HostFunction::UploadContractWasm(wasm_bytes_m),
+        auth: VecM::default(),
+    };
+
+    let op = Operation {
+        source_account: None,
+        body: OperationBody::InvokeHostFunction(upload_op),
+    };
+
+    let tx = Transaction {
+        source_account: MuxedAccount::Ed25519(match source_account.0 {
+            PublicKey::PublicKeyTypeEd25519(u) => u,
+        }),
+        fee: params.fee,
+        seq_num: SequenceNumber(params.sequence),
+        cond: Preconditions::None,
+        memo: Memo::None,
+        operations: VecM::try_from(vec![op]).unwrap(),
+        ext: TransactionExt::V0,
+    };
+
+    let envelope = TransactionEnvelope::Tx(TransactionV1Envelope {
+        tx,
+        signatures: VecM::default(),
+    });
+
+    let mut buf = Vec::new();
+    let mut l = stellar_xdr::Limited::new(&mut buf, stellar_xdr::Limits::none());
+    envelope.write_xdr(&mut l).map_err(DecodeError::XdrWrite)?;
+
+    Ok(STANDARD.encode(&buf))
+}
+
+/// Builds a final `TransactionEnvelope` for uploading a WASM binary with SorobanTransactionData.
+pub fn build_upload_wasm_tx_with_data(
+    params: &UploadWasmParams,
+    soroban_data: SorobanTransactionData,
+) -> Result<String, DecodeError> {
+    let source_account = decode_account_id(&params.source_account)?;
+
+    let wasm_bytes_m = BytesM::try_from(params.wasm_bytes.as_slice())
+        .map_err(|_| DecodeError::Extraction("WASM bytes exceed max length".into()))?;
+
+    let upload_op = InvokeHostFunctionOp {
+        host_function: HostFunction::UploadContractWasm(wasm_bytes_m),
+        auth: VecM::default(),
+    };
+
+    let op = Operation {
+        source_account: None,
+        body: OperationBody::InvokeHostFunction(upload_op),
+    };
+
+    let tx = Transaction {
+        source_account: MuxedAccount::Ed25519(match source_account.0 {
+            PublicKey::PublicKeyTypeEd25519(u) => u,
+        }),
+        fee: params.fee,
+        seq_num: SequenceNumber(params.sequence),
+        cond: Preconditions::None,
+        memo: Memo::None,
+        operations: VecM::try_from(vec![op]).unwrap(),
+        ext: TransactionExt::V1(soroban_data),
+    };
+
+    let envelope = TransactionEnvelope::Tx(TransactionV1Envelope {
+        tx,
+        signatures: VecM::default(),
+    });
+
+    let mut buf = Vec::new();
+    let mut l = stellar_xdr::Limited::new(&mut buf, stellar_xdr::Limits::none());
+    envelope.write_xdr(&mut l).map_err(DecodeError::XdrWrite)?;
+
+    Ok(STANDARD.encode(&buf))
+}
+
+/// Builds an initial `TransactionEnvelope` for creating a contract instance from an uploaded WASM.
+/// This is used for simulation; the final transaction uses `build_create_contract_tx_with_data`.
+pub fn build_create_contract_tx(params: &CreateContractParams) -> Result<String, DecodeError> {
+    let source_account = decode_account_id(&params.source_account)?;
+    let deployer = decode_account_id(&params.deployer_address)?;
+
+    // Pad 20-byte salt to 32 bytes for Uint256
+    let mut salt_bytes = [0u8; 32];
+    salt_bytes[..params.salt.len()].copy_from_slice(&params.salt);
+
+    let preimage = ContractIdPreimage::Address(ContractIdPreimageFromAddress {
+        address: ScAddress::Account(AccountId(PublicKey::PublicKeyTypeEd25519(
+            match deployer.0 {
+                PublicKey::PublicKeyTypeEd25519(u) => u,
+            },
+        ))),
+        salt: Uint256(salt_bytes),
+    });
+
+    let create_op = InvokeHostFunctionOp {
+        host_function: HostFunction::CreateContract(CreateContractArgs {
+            contract_id_preimage: preimage,
+            executable: ContractExecutable::Wasm(Hash(params.wasm_hash)),
+        }),
+        auth: VecM::default(),
+    };
+
+    let op = Operation {
+        source_account: None,
+        body: OperationBody::InvokeHostFunction(create_op),
+    };
+
+    let tx = Transaction {
+        source_account: MuxedAccount::Ed25519(match source_account.0 {
+            PublicKey::PublicKeyTypeEd25519(u) => u,
+        }),
+        fee: params.fee,
+        seq_num: SequenceNumber(params.sequence),
+        cond: Preconditions::None,
+        memo: Memo::None,
+        operations: VecM::try_from(vec![op]).unwrap(),
+        ext: TransactionExt::V0,
+    };
+
+    let envelope = TransactionEnvelope::Tx(TransactionV1Envelope {
+        tx,
+        signatures: VecM::default(),
+    });
+
+    let mut buf = Vec::new();
+    let mut l = stellar_xdr::Limited::new(&mut buf, stellar_xdr::Limits::none());
+    envelope.write_xdr(&mut l).map_err(DecodeError::XdrWrite)?;
+
+    Ok(STANDARD.encode(&buf))
+}
+
+/// Builds a final `TransactionEnvelope` for creating a contract instance with SorobanTransactionData.
+pub fn build_create_contract_tx_with_data(
+    params: &CreateContractParams,
+    soroban_data: SorobanTransactionData,
+) -> Result<String, DecodeError> {
+    let source_account = decode_account_id(&params.source_account)?;
+    let deployer = decode_account_id(&params.deployer_address)?;
+
+    // Pad 20-byte salt to 32 bytes for Uint256
+    let mut salt_bytes = [0u8; 32];
+    salt_bytes[..params.salt.len()].copy_from_slice(&params.salt);
+
+    let preimage = ContractIdPreimage::Address(ContractIdPreimageFromAddress {
+        address: ScAddress::Account(AccountId(PublicKey::PublicKeyTypeEd25519(
+            match deployer.0 {
+                PublicKey::PublicKeyTypeEd25519(u) => u,
+            },
+        ))),
+        salt: Uint256(salt_bytes),
+    });
+
+    let create_op = InvokeHostFunctionOp {
+        host_function: HostFunction::CreateContract(CreateContractArgs {
+            contract_id_preimage: preimage,
+            executable: ContractExecutable::Wasm(Hash(params.wasm_hash)),
+        }),
+        auth: VecM::default(),
+    };
+
+    let op = Operation {
+        source_account: None,
+        body: OperationBody::InvokeHostFunction(create_op),
+    };
+
+    let tx = Transaction {
+        source_account: MuxedAccount::Ed25519(match source_account.0 {
+            PublicKey::PublicKeyTypeEd25519(u) => u,
+        }),
+        fee: params.fee,
+        seq_num: SequenceNumber(params.sequence),
+        cond: Preconditions::None,
+        memo: Memo::None,
+        operations: VecM::try_from(vec![op]).unwrap(),
+        ext: TransactionExt::V1(soroban_data),
+    };
+
+    let envelope = TransactionEnvelope::Tx(TransactionV1Envelope {
+        tx,
+        signatures: VecM::default(),
+    });
+
+    let mut buf = Vec::new();
+    let mut l = stellar_xdr::Limited::new(&mut buf, stellar_xdr::Limits::none());
+    envelope.write_xdr(&mut l).map_err(DecodeError::XdrWrite)?;
+
+    Ok(STANDARD.encode(&buf))
+}
+
+/// Builds a final `TransactionEnvelope` for uploading a WASM binary with SorobanTransactionData and auth entries.
+pub fn build_upload_wasm_tx_with_data_and_auth(
+    params: &UploadWasmParams,
+    soroban_data: SorobanTransactionData,
+    auth_entries: Vec<SorobanAuthorizationEntry>,
+) -> Result<String, DecodeError> {
+    let source_account = decode_account_id(&params.source_account)?;
+
+    let wasm_bytes_m = BytesM::try_from(params.wasm_bytes.as_slice())
+        .map_err(|_| DecodeError::Extraction("WASM bytes exceed max length".into()))?;
+
+    let auth_vec_m = VecM::try_from(auth_entries)
+        .map_err(|_| DecodeError::Extraction("Too many auth entries".into()))?;
+
+    let upload_op = InvokeHostFunctionOp {
+        host_function: HostFunction::UploadContractWasm(wasm_bytes_m),
+        auth: auth_vec_m,
+    };
+
+    let op = Operation {
+        source_account: None,
+        body: OperationBody::InvokeHostFunction(upload_op),
+    };
+
+    let tx = Transaction {
+        source_account: MuxedAccount::Ed25519(match source_account.0 {
+            PublicKey::PublicKeyTypeEd25519(u) => u,
+        }),
+        fee: params.fee,
+        seq_num: SequenceNumber(params.sequence),
+        cond: Preconditions::None,
+        memo: Memo::None,
+        operations: VecM::try_from(vec![op]).unwrap(),
+        ext: TransactionExt::V1(soroban_data),
+    };
+
+    let envelope = TransactionEnvelope::Tx(TransactionV1Envelope {
+        tx,
+        signatures: VecM::default(),
+    });
+
+    let mut buf = Vec::new();
+    let mut l = stellar_xdr::Limited::new(&mut buf, stellar_xdr::Limits::none());
+    envelope.write_xdr(&mut l).map_err(DecodeError::XdrWrite)?;
+
+    Ok(STANDARD.encode(&buf))
+}
+
+/// Builds a final `TransactionEnvelope` for creating a contract instance with SorobanTransactionData and auth entries.
+pub fn build_create_contract_tx_with_data_and_auth(
+    params: &CreateContractParams,
+    soroban_data: SorobanTransactionData,
+    auth_entries: Vec<SorobanAuthorizationEntry>,
+) -> Result<String, DecodeError> {
+    let source_account = decode_account_id(&params.source_account)?;
+    let deployer = decode_account_id(&params.deployer_address)?;
+
+    // Pad 20-byte salt to 32 bytes for Uint256
+    let mut salt_bytes = [0u8; 32];
+    salt_bytes[..params.salt.len()].copy_from_slice(&params.salt);
+
+    let preimage = ContractIdPreimage::Address(ContractIdPreimageFromAddress {
+        address: ScAddress::Account(AccountId(PublicKey::PublicKeyTypeEd25519(
+            match deployer.0 {
+                PublicKey::PublicKeyTypeEd25519(u) => u,
+            },
+        ))),
+        salt: Uint256(salt_bytes),
+    });
+
+    let auth_vec_m = VecM::try_from(auth_entries)
+        .map_err(|_| DecodeError::Extraction("Too many auth entries".into()))?;
+
+    let create_op = InvokeHostFunctionOp {
+        host_function: HostFunction::CreateContract(CreateContractArgs {
+            contract_id_preimage: preimage,
+            executable: ContractExecutable::Wasm(Hash(params.wasm_hash)),
+        }),
+        auth: auth_vec_m,
+    };
+
+    let op = Operation {
+        source_account: None,
+        body: OperationBody::InvokeHostFunction(create_op),
+    };
+
+    let tx = Transaction {
+        source_account: MuxedAccount::Ed25519(match source_account.0 {
+            PublicKey::PublicKeyTypeEd25519(u) => u,
+        }),
+        fee: params.fee,
+        seq_num: SequenceNumber(params.sequence),
+        cond: Preconditions::None,
+        memo: Memo::None,
+        operations: VecM::try_from(vec![op]).unwrap(),
+        ext: TransactionExt::V1(soroban_data),
+    };
+
+    let envelope = TransactionEnvelope::Tx(TransactionV1Envelope {
+        tx,
+        signatures: VecM::default(),
+    });
+
+    let mut buf = Vec::new();
+    let mut l = stellar_xdr::Limited::new(&mut buf, stellar_xdr::Limits::none());
+    envelope.write_xdr(&mut l).map_err(DecodeError::XdrWrite)?;
+
+    Ok(STANDARD.encode(&buf))
+}
+
+/// Parse base64-encoded SorobanAuthorizationEntry from simulation response.
+pub fn parse_soroban_authorization_entry(
+    base64_data: &str,
+) -> Result<SorobanAuthorizationEntry, DecodeError> {
+    let raw = STANDARD.decode(base64_data).map_err(|e| {
+        DecodeError::Extraction(format!("Failed to decode SorobanAuthorizationEntry: {}", e))
+    })?;
+    let mut cursor = std::io::Cursor::new(&raw);
+    let mut l = stellar_xdr::Limited::new(&mut cursor, stellar_xdr::Limits::none());
+    SorobanAuthorizationEntry::read_xdr(&mut l)
+        .map_err(|e| DecodeError::XdrParse("SorobanAuthorizationEntry".into(), e))
+}
+
+/// Parse multiple base64-encoded SorobanAuthorizationEntry from simulation response.
+pub fn parse_soroban_authorization_entries(
+    auth_b64_list: &[String],
+) -> Result<Vec<SorobanAuthorizationEntry>, DecodeError> {
+    auth_b64_list
+        .iter()
+        .map(|s| parse_soroban_authorization_entry(s))
+        .collect::<Result<Vec<_>, _>>()
+}
+
+/// Parse base64-encoded SorobanTransactionData from simulation response.
+pub fn parse_soroban_transaction_data(
+    base64_data: &str,
+) -> Result<SorobanTransactionData, DecodeError> {
+    let raw = STANDARD.decode(base64_data).map_err(|e| {
+        DecodeError::Extraction(format!("Failed to decode SorobanTransactionData: {}", e))
+    })?;
+    let mut cursor = std::io::Cursor::new(&raw);
+    let mut l = stellar_xdr::Limited::new(&mut cursor, stellar_xdr::Limits::none());
+    SorobanTransactionData::read_xdr(&mut l)
+        .map_err(|e| DecodeError::XdrParse("SorobanTransactionData".into(), e))
+}
+
+/// Derives the contract ID from network ID, deployer address, and salt.
+///
+/// Uses Stellar's official formula:
+/// 1. Build `HashIdPreimage::ContractId(HashIdPreimageContractId { network_id, contract_id_preimage })`
+///    where `contract_id_preimage = ContractIdPreimage::Address(ContractIdPreimageFromAddress { address, salt })`.
+/// 2. SHA-256 the XDR serialization of the full `HashIdPreimage`.
+///
+/// The `wasm_hash` parameter is not directly part of ID derivation but is retained
+/// in the signature for interface consistency with the full `CreateContract` flow.
+pub fn derive_contract_id(
+    network_id: &[u8; 32],
+    deployer_address: &str,
+    salt: &[u8; 20],
+    wasm_hash: &[u8; 32],
+) -> Result<String, DecodeError> {
+    let deployer = decode_account_id(deployer_address)?;
+
+    // Pad 20-byte salt to 32 bytes for Uint256 (left-aligned, big-endian)
+    let mut salt_bytes = [0u8; 32];
+    salt_bytes[..salt.len()].copy_from_slice(salt);
+
+    let contract_id_preimage = ContractIdPreimage::Address(ContractIdPreimageFromAddress {
+        address: ScAddress::Account(AccountId(PublicKey::PublicKeyTypeEd25519(
+            match deployer.0 {
+                PublicKey::PublicKeyTypeEd25519(u) => u,
+            },
+        ))),
+        salt: Uint256(salt_bytes),
+    });
+
+    // Official Stellar/Soroban: SHA-256(XDR(HashIdPreimage::ContractId))
+    let full_preimage = HashIdPreimage::ContractId(HashIdPreimageContractId {
+        network_id: Hash(*network_id),
+        contract_id_preimage,
+    });
+
+    let mut buf = Vec::new();
+    let mut l = stellar_xdr::Limited::new(&mut buf, stellar_xdr::Limits::none());
+    full_preimage
+        .write_xdr(&mut l)
+        .map_err(DecodeError::XdrWrite)?;
+
+    let hash = Sha256::digest(&buf);
+    let _ = wasm_hash;
+    Ok(hex::encode(hash))
+}
+
+#[cfg(test)]
+fn realistic_soroban_transaction_data() -> SorobanTransactionData {
+    use stellar_xdr::{
+        ContractDataDurability, LedgerFootprint, LedgerKey, LedgerKeyContractData, ScVal,
+        SorobanResources, SorobanTransactionDataExt,
+    };
+
+    let contract_key = LedgerKey::ContractData(LedgerKeyContractData {
+        contract: ScAddress::Contract(ContractId(Hash([0; 32]))),
+        key: ScVal::LedgerKeyContractInstance,
+        durability: ContractDataDurability::Persistent,
+    });
+
+    SorobanTransactionData {
+        ext: SorobanTransactionDataExt::V0,
+        resources: SorobanResources {
+            footprint: LedgerFootprint {
+                read_only: VecM::try_from(vec![contract_key]).unwrap(),
+                read_write: VecM::default(),
+            },
+            instructions: 100_000_000,
+            disk_read_bytes: 100_000,
+            write_bytes: 100_000,
+        },
+        resource_fee: 50_000,
+    }
+}
+
+/// Create a test SorobanAuthorizationEntry with SourceAccount credentials.
+#[cfg(test)]
+fn test_auth_entry() -> SorobanAuthorizationEntry {
+    use stellar_xdr::{SorobanAuthorizedFunction, SorobanAuthorizedInvocation, SorobanCredentials};
+
+    SorobanAuthorizationEntry {
+        credentials: SorobanCredentials::SourceAccount,
+        root_invocation: SorobanAuthorizedInvocation {
+            function: SorobanAuthorizedFunction::ContractFn(InvokeContractArgs {
+                contract_address: ScAddress::Contract(ContractId(Hash([0; 32]))),
+                function_name: ScSymbol::try_from("hello").unwrap(),
+                args: VecM::default(),
+            }),
+            sub_invocations: VecM::default(),
+        },
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use stellar_xdr::{OperationBody, SorobanCredentials};
 
     const TEST_SOURCE: &str = "GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF";
     const TEST_CONTRACT: &str = "CAAQCAIBAEAQCAIBAEAQCAIBAEAQCAIBAEAQCAIBAEAQCAIBAEAQC526";
@@ -203,5 +674,330 @@ mod tests {
 
         let envelope = build_invoke_transaction(&params).unwrap();
         assert!(!envelope.is_empty());
+    }
+
+    #[test]
+    fn test_build_upload_wasm_tx_produces_valid_xdr() {
+        let params = UploadWasmParams {
+            source_account: TEST_SOURCE.to_string(),
+            sequence: 1,
+            fee: 100,
+            wasm_bytes: vec![0x00, 0x61, 0x73, 0x6d], // Minimal WASM magic
+        };
+
+        let envelope = build_upload_wasm_tx(&params).unwrap();
+        assert!(!envelope.is_empty());
+
+        // Parse back and verify structure
+        let raw = STANDARD.decode(&envelope).unwrap();
+        let mut cursor = std::io::Cursor::new(&raw);
+        let mut l = stellar_xdr::Limited::new(&mut cursor, stellar_xdr::Limits::none());
+        let env = TransactionEnvelope::read_xdr(&mut l).unwrap();
+
+        match env {
+            TransactionEnvelope::Tx(v1) => {
+                assert_eq!(v1.tx.fee, 100);
+                assert_eq!(v1.tx.seq_num.0, 1);
+            }
+            _ => panic!("Expected V1 envelope"),
+        }
+    }
+
+    #[test]
+    fn test_build_create_contract_tx_produces_valid_xdr() {
+        let wasm_hash = [1u8; 32];
+        let salt = [2u8; 20];
+
+        let params = CreateContractParams {
+            source_account: TEST_SOURCE.to_string(),
+            sequence: 2,
+            fee: 100,
+            wasm_hash,
+            deployer_address: TEST_SOURCE.to_string(),
+            salt,
+        };
+
+        let envelope = build_create_contract_tx(&params).unwrap();
+        assert!(!envelope.is_empty());
+
+        // Parse back and verify structure
+        let raw = STANDARD.decode(&envelope).unwrap();
+        let mut cursor = std::io::Cursor::new(&raw);
+        let mut l = stellar_xdr::Limited::new(&mut cursor, stellar_xdr::Limits::none());
+        let env = TransactionEnvelope::read_xdr(&mut l).unwrap();
+
+        match env {
+            TransactionEnvelope::Tx(v1) => {
+                assert_eq!(v1.tx.fee, 100);
+                assert_eq!(v1.tx.seq_num.0, 2);
+            }
+            _ => panic!("Expected V1 envelope"),
+        }
+    }
+
+    #[test]
+    fn test_derive_contract_id_matches_stellar_formula() {
+        // Deterministic test vector for Stellar contract ID derivation:
+        // SHA-256(XDR(HashIdPreimage::ContractId(HashIdPreimageContractId {
+        //     network_id, contract_id_preimage: ContractIdPreimage::Address(...)
+        // })))
+        //
+        // Reference: soroban-env-host src/host/lifecycle.rs + src/test/lifecycle.rs
+        //   let full_id_preimage = HashIdPreimage::ContractId(HashIdPreimageContractId {
+        //       network_id, contract_id_preimage });
+        //   let contract_id = sha256_hash_id_preimage(full_id_preimage);
+        //
+        // Network: "Test SDF Network ; September 2015"
+        // Source: GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF (all zeros)
+        // Salt (20 bytes): 0x03 * 20, left-padded to 32 bytes
+        //
+        // Expected: e52f714abcb6555da317cb8d4265ffce88401c06e40e60c2d1f721445f683c3c
+        let mut network_id = [0u8; 32];
+        network_id.copy_from_slice(
+            &hex::decode("cee0302d59844d32bdca915c8203dd44b33fbb7edc19051ea37abedf28ecd472")
+                .unwrap(),
+        );
+
+        let source = "GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF";
+        let salt = [3u8; 20];
+        let wasm_hash = [4u8; 32];
+
+        let result = derive_contract_id(&network_id, source, &salt, &wasm_hash);
+        assert!(result.is_ok());
+
+        let contract_id = result.unwrap();
+        assert_eq!(
+            contract_id,
+            "e52f714abcb6555da317cb8d4265ffce88401c06e40e60c2d1f721445f683c3c"
+        );
+    }
+
+    #[test]
+    fn test_derive_contract_id_different_networks_produce_different_ids() {
+        // Same inputs but different network should produce different contract ID
+        let mut testnet_network_id = [0u8; 32];
+        testnet_network_id.copy_from_slice(
+            &hex::decode("cee0302d59844d32bdca915c8203dd44b33fbb7edc19051ea37abedf28ecd472")
+                .unwrap(),
+        );
+
+        let mut mainnet_network_id = [0u8; 32];
+        mainnet_network_id.copy_from_slice(
+            &hex::decode("7ac33997544e3264d040315e569b3cd71dbbc6eb9a5aa6f2b7ecf1df4b49e5e1")
+                .unwrap(),
+        );
+
+        let source = "GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF";
+        let salt = [3u8; 20];
+        let wasm_hash = [4u8; 32];
+
+        let testnet_id =
+            derive_contract_id(&testnet_network_id, source, &salt, &wasm_hash).unwrap();
+        let mainnet_id =
+            derive_contract_id(&mainnet_network_id, source, &salt, &wasm_hash).unwrap();
+
+        assert_ne!(testnet_id, mainnet_id);
+    }
+
+    #[test]
+    fn test_build_upload_wasm_tx_with_data() {
+        let params = UploadWasmParams {
+            source_account: TEST_SOURCE.to_string(),
+            sequence: 1,
+            fee: 50_100, // inclusion_fee + resource_fee
+            wasm_bytes: vec![0x00, 0x61, 0x73, 0x6d],
+        };
+
+        let soroban_data = realistic_soroban_transaction_data();
+        let envelope = build_upload_wasm_tx_with_data(&params, soroban_data).unwrap();
+        assert!(!envelope.is_empty());
+
+        // Parse back and verify it has V1 extension with realistic data
+        let raw = STANDARD.decode(&envelope).unwrap();
+        let mut cursor = std::io::Cursor::new(&raw);
+        let mut l = stellar_xdr::Limited::new(&mut cursor, stellar_xdr::Limits::none());
+        let env = TransactionEnvelope::read_xdr(&mut l).unwrap();
+
+        match env {
+            TransactionEnvelope::Tx(v1) => {
+                assert_eq!(v1.tx.fee, 50_100);
+                match v1.tx.ext {
+                    TransactionExt::V1(data) => {
+                        assert_eq!(data.resource_fee, 50_000);
+                        assert_eq!(data.resources.instructions, 100_000_000);
+                        assert_eq!(data.resources.disk_read_bytes, 100_000);
+                        assert_eq!(data.resources.write_bytes, 100_000);
+                        assert_eq!(data.resources.footprint.read_only.len(), 1);
+                    }
+                    _ => panic!("Expected V1 extension"),
+                }
+            }
+            _ => panic!("Expected V1 envelope"),
+        }
+    }
+
+    #[test]
+    fn test_build_create_contract_tx_with_data() {
+        let wasm_hash = [1u8; 32];
+        let salt = [2u8; 20];
+
+        let params = CreateContractParams {
+            source_account: TEST_SOURCE.to_string(),
+            sequence: 2,
+            fee: 50_100,
+            wasm_hash,
+            deployer_address: TEST_SOURCE.to_string(),
+            salt,
+        };
+
+        let soroban_data = realistic_soroban_transaction_data();
+        let envelope = build_create_contract_tx_with_data(&params, soroban_data).unwrap();
+        assert!(!envelope.is_empty());
+
+        // Parse back and verify it has V1 extension with realistic data
+        let raw = STANDARD.decode(&envelope).unwrap();
+        let mut cursor = std::io::Cursor::new(&raw);
+        let mut l = stellar_xdr::Limited::new(&mut cursor, stellar_xdr::Limits::none());
+        let env = TransactionEnvelope::read_xdr(&mut l).unwrap();
+
+        match env {
+            TransactionEnvelope::Tx(v1) => {
+                assert_eq!(v1.tx.fee, 50_100);
+                match v1.tx.ext {
+                    TransactionExt::V1(data) => {
+                        assert_eq!(data.resource_fee, 50_000);
+                        assert_eq!(data.resources.instructions, 100_000_000);
+                    }
+                    _ => panic!("Expected V1 extension"),
+                }
+            }
+            _ => panic!("Expected V1 envelope"),
+        }
+    }
+
+    #[test]
+    fn test_parse_soroban_transaction_data() {
+        // Create a valid SorobanTransactionData and encode it
+        let data = realistic_soroban_transaction_data();
+        let mut buf = Vec::new();
+        let mut l = stellar_xdr::Limited::new(&mut buf, stellar_xdr::Limits::none());
+        data.write_xdr(&mut l).unwrap();
+        let encoded = STANDARD.encode(&buf);
+
+        // Parse it back
+        let result = parse_soroban_transaction_data(&encoded);
+        assert!(result.is_ok());
+        let parsed = result.unwrap();
+        assert_eq!(parsed.resource_fee, 50_000);
+        assert_eq!(parsed.resources.instructions, 100_000_000);
+        assert_eq!(parsed.resources.footprint.read_only.len(), 1);
+    }
+
+    #[test]
+    fn test_build_upload_wasm_tx_with_auth() {
+        let params = UploadWasmParams {
+            source_account: TEST_SOURCE.to_string(),
+            sequence: 1,
+            fee: 50_100,
+            wasm_bytes: vec![0x00, 0x61, 0x73, 0x6d],
+        };
+
+        let soroban_data = realistic_soroban_transaction_data();
+        let auth_entries = vec![test_auth_entry()];
+        let envelope =
+            build_upload_wasm_tx_with_data_and_auth(&params, soroban_data, auth_entries).unwrap();
+        assert!(!envelope.is_empty());
+
+        // Parse back and verify it has V1 extension and auth entries
+        let raw = STANDARD.decode(&envelope).unwrap();
+        let mut cursor = std::io::Cursor::new(&raw);
+        let mut l = stellar_xdr::Limited::new(&mut cursor, stellar_xdr::Limits::none());
+        let env = TransactionEnvelope::read_xdr(&mut l).unwrap();
+
+        match env {
+            TransactionEnvelope::Tx(v1) => match v1.tx.ext {
+                TransactionExt::V1(data) => {
+                    assert_eq!(data.resource_fee, 50_000);
+                    // Verify auth entries are present in the operation
+                    let op = &v1.tx.operations[0];
+                    match &op.body {
+                        OperationBody::InvokeHostFunction(host_fn) => {
+                            assert_eq!(host_fn.auth.len(), 1);
+                            assert_eq!(
+                                host_fn.auth[0].credentials,
+                                SorobanCredentials::SourceAccount
+                            );
+                        }
+                        _ => panic!("Expected InvokeHostFunction"),
+                    }
+                }
+                _ => panic!("Expected V1 extension"),
+            },
+            _ => panic!("Expected V1 envelope"),
+        }
+    }
+
+    #[test]
+    fn test_build_create_contract_tx_with_auth() {
+        let wasm_hash = [1u8; 32];
+        let salt = [2u8; 20];
+
+        let params = CreateContractParams {
+            source_account: TEST_SOURCE.to_string(),
+            sequence: 2,
+            fee: 50_100,
+            wasm_hash,
+            deployer_address: TEST_SOURCE.to_string(),
+            salt,
+        };
+
+        let soroban_data = realistic_soroban_transaction_data();
+        let auth_entries = vec![test_auth_entry()];
+        let envelope =
+            build_create_contract_tx_with_data_and_auth(&params, soroban_data, auth_entries)
+                .unwrap();
+        assert!(!envelope.is_empty());
+
+        // Parse back and verify it has V1 extension and auth entries
+        let raw = STANDARD.decode(&envelope).unwrap();
+        let mut cursor = std::io::Cursor::new(&raw);
+        let mut l = stellar_xdr::Limited::new(&mut cursor, stellar_xdr::Limits::none());
+        let env = TransactionEnvelope::read_xdr(&mut l).unwrap();
+
+        match env {
+            TransactionEnvelope::Tx(v1) => match v1.tx.ext {
+                TransactionExt::V1(data) => {
+                    assert_eq!(data.resource_fee, 50_000);
+                    // Verify auth entries are present in the operation
+                    let op = &v1.tx.operations[0];
+                    match &op.body {
+                        OperationBody::InvokeHostFunction(host_fn) => {
+                            assert_eq!(host_fn.auth.len(), 1);
+                            assert_eq!(
+                                host_fn.auth[0].credentials,
+                                SorobanCredentials::SourceAccount
+                            );
+                        }
+                        _ => panic!("Expected InvokeHostFunction"),
+                    }
+                }
+                _ => panic!("Expected V1 extension"),
+            },
+            _ => panic!("Expected V1 envelope"),
+        }
+    }
+
+    #[test]
+    fn test_parse_invalid_auth_entry() {
+        let result = parse_soroban_authorization_entry("invalid-base64!!!");
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_parse_empty_auth_list() {
+        let auth_list: Vec<String> = vec![];
+        let result = parse_soroban_authorization_entries(&auth_list);
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap().len(), 0);
     }
 }

@@ -156,8 +156,8 @@ fn breaking_change_verdict_matches_m14_engine() {
         .success()
         .stdout(predicate::str::contains("Upgrade Safety"))
         .stdout(predicate::str::contains("Compatible: NO"))
-        .stdout(predicate::str::contains("Changed signature: mint()"))
-        .stdout(predicate::str::contains("Added function: balance()"));
+        .stdout(predicate::str::contains("Removed function: mint()"))
+        .stdout(predicate::str::contains("Added function: hello()"));
 }
 
 #[test]

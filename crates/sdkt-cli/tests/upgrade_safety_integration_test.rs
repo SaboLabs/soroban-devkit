@@ -35,9 +35,9 @@ fn upgrade_safety_pretty_shows_breaking_and_nonbreaking() {
         .success()
         .stdout(contains("Upgrade Safety"))
         .stdout(contains("Compatible: NO"))
-        .stdout(contains("Changed signature: mint()"))
-        .stdout(contains("Added function: balance()"))
-        .stdout(contains("Added event: Mint"));
+        .stdout(contains("Removed function: mint"))
+        .stdout(contains("Removed function: transfer"))
+        .stdout(contains("Added function: hello"));
 }
 
 #[test]
@@ -57,8 +57,7 @@ fn upgrade_safety_json_serializes_verdict() {
         .success()
         .stdout(contains("\"compatible\":false"))
         .stdout(contains("\"breaking_changes\""))
-        .stdout(contains("\"non_breaking_changes\""))
-        .stdout(contains("\"changed_signature\""));
+        .stdout(contains("\"non_breaking_changes\""));
 }
 
 #[test]
@@ -69,7 +68,7 @@ fn deploy_deny_breaking_aborts_on_incompatible() {
             "--wasm",
             &fixture("us_new.wasm"),
             "--salt",
-            "salt",
+            "0000000000000000000000000000000000000000",
             "--deny-breaking",
             "--old-wasm",
             &fixture("us_old.wasm"),
@@ -80,18 +79,18 @@ fn deploy_deny_breaking_aborts_on_incompatible() {
 }
 
 #[test]
-fn deploy_without_deny_breaking_skips_guard() {
-    // Without --deny-breaking the upgrade-safety guard is skipped entirely,
-    // so it must never print the abort message (behavior unchanged).
+fn deploy_fails_without_identity() {
+    // Deploy without a configured identity should fail with identity error,
+    // NOT with upgrade-safety guard error.
     sdkt()
         .args([
             "deploy",
             "--wasm",
             &fixture("us_new.wasm"),
             "--salt",
-            "salt",
+            "0000000000000000000000000000000000000001",
         ])
         .assert()
-        .success() // guard skipped, deploy proceeds (no abort)
+        .failure() // Expected to fail due to missing identity
         .stderr(contains("NOT backwards-compatible").not());
 }

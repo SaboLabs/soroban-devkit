@@ -5,8 +5,23 @@
 //! [`SorobanRpcClient`] for all HTTP/JSON-RPC transport.
 
 use crate::{RpcError, SorobanRpcClient};
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Deserializer, Serialize};
 use std::time::Duration;
+
+/// Helper to deserialize either a string or an integer into an Option<String>.
+fn deserialize_optional_string_or_int<'de, D>(deserializer: D) -> Result<Option<String>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    use serde::de::Error;
+    let value = Option::<serde_json::Value>::deserialize(deserializer)?;
+    Ok(match value {
+        Some(serde_json::Value::String(s)) => Some(s),
+        Some(serde_json::Value::Number(n)) => Some(n.to_string()),
+        Some(_) => return Err(Error::custom("expected string or number")),
+        None => None,
+    })
+}
 
 /// Request payload for `sendTransaction`.
 #[derive(Debug, Serialize)]
@@ -16,6 +31,9 @@ pub struct SendTransactionRequest {
 
 /// Response from `sendTransaction`. `status` reflects the immediate
 /// acceptance/processing state; final settlement requires polling.
+///
+/// When `status` is `"ERROR"`, the `error_result`, `error_result_xdr`, and
+/// `diagnostic_events` fields contain the network's rejection diagnostics.
 #[derive(Debug, Clone, Deserialize, Serialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct SendTransactionResponse {
@@ -23,10 +41,21 @@ pub struct SendTransactionResponse {
     pub hash: String,
     #[serde(default)]
     pub status: String,
-    #[serde(default)]
+    /// Accepts both string and integer values from Testnet.
+    #[serde(default, deserialize_with = "deserialize_optional_string_or_int")]
     pub latest_ledger: Option<String>,
+    /// Present only when status == "ERROR".
     #[serde(default)]
-    pub error: Option<String>,
+    pub latest_ledger_close_time: Option<String>,
+    /// Base64 TransactionResult XDR present only when status == "ERROR".
+    #[serde(default)]
+    pub error_result_xdr: Option<String>,
+    /// Diagnostic events (base64 ContractEvent XDR) present only when status == "ERROR".
+    #[serde(default)]
+    pub diagnostic_events: Vec<String>,
+    /// Error code string (e.g. "tx_bad_auth", "tx_insufficient_balance") when status == "ERROR".
+    #[serde(default)]
+    pub error_result: Option<String>,
 }
 
 /// Terminal/transient status of a transaction on the network.
@@ -55,13 +84,17 @@ impl TransactionStatus {
 pub struct TransactionStatusResponse {
     #[serde(default)]
     pub status: String,
-    #[serde(default)]
+    /// Accepts both string and integer values from Testnet.
+    #[serde(default, deserialize_with = "deserialize_optional_string_or_int")]
     pub latest_ledger: Option<String>,
-    #[serde(default)]
+    /// Accepts both string and integer values from Testnet.
+    #[serde(default, deserialize_with = "deserialize_optional_string_or_int")]
     pub latest_ledger_close_time: Option<String>,
-    #[serde(default)]
+    /// Accepts both string and integer values from Testnet.
+    #[serde(default, deserialize_with = "deserialize_optional_string_or_int")]
     pub oldest_ledger: Option<String>,
-    #[serde(default)]
+    /// Accepts both string and integer values from Testnet.
+    #[serde(default, deserialize_with = "deserialize_optional_string_or_int")]
     pub oldest_ledger_close_time: Option<String>,
     #[serde(default)]
     pub application_order: Option<u64>,
@@ -92,6 +125,15 @@ pub struct SubmissionResult {
     pub result_xdr: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub latest_ledger: Option<String>,
+    /// Error code from sendTransaction (e.g. "tx_bad_auth"), when status == Failed.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub error_code: Option<String>,
+    /// Base64 TransactionResult XDR from sendTransaction, when status == Failed.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub error_result_xdr: Option<String>,
+    /// Diagnostic events (base64 ContractEvent XDR) from sendTransaction, when status == Failed.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub diagnostic_events: Vec<String>,
 }
 
 /// Configuration for transaction polling.
@@ -150,12 +192,30 @@ pub async fn submit_and_wait(
 ) -> Result<SubmissionResult, RpcError> {
     let sent = send_transaction(client, envelope).await?;
     let hash = sent.hash.clone();
+
+    // If the network rejected the transaction immediately (status == ERROR),
+    // surface the diagnostics instead of waiting for a poll timeout.
+    if sent.status.eq_ignore_ascii_case("ERROR") {
+        return Ok(SubmissionResult {
+            hash,
+            status: TransactionStatus::Failed,
+            result_xdr: None,
+            latest_ledger: sent.latest_ledger,
+            error_code: sent.error_result,
+            error_result_xdr: sent.error_result_xdr,
+            diagnostic_events: sent.diagnostic_events,
+        });
+    }
+
     if !wait {
         return Ok(SubmissionResult {
             hash,
             status: TransactionStatus::Pending,
             result_xdr: None,
             latest_ledger: None,
+            error_code: None,
+            error_result_xdr: None,
+            diagnostic_events: Vec::new(),
         });
     }
     poll_transaction(client, &hash, config).await
@@ -180,6 +240,9 @@ pub async fn poll_transaction(
                     status,
                     result_xdr: res.result_xdr,
                     latest_ledger: res.latest_ledger,
+                    error_code: None,
+                    error_result_xdr: None,
+                    diagnostic_events: Vec::new(),
                 });
             }
             TransactionStatus::Failed => {
@@ -188,6 +251,9 @@ pub async fn poll_transaction(
                     status,
                     result_xdr: res.result_xdr,
                     latest_ledger: res.latest_ledger,
+                    error_code: None,
+                    error_result_xdr: None,
+                    diagnostic_events: Vec::new(),
                 });
             }
             TransactionStatus::NotFound | TransactionStatus::Pending => {
@@ -207,6 +273,7 @@ pub async fn poll_transaction(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use tokio::io::AsyncReadExt;
 
     #[test]
     fn test_status_parsing() {
@@ -244,7 +311,8 @@ mod tests {
         assert_eq!(resp.hash, "deadbeef");
         assert_eq!(resp.status, "PENDING");
         assert_eq!(resp.latest_ledger, Some("100".to_string()));
-        assert_eq!(resp.error, None);
+        assert_eq!(resp.error_result, None);
+        assert!(resp.diagnostic_events.is_empty());
     }
 
     #[test]
@@ -267,8 +335,79 @@ mod tests {
             status: TransactionStatus::Success,
             result_xdr: Some("xdr".to_string()),
             latest_ledger: Some("100".to_string()),
+            error_code: None,
+            error_result_xdr: None,
+            diagnostic_events: Vec::new(),
         };
         let v = serde_json::to_value(&r).unwrap();
         assert_eq!(v["status"], "Success");
+    }
+
+    #[test]
+    fn test_send_response_error_diagnostics_preserved() {
+        let raw = r#"{
+            "hash": "abc123",
+            "status": "ERROR",
+            "latestLedger": "100",
+            "errorResult": "tx_bad_auth",
+            "errorResultXdr": "AAAA",
+            "diagnosticEvents": ["AAAAevent1", "AAAAevent2"]
+        }"#;
+        let resp: SendTransactionResponse = serde_json::from_str(raw).unwrap();
+        assert_eq!(resp.hash, "abc123");
+        assert_eq!(resp.status, "ERROR");
+        assert_eq!(resp.error_result.as_deref(), Some("tx_bad_auth"));
+        assert_eq!(resp.error_result_xdr.as_deref(), Some("AAAA"));
+        assert_eq!(resp.diagnostic_events, vec!["AAAAevent1", "AAAAevent2"]);
+    }
+
+    #[test]
+    fn test_send_response_pending_no_diagnostics() {
+        let raw = r#"{
+            "hash": "abc123",
+            "status": "PENDING",
+            "latestLedger": "100"
+        }"#;
+        let resp: SendTransactionResponse = serde_json::from_str(raw).unwrap();
+        assert_eq!(resp.hash, "abc123");
+        assert_eq!(resp.status, "PENDING");
+        assert_eq!(resp.error_result, None);
+        assert_eq!(resp.error_result_xdr, None);
+        assert!(resp.diagnostic_events.is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_submit_and_wait_error_short_circuits_with_diagnostics() {
+        // Build a mock HTTP server that returns ERROR status with diagnostics
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+
+        tokio::spawn(async move {
+            let (mut sock, _) = listener.accept().await.unwrap();
+            let mut buf = [0u8; 8192];
+            let n = sock.read(&mut buf).await.unwrap();
+            let _req = String::from_utf8_lossy(&buf[..n]).to_string();
+
+            let resp = r#"{"jsonrpc":"2.0","id":1,"result":{"hash":"deadbeef","status":"ERROR","latestLedger":"100","errorResult":"tx_bad_auth","errorResultXdr":"AAAA","diagnosticEvents":["AAAAevent"]}}"#;
+            let http_resp = format!(
+                "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+                resp.len(),
+                resp
+            );
+            use tokio::io::AsyncWriteExt;
+            sock.write_all(http_resp.as_bytes()).await.unwrap();
+            let _ = sock.shutdown().await;
+        });
+
+        let client = SorobanRpcClient::new(&format!("http://{}", addr));
+        let result = submit_and_wait(&client, "AAAAEnvelope===", true, &PollConfig::default())
+            .await
+            .unwrap();
+
+        assert_eq!(result.status, TransactionStatus::Failed);
+        assert_eq!(result.hash, "deadbeef");
+        assert_eq!(result.error_code.as_deref(), Some("tx_bad_auth"));
+        assert_eq!(result.error_result_xdr.as_deref(), Some("AAAA"));
+        assert_eq!(result.diagnostic_events, vec!["AAAAevent"]);
     }
 }
