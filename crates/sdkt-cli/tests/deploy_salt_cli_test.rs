@@ -39,6 +39,37 @@ fn cli_deploy_rejects_invalid_salt_non_hex() {
         .stderr(predicate::str::contains("Invalid --salt"));
 }
 
+/// 40 chars but contains non-hex characters — must report a hex error,
+/// NOT the length error (see issue #48).
+#[test]
+fn cli_deploy_rejects_40char_nonhex_salt() {
+    let dir = std::env::temp_dir().join(format!(
+        "sdkt-salt-{}-40char-nonhex",
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos()
+    ));
+    let _ = std::fs::create_dir_all(&dir);
+
+    // Exactly 40 characters, but 'z' is not a hex digit
+    let bad_salt = "z".repeat(40);
+    sdkt(&dir)
+        .args([
+            "deploy",
+            "--wasm",
+            "/tmp/soroban-devkit/crates/sdkt-cli/tests/fixtures/us_new.wasm",
+            "--salt",
+            bad_salt.as_str(),
+            "--identity",
+            "default",
+        ])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("not a hex digit"))
+        .stderr(predicate::str::contains("length").not());
+}
+
 #[test]
 fn cli_deploy_rejects_invalid_salt_wrong_length() {
     let dir = std::env::temp_dir().join(format!(
