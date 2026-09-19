@@ -791,6 +791,9 @@ enum TxAction {
         envelope: String,
         #[arg(short, long, default_value = "pretty")]
         format: String,
+        /// Path to contract WASM for ABI-aware result decoding
+        #[arg(long, value_name = "WASM")]
+        abi: Option<String>,
     },
     /// Submit a transaction envelope to the network, optionally waiting
     Submit {
@@ -2171,7 +2174,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     process::exit(1);
                 }
             }
-            TxAction::Simulate { envelope, format } => {
+            TxAction::Simulate {
+                envelope,
+                format,
+                abi,
+            } => {
                 let fmt = parse_format_str(&format);
                 let client = resolve_rpc_client(
                     net.rpc_url.clone(),
@@ -2187,14 +2194,54 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
                 match simulate_transaction(&client, &env_data).await {
                     Ok(sim) => {
+                        // Load ABI spec if --abi was provided
+                        let abi_spec = if let Some(wasm_path) = &abi {
+                            let wasm_bytes = std::fs::read(wasm_path)
+                                .map_err(|e| format!("Failed to read WASM: {e}"))?;
+                            match sdkt_wasm::parse_contract_spec(&wasm_bytes) {
+                                Ok(spec) => Some(spec),
+                                Err(e) => return Err(format!("Failed to parse ABI: {e}").into()),
+                            }
+                        } else {
+                            None
+                        };
+
+                        // Decode primary result if ABI available
+                        let decoded_result = abi_spec.as_ref().and_then(|spec| {
+                            sim.results.first().and_then(|first_result| {
+                                sdkt_xdr::scval_from_base64(&first_result.xdr).map(|scval| {
+                                    sdkt_xdr::abi_decode::decode_with_abi(spec, &scval, None)
+                                })
+                            })
+                        });
+
                         if fmt == OutputFormat::Json {
-                            let json_str = serde_json::to_string(&sim)?;
-                            println!("{}", json_str);
+                            let mut json_obj = serde_json::json!({
+                                "error": sim.error,
+                                "latestLedger": sim.latest_ledger,
+                                "minResourceFee": sim.min_resource_fee,
+                                "restorePreamble": sim.restore_preamble,
+                                "cost": sim.cost,
+                                "events": sim.events,
+                                "stateChanges": sim.state_changes,
+                                "results": sim.results,
+                            });
+
+                            if let Some(decoded) = &decoded_result {
+                                json_obj["decodedResult"] = serde_json::json!({
+                                    "raw": decoded.raw,
+                                    "label": decoded.label,
+                                    "matchedType": decoded.matched_type,
+                                    "fields": decoded.fields,
+                                });
+                            }
+
+                            println!("{}", serde_json::to_string(&json_obj)?);
                         } else {
                             println!("Simulation Result:");
                             if let Some(err) = &sim.error {
                                 println!("  Status: FAILED");
-                                println!("  Error: {}", err);
+                                println!("  Error: {err}");
                                 process::exit(1);
                             } else {
                                 println!("  Status: SUCCESS");
@@ -2222,6 +2269,23 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                                 println!("    CPU Instructions: {}", cost.cpu_insns);
                                 println!("    Memory Bytes: {}", cost.mem_bytes);
                             }
+
+                            // Show decoded result if ABI was provided
+                            if let Some(decoded) = &decoded_result {
+                                println!("  Decoded Result: {}", decoded.label);
+                                if let Some(matched) = &decoded.matched_type {
+                                    println!("    ABI Type: {matched}");
+                                }
+                                if let Some(fields) = &decoded.fields {
+                                    if !fields.is_empty() {
+                                        println!("    Fields:");
+                                        for (k, v) in fields {
+                                            println!("      {k}: {v}");
+                                        }
+                                    }
+                                }
+                            }
+
                             if !sim.events.is_empty() {
                                 println!("  Events: {} emitted", sim.events.len());
                             }
@@ -2237,7 +2301,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                         }
                     }
                     Err(e) => {
-                        eprintln!("Error simulating transaction: {}", e);
+                        eprintln!("Error simulating transaction: {e}");
                         process::exit(1);
                     }
                 }

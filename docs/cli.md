@@ -38,7 +38,7 @@ sdkt
 ├── tx
 │   ├── inspect <hash>        [--format]
 │   ├── validate <xdr>        [--format] (offline parse + structural checks)
-│   ├── simulate <xdr>        [--format] (RPC; surfaces restore preambles, costs, state changes)
+│   ├── simulate <xdr>        [--format] [--abi <wasm>] (RPC; surfaces restore preambles, costs, state changes; ABI-aware result decoding)
 │   ├── sign                  [--input <xdr|file>] [--output <file>] [--identity <name>] [--network <testnet|mainnet|futurenet|custom:<p>>] [--format] (offline ED25519 signing)
 │   ├── submit <xdr>          [--wait] [--timeout <s>] [--interval <s>] [--format] (RPC)
 │   └── build                 [--source --sequence --contract --function --arg* --output]

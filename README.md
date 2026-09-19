@@ -254,7 +254,7 @@ See [`docs/plugin-authoring.md`](docs/plugin-authoring.md) for how to build or u
 | `sdkt storage extend <contract-id> --ledgers <N>` | Extend TTL of known footprint keys (`ExtendFootprintTtl`). Instance key is always included; extra keys via `--key`. Does not restore archived entries. |
 | `sdkt tx inspect <hash>` | Transaction status / ledger inclusion. |
 | `sdkt tx validate --envelope <xdr>` | Offline pre-flight validation of an envelope (parses + structural checks). |
-| `sdkt tx simulate <xdr>` | Offline pre-flight via `simulateTransaction` (RPC). |
+| `sdkt tx simulate <xdr>` | Offline pre-flight via `simulateTransaction` (RPC). `--abi <wasm>` decodes the invoke result via the contract spec. |
 | `sdkt tx sign --input <xdr> --identity <name>` | Sign an envelope with a local ED25519 identity — fully offline. |
 | `sdkt tx submit <xdr>` | Submit a transaction (with optional poll; RPC). |
 | `sdkt tx build` | Typed envelope builder. |

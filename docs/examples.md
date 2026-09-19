@@ -136,6 +136,9 @@ sdkt tx validate --envelope unsigned.xdr
 # 4. Simulate against the network to catch failures early (RPC)
 sdkt tx simulate --envelope unsigned.xdr
 
+# 4b. Simulate with ABI-aware result decoding (requires contractspecv0 WASM)
+sdkt tx simulate --envelope unsigned.xdr --abi /path/to/contract.wasm
+
 # 5. Sign with the local identity (offline)
 sdkt tx sign --input unsigned.xdr --output signed.xdr --identity alice --network testnet
 
