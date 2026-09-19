@@ -7,8 +7,8 @@ use sdkt_rpc::inspect::StorageSummary;
 use sdkt_rpc::wasm::get_wasm_bytecode;
 use sdkt_rpc::{
     estimate_dynamic_fee, extend_footprint, get_contract_events, get_ttl_info, get_wasm_metadata,
-    inspect_account, inspect_contract, inspect_transaction, simulate_transaction, SorobanRpcClient,
-    StorageKeyInfo, TtlInfoSummary,
+    inspect_account, inspect_contract, inspect_transaction, read_contract_state,
+    simulate_transaction, SorobanRpcClient, StorageKeyInfo, TtlInfoSummary,
 };
 use sdkt_storage::WasmCache;
 use sdkt_storage::{NetworkProfile, NetworkStore, StorageAnalyzer};
@@ -936,6 +936,17 @@ enum StorageAction {
         #[arg(short, long, default_value = "pretty")]
         format: String,
     },
+    /// Read a contract's storage entry by its complete `LedgerKey` (base64 XDR).
+    Read {
+        /// Contract ID whose storage entry should be read.
+        #[arg(long)]
+        contract: String,
+        /// Complete base64-encoded `LedgerKey` identifying the storage entry.
+        #[arg(long, value_name = "BASE64_XDR")]
+        key_xdr: String,
+        #[arg(short, long, default_value = "pretty")]
+        format: String,
+    },
 }
 
 /// — Contract verification report.
@@ -1391,6 +1402,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             abi_contract,
             net,
         } => {
+            if abi.is_some() && abi_contract.is_some() {
+                eprintln!("Error: specify only one of --abi or --abi-contract");
+                process::exit(1);
+            }
+
             let client = resolve_rpc_client(
                 net.rpc_url.clone(),
                 net.network_passphrase.clone(),
@@ -1613,14 +1629,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
                     let identity_store = sdkt_storage::IdentityStore::new()
                         .map_err(|e| format!("Failed to access identity store: {}", e))?;
-                    let identity_obj = identity_store.get(&identity).map_err(|e| {
-                        format!("Identity '{}' not found: {}", identity, e)
+                    let identity_obj = identity_store
+                        .get(&identity)
+                        .map_err(|e| format!("Identity '{}' not found: {}", identity, e))?;
+                    let signing_key = identity_store.load_signing_key(&identity).map_err(|e| {
+                        format!("Failed to load signing key for '{}': {}", identity, e)
                     })?;
-                    let signing_key = identity_store
-                        .load_signing_key(&identity)
-                        .map_err(|e| {
-                            format!("Failed to load signing key for '{}': {}", identity, e)
-                        })?;
                     let signer = sdkt_xdr::sign::Ed25519Signer::from_seed(&signing_key.to_bytes());
                     let source_account = identity_obj.public_key.clone();
                     let client = SorobanRpcClient::from_config(&network_config);
@@ -1654,6 +1668,86 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                         }
                         Err(e) => {
                             eprintln!("Error extending storage TTL: {}", e);
+                            process::exit(1);
+                        }
+                    }
+                }
+                StorageAction::Read {
+                    contract,
+                    key_xdr,
+                    format,
+                } => {
+                    let fmt = parse_format_str(&format);
+
+                    if contract.trim().is_empty() {
+                        eprintln!("Error: --contract must not be empty");
+                        process::exit(1);
+                    }
+                    if key_xdr.trim().is_empty() {
+                        eprintln!("Error: --key-xdr must not be empty");
+                        process::exit(1);
+                    }
+
+                    let network_config = resolve_network_config(
+                        net.rpc_url.clone(),
+                        net.network_passphrase.clone(),
+                        net.network_profile.clone(),
+                    )?;
+                    let client = SorobanRpcClient::from_config(&network_config);
+
+                    let contract_spec: Option<sdkt_wasm::ContractSpec> = if let Some(wasm_path) =
+                        abi.as_ref()
+                    {
+                        let wasm_bytes =
+                            fs::read(wasm_path).map_err(|e| format!("Failed to read WASM: {e}"))?;
+                        Some(
+                            parse_contract_spec(&wasm_bytes)
+                                .map_err(|e| format!("Failed to parse ABI: {e}"))?,
+                        )
+                    } else if let Some(id) = abi_contract.as_ref() {
+                        let inspection =
+                            inspect_contract(&client, id).await.map_err(|e| match &e {
+                                sdkt_rpc::RpcError::ContractNotFound => {
+                                    format!("contract {id} not found")
+                                }
+                                _ => format!("{e}"),
+                            })?;
+                        let deployed_bytes = get_wasm_bytecode(&client, &inspection.wasm_hash)
+                            .await
+                            .map_err(|e| format!("could not fetch on-chain WASM for {id}: {e}"))?;
+                        Some(
+                            parse_contract_spec(&deployed_bytes)
+                                .map_err(|e| format!("failed to parse deployed ABI: {e}"))?,
+                        )
+                    } else {
+                        None
+                    };
+
+                    match read_contract_state(&client, &contract, &key_xdr, contract_spec.as_ref())
+                        .await
+                    {
+                        Ok(res) => {
+                            if fmt == OutputFormat::Json {
+                                println!("{}", serde_json::to_string(&res)?);
+                            } else {
+                                println!("Contract State Read");
+                                println!("  Contract:       {}", res.contract_id);
+                                println!("  Key:            {}", res.key);
+                                println!("  Entry Type:     {}", res.entry_type);
+                                if let Some(dur) = &res.durability {
+                                    println!("  Durability:     {dur}");
+                                }
+                                if let Some(ttl) = res.live_until_ledger {
+                                    println!("  Live Until:     {ttl} (ledger)");
+                                }
+                                println!(
+                                    "  Value:          {}",
+                                    serde_json::to_string(&res.value)?
+                                );
+                            }
+                        }
+                        Err(e) => {
+                            eprintln!("Error reading contract state: {e}");
                             process::exit(1);
                         }
                     }

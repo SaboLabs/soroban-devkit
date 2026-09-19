@@ -1,7 +1,8 @@
 use crate::client::SorobanRpcClient;
 use crate::error::RpcError;
+use base64::Engine;
 use serde::Serialize;
-use stellar_xdr::SorobanTransactionData;
+use stellar_xdr::{LedgerEntryData, ReadXdr, SorobanTransactionData};
 
 /// Storage TTL info for a contract.
 #[derive(Debug, Clone, PartialEq, Serialize)]
@@ -108,11 +109,8 @@ fn parse_min_resource_fee(raw: &str) -> Result<u32, RpcError> {
             "simulation returned invalid min_resource_fee: {raw:?}"
         ))
     })?;
-    u32::try_from(parsed).map_err(|_| {
-        RpcError::Rpc(format!(
-            "simulation min_resource_fee overflowed u32: {raw}"
-        ))
-    })
+    u32::try_from(parsed)
+        .map_err(|_| RpcError::Rpc(format!("simulation min_resource_fee overflowed u32: {raw}")))
 }
 
 /// Merge the contract instance key with extra operator-supplied keys.
@@ -174,9 +172,8 @@ pub async fn extend_footprint(
     }
 
     let soroban_data: SorobanTransactionData =
-        sdkt_xdr::parse_soroban_transaction_data(&simulation.transaction_data).map_err(|e| {
-            RpcError::Rpc(format!("Failed to parse SorobanTransactionData: {e}"))
-        })?;
+        sdkt_xdr::parse_soroban_transaction_data(&simulation.transaction_data)
+            .map_err(|e| RpcError::Rpc(format!("Failed to parse SorobanTransactionData: {e}")))?;
 
     let min_resource_fee = parse_min_resource_fee(&simulation.min_resource_fee)?;
     let inclusion_fee: u32 = 100;
@@ -186,14 +183,12 @@ pub async fn extend_footprint(
         fee: total_fee,
         ..sim_params
     };
-    let final_envelope =
-        sdkt_xdr::build_extend_footprint_tx_with_data(&final_params, soroban_data)
-            .map_err(|e| RpcError::Rpc(format!("Failed to build final extend transaction: {e}")))?;
+    let final_envelope = sdkt_xdr::build_extend_footprint_tx_with_data(&final_params, soroban_data)
+        .map_err(|e| RpcError::Rpc(format!("Failed to build final extend transaction: {e}")))?;
 
     let signing_opts = sdkt_xdr::sign::SigningOptions::with(network);
-    let signed_envelope =
-        sdkt_xdr::sign_transaction(&final_envelope, signer, &signing_opts)
-            .map_err(|e| RpcError::Rpc(format!("Failed to sign extend transaction: {e}")))?;
+    let signed_envelope = sdkt_xdr::sign_transaction(&final_envelope, signer, &signing_opts)
+        .map_err(|e| RpcError::Rpc(format!("Failed to sign extend transaction: {e}")))?;
 
     let submission = crate::submission::submit_and_wait(
         client,
@@ -205,10 +200,7 @@ pub async fn extend_footprint(
 
     if submission.status != crate::submission::TransactionStatus::Success {
         let code = submission.error_code.as_deref().unwrap_or("unknown");
-        let diag = submission
-            .error_result_xdr
-            .as_deref()
-            .unwrap_or("");
+        let diag = submission.error_result_xdr.as_deref().unwrap_or("");
         return Err(RpcError::Rpc(format!(
             "Extend transaction failed: code={code} {diag}"
         )));
@@ -221,6 +213,127 @@ pub async fn extend_footprint(
         hash: submission.hash,
         status: "SUCCESS".into(),
         fee: total_fee,
+    })
+}
+
+/// Read a single ledger entry by its `LedgerKey` (base64 XDR).
+///
+/// Calls `getLedgerEntries` and returns the decoded `LedgerEntry`. If the
+/// requested entry is absent, returns a clear error rather than an empty value.
+pub async fn read_ledger_entry(
+    client: &SorobanRpcClient,
+    key_b64: &str,
+) -> Result<stellar_xdr::LedgerEntry, RpcError> {
+    let keys = vec![key_b64.to_string()];
+    let response = client.get_contract_storage("", &keys).await?;
+
+    if response.entries.is_empty() {
+        return Err(RpcError::Rpc(
+            "Ledger entry not found for the requested key".into(),
+        ));
+    }
+
+    let entry_xdr = &response.entries[0].xdr;
+    let entry_bytes = base64::engine::general_purpose::STANDARD
+        .decode(entry_xdr.trim())
+        .map_err(|e| RpcError::Rpc(format!("Failed to decode LedgerEntry XDR: {e}")))?;
+
+    let mut cursor = std::io::Cursor::new(&entry_bytes);
+    let mut l = stellar_xdr::Limited::new(&mut cursor, stellar_xdr::Limits::none());
+    stellar_xdr::LedgerEntry::read_xdr(&mut l)
+        .map_err(|e| RpcError::Rpc(format!("Failed to parse LedgerEntry: {e}")))
+}
+
+/// Result of a successful `storage read` call.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct StateReadResult {
+    pub contract_id: String,
+    pub key: String,
+    pub entry_type: String,
+    pub durability: Option<String>,
+    pub value: serde_json::Value,
+    pub live_until_ledger: Option<u32>,
+}
+
+/// Read a contract's storage entry by its `LedgerKey` (base64 XDR).
+///
+/// The instance key is NOT included automatically — the caller must supply
+/// the complete `LedgerKey` via `--key-xdr`. ABI formatting is applied to the
+/// returned `val` only when `--abi` is supplied; it is NOT used to discover
+/// or construct the key.
+pub async fn read_contract_state(
+    client: &SorobanRpcClient,
+    contract_id: &str,
+    key_b64: &str,
+    abi: Option<&sdkt_wasm::ContractSpec>,
+) -> Result<StateReadResult, RpcError> {
+    use stellar_xdr::WriteXdr;
+    let decoded_key = sdkt_xdr::decode_ledger_key(key_b64)
+        .map_err(|e| RpcError::Rpc(format!("Invalid LedgerKey: {e}")))?;
+    let mut buf = Vec::new();
+    let mut l = stellar_xdr::Limited::new(&mut buf, stellar_xdr::Limits::none());
+    decoded_key
+        .write_xdr(&mut l)
+        .map_err(|e| RpcError::Rpc(format!("Failed to re-encode LedgerKey: {e}")))?;
+    let canonical_key_b64 = base64::engine::general_purpose::STANDARD.encode(&buf);
+
+    let entry = read_ledger_entry(client, &canonical_key_b64).await?;
+
+    let (entry_type, durability, value_json) = match &entry.data {
+        LedgerEntryData::ContractData(cd) => {
+            let durability_str = match cd.durability {
+                stellar_xdr::ContractDataDurability::Persistent => "persistent",
+                stellar_xdr::ContractDataDurability::Temporary => "temporary",
+            };
+
+            let value_json = match abi {
+                Some(spec) => {
+                    let decoded = sdkt_xdr::abi_decode::decode_with_abi(spec, &cd.val, None);
+                    serde_json::json!({
+                        "raw": decoded.raw,
+                        "label": decoded.label,
+                        "matched_type": decoded.matched_type,
+                        "fields": decoded.fields,
+                    })
+                }
+                None => {
+                    let mut val_buf = Vec::new();
+                    let mut val_cursor = std::io::Cursor::new(&mut val_buf);
+                    let mut val_l =
+                        stellar_xdr::Limited::new(&mut val_cursor, stellar_xdr::Limits::none());
+                    cd.val
+                        .write_xdr(&mut val_l)
+                        .map_err(|e| RpcError::Rpc(format!("Failed to encode ScVal: {e}")))?;
+                    let val_b64 = base64::engine::general_purpose::STANDARD.encode(&val_buf);
+                    serde_json::json!({ "xdr": val_b64 })
+                }
+            };
+
+            (
+                "contract_data".into(),
+                Some(durability_str.to_string()),
+                value_json,
+            )
+        }
+        LedgerEntryData::ContractCode(_cc) => (
+            "contract_code".into(),
+            None,
+            serde_json::json!({ "note": "contract code entry" }),
+        ),
+        _ => {
+            return Err(RpcError::Rpc(
+                "Ledger entry is not a ContractData or ContractCode entry".into(),
+            ));
+        }
+    };
+
+    Ok(StateReadResult {
+        contract_id: contract_id.to_string(),
+        key: canonical_key_b64,
+        entry_type,
+        durability,
+        value: value_json,
+        live_until_ledger: None,
     })
 }
 
@@ -304,14 +417,20 @@ mod tests {
 
     #[test]
     fn test_collect_extend_keys_includes_instance() {
-        let keys = collect_extend_keys("CAE3U7JKESRWZHPEQ72DVNGOQ6WPA7HSPQZL5YV46NPCE4TMUPAGYMEC", &[]).unwrap();
+        let keys = collect_extend_keys(
+            "CAE3U7JKESRWZHPEQ72DVNGOQ6WPA7HSPQZL5YV46NPCE4TMUPAGYMEC",
+            &[],
+        )
+        .unwrap();
         assert_eq!(keys.len(), 1);
     }
 
     #[test]
     fn test_collect_extend_keys_dedupes_instance() {
         // Supplying the instance key explicitly should not duplicate it.
-        let instance = instance_ledger_key("CAE3U7JKESRWZHPEQ72DVNGOQ6WPA7HSPQZL5YV46NPCE4TMUPAGYMEC").unwrap();
+        let instance =
+            instance_ledger_key("CAE3U7JKESRWZHPEQ72DVNGOQ6WPA7HSPQZL5YV46NPCE4TMUPAGYMEC")
+                .unwrap();
         let keys = collect_extend_keys(
             "CAE3U7JKESRWZHPEQ72DVNGOQ6WPA7HSPQZL5YV46NPCE4TMUPAGYMEC",
             &[instance.clone(), instance],

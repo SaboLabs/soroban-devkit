@@ -36,7 +36,10 @@ pub use simulate::{
     simulate_transaction, validate_envelope, SimulateCost, SimulateOperationResult,
     SimulateResponse, SimulateTransactionRequest,
 };
-pub use storage::{calculate_extension_cost, collect_extend_keys, extend_footprint, get_ttl_info, ExtendResult, TtlEntry, TtlInfo};
+pub use storage::{
+    calculate_extension_cost, collect_extend_keys, extend_footprint, get_ttl_info,
+    read_contract_state, read_ledger_entry, ExtendResult, StateReadResult, TtlEntry, TtlInfo,
+};
 pub use submission::{
     get_transaction_status, poll_transaction, send_transaction, submit_and_wait, PollConfig,
     SendTransactionRequest, SendTransactionResponse, SubmissionResult, TransactionStatus,

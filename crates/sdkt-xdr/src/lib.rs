@@ -27,12 +27,11 @@ pub mod builder;
 pub mod sign;
 pub mod typed;
 pub use builder::{
-    build_create_contract_tx, build_create_contract_tx_with_data,
-    build_extend_footprint_tx, build_extend_footprint_tx_with_data, build_invoke_transaction,
-    build_upload_wasm_tx, build_upload_wasm_tx_with_data, decode_account_id, decode_contract_id,
-    decode_ledger_key, derive_contract_id, merge_footprint_keys,
-    parse_soroban_transaction_data, CreateContractParams, ExtendFootprintParams,
-    InvokeTransactionParams, UploadWasmParams,
+    build_create_contract_tx, build_create_contract_tx_with_data, build_extend_footprint_tx,
+    build_extend_footprint_tx_with_data, build_invoke_transaction, build_upload_wasm_tx,
+    build_upload_wasm_tx_with_data, decode_account_id, decode_contract_id, decode_ledger_key,
+    derive_contract_id, merge_footprint_keys, parse_soroban_transaction_data, CreateContractParams,
+    ExtendFootprintParams, InvokeTransactionParams, UploadWasmParams,
 };
 pub use sign::{
     sign_envelope_with, sign_transaction, verify_signature, Ed25519Signer, Network, Signer,
@@ -198,6 +197,49 @@ fn extract_hash_from_contract_data(
     };
 
     Ok(hex::encode(hash.0))
+}
+
+/// Extracts the generic `val: ScVal` and durability from a `LedgerEntry`
+/// containing a `ContractData` entry.
+///
+/// Uses the same live-wire compatibility bridge as [`extract_wasm_hash`].
+pub fn extract_contract_data_value(
+    base64_ledger_entry: &str,
+) -> Result<stellar_xdr::ContractDataEntry, DecodeError> {
+    let raw = detect_and_decode(base64_ledger_entry)?;
+    match extract_contract_data_value_standard(&raw) {
+        Ok(data) => Ok(data),
+        Err(e) => match e {
+            DecodeError::XdrParse(..) => extract_contract_data_value_from_live_ledger_entry(&raw),
+            _ => Err(e),
+        },
+    }
+}
+
+fn extract_contract_data_value_standard(
+    raw: &[u8],
+) -> Result<stellar_xdr::ContractDataEntry, DecodeError> {
+    let mut cursor = std::io::Cursor::new(raw);
+    let mut l = Limited::new(&mut cursor, Limits::none());
+    let entry = LedgerEntry::read_xdr(&mut l)
+        .map_err(|e| DecodeError::XdrParse("LedgerEntry".to_string(), e))?;
+    match entry.data {
+        LedgerEntryData::ContractData(d) => Ok(d),
+        _ => Err(DecodeError::Extraction("Not a ContractData entry".into())),
+    }
+}
+
+fn extract_contract_data_value_from_live_ledger_entry(
+    raw: &[u8],
+) -> Result<stellar_xdr::ContractDataEntry, DecodeError> {
+    let mut cursor = std::io::Cursor::new(raw);
+    let mut l = Limited::new(&mut cursor, Limits::none());
+    let data = LedgerEntryData::read_xdr(&mut l)
+        .map_err(|e| DecodeError::XdrParse("LedgerEntryData(live)".to_string(), e))?;
+    match data {
+        LedgerEntryData::ContractData(d) => Ok(d),
+        _ => Err(DecodeError::Extraction("Not a ContractData entry".into())),
+    }
 }
 
 /// Extracts the raw WASM bytecode from a Base64 encoded `LedgerEntry` containing a `ContractCode` entry.

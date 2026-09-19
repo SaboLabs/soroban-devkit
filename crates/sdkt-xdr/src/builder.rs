@@ -11,11 +11,12 @@ use stellar_strkey::Strkey;
 use stellar_xdr::{
     AccountId, BytesM, ContractExecutable, ContractId, ContractIdPreimage,
     ContractIdPreimageFromAddress, CreateContractArgs, ExtendFootprintTtlOp, ExtensionPoint, Hash,
-    HashIdPreimage, HashIdPreimageContractId, HostFunction, InvokeContractArgs, InvokeHostFunctionOp,
-    LedgerFootprint, LedgerKey, Memo, MuxedAccount, Operation, OperationBody, Preconditions,
-    PublicKey, ReadXdr, ScAddress, ScSymbol, SequenceNumber, SorobanAuthorizationEntry,
-    SorobanResources, SorobanTransactionData, SorobanTransactionDataExt, Transaction,
-    TransactionEnvelope, TransactionExt, TransactionV1Envelope, Uint256, VecM, WriteXdr,
+    HashIdPreimage, HashIdPreimageContractId, HostFunction, InvokeContractArgs,
+    InvokeHostFunctionOp, LedgerFootprint, LedgerKey, Memo, MuxedAccount, Operation, OperationBody,
+    Preconditions, PublicKey, ReadXdr, ScAddress, ScSymbol, SequenceNumber,
+    SorobanAuthorizationEntry, SorobanResources, SorobanTransactionData, SorobanTransactionDataExt,
+    Transaction, TransactionEnvelope, TransactionExt, TransactionV1Envelope, Uint256, VecM,
+    WriteXdr,
 };
 
 /// Parameters for building a basic contract invocation transaction.
@@ -544,9 +545,7 @@ pub fn merge_footprint_keys(keys: &[String]) -> Result<Vec<String>, DecodeError>
         let decoded = decode_ledger_key(k)?;
         let mut buf = Vec::new();
         let mut l = stellar_xdr::Limited::new(&mut buf, stellar_xdr::Limits::none());
-        decoded
-            .write_xdr(&mut l)
-            .map_err(DecodeError::XdrWrite)?;
+        decoded.write_xdr(&mut l).map_err(DecodeError::XdrWrite)?;
         let canonical = STANDARD.encode(&buf);
         if seen.insert(canonical.clone()) {
             out.push(canonical);
@@ -1146,51 +1145,83 @@ mod tests {
         assert!(result.is_ok());
         assert_eq!(result.unwrap().len(), 0);
     }
+}
 
-    fn instance_key_b64() -> String {
-        crate::encode_ledger_key(&crate::LedgerKeyParams::ContractData(
-            "09ba7d2a24a36c9de487f43ab4ce87acf07cf27c32bee2bcf35e22726ca3c06c".into(),
-        ))
-        .unwrap()
-    }
+#[cfg(test)]
+mod extract_tests {
+    use crate::extract_contract_data_value;
+    use base64::Engine;
+    use stellar_xdr::{
+        ContractDataDurability, ContractDataEntry, ContractId, ExtensionPoint, Hash, LedgerEntry,
+        LedgerEntryData, LedgerEntryExt, Limited, Limits, ScAddress, ScVal, WriteXdr,
+    };
 
-    fn extend_params(keys: Vec<String>, extend_to: u32) -> ExtendFootprintParams {
-        ExtendFootprintParams {
-            source_account: TEST_SOURCE.to_string(),
-            sequence: 7,
-            fee: 100,
-            extend_to,
-            footprint_keys: keys,
-        }
+    #[test]
+    fn test_extract_contract_data_value_returns_val() {
+        let entry = LedgerEntry {
+            last_modified_ledger_seq: 1,
+            data: LedgerEntryData::ContractData(ContractDataEntry {
+                ext: ExtensionPoint::V0,
+                contract: ScAddress::Contract(ContractId(Hash([0; 32]))),
+                key: ScVal::U32(1),
+                durability: ContractDataDurability::Persistent,
+                val: ScVal::U32(42),
+            }),
+            ext: LedgerEntryExt::V0,
+        };
+        let mut buf = Vec::new();
+        let mut l = Limited::new(&mut buf, Limits::none());
+        entry.write_xdr(&mut l).unwrap();
+        let b64 = base64::engine::general_purpose::STANDARD.encode(&buf);
+
+        let cd = extract_contract_data_value(&b64).unwrap();
+        assert!(matches!(cd.val, ScVal::U32(42)));
+        assert_eq!(cd.key, ScVal::U32(1));
+        assert_eq!(cd.durability, ContractDataDurability::Persistent);
     }
 
     #[test]
-    fn test_decode_ledger_key_rejects_empty() {
-        assert!(decode_ledger_key("").is_err());
-        assert!(decode_ledger_key("   ").is_err());
-        assert!(decode_ledger_key("not-base64-or-hex!!").is_err());
+    fn test_extract_contract_data_value_rejects_non_contract_data() {
+        let result = extract_contract_data_value("AAAABAAAAAE=");
+        assert!(result.is_err());
     }
+}
 
-    #[test]
-    fn test_merge_footprint_keys_dedupes_and_preserves_order() {
-        let a = instance_key_b64();
-        let merged = merge_footprint_keys(&[a.clone(), a.clone()]).unwrap();
-        assert_eq!(merged.len(), 1);
-        assert_eq!(merged[0], a);
-    }
-
-    #[test]
-    fn test_merge_footprint_keys_rejects_empty() {
-        assert!(merge_footprint_keys(&[]).is_err());
-    }
+#[cfg(test)]
+mod extend_tests {
+    use super::*;
+    use crate::builder::{
+        build_extend_footprint_tx, build_extend_footprint_tx_with_data,
+        realistic_soroban_transaction_data, ExtendFootprintParams,
+    };
+    use stellar_xdr::{
+        ContractDataDurability, Hash, LedgerKey, LedgerKeyContractData, Limited, Limits,
+        OperationBody, ScAddress, ScVal, TransactionEnvelope, TransactionExt, WriteXdr,
+    };
 
     #[test]
     fn test_build_extend_footprint_tx_round_trip() {
-        let key = instance_key_b64();
-        let envelope = build_extend_footprint_tx(&extend_params(vec![key.clone()], 100_000)).unwrap();
+        let k = LedgerKey::ContractData(LedgerKeyContractData {
+            contract: ScAddress::Contract(ContractId(Hash([0; 32]))),
+            key: ScVal::LedgerKeyContractInstance,
+            durability: ContractDataDurability::Persistent,
+        });
+        let mut buf = Vec::new();
+        let mut l = Limited::new(&mut buf, Limits::none());
+        k.write_xdr(&mut l).unwrap();
+        let key = STANDARD.encode(&buf);
+
+        let params = ExtendFootprintParams {
+            source_account: "GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF".into(),
+            sequence: 7,
+            fee: 100,
+            extend_to: 100_000,
+            footprint_keys: vec![key],
+        };
+        let envelope = build_extend_footprint_tx(&params).unwrap();
         let raw = STANDARD.decode(&envelope).unwrap();
         let mut cursor = std::io::Cursor::new(&raw);
-        let mut l = stellar_xdr::Limited::new(&mut cursor, stellar_xdr::Limits::none());
+        let mut l = Limited::new(&mut cursor, Limits::none());
         let env = TransactionEnvelope::read_xdr(&mut l).unwrap();
         match env {
             TransactionEnvelope::Tx(v1) => {
@@ -1215,20 +1246,51 @@ mod tests {
 
     #[test]
     fn test_build_extend_footprint_tx_rejects_zero_ledgers() {
-        let key = instance_key_b64();
-        let err = build_extend_footprint_tx(&extend_params(vec![key], 0)).unwrap_err();
+        let k = LedgerKey::ContractData(LedgerKeyContractData {
+            contract: ScAddress::Contract(ContractId(Hash([0; 32]))),
+            key: ScVal::LedgerKeyContractInstance,
+            durability: ContractDataDurability::Persistent,
+        });
+        let mut buf = Vec::new();
+        let mut l = Limited::new(&mut buf, Limits::none());
+        k.write_xdr(&mut l).unwrap();
+        let key = STANDARD.encode(&buf);
+
+        let params = ExtendFootprintParams {
+            source_account: "GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF".into(),
+            sequence: 1,
+            fee: 100,
+            extend_to: 0,
+            footprint_keys: vec![key],
+        };
+        let err = build_extend_footprint_tx(&params).unwrap_err();
         assert!(err.to_string().contains("greater than 0"));
     }
 
     #[test]
     fn test_build_extend_footprint_tx_with_data_preserves_simulation_resources() {
-        let key = instance_key_b64();
-        let params = extend_params(vec![key], 50_000);
+        let k = LedgerKey::ContractData(LedgerKeyContractData {
+            contract: ScAddress::Contract(ContractId(Hash([0; 32]))),
+            key: ScVal::LedgerKeyContractInstance,
+            durability: ContractDataDurability::Persistent,
+        });
+        let mut buf = Vec::new();
+        let mut l = Limited::new(&mut buf, Limits::none());
+        k.write_xdr(&mut l).unwrap();
+        let key = STANDARD.encode(&buf);
+
+        let params = ExtendFootprintParams {
+            source_account: "GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF".into(),
+            sequence: 2,
+            fee: 100,
+            extend_to: 50_000,
+            footprint_keys: vec![key],
+        };
         let data = realistic_soroban_transaction_data();
         let envelope = build_extend_footprint_tx_with_data(&params, data).unwrap();
         let raw = STANDARD.decode(&envelope).unwrap();
         let mut cursor = std::io::Cursor::new(&raw);
-        let mut l = stellar_xdr::Limited::new(&mut cursor, stellar_xdr::Limits::none());
+        let mut l = Limited::new(&mut cursor, Limits::none());
         let env = TransactionEnvelope::read_xdr(&mut l).unwrap();
         match env {
             TransactionEnvelope::Tx(v1) => match v1.tx.ext {

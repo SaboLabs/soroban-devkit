@@ -19,7 +19,12 @@ sdkt
 │   ├── check <contract-id>   [--abi <wasm>] [--abi-contract <id>] [--format]
 │   ├── analyze <contract-id> [--abi <wasm>] [--abi-contract <id>] [--format]
 │   ├── estimate <wasm-path>  [--format]
+│   ├── read --contract <contract-id> --key-xdr <BASE64_XDR> [--abi <wasm>] [--format]
 │   └── extend --contract <contract-id> --ledgers <N> [--key <xdr>]... [--identity <name>] [--format]
+│
+│   `read` fetches a single ledger entry by its complete `LedgerKey` (base64 XDR).
+│   The instance key is NOT included automatically — supply the full key via --key-xdr.
+│   ABI formatting is optional and applies only to the returned value.
 │
 │   `extend` submits an `ExtendFootprintTtl` transaction. The contract instance
 │   key is always included in the read-only footprint. Additional `--key` values

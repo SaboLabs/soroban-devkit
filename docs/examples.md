@@ -107,6 +107,9 @@ sdkt storage check <CONTRACT_ID> --abi contract.wasm
 sdkt storage analyze <CONTRACT_ID>
 sdkt storage estimate contract.wasm
 
+# Read a contract storage entry by its complete LedgerKey (base64 XDR)
+sdkt storage read --contract <CONTRACT_ID> --key-xdr <BASE64_LEDGER_KEY>
+
 # Extend TTL of the contract instance (and optional extra keys)
 # --ledgers is an ABSOLUTE target ledger (extend_to), not a relative delta.
 # Example: current ledger + 17280 ≈ 17280 additional ledgers (~1 day at 5s/ledger).
