@@ -246,6 +246,26 @@ sdkt deploy --wasm new.wasm --salt <40-HEX-CHARS> --deny-breaking --old-wasm dep
 
 `--salt` is optional. When omitted, a random 20-byte salt is generated automatically.
 
+### Read-only contract call
+
+Invoke a contract function without signing or submitting a transaction.
+Useful for querying state, checking return values, and debugging.
+
+```bash
+# Simple call (no args)
+sdkt call C... balance
+
+# With typed args
+sdkt call C... transfer --args address:G...,u32:100
+
+# JSON output for scripting
+sdkt call C... balance --format json --network-profile testnet
+```
+
+- `--args` accepts typed values: `u32:N`, `u64:N`, `i32:N`, `i64:N`, `bool:true|false`, `string:text`, `address:G...`
+- No identity required — call is read-only via `simulateTransaction`
+- No transaction is signed or submitted
+
 ## CI gating (copy-paste)
 
 Gate a PR on the static audit and a release on upgrade-safety. See

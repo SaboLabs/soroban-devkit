@@ -217,6 +217,12 @@ or git logic is duplicated; the same `compute_dependency_integrity` /
 │   Invalid graphs (unknown/self/duplicate dependency, cycle, duplicate name)
 │   fail fast with a clear error.
 │
+├── call
+│   ├── <CONTRACT_ID>
+│   ├── <FUNCTION>
+│   ├── --args <TYPE:VALUE>...    (e.g. u32:100, address:G..., string:hello)
+│   ├── --format <json|pretty>
+│   └── --network-profile <NAME>
 └── deploy
     ├── --wasm <file>
     ├── --salt <salt>          (optional; auto-generated if omitted)

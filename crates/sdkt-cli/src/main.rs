@@ -531,6 +531,22 @@ enum Commands {
     },
     /// Compile Rust contracts into WASM artifacts
     Build,
+    /// Invoke a contract function (read-only, no signing/submission)
+    Call {
+        /// Stellar contract ID (C...)
+        #[arg(value_name = "CONTRACT_ID")]
+        contract_id: String,
+        /// Function name
+        #[arg(value_name = "FUNCTION")]
+        function: String,
+        /// Typed arguments (e.g. u32:100, address:G..., string:hello, bool:true)
+        #[arg(short, long, value_name = "TYPE:VALUE")]
+        args: Vec<String>,
+        #[arg(short, long, default_value = "pretty")]
+        format: String,
+        #[command(flatten)]
+        net: NetworkArgs,
+    },
     /// Generate or inspect the project lock file (`sdkt.lock`)
     Lock {
         #[command(subcommand)]
@@ -3654,6 +3670,140 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     eprintln!("Error building workspace: {}", e);
                     std::process::exit(1);
                 }
+            }
+        }
+        Commands::Call {
+            contract_id,
+            function,
+            args,
+            format,
+            net,
+        } => {
+            use sdkt_rpc::simulate_transaction;
+            use sdkt_xdr::{scval_to_base64, Address, IntoScVal};
+
+            let fmt = parse_format_str(&format);
+
+            // Resolve network config
+            let network_config = resolve_network_config(
+                net.rpc_url.clone(),
+                net.network_passphrase.clone(),
+                net.network_profile.clone(),
+            )?;
+
+            // Parse typed args into base64-encoded ScVal (reuse existing parser)
+            let mut parsed_args = Vec::new();
+            for a in args.iter() {
+                if let Some((t, v)) = a.split_once(':') {
+                    let b64 = match t.to_lowercase().as_str() {
+                        "u32" => {
+                            let n: u32 = v.parse().map_err(|_| format!("invalid u32: {v}"))?;
+                            scval_to_base64(&n.into_scval()?)?
+                        }
+                        "i32" => {
+                            let n: i32 = v.parse().map_err(|_| format!("invalid i32: {v}"))?;
+                            scval_to_base64(&n.into_scval()?)?
+                        }
+                        "u64" => {
+                            let n: u64 = v.parse().map_err(|_| format!("invalid u64: {v}"))?;
+                            scval_to_base64(&n.into_scval()?)?
+                        }
+                        "i64" => {
+                            let n: i64 = v.parse().map_err(|_| format!("invalid i64: {v}"))?;
+                            scval_to_base64(&n.into_scval()?)?
+                        }
+                        "u128" => {
+                            let n: u128 = v.parse().map_err(|_| format!("invalid u128: {v}"))?;
+                            scval_to_base64(&n.into_scval()?)?
+                        }
+                        "i128" => {
+                            let n: i128 = v.parse().map_err(|_| format!("invalid i128: {v}"))?;
+                            scval_to_base64(&n.into_scval()?)?
+                        }
+                        "bool" => {
+                            let b: bool = v.parse().map_err(|_| format!("invalid bool: {v}"))?;
+                            scval_to_base64(&b.into_scval()?)?
+                        }
+                        "string" => scval_to_base64(&v.into_scval()?)?,
+                        "address" => {
+                            let addr = Address::from_strkey(v)
+                                .map_err(|_| format!("invalid Stellar address: {v}"))?;
+                            scval_to_base64(&addr.into_scval()?)?
+                        }
+                        _ => return Err(format!("unknown arg type '{t}'. Use u32|i32|u64|i64|u128|i128|bool|string|address").into()),
+                    };
+                    parsed_args.push(b64);
+                } else {
+                    return Err(format!(
+                        "invalid arg format '{a}'. Use TYPE:VALUE (e.g. u32:100, address:G...)"
+                    )
+                    .into());
+                }
+            }
+
+            // Read-only: use a zero-fake sequence + arbitrary fee + identity placeholder
+            // This tx will NOT be signed or submitted — only simulated.
+            let params = sdkt_xdr::builder::InvokeTransactionParams {
+                // Use the zero-stroop account as source for read-only sims
+                // Any valid G... address works since we only simulate.
+                source_account: "GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF".into(),
+                sequence: 0,
+                fee: 0,
+                contract_id: contract_id.clone(),
+                function: function.clone(),
+                args: parsed_args,
+            };
+
+            let envelope = sdkt_xdr::builder::build_invoke_transaction(&params)?;
+
+            let client = SorobanRpcClient::from_config(&network_config);
+            match simulate_transaction(&client, &envelope).await {
+                Ok(resp) => {
+                    if let Some(err) = &resp.error {
+                        return Err(format!("simulation error: {err}").into());
+                    }
+
+                    // Extract result from simulation
+                    let result_raw = resp
+                        .results
+                        .first()
+                        .map(|r| r.xdr.clone())
+                        .unwrap_or_default();
+
+                    // Decode if present
+                    let result_display = if result_raw.is_empty() {
+                        "(void)".into()
+                    } else {
+                        result_raw
+                    };
+
+                    // Format events
+                    let events_json: Vec<String> =
+                        resp.events.iter().map(|e| e.to_string()).collect();
+
+                    if fmt == OutputFormat::Json {
+                        println!(
+                            "{}",
+                            serde_json::json!({
+                                "contract": contract_id,
+                                "function": function,
+                                "result": result_display,
+                                "events": events_json,
+                            })
+                        );
+                    } else {
+                        println!("Contract:  {}", contract_id);
+                        println!("Function:  {}", function);
+                        println!("Result:    {}", result_display);
+                        if !events_json.is_empty() {
+                            println!("Events:");
+                            for ev in &events_json {
+                                println!("  {}", ev);
+                            }
+                        }
+                    }
+                }
+                Err(e) => return Err(format!("RPC simulation failed: {e}").into()),
             }
         }
         Commands::Lock { action } => match action {
