@@ -6,9 +6,9 @@ use sdkt_core::{DevKitConfig, NetworkConfig, OutputFormat};
 use sdkt_rpc::inspect::StorageSummary;
 use sdkt_rpc::wasm::get_wasm_bytecode;
 use sdkt_rpc::{
-    estimate_dynamic_fee, get_contract_events, get_ttl_info, get_wasm_metadata, inspect_account,
-    inspect_contract, inspect_transaction, simulate_transaction, SorobanRpcClient, StorageKeyInfo,
-    TtlInfoSummary,
+    estimate_dynamic_fee, extend_footprint, get_contract_events, get_ttl_info, get_wasm_metadata,
+    inspect_account, inspect_contract, inspect_transaction, simulate_transaction, SorobanRpcClient,
+    StorageKeyInfo, TtlInfoSummary,
 };
 use sdkt_storage::WasmCache;
 use sdkt_storage::{NetworkProfile, NetworkStore, StorageAnalyzer};
@@ -919,6 +919,23 @@ enum StorageAction {
         #[arg(short, long, default_value = "pretty")]
         format: String,
     },
+    /// Extend the TTL of a contract's footprint via `ExtendFootprintTtl`.
+    Extend {
+        /// Contract whose storage footprint should have TTL extended.
+        #[arg(long)]
+        contract: String,
+        #[arg(short, long)]
+        ledgers: u32,
+        /// Repeatable: extra ledger keys (base64 XDR or hex XDR) to include in
+        /// the footprint. The contract instance key is always included.
+        #[arg(long, value_name = "KEY")]
+        key: Vec<String>,
+        /// Identity name to sign the extend transaction. Defaults to "default".
+        #[arg(short = 'I', long, default_value = "default")]
+        identity: String,
+        #[arg(short, long, default_value = "pretty")]
+        format: String,
+    },
 }
 
 /// — Contract verification report.
@@ -1543,6 +1560,100 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                         }
                         Err(e) => {
                             eprintln!("Error analyzing storage: {}", e);
+                            process::exit(1);
+                        }
+                    }
+                }
+                StorageAction::Extend {
+                    contract,
+                    ledgers,
+                    key,
+                    identity,
+                    format,
+                } => {
+                    let fmt = parse_format_str(&format);
+
+                    if contract.trim().is_empty() {
+                        eprintln!("Error: --contract / contract id must not be empty");
+                        process::exit(1);
+                    }
+                    if ledgers == 0 {
+                        eprintln!("Error: --ledgers must be greater than 0");
+                        process::exit(1);
+                    }
+                    if let Err(e) = sdkt_rpc::collect_extend_keys(&contract, &key) {
+                        eprintln!("Error: {}", e);
+                        process::exit(1);
+                    }
+
+                    let network_config = resolve_network_config(
+                        net.rpc_url.clone(),
+                        net.network_passphrase.clone(),
+                        net.network_profile.clone(),
+                    )?;
+                    let network = match network_config.passphrase.as_str() {
+                        "Test SDF Network ; September 2015" => sdkt_xdr::sign::Network::Testnet,
+                        "Public Global Stellar Network ; September 2015" => {
+                            sdkt_xdr::sign::Network::Mainnet
+                        }
+                        "Test SDF Future Network ; October 2022" => {
+                            sdkt_xdr::sign::Network::Futurenet
+                        }
+                        other => sdkt_xdr::sign::Network::Custom(other.to_string()),
+                    };
+                    let network_is_explicit = net.rpc_url.is_some()
+                        || net.network_passphrase.is_some()
+                        || net.network_profile.is_some();
+                    if let Err(e) =
+                        sdkt_core::guard_mutating_network(&network_config, network_is_explicit)
+                    {
+                        eprintln!("Error: {}", e);
+                        process::exit(1);
+                    }
+
+                    let identity_store = sdkt_storage::IdentityStore::new()
+                        .map_err(|e| format!("Failed to access identity store: {}", e))?;
+                    let identity_obj = identity_store.get(&identity).map_err(|e| {
+                        format!("Identity '{}' not found: {}", identity, e)
+                    })?;
+                    let signing_key = identity_store
+                        .load_signing_key(&identity)
+                        .map_err(|e| {
+                            format!("Failed to load signing key for '{}': {}", identity, e)
+                        })?;
+                    let signer = sdkt_xdr::sign::Ed25519Signer::from_seed(&signing_key.to_bytes());
+                    let source_account = identity_obj.public_key.clone();
+                    let client = SorobanRpcClient::from_config(&network_config);
+
+                    match extend_footprint(
+                        &client,
+                        &contract,
+                        &key,
+                        ledgers,
+                        &source_account,
+                        &signer,
+                        network,
+                    )
+                    .await
+                    {
+                        Ok(res) => {
+                            if fmt == OutputFormat::Json {
+                                println!("{}", serde_json::to_string(&res)?);
+                            } else {
+                                println!("Storage TTL Extend");
+                                println!("  Contract:       {}", res.contract_id);
+                                println!("  Extend To:      {} (ledger)", res.extend_to);
+                                println!("  Footprint Keys: {}", res.footprint_keys.len());
+                                for (i, k) in res.footprint_keys.iter().enumerate() {
+                                    println!("    #{} {}", i + 1, k);
+                                }
+                                println!("  TX Hash:        {}", res.hash);
+                                println!("  Fee:            {} stroops", res.fee);
+                                println!("  Status:         {}", res.status);
+                            }
+                        }
+                        Err(e) => {
+                            eprintln!("Error extending storage TTL: {}", e);
                             process::exit(1);
                         }
                     }

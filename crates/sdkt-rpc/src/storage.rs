@@ -1,6 +1,7 @@
 use crate::client::SorobanRpcClient;
 use crate::error::RpcError;
 use serde::Serialize;
+use stellar_xdr::SorobanTransactionData;
 
 /// Storage TTL info for a contract.
 #[derive(Debug, Clone, PartialEq, Serialize)]
@@ -89,6 +90,140 @@ pub async fn get_ttl_info(
     })
 }
 
+/// Result of a successful `ExtendFootprintTtl` submission.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct ExtendResult {
+    pub contract_id: String,
+    pub extend_to: u32,
+    pub footprint_keys: Vec<String>,
+    pub hash: String,
+    pub status: String,
+    pub fee: u32,
+}
+
+/// Parse `min_resource_fee` from simulation. Never silently default to zero.
+fn parse_min_resource_fee(raw: &str) -> Result<u32, RpcError> {
+    let parsed: u64 = raw.parse().map_err(|_| {
+        RpcError::Rpc(format!(
+            "simulation returned invalid min_resource_fee: {raw:?}"
+        ))
+    })?;
+    u32::try_from(parsed).map_err(|_| {
+        RpcError::Rpc(format!(
+            "simulation min_resource_fee overflowed u32: {raw}"
+        ))
+    })
+}
+
+/// Merge the contract instance key with extra operator-supplied keys.
+/// Extra keys may be base64 XDR or even-length hex XDR. Duplicates are dropped.
+pub fn collect_extend_keys(
+    contract_id: &str,
+    extra_keys: &[String],
+) -> Result<Vec<String>, RpcError> {
+    let mut keys = vec![instance_ledger_key(contract_id)?];
+    keys.extend(extra_keys.iter().cloned());
+    sdkt_xdr::merge_footprint_keys(&keys)
+        .map_err(|e| RpcError::Rpc(format!("invalid LedgerKey: {e}")))
+}
+
+/// Extend the TTL of known footprint keys via `ExtendFootprintTtl`.
+///
+/// Always includes the contract instance singleton. Additional keys may be
+/// supplied; they are not discovered automatically.
+pub async fn extend_footprint(
+    client: &SorobanRpcClient,
+    contract_id: &str,
+    extra_keys: &[String],
+    extend_to: u32,
+    source_account: &str,
+    signer: &sdkt_xdr::sign::Ed25519Signer,
+    network: sdkt_xdr::sign::Network,
+) -> Result<ExtendResult, RpcError> {
+    if extend_to == 0 {
+        return Err(RpcError::Rpc(
+            "--ledgers / extend_to must be greater than 0".into(),
+        ));
+    }
+
+    let footprint_keys = collect_extend_keys(contract_id, extra_keys)?;
+    let sequence = crate::account::get_next_sequence(client, source_account).await?;
+
+    let sim_params = sdkt_xdr::ExtendFootprintParams {
+        source_account: source_account.to_string(),
+        sequence,
+        fee: 100,
+        extend_to,
+        footprint_keys: footprint_keys.clone(),
+    };
+
+    let initial_envelope = sdkt_xdr::build_extend_footprint_tx(&sim_params)
+        .map_err(|e| RpcError::Rpc(format!("Failed to build extend transaction: {e}")))?;
+
+    let simulation = crate::simulate::simulate_transaction(client, &initial_envelope)
+        .await
+        .map_err(|e| RpcError::Rpc(format!("Extend simulation failed: {e}")))?;
+
+    if let Some(err) = &simulation.error {
+        return Err(RpcError::Rpc(format!("Extend simulation error: {err}")));
+    }
+    if simulation.transaction_data.is_empty() {
+        return Err(RpcError::Rpc(
+            "Simulation did not return SorobanTransactionData".into(),
+        ));
+    }
+
+    let soroban_data: SorobanTransactionData =
+        sdkt_xdr::parse_soroban_transaction_data(&simulation.transaction_data).map_err(|e| {
+            RpcError::Rpc(format!("Failed to parse SorobanTransactionData: {e}"))
+        })?;
+
+    let min_resource_fee = parse_min_resource_fee(&simulation.min_resource_fee)?;
+    let inclusion_fee: u32 = 100;
+    let total_fee = inclusion_fee.saturating_add(min_resource_fee);
+
+    let final_params = sdkt_xdr::ExtendFootprintParams {
+        fee: total_fee,
+        ..sim_params
+    };
+    let final_envelope =
+        sdkt_xdr::build_extend_footprint_tx_with_data(&final_params, soroban_data)
+            .map_err(|e| RpcError::Rpc(format!("Failed to build final extend transaction: {e}")))?;
+
+    let signing_opts = sdkt_xdr::sign::SigningOptions::with(network);
+    let signed_envelope =
+        sdkt_xdr::sign_transaction(&final_envelope, signer, &signing_opts)
+            .map_err(|e| RpcError::Rpc(format!("Failed to sign extend transaction: {e}")))?;
+
+    let submission = crate::submission::submit_and_wait(
+        client,
+        &signed_envelope,
+        true,
+        &crate::submission::PollConfig::default(),
+    )
+    .await?;
+
+    if submission.status != crate::submission::TransactionStatus::Success {
+        let code = submission.error_code.as_deref().unwrap_or("unknown");
+        let diag = submission
+            .error_result_xdr
+            .as_deref()
+            .unwrap_or("");
+        return Err(RpcError::Rpc(format!(
+            "Extend transaction failed: code={code} {diag}"
+        )));
+    }
+
+    Ok(ExtendResult {
+        contract_id: contract_id.to_string(),
+        extend_to,
+        footprint_keys,
+        hash: submission.hash,
+        status: "SUCCESS".into(),
+        fee: total_fee,
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -146,5 +281,87 @@ mod tests {
     fn test_instance_ledger_key_rejects_garbage() {
         // Garbage must error rather than silently yielding an empty/placeholder key.
         assert!(instance_ledger_key("not-a-contract-id").is_err());
+    }
+
+    #[test]
+    fn test_parse_min_resource_fee_valid() {
+        assert_eq!(parse_min_resource_fee("1000").unwrap(), 1000);
+        assert_eq!(parse_min_resource_fee("0").unwrap(), 0);
+    }
+
+    #[test]
+    fn test_parse_min_resource_fee_rejects_invalid() {
+        assert!(parse_min_resource_fee("").is_err());
+        assert!(parse_min_resource_fee("abc").is_err());
+        assert!(parse_min_resource_fee("-1").is_err());
+    }
+
+    #[test]
+    fn test_parse_min_resource_fee_rejects_overflow() {
+        let huge = (u64::from(u32::MAX) + 1).to_string();
+        assert!(parse_min_resource_fee(&huge).is_err());
+    }
+
+    #[test]
+    fn test_collect_extend_keys_includes_instance() {
+        let keys = collect_extend_keys("CAE3U7JKESRWZHPEQ72DVNGOQ6WPA7HSPQZL5YV46NPCE4TMUPAGYMEC", &[]).unwrap();
+        assert_eq!(keys.len(), 1);
+    }
+
+    #[test]
+    fn test_collect_extend_keys_dedupes_instance() {
+        // Supplying the instance key explicitly should not duplicate it.
+        let instance = instance_ledger_key("CAE3U7JKESRWZHPEQ72DVNGOQ6WPA7HSPQZL5YV46NPCE4TMUPAGYMEC").unwrap();
+        let keys = collect_extend_keys(
+            "CAE3U7JKESRWZHPEQ72DVNGOQ6WPA7HSPQZL5YV46NPCE4TMUPAGYMEC",
+            &[instance.clone(), instance],
+        )
+        .unwrap();
+        assert_eq!(keys.len(), 1);
+    }
+
+    #[test]
+    fn test_collect_extend_keys_rejects_invalid_extra() {
+        let result = collect_extend_keys(
+            "CAE3U7JKESRWZHPEQ72DVNGOQ6WPA7HSPQZL5YV46NPCE4TMUPAGYMEC",
+            &["not-a-valid-key".to_string()],
+        );
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_collect_extend_keys_rejects_bad_contract() {
+        assert!(collect_extend_keys("not-a-contract", &[]).is_err());
+    }
+
+    #[test]
+    fn test_extend_result_json_is_valid_and_contains_key_fields() {
+        // Verifies the structured JSON the CLI emits for `--format json`.
+        let result = ExtendResult {
+            contract_id: "CAE3U7JKESRWZHPEQ72DVNGOQ6WPA7HSPQZL5YV46NPCE4TMUPAGYMEC".into(),
+            extend_to: 17280,
+            footprint_keys: vec![
+                "AAAABQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=".into(),
+                "AAAABQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAY=".into(),
+            ],
+            hash: "abc123".into(),
+            status: "SUCCESS".into(),
+            fee: 12345,
+        };
+
+        let json = serde_json::to_string(&result).unwrap();
+        let parsed: serde_json::Value = serde_json::from_str(&json).unwrap();
+
+        assert_eq!(
+            parsed["contract_id"],
+            "CAE3U7JKESRWZHPEQ72DVNGOQ6WPA7HSPQZL5YV46NPCE4TMUPAGYMEC"
+        );
+        assert_eq!(parsed["extend_to"], 17280);
+        assert_eq!(parsed["hash"], "abc123");
+        assert_eq!(parsed["status"], "SUCCESS");
+        assert_eq!(parsed["fee"], 12345);
+
+        let keys = parsed["footprint_keys"].as_array().unwrap();
+        assert_eq!(keys.len(), 2);
     }
 }

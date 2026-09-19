@@ -106,6 +106,11 @@ sdkt inspect <CONTRACT_ID> --abi contract.wasm
 sdkt storage check <CONTRACT_ID> --abi contract.wasm
 sdkt storage analyze <CONTRACT_ID>
 sdkt storage estimate contract.wasm
+
+# Extend TTL of the contract instance (and optional extra keys)
+# --ledgers is an ABSOLUTE target ledger (extend_to), not a relative delta.
+# Example: current ledger + 17280 ≈ 17280 additional ledgers (~1 day at 5s/ledger).
+sdkt storage extend --contract <CONTRACT_ID> --ledgers 17280 --identity my-deployer
 ```
 
 ### Transaction lifecycle

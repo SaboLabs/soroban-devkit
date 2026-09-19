@@ -18,7 +18,13 @@ sdkt
 ├── storage
 │   ├── check <contract-id>   [--abi <wasm>] [--abi-contract <id>] [--format]
 │   ├── analyze <contract-id> [--abi <wasm>] [--abi-contract <id>] [--format]
-│   └── estimate <wasm-path>  [--format]
+│   ├── estimate <wasm-path>  [--format]
+│   └── extend --contract <contract-id> --ledgers <N> [--key <xdr>]... [--identity <name>] [--format]
+│
+│   `extend` submits an `ExtendFootprintTtl` transaction. The contract instance
+│   key is always included in the read-only footprint. Additional `--key` values
+│   (base64 XDR or hex XDR) are merged and de-duplicated. This does NOT discover
+│   all contract storage and does NOT restore archived entries.
 │
 │   `--abi <wasm>` supplies the ABI from a local WASM; `--abi-contract <id>` fetches
 │   the deployed contract's on-chain WASM and uses it as the ABI source
