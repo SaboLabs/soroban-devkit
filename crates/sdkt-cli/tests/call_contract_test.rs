@@ -427,3 +427,187 @@ fn call_does_not_modify_identity_store() {
         );
     }
 }
+
+// =============================================================================
+// ABI-aware contract call tests (Phase 24)
+// =============================================================================
+
+/// Path to a real contractspecv0 WASM fixture with functions that return u32.
+static WASM_WITH_RETURN: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/us_new.wasm");
+
+/// Path to a real contractspecv0 WASM fixture with functions that have no return.
+static WASM_NO_RETURN: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/us_old.wasm");
+
+/// ScVal U32(42) in base64 XDR — result from a simulated call.
+const MOCK_SCVAL_U32_42: &str = "AAAAAwAAACo=";
+
+/// Build a mock simulation response with a valid ScVal XDR result.
+fn mock_call_response_with_result(scval_b64: &str) -> String {
+    format!(
+        "{{\"jsonrpc\":\"2.0\",\"id\":1,\"result\":{{\"results\":[{{\"xdr\":\"{scval_b64}\",\"auth\":[]}}],\"latestLedger\":\"12345\",\"events\":[]}}}}"
+    )
+}
+
+/// Mock server that returns a simulation result with the given ScVal XDR.
+fn mock_call_server_with_result(scval_b64: &str) -> String {
+    mock_http_server(
+        "HTTP/1.1 200 OK\r\n",
+        &mock_call_response_with_result(scval_b64),
+    )
+}
+
+#[test]
+fn call_with_abi_decodes_scalar_result() {
+    let dir = tempdir().unwrap();
+    let rpc_url = mock_call_server_with_result(MOCK_SCVAL_U32_42);
+    add_mock_profile(dir.path(), &rpc_url);
+
+    sdkt_isolated(dir.path())
+        .args([
+            "call",
+            VALID_CONTRACT,
+            "hello",
+            "--network-profile",
+            "mocknet",
+            "--abi",
+            WASM_WITH_RETURN,
+        ])
+        .assert()
+        .success()
+        .stdout(predicates::str::contains("u32(42)"));
+}
+
+#[test]
+fn call_with_abi_json_output() {
+    let dir = tempdir().unwrap();
+    let rpc_url = mock_call_server_with_result(MOCK_SCVAL_U32_42);
+    add_mock_profile(dir.path(), &rpc_url);
+
+    let output = sdkt_isolated(dir.path())
+        .args([
+            "call",
+            VALID_CONTRACT,
+            "hello",
+            "--network-profile",
+            "mocknet",
+            "--abi",
+            WASM_WITH_RETURN,
+            "--format",
+            "json",
+        ])
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "Failed: stdout={} stderr={}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let parsed: serde_json::Value = serde_json::from_str(&stdout)
+        .unwrap_or_else(|e| panic!("Invalid JSON: {}\nOutput: {}", e, stdout));
+
+    assert!(parsed.get("result").is_some(), "Missing result");
+    assert!(parsed.get("decoded").is_some(), "Missing decoded field");
+    assert_eq!(parsed["decoded"]["label"], "u32(42)");
+}
+
+#[test]
+fn call_without_abi_preserves_raw_result() {
+    let dir = tempdir().unwrap();
+    let rpc_url = mock_http_server("HTTP/1.1 200 OK\r\n", MOCK_SIM_OK);
+    add_mock_profile(dir.path(), &rpc_url);
+
+    sdkt_isolated(dir.path())
+        .args([
+            "call",
+            VALID_CONTRACT,
+            "balance",
+            "--network-profile",
+            "mocknet",
+        ])
+        .assert()
+        .success()
+        .stdout(predicates::str::contains("AAAAAQ=="));
+}
+
+#[test]
+fn call_with_abi_function_not_found_warns() {
+    let dir = tempdir().unwrap();
+    let rpc_url = mock_call_server_with_result(MOCK_SCVAL_U32_42);
+    add_mock_profile(dir.path(), &rpc_url);
+
+    let output = sdkt_isolated(dir.path())
+        .args([
+            "call",
+            VALID_CONTRACT,
+            "nonexistent_function",
+            "--network-profile",
+            "mocknet",
+            "--abi",
+            WASM_WITH_RETURN,
+        ])
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "Call should succeed even when function not in ABI"
+    );
+
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("not found") || stderr.contains("warning"),
+        "Expected warning about function not found, got: {}",
+        stderr
+    );
+}
+
+#[test]
+fn call_with_abi_invalid_wasm_fails() {
+    let dir = tempdir().unwrap();
+    let rpc_url = mock_call_server_with_result(MOCK_SCVAL_U32_42);
+    add_mock_profile(dir.path(), &rpc_url);
+
+    let invalid_wasm = dir.path().join("invalid.wasm");
+    std::fs::write(&invalid_wasm, b"not a wasm file").unwrap();
+
+    sdkt_isolated(dir.path())
+        .args([
+            "call",
+            VALID_CONTRACT,
+            "hello",
+            "--network-profile",
+            "mocknet",
+            "--abi",
+            invalid_wasm.to_str().unwrap(),
+        ])
+        .assert()
+        .failure()
+        .stderr(predicates::str::contains("Failed to parse ABI"));
+}
+
+#[test]
+fn call_with_abi_void_return() {
+    let dir = tempdir().unwrap();
+    let rpc_url = mock_http_server("HTTP/1.1 200 OK\r\n", MOCK_SIM_OK);
+    add_mock_profile(dir.path(), &rpc_url);
+
+    // us_old.wasm functions have empty outputs (void)
+    sdkt_isolated(dir.path())
+        .args([
+            "call",
+            VALID_CONTRACT,
+            "transfer",
+            "--network-profile",
+            "mocknet",
+            "--abi",
+            WASM_NO_RETURN,
+            "--args",
+            "address:GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF",
+        ])
+        .assert()
+        .success();
+}

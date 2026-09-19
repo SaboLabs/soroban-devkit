@@ -260,7 +260,7 @@ See [`docs/plugin-authoring.md`](docs/plugin-authoring.md) for how to build or u
 | `sdkt tx build` | Typed envelope builder. |
 | `sdkt events <contract-id>` | Emitted-contract event explorer (`--abi <wasm>`). |
 | `sdkt account <address>` | Account balances + signers (Horizon-enriched). |
-| `sdkt call <contract> <function> [--args TYPE:VALUE...]` | Read-only contract invocation. No signing, no submission. Returns result + events. |
+| `sdkt call <contract> <function> [--args TYPE:VALUE...]` | Read-only contract invocation. No signing, no submission. Returns result + events. `--abi <wasm>` decodes the result via the contract spec. |
 | `sdkt diff` | Offline comparison of WASM binaries and API surfaces. |
 | `sdkt diff --old-wasm <A> --new-wasm <B>` | Offline ABI/function/event/type diff of two WASM files. Add `--upgrade-safety` for a breaking-change verdict. |
 | `sdkt build` | Compile workspace rust contracts into optimized WASMs. |

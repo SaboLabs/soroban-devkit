@@ -221,6 +221,8 @@ or git logic is duplicated; the same `compute_dependency_integrity` /
 │   ├── <CONTRACT_ID>
 │   ├── <FUNCTION>
 │   ├── --args <TYPE:VALUE>...    (e.g. u32:100, address:G..., string:hello)
+│   ├── --abi <wasm>          (ABI-aware result decoding from a local WASM;
+│   │                            without it the raw base64 XDR result is shown)
 │   ├── --format <json|pretty>
 │   └── --network-profile <NAME>
 └── deploy

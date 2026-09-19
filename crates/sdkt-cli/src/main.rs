@@ -544,6 +544,9 @@ enum Commands {
         args: Vec<String>,
         #[arg(short, long, default_value = "pretty")]
         format: String,
+        /// Path to contract WASM for ABI-aware result decoding
+        #[arg(long, value_name = "WASM")]
+        abi: Option<String>,
         #[command(flatten)]
         net: NetworkArgs,
     },
@@ -3677,10 +3680,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             function,
             args,
             format,
+            abi,
             net,
         } => {
             use sdkt_rpc::simulate_transaction;
-            use sdkt_xdr::{scval_to_base64, Address, IntoScVal};
+            use sdkt_xdr::{scval_from_base64, scval_to_base64, Address, IntoScVal};
 
             let fmt = parse_format_str(&format);
 
@@ -3744,8 +3748,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             // Read-only: use a zero-fake sequence + arbitrary fee + identity placeholder
             // This tx will NOT be signed or submitted — only simulated.
             let params = sdkt_xdr::builder::InvokeTransactionParams {
-                // Use the zero-stroop account as source for read-only sims
-                // Any valid G... address works since we only simulate.
                 source_account: "GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF".into(),
                 sequence: 0,
                 fee: 0,
@@ -3763,18 +3765,50 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                         return Err(format!("simulation error: {err}").into());
                     }
 
-                    // Extract result from simulation
+                    // Extract raw result from simulation
                     let result_raw = resp
                         .results
                         .first()
                         .map(|r| r.xdr.clone())
                         .unwrap_or_default();
 
-                    // Decode if present
-                    let result_display = if result_raw.is_empty() {
-                        "(void)".into()
+                    // Load ABI spec if --abi was provided
+                    let abi_spec = if let Some(wasm_path) = &abi {
+                        let wasm_bytes = std::fs::read(wasm_path)
+                            .map_err(|e| format!("Failed to read WASM: {e}"))?;
+                        match sdkt_wasm::parse_contract_spec(&wasm_bytes) {
+                            Ok(spec) => Some(spec),
+                            Err(e) => return Err(format!("Failed to parse ABI: {e}").into()),
+                        }
                     } else {
-                        result_raw
+                        None
+                    };
+
+                    // Decode result with ABI if available
+                    let (result_display, result_decoded) = if result_raw.is_empty() {
+                        ("(void)".into(), None)
+                    } else if let Some(spec) = &abi_spec {
+                        // Parse ScVal from base64 XDR
+                        match scval_from_base64(&result_raw) {
+                            Some(scval) => {
+                                // Find the function in the spec
+                                let func = spec.functions.iter().find(|f| f.name == function);
+                                if func.is_none() {
+                                    eprintln!("warning: function '{function}' not found in ABI — showing raw result");
+                                }
+                                let decoded =
+                                    sdkt_xdr::abi_decode::decode_with_abi(spec, &scval, None);
+                                (decoded.label.clone(), Some(decoded))
+                            }
+                            None => {
+                                eprintln!(
+                                    "warning: could not parse result ScVal — showing raw result"
+                                );
+                                (result_raw.clone(), None)
+                            }
+                        }
+                    } else {
+                        (result_raw.clone(), None)
                     };
 
                     // Format events
@@ -3782,19 +3816,32 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                         resp.events.iter().map(|e| e.to_string()).collect();
 
                     if fmt == OutputFormat::Json {
-                        println!(
-                            "{}",
-                            serde_json::json!({
-                                "contract": contract_id,
-                                "function": function,
-                                "result": result_display,
-                                "events": events_json,
-                            })
-                        );
+                        // Build JSON: always include raw result
+                        let mut json_obj = serde_json::json!({
+                            "contract": contract_id,
+                            "function": function,
+                            "result": result_display,
+                            "events": events_json,
+                        });
+
+                        // If ABI was used and decoding succeeded, include decoded info
+                        if let Some(decoded) = &result_decoded {
+                            json_obj["result_raw"] = serde_json::json!(result_raw);
+                            json_obj["decoded"] = serde_json::json!({
+                                "raw": decoded.raw,
+                                "label": decoded.label,
+                                "matched_type": decoded.matched_type,
+                                "fields": decoded.fields,
+                            });
+                        }
+
+                        println!("{}", serde_json::to_string(&json_obj)?);
                     } else {
+                        // Pretty output
                         println!("Contract:  {}", contract_id);
                         println!("Function:  {}", function);
                         println!("Result:    {}", result_display);
+
                         if !events_json.is_empty() {
                             println!("Events:");
                             for ev in &events_json {
