@@ -91,7 +91,8 @@ sdkt
 │   ├── list
 │   ├── show <name>
 │   ├── delete <name>
-│   └── default <name>
+│   ├── default <name>
+│   └── fund <name>           [--network-profile <NAME>] [--format pretty|json]
 │
 ├── init <name>              [--minimal] [--force] [--format]
 

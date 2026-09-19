@@ -562,12 +562,32 @@ enum Commands {
 
 #[derive(Subcommand)]
 enum IdentityAction {
-    Generate { name: String },
-    Import { name: String, secret: String },
+    Generate {
+        name: String,
+    },
+    Import {
+        name: String,
+        secret: String,
+    },
     List,
-    Show { name: String },
-    Delete { name: String },
-    Default { name: String },
+    Show {
+        name: String,
+    },
+    Delete {
+        name: String,
+    },
+    Default {
+        name: String,
+    },
+    /// Fund an identity via the Stellar Testnet Friendbot.
+    Fund {
+        name: String,
+        /// Network profile name (must have a Friendbot URL configured).
+        #[arg(long)]
+        network_profile: String,
+        #[arg(short, long, default_value = "pretty")]
+        format: String,
+    },
 }
 
 #[derive(Subcommand)]
@@ -3303,6 +3323,45 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 IdentityAction::Default { name } => {
                     store.set_default(&name)?;
                     println!("Identity '{}' set as default.", name);
+                }
+                IdentityAction::Fund {
+                    name,
+                    network_profile,
+                    format,
+                } => {
+                    let fmt = parse_format_str(&format);
+                    let identity = store
+                        .get(&name)
+                        .map_err(|e| format!("Identity '{}' not found: {}", name, e))?;
+
+                    let net_store = NetworkStore::new()
+                        .map_err(|e| format!("Failed to access network store: {}", e))?;
+                    let profile = net_store.get(&network_profile).map_err(|e| {
+                        format!("Network profile '{}' not found: {}", network_profile, e)
+                    })?;
+
+                    let friendbot_url = profile.friendbot_url.clone().ok_or_else(|| {
+                        format!("Network profile '{}' has no Friendbot URL. Use 'sdkt network add --friendbot <url>' first.", network_profile)
+                    })?;
+
+                    match sdkt_rpc::fund_account(&friendbot_url, &identity.public_key).await {
+                        Ok(res) => {
+                            if fmt == OutputFormat::Json {
+                                println!("{}", serde_json::to_string(&res)?);
+                            } else {
+                                println!("Identity Funded via Friendbot");
+                                println!("  Identity:   {}", name);
+                                println!("  Address:    {}", res.address);
+                                println!("  Network:    {}", network_profile);
+                                println!("  Endpoint:   {}", friendbot_url);
+                                println!("  Status:     {}", res.status);
+                            }
+                        }
+                        Err(e) => {
+                            eprintln!("Error funding identity: {}", e);
+                            process::exit(1);
+                        }
+                    }
                 }
             }
         }

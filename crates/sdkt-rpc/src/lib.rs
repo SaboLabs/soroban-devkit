@@ -25,6 +25,7 @@ pub use account::{
     get_next_sequence, inspect_account, AccountBalance, AccountInspection, AccountSigner,
 };
 pub use client::SorobanRpcClient;
+pub use client::{fund_account, FundResult};
 pub use deploy::{
     deploy_contract, format_json, format_pretty, DeployOutcome, DeployResult, PartialDeployResult,
 };

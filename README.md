@@ -208,8 +208,10 @@ sdkt network add testnet \
   --friendbot https://friendbot.stellar.org
 
 # 5. Fund your identity (Testnet only)
-#    Visit https://friendbot.stellar.org and paste your public key from:
-sdkt identity show my-deployer
+#    Copy the public key from `sdkt identity show my-deployer` and paste it at:
+#    https://friendbot.stellar.org
+#    OR use the CLI directly:
+sdkt identity fund my-deployer --network-profile testnet
 
 # 6. Generate a 20-byte salt (40 hex characters)
 openssl rand -hex 20
@@ -269,6 +271,7 @@ See [`docs/plugin-authoring.md`](docs/plugin-authoring.md) for how to build or u
 | `sdkt wasm cache` | Manage the WASM cache (`info` / `remove` / `clear`). |
 || `sdkt audit <path.rs>` | Static security analysis (AUTH-001/002/003/004, MOVE-001). `--disable <RULE_ID>` to skip a rule. `--rules <path|id>` (repeatable) to load external rule paths or resolve installed plugin IDs. |
 | `sdkt identity <generate\|import\|list\|show\|delete\|default>` | ED25519 keystore management. |
+| `sdkt identity fund <name> --network-profile <NAME>` | Fund an identity via Stellar Testnet Friendbot. |
 | `sdkt network <add\|list\|show\|remove>` | Named network profiles (RPC URL + passphrase). Combine with `--network-profile <NAME>` on any RPC command to avoid repeating endpoints; `--rpc-url` / `--network-passphrase` override. |
 || `sdkt init <name>` | Scaffold a new Soroban project (`--minimal`, `--force`). |
 | `sdkt lock generate` | Write `sdkt.lock` recording each built artifact's SHA-256 + deploy order (after `sdkt build`). |

@@ -186,6 +186,30 @@ sdkt network remove testnet
 sdkt network show testnet --format json
 ```
 
+### Fund an identity (Testnet only)
+
+Friendbot is a Testnet-only faucet — it does not exist on Mainnet. The network
+profile you pass must carry an explicit `friendbot_url`. `sdkt identity fund`
+removes the manual step of copying your public key and pasting it into a Friendbot
+UI or making a raw `curl` call.
+
+```bash
+# Generate a local signing identity (offline)
+sdkt identity generate my-deployer
+
+# Fund it via Friendbot using a profile that has --friendbot set
+sdkt identity fund my-deployer --network-profile testnet
+
+# JSON output for scripting
+sdkt identity fund my-deployer --network-profile testnet --format json
+```
+
+- Requires `--network-profile <NAME>` to be passed explicitly.
+- The profile **must** have a friendbot URL (set via `sdkt network add --friendbot <url>`).
+- If the profile has no Friendbot URL, the command fails with a clear error.
+- HTTP 429 (rate limit) is reported explicitly — wait and retry.
+- HTTP 5xx and malformed responses surface as errors.
+
 ### Using a profile with RPC commands
 
 Once a profile exists, reference it from any RPC command instead of repeating
