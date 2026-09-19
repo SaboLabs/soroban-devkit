@@ -219,7 +219,7 @@ or git logic is duplicated; the same `compute_dependency_integrity` /
 │
 └── deploy
     ├── --wasm <file>
-    ├── --salt <salt>
+    ├── --salt <salt>          (optional; auto-generated if omitted)
     ├── --format <json|pretty>
     ├── --deny-breaking        (abort if not backwards-compatible)
     └── --old-wasm <deployed>  (baseline, required by --deny-breaking)

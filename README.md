@@ -311,16 +311,15 @@ sdkt network add testnet \
 #    https://friendbot.stellar.org
 #    (Friendbot is a Testnet faucet — it does NOT work on Mainnet.)
 
-# 5. Generate a 20-byte salt (40 hex characters)
-#    This salt controls the derived contract address.
-openssl rand -hex 20
-
-# 6. Deploy
+# 5. Deploy (salt is auto-generated if omitted)
 sdkt deploy \
   --wasm target/wasm32-unknown-unknown/release/<project>.wasm \
-  --salt <paste-hex-from-step-5> \
   --identity my-deployer \
   --network-profile testnet
+
+# Or with explicit salt for deterministic address:
+# openssl rand -hex 20
+# sdkt deploy --wasm ... --salt <40-hex-chars> --identity my-deployer --network-profile testnet
 ```
 
 Replace `<project>` with your crate name (the `name` field in `Cargo.toml`).
@@ -330,9 +329,9 @@ directory differs.
 
 #### Options
 - `--wasm` (required): Path to a compiled Soroban WASM (32kb+ after `stellar contract build`).
-- `--salt` (required): 40-character hex string (20 bytes). It salts the contract
+- `--salt` (optional): 40-character hex string (20 bytes). Auto-generated if omitted. It salts the contract
   ID derivation so the same deployer + WASM + salt always yields the same contract
-  address across networks.
+  address across networks. Provide explicitly for deterministic/reproducible deployment.
 - `--identity <name>`: ED25519 identity from `sdkt identity` used to sign both
   transactions (upload + instantiate). Defaults to `default`.
 - `--format <pretty|json>`: Output format (default `pretty`).
@@ -466,7 +465,7 @@ The lock file (`sdkt.lock`) records each dependency's source, git URL,
 requested reference, and resolved commit SHA (when available), so fetches are
 reproducible. Local path deps remain unchanged in the lock.
 
-| `sdkt deploy --wasm <file> --salt <salt>` | Upload WASM + instantiate (see [Deploy a single contract](#deploy-a-single-contract) below). Add `--deny-breaking --old-wasm <deployed.wasm>` to abort on a non-backwards-compatible upgrade. |
+| `sdkt deploy --wasm <file> [--salt <salt>]` | Upload WASM + instantiate. Salt is auto-generated if omitted (see [Deploy a single contract](#deploy-a-single-contract) below). Add `--deny-breaking --old-wasm <deployed.wasm>` to abort on a non-backwards-compatible upgrade. |
 ### Network profiles
 
 Save an RPC endpoint once and reference it from any RPC command instead of

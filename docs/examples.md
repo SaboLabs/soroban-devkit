@@ -234,10 +234,17 @@ Commands without these flags behave exactly as before.
 ### Deploy
 
 ```bash
-sdkt deploy --wasm contract.wasm --salt <SALT>
+# Auto-generate salt (simplest)
+sdkt deploy --wasm contract.wasm
+
+# Explicit salt for deterministic address
+sdkt deploy --wasm contract.wasm --salt <40-HEX-CHARS>
+
 # Abort if the upgrade is not backwards-compatible:
-sdkt deploy --wasm new.wasm --salt <SALT> --deny-breaking --old-wasm deployed.wasm
+sdkt deploy --wasm new.wasm --salt <40-HEX-CHARS> --deny-breaking --old-wasm deployed.wasm
 ```
+
+`--salt` is optional. When omitted, a random 20-byte salt is generated automatically.
 
 ## CI gating (copy-paste)
 

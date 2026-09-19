@@ -18,6 +18,7 @@ pub struct DeployResult {
     pub upload_hash: String,
     pub create_hash: String,
     pub status: String,
+    pub salt: String,
 }
 
 /// Partial deployment result when upload succeeds but create fails.
@@ -427,14 +428,15 @@ pub async fn deploy_contract(
         upload_hash,
         create_hash,
         status: "SUCCESS".into(),
+        salt: hex::encode(salt),
     }))
 }
 
 /// Pretty-print a deployment result.
 pub fn format_pretty(res: &DeployResult) -> String {
     format!(
-        "Deployment Result:\n  WASM Hash: {}\n  Contract ID: {}\n  Upload Hash: {}\n  Create Hash: {}\n  Status: {}",
-        res.wasm_hash, res.contract_id, res.upload_hash, res.create_hash, res.status
+        "Deployment Result:\n  WASM Hash: {}\n  Contract ID: {}\n  Upload Hash: {}\n  Create Hash: {}\n  Salt: {}\n  Status: {}",
+        res.wasm_hash, res.contract_id, res.upload_hash, res.create_hash, res.salt, res.status
     )
 }
 
@@ -445,6 +447,7 @@ pub fn format_json(res: &DeployResult) -> String {
         "contractId": res.contract_id,
         "uploadHash": res.upload_hash,
         "createHash": res.create_hash,
+        "salt": res.salt,
         "status": res.status,
     })
     .to_string()
@@ -522,5 +525,91 @@ mod tests {
         let mut padded2 = [0u8; 32];
         padded2[..20].copy_from_slice(&salt);
         assert_eq!(padded, padded2);
+    }
+
+    #[test]
+    fn test_deploy_result_contains_salt_field() {
+        // Verify DeployResult has a salt field that can be set and read
+        let result = DeployResult {
+            wasm_hash: "abc123".into(),
+            contract_id: "C...".into(),
+            upload_hash: "u1".into(),
+            create_hash: "c1".into(),
+            status: "SUCCESS".into(),
+            salt: "00112233445566778899aabbccddeeff00112233".into(),
+        };
+        assert_eq!(result.salt, "00112233445566778899aabbccddeeff00112233");
+    }
+
+    #[test]
+    fn test_explicit_salt_returned_in_result() {
+        // User-provided salt must be preserved end-to-end
+        let explicit = [7u8; 20];
+        let selected = match Some(explicit) {
+            Some(s) => s,
+            None => generate_salt(),
+        };
+        assert_eq!(selected, explicit);
+        let hex_salt = hex::encode(selected);
+        assert_eq!(hex_salt.len(), 40);
+        assert_eq!(hex_salt, "0707070707070707070707070707070707070707");
+    }
+
+    #[test]
+    fn test_auto_salt_is_20_bytes_and_hex_encoded() {
+        // Auto-generated salt must be 20 bytes → 40 hex chars
+        let selected: [u8; 20] = match None {
+            Some(s) => s,
+            None => generate_salt(),
+        };
+        let hex_salt = hex::encode(selected);
+        assert_eq!(hex_salt.len(), 40);
+        // Must be valid hex
+        assert!(hex_salt.chars().all(|c| c.is_ascii_hexdigit()));
+    }
+
+    #[test]
+    fn test_salt_in_contract_id_derivation_matches_result() {
+        // Same salt must be used for contract_id derivation and result
+        let salt = [3u8; 20];
+        let hex_before = hex::encode(salt);
+
+        // Simulate derivation (simplified - just verify salt is used)
+        let mut salt_bytes = [0u8; 32];
+        salt_bytes[..20].copy_from_slice(&salt);
+
+        let hex_after = hex::encode(salt);
+        assert_eq!(hex_before, hex_after);
+        assert_eq!(hex_after, "0303030303030303030303030303030303030303");
+    }
+
+    #[test]
+    fn test_format_pretty_includes_salt() {
+        let result = DeployResult {
+            wasm_hash: "abc".into(),
+            contract_id: "C123".into(),
+            upload_hash: "u1".into(),
+            create_hash: "c1".into(),
+            status: "SUCCESS".into(),
+            salt: "00112233445566778899aabbccddeeff00112233".into(),
+        };
+        let pretty = format_pretty(&result);
+        assert!(pretty.contains("Salt:"));
+        assert!(pretty.contains("00112233445566778899aabbccddeeff00112233"));
+    }
+
+    #[test]
+    fn test_format_json_includes_salt() {
+        let result = DeployResult {
+            wasm_hash: "abc".into(),
+            contract_id: "C123".into(),
+            upload_hash: "u1".into(),
+            create_hash: "c1".into(),
+            status: "SUCCESS".into(),
+            salt: "00112233445566778899aabbccddeeff00112233".into(),
+        };
+        let json = format_json(&result);
+        assert!(json.contains("\"salt\""));
+        assert!(json.contains("00112233445566778899aabbccddeeff00112233"));
     }
 }

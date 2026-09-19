@@ -511,8 +511,9 @@ enum Commands {
     Deploy {
         #[arg(short, long)]
         wasm: String,
+        /// Deployment salt (40 hex chars = 20 bytes). Auto-generated if omitted.
         #[arg(short, long)]
-        salt: String,
+        salt: Option<String>,
         #[arg(short, long, default_value = "pretty")]
         format: String,
         /// Identity name to sign deployment transactions
@@ -3545,8 +3546,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 std::process::exit(1);
             }
 
-            // Parse and validate salt BEFORE identity lookup (fail fast on bad input)
-            let salt_bytes = parse_salt_hex(&salt)?;
+            // Parse and validate salt (if provided) BEFORE identity lookup (fail fast on bad input)
+            let salt_bytes = salt.as_ref().map(|s| parse_salt_hex(s)).transpose()?;
 
             // Optional deploy guard: abort on a backwards-incompatible upgrade.
             if deny_breaking {
@@ -3603,7 +3604,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 &source_account,
                 &signer,
                 network,
-                Some(salt_bytes),
+                salt_bytes,
             )
             .await
             {
