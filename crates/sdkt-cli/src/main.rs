@@ -1528,8 +1528,35 @@ async fn run_upgrade_safety(
     Ok(())
 }
 
-#[tokio::main]
-async fn main() -> Result<(), Box<dyn std::error::Error>> {
+fn main() -> Result<(), Box<dyn std::error::Error>> {
+    // Windows debug builds overflow the default 1 MB main-thread stack
+    // (introduced by the invoke command's deeper async call chain). Unix
+    // platforms default to 8 MB, so only Windows users hit this. Run the
+    // runtime on an explicitly sized thread so all platforms use the same
+    // effective stack size. The runtime is created inside the spawned thread
+    // so the CLI's async execution actually occurs on the larger stack.
+    let result = std::thread::Builder::new()
+        .stack_size(8 * 1024 * 1024)
+        .spawn(|| {
+            let rt = tokio::runtime::Builder::new_multi_thread()
+                .enable_all()
+                .build()
+                .expect("failed to build Tokio runtime");
+
+            // The boxed error is not `Send`, so string-ify it inside the
+            // thread and rebuild a `Send` error on this side.
+            match rt.block_on(async_main()) {
+                Ok(()) => Ok(()),
+                Err(e) => Err(e.to_string()),
+            }
+        })?
+        .join()
+        .map_err(|_| "main thread panicked".to_string())?;
+
+    result.map_err(|e| -> Box<dyn std::error::Error> { e.into() })
+}
+
+async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
     let cli = Cli::parse();
 
     match cli.command {
