@@ -550,6 +550,27 @@ enum Commands {
         #[command(flatten)]
         net: NetworkArgs,
     },
+    /// Invoke a contract function with a signed, submitted transaction
+    /// (state-changing end-to-end: sequence → simulate → sign → submit → poll)
+    Invoke {
+        /// Stellar contract ID (C...)
+        #[arg(value_name = "CONTRACT_ID")]
+        contract_id: String,
+        /// Function name
+        #[arg(value_name = "FUNCTION")]
+        function: String,
+        /// Typed arguments (e.g. u32:100, address:G..., string:hello, bool:true)
+        #[arg(short, long, value_name = "TYPE:VALUE")]
+        args: Vec<String>,
+        /// Identity name whose account signs and pays for the invocation
+        #[arg(short = 'I', long, default_value = "default")]
+        identity: String,
+        /// Output format (pretty or json)
+        #[arg(short, long, default_value = "pretty")]
+        format: String,
+        #[command(flatten)]
+        net: NetworkArgs,
+    },
     /// Generate or inspect the project lock file (`sdkt.lock`)
     Lock {
         #[command(subcommand)]
@@ -1271,6 +1292,97 @@ fn parse_format_str(s: &str) -> OutputFormat {
             process::exit(1);
         }
     }
+}
+
+/// Shared typed-argument parser used by `call`, `tx build`, and `invoke`.
+///
+/// Accepts `TYPE:VALUE` pairs (u32|i32|u64|i64|u128|i128|bool|string|bytes|
+/// address) and returns base64-encoded `ScVal` strings ready for
+/// `InvokeTransactionParams::args`. Values without a recognized `TYPE:` prefix
+/// are passed through as-is (assumed pre-encoded base64 ScVal), matching the
+/// historical `tx build` behavior.
+fn parse_typed_args(args: &[String], strict: bool) -> Result<Vec<String>, String> {
+    use sdkt_xdr::{scval_to_base64, Address, IntoScVal};
+    let mut parsed = Vec::new();
+    for a in args.iter() {
+        if let Some((t, v)) = a.split_once(':') {
+            let b64 = match t.to_lowercase().as_str() {
+                "u32" => {
+                    let n: u32 = v.parse().map_err(|_| format!("invalid u32 value: {v}"))?;
+                    scval_to_base64(&n.into_scval().map_err(|e| e.to_string())?)
+                        .map_err(|e| e.to_string())?
+                }
+                "i32" => {
+                    let n: i32 = v.parse().map_err(|_| format!("invalid i32 value: {v}"))?;
+                    scval_to_base64(&n.into_scval().map_err(|e| e.to_string())?)
+                        .map_err(|e| e.to_string())?
+                }
+                "u64" => {
+                    let n: u64 = v.parse().map_err(|_| format!("invalid u64 value: {v}"))?;
+                    scval_to_base64(&n.into_scval().map_err(|e| e.to_string())?)
+                        .map_err(|e| e.to_string())?
+                }
+                "i64" => {
+                    let n: i64 = v.parse().map_err(|_| format!("invalid i64 value: {v}"))?;
+                    scval_to_base64(&n.into_scval().map_err(|e| e.to_string())?)
+                        .map_err(|e| e.to_string())?
+                }
+                "u128" => {
+                    let n: u128 = v.parse().map_err(|_| format!("invalid u128 value: {v}"))?;
+                    scval_to_base64(&n.into_scval().map_err(|e| e.to_string())?)
+                        .map_err(|e| e.to_string())?
+                }
+                "i128" => {
+                    let n: i128 = v.parse().map_err(|_| format!("invalid i128 value: {v}"))?;
+                    scval_to_base64(&n.into_scval().map_err(|e| e.to_string())?)
+                        .map_err(|e| e.to_string())?
+                }
+                "bool" => {
+                    let b: bool = v.parse().map_err(|_| format!("invalid bool value: {v}"))?;
+                    scval_to_base64(&b.into_scval().map_err(|e| e.to_string())?)
+                        .map_err(|e| e.to_string())?
+                }
+                "string" => scval_to_base64(&v.into_scval().map_err(|e| e.to_string())?)
+                    .map_err(|e| e.to_string())?,
+                "bytes" => {
+                    let mut b = Vec::new();
+                    let s = v.trim();
+                    if s.len() % 2 != 0 {
+                        return Err(format!("invalid hex byte in: {v}"));
+                    }
+                    for i in (0..s.len()).step_by(2) {
+                        let byte = u8::from_str_radix(&s[i..i + 2], 16)
+                            .map_err(|_| format!("invalid hex byte in: {v}"))?;
+                        b.push(byte);
+                    }
+                    scval_to_base64(&b.into_scval().map_err(|e| e.to_string())?)
+                        .map_err(|e| e.to_string())?
+                }
+                "address" => {
+                    let addr = Address::from_strkey(v)
+                        .map_err(|_| format!("invalid Stellar address: {v}"))?;
+                    scval_to_base64(&addr.into_scval().map_err(|e| e.to_string())?)
+                        .map_err(|e| e.to_string())?
+                }
+                _ => {
+                    if strict {
+                        return Err(format!(
+                            "unknown arg type '{t}'. Use u32|i32|u64|i64|u128|i128|bool|string|bytes|address"
+                        ));
+                    }
+                    a.clone() // passthrough: pre-encoded base64 ScVal
+                }
+            };
+            parsed.push(b64);
+        } else if strict {
+            return Err(format!(
+                "invalid arg format '{a}'. Use TYPE:VALUE (e.g. u32:100, address:G...)"
+            ));
+        } else {
+            parsed.push(a.clone());
+        }
+    }
+    Ok(parsed)
 }
 
 /// Load `.sdkt.toml` from the current directory.
@@ -2379,69 +2491,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     }
                 }
 
-                let mut parsed_args = Vec::new();
-                for a in arg.iter() {
-                    if let Some((t, v)) = a.split_once(':') {
-                        use sdkt_xdr::{scval_to_base64, Address, IntoScVal};
-                        let b64 = match t.to_lowercase().as_str() {
-                            "u32" => {
-                                let n: u32 =
-                                    v.parse().map_err(|_| format!("invalid u32 value: {v}"))?;
-                                scval_to_base64(&n.into_scval()?)?
-                            }
-                            "i32" => {
-                                let n: i32 =
-                                    v.parse().map_err(|_| format!("invalid i32 value: {v}"))?;
-                                scval_to_base64(&n.into_scval()?)?
-                            }
-                            "u64" => {
-                                let n: u64 =
-                                    v.parse().map_err(|_| format!("invalid u64 value: {v}"))?;
-                                scval_to_base64(&n.into_scval()?)?
-                            }
-                            "i64" => {
-                                let n: i64 =
-                                    v.parse().map_err(|_| format!("invalid i64 value: {v}"))?;
-                                scval_to_base64(&n.into_scval()?)?
-                            }
-                            "u128" => {
-                                let n: u128 =
-                                    v.parse().map_err(|_| format!("invalid u128 value: {v}"))?;
-                                scval_to_base64(&n.into_scval()?)?
-                            }
-                            "i128" => {
-                                let n: i128 =
-                                    v.parse().map_err(|_| format!("invalid i128 value: {v}"))?;
-                                scval_to_base64(&n.into_scval()?)?
-                            }
-                            "bool" => {
-                                let b: bool =
-                                    v.parse().map_err(|_| format!("invalid bool value: {v}"))?;
-                                scval_to_base64(&b.into_scval()?)?
-                            }
-                            "string" => scval_to_base64(&v.into_scval()?)?,
-                            "bytes" => {
-                                let mut b = Vec::new();
-                                let s = v.trim();
-                                for i in (0..s.len()).step_by(2) {
-                                    let byte = u8::from_str_radix(&s[i..i + 2], 16)
-                                        .map_err(|_| format!("invalid hex byte in: {v}"))?;
-                                    b.push(byte);
-                                }
-                                scval_to_base64(&b.into_scval()?)?
-                            }
-                            "address" => {
-                                let addr = Address::from_strkey(v)
-                                    .map_err(|_| format!("invalid Stellar address: {v}"))?;
-                                scval_to_base64(&addr.into_scval()?)?
-                            }
-                            _ => a.clone(), // Unknown type fallback to direct base64
-                        };
-                        parsed_args.push(b64);
-                    } else {
-                        parsed_args.push(a.clone());
-                    }
-                }
+                let parsed_args = parse_typed_args(&arg, false)?;
 
                 let params = InvokeTransactionParams {
                     source_account,
@@ -3748,7 +3798,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             net,
         } => {
             use sdkt_rpc::simulate_transaction;
-            use sdkt_xdr::{scval_from_base64, scval_to_base64, Address, IntoScVal};
+            use sdkt_xdr::scval_from_base64;
 
             let fmt = parse_format_str(&format);
 
@@ -3760,54 +3810,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             )?;
 
             // Parse typed args into base64-encoded ScVal (reuse existing parser)
-            let mut parsed_args = Vec::new();
-            for a in args.iter() {
-                if let Some((t, v)) = a.split_once(':') {
-                    let b64 = match t.to_lowercase().as_str() {
-                        "u32" => {
-                            let n: u32 = v.parse().map_err(|_| format!("invalid u32: {v}"))?;
-                            scval_to_base64(&n.into_scval()?)?
-                        }
-                        "i32" => {
-                            let n: i32 = v.parse().map_err(|_| format!("invalid i32: {v}"))?;
-                            scval_to_base64(&n.into_scval()?)?
-                        }
-                        "u64" => {
-                            let n: u64 = v.parse().map_err(|_| format!("invalid u64: {v}"))?;
-                            scval_to_base64(&n.into_scval()?)?
-                        }
-                        "i64" => {
-                            let n: i64 = v.parse().map_err(|_| format!("invalid i64: {v}"))?;
-                            scval_to_base64(&n.into_scval()?)?
-                        }
-                        "u128" => {
-                            let n: u128 = v.parse().map_err(|_| format!("invalid u128: {v}"))?;
-                            scval_to_base64(&n.into_scval()?)?
-                        }
-                        "i128" => {
-                            let n: i128 = v.parse().map_err(|_| format!("invalid i128: {v}"))?;
-                            scval_to_base64(&n.into_scval()?)?
-                        }
-                        "bool" => {
-                            let b: bool = v.parse().map_err(|_| format!("invalid bool: {v}"))?;
-                            scval_to_base64(&b.into_scval()?)?
-                        }
-                        "string" => scval_to_base64(&v.into_scval()?)?,
-                        "address" => {
-                            let addr = Address::from_strkey(v)
-                                .map_err(|_| format!("invalid Stellar address: {v}"))?;
-                            scval_to_base64(&addr.into_scval()?)?
-                        }
-                        _ => return Err(format!("unknown arg type '{t}'. Use u32|i32|u64|i64|u128|i128|bool|string|address").into()),
-                    };
-                    parsed_args.push(b64);
-                } else {
-                    return Err(format!(
-                        "invalid arg format '{a}'. Use TYPE:VALUE (e.g. u32:100, address:G...)"
-                    )
-                    .into());
-                }
-            }
+            let parsed_args = parse_typed_args(&args, true)?;
 
             // Read-only: use a zero-fake sequence + arbitrary fee + identity placeholder
             // This tx will NOT be signed or submitted — only simulated.
@@ -3915,6 +3918,108 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     }
                 }
                 Err(e) => return Err(format!("RPC simulation failed: {e}").into()),
+            }
+        }
+        Commands::Invoke {
+            contract_id,
+            function,
+            args,
+            identity,
+            format,
+            net,
+        } => {
+            let fmt = parse_format_str(&format);
+
+            // 1. Resolve network (mutating operation → mainnet safety guard).
+            let network_config = resolve_network_config(
+                net.rpc_url.clone(),
+                net.network_passphrase.clone(),
+                net.network_profile.clone(),
+            )?;
+            let network_is_explicit =
+                network_is_explicit(&net.rpc_url, &net.network_passphrase, &net.network_profile);
+            if let Err(e) = sdkt_core::guard_mutating_network(&network_config, network_is_explicit)
+            {
+                eprintln!("Error: {}", e);
+                process::exit(1);
+            }
+            let network = match network_config.passphrase.as_str() {
+                "Public Global Stellar Network ; September 2015" => Network::Mainnet,
+                "Test SDF Future Network ; October 2022" => Network::Futurenet,
+                other => Network::Custom(other.to_string()),
+            };
+
+            // 2. Load the signing identity (keystore; no secret on argv).
+            let identity_store = sdkt_storage::IdentityStore::new()
+                .map_err(|e| format!("Failed to access identity store: {e}"))?;
+            let identity_obj = identity_store
+                .get(&identity)
+                .map_err(|e| format!("Identity '{}' not found: {e}", identity))?;
+            let signing_key = identity_store
+                .load_signing_key(&identity)
+                .map_err(|e| format!("Failed to load signing key for '{}': {e}", identity))?;
+            let signer = Ed25519Signer::from_seed(&signing_key.to_bytes());
+
+            // 3. Parse typed args (shared parser; strict — typos must not be
+            //    silently treated as pre-encoded ScVal on a state-changing path).
+            let parsed_args = parse_typed_args(&args, true)?;
+
+            let params = InvokeTransactionParams {
+                source_account: identity_obj.public_key.clone(),
+                sequence: 0, // fetched by invoke_contract from the network
+                fee: 0,      // computed from simulation inside invoke_contract
+                contract_id: contract_id.clone(),
+                function: function.clone(),
+                args: parsed_args,
+            };
+
+            let client = SorobanRpcClient::from_config(&network_config);
+            let poll = sdkt_rpc::PollConfig::default();
+
+            match sdkt_rpc::invoke_contract(&client, &params, &signer, network, &poll).await {
+                Ok(res) => {
+                    if fmt == OutputFormat::Json {
+                        println!(
+                            "{}",
+                            serde_json::json!({
+                                "hash": res.hash,
+                                "status": res.status,
+                                "contractId": res.contract_id,
+                                "function": res.function,
+                                "fee": res.fee,
+                                "resultXdr": res.result_xdr,
+                                "errorCode": res.error_code,
+                                "diagnosticEvents": res.diagnostic_events,
+                            })
+                        );
+                    } else {
+                        println!("Invocation Result:");
+                        println!("  Contract: {}", res.contract_id);
+                        println!("  Function: {}", res.function);
+                        println!("  Hash:     {}", res.hash);
+                        println!("  Status:   {}", res.status);
+                        println!("  Fee:      {} stroops", res.fee);
+                        if let Some(ledger) = &res.result_xdr {
+                            println!("  Result XDR: {}", ledger);
+                        }
+                        if let Some(code) = &res.error_code {
+                            println!("  Error:    {}", code);
+                        }
+                        if let Some(xdr) = &res.error_result_xdr {
+                            println!("  Error Result XDR: {}", xdr);
+                        }
+                        for ev in &res.diagnostic_events {
+                            println!("  Diagnostic: {}", ev);
+                        }
+                    }
+                    if res.status != "SUCCESS" {
+                        process::exit(1);
+                    }
+                }
+                Err(e) => {
+                    eprintln!("Error invoking contract: {}", e);
+                    process::exit(1);
+                }
             }
         }
         Commands::Lock { action } => match action {

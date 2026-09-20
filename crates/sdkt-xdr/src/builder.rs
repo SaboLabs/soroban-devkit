@@ -20,6 +20,7 @@ use stellar_xdr::{
 };
 
 /// Parameters for building a basic contract invocation transaction.
+#[derive(Debug, Clone)]
 pub struct InvokeTransactionParams {
     /// Source account public key (G...)
     pub source_account: String,
@@ -116,6 +117,78 @@ pub fn build_invoke_transaction(params: &InvokeTransactionParams) -> Result<Stri
     let envelope = TransactionEnvelope::Tx(TransactionV1Envelope {
         tx,
         signatures: VecM::default(), // No signatures applied yet
+    });
+
+    let mut buf = Vec::new();
+    let mut l = stellar_xdr::Limited::new(&mut buf, stellar_xdr::Limits::none());
+    envelope.write_xdr(&mut l).map_err(DecodeError::XdrWrite)?;
+
+    Ok(STANDARD.encode(&buf))
+}
+
+/// Builds a final contract-invocation envelope with `SorobanTransactionData`
+/// (ext V1 — required by the network for host-function transactions) and
+/// authorization entries returned by simulation. Sign after this.
+pub fn build_invoke_transaction_with_data(
+    params: &InvokeTransactionParams,
+    soroban_data: SorobanTransactionData,
+    auth_entries: Vec<SorobanAuthorizationEntry>,
+) -> Result<String, DecodeError> {
+    let source_account = decode_account_id(&params.source_account)?;
+    let contract_hash = decode_contract_id(&params.contract_id)?;
+
+    let mut scval_args = Vec::new();
+    for arg_b64 in &params.args {
+        let raw = STANDARD.decode(arg_b64)?;
+        let mut cursor = std::io::Cursor::new(&raw);
+        let mut l = stellar_xdr::Limited::new(&mut cursor, stellar_xdr::Limits::none());
+        let val = stellar_xdr::ScVal::read_xdr(&mut l)
+            .map_err(|e| DecodeError::XdrParse("ScVal arg".into(), e))?;
+        scval_args.push(val);
+    }
+    let args_vec = VecM::try_from(scval_args)
+        .map_err(|_| DecodeError::Extraction("Too many arguments".into()))?;
+
+    let function_name = ScSymbol(
+        params
+            .function
+            .as_bytes()
+            .try_into()
+            .map_err(|_| DecodeError::Extraction("Function name too long".into()))?,
+    );
+
+    let auth_vec_m = VecM::try_from(auth_entries)
+        .map_err(|_| DecodeError::Extraction("Too many auth entries".into()))?;
+
+    let invoke_op = InvokeHostFunctionOp {
+        host_function: HostFunction::InvokeContract(InvokeContractArgs {
+            contract_address: ScAddress::Contract(ContractId(contract_hash)),
+            function_name,
+            args: args_vec,
+        }),
+        auth: auth_vec_m,
+    };
+
+    let op = Operation {
+        source_account: None,
+        body: OperationBody::InvokeHostFunction(invoke_op),
+    };
+
+    let tx = Transaction {
+        source_account: MuxedAccount::Ed25519(match source_account.0 {
+            PublicKey::PublicKeyTypeEd25519(u) => u,
+        }),
+        fee: params.fee,
+        seq_num: SequenceNumber(params.sequence),
+        cond: Preconditions::None,
+        memo: Memo::None,
+        operations: VecM::try_from(vec![op]).unwrap(),
+        ext: TransactionExt::V1(soroban_data),
+    };
+
+    let envelope = TransactionEnvelope::Tx(TransactionV1Envelope {
+        tx,
+        signatures: VecM::default(),
     });
 
     let mut buf = Vec::new();

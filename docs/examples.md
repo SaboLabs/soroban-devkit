@@ -276,6 +276,35 @@ sdkt call C... balance --abi /path/to/contract.wasm --format json --network-prof
 - No identity required — call is read-only via `simulateTransaction`
 - No transaction is signed or submitted
 
+### State-changing invoke
+
+Run the full transaction lifecycle in one command: sequence fetch →
+simulation → final envelope build → signing → submission → polling.
+
+```bash
+# Invoke with a local identity (signs + pays fees)
+sdkt invoke C... increment --args u32:1 --identity alice --network-profile testnet
+
+# JSON output for scripting
+sdkt invoke C... set_admin --args address:G... --identity alice --format json --network-profile testnet
+```
+
+- `--args` uses the same `TYPE:VALUE` syntax as `call`, but is strict: an
+  unknown type or a missing `TYPE:` prefix is an error (no base64 passthrough).
+- `--identity` names a keystore identity (`sdkt identity generate`); the secret
+  key never touches the command line.
+- The fee is computed from the simulation (`minResourceFee` + 100 stroops
+  inclusion fee); the footprint and auth entries come from the same simulation.
+- Output shows the transaction hash, final status, fee, and result XDR.
+  Exit code is non-zero when the transaction fails or is rejected.
+- Relation to `tx build/sign/submit`: `invoke` is the one-command equivalent of
+  `tx build` (with a real sequence + simulated fees) → `tx sign` →
+  `tx submit --wait`. Use the `tx` subcommands when you need to inspect or
+  modify the envelope between steps; use `invoke` for the common straight path.
+- Limitations (core implementation): single-operation only, no ABI-aware
+  result decoding of the return value, no `--fee` override, no dry-run flag.
+  A live Testnet smoke test is documented here but NOT exercised in CI.
+
 ## CI gating (copy-paste)
 
 Gate a PR on the static audit and a release on upgrade-safety. See

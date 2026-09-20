@@ -35,6 +35,21 @@ sdkt
 │   the deployed contract's on-chain WASM and uses it as the ABI source
 │   for storage decoding. The two flags are mutually exclusive.
 │
+├── invoke <CONTRACT_ID> <FUNCTION>
+│   ├── --args <TYPE:VALUE>...    (same typed-args as `call` / `tx build`;
+│   │                            strict: unknown types are rejected)
+│   ├── --identity <name>        (signs and pays; default: "default")
+│   ├── --format <json|pretty>
+│   └── --network-profile <NAME> / --rpc-url <URL> / --network-passphrase <P>
+│
+│   State-changing end-to-end flow in one command:
+│     fetch account sequence → simulate → build final envelope (authoritative
+│     footprint + fees + auth entries from simulation) → sign with the local
+│     identity → submit → poll until settled. Exit code 0 only on SUCCESS.
+│   Result decoding is limited to the transaction-level `TransactionResult`
+│   XDR (no ABI-aware result decode yet). Inherits the mainnet safety guard
+│   (see below). Live Testnet smoke test is documented but NOT exercised in CI.
+│
 ├── tx
 │   ├── inspect <hash>        [--format]
 │   ├── validate <xdr>        [--format] (offline parse + structural checks)
@@ -305,7 +320,7 @@ Store root precedence (lowest → highest): `<cwd>/.sdkt/plugins`,
 - `--format json` is supported on all read-style commands and on `diff`, `audit`, `deploy`, `init` for scripting / CI.
 - `diff --upgrade-safety` and `deploy --deny-breaking` implement the Upgrade Safety Guard (see `ROADMAP.md`).
 - `audit` implements the static-analysis rules (AUTH-001/002/003/004, MOVE-001).
-- **Mainnet safety.** Mutating commands (`tx submit`, `deploy`, `project deploy`) refuse to target mainnet unless you explicitly select the network — via `--network-profile`, `--rpc-url`, or `--network-passphrase`. A testnet-default passphrase pointed at a mainnet endpoint is rejected before any request is sent, protecting against signing for the wrong network.
+- **Mainnet safety.** Mutating commands (`tx submit`, `invoke`, `deploy`, `project deploy`) refuse to target mainnet unless you explicitly select the network — via `--network-profile`, `--rpc-url`, or `--network-passphrase`. A testnet-default passphrase pointed at a mainnet endpoint is rejected before any request is sent, protecting against signing for the wrong network.
 
 ## Error Handling
 

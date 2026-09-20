@@ -57,6 +57,8 @@ Most commands are **offline**; only on-chain reads (`inspect`, `storage`, `tx`, 
 | Named network profiles | `sdkt network` |
 | Project scaffolding | `sdkt init` |
 | Deploy (with `--deny-breaking` guard) | `sdkt deploy` |
+| Contract invocation (read-only) | `sdkt call` |
+| Contract invocation (state-changing, end-to-end) | `sdkt invoke` |
 
 ## Quick Start
 
@@ -222,6 +224,9 @@ sdkt deploy \
   --salt <paste-hex-from-step-6> \
   --identity my-deployer \
   --network-profile testnet
+
+# 8. Invoke a contract function (state-changing: sequence → simulate → sign → submit → poll)
+sdkt invoke <CONTRACT_ID> increment --args u32:1 --identity my-deployer --network-profile testnet
 ```
 
 For a detailed explanation of each step, see [Deploy a single contract](#deploy-a-single-contract).
