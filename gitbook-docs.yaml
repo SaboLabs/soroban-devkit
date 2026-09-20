@@ -1,0 +1,12 @@
+$schema: https://api.gitbook.com/gitbook-docs.yaml
+site:
+  title: Soroban DevKit
+  structure:
+    - type: space
+      key: docs
+      title: Documentation
+      path: docs
+      default: true
+      content:
+        directory: ./docs
+        language: en
