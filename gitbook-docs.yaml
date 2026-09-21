@@ -6,12 +6,12 @@ site:
       key: section-introduction
       title: Introduction
       path: introduction
-      default: true
       children:
         - type: space
           key: space-introduction
           title: Soroban DevKit
           path: introduction
+          default: true
           content:
             directory: ./docs/introduction
             language: en
@@ -24,6 +24,7 @@ site:
           key: space-getting-started
           title: Getting Started
           path: getting-started
+          default: true
           content:
             directory: ./docs/getting-started
             language: en
@@ -36,6 +37,7 @@ site:
           key: space-reference
           title: CLI Reference
           path: reference
+          default: true
           content:
             directory: ./docs/reference
             language: en
@@ -48,6 +50,7 @@ site:
           key: space-plugins
           title: Plugins
           path: plugins
+          default: true
           content:
             directory: ./docs/plugins
             language: en
@@ -60,6 +63,7 @@ site:
           key: space-compatibility
           title: Compatibility & CI
           path: compatibility
+          default: true
           content:
             directory: ./docs/compatibility
             language: en
@@ -72,6 +76,7 @@ site:
           key: space-advanced
           title: Advanced
           path: advanced
+          default: true
           content:
             directory: ./docs/advanced
             language: en
@@ -84,6 +89,7 @@ site:
           key: space-releases
           title: Releases
           path: releases
+          default: true
           content:
             directory: ./docs/releases
             language: en
