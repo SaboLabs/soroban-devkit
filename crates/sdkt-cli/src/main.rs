@@ -599,6 +599,15 @@ enum Commands {
         #[arg(value_enum)]
         shell: Shell,
     },
+    /// Run diagnostic checks on the sdkt environment and project
+    Doctor {
+        /// Output format (pretty or json)
+        #[arg(short, long, default_value = "pretty")]
+        format: String,
+        /// Shorthand for --format json (machine-readable output)
+        #[arg(long, conflicts_with = "format")]
+        json: bool,
+    },
 }
 
 #[derive(Subcommand)]
@@ -1554,6 +1563,250 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .map_err(|_| "main thread panicked".to_string())?;
 
     result.map_err(|e| -> Box<dyn std::error::Error> { e.into() })
+}
+
+// — `sdkt doctor`: baseline environment/project diagnostics.
+//
+// Core scope only: runtime, toolchain, project/config validity, and clear
+// handling of non-project directories. Network/identity/plugin checks are
+// intentionally out of scope for the doctor core.
+
+/// Severity of a single diagnostic check result.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
+#[serde(rename_all = "snake_case")]
+enum CheckStatus {
+    Ok,
+    Warning,
+    Error,
+}
+
+/// One diagnostic check result: stable ID, status, message, optional fix hint.
+#[derive(Debug, Clone, serde::Serialize)]
+struct DoctorCheck {
+    /// Stable machine-readable identifier (e.g. `runtime-version`).
+    id: &'static str,
+    status: CheckStatus,
+    /// Human-readable one-line summary. Never contains secret material.
+    message: String,
+    /// Optional remediation hint shown only when status is not Ok.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    remediation: Option<String>,
+}
+
+impl DoctorCheck {
+    fn ok(id: &'static str, message: impl Into<String>) -> Self {
+        Self {
+            id,
+            status: CheckStatus::Ok,
+            message: message.into(),
+            remediation: None,
+        }
+    }
+    fn warn(id: &'static str, message: impl Into<String>, remediation: impl Into<String>) -> Self {
+        Self {
+            id,
+            status: CheckStatus::Warning,
+            message: message.into(),
+            remediation: Some(remediation.into()),
+        }
+    }
+    fn err(id: &'static str, message: impl Into<String>, remediation: impl Into<String>) -> Self {
+        Self {
+            id,
+            status: CheckStatus::Error,
+            message: message.into(),
+            remediation: Some(remediation.into()),
+        }
+    }
+}
+
+/// Aggregate doctor report.
+#[derive(Debug, serde::Serialize)]
+struct DoctorReport {
+    checks: Vec<DoctorCheck>,
+    /// true when no check has status Error (warnings allowed).
+    healthy: bool,
+}
+
+impl DoctorReport {
+    fn from_checks(checks: Vec<DoctorCheck>) -> Self {
+        let healthy = checks.iter().all(|c| c.status != CheckStatus::Error);
+        Self { checks, healthy }
+    }
+}
+
+/// Look for a runnable program on PATH (name only; no output capture).
+fn command_on_path(program: &str) -> bool {
+    let path_var = std::env::var_os("PATH").unwrap_or_default();
+    std::env::split_paths(&path_var)
+        .map(|dir| dir.join(program))
+        .find(|p| p.is_file())
+        .is_some()
+}
+
+/// Detect the Rust WASM build target via `rustup target list --installed`
+/// (offline, no compilation). Falls back to `false` when rustup is absent.
+fn wasm_target_installed() -> Option<bool> {
+    let output = std::process::Command::new("rustup")
+        .args(["target", "list", "--installed"])
+        .output()
+        .ok()?;
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    Some(
+        stdout
+            .lines()
+            .any(|l| l.trim() == "wasm32-unknown-unknown" || l.trim() == "wasm32v1-none"),
+    )
+}
+
+/// Collect baseline diagnostic checks. Purely offline and side-effect free.
+fn collect_doctor_checks() -> Vec<DoctorCheck> {
+    let mut checks = Vec::new();
+
+    // 1. sdkt runtime availability (running means installed; report version).
+    checks.push(DoctorCheck::ok(
+        "sdkt-runtime",
+        format!("sdkt {} is running", env!("CARGO_PKG_VERSION")),
+    ));
+
+    // 2. Rust/Cargo availability — required for `sdkt build` / source installs.
+    let cargo = command_on_path("cargo");
+    let rustc = command_on_path("rustc");
+    if cargo && rustc {
+        checks.push(DoctorCheck::ok(
+            "rust-toolchain",
+            "cargo and rustc found on PATH",
+        ));
+    } else {
+        let missing = match (cargo, rustc) {
+            (false, false) => "cargo and rustc are both missing".to_string(),
+            (false, _) => "cargo is missing".to_string(),
+            (_, false) => "rustc is missing".to_string(),
+            _ => unreachable!(),
+        };
+        checks.push(DoctorCheck::warn(
+            "rust-toolchain",
+            format!("{missing} — `sdkt build` and source installs will not work"),
+            "Install Rust via rustup: https://rustup.rs (prebuilt-release users can ignore this warning)",
+        ));
+    }
+
+    // 3. WASM build target availability — required for `sdkt build`.
+    if !cargo {
+        checks.push(DoctorCheck::warn(
+            "wasm-target",
+            "skipped: cargo/rustup not available",
+            "Install Rust first; then run `rustup target add wasm32-unknown-unknown`",
+        ));
+    } else {
+        match wasm_target_installed() {
+            Some(true) => {
+                checks.push(DoctorCheck::ok(
+                    "wasm-target",
+                    "a WASM build target is installed",
+                ));
+            }
+            Some(false) => {
+                checks.push(DoctorCheck::err(
+                    "wasm-target",
+                    "no WASM build target installed — `sdkt build` will fail",
+                    "Run: rustup target add wasm32-unknown-unknown",
+                ));
+            }
+            None => {
+                checks.push(DoctorCheck::warn(
+                    "wasm-target",
+                    "could not verify WASM target (rustup not available or not managing the toolchain)",
+                    "Verify with: rustup target list --installed",
+                ));
+            }
+        }
+    }
+
+    // 4. Project/config validity — only when a `.sdkt.toml` is present.
+    let config_path = std::path::Path::new(".sdkt.toml");
+    if !config_path.exists() {
+        checks.push(DoctorCheck::warn(
+            "project-config",
+            "no .sdkt.toml in the current directory (not inside an sdkt project)",
+            "Run `sdkt init <name>` to create a project, or cd into one",
+        ));
+    } else {
+        match DevKitConfig::from_file(config_path) {
+            Ok(config) => {
+                // Reuse the shared project graph resolver as the validity oracle.
+                match sdkt_core::project::validate_project(&config) {
+                    Ok(()) => {
+                        checks.push(DoctorCheck::ok(
+                            "project-config",
+                            format!(
+                                ".sdkt.toml is valid ({} contract(s) configured)",
+                                config.contracts.len()
+                            ),
+                        ));
+                    }
+                    Err(e) => {
+                        checks.push(DoctorCheck::err(
+                            "project-config",
+                            format!(".sdkt.toml is invalid: {e}"),
+                            "Fix the [contracts] dependency graph errors reported above",
+                        ));
+                    }
+                }
+            }
+            Err(e) => {
+                checks.push(DoctorCheck::err(
+                    "project-config",
+                    format!(".sdkt.toml failed to parse: {e}"),
+                    "Fix the TOML syntax errors reported above",
+                ));
+            }
+        }
+    }
+
+    checks
+}
+
+/// Pretty-print the doctor report (human-readable output).
+fn print_doctor_pretty(report: &DoctorReport) {
+    println!("sdkt doctor");
+    println!("===========");
+    for check in &report.checks {
+        let icon = match check.status {
+            CheckStatus::Ok => "✓",
+            CheckStatus::Warning => "!",
+            CheckStatus::Error => "✗",
+        };
+        println!("  [{icon}] {}: {}", check.id, check.message);
+        if let Some(rem) = &check.remediation {
+            println!("        fix: {rem}");
+        }
+    }
+    println!();
+    if report.healthy {
+        println!("Result: HEALTHY (no errors; warnings are non-fatal)");
+    } else {
+        println!("Result: UNHEALTHY (one or more checks failed)");
+    }
+}
+
+/// Execute `sdkt doctor`. Exit code: 0 healthy/warnings, 1 any error.
+fn run_doctor(fmt: OutputFormat) {
+    let report = DoctorReport::from_checks(collect_doctor_checks());
+    match fmt {
+        OutputFormat::Json => {
+            // Machine-readable; contains no secret material by construction —
+            // messages are built from fixed strings + version/counts only.
+            println!(
+                "{}",
+                serde_json::to_string_pretty(&report).expect("doctor report serializes")
+            );
+        }
+        OutputFormat::Pretty => print_doctor_pretty(&report),
+    }
+    if !report.healthy {
+        process::exit(1);
+    }
 }
 
 async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
@@ -4868,6 +5121,14 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
             // success instead of letting clap_complete panic on it.
             let mut out = BrokenPipeOk(std::io::stdout());
             clap_complete::generate(shell, &mut cmd, "sdkt", &mut out);
+        }
+        Commands::Doctor { format, json } => {
+            let fmt = if json {
+                OutputFormat::Json
+            } else {
+                parse_format_str(&format)
+            };
+            run_doctor(fmt);
         }
     }
 

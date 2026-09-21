@@ -290,6 +290,32 @@ Pipe the output to a file your shell reads at startup (see the README
 "Shell completions" section for per-shell install paths). Tab-completion then
 covers commands, subcommands, and flag names.
 
+## Doctor
+
+`sdkt doctor` runs baseline diagnostic checks on the sdkt environment and the
+current project. It is fully offline and safe to run anywhere.
+
+```bash
+sdkt doctor              # human-readable output
+sdkt doctor --json      # machine-readable output
+```
+
+Checks included in the core:
+
+| Check | ID | Meaning |
+|-------|----|---------|
+| sdkt runtime | `sdkt-runtime` | confirms the binary is running and reports its version |
+| Rust toolchain | `rust-toolchain` | verifies `cargo` and `rustc` are on `PATH` |
+| WASM build target | `wasm-target` | verifies a Soroban WASM target is installed via `rustup` |
+| Project config | `project-config` | validates `.sdkt.toml` and the `[contracts]` dependency graph when inside a project |
+
+Exit codes:
+
+- `0` — all checks passed, or only warnings (non-fatal)
+- `1` — at least one check failed (e.g. invalid config, missing WASM target)
+
+Warnings are never fatal. The JSON output contains no secret material.
+
 ## Plugin management
 
 A **local, offline-first** plugin store. All operations are local;
