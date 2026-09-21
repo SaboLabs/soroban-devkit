@@ -1635,28 +1635,44 @@ impl DoctorReport {
     }
 }
 
+/// Pure executable lookup: true when `program` — or `program.exe`, the
+/// Windows naming — exists as a file in any PATH entry. Checking the `.exe`
+/// form on every platform is harmless (those files never exist as bare names
+/// elsewhere) and keeps discovery correct on Windows without cfg hacks.
+fn path_contains_command(path_var: &std::ffi::OsStr, program: &str) -> bool {
+    std::env::split_paths(path_var)
+        .any(|dir| dir.join(program).is_file() || dir.join(format!("{program}.exe")).is_file())
+}
+
 /// Look for a runnable program on PATH (name only; no output capture).
 fn command_on_path(program: &str) -> bool {
-    let path_var = std::env::var_os("PATH").unwrap_or_default();
-    std::env::split_paths(&path_var)
-        .map(|dir| dir.join(program))
-        .find(|p| p.is_file())
-        .is_some()
+    path_contains_command(&std::env::var_os("PATH").unwrap_or_default(), program)
+}
+
+/// True when `installed` (the line-separated output of
+/// `rustup target list --installed`) contains a WASM target that `sdkt build`
+/// can compile contracts with. The build engine hardcodes
+/// `wasm32-unknown-unknown` (see `sdkt_core::build`); `wasm32v1-none` is the
+/// modern equivalent used by current soroban-sdk toolchains. `wasm32-wasip1`
+/// is a plugin/playground target, NOT a contract build target, so it must not
+/// count.
+fn wasm_target_present(installed: &str) -> bool {
+    installed.lines().any(|l| {
+        let t = l.trim();
+        t == "wasm32-unknown-unknown" || t == "wasm32v1-none"
+    })
 }
 
 /// Detect the Rust WASM build target via `rustup target list --installed`
-/// (offline, no compilation). Falls back to `false` when rustup is absent.
+/// (offline, no compilation). Returns None when rustup cannot be executed.
 fn wasm_target_installed() -> Option<bool> {
     let output = std::process::Command::new("rustup")
         .args(["target", "list", "--installed"])
         .output()
         .ok()?;
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    Some(
-        stdout
-            .lines()
-            .any(|l| l.trim() == "wasm32-unknown-unknown" || l.trim() == "wasm32v1-none"),
-    )
+    Some(wasm_target_present(&String::from_utf8_lossy(
+        &output.stdout,
+    )))
 }
 
 /// Collect baseline diagnostic checks. Purely offline and side-effect free.
@@ -5133,6 +5149,144 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
     }
 
     Ok(())
+}
+
+#[cfg(test)]
+mod doctor_unit_tests {
+    use super::*;
+    use std::ffi::OsString;
+
+    // ── wasm_target_present: project contract-build target oracle ──
+
+    #[test]
+    fn wasm_target_accepts_unknown_unknown() {
+        assert!(wasm_target_present("wasm32-unknown-unknown\n"));
+        assert!(wasm_target_present(
+            "x86_64-unknown-linux-gnu\nwasm32-unknown-unknown\n"
+        ));
+    }
+
+    #[test]
+    fn wasm_target_accepts_v1_none() {
+        assert!(wasm_target_present("wasm32v1-none\n"));
+    }
+
+    #[test]
+    fn wasm_target_rejects_only_wasip1() {
+        // CI installs only wasm32-wasip1 (plugin/playground target). It is
+        // NOT a contract build target — sdkt build hardcodes
+        // wasm32-unknown-unknown — so the check must not be satisfied by it.
+        assert!(!wasm_target_present("wasm32-wasip1\n"));
+    }
+
+    #[test]
+    fn wasm_target_rejects_empty_and_unrelated() {
+        assert!(!wasm_target_present(""));
+        assert!(!wasm_target_present(
+            "x86_64-unknown-linux-gnu\naarch64-apple-darwin\n"
+        ));
+    }
+
+    #[test]
+    fn wasm_target_handles_missing_trailing_newline() {
+        assert!(wasm_target_present("wasm32-unknown-unknown"));
+        assert!(wasm_target_present("  wasm32v1-none  \n"));
+    }
+
+    // ── path_contains_command: Windows-safe executable discovery ──
+
+    fn with_path(dir: &std::path::Path) -> OsString {
+        std::env::join_paths([dir.to_path_buf()]).unwrap()
+    }
+
+    #[test]
+    fn path_finds_bare_executable() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        fs::write(tmp.path().join("cargo"), b"").unwrap();
+        assert!(path_contains_command(&with_path(tmp.path()), "cargo"));
+    }
+
+    #[test]
+    fn path_finds_exe_suffixed_executable() {
+        // Windows exposes cargo.exe / rustc.exe on PATH. Discovery must try
+        // the .exe form so doctor does not falsely report the toolchain as
+        // missing on Windows.
+        let tmp = tempfile::TempDir::new().unwrap();
+        fs::write(tmp.path().join("cargo.exe"), b"").unwrap();
+        assert!(path_contains_command(&with_path(tmp.path()), "cargo"));
+    }
+
+    #[test]
+    fn path_finds_rustc_exe() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        fs::write(tmp.path().join("rustc.exe"), b"").unwrap();
+        assert!(path_contains_command(&with_path(tmp.path()), "rustc"));
+    }
+
+    #[test]
+    fn path_rejects_missing_command() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        assert!(!path_contains_command(&with_path(tmp.path()), "cargo"));
+        assert!(!path_contains_command(&with_path(tmp.path()), "rustc"));
+    }
+
+    #[test]
+    fn path_rejects_directory_named_like_command() {
+        // A directory named "cargo" on PATH is not an executable.
+        let tmp = tempfile::TempDir::new().unwrap();
+        fs::create_dir(tmp.path().join("cargo")).unwrap();
+        assert!(!path_contains_command(&with_path(tmp.path()), "cargo"));
+    }
+
+    #[test]
+    fn path_rejects_unrelated_executable() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        fs::write(tmp.path().join("notcargo.exe"), b"").unwrap();
+        fs::write(tmp.path().join("cargo.txt"), b"").unwrap();
+        assert!(!path_contains_command(&with_path(tmp.path()), "cargo"));
+    }
+
+    // ── DoctorReport healthy aggregation ──
+
+    #[test]
+    fn report_healthy_when_only_warnings() {
+        let report = DoctorReport::from_checks(vec![
+            DoctorCheck::ok("a", "fine"),
+            DoctorCheck::warn("b", "meh", "fix it"),
+        ]);
+        assert!(report.healthy);
+    }
+
+    #[test]
+    fn report_unhealthy_with_any_error() {
+        let report = DoctorReport::from_checks(vec![
+            DoctorCheck::ok("a", "fine"),
+            DoctorCheck::err("b", "broken", "fix it"),
+        ]);
+        assert!(!report.healthy);
+    }
+
+    #[test]
+    fn report_json_shape_is_stable() {
+        let report = DoctorReport::from_checks(vec![DoctorCheck::warn("x", "note", "hint")]);
+        let json = serde_json::to_value(&report).unwrap();
+        assert_eq!(json["healthy"], false_or_true(&report));
+        assert_eq!(json["checks"][0]["id"], "x");
+        assert_eq!(json["checks"][0]["status"], "warning");
+        assert_eq!(json["checks"][0]["message"], "note");
+        assert_eq!(json["checks"][0]["remediation"], "hint");
+    }
+
+    fn false_or_true(r: &DoctorReport) -> serde_json::Value {
+        serde_json::json!(r.healthy)
+    }
+
+    #[test]
+    fn ok_check_omits_remediation_in_json() {
+        let report = DoctorReport::from_checks(vec![DoctorCheck::ok("x", "fine")]);
+        let json = serde_json::to_value(&report).unwrap();
+        assert!(json["checks"][0].get("remediation").is_none());
+    }
 }
 
 #[cfg(test)]
