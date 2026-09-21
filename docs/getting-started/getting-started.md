@@ -1,10 +1,10 @@
-# Getting Started
+# getting-started
 
-This guide takes you from zero to your first `sdkt` commands. Everything here
-runs **offline** — no RPC node, no network — so you can follow along in under
-five minutes.
+## Getting Started
 
-## 1. Install
+This guide takes you from zero to your first `sdkt` commands. Everything here runs **offline** — no RPC node, no network — so you can follow along in under five minutes.
+
+### 1. Install
 
 See [installation.md](installation.md). The fastest path:
 
@@ -18,13 +18,11 @@ cargo install --path crates/sdkt-cli
 sdkt --version
 ```
 
-> The `sdkt` binary is built by the `sdkt-cli` crate. After `cargo install` the command
-> is named `sdkt` on your PATH.
+> The `sdkt` binary is built by the `sdkt-cli` crate. After `cargo install` the command is named `sdkt` on your PATH.
 
-## 2. Your first command — offline ABI/WASM diff
+### 2. Your first command — offline ABI/WASM diff
 
-`sdkt diff` compares two contract WASM files and reports added/removed
-functions, changed signatures, events, and custom types. It needs no network.
+`sdkt diff` compares two contract WASM files and reports added/removed functions, changed signatures, events, and custom types. It needs no network.
 
 ```bash
 sdkt diff \
@@ -48,8 +46,7 @@ Changed signatures (1):
 ...
 ```
 
-Add `--upgrade-safety` to get a breaking-change verdict (used by CI on
-releases):
+Add `--upgrade-safety` to get a breaking-change verdict (used by CI on releases):
 
 ```bash
 sdkt diff \
@@ -57,7 +54,7 @@ sdkt diff \
   --upgrade-safety --format json
 ```
 
-## 3. Your second command — static security audit
+### 3. Your second command — static security audit
 
 `sdkt audit` scans a Soroban contract's Rust source for common auth bugs:
 
@@ -65,26 +62,25 @@ sdkt diff \
 sdkt audit path/to/contract/src/lib.rs
 ```
 
-It flags `AUTH-001/002/003/004` (missing `require_auth` on privileged functions,
-unauthenticated `invoke_contract`, unguarded `initialize`, unguarded token
-transfers) and `MOVE-001` (suspicious move-after-use, warning only). To skip a rule:
+It flags `AUTH-001/002/003/004` (missing `require_auth` on privileged functions, unauthenticated `invoke_contract`, unguarded `initialize`, unguarded token transfers) and `MOVE-001` (suspicious move-after-use, warning only). To skip a rule:
 
 ```bash
 sdkt audit contract/src/lib.rs --disable MOVE-001
 ```
 
-# When to use `sdkt`?
+## When to use `sdkt`?
 
 `sdkt` is built to consolidate disjointed Soroban scripts into one professional interface. You should use `sdkt` if:
+
 1. You are actively building and deploying multi-contract Soroban workspaces and need topological dependency sorting (`sdkt project deploy`).
 2. You need to decode base64 XDR payloads, inspect deployed contract ABI, or fetch raw event streams without hunting for RPC JSON payloads (`sdkt decode`, `sdkt inspect`).
 3. You want offline, pre-flight security checks integrated into your workflow (`sdkt audit`, `sdkt diff --upgrade-safety`).
 4. You need to calculate exact storage extension fees and TTL horizons before your deployed instances expire (`sdkt storage analyze`).
 
-**For comprehensive examples across all capabilities, view the recipes inside [examples.md](examples.md).**
+**For comprehensive examples across all capabilities, view the recipes inside** [**examples.md**](./)**.**
 
-- [examples.md](examples.md) — copy-paste recipes for every subcommand.
-- [installation.md](installation.md) — build options, features, updating.
-- [cli.md](../reference/cli.md) — full command reference.
-- [ci-cd.md](../compatibility/ci-cd.md) — gate your PRs on `sdkt audit` / upgrade-safety.
-- [plugin-authoring.md](../plugins/plugin-authoring.md) — extend `sdkt audit` with rules.
+* [examples.md](./) — copy-paste recipes for every subcommand.
+* [installation.md](installation.md) — build options, features, updating.
+* [cli.md](../reference/cli.md) — full command reference.
+* [ci-cd.md](../compatibility/ci-cd.md) — gate your PRs on `sdkt audit` / upgrade-safety.
+* [plugin-authoring.md](../plugins/plugin-authoring.md) — extend `sdkt audit` with rules.
