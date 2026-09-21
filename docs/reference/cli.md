@@ -316,6 +316,75 @@ Exit codes:
 
 Warnings are never fatal. The JSON output contains no secret material.
 
+## Encode
+
+`sdkt encode` converts a typed value to its base64 XDR representation — the
+write-direction counterpart to `sdkt decode`. It is fully offline and useful
+for building test fixtures, debugging, and CLI round-trips.
+
+```bash
+sdkt encode u32:100
+# AAAAAwAAAGQ=
+
+# Verify by decoding back
+sdkt encode string:hello | xargs sdkt decode --type ScVal
+# {"string": "hello"}
+```
+
+### Supported types (core subset)
+
+`u32`, `i32`, `u64`, `i64`, `bool`, `string`, `address` (Stellar `G...` strkey).
+
+Exactly one value is encoded per invocation; the `TYPE:VALUE` syntax matches
+the typed-argument convention used by `sdkt call` and `sdkt invoke`.
+
+### Unsupported (clear failure)
+
+Other types — `u128`, `i128`, `bytes`, `Vec`, `Map`, `Option`, `Result`,
+UDTs — are rejected with an error listing the supported types. Malformed
+values (bad numbers, invalid bools, invalid strkeys) fail with a message
+naming the offending value.
+
+## Generate client
+
+`sdkt generate client` produces deterministic, typed Rust call builders from
+the ContractSpec of a compiled Soroban contract WASM. The command is fully
+offline — it reads a local `.wasm` artifact and emits Rust source.
+
+```bash
+# Print the generated client to stdout
+sdkt generate client target/wasm32-unknown-unknown/release/my_contract.wasm
+
+# Write it to a file
+sdkt generate client contract.wasm --output src/client.rs
+```
+
+### Output
+
+Each contract function becomes a `*Call` struct with:
+- one typed field per parameter,
+- a `NAME` constant with the contract function name,
+- an `args()` method encoding the call as `TYPE:VALUE` strings — the same
+  typed-argument convention accepted by `sdkt call` and `sdkt invoke`,
+- a `<Function>Output` type alias mirroring the return type.
+
+The output is deterministic: the same input WASM always produces
+byte-identical source, suitable for checking generated files into a repo.
+
+### Supported types (core subset)
+
+Parameters and single return values of these primitive types are supported:
+`u32`, `i32`, `u64`, `i64`, `bool`, `address`, `string`, `symbol`, `void`
+(no return).
+
+### Unsupported (clear failure)
+
+Any other type — UDTs, `Option`, `Result`, `Vec`, `Map`, `Tuple`, `BytesN`,
+`Val`, multiple return values — aborts generation with an error naming the
+function, the type, and the position (parameter or return). Nothing partial
+is emitted. A WASM without a `contractspecv0` section is rejected as
+"not a Soroban contract".
+
 ## Plugin management
 
 A **local, offline-first** plugin store. All operations are local;

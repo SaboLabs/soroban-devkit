@@ -347,6 +347,12 @@ enum Commands {
         #[arg(short = 'i', long, value_name = "FILE")]
         file: Option<String>,
     },
+    /// Encode typed values (TYPE:VALUE) to base64 XDR (reverse of decode)
+    Encode {
+        /// Typed values to encode, e.g. u32:100 address:G... string:hello
+        #[arg(value_name = "TYPE:VALUE", num_args = 1..)]
+        values: Vec<String>,
+    },
     /// Inspect storage TTL for a contract
     Storage {
         #[command(subcommand)]
@@ -607,6 +613,22 @@ enum Commands {
         /// Shorthand for --format json (machine-readable output)
         #[arg(long, conflicts_with = "format")]
         json: bool,
+    },
+    /// Generate typed clients and other artifacts from contract interfaces
+    #[command(subcommand)]
+    Generate(GenerateAction),
+}
+
+#[derive(Subcommand)]
+enum GenerateAction {
+    /// Generate a typed Rust client from a compiled contract's ContractSpec
+    Client {
+        /// Path to the compiled contract WASM file
+        #[arg(value_name = "WASM")]
+        wasm: String,
+        /// Output file path (prints to stdout if omitted)
+        #[arg(short, long, value_name = "PATH")]
+        output: Option<String>,
     },
 }
 
@@ -1394,12 +1416,71 @@ fn parse_typed_args(args: &[String], strict: bool) -> Result<Vec<String>, String
     Ok(parsed)
 }
 
-/// Load `.sdkt.toml` from the current directory.
+/// Encode typed `TYPE:VALUE` values to a single base64 XDR `ScVal` string.
 ///
-/// A missing file yields the default config (so commands like `sdkt lock
-/// verify` still run meaningfully). A present-but-unparseable file (e.g. a
-/// duplicate contract name or malformed TOML) is a hard error surfaced with a
-/// clear message, rather than silently falling back to an empty config.
+/// This is the write-direction counterpart to `sdkt decode`. Supported types
+/// are the primitives this CLI already encodes elsewhere (`parse_typed_args`):
+/// `u32`, `i32`, `u64`, `i64`, `bool`, `address`, `string`. Exactly one value
+/// is encoded per invocation; passing more than one is rejected to keep the
+/// output unambiguous.
+fn run_encode(values: &[String]) -> Result<String, String> {
+    if values.is_empty() {
+        return Err("no input provided: pass a value like u32:100".to_string());
+    }
+    if values.len() > 1 {
+        return Err(format!(
+            "expected exactly one value, got {} — encode one value per invocation",
+            values.len()
+        ));
+    }
+
+    let arg = &values[0];
+    let (ty, raw) = arg.split_once(':').ok_or_else(|| {
+        format!("invalid arg format '{arg}'. Use TYPE:VALUE (e.g. u32:100, address:G...)")
+    })?;
+
+    use sdkt_xdr::{scval_to_base64, Address, IntoScVal};
+    let scval = match ty.to_lowercase().as_str() {
+        "u32" => raw
+            .parse::<u32>()
+            .map_err(|_| format!("invalid u32 value: {raw}"))?
+            .into_scval()
+            .map_err(|e| e.to_string())?,
+        "i32" => raw
+            .parse::<i32>()
+            .map_err(|_| format!("invalid i32 value: {raw}"))?
+            .into_scval()
+            .map_err(|e| e.to_string())?,
+        "u64" => raw
+            .parse::<u64>()
+            .map_err(|_| format!("invalid u64 value: {raw}"))?
+            .into_scval()
+            .map_err(|e| e.to_string())?,
+        "i64" => raw
+            .parse::<i64>()
+            .map_err(|_| format!("invalid i64 value: {raw}"))?
+            .into_scval()
+            .map_err(|e| e.to_string())?,
+        "bool" => raw
+            .parse::<bool>()
+            .map_err(|_| format!("invalid bool value: {raw}"))?
+            .into_scval()
+            .map_err(|e| e.to_string())?,
+        "string" => raw.to_string().into_scval().map_err(|e| e.to_string())?,
+        "address" => Address::from_strkey(raw)
+            .map_err(|_| format!("invalid Stellar address: {raw}"))?
+            .into_scval()
+            .map_err(|e| e.to_string())?,
+        other => {
+            return Err(format!(
+                "unknown type '{other}'. Use u32|i32|u64|i64|bool|string|address"
+            ))
+        }
+    };
+
+    scval_to_base64(&scval).map_err(|e| e.to_string())
+}
+
 fn load_config() -> DevKitConfig {
     match DevKitConfig::from_file(".sdkt.toml") {
         Ok(c) => c,
@@ -1847,6 +1928,13 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
             let json = decode(&input, r#type.as_deref(), fmt)?;
             println!("{}", json);
         }
+        Commands::Encode { values } => match run_encode(&values) {
+            Ok(b64) => println!("{}", b64),
+            Err(e) => {
+                eprintln!("Error: {}", e);
+                process::exit(1);
+            }
+        },
         Commands::Storage {
             action,
             abi,
@@ -5146,8 +5234,32 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
             };
             run_doctor(fmt);
         }
+        Commands::Generate(action) => match action {
+            GenerateAction::Client { wasm, output } => {
+                if let Err(e) = run_generate_client(&wasm, output.as_deref()) {
+                    eprintln!("Error: {e}");
+                    process::exit(1);
+                }
+            }
+        },
     }
 
+    Ok(())
+}
+
+/// Execute `sdkt generate client`: parse the ContractSpec from a local WASM
+/// and emit a deterministic typed Rust client (offline, no network).
+fn run_generate_client(wasm_path: &str, output: Option<&str>) -> Result<(), String> {
+    let bytes = fs::read(wasm_path).map_err(|e| format!("cannot read WASM '{wasm_path}': {e}"))?;
+    let spec = parse_contract_spec(&bytes).map_err(|e| format!("{wasm_path}: {e}"))?;
+    let code = sdkt_wasm::generate_client(&spec).map_err(|e| e.to_string())?;
+    match output {
+        Some(path) => {
+            fs::write(path, &code).map_err(|e| format!("cannot write '{path}': {e}"))?;
+            println!("✓ Generated client ({} bytes) -> {}", code.len(), path);
+        }
+        None => print!("{}", code),
+    }
     Ok(())
 }
 
