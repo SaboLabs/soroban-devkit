@@ -6,6 +6,7 @@ site:
       key: section-introduction
       title: Introduction
       path: introduction
+      default: true
       children:
         - type: space
           key: space-introduction
