@@ -85,6 +85,6 @@ sdkt audit contract/src/lib.rs --disable MOVE-001
 
 - [examples.md](examples.md) — copy-paste recipes for every subcommand.
 - [installation.md](installation.md) — build options, features, updating.
-- [cli.md](cli.md) — full command reference.
-- [ci-cd.md](ci-cd.md) — gate your PRs on `sdkt audit` / upgrade-safety.
-- [plugin-authoring.md](plugin-authoring.md) — extend `sdkt audit` with rules.
+- [cli.md](../reference/cli.md) — full command reference.
+- [ci-cd.md](../compatibility/ci-cd.md) — gate your PRs on `sdkt audit` / upgrade-safety.
+- [plugin-authoring.md](../plugins/plugin-authoring.md) — extend `sdkt audit` with rules.

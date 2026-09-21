@@ -1,7 +1,7 @@
 # CI/CD with Soroban DevKit (`sdkt`)
 
 `sdkt` ships a reusable **GitHub composite Action** at
-[`sdkt` composite Action](../.github/actions/sdkt/action.yml) so you can
+[`sdkt` composite Action](../../.github/actions/sdkt/action.yml) so you can
 gate merges on static security findings (`sdkt audit`) and on breaking contract
 upgrades (`sdkt diff --upgrade-safety`) — entirely in CI, no local install
 required.
@@ -78,7 +78,7 @@ jobs:
 ## Example 3 — Self-validating the Action (this repo)
 
 This repository validates the composite Action itself in
-[`.github/workflows/sdkt-action-ci.yml`](../.github/workflows/sdkt-action-ci.yml):
+[`.github/workflows/sdkt-action-ci.yml`](../../.github/workflows/sdkt-action-ci.yml):
 a **breaking** diff (committed fixtures `us_old.wasm` → `us_new.wasm`) is
 asserted to **fail**, and an **identical** diff is asserted to **pass**.
 

@@ -19,8 +19,8 @@ Need help with `sdkt`? This guide points you to the right place.
 To help us resolve your problem quickly, please:
 
 1. **Check the documentation first** — [README.md](README.md),
-   [docs/quick-start.md](docs/quick-start.md), [docs/cli.md](docs/cli.md),
-   and [docs/examples.md](docs/examples.md) cover install, commands, and
+   [docs/quick-start.md](docs/getting-started/quick-start.md), [docs/cli.md](docs/reference/cli.md),
+   and [docs/examples.md](docs/getting-started/examples.md) cover install, commands, and
    common workflows.
 2. **Provide your `sdkt` version** — run `sdkt --version` and paste the output.
 3. **Provide your environment** — OS and architecture (e.g. `Linux x86_64`,

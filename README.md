@@ -171,7 +171,7 @@ sdkt wasm inspect crates/sdkt-cli/tests/fixtures/us_old.wasm
 ```
 
 Then follow the guided walkthrough in
-[docs/quick-start.md](docs/quick-start.md) — it covers inspect, audit, and
+[docs/quick-start.md](docs/getting-started/quick-start.md) — it covers inspect, audit, and
 upgrade-safety diff step by step.
 
 ## Use Cases
@@ -235,7 +235,7 @@ For a detailed explanation of each step, see [Deploy a single contract](#deploy-
 
 Full options — including the `wasm-plugins` / `plugins` feature flags,
 installing from crates.io, and updating — are in
-[docs/installation.md](docs/installation.md).
+[docs/installation.md](docs/getting-started/installation.md).
 
 ### Extensibility & Plugins
 
@@ -244,7 +244,7 @@ The `sdkt audit` static analysis engine supports third-party plugins.
 - **`wasm-plugins` (Recommended):** Build with `cargo install --path crates/sdkt-cli --features wasm-plugins` to load platform-independent, sandboxed `.wasm` plugins.
 - **`plugins`:** Build with `--features plugins` to load native shared libraries (`.so`, `.dylib`).
 
-See [`docs/plugin-authoring.md`](docs/plugin-authoring.md) for how to build or use custom rules.
+See [`docs/plugin-authoring.md`](docs/plugins/plugin-authoring.md) for how to build or use custom rules.
 
 ## Commands
 
@@ -494,14 +494,14 @@ Every RPC command (`inspect`, `verify`, `health`, `storage`, `events`, `account`
 **Precedence (highest wins):** explicit `--rpc-url` / `--network-passphrase` >
 `--network-profile` > `.sdkt.toml` `[network]` > built-in testnet default.
 Commands without these flags behave exactly as before. (`tx sign` is offline and
-excluded.) See [docs/cli.md](docs/cli.md) and [docs/examples.md](docs/examples.md).
+excluded.) See [docs/cli.md](docs/reference/cli.md) and [docs/examples.md](docs/getting-started/examples.md).
 
 Most commands accept `--format json` for scripting / CI integration.
 
 ## Common Workflows
 
 - **Audit every PR** — gate merges on `sdkt audit` (fails on `critical`). See
-  [docs/ci-cd.md](docs/ci-cd.md).
+  [docs/ci-cd.md](docs/compatibility/ci-cd.md).
 - **Safe upgrades** — run `sdkt diff --upgrade-safety` in release CI to block
   breaking contract changes.
 - **Local analysis** — `decode`, `diff`, and `audit` need no RPC; run them in
@@ -548,29 +548,29 @@ Notes:
   stdout. Use `--format json` for scripting.
 
 Copy-paste recipes for every subcommand are in
-[docs/examples.md](docs/examples.md).
+[docs/examples.md](docs/getting-started/examples.md).
 
 ## Upgrade Safety in CI
 
 `sdkt` ships a reusable GitHub composite Action. See
-[docs/ci-cd.md](docs/ci-cd.md) for copy-paste workflows (audit-on-PR,
+[docs/ci-cd.md](docs/compatibility/ci-cd.md) for copy-paste workflows (audit-on-PR,
 upgrade-safety-on-release).
 
 ## Documentation
 
-- [docs/quick-start.md](docs/quick-start.md) — five-minute first-time walkthrough.
-- [docs/getting-started.md](docs/getting-started.md) — deeper offline `diff` and `audit` examples.
-- [docs/examples.md](docs/examples.md) — command recipes & CI gating.
-- [docs/installation.md](docs/installation.md) — build / install / features.
-- [docs/compatibility.md](docs/compatibility.md) — real-world contract compatibility matrix.
-- [docs/ci-cd.md](docs/ci-cd.md) — CI/CD with the reusable Action.
-- [docs/adoption.md](docs/adoption.md) — ecosystem adoption and integration evidence.
+- [docs/quick-start.md](docs/getting-started/quick-start.md) — five-minute first-time walkthrough.
+- [docs/getting-started.md](docs/getting-started/getting-started.md) — deeper offline `diff` and `audit` examples.
+- [docs/examples.md](docs/getting-started/examples.md) — command recipes & CI gating.
+- [docs/installation.md](docs/getting-started/installation.md) — build / install / features.
+- [docs/compatibility.md](docs/compatibility/compatibility.md) — real-world contract compatibility matrix.
+- [docs/ci-cd.md](docs/compatibility/ci-cd.md) — CI/CD with the reusable Action.
+- [docs/adoption.md](docs/advanced/adoption.md) — ecosystem adoption and integration evidence.
 - [SECURITY.md](SECURITY.md) — supported versions and vulnerability reporting.
 - [CONTRIBUTING.md](CONTRIBUTING.md) — how to contribute.
 
-Additional references: [docs/cli.md](docs/cli.md) (full command reference),
-[docs/faq.md](docs/faq.md) (FAQ),
-[docs/plugin-authoring.md](docs/plugin-authoring.md) (write your own audit
+Additional references: [docs/cli.md](docs/reference/cli.md) (full command reference),
+[docs/faq.md](docs/getting-started/faq.md) (FAQ),
+[docs/plugin-authoring.md](docs/plugins/plugin-authoring.md) (write your own audit
 rules), and [ROADMAP.md](ROADMAP.md) · [CHANGELOG.md](CHANGELOG.md).
 
 ## Contributing

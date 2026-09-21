@@ -35,7 +35,7 @@ plugins) and Phase C (WASM plugins) are both shipped: build `sdkt-cli` with the
 `--features wasm-plugins` for sandboxed `.wasm` plugins. Load them with
 `sdkt audit <src.rs> --rules <artifact>` or resolve an installed plugin id via
 `sdkt plugin install` + `--rules <id>`. See
-[plugin-authoring.md](plugin-authoring.md).
+[plugin-authoring.md](../plugins/plugin-authoring.md).
 
 ### How do I configure the RPC network?
 `sdkt init <name>` scaffolds a project with a `.sdkt.toml`. Edit the network
@@ -50,4 +50,4 @@ Double-check the payload and the `--type` (`ScVal`, `TransactionEnvelope`, or
 ### Where do I report a bug or request a feature?
 Use the GitHub issue templates (Bug Report / Feature Request / Good First
 Issue). For security issues, open a private Security Advisory — see
-[SECURITY.md](../SECURITY.md).
+[SECURITY.md](../../SECURITY.md).

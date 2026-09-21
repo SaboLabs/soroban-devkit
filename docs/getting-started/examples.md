@@ -311,7 +311,7 @@ sdkt invoke C... set_admin --args address:G... --identity alice --format json --
 ## CI gating (copy-paste)
 
 Gate a PR on the static audit and a release on upgrade-safety. See
-[ci-cd.md](ci-cd.md) for the full workflows.
+[ci-cd.md](../compatibility/ci-cd.md) for the full workflows.
 
 ### Audit on PR Workflow
 Ensure privileged functions have authentication barriers:

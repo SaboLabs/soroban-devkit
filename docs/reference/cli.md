@@ -312,7 +312,7 @@ sdkt audit contract.rs --rules <id>                # resolve id → stored artif
 `sdkt audit --rules <id>` resolves a plugin `id` to its stored artifact and runs
 the existing loader; passing a filesystem path keeps the legacy behavior.
 Installing a `native` plugin prints a warning: native plugins run **unsandboxed**
-(unmodified behavior). See `docs/plugin-authoring.md` for the `plugin.toml`
+(unmodified behavior). See `docs/plugins/plugin-authoring.md` for the `plugin.toml`
 schema and the install-validation rules.
 
 Store root precedence (lowest → highest): `<cwd>/.sdkt/plugins`,

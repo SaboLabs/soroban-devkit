@@ -53,7 +53,7 @@ sdkt diff --old-wasm token.wasm --new-wasm liquidity_pool.wasm --upgrade-safety
 
 All commands are offline. Online-only commands (`inspect --abi`, `health`,
 `storage`, `verify`) are intentionally excluded — they require a live RPC and
-deployed contract (see `docs/compatibility.md`).
+deployed contract (see `docs/compatibility/compatibility.md`).
 
 ## Notes on behavior
 

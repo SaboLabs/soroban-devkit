@@ -25,8 +25,8 @@ and runs `sdkt` offline commands against the compiled artifacts:
 | `sdkt audit <src.rs>` | 5 | PASS |
 
 **Evidence:**
-- Workflow definition: [.github/workflows/compatibility.yml](../.github/workflows/compatibility.yml)
-- Compatibility matrix: [docs/compatibility.md](compatibility.md)
+- Workflow definition: [.github/workflows/compatibility.yml](../../.github/workflows/compatibility.yml)
+- Compatibility matrix: [docs/compatibility.md](../compatibility/compatibility.md)
 - CI runs on every push to `main`/`feat/*` and all PRs:
   [Actions tab](https://github.com/naninu123/soroban-devkit/actions/workflows/compatibility.yml)
 
@@ -75,7 +75,7 @@ infrastructure:
 | `bash install.sh --selftest` | Installer checksum verification | Ubuntu |
 
 **Evidence:**
-- Workflow definition: [.github/workflows/ci.yml](../.github/workflows/ci.yml)
+- Workflow definition: [.github/workflows/ci.yml](../../.github/workflows/ci.yml)
 - CI runs on every push to `main`/`feat/*` and all PRs:
   [Actions tab](https://github.com/naninu123/soroban-devkit/actions/workflows/ci.yml)
 
@@ -97,8 +97,8 @@ on every run, ensuring the command output schema does not regress:
 | `storage-abi.json` | `sdkt storage analyze <id> --abi-contract <id>` |
 
 **Evidence:**
-- Fixture directory: [tests/fixtures/onchain/](../tests/fixtures/onchain/)
-- Workflow step definitions: [.github/workflows/compatibility.yml](../.github/workflows/compatibility.yml) (lines 97–236)
+- Fixture directory: [tests/fixtures/onchain/](../../tests/fixtures/onchain/)
+- Workflow step definitions: [.github/workflows/compatibility.yml](../../.github/workflows/compatibility.yml) (lines 97–236)
 
 ## Confirmed External Adopters
 

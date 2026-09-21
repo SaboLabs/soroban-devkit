@@ -2,11 +2,88 @@ $schema: https://api.gitbook.com/gitbook-docs.yaml
 site:
   title: Soroban DevKit
   structure:
-    - type: space
-      key: docs
-      title: Documentation
-      path: docs
+    - type: section
+      key: section-introduction
+      title: Introduction
+      path: introduction
       default: true
-      content:
-        directory: ./docs
-        language: en
+      children:
+        - type: space
+          key: space-introduction
+          title: Soroban DevKit
+          path: introduction
+          content:
+            directory: ./docs/introduction
+            language: en
+    - type: section
+      key: section-getting-started
+      title: Getting Started
+      path: getting-started
+      children:
+        - type: space
+          key: space-getting-started
+          title: Getting Started
+          path: getting-started
+          content:
+            directory: ./docs/getting-started
+            language: en
+    - type: section
+      key: section-reference
+      title: Reference
+      path: reference
+      children:
+        - type: space
+          key: space-reference
+          title: CLI Reference
+          path: reference
+          content:
+            directory: ./docs/reference
+            language: en
+    - type: section
+      key: section-plugins
+      title: Plugins
+      path: plugins
+      children:
+        - type: space
+          key: space-plugins
+          title: Plugins
+          path: plugins
+          content:
+            directory: ./docs/plugins
+            language: en
+    - type: section
+      key: section-compatibility
+      title: Compatibility & CI
+      path: compatibility
+      children:
+        - type: space
+          key: space-compatibility
+          title: Compatibility & CI
+          path: compatibility
+          content:
+            directory: ./docs/compatibility
+            language: en
+    - type: section
+      key: section-advanced
+      title: Advanced
+      path: advanced
+      children:
+        - type: space
+          key: space-advanced
+          title: Advanced
+          path: advanced
+          content:
+            directory: ./docs/advanced
+            language: en
+    - type: section
+      key: section-releases
+      title: Releases
+      path: releases
+      children:
+        - type: space
+          key: space-releases
+          title: Releases
+          path: releases
+          content:
+            directory: ./docs/releases
+            language: en

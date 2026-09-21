@@ -261,10 +261,10 @@ You now know the three core offline workflows. Continue with:
   inspect your own `.wasm` in the browser (no install).
 - **[docs/examples.md](examples.md)** — copy-paste recipes for every subcommand
   (decode, storage, tx, deploy) and CI gating patterns.
-- **[docs/compatibility.md](compatibility.md)** — which real-world Soroban
+- **[docs/compatibility.md](../compatibility/compatibility.md)** — which real-world Soroban
   contracts `sdkt` is validated against, and the compatibility matrix.
-- **[docs/ci-cd.md](ci-cd.md)** — wire `sdkt audit` and `sdkt diff
+- **[docs/ci-cd.md](../compatibility/ci-cd.md)** — wire `sdkt audit` and `sdkt diff
   --upgrade-safety` into GitHub Actions to block bad PRs and unsafe releases.
 
-For the full command reference, see [docs/cli.md](cli.md). For build/install
-options and feature flags, see [docs/installation.md](installation.md).
+For the full command reference, see [docs/cli.md](../reference/cli.md). For build/install
+options and feature flags, see [docs/getting-started/installation.md](installation.md).
