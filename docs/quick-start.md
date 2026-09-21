@@ -231,7 +231,8 @@ and sign an envelope.
 # Create a local signing identity (stored in the keystore, never printed)
 sdkt identity generate alice
 
-# Build an unsigned envelope (offline)
+# Build an unsigned envelope (offline; fee defaults to 100 stroops,
+# override with --fee <STROPS>)
 sdkt tx build \
   --source <SOURCE_ACCOUNT> \
   --sequence <SEQ> \

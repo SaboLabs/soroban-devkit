@@ -29,10 +29,12 @@ change the signature of existing ones. The CI Action fails the step when
 `compatible == false`.
 
 ### Can I write my own audit rules?
-Yes — Phase A (shipped) provides the `AuditRule` trait, a `RuleRegistry`,
-and a `register_rule!` macro. External rules are compiled into the binary (the
-`plugins` feature links the reference `sdkt-audit-example-rule`). Dynamic
-loading is planned for Phase B (post-1.0). See
+Yes — Phase A (compiled-in rules) is the default. Phase B (native shared-library
+plugins) and Phase C (WASM plugins) are both shipped: build `sdkt-cli` with the
+`--features plugins` flag for native `.so`/`.dylib`/`.dll` plugins, or
+`--features wasm-plugins` for sandboxed `.wasm` plugins. Load them with
+`sdkt audit <src.rs> --rules <artifact>` or resolve an installed plugin id via
+`sdkt plugin install` + `--rules <id>`. See
 [plugin-authoring.md](plugin-authoring.md).
 
 ### How do I configure the RPC network?

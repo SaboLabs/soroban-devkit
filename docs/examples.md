@@ -105,7 +105,9 @@ sdkt init my-project --minimal   # scaffolds a project + .sdkt.toml
 sdkt inspect <CONTRACT_ID> --abi contract.wasm
 sdkt storage check <CONTRACT_ID> --abi contract.wasm
 sdkt storage analyze <CONTRACT_ID>
-sdkt storage estimate contract.wasm
+
+# NOTE: `sdkt storage estimate` is NOT YET IMPLEMENTED (placeholder only —
+# it prints a stub message and does not compute a real storage-cost estimate).
 
 # Read a contract storage entry by its complete LedgerKey (base64 XDR)
 sdkt storage read --contract <CONTRACT_ID> --key-xdr <BASE64_LEDGER_KEY>
@@ -124,7 +126,8 @@ Build, validate, simulate, sign, and submit a Soroban transaction:
 # 1. Create a local signing identity (offline)
 sdkt identity generate alice
 
-# 2. Build an unsigned envelope (offline)
+# 2. Build an unsigned envelope (offline; fee defaults to 100 stroops,
+#    override with --fee <STROPS>)
 sdkt tx build \
   --source <SOURCE_ACCOUNT> --sequence <SEQ> \
   --contract <CONTRACT_ID> --function hello \
@@ -308,7 +311,7 @@ sdkt invoke C... set_admin --args address:G... --identity alice --format json --
 ## CI gating (copy-paste)
 
 Gate a PR on the static audit and a release on upgrade-safety. See
-[ci-cd.md](docs/ci-cd.md) for the full workflows.
+[ci-cd.md](ci-cd.md) for the full workflows.
 
 ### Audit on PR Workflow
 Ensure privileged functions have authentication barriers:

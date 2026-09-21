@@ -81,7 +81,7 @@ sdkt audit contract/src/lib.rs --disable MOVE-001
 3. You want offline, pre-flight security checks integrated into your workflow (`sdkt audit`, `sdkt diff --upgrade-safety`).
 4. You need to calculate exact storage extension fees and TTL horizons before your deployed instances expire (`sdkt storage analyze`).
 
-**For comprehensive examples across all capabilities, view the recipes inside [docs/examples.md](docs/examples.md).**
+**For comprehensive examples across all capabilities, view the recipes inside [examples.md](examples.md).**
 
 - [examples.md](examples.md) — copy-paste recipes for every subcommand.
 - [installation.md](installation.md) — build options, features, updating.

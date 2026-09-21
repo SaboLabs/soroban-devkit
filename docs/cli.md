@@ -18,7 +18,7 @@ sdkt
 ├── storage
 │   ├── check <contract-id>   [--abi <wasm>] [--abi-contract <id>] [--format]
 │   ├── analyze <contract-id> [--abi <wasm>] [--abi-contract <id>] [--format]
-│   ├── estimate <wasm-path>  [--format]
+│   ├── estimate <wasm-path>  [--format] (NOT YET IMPLEMENTED — placeholder only)
 │   ├── read --contract <contract-id> --key-xdr <BASE64_XDR> [--abi <wasm>] [--format]
 │   └── extend --contract <contract-id> --ledgers <N> [--key <xdr>]... [--identity <name>] [--format]
 │
@@ -56,7 +56,8 @@ sdkt
 │   ├── simulate <xdr>        [--format] [--abi <wasm>] (RPC; surfaces restore preambles, costs, state changes; ABI-aware result decoding)
 │   ├── sign                  [--input <xdr|file>] [--output <file>] [--identity <name>] [--network <testnet|mainnet|futurenet|custom:<p>>] [--format] (offline ED25519 signing)
 │   ├── submit <xdr>          [--wait] [--timeout <s>] [--interval <s>] [--format] (RPC)
-│   └── build                 [--source --sequence --contract --function --arg* --output]
+│   └── build                 [--source --sequence --contract --function --fee* --arg* --output]
+│                             (--fee <STROPS> overrides the fee, default 100 stroops)
 │
 ├── events <contract-id>
 │   ├── --format <json|pretty>
