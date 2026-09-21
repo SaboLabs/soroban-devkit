@@ -50,6 +50,29 @@ fn encodes_i64_negative() {
 }
 
 #[test]
+fn encodes_u128() {
+    assert_eq!(encode("u128:100"), "AAAACQAAAAAAAAAAAAAAAAAAAGQ=");
+}
+
+#[test]
+fn encodes_u128_max() {
+    assert_eq!(
+        encode("u128:340282366920938463463374607431768211455"),
+        "AAAACf////////////////////8="
+    );
+}
+
+#[test]
+fn encodes_i128_negative() {
+    assert_eq!(encode("i128:-1000"), "AAAACv///////////////////Bg=");
+}
+
+#[test]
+fn encodes_bytes() {
+    assert_eq!(encode("bytes:0a0b"), "AAAADQAAAAIKCwAA");
+}
+
+#[test]
 fn encodes_bool_true() {
     assert_eq!(encode("bool:true"), "AAAAAAAAAAE=");
 }
@@ -86,6 +109,12 @@ fn round_trip_all_supported_types() {
         ("i32:-5", "\"i32\":-5"),
         ("u64:1000", "\"u64\":\"1000\""),
         ("i64:-1000", "\"i64\":\"-1000\""),
+        (
+            "u128:340282366920938463463374607431768211455",
+            "\"u128\":\"340282366920938463463374607431768211455\"",
+        ),
+        ("i128:-1000", "\"i128\":\"-1000\""),
+        ("bytes:0a0b", "\"bytes\":\"0a0b\""),
         ("bool:true", "\"bool\":true"),
         ("string:hello", "\"string\":\"hello\""),
     ];
@@ -146,7 +175,7 @@ fn rejects_unknown_type() {
         .code(1)
         .stderr(predicate::str::contains("unknown type 'foo'"))
         .stderr(predicate::str::contains(
-            "u32|i32|u64|i64|bool|string|address",
+            "u32|i32|u64|i64|u128|i128|bool|string|bytes|address",
         ));
 }
 
@@ -211,13 +240,67 @@ fn rejects_multiple_values() {
         .stderr(predicate::str::contains("expected exactly one value"));
 }
 
-// ── Documented-but-unsupported types must fail clearly (scope boundary) ──
+// ── Error paths for the newly supported types ──
 
 #[test]
-fn rejects_unsupported_primitive_types() {
-    // These types exist in the ContractSpec model and in `call`/`invoke`'s
-    // typed-arg parser, but are outside the `encode` core subset.
-    for value in ["u128:1", "i128:-1", "bytes:0a0b"] {
+fn rejects_invalid_u128() {
+    sdkt()
+        .args(["encode", "u128:abc"])
+        .assert()
+        .failure()
+        .code(1)
+        .stderr(predicate::str::contains("invalid u128 value: abc"));
+}
+
+#[test]
+fn rejects_u128_overflow() {
+    // u128::MAX + 1.
+    sdkt()
+        .args(["encode", "u128:340282366920938463463374607431768211456"])
+        .assert()
+        .failure()
+        .code(1)
+        .stderr(predicate::str::contains("invalid u128 value"));
+}
+
+#[test]
+fn rejects_invalid_i128() {
+    sdkt()
+        .args(["encode", "i128:abc"])
+        .assert()
+        .failure()
+        .code(1)
+        .stderr(predicate::str::contains("invalid i128 value: abc"));
+}
+
+#[test]
+fn rejects_odd_length_hex() {
+    // "0a0" has an odd number of hex digits — rejected, matching
+    // `parse_typed_args`.
+    sdkt()
+        .args(["encode", "bytes:0a0"])
+        .assert()
+        .failure()
+        .code(1)
+        .stderr(predicate::str::contains("invalid hex byte in: 0a0"));
+}
+
+#[test]
+fn rejects_non_hex_bytes() {
+    sdkt()
+        .args(["encode", "bytes:zz"])
+        .assert()
+        .failure()
+        .code(1)
+        .stderr(predicate::str::contains("invalid hex byte in: zz"));
+}
+
+// ── Scope boundary: still-unsupported types fail clearly ──
+
+#[test]
+fn rejects_unsupported_types() {
+    // `symbol` and compound types remain outside the `encode` core subset.
+    for value in ["symbol:hello", "vec:1", "map:1"] {
         sdkt()
             .args(["encode", value])
             .assert()
