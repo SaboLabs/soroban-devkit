@@ -5,6 +5,15 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Fixed
+- **`sdkt events --abi --format json` now preserves the raw event `topics` and
+  `value`** alongside the existing ABI-decoded representation, matching the
+  non-ABI JSON and pretty output paths. Regression tests in
+  `crates/sdkt-cli/tests/events_abi_json_test.rs` cover ABI-aware JSON, non-ABI
+  JSON, and pretty output.
+
 ## [v2.5.0] - 2026-08-08
 
 ### Added
