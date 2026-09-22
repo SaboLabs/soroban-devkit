@@ -326,6 +326,12 @@ for building test fixtures, debugging, and CLI round-trips.
 sdkt encode u32:100
 # AAAAAwAAAGQ=
 
+sdkt encode i128:-1000
+# AAAACv///////////////////Bg=
+
+sdkt encode bytes:0a0b
+# AAAADQAAAAIKCwAA
+
 # Verify by decoding back
 sdkt encode string:hello | xargs sdkt decode --type ScVal
 # {"string": "hello"}
@@ -333,17 +339,19 @@ sdkt encode string:hello | xargs sdkt decode --type ScVal
 
 ### Supported types (core subset)
 
-`u32`, `i32`, `u64`, `i64`, `bool`, `string`, `address` (Stellar `G...` strkey).
+`u32`, `i32`, `u64`, `i64`, `u128`, `i128`, `bool`, `string`,
+`bytes` (even-length hex), `address` (Stellar `G...` strkey).
 
 Exactly one value is encoded per invocation; the `TYPE:VALUE` syntax matches
-the typed-argument convention used by `sdkt call` and `sdkt invoke`.
+the typed-argument convention used by `sdkt call` and `sdkt invoke`, and both
+paths share the same parser so they produce identical XDR for the same input.
 
 ### Unsupported (clear failure)
 
-Other types — `u128`, `i128`, `bytes`, `Vec`, `Map`, `Option`, `Result`,
-UDTs — are rejected with an error listing the supported types. Malformed
-values (bad numbers, invalid bools, invalid strkeys) fail with a message
-naming the offending value.
+Other types — `symbol`, `Vec`, `Map`, `Option`, `Result`, UDTs — are rejected
+with an error listing the supported types. Malformed values (bad numbers,
+invalid bools, odd-length hex, invalid strkeys) fail with a message naming
+the offending value.
 
 ## Generate client
 

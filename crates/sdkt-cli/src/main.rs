@@ -1325,6 +1325,71 @@ fn parse_format_str(s: &str) -> OutputFormat {
     }
 }
 
+/// Parse a single `TYPE:VALUE` pair into its `ScVal`.
+///
+/// This is the single source of truth for the typed-argument convention shared
+/// by `sdkt call`, `sdkt invoke`, and `sdkt encode`, so every path produces a
+/// byte-for-byte identical `ScVal` for the same input. Supported types are
+/// `u32`, `i32`, `u64`, `i64`, `u128`, `i128`, `bool`, `string`, `bytes`
+/// (hex), and `address` (Stellar `G...` strkey).
+///
+/// Returns `None` when the type is not recognised; the caller decides whether
+/// that is an error (`encode`, strict `call`) or a passthrough (non-strict).
+fn parse_primitive_scval(t: &str, v: &str) -> Option<Result<stellar_xdr::ScVal, String>> {
+    use sdkt_xdr::{Address, IntoScVal};
+    let result: Result<stellar_xdr::ScVal, String> = match t.to_lowercase().as_str() {
+        "u32" => v
+            .parse::<u32>()
+            .map_err(|_| format!("invalid u32 value: {v}"))
+            .and_then(|n| n.into_scval().map_err(|e| e.to_string())),
+        "i32" => v
+            .parse::<i32>()
+            .map_err(|_| format!("invalid i32 value: {v}"))
+            .and_then(|n| n.into_scval().map_err(|e| e.to_string())),
+        "u64" => v
+            .parse::<u64>()
+            .map_err(|_| format!("invalid u64 value: {v}"))
+            .and_then(|n| n.into_scval().map_err(|e| e.to_string())),
+        "i64" => v
+            .parse::<i64>()
+            .map_err(|_| format!("invalid i64 value: {v}"))
+            .and_then(|n| n.into_scval().map_err(|e| e.to_string())),
+        "u128" => v
+            .parse::<u128>()
+            .map_err(|_| format!("invalid u128 value: {v}"))
+            .and_then(|n| n.into_scval().map_err(|e| e.to_string())),
+        "i128" => v
+            .parse::<i128>()
+            .map_err(|_| format!("invalid i128 value: {v}"))
+            .and_then(|n| n.into_scval().map_err(|e| e.to_string())),
+        "bool" => v
+            .parse::<bool>()
+            .map_err(|_| format!("invalid bool value: {v}"))
+            .and_then(|b| b.into_scval().map_err(|e| e.to_string())),
+        "string" => v.into_scval().map_err(|e| e.to_string()),
+        "bytes" => {
+            let mut b = Vec::new();
+            let s = v.trim();
+            if !s.len().is_multiple_of(2) {
+                return Some(Err(format!("invalid hex byte in: {v}")));
+            }
+            for i in (0..s.len()).step_by(2) {
+                match u8::from_str_radix(&s[i..i + 2], 16) {
+                    Ok(byte) => b.push(byte),
+                    Err(_) => return Some(Err(format!("invalid hex byte in: {v}"))),
+                }
+            }
+            b.into_scval().map_err(|e| e.to_string())
+        }
+        "address" => match Address::from_strkey(v) {
+            Ok(addr) => addr.into_scval().map_err(|e| e.to_string()),
+            Err(_) => return Some(Err(format!("invalid Stellar address: {v}"))),
+        },
+        _ => return None,
+    };
+    Some(result)
+}
+
 /// Shared typed-argument parser used by `call`, `tx build`, and `invoke`.
 ///
 /// Accepts `TYPE:VALUE` pairs (u32|i32|u64|i64|u128|i128|bool|string|bytes|
@@ -1333,78 +1398,22 @@ fn parse_format_str(s: &str) -> OutputFormat {
 /// are passed through as-is (assumed pre-encoded base64 ScVal), matching the
 /// historical `tx build` behavior.
 fn parse_typed_args(args: &[String], strict: bool) -> Result<Vec<String>, String> {
-    use sdkt_xdr::{scval_to_base64, Address, IntoScVal};
+    use sdkt_xdr::scval_to_base64;
     let mut parsed = Vec::new();
     for a in args.iter() {
         if let Some((t, v)) = a.split_once(':') {
-            let b64 = match t.to_lowercase().as_str() {
-                "u32" => {
-                    let n: u32 = v.parse().map_err(|_| format!("invalid u32 value: {v}"))?;
-                    scval_to_base64(&n.into_scval().map_err(|e| e.to_string())?)
-                        .map_err(|e| e.to_string())?
+            match parse_primitive_scval(t, v) {
+                Some(res) => {
+                    let b64 = scval_to_base64(&res?).map_err(|e| e.to_string())?;
+                    parsed.push(b64);
                 }
-                "i32" => {
-                    let n: i32 = v.parse().map_err(|_| format!("invalid i32 value: {v}"))?;
-                    scval_to_base64(&n.into_scval().map_err(|e| e.to_string())?)
-                        .map_err(|e| e.to_string())?
+                None if strict => {
+                    return Err(format!(
+                        "unknown arg type '{t}'. Use u32|i32|u64|i64|u128|i128|bool|string|bytes|address"
+                    ));
                 }
-                "u64" => {
-                    let n: u64 = v.parse().map_err(|_| format!("invalid u64 value: {v}"))?;
-                    scval_to_base64(&n.into_scval().map_err(|e| e.to_string())?)
-                        .map_err(|e| e.to_string())?
-                }
-                "i64" => {
-                    let n: i64 = v.parse().map_err(|_| format!("invalid i64 value: {v}"))?;
-                    scval_to_base64(&n.into_scval().map_err(|e| e.to_string())?)
-                        .map_err(|e| e.to_string())?
-                }
-                "u128" => {
-                    let n: u128 = v.parse().map_err(|_| format!("invalid u128 value: {v}"))?;
-                    scval_to_base64(&n.into_scval().map_err(|e| e.to_string())?)
-                        .map_err(|e| e.to_string())?
-                }
-                "i128" => {
-                    let n: i128 = v.parse().map_err(|_| format!("invalid i128 value: {v}"))?;
-                    scval_to_base64(&n.into_scval().map_err(|e| e.to_string())?)
-                        .map_err(|e| e.to_string())?
-                }
-                "bool" => {
-                    let b: bool = v.parse().map_err(|_| format!("invalid bool value: {v}"))?;
-                    scval_to_base64(&b.into_scval().map_err(|e| e.to_string())?)
-                        .map_err(|e| e.to_string())?
-                }
-                "string" => scval_to_base64(&v.into_scval().map_err(|e| e.to_string())?)
-                    .map_err(|e| e.to_string())?,
-                "bytes" => {
-                    let mut b = Vec::new();
-                    let s = v.trim();
-                    if s.len() % 2 != 0 {
-                        return Err(format!("invalid hex byte in: {v}"));
-                    }
-                    for i in (0..s.len()).step_by(2) {
-                        let byte = u8::from_str_radix(&s[i..i + 2], 16)
-                            .map_err(|_| format!("invalid hex byte in: {v}"))?;
-                        b.push(byte);
-                    }
-                    scval_to_base64(&b.into_scval().map_err(|e| e.to_string())?)
-                        .map_err(|e| e.to_string())?
-                }
-                "address" => {
-                    let addr = Address::from_strkey(v)
-                        .map_err(|_| format!("invalid Stellar address: {v}"))?;
-                    scval_to_base64(&addr.into_scval().map_err(|e| e.to_string())?)
-                        .map_err(|e| e.to_string())?
-                }
-                _ => {
-                    if strict {
-                        return Err(format!(
-                            "unknown arg type '{t}'. Use u32|i32|u64|i64|u128|i128|bool|string|bytes|address"
-                        ));
-                    }
-                    a.clone() // passthrough: pre-encoded base64 ScVal
-                }
-            };
-            parsed.push(b64);
+                None => parsed.push(a.clone()), // passthrough: pre-encoded base64 ScVal
+            }
         } else if strict {
             return Err(format!(
                 "invalid arg format '{a}'. Use TYPE:VALUE (e.g. u32:100, address:G...)"
@@ -1420,9 +1429,11 @@ fn parse_typed_args(args: &[String], strict: bool) -> Result<Vec<String>, String
 ///
 /// This is the write-direction counterpart to `sdkt decode`. Supported types
 /// are the primitives this CLI already encodes elsewhere (`parse_typed_args`):
-/// `u32`, `i32`, `u64`, `i64`, `bool`, `address`, `string`. Exactly one value
-/// is encoded per invocation; passing more than one is rejected to keep the
-/// output unambiguous.
+/// `u32`, `i32`, `u64`, `i64`, `u128`, `i128`, `bool`, `string`, `bytes`,
+/// `address`. Both paths share [`parse_primitive_scval`], so they always
+/// produce the same `ScVal` for the same input. Exactly one value is encoded
+/// per invocation; passing more than one is rejected to keep the output
+/// unambiguous.
 fn run_encode(values: &[String]) -> Result<String, String> {
     if values.is_empty() {
         return Err("no input provided: pass a value like u32:100".to_string());
@@ -1439,46 +1450,17 @@ fn run_encode(values: &[String]) -> Result<String, String> {
         format!("invalid arg format '{arg}'. Use TYPE:VALUE (e.g. u32:100, address:G...)")
     })?;
 
-    use sdkt_xdr::{scval_to_base64, Address, IntoScVal};
-    let scval = match ty.to_lowercase().as_str() {
-        "u32" => raw
-            .parse::<u32>()
-            .map_err(|_| format!("invalid u32 value: {raw}"))?
-            .into_scval()
-            .map_err(|e| e.to_string())?,
-        "i32" => raw
-            .parse::<i32>()
-            .map_err(|_| format!("invalid i32 value: {raw}"))?
-            .into_scval()
-            .map_err(|e| e.to_string())?,
-        "u64" => raw
-            .parse::<u64>()
-            .map_err(|_| format!("invalid u64 value: {raw}"))?
-            .into_scval()
-            .map_err(|e| e.to_string())?,
-        "i64" => raw
-            .parse::<i64>()
-            .map_err(|_| format!("invalid i64 value: {raw}"))?
-            .into_scval()
-            .map_err(|e| e.to_string())?,
-        "bool" => raw
-            .parse::<bool>()
-            .map_err(|_| format!("invalid bool value: {raw}"))?
-            .into_scval()
-            .map_err(|e| e.to_string())?,
-        "string" => raw.to_string().into_scval().map_err(|e| e.to_string())?,
-        "address" => Address::from_strkey(raw)
-            .map_err(|_| format!("invalid Stellar address: {raw}"))?
-            .into_scval()
-            .map_err(|e| e.to_string())?,
-        other => {
+    let scval = match parse_primitive_scval(ty, raw) {
+        Some(res) => res?,
+        None => {
             return Err(format!(
-                "unknown type '{other}'. Use u32|i32|u64|i64|bool|string|address"
+                "unknown type '{}'. Use u32|i32|u64|i64|u128|i128|bool|string|bytes|address",
+                ty.to_lowercase()
             ))
         }
     };
 
-    scval_to_base64(&scval).map_err(|e| e.to_string())
+    sdkt_xdr::scval_to_base64(&scval).map_err(|e| e.to_string())
 }
 
 fn load_config() -> DevKitConfig {
@@ -5566,5 +5548,51 @@ mod m23_tests {
         };
         let json2 = serde_json::to_string(&r2).unwrap();
         assert!(json2.contains("\"verified\":null") || !json2.contains("\"verified\""));
+    }
+}
+
+#[cfg(test)]
+mod encode_unit_tests {
+    use super::*;
+
+    const ADDR: &str = "GCJK2BPWLQDHCSOCAHU7Y2HDZ6YNCPYMTHWGG4IEUZLZTJ4E656GOYGM";
+
+    /// `parse_typed_args` (used by `call`/`invoke`) and `run_encode` (used by
+    /// `encode`) must yield byte-for-byte identical XDR for the same input —
+    /// they now share `parse_primitive_scval`, so this guards the consistency
+    /// acceptance criterion against future divergence.
+    #[test]
+    fn parser_and_encode_agree_on_success() {
+        let cases = [
+            "u32:100",
+            "i32:-5",
+            "u64:1000",
+            "i64:-1000",
+            "u128:340282366920938463463374607431768211455",
+            "i128:-1000",
+            "bool:true",
+            "string:hello",
+            "bytes:0a0b",
+            &format!("address:{ADDR}"),
+        ];
+        for case in cases {
+            let via_parser = parse_typed_args(&[case.to_string()], true).unwrap();
+            let via_encode = run_encode(&[case.to_string()]).unwrap();
+            assert_eq!(
+                via_parser,
+                vec![via_encode],
+                "encode/parse_typed_args mismatch for {case}"
+            );
+        }
+    }
+
+    #[test]
+    fn parser_and_encode_agree_on_errors() {
+        // Malformed values that are recognised types must fail identically.
+        for case in ["u128:abc", "i128:abc", "bytes:0a0", "bytes:zz", "u32:abc"] {
+            let via_parser = parse_typed_args(&[case.to_string()], true).unwrap_err();
+            let via_encode = run_encode(&[case.to_string()]).unwrap_err();
+            assert_eq!(via_parser, via_encode, "error mismatch for {case}");
+        }
     }
 }
