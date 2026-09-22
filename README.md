@@ -112,6 +112,27 @@ verifies its SHA-256 checksum, and installs `sdkt` to `~/.local/bin/sdkt`.
    sdkt --version
    ```
 
+   Windows needs a linker toolchain before `cargo install` will work. Check which
+   host `rustup` selected:
+
+   ```powershell
+   rustup show
+   ```
+
+   - **`x86_64-pc-windows-msvc`** — install the Visual Studio Build Tools with the
+     "Desktop development with C++" workload.
+   - **`x86_64-pc-windows-gnu`** — install MinGW-w64, for example
+     `winget install BrechtSanders.WinLibs.POSIX.UCRT`, and make sure its
+     `mingw64\bin` is on `PATH`.
+
+   Without one of these, the build fails while compiling a dependency rather than
+   `sdkt-cli` itself, which makes the cause easy to misread:
+
+   ```text
+   error: error calling dlltool 'dlltool.exe': program not found
+   error: could not compile `getrandom` (lib) due to 1 previous error
+   ```
+
 #### Alternative — Build from source (requires Rust 1.88.0+)
 
 ```bash
