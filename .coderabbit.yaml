@@ -1,0 +1,109 @@
+# CodeRabbit configuration for SaboLabs/soroban-devkit
+# Source of truth: https://docs.coderabbit.ai/reference/configuration
+#
+# CodeRabbit is a first-pass automated reviewer. It does NOT replace the
+# maintainer review and it never merges or approves PRs. CI remains the gate.
+
+language: "en-US"
+
+tone_instructions: >-
+  Direct and technical. Every finding needs: (1) concrete problem,
+  (2) code path, (3) why it matters, (4) actionable fix. No comments on
+  rustfmt/clippy/style/speculative issues. No comment if nothing meaningful.
+
+early_access: false
+
+reviews:
+  profile: chill
+
+  # Never auto-approve or auto-request-changes: CI stays the gate and the
+  # maintainer performs the final human review.
+  request_changes_workflow: false
+
+  high_level_summary: true
+  review_status: true
+
+  auto_review:
+    enabled: true
+    drafts: false
+
+  # Re-review incremental pushes; avoid re-raising resolved comments.
+  auto_incremental_review: true
+
+  # Do not review generated/binary outputs.
+  path_filters:
+    - "!target/**"
+    - "!**/*.wasm"
+
+  path_instructions:
+    - path: "crates/**/*.rs"
+      instructions: >-
+        Rust workspace: check incorrect Result handling, swallowed errors,
+        panic/unreachable paths, unsafe code, incorrect conversions,
+        integer/type mistakes, serialization/deserialization problems,
+        and incorrect async/error propagation. Prioritize correctness,
+        security, reliability, and regression risk. Do not request refactors
+        for style preferences alone.
+
+    - path: "crates/sdkt-cli/**/*.rs"
+      instructions: >-
+        CLI surface: check exit codes, stdout vs stderr discipline, JSON
+        output vs human-readable output consistency, missing-file handling,
+        invalid-input handling, command consistency, and automation/script
+        compatibility. Do not treat intentional behavior changes as bugs.
+
+    - path: "crates/sdkt-rpc/**/*.rs"
+      instructions: >-
+        RPC layer: check malformed RPC responses, missing fields being
+        silently defaulted, retry/timeout ambiguity, stale ledger values,
+        sequence handling, fee/resource parsing, error classification, and
+        transaction status interpretation. Verify callers actually compensate
+        for any suspected swallowed error before flagging it.
+
+    - path: "crates/sdkt-xdr/**"
+      instructions: >-
+        XDR/ScVal handling: check envelope decoding, signed vs unsigned
+        envelopes, network passphrase handling, type conversions, and
+        information loss during encode/decode round-trips.
+
+    - path: "crates/sdkt-audit/**"
+      instructions: >-
+        Audit engine: check false negatives and false positives, rule
+        registration vs execution, severity handling, plugin lifecycle
+        (install/update/remove/verify), corrupted bundles, stale artifacts,
+        plugin identity consistency, and path traversal.
+
+    - path: "crates/sdkt-storage/**"
+      instructions: >-
+        Persistent stores (identities, networks, plugins, caches): check
+        stale references, inconsistent delete behavior, partial writes,
+        replacement leaving stale files, corrupted state, and interrupted
+        operations.
+
+    - path: "crates/sdkt-core/**"
+      instructions: >-
+        Core build/config/project logic: check scaffolded project validity
+        (generated Cargo.toml/tests actually compile and test), lock file
+        consistency, dependency resolution, and workspace graph validation.
+
+    - path: "docs/**/*.md"
+      instructions: >-
+        Check documentation consistency only when an API, CLI behavior, or
+        safety expectation actually changed. Do not nitpick wording.
+
+    - path: ".github/**/*.yml"
+      instructions: >-
+        CI workflow correctness and security. Do not suggest changes that
+        would disable existing checks or alter the contributor workflow.
+
+    - path: ".github/**/*.yaml"
+      instructions: >-
+        CI workflow correctness and security. Do not suggest changes that
+        would disable existing checks or alter the contributor workflow.
+
+  tools:
+    ast_grep:
+      enabled: false
+
+chat:
+  auto_reply: false
