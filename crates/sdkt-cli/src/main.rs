@@ -1420,7 +1420,7 @@ fn parse_typed_args(args: &[String], strict: bool) -> Result<Vec<String>, String
 ///
 /// This is the write-direction counterpart to `sdkt decode`. Supported types
 /// are the primitives this CLI already encodes elsewhere (`parse_typed_args`):
-/// `u32`, `i32`, `u64`, `i64`, `bool`, `address`, `string`. Exactly one value
+/// `u32`, `i32`, `u64`, `i64`, `bool`, `address`, `string`, `symbol`. Exactly one value
 /// is encoded per invocation; passing more than one is rejected to keep the
 /// output unambiguous.
 fn run_encode(values: &[String]) -> Result<String, String> {
@@ -1440,6 +1440,7 @@ fn run_encode(values: &[String]) -> Result<String, String> {
     })?;
 
     use sdkt_xdr::{scval_to_base64, Address, IntoScVal};
+    use stellar_xdr::{ScSymbol, ScVal};
     let scval = match ty.to_lowercase().as_str() {
         "u32" => raw
             .parse::<u32>()
@@ -1467,13 +1468,19 @@ fn run_encode(values: &[String]) -> Result<String, String> {
             .into_scval()
             .map_err(|e| e.to_string())?,
         "string" => raw.to_string().into_scval().map_err(|e| e.to_string())?,
+        "symbol" => {
+            if raw.len() > 32 {
+                return Err(format!("symbol exceeds 32 bytes (got {} bytes)", raw.len()));
+            }
+            ScVal::Symbol(ScSymbol::try_from(raw).map_err(|_| "invalid symbol value".to_string())?)
+        }
         "address" => Address::from_strkey(raw)
             .map_err(|_| format!("invalid Stellar address: {raw}"))?
             .into_scval()
             .map_err(|e| e.to_string())?,
         other => {
             return Err(format!(
-                "unknown type '{other}'. Use u32|i32|u64|i64|bool|string|address"
+                "unknown type '{other}'. Use u32|i32|u64|i64|bool|string|symbol|address"
             ))
         }
     };

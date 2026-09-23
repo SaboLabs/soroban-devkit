@@ -70,6 +70,23 @@ fn encodes_string() {
 }
 
 #[test]
+fn encodes_symbol() {
+    assert_eq!(encode("symbol:USD"), "AAAADwAAAANVU0QA");
+}
+
+#[test]
+fn accepts_symbol_at_32_byte_limit() {
+    let symbol = "A".repeat(32);
+    let value = encode(&format!("symbol:{symbol}"));
+    let decoded = sdkt()
+        .args(["decode", &value, "--type", "ScVal", "--format", "json"])
+        .output()
+        .expect("decode runs");
+    assert!(decoded.status.success());
+    assert!(String::from_utf8(decoded.stdout).unwrap().contains(&symbol));
+}
+
+#[test]
 fn encodes_address() {
     assert_eq!(
         encode(&format!("address:{VALID_ADDRESS}")),
@@ -88,6 +105,7 @@ fn round_trip_all_supported_types() {
         ("i64:-1000", "\"i64\":\"-1000\""),
         ("bool:true", "\"bool\":true"),
         ("string:hello", "\"string\":\"hello\""),
+        ("symbol:USD", "\"symbol\":\"USD\""),
     ];
     for (value, expected_fragment) in cases {
         let b64 = encode(value);
@@ -146,7 +164,19 @@ fn rejects_unknown_type() {
         .code(1)
         .stderr(predicate::str::contains("unknown type 'foo'"))
         .stderr(predicate::str::contains(
-            "u32|i32|u64|i64|bool|string|address",
+            "u32|i32|u64|i64|bool|string|symbol|address",
+        ));
+}
+
+#[test]
+fn rejects_symbol_over_32_bytes() {
+    sdkt()
+        .args(["encode", &format!("symbol:{}", "A".repeat(33))])
+        .assert()
+        .failure()
+        .code(1)
+        .stderr(predicate::str::contains(
+            "symbol exceeds 32 bytes (got 33 bytes)",
         ));
 }
 

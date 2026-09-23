@@ -329,11 +329,15 @@ sdkt encode u32:100
 # Verify by decoding back
 sdkt encode string:hello | xargs sdkt decode --type ScVal
 # {"string": "hello"}
+
+sdkt encode symbol:USD | xargs sdkt decode --type ScVal
+# {"symbol": "USD"}
 ```
 
 ### Supported types (core subset)
 
-`u32`, `i32`, `u64`, `i64`, `bool`, `string`, `address` (Stellar `G...` strkey).
+`u32`, `i32`, `u64`, `i64`, `bool`, `string`, `symbol` (up to 32 bytes),
+`address` (Stellar `G...` strkey).
 
 Exactly one value is encoded per invocation; the `TYPE:VALUE` syntax matches
 the typed-argument convention used by `sdkt call` and `sdkt invoke`.
