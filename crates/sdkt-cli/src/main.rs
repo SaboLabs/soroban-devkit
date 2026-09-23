@@ -4383,6 +4383,7 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
                                 "fee": res.fee,
                                 "resultXdr": res.result_xdr,
                                 "errorCode": res.error_code,
+                                "errorResultXdr": res.error_result_xdr,
                                 "diagnosticEvents": res.diagnostic_events,
                             })
                         );
