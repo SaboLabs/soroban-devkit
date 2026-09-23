@@ -40,6 +40,13 @@ const SOROBAN_DATA_XDR: &str = "AAAAAAAAAAAAAAAAAAAD6AAAAAoAAAAKAAAAAAAAAJY=";
 ///
 /// `requests` records each JSON-RPC method received, in order, joined by '\n'.
 fn mock_rpc_server(tx_failed: bool) -> (String, std::sync::Arc<std::sync::Mutex<Vec<String>>>) {
+    mock_rpc_server_with_send_error(tx_failed, false)
+}
+
+fn mock_rpc_server_with_send_error(
+    tx_failed: bool,
+    send_error: bool,
+) -> (String, std::sync::Arc<std::sync::Mutex<Vec<String>>>) {
     let listener = TcpListener::bind("127.0.0.1:0").unwrap();
     let addr = listener.local_addr().unwrap();
     let url = format!("http://{}", addr);
@@ -72,7 +79,11 @@ fn mock_rpc_server(tx_failed: bool) -> (String, std::sync::Arc<std::sync::Mutex<
                     r#"{{"jsonrpc":"2.0","id":1,"result":{{"transactionData":"{SOROBAN_DATA_XDR}","minResourceFee":"150","results":[{{"xdr":"AAAAAQ==","auth":[]}}],"latestLedger":"100","events":[]}}}}"#
                 ),
                 Some("sendTransaction") => {
-                    r#"{"jsonrpc":"2.0","id":1,"result":{"hash":"deadbeefcafe","status":"PENDING","latestLedger":"100"}}"#.to_string()
+                    if send_error {
+                        r#"{"jsonrpc":"2.0","id":1,"result":{"hash":"deadbeefcafe","status":"ERROR","latestLedger":"100","errorResult":"tx_bad_auth","errorResultXdr":"AAAA","diagnosticEvents":["AAAAevent"]}}"#.to_string()
+                    } else {
+                        r#"{"jsonrpc":"2.0","id":1,"result":{"hash":"deadbeefcafe","status":"PENDING","latestLedger":"100"}}"#.to_string()
+                    }
                 }
                 Some("getTransaction") => {
                     if failed {
@@ -338,6 +349,40 @@ fn invoke_success_json_output() {
     assert_eq!(parsed["hash"], "deadbeefcafe");
     assert_eq!(parsed["fee"], 250);
     assert_eq!(parsed["function"], "increment");
+    assert!(parsed.get("errorResultXdr").unwrap().is_null());
+}
+
+#[test]
+fn invoke_send_error_json_includes_error_result_xdr() {
+    let dir = tempdir().unwrap();
+    generate_identity(dir.path(), "alice");
+    let (url, seen) = mock_rpc_server_with_send_error(false, true);
+    add_mock_profile(dir.path(), &url);
+
+    let output = sdkt_isolated(dir.path())
+        .args([
+            "invoke",
+            VALID_CONTRACT,
+            "increment",
+            "--identity",
+            "alice",
+            "--network-profile",
+            "mocknet",
+            "--format",
+            "json",
+        ])
+        .output()
+        .unwrap();
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(!output.status.success(), "stdout={stdout}");
+    let parsed: serde_json::Value =
+        serde_json::from_str(&stdout).unwrap_or_else(|e| panic!("Invalid JSON: {e}\n{stdout}"));
+    assert_eq!(parsed["status"], "FAILED");
+    assert_eq!(parsed["errorCode"], "tx_bad_auth");
+    assert_eq!(parsed["errorResultXdr"], "AAAA");
+    assert_eq!(parsed["diagnosticEvents"], serde_json::json!(["AAAAevent"]));
+    assert!(!seen.lock().unwrap().contains(&"getTransaction".to_string()));
 }
 
 #[test]

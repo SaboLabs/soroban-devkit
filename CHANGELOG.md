@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- `sdkt invoke --format json` includes `errorResultXdr` when an RPC submission fails, matching the existing pretty output. The field is `null` when the RPC response has no error result XDR.
+
 ### Added
 - `sdkt encode` now accepts `symbol:VALUE` and emits a Soroban `ScVal::Symbol`.
   Values longer than 32 bytes fail with a clear error.
