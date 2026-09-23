@@ -914,6 +914,9 @@ enum ProjectCommand {
         /// Optional deployment salt base
         #[arg(short, long, default_value = "deploy")]
         salt: String,
+        /// Identity name to sign deployment transactions
+        #[arg(short = 'I', long, default_value = "default")]
+        identity: String,
         #[arg(short, long, default_value = "pretty")]
         format: String,
     },
@@ -4898,7 +4901,7 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
             }
         },
         Commands::Project { action, net } => match action {
-            ProjectCommand::Deploy { salt: _, format } => {
+            ProjectCommand::Deploy { salt: _, format, identity } => {
                 let fmt = parse_format_str(&format);
                 let config = load_config();
 
@@ -4971,11 +4974,11 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
                             let identity_store = sdkt_storage::IdentityStore::new()
                                 .map_err(|e| format!("Failed to access identity store: {}", e))?;
                             let identity_obj = identity_store
-                                .get("default")
-                                .map_err(|e| format!("Default identity not found: {}", e))?;
+                                .get(&identity)
+                                .map_err(|e| format!("Identity '{}' not found: {}", identity, e))?;
                             let signing_key = identity_store
-                                .load_signing_key("default")
-                                .map_err(|e| format!("Failed to load signing key: {}", e))?;
+                                .load_signing_key(&identity)
+                                .map_err(|e| format!("Failed to load signing key for '{}': {}", identity, e))?;
                             let signer =
                                 sdkt_xdr::sign::Ed25519Signer::from_seed(&signing_key.to_bytes());
                             let source_account = identity_obj.public_key.clone();
