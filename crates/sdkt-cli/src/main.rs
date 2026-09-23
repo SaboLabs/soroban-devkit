@@ -1472,6 +1472,9 @@ fn run_encode(values: &[String]) -> Result<String, String> {
             if raw.len() > 32 {
                 return Err(format!("symbol exceeds 32 bytes (got {} bytes)", raw.len()));
             }
+            if !raw.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'_') {
+                return Err("invalid symbol value: use only ASCII letters, digits, and _".into());
+            }
             ScVal::Symbol(ScSymbol::try_from(raw).map_err(|_| "invalid symbol value".to_string())?)
         }
         "address" => Address::from_strkey(raw)

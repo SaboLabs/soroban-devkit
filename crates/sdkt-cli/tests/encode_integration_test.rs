@@ -75,6 +75,19 @@ fn encodes_symbol() {
 }
 
 #[test]
+fn encodes_symbol_with_underscore() {
+    let value = encode("symbol:USD_2026");
+    let decoded = sdkt()
+        .args(["decode", &value, "--type", "ScVal", "--format", "json"])
+        .output()
+        .expect("decode runs");
+    assert!(decoded.status.success());
+    assert!(String::from_utf8(decoded.stdout)
+        .unwrap()
+        .contains("USD_2026"));
+}
+
+#[test]
 fn accepts_symbol_at_32_byte_limit() {
     let symbol = "A".repeat(32);
     let value = encode(&format!("symbol:{symbol}"));
@@ -178,6 +191,20 @@ fn rejects_symbol_over_32_bytes() {
         .stderr(predicate::str::contains(
             "symbol exceeds 32 bytes (got 33 bytes)",
         ));
+}
+
+#[test]
+fn rejects_symbol_with_invalid_characters() {
+    for value in ["symbol:]", "symbol:bad-name", "symbol:café"] {
+        sdkt()
+            .args(["encode", value])
+            .assert()
+            .failure()
+            .code(1)
+            .stderr(predicate::str::contains(
+                "invalid symbol value: use only ASCII letters, digits, and _",
+            ));
+    }
 }
 
 #[test]
