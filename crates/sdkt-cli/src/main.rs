@@ -531,6 +531,11 @@ enum Commands {
         /// Identity name to sign deployment transactions
         #[arg(short, long, default_value = "default")]
         identity: String,
+        /// Constructor arguments: `type:value` (e.g. `u32:100`, `string:hello`,
+        /// `bool:true`, `bytes:0a0b`, `address:G...`). Base64-encoded ScVal strings
+        /// are also accepted as-is. Can be repeated.
+        #[arg(long)]
+        arg: Vec<String>,
         /// Abort deployment if the upgrade is not backwards-compatible.
         /// Requires --old-wasm (the currently deployed WASM) to be supplied.
         #[arg(long, default_value_t = false)]
@@ -1448,10 +1453,25 @@ fn parse_typed_args(args: &[String], strict: bool) -> Result<Vec<String>, String
                     scval_to_base64(&addr.into_scval().map_err(|e| e.to_string())?)
                         .map_err(|e| e.to_string())?
                 }
+                "symbol" => {
+                    use stellar_xdr::{ScSymbol, ScVal};
+                    if v.len() > 32 {
+                        return Err(format!("symbol exceeds 32 bytes (got {} bytes)", v.len()));
+                    }
+                    if !v.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'_') {
+                        return Err(
+                            "invalid symbol value: use only ASCII letters, digits, and _".into(),
+                        );
+                    }
+                    let sym_val = ScVal::Symbol(
+                        ScSymbol::try_from(v).map_err(|_| "invalid symbol value".to_string())?,
+                    );
+                    scval_to_base64(&sym_val).map_err(|e| e.to_string())?
+                }
                 _ => {
                     if strict {
                         return Err(format!(
-                            "unknown arg type '{t}'. Use u32|i32|u64|i64|u128|i128|bool|string|bytes|address"
+                            "unknown arg type '{t}'. Use u32|i32|u64|i64|u128|i128|bool|string|symbol|bytes|address"
                         ));
                     }
                     a.clone() // passthrough: pre-encoded base64 ScVal
@@ -4138,6 +4158,7 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
             salt,
             format,
             identity,
+            arg,
             deny_breaking,
             old_wasm,
             net,
@@ -4197,6 +4218,11 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
             // Parse and validate salt (if provided) BEFORE identity lookup (fail fast on bad input)
             let salt_bytes = salt.as_ref().map(|s| parse_salt_hex(s)).transpose()?;
 
+            // Parse and validate constructor arguments (fail fast on bad input)
+            let parsed_args = parse_typed_args(&arg, false)?;
+            sdkt_xdr::parse_scval_args(&parsed_args)
+                .map_err(|e| format!("Invalid constructor argument: {}", e))?;
+
             // Optional deploy guard: abort on a backwards-incompatible upgrade.
             if deny_breaking {
                 let baseline = old_wasm.ok_or_else(|| {
@@ -4246,14 +4272,15 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
             // Source account is the identity's public key
             let source_account = identity_obj.public_key.clone();
 
-            use sdkt_rpc::deploy_contract;
-            match deploy_contract(
+            use sdkt_rpc::deploy_contract_with_args;
+            match deploy_contract_with_args(
                 &client,
                 &wasm_bytes,
                 &source_account,
                 &signer,
                 network,
                 salt_bytes,
+                parsed_args,
             )
             .await
             {
