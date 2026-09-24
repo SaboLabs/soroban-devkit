@@ -665,9 +665,18 @@ enum IdentityAction {
 #[derive(Subcommand)]
 enum PluginAction {
     /// List installed plugins
-    List,
+    List {
+        /// Output format (pretty or json)
+        #[arg(short, long, default_value = "pretty")]
+        format: String,
+    },
     /// Show metadata for an installed plugin
-    Show { id: String },
+    Show {
+        id: String,
+        /// Output format (pretty or json)
+        #[arg(short, long, default_value = "pretty")]
+        format: String,
+    },
     /// Install a plugin from a local artifact + sibling plugin.toml
     Install {
         /// Path to the local plugin artifact (.so/.dylib/.dll/.wasm)
@@ -678,14 +687,25 @@ enum PluginAction {
         /// Overwrite an existing install of the same id
         #[arg(long)]
         force: bool,
+        /// Output format (pretty or json)
+        #[arg(short, long, default_value = "pretty")]
+        format: String,
     },
     /// Remove an installed plugin by id (idempotent)
-    Remove { id: String },
+    Remove {
+        id: String,
+        /// Output format (pretty or json)
+        #[arg(short, long, default_value = "pretty")]
+        format: String,
+    },
     /// Update an installed plugin from a new local artifact (local-only)
     Update {
         id: String,
         /// Path to the new local artifact
         source: String,
+        /// Output format (pretty or json)
+        #[arg(short, long, default_value = "pretty")]
+        format: String,
     },
     /// Pack a plugin directory into a `.sdktplugin` bundle
     Pack {
@@ -697,6 +717,9 @@ enum PluginAction {
         /// Optional Ed25519 secret key file for signing (32 bytes, raw)
         #[arg(long)]
         secret_key: Option<String>,
+        /// Output format (pretty or json)
+        #[arg(short, long, default_value = "pretty")]
+        format: String,
     },
     /// Verify a `.sdktplugin` bundle's integrity and signature
     VerifyBundle {
@@ -705,6 +728,9 @@ enum PluginAction {
         /// Optional Ed25519 public key file for signature verification (32 bytes, raw)
         #[arg(long)]
         public_key: Option<String>,
+        /// Output format (pretty or json)
+        #[arg(short, long, default_value = "pretty")]
+        format: String,
     },
 }
 
@@ -5096,9 +5122,15 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
             }
         },
         Commands::Plugin { action } => match action {
-            PluginAction::List => {
+            // In JSON mode stdout carries only the JSON document; warnings and
+            // notes stay on stderr exactly as in pretty mode, so the output can
+            // be piped straight into a parser.
+            PluginAction::List { format } => {
+                let fmt = parse_format_str(&format);
                 let plugins = sdkt_audit::plugin_store::list();
-                if plugins.is_empty() {
+                if fmt == OutputFormat::Json {
+                    println!("{}", serde_json::to_string_pretty(&plugins)?);
+                } else if plugins.is_empty() {
                     println!("No plugins installed.");
                 } else {
                     for p in plugins {
@@ -5106,23 +5138,35 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
                     }
                 }
             }
-            PluginAction::Show { id } => match sdkt_audit::plugin_store::show(&id) {
-                Some(p) => {
-                    println!("id: {}", p.id);
-                    println!("name: {}", p.name);
-                    println!("version: {}", p.version);
-                    println!("author: {}", p.author);
-                    println!("kind: {}", p.kind);
-                    println!("artifact: {}", p.artifact);
-                    println!("abi: {}.{}", p.abi_major, p.abi_minor);
-                    println!("description: {}", p.description);
+            PluginAction::Show { id, format } => {
+                let fmt = parse_format_str(&format);
+                match sdkt_audit::plugin_store::show(&id) {
+                    Some(p) if fmt == OutputFormat::Json => {
+                        println!("{}", serde_json::to_string_pretty(&p)?);
+                    }
+                    Some(p) => {
+                        println!("id: {}", p.id);
+                        println!("name: {}", p.name);
+                        println!("version: {}", p.version);
+                        println!("author: {}", p.author);
+                        println!("kind: {}", p.kind);
+                        println!("artifact: {}", p.artifact);
+                        println!("abi: {}.{}", p.abi_major, p.abi_minor);
+                        println!("description: {}", p.description);
+                    }
+                    None => {
+                        eprintln!("Error: plugin '{}' is not installed", id);
+                        process::exit(1);
+                    }
                 }
-                None => {
-                    eprintln!("Error: plugin '{}' is not installed", id);
-                    process::exit(1);
-                }
-            },
-            PluginAction::Install { source, id, force } => {
+            }
+            PluginAction::Install {
+                source,
+                id,
+                force,
+                format,
+            } => {
+                let fmt = parse_format_str(&format);
                 let opts = sdkt_audit::plugin_store::InstallOpts { id, force };
                 match sdkt_audit::plugin_store::install(std::path::Path::new(&source), &opts) {
                     Ok(meta) => {
@@ -5131,10 +5175,15 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
                                     "Warning: native plugins run UNSANDBOXED. Only install from trusted sources."
                                 );
                         }
-                        println!(
-                            "Installed plugin '{}' ({} v{})",
-                            meta.id, meta.kind, meta.version
-                        );
+                        if fmt == OutputFormat::Json {
+                            let json = serde_json::json!({ "status": "installed", "plugin": meta });
+                            println!("{}", serde_json::to_string_pretty(&json)?);
+                        } else {
+                            println!(
+                                "Installed plugin '{}' ({} v{})",
+                                meta.id, meta.kind, meta.version
+                            );
+                        }
                     }
                     Err(e) => {
                         eprintln!("Error installing plugin: {}", e);
@@ -5142,14 +5191,21 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
                     }
                 }
             }
-            PluginAction::Remove { id } => {
+            PluginAction::Remove { id, format } => {
+                let fmt = parse_format_str(&format);
                 if let Err(e) = sdkt_audit::plugin_store::remove(&id) {
                     eprintln!("Error removing plugin: {}", e);
                     process::exit(1);
                 }
-                println!("Removed plugin '{}' (if it was installed).", id);
+                if fmt == OutputFormat::Json {
+                    let json = serde_json::json!({ "status": "removed", "id": id });
+                    println!("{}", serde_json::to_string_pretty(&json)?);
+                } else {
+                    println!("Removed plugin '{}' (if it was installed).", id);
+                }
             }
-            PluginAction::Update { id, source } => {
+            PluginAction::Update { id, source, format } => {
+                let fmt = parse_format_str(&format);
                 match sdkt_audit::plugin_store::update(&id, std::path::Path::new(&source)) {
                     Ok(meta) => {
                         if meta.kind == "native" {
@@ -5157,7 +5213,12 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
                                     "Warning: native plugins run UNSANDBOXED. Only install from trusted sources."
                                 );
                         }
-                        println!("Updated plugin '{}' to v{}", meta.id, meta.version);
+                        if fmt == OutputFormat::Json {
+                            let json = serde_json::json!({ "status": "updated", "plugin": meta });
+                            println!("{}", serde_json::to_string_pretty(&json)?);
+                        } else {
+                            println!("Updated plugin '{}' to v{}", meta.id, meta.version);
+                        }
                     }
                     Err(e) => {
                         eprintln!("Error updating plugin: {}", e);
@@ -5169,7 +5230,9 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
                 source,
                 output,
                 secret_key,
+                format,
             } => {
+                let fmt = parse_format_str(&format);
                 let src = std::path::Path::new(&source);
                 let meta_path = src.join("plugin.toml");
                 if !meta_path.exists() {
@@ -5228,7 +5291,18 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
                     signing_key.as_ref(),
                 ) {
                     Ok(()) => {
-                        println!("Packed plugin to '{}'", out);
+                        if fmt == OutputFormat::Json {
+                            let json = serde_json::json!({
+                                "status": "packed",
+                                "output": out,
+                                "id": meta.id,
+                                "version": meta.version,
+                                "signed": signing_key.is_some(),
+                            });
+                            println!("{}", serde_json::to_string_pretty(&json)?);
+                        } else {
+                            println!("Packed plugin to '{}'", out);
+                        }
                         if signing_key.is_none() {
                             eprintln!("Note: bundle was NOT signed (pass --secret-key to sign)");
                         }
@@ -5239,7 +5313,12 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
                     }
                 }
             }
-            PluginAction::VerifyBundle { bundle, public_key } => {
+            PluginAction::VerifyBundle {
+                bundle,
+                public_key,
+                format,
+            } => {
+                let fmt = parse_format_str(&format);
                 let pubkey = if let Some(key_path) = public_key {
                     let bytes = std::fs::read(key_path)
                         .map_err(|e| {
@@ -5272,6 +5351,14 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
                     &staging,
                     pubkey.as_ref(),
                 ) {
+                    Ok(result) if fmt == OutputFormat::Json => {
+                        let json = serde_json::json!({
+                            "valid": true,
+                            "signed": result.signed,
+                            "plugin": result.metadata,
+                        });
+                        println!("{}", serde_json::to_string_pretty(&json)?);
+                    }
                     Ok(result) => {
                         println!("Bundle is valid.");
                         println!("  id: {}", result.metadata.id);

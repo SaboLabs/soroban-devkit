@@ -439,7 +439,34 @@ pub fn list_in(root: &Path) -> Vec<PluginMeta> {
             out.push(meta);
         }
     }
-    out.sort_by(|a, b| a.id.cmp(&b.id));
+    // Order on every field, not just `id`: `install --id` stores a plugin under
+    // another directory without rewriting its manifest, so two entries can share
+    // an `id`, and `read_dir` order is unspecified. Entries that still compare
+    // equal are identical, so the listing is deterministic either way.
+    out.sort_by(|a, b| {
+        (
+            &a.id,
+            &a.version,
+            &a.name,
+            &a.author,
+            &a.description,
+            &a.kind,
+            &a.artifact,
+            a.abi_major,
+            a.abi_minor,
+        )
+            .cmp(&(
+                &b.id,
+                &b.version,
+                &b.name,
+                &b.author,
+                &b.description,
+                &b.kind,
+                &b.artifact,
+                b.abi_major,
+                b.abi_minor,
+            ))
+    });
     out
 }
 
@@ -572,6 +599,47 @@ pub fn update(id: &str, local_source: &Path) -> Result<PluginMeta, StoreError> {
         force: true,
     };
     install(local_source, &opts)
+}
+
+#[cfg(test)]
+mod list_tests {
+    use super::*;
+    use std::fs;
+
+    fn write_entry(root: &Path, dir: &str, id: &str, version: &str) {
+        let d = root.join(dir);
+        fs::create_dir_all(&d).unwrap();
+        fs::write(
+            d.join("plugin.toml"),
+            format!(
+                "id = \"{id}\"\nname = \"Rule\"\nversion = \"{version}\"\nauthor = \"Test\"\n\
+                 description = \"d\"\nkind = \"wasm\"\nartifact = \"rule.wasm\"\n\
+                 abi_major = {SDKT_AUDIT_ABI_MAJOR}\nabi_minor = 0\n"
+            ),
+        )
+        .unwrap();
+    }
+
+    #[test]
+    fn list_is_deterministic_when_ids_collide() {
+        let root = tempfile::tempdir().unwrap();
+        // `install --id` keeps the manifest id, so two directories can hold the
+        // same id. The directory names run against version order, so directory
+        // order alone cannot produce the expected listing.
+        write_entry(root.path(), "a-alias", "same", "2.0.0");
+        write_entry(root.path(), "b-alias", "same", "1.0.0");
+        write_entry(root.path(), "0-first", "zeta", "1.0.0");
+
+        let listed: Vec<(String, String)> = list_in(root.path())
+            .into_iter()
+            .map(|m| (m.id, m.version))
+            .collect();
+        assert_eq!(
+            listed,
+            [("same", "1.0.0"), ("same", "2.0.0"), ("zeta", "1.0.0")]
+                .map(|(i, v)| (i.to_string(), v.to_string()))
+        );
+    }
 }
 
 #[cfg(test)]
