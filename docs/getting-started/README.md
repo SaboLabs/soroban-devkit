@@ -294,6 +294,9 @@ sdkt invoke C... increment --args u32:1 --identity alice --network-profile testn
 
 # JSON output for scripting
 sdkt invoke C... set_admin --args address:G... --identity alice --format json --network-profile testnet
+
+# Submit without waiting for settlement (prints the hash with status PENDING)
+sdkt invoke C... increment --args u32:1 --identity alice --no-wait --network-profile testnet
 ```
 
 - `--args` uses the same `TYPE:VALUE` syntax as `call`, but is strict: an
@@ -304,6 +307,10 @@ sdkt invoke C... set_admin --args address:G... --identity alice --format json --
   inclusion fee); the footprint and auth entries come from the same simulation.
 - Output shows the transaction hash, final status, fee, and result XDR.
   Exit code is non-zero when the transaction fails or is rejected.
+- By default, `invoke` polls until the transaction settles. Use `--no-wait` to
+  return immediately after successful submission with the transaction hash and
+  `PENDING` status; this mode exits successfully and does not call
+  `getTransaction`.
 - Relation to `tx build/sign/submit`: `invoke` is the one-command equivalent of
   `tx build` (with a real sequence + simulated fees) → `tx sign` →
   `tx submit --wait`. Use the `tx` subcommands when you need to inspect or

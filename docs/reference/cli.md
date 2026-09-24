@@ -39,13 +39,16 @@ sdkt
 │   ├── --args <TYPE:VALUE>...    (same typed-args as `call` / `tx build`;
 │   │                            strict: unknown types are rejected)
 │   ├── --identity <name>        (signs and pays; default: "default")
+│   ├── --no-wait                (return after submission with status PENDING)
 │   ├── --format <json|pretty>
 │   └── --network-profile <NAME> / --rpc-url <URL> / --network-passphrase <P>
 │
 │   State-changing end-to-end flow in one command:
 │     fetch account sequence → simulate → build final envelope (authoritative
 │     footprint + fees + auth entries from simulation) → sign with the local
-│     identity → submit → poll until settled. Exit code 0 only on SUCCESS.
+│     identity → submit → poll until settled. With --no-wait, return after
+│     submission with the hash and PENDING status. Exit code 0 only on SUCCESS
+│     unless --no-wait was supplied.
 │   Result decoding is limited to the transaction-level `TransactionResult`
 │   XDR (no ABI-aware result decode yet). Inherits the mainnet safety guard
 │   (see below). Live Testnet smoke test is documented but NOT exercised in CI.

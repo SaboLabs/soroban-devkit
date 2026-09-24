@@ -147,7 +147,7 @@ fn empty_soroban_data() -> SorobanTransactionData {
 
 /// Invoke a contract function end-to-end: fetch sequence, simulate for the
 /// authoritative footprint/auth/fees, build the final envelope, sign, submit,
-/// and poll until the transaction settles.
+/// and optionally poll until the transaction settles.
 ///
 /// `params.args` are base64-encoded `ScVal` strings (the format produced by
 /// the CLI typed-argument parser).
@@ -157,6 +157,7 @@ pub async fn invoke_contract(
     signer: &Ed25519Signer,
     network: Network,
     poll: &PollConfig,
+    wait: bool,
 ) -> Result<InvokeResult, RpcError> {
     // 1. Current sequence for the source account.
     let sequence = get_next_sequence(client, &params.source_account).await?;
@@ -186,8 +187,8 @@ pub async fn invoke_contract(
     let signed_envelope = sign_transaction(&final_envelope, signer, &signing_opts)
         .map_err(|e| RpcError::Rpc(format!("Failed to sign invoke transaction: {e}")))?;
 
-    // 6. Submit and poll until settled.
-    let submission = submit_and_wait(client, &signed_envelope, true, poll).await?;
+    // 6. Submit and optionally poll until settled.
+    let submission = submit_and_wait(client, &signed_envelope, wait, poll).await?;
 
     let status = match submission.status {
         TransactionStatus::Success => "SUCCESS",

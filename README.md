@@ -227,6 +227,9 @@ sdkt deploy \
 
 # 8. Invoke a contract function (state-changing: sequence → simulate → sign → submit → poll)
 sdkt invoke <CONTRACT_ID> increment --args u32:1 --identity my-deployer --network-profile testnet
+
+# Submit and return immediately with the transaction hash
+sdkt invoke <CONTRACT_ID> increment --args u32:1 --identity my-deployer --no-wait --network-profile testnet
 ```
 
 For a detailed explanation of each step, see [Deploy a single contract](#deploy-a-single-contract).

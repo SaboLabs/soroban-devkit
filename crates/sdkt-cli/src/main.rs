@@ -592,6 +592,9 @@ enum Commands {
         /// Output format (pretty or json)
         #[arg(short, long, default_value = "pretty")]
         format: String,
+        /// Return after submission with the transaction hash instead of polling for settlement
+        #[arg(long)]
+        no_wait: bool,
         #[command(flatten)]
         net: NetworkArgs,
     },
@@ -4855,6 +4858,7 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
             args,
             identity,
             format,
+            no_wait,
             net,
         } => {
             let fmt = parse_format_str(&format);
@@ -4905,7 +4909,9 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
             let client = SorobanRpcClient::from_config(&network_config);
             let poll = sdkt_rpc::PollConfig::default();
 
-            match sdkt_rpc::invoke_contract(&client, &params, &signer, network, &poll).await {
+            match sdkt_rpc::invoke_contract(&client, &params, &signer, network, &poll, !no_wait)
+                .await
+            {
                 Ok(res) => {
                     if fmt == OutputFormat::Json {
                         println!(
@@ -4942,7 +4948,7 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
                             println!("  Diagnostic: {}", ev);
                         }
                     }
-                    if res.status != "SUCCESS" {
+                    if res.status != "SUCCESS" && !(no_wait && res.status == "PENDING") {
                         process::exit(1);
                     }
                 }

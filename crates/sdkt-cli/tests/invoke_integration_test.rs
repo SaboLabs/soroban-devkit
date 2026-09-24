@@ -159,7 +159,8 @@ fn invoke_help_shows_identity_and_args_flags() {
         .assert()
         .success()
         .stdout(predicates::str::contains("--identity"))
-        .stdout(predicates::str::contains("--args"));
+        .stdout(predicates::str::contains("--args"))
+        .stdout(predicates::str::contains("--no-wait"));
 }
 
 // ---------- Argument parsing ----------
@@ -350,6 +351,50 @@ fn invoke_success_json_output() {
     assert_eq!(parsed["fee"], 250);
     assert_eq!(parsed["function"], "increment");
     assert!(parsed.get("errorResultXdr").unwrap().is_null());
+}
+
+#[test]
+fn invoke_no_wait_returns_pending_without_polling() {
+    let dir = tempdir().unwrap();
+    generate_identity(dir.path(), "alice");
+    let (url, seen) = mock_rpc_server(false);
+    add_mock_profile(dir.path(), &url);
+
+    let output = sdkt_isolated(dir.path())
+        .args([
+            "invoke",
+            VALID_CONTRACT,
+            "increment",
+            "--identity",
+            "alice",
+            "--network-profile",
+            "mocknet",
+            "--no-wait",
+            "--format",
+            "json",
+        ])
+        .output()
+        .unwrap();
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        output.status.success(),
+        "no-wait should succeed after submission. stdout={stdout} stderr={}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let parsed: serde_json::Value =
+        serde_json::from_str(&stdout).unwrap_or_else(|e| panic!("Invalid JSON: {e}\n{stdout}"));
+    assert_eq!(parsed["status"], "PENDING");
+    assert_eq!(parsed["hash"], "deadbeefcafe");
+
+    let methods = seen.lock().unwrap().clone();
+    assert!(methods.contains(&"getLedgerEntries".to_string()));
+    assert!(methods.contains(&"simulateTransaction".to_string()));
+    assert!(methods.contains(&"sendTransaction".to_string()));
+    assert!(
+        !methods.contains(&"getTransaction".to_string()),
+        "methods={methods:?}"
+    );
 }
 
 #[test]
