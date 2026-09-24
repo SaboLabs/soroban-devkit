@@ -56,7 +56,7 @@ fn scalar_type_tag(t: &ContractType) -> Option<&'static str> {
         "u32" => Some("u32"),
         "i32" => Some("i32"),
         "u64" => Some("u64"),
-        "i64" => Some("u64"),
+        "i64" => Some("i64"),
         "bool" => Some("bool"),
         "address" => Some("address"),
         "string" => Some("string"),
@@ -413,6 +413,7 @@ mod tests {
         let code = generate_client(&spec).unwrap();
         assert!(code.contains("pub a: i32,"));
         assert!(code.contains("pub b: i64,"));
+        assert!(code.contains("format!(\"i64:{}\", self.b.to_string())"));
         assert!(code.contains("pub type SetOutput = bool;"));
     }
 }
