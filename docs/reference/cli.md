@@ -239,6 +239,10 @@ or git logic is duplicated; the same `compute_dependency_integrity` /
 │   ├── --args <TYPE:VALUE>...    (e.g. u32:100, address:G..., string:hello)
 │   ├── --abi <wasm>          (ABI-aware result decoding from a local WASM;
 │   │                            without it the raw base64 XDR result is shown)
+│   ├── --abi-contract <id>   (ABI-aware result decoding using the deployed
+│   │                            contract's on-chain WASM, fetched via the
+│   │                            inspection path; no local artifact needed.
+│   │                            Mutually exclusive with --abi.)
 │   ├── --format <json|pretty>
 │   └── --network-profile <NAME>
 └── deploy

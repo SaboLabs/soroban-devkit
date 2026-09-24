@@ -25,6 +25,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Local plugin ecosystem and signed plugin bundles.** Local plugin loading/ecosystem support, plus a signed, reproducible plugin bundle format with e2e/compatibility coverage.
 - **On-chain inspection tooling.** Enriched on-chain contract inspection, upgrade-safety verification, live-contract ABI for events decode, and on-chain ABI for storage decode.
 - **`tx simulate --abi-contract`.** Transaction simulation can now fetch a deployed contract's on-chain WASM and decode the primary result with its ABI, matching the existing `--abi-contract` support in `events`/`storage`. `--abi` and `--abi-contract` are mutually exclusive.
+- **`call --abi-contract`.** Read-only calls can decode the result using the deployed contract's on-chain WASM (`inspect_contract` → `get_wasm_bytecode` → `parse_contract_spec`) instead of requiring a local artifact, matching `events`/`storage`/`tx simulate`. `--abi` and `--abi-contract` are mutually exclusive; local `--abi` and no-flag behavior are unchanged.
 - **Windows x86_64 release binary.** Packaged Windows builds are available alongside existing platforms.
 - **Website and Web Playground.** Public landing page and a browser-based contract inspector (Web Playground MVP).
 
