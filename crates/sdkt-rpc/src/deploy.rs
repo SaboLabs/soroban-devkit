@@ -19,6 +19,9 @@ pub struct DeployResult {
     pub create_hash: String,
     pub status: String,
     pub salt: String,
+    pub upload_fee: u32,
+    pub create_fee: u32,
+    pub total_fee: u64,
 }
 
 /// Partial deployment result when upload succeeds but create fails.
@@ -43,8 +46,8 @@ impl std::fmt::Display for DeployOutcome {
             DeployOutcome::Success(r) => {
                 write!(
                     f,
-                    "Deployment successful!\n  WASM Hash: {}\n  Contract ID: {}\n  Upload TX: {}\n  Create TX: {}",
-                    r.wasm_hash, r.contract_id, r.upload_hash, r.create_hash
+                    "Deployment successful!\n  WASM Hash: {}\n  Contract ID: {}\n  Upload TX: {}\n  Create TX: {}\n  Salt: {}\n  Status: {}\n  Upload Fee: {}\n  Create Fee: {}\n  Total Fee: {}",
+                    r.wasm_hash, r.contract_id, r.upload_hash, r.create_hash, r.salt, r.status, r.upload_fee, r.create_fee, r.total_fee
                 )
             }
             DeployOutcome::Partial(p) => {
@@ -89,7 +92,7 @@ pub async fn upload_wasm(
     fee: u32,
     network: Network,
     signer: &Ed25519Signer,
-) -> Result<(String, String), RpcError> {
+) -> Result<(String, String, u32), RpcError> {
     use sdkt_xdr::builder::UploadWasmParams;
 
     if wasm_bytes.is_empty() {
@@ -212,7 +215,7 @@ pub async fn upload_wasm(
         )));
     }
 
-    Ok((wasm_hash, submission_result.hash))
+    Ok((wasm_hash, submission_result.hash, total_fee))
 }
 
 /// Create a contract instance from an uploaded WASM.
@@ -223,7 +226,7 @@ pub async fn create_contract(
     fee: u32,
     network: Network,
     signer: &Ed25519Signer,
-) -> Result<(String, String), RpcError> {
+) -> Result<(String, String, u32), RpcError> {
     use sdkt_xdr::builder::CreateContractParams;
 
     // Build initial V1 transaction for simulation (Soroban requires V1)
@@ -351,7 +354,7 @@ pub async fn create_contract(
     )
     .map_err(|e| RpcError::Rpc(format!("Failed to derive contract ID: {}", e)))?;
 
-    Ok((contract_id, submission_result.hash))
+    Ok((contract_id, submission_result.hash, total_fee))
 }
 
 /// Deploy a contract: upload WASM, then create contract instance.
@@ -385,7 +388,7 @@ pub async fn deploy_contract(
     let mut sequence = get_next_sequence(client, source_account).await?;
 
     // Step 1: Upload WASM
-    let (_uploaded_wasm_hash, upload_hash) = match upload_wasm(
+    let (_uploaded_wasm_hash, upload_hash, upload_fee) = match upload_wasm(
         client,
         wasm_bytes,
         source_account,
@@ -410,7 +413,7 @@ pub async fn deploy_contract(
         salt,
     };
 
-    let (contract_id, create_hash) =
+    let (contract_id, create_hash, create_fee) =
         match create_contract(client, &create_args, sequence, 100, network, signer).await {
             Ok(result) => result,
             Err(e) => {
@@ -422,6 +425,8 @@ pub async fn deploy_contract(
             }
         };
 
+    let total_fee = upload_fee as u64 + create_fee as u64;
+
     Ok(DeployOutcome::Success(DeployResult {
         wasm_hash: wasm_hash_str,
         contract_id,
@@ -429,14 +434,17 @@ pub async fn deploy_contract(
         create_hash,
         status: "SUCCESS".into(),
         salt: hex::encode(salt),
+        upload_fee,
+        create_fee,
+        total_fee,
     }))
 }
 
 /// Pretty-print a deployment result.
 pub fn format_pretty(res: &DeployResult) -> String {
     format!(
-        "Deployment Result:\n  WASM Hash: {}\n  Contract ID: {}\n  Upload Hash: {}\n  Create Hash: {}\n  Salt: {}\n  Status: {}",
-        res.wasm_hash, res.contract_id, res.upload_hash, res.create_hash, res.salt, res.status
+        "Deployment Result:\n  WASM Hash: {}\n  Contract ID: {}\n  Upload Hash: {}\n  Create Hash: {}\n  Salt: {}\n  Status: {}\n  Upload Fee: {}\n  Create Fee: {}\n  Total Fee: {}",
+        res.wasm_hash, res.contract_id, res.upload_hash, res.create_hash, res.salt, res.status, res.upload_fee, res.create_fee, res.total_fee
     )
 }
 
@@ -449,6 +457,9 @@ pub fn format_json(res: &DeployResult) -> String {
         "createHash": res.create_hash,
         "salt": res.salt,
         "status": res.status,
+        "uploadFee": res.upload_fee,
+        "createFee": res.create_fee,
+        "totalFee": res.total_fee,
     })
     .to_string()
 }
@@ -537,8 +548,59 @@ mod tests {
             create_hash: "c1".into(),
             status: "SUCCESS".into(),
             salt: "00112233445566778899aabbccddeeff00112233".into(),
+            upload_fee: 100,
+            create_fee: 200,
+            total_fee: 300,
         };
         assert_eq!(result.salt, "00112233445566778899aabbccddeeff00112233");
+    }
+
+    #[test]
+    fn test_deploy_result_fee_fields_and_total() {
+        let result = DeployResult {
+            wasm_hash: "abc123".into(),
+            contract_id: "C...".into(),
+            upload_hash: "u1".into(),
+            create_hash: "c1".into(),
+            status: "SUCCESS".into(),
+            salt: "00112233445566778899aabbccddeeff00112233".into(),
+            upload_fee: 1500,
+            create_fee: 2500,
+            total_fee: 4000,
+        };
+        assert_eq!(result.upload_fee, 1500);
+        assert_eq!(result.create_fee, 2500);
+        assert_eq!(result.total_fee, 4000);
+        assert_eq!(
+            result.total_fee,
+            result.upload_fee as u64 + result.create_fee as u64
+        );
+    }
+
+    #[test]
+    fn test_deploy_result_fee_overflow_safety() {
+        let upload_fee = u32::MAX;
+        let create_fee = u32::MAX;
+        let total_fee = upload_fee as u64 + create_fee as u64;
+        let result = DeployResult {
+            wasm_hash: "abc123".into(),
+            contract_id: "C...".into(),
+            upload_hash: "u1".into(),
+            create_hash: "c1".into(),
+            status: "SUCCESS".into(),
+            salt: "00112233445566778899aabbccddeeff00112233".into(),
+            upload_fee,
+            create_fee,
+            total_fee,
+        };
+        assert_eq!(result.upload_fee, u32::MAX);
+        assert_eq!(result.create_fee, u32::MAX);
+        assert_eq!(result.total_fee, 8589934590);
+        assert!(result.total_fee > u32::MAX as u64);
+        assert_eq!(
+            result.total_fee,
+            result.upload_fee as u64 + result.create_fee as u64
+        );
     }
 
     #[test]
@@ -584,7 +646,7 @@ mod tests {
     }
 
     #[test]
-    fn test_format_pretty_includes_salt() {
+    fn test_format_pretty_includes_salt_and_fees() {
         let result = DeployResult {
             wasm_hash: "abc".into(),
             contract_id: "C123".into(),
@@ -592,14 +654,20 @@ mod tests {
             create_hash: "c1".into(),
             status: "SUCCESS".into(),
             salt: "00112233445566778899aabbccddeeff00112233".into(),
+            upload_fee: 150,
+            create_fee: 250,
+            total_fee: 400,
         };
         let pretty = format_pretty(&result);
         assert!(pretty.contains("Salt:"));
         assert!(pretty.contains("00112233445566778899aabbccddeeff00112233"));
+        assert!(pretty.contains("Upload Fee: 150"));
+        assert!(pretty.contains("Create Fee: 250"));
+        assert!(pretty.contains("Total Fee: 400"));
     }
 
     #[test]
-    fn test_format_json_includes_salt() {
+    fn test_format_json_includes_salt_and_fees() {
         let result = DeployResult {
             wasm_hash: "abc".into(),
             contract_id: "C123".into(),
@@ -607,9 +675,35 @@ mod tests {
             create_hash: "c1".into(),
             status: "SUCCESS".into(),
             salt: "00112233445566778899aabbccddeeff00112233".into(),
+            upload_fee: 150,
+            create_fee: 250,
+            total_fee: 400,
         };
         let json = format_json(&result);
         assert!(json.contains("\"salt\""));
         assert!(json.contains("00112233445566778899aabbccddeeff00112233"));
+        assert!(json.contains("\"uploadFee\":150"));
+        assert!(json.contains("\"createFee\":250"));
+        assert!(json.contains("\"totalFee\":400"));
+    }
+
+    #[test]
+    fn test_deploy_outcome_display_includes_fees() {
+        let result = DeployResult {
+            wasm_hash: "abc".into(),
+            contract_id: "C123".into(),
+            upload_hash: "u1".into(),
+            create_hash: "c1".into(),
+            status: "SUCCESS".into(),
+            salt: "00112233445566778899aabbccddeeff00112233".into(),
+            upload_fee: 150,
+            create_fee: 250,
+            total_fee: 400,
+        };
+        let outcome = DeployOutcome::Success(result);
+        let display = format!("{}", outcome);
+        assert!(display.contains("Upload Fee: 150"));
+        assert!(display.contains("Create Fee: 250"));
+        assert!(display.contains("Total Fee: 400"));
     }
 }

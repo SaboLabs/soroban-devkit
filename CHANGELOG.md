@@ -8,6 +8,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **Deployment fee breakdown in deploy output.** `sdkt deploy` exposes internal simulation fee calculations (`upload_fee`, `create_fee`, and `total_fee`) in `DeployResult` and displays them in both pretty and JSON output formats (#55).
 - **Real Soroban contract deployment.** `sdkt` can deploy Wasm contracts to a live network (upload Wasm, create the contract instance, and report the resulting contract ID), replacing the previous placeholder/stub path.
 - **Auto-generated deployment salt.** Deploy flows generate a salt when the operator does not supply one, so routine deployments no longer require a hand-crafted hex salt.
 - **Contract TTL extension.** Operators can extend a contract instance’s TTL via the CLI/storage helpers.
