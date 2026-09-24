@@ -34,6 +34,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Website and Web Playground.** Public landing page and a browser-based contract inspector (Web Playground MVP).
 
 ### Fixed
+- Updated public landing page content (`website/index.html`) to reflect shipped CLI capabilities, adding contract invocation (`invoke` / `call`), event exploration, storage read/extend, account inspection, and Friendbot funding, updating the workflow to feature `invoke` as the primary execution path, adding a real `invoke` terminal demo, and fixing/expanding documentation footer links (#82).
 - `sdkt identity delete` now fails with a not-found error, and exits non-zero, when the identity does not exist, instead of reporting a removal that did not happen. `IdentityStore::remove` returns `StorageError::NotFound` in that case, matching `network remove` (#109).
 - `storage extend --ledgers` is documented as the relative TTL it is. The getting-started guides and the `ExtendFootprintParams::extend_to` doc comment described it as an absolute ledger sequence, but the protocol's `ExtendFootprintTTLOp.extendTo` means "at least N ledgers from the last closed ledger". Behaviour is unchanged; a regression test now pins that `N` reaches the operation as given (#110).
 - Generated client arguments use the `i64:` type tag for `i64` parameters (#105).
