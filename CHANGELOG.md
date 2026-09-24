@@ -7,12 +7,32 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-### Fixed
-- `sdkt invoke --format json` includes `errorResultXdr` when an RPC submission fails, matching the existing pretty output. The field is `null` when the RPC response has no error result XDR.
-
 ### Added
-- `sdkt encode` now accepts `symbol:VALUE` and emits a Soroban `ScVal::Symbol`.
-  Values longer than 32 bytes fail with a clear error.
+- **Real Soroban contract deployment.** `sdkt` can deploy Wasm contracts to a live network (upload Wasm, create the contract instance, and report the resulting contract ID), replacing the previous placeholder/stub path.
+- **Auto-generated deployment salt.** Deploy flows generate a salt when the operator does not supply one, so routine deployments no longer require a hand-crafted hex salt.
+- **Contract TTL extension.** Operators can extend a contract instance’s TTL via the CLI/storage helpers.
+- **Contract state read by LedgerKey.** Read on-chain contract state using a LedgerKey, for inspection and tooling workflows.
+- **Friendbot funding.** Identity/account helpers can request Friendbot funding on supported test networks.
+- **Read-only contract call.** `sdkt` can perform a read-only contract call against a live contract.
+- **ABI-aware result decoding for contract call and simulation.** Call and transaction-simulation paths can decode results using contract ABI metadata when available.
+- **Real account inspection.** Account inspection talks to the network and reports live account state instead of a stub.
+- **State-changing contract invoke.** `sdkt invoke` submits state-changing contract invocations (with JSON output improvements noted under Fixed).
+- **`sdkt doctor`.** New diagnostics command that checks local toolchain/environment readiness (CI- and Windows-safe checks).
+- **Client generation and XDR encoding.** CLI support for generating clients and encoding XDR values, including `symbol:VALUE` as a Soroban `ScVal::Symbol` (values longer than 32 bytes fail with a clear error).
+- **Local plugin ecosystem and signed plugin bundles.** Local plugin loading/ecosystem support, plus a signed, reproducible plugin bundle format with e2e/compatibility coverage.
+- **On-chain inspection tooling.** Enriched on-chain contract inspection, upgrade-safety verification, live-contract ABI for events decode, and on-chain ABI for storage decode.
+- **Windows x86_64 release binary.** Packaged Windows builds are available alongside existing platforms.
+- **Website and Web Playground.** Public landing page and a browser-based contract inspector (Web Playground MVP).
+
+### Fixed
+- Deploy salt validation distinguishes invalid length from invalid hex, with clearer error messages (#51).
+- `sdkt invoke --format json` includes `errorResultXdr` when an RPC submission fails, matching the existing pretty output. The field is `null` when the RPC response has no error result XDR.
+- RPC/XDR compatibility restorations for live Soroban LedgerEntry handling, on-chain inspection paths, and contract-instance TTL queries.
+- Windows debug stack overflow avoided by running async main on an 8MB-stack thread.
+- AUTH-004 audit rule registration/behavior improvements (plus additional AUTH/MOVE unit coverage).
+
+### Changed
+- Public docs refreshed for deployment, contributor onboarding, security-model wording, Windows availability, GitBook navigation, and README positioning. Historical internal/planning docs were archived or removed where appropriate.
 
 ## [v2.5.0] - 2026-08-08
 
