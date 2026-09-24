@@ -1036,14 +1036,34 @@ enum StorageAction {
         #[arg(short, long, default_value = "pretty")]
         format: String,
     },
-    /// Read a contract's storage entry by its complete `LedgerKey` (base64 XDR).
+    /// Read a contract's storage entry.
+    ///
+    /// The entry can be identified either by a complete raw `LedgerKey`
+    /// (`--key-xdr`, base64 or hex) or by a typed key specification built from
+    /// the contract's own types (`--map-key`/`--key-arg`, or `--instance`).
     Read {
-        /// Contract ID whose storage entry should be read.
+        /// Contract ID whose storage entry should be read (C... StrKey).
         #[arg(long)]
         contract: String,
-        /// Complete base64-encoded `LedgerKey` identifying the storage entry.
+        /// Complete base64/hex-encoded `LedgerKey` (escape hatch for advanced
+        /// use). Mutually exclusive with the typed key options.
         #[arg(long, value_name = "BASE64_XDR")]
-        key_xdr: String,
+        key_xdr: Option<String>,
+        /// Leading symbol of a typed data key — the map/enum-variant name.
+        /// Combined with `--key-arg` this builds `ScVec[symbol, args...]`,
+        /// e.g. `--map-key balances --key-arg address:G...`.
+        #[arg(long, value_name = "SYMBOL")]
+        map_key: Option<String>,
+        /// Repeatable typed key component (`TYPE:VALUE`, e.g. `address:G...`,
+        /// `u32:100`) appended after `--map-key`. Requires `--map-key`.
+        #[arg(long, value_name = "TYPE:VALUE")]
+        key_arg: Vec<String>,
+        /// Read the contract's instance-storage entry (always persistent).
+        #[arg(long)]
+        instance: bool,
+        /// Durability of a typed data key: `persistent` (default) or `temporary`.
+        #[arg(long, value_name = "persistent|temporary", default_value = "persistent")]
+        durability: String,
         #[arg(short, long, default_value = "pretty")]
         format: String,
     },
@@ -1419,6 +1439,79 @@ fn parse_typed_args(args: &[String], strict: bool) -> Result<Vec<String>, String
         }
     }
     Ok(parsed)
+}
+
+/// Parse a `storage read` durability value into `ContractDataDurability`.
+fn parse_durability(s: &str) -> Result<stellar_xdr::ContractDataDurability, String> {
+    match s.trim().to_ascii_lowercase().as_str() {
+        "persistent" | "p" => Ok(stellar_xdr::ContractDataDurability::Persistent),
+        "temporary" | "temp" | "t" => Ok(stellar_xdr::ContractDataDurability::Temporary),
+        other => Err(format!(
+            "invalid durability '{other}' (expected persistent|temporary)"
+        )),
+    }
+}
+
+/// Resolve the effective base64 `LedgerKey` for `storage read` from its mutually
+/// exclusive key sources: the raw `--key-xdr` escape hatch, a typed
+/// `--map-key`/`--key-arg` spec, or `--instance`.
+///
+/// Pure (no network/I/O) so the key-construction and validation logic is
+/// unit-testable without a live RPC.
+fn resolve_storage_read_key(
+    contract: &str,
+    key_xdr: Option<&str>,
+    map_key: Option<&str>,
+    key_arg: &[String],
+    instance: bool,
+    durability: &str,
+) -> Result<String, String> {
+    let sources = [key_xdr.is_some(), map_key.is_some(), instance]
+        .into_iter()
+        .filter(|b| *b)
+        .count();
+    if sources == 0 {
+        return Err(
+            "provide a key via --key-xdr <BASE64|HEX>, --map-key <SYMBOL> \
+             [--key-arg TYPE:VALUE ...], or --instance"
+                .to_string(),
+        );
+    }
+    if sources > 1 {
+        return Err("specify only one of --key-xdr, --map-key, or --instance".to_string());
+    }
+    if !key_arg.is_empty() && map_key.is_none() {
+        return Err("--key-arg requires --map-key".to_string());
+    }
+
+    if let Some(raw) = key_xdr {
+        if raw.trim().is_empty() {
+            return Err("--key-xdr must not be empty".to_string());
+        }
+        // Escape hatch: pass the raw LedgerKey through unchanged.
+        return Ok(raw.to_string());
+    }
+
+    // Typed construction.
+    let (key, dur) = if instance {
+        // Instance storage is a single, always-persistent ledger entry.
+        (
+            stellar_xdr::ScVal::LedgerKeyContractInstance,
+            stellar_xdr::ContractDataDurability::Persistent,
+        )
+    } else {
+        let symbol = map_key.expect("map_key present when instance/key_xdr absent");
+        let args_b64 = parse_typed_args(key_arg, true)?;
+        let key = sdkt_xdr::build_map_key(symbol, &args_b64).map_err(|e| e.to_string())?;
+        (key, parse_durability(durability)?)
+    };
+
+    sdkt_xdr::encode_ledger_key(&sdkt_xdr::LedgerKeyParams::ContractDataEntry {
+        contract: contract.to_string(),
+        key,
+        durability: dur,
+    })
+    .map_err(|e| format!("failed to build LedgerKey: {e}"))
 }
 
 /// Encode typed `TYPE:VALUE` values to a single base64 XDR `ScVal` string.
@@ -2229,6 +2322,10 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
                 StorageAction::Read {
                     contract,
                     key_xdr,
+                    map_key,
+                    key_arg,
+                    instance,
+                    durability,
                     format,
                 } => {
                     let fmt = parse_format_str(&format);
@@ -2237,10 +2334,24 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
                         eprintln!("Error: --contract must not be empty");
                         process::exit(1);
                     }
-                    if key_xdr.trim().is_empty() {
-                        eprintln!("Error: --key-xdr must not be empty");
-                        process::exit(1);
-                    }
+
+                    // Resolve the LedgerKey from exactly one source: the raw
+                    // `--key-xdr` escape hatch, a typed `--map-key` spec, or
+                    // `--instance`.
+                    let key_xdr = match resolve_storage_read_key(
+                        &contract,
+                        key_xdr.as_deref(),
+                        map_key.as_deref(),
+                        &key_arg,
+                        instance,
+                        &durability,
+                    ) {
+                        Ok(k) => k,
+                        Err(e) => {
+                            eprintln!("Error: {e}");
+                            process::exit(1);
+                        }
+                    };
 
                     let network_config = resolve_network_config(
                         net.rpc_url.clone(),
@@ -5639,5 +5750,160 @@ mod m23_tests {
         };
         let json2 = serde_json::to_string(&r2).unwrap();
         assert!(json2.contains("\"verified\":null") || !json2.contains("\"verified\""));
+    }
+}
+
+#[cfg(test)]
+mod storage_read_key_tests {
+    use super::*;
+    use stellar_xdr::{ContractDataDurability, LedgerKey, ScVal};
+
+    const CONTRACT: &str = "CAE3U7JKESRWZHPEQ72DVNGOQ6WPA7HSPQZL5YV46NPCE4TMUPAGYMEC";
+
+    fn args(vals: &[&str]) -> Vec<String> {
+        vals.iter().map(|s| s.to_string()).collect()
+    }
+
+    #[test]
+    fn rejects_no_key_source() {
+        let err = resolve_storage_read_key(CONTRACT, None, None, &[], false, "persistent")
+            .unwrap_err();
+        assert!(err.contains("provide a key"));
+    }
+
+    #[test]
+    fn rejects_multiple_key_sources() {
+        let err =
+            resolve_storage_read_key(CONTRACT, Some("AAAA"), Some("bal"), &[], false, "persistent")
+                .unwrap_err();
+        assert!(err.contains("only one of"));
+    }
+
+    #[test]
+    fn rejects_key_arg_without_map_key() {
+        let err = resolve_storage_read_key(
+            CONTRACT,
+            None,
+            None,
+            &args(&["u32:1"]),
+            true,
+            "persistent",
+        )
+        .unwrap_err();
+        assert!(err.contains("--key-arg requires --map-key"));
+    }
+
+    #[test]
+    fn escape_hatch_passes_raw_key_through() {
+        let raw = "AAAABQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=";
+        let out =
+            resolve_storage_read_key(CONTRACT, Some(raw), None, &[], false, "persistent").unwrap();
+        assert_eq!(out, raw);
+    }
+
+    #[test]
+    fn rejects_empty_key_xdr() {
+        let err =
+            resolve_storage_read_key(CONTRACT, Some("   "), None, &[], false, "persistent")
+                .unwrap_err();
+        assert!(err.contains("must not be empty"));
+    }
+
+    #[test]
+    fn instance_builds_persistent_instance_key() {
+        let out =
+            resolve_storage_read_key(CONTRACT, None, None, &[], true, "persistent").unwrap();
+        match sdkt_xdr::decode_ledger_key(&out).unwrap() {
+            LedgerKey::ContractData(d) => {
+                assert_eq!(d.key, ScVal::LedgerKeyContractInstance);
+                assert_eq!(d.durability, ContractDataDurability::Persistent);
+            }
+            other => panic!("expected ContractData, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn typed_map_key_persistent_and_temporary_differ() {
+        let persistent = resolve_storage_read_key(
+            CONTRACT,
+            None,
+            Some("balances"),
+            &args(&["u32:100"]),
+            false,
+            "persistent",
+        )
+        .unwrap();
+        let temporary = resolve_storage_read_key(
+            CONTRACT,
+            None,
+            Some("balances"),
+            &args(&["u32:100"]),
+            false,
+            "temporary",
+        )
+        .unwrap();
+        assert_ne!(persistent, temporary);
+
+        match sdkt_xdr::decode_ledger_key(&persistent).unwrap() {
+            LedgerKey::ContractData(d) => {
+                assert_eq!(d.durability, ContractDataDurability::Persistent);
+                match d.key {
+                    ScVal::Vec(Some(v)) => {
+                        assert_eq!(v.len(), 2);
+                        assert_eq!(v[0], ScVal::Symbol("balances".try_into().unwrap()));
+                        assert_eq!(v[1], ScVal::U32(100));
+                    }
+                    other => panic!("expected ScVec key, got {other:?}"),
+                }
+            }
+            other => panic!("expected ContractData, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn typed_output_equals_raw_key_xdr_path() {
+        // The typed path and the raw escape hatch must resolve to the same key:
+        // feeding the typed output back as --key-xdr is a no-op.
+        let typed = resolve_storage_read_key(
+            CONTRACT,
+            None,
+            Some("bal"),
+            &args(&["u32:7"]),
+            false,
+            "persistent",
+        )
+        .unwrap();
+        let via_raw =
+            resolve_storage_read_key(CONTRACT, Some(&typed), None, &[], false, "persistent")
+                .unwrap();
+        assert_eq!(typed, via_raw);
+    }
+
+    #[test]
+    fn rejects_unknown_key_arg_type() {
+        let err = resolve_storage_read_key(
+            CONTRACT,
+            None,
+            Some("bal"),
+            &args(&["weird:1"]),
+            false,
+            "persistent",
+        )
+        .unwrap_err();
+        assert!(err.contains("unknown arg type"));
+    }
+
+    #[test]
+    fn rejects_invalid_durability() {
+        let err = resolve_storage_read_key(
+            CONTRACT,
+            None,
+            Some("bal"),
+            &[],
+            false,
+            "forever",
+        )
+        .unwrap_err();
+        assert!(err.contains("invalid durability"));
     }
 }
