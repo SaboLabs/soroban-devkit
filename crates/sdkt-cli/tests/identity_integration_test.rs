@@ -1,4 +1,5 @@
 use assert_cmd::Command;
+use predicates::prelude::*;
 use tempfile::tempdir;
 
 /// Redirect the keystore for a subprocess to an isolated temp dir.
@@ -50,4 +51,28 @@ fn test_cli_identity_lifecycle() {
         .assert()
         .success()
         .stdout(predicates::str::contains("removed"));
+}
+
+#[test]
+fn test_cli_identity_delete_missing_errors() {
+    let dir = tempdir().unwrap();
+
+    sdkt(dir.path())
+        .args(["identity", "generate", "alice"])
+        .assert()
+        .success();
+
+    sdkt(dir.path())
+        .args(["identity", "delete", "alice"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("Identity 'alice' removed."));
+
+    // A second delete must fail rather than report a removal that did not happen.
+    sdkt(dir.path())
+        .args(["identity", "delete", "alice"])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("Identity 'alice' not found"))
+        .stdout(predicate::str::contains("removed").not());
 }

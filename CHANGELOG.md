@@ -26,6 +26,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Website and Web Playground.** Public landing page and a browser-based contract inspector (Web Playground MVP).
 
 ### Fixed
+- `sdkt identity delete` now fails with a not-found error, and exits non-zero, when the identity does not exist, instead of reporting a removal that did not happen. `IdentityStore::remove` returns `StorageError::NotFound` in that case, matching `network remove` (#109).
 - `storage extend --ledgers` is documented as the relative TTL it is. The getting-started guides and the `ExtendFootprintParams::extend_to` doc comment described it as an absolute ledger sequence, but the protocol's `ExtendFootprintTTLOp.extendTo` means "at least N ledgers from the last closed ledger". Behaviour is unchanged; a regression test now pins that `N` reaches the operation as given (#110).
 - `sdkt deploy` now reports the file path and read error when its WASM file cannot be read (#49).
 - Deploy salt validation distinguishes invalid length from invalid hex, with clearer error messages (#51).
