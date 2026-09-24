@@ -580,7 +580,10 @@ pub struct ExtendFootprintParams {
     pub sequence: i64,
     /// Transaction fee in stroops
     pub fee: u32,
-    /// Absolute ledger sequence the TTL should be extended to (`extendTo`).
+    /// Minimum TTL in ledgers (`extendTo`): the footprint entries will live at
+    /// least this many ledgers past the last closed ledger. Relative, not an
+    /// absolute ledger sequence — see `ExtendFootprintTTLOp` in
+    /// `Stellar-transaction.x`.
     pub extend_to: u32,
     /// Ledger keys (base64 XDR or hex-encoded XDR) whose TTL will be extended.
     /// Placed in the read-only footprint of the simulation envelope.

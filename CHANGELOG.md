@@ -26,6 +26,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Website and Web Playground.** Public landing page and a browser-based contract inspector (Web Playground MVP).
 
 ### Fixed
+- `storage extend --ledgers` is documented as the relative TTL it is. The getting-started guides and the `ExtendFootprintParams::extend_to` doc comment described it as an absolute ledger sequence, but the protocol's `ExtendFootprintTTLOp.extendTo` means "at least N ledgers from the last closed ledger". Behaviour is unchanged; a regression test now pins that `N` reaches the operation as given (#110).
 - `sdkt deploy` now reports the file path and read error when its WASM file cannot be read (#49).
 - Deploy salt validation distinguishes invalid length from invalid hex, with clearer error messages (#51).
 - `sdkt invoke --format json` includes `errorResultXdr` when an RPC submission fails, matching the existing pretty output. The field is `null` when the RPC response has no error result XDR.

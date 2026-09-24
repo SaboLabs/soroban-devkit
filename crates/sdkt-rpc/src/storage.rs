@@ -129,6 +129,11 @@ pub fn collect_extend_keys(
 ///
 /// Always includes the contract instance singleton. Additional keys may be
 /// supplied; they are not discovered automatically.
+///
+/// `extend_to` is relative, as the protocol defines it: the entries will live
+/// at least `extend_to` ledgers past the last closed ledger. It is passed to
+/// the operation unchanged; adding the current ledger would overshoot and
+/// exceed the network's maximum TTL.
 pub async fn extend_footprint(
     client: &SorobanRpcClient,
     contract_id: &str,

@@ -1019,6 +1019,7 @@ enum StorageAction {
         /// Contract whose storage footprint should have TTL extended.
         #[arg(long)]
         contract: String,
+        /// Minimum TTL in ledgers: entries will live at least this many ledgers past the current ledger.
         #[arg(short, long)]
         ledgers: u32,
         /// Repeatable: extra ledger keys (base64 XDR or hex XDR) to include in

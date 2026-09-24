@@ -113,8 +113,8 @@ sdkt storage analyze <CONTRACT_ID>
 sdkt storage read --contract <CONTRACT_ID> --key-xdr <BASE64_LEDGER_KEY>
 
 # Extend TTL of the contract instance (and optional extra keys)
-# --ledgers is an ABSOLUTE target ledger (extend_to), not a relative delta.
-# Example: current ledger + 17280 ≈ 17280 additional ledgers (~1 day at 5s/ledger).
+# --ledgers is relative: entries will live at least N ledgers past the current ledger.
+# Example: 17280 ledgers ≈ 1 day at 5s/ledger.
 sdkt storage extend --contract <CONTRACT_ID> --ledgers 17280 --identity my-deployer
 ```
 
