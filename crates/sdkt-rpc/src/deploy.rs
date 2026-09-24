@@ -541,7 +541,9 @@ mod tests {
         // Fits in u64 but exceeds u32 — must error, never silently truncate to 0.
         let raw = (u32::MAX as u64 + 1).to_string();
         let err = parse_min_resource_fee(&raw).unwrap_err();
-        assert!(err.to_string().contains("exceeds the supported u32 fee range"));
+        assert!(err
+            .to_string()
+            .contains("exceeds the supported u32 fee range"));
     }
 
     #[test]
