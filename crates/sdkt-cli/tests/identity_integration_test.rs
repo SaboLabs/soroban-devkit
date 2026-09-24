@@ -51,3 +51,57 @@ fn test_cli_identity_lifecycle() {
         .success()
         .stdout(predicates::str::contains("removed"));
 }
+
+#[test]
+fn test_cli_identity_import_from_stdin() {
+    let dir = tempdir().unwrap();
+    let secret = "SAAACAQDAQCQMBYIBEFAWDANBYHRAEISCMKBKFQXDAMRUGY4DUPB6NKI";
+
+    sdkt(dir.path())
+        .args(["identity", "import", "bob"])
+        .write_stdin(secret)
+        .assert()
+        .success()
+        .stdout(predicates::str::contains("imported successfully"))
+        .stdout(predicates::str::contains("Public Key: G"));
+
+    sdkt(dir.path())
+        .args(["identity", "show", "bob"])
+        .assert()
+        .success()
+        .stdout(predicates::str::contains("Public Key: G"));
+}
+
+#[test]
+fn test_cli_identity_import_rejects_empty_stdin() {
+    let dir = tempdir().unwrap();
+
+    sdkt(dir.path())
+        .args(["identity", "import", "bob"])
+        .write_stdin("")
+        .assert()
+        .failure();
+}
+
+#[test]
+fn test_cli_identity_import_rejects_invalid_secret() {
+    let dir = tempdir().unwrap();
+
+    sdkt(dir.path())
+        .args(["identity", "import", "bob"])
+        .write_stdin("not-a-valid-secret-key")
+        .assert()
+        .failure();
+}
+
+#[test]
+fn test_cli_identity_import_no_longer_accepts_argv_secret() {
+    let dir = tempdir().unwrap();
+    let secret = "SAAACAQDAQCQMBYIBEFAWDANBYHRAEISCMKBKFQXDAMRUGY4DUPB6NKI";
+
+    // Positional argv secret must be rejected (extra arg → clap usage error).
+    sdkt(dir.path())
+        .args(["identity", "import", "bob", secret])
+        .assert()
+        .failure();
+}

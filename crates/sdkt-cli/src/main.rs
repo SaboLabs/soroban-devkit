@@ -20,7 +20,7 @@ use sdkt_xdr::{
     SigningError, SigningOptions,
 };
 use std::fs;
-use std::io::{self, Write};
+use std::io::{self, IsTerminal, Read, Write};
 use std::path::Path;
 use std::process;
 
@@ -637,9 +637,11 @@ enum IdentityAction {
     Generate {
         name: String,
     },
+    /// Import an identity from a secret key read on stdin (never via argv).
+    ///
+    /// Example: `echo "S..." | sdkt identity import alice`
     Import {
         name: String,
-        secret: String,
     },
     List,
     Show {
@@ -1626,6 +1628,30 @@ async fn run_upgrade_safety(
         );
     }
     Ok(())
+}
+
+
+/// Read an identity secret from stdin so it never appears in process argv.
+///
+/// Piped input (`echo "S..." | sdkt identity import <name>`) and interactive
+/// prompts are both supported. Empty input fails with a clear error.
+fn read_identity_secret_from_stdin() -> Result<String, Box<dyn std::error::Error>> {
+    let stdin = io::stdin();
+    if stdin.is_terminal() {
+        eprint!("Enter secret key: ");
+        let _ = io::stderr().flush();
+    }
+
+    let mut secret = String::new();
+    stdin.lock().read_line(&mut secret)?;
+    let secret = secret.trim().to_string();
+    if secret.is_empty() {
+        return Err(
+            "No secret key provided on stdin. Pass it via pipe, e.g. `echo \"S...\" | sdkt identity import <name>`."
+                .into(),
+        );
+    }
+    Ok(secret)
 }
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -3814,7 +3840,8 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
                     println!("Identity '{}' generated successfully.", identity.name);
                     println!("Public Key: {}", identity.public_key);
                 }
-                IdentityAction::Import { name, secret } => {
+                IdentityAction::Import { name } => {
+                    let secret = read_identity_secret_from_stdin()?;
                     let identity = store.import(&name, &secret)?;
                     println!("Identity '{}' imported successfully.", identity.name);
                     println!("Public Key: {}", identity.public_key);

@@ -167,6 +167,8 @@ sdkt fee estimate
 
 ```bash
 sdkt identity generate alice
+# Import reads the secret from stdin (never argv — avoids shell history / `ps` leaks)
+echo "S..." | sdkt identity import alice
 sdkt identity list
 sdkt identity show alice
 sdkt identity default alice

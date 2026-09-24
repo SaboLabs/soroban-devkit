@@ -103,7 +103,7 @@ sdkt
 │   └── --rules <PATH>        (repeatable; external rule paths)
 ├── identity
 │   ├── generate <name>
-│   ├── import <name> <secret>
+│   ├── import <name>            (secret via stdin, not argv)
 │   ├── list
 │   ├── show <name>
 │   ├── delete <name>
