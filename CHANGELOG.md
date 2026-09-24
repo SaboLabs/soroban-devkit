@@ -8,6 +8,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **Configurable event query ranges.** `sdkt events` accepts `--start-ledger <N>` and `--end-ledger <N>` flags to query specific ledger ranges. Ranges default to the prior 1000-ledger window if omitted, single bounds query from/to latest or relative windows, and inverted ranges (`start > end`) are rejected before RPC dispatch (#57).
 - **`sdkt plugin init`.** Scaffold a new audit rule project (standalone crate, derived rule id, native/WASM ABI files, `plugin.toml`, README, and unit tests) derived from `crates/sdkt-audit-example-rule`, so a plugin author goes straight to `cargo build --release --features plugins` without hand-copying the reference implementation (#95).
 - **JSON output for plugin commands.** Every `sdkt plugin` subcommand (`list`, `show`, `install`, `remove`, `update`, `pack`, `verify-bundle`) accepts `--format json`. Stdout carries only the JSON document; the native-plugin warning and the unsigned-bundle note stay on stderr. (#54).
 - **Deployment fee breakdown in deploy output.** `sdkt deploy` exposes internal simulation fee calculations (`upload_fee`, `create_fee`, and `total_fee`) in `DeployResult` and displays them in both pretty and JSON output formats (#55).

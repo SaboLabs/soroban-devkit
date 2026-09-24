@@ -428,6 +428,12 @@ enum Commands {
         contract_id: String,
         #[arg(short, long, default_value = "pretty")]
         format: String,
+        /// Start ledger sequence number for event search range
+        #[arg(long)]
+        start_ledger: Option<u32>,
+        /// End ledger sequence number for event search range
+        #[arg(long)]
+        end_ledger: Option<u32>,
         /// Path to contract WASM for ABI-aware decoding
         #[arg(long, value_name = "WASM")]
         abi: Option<String>,
@@ -3121,6 +3127,8 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
         Commands::Events {
             contract_id,
             format,
+            start_ledger,
+            end_ledger,
             abi,
             abi_contract,
             net,
@@ -3131,6 +3139,16 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
                 net.network_passphrase.clone(),
                 net.network_profile.clone(),
             );
+
+            // Reject inverted ranges before making RPC calls
+            if let (Some(start), Some(end)) = (start_ledger, end_ledger) {
+                if start > end {
+                    eprintln!(
+                        "Error: start ledger ({start}) cannot be greater than end ledger ({end})"
+                    );
+                    process::exit(1);
+                }
+            }
 
             // Resolve the ABI ContractSpec from one of two sources (mutually
             // exclusive): a local WASM file (`--abi`) or a deployed contract's
@@ -3168,7 +3186,7 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
                     None
                 };
 
-            match get_contract_events(&client, &contract_id).await {
+            match get_contract_events(&client, &contract_id, start_ledger, end_ledger).await {
                 Ok(events) => {
                     if let Some(spec) = contract_spec {
                         // ABI-aware decoding: topics[0] is the event symbol,
