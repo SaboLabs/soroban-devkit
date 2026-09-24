@@ -566,11 +566,29 @@ pub fn install(local_source: &Path, opts: &InstallOpts) -> Result<PluginMeta, St
             .map_err(|e| StoreError::DryRunLoad(e.to_string()))?;
     }
 
+    // Capture the previously-managed artifact (if any) before committing, so a
+    // rename of the artifact filename during an update does not orphan the old
+    // file. Only the artifact referenced by this plugin's own metadata is ever
+    // considered; unrelated files are left untouched.
+    let previous_artifact = read_meta(&root, &id).ok().map(|old| old.artifact);
+
     // Commit: create dir, copy artifact + manifest.
     std::fs::create_dir_all(&dir)?;
     let dest_artifact = dir.join(&meta.artifact);
     std::fs::copy(local_source, &dest_artifact)?;
     std::fs::write(dir.join("plugin.toml"), raw)?;
+
+    // Remove the stale artifact only after the new one is committed, and only
+    // when the filename actually changed. Guard against path traversal so we
+    // never delete outside the plugin directory.
+    if let Some(old_artifact) = previous_artifact {
+        if old_artifact != meta.artifact {
+            let old_path = dir.join(&old_artifact);
+            if old_path.is_file() && is_safe_relative_path(Path::new(&old_artifact)) {
+                std::fs::remove_file(&old_path)?;
+            }
+        }
+    }
     Ok(meta)
 }
 
