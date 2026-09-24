@@ -2730,6 +2730,7 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
                                     "results": sim.results,
                                 });
                                 println!("{}", serde_json::to_string(&json_obj)?);
+                                process::exit(1);
                             } else {
                                 println!("Simulation Result:");
                                 println!("  Status: FAILED");

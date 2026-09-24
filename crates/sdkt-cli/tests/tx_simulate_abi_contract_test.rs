@@ -430,7 +430,7 @@ fn tx_simulate_error_precedes_local_abi_in_json_mode() {
     let stdout = String::from_utf8_lossy(&output.stdout);
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(
-        output.status.success(),
+        !output.status.success(),
         "Failed: stdout={stdout} stderr={stderr}"
     );
 
