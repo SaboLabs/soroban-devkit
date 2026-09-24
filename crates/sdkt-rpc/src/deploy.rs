@@ -76,6 +76,29 @@ pub fn parse_wasm_hash(hash_str: &str) -> Result<[u8; 32], RpcError> {
     Ok(result)
 }
 
+/// Parse the `min_resource_fee` returned by a simulation into a `u32` stroop
+/// amount.
+///
+/// The value arrives as a decimal string. A missing, empty, or non-numeric
+/// value is a hard error rather than a silent `0`: defaulting to zero would
+/// build a transaction whose fee is just the 100-stroop inclusion fee, which
+/// the network rejects with an opaque `txINSUFFICIENT_FEE` while hiding the
+/// fact that fee parsing failed.
+fn parse_min_resource_fee(raw: &str) -> Result<u32, RpcError> {
+    let trimmed = raw.trim();
+    let value: u64 = trimmed.parse().map_err(|_| {
+        RpcError::Rpc(format!(
+            "Simulation returned an invalid min_resource_fee: {trimmed:?} \
+             (expected a numeric stroop value)"
+        ))
+    })?;
+    u32::try_from(value).map_err(|_| {
+        RpcError::Rpc(format!(
+            "Simulation min_resource_fee {value} exceeds the supported u32 fee range"
+        ))
+    })
+}
+
 /// Generate a random 20-byte salt for contract ID derivation.
 pub fn generate_salt() -> [u8; 20] {
     let mut salt = [0u8; 20];
@@ -151,12 +174,7 @@ pub async fn upload_wasm(
     };
 
     // Calculate fee from simulation
-    let min_resource_fee: u32 = simulation
-        .min_resource_fee
-        .parse()
-        .unwrap_or(0)
-        .try_into()
-        .unwrap_or(0);
+    let min_resource_fee: u32 = parse_min_resource_fee(&simulation.min_resource_fee)?;
 
     let inclusion_fee: u32 = 100;
     let total_fee = inclusion_fee + min_resource_fee;
@@ -298,12 +316,7 @@ pub async fn create_contract(
     };
 
     // Calculate fee from simulation
-    let min_resource_fee: u32 = simulation
-        .min_resource_fee
-        .parse()
-        .unwrap_or(0)
-        .try_into()
-        .unwrap_or(0);
+    let min_resource_fee: u32 = parse_min_resource_fee(&simulation.min_resource_fee)?;
 
     let inclusion_fee: u32 = 100;
     let total_fee = inclusion_fee + min_resource_fee;
@@ -564,6 +577,43 @@ mod tests {
     fn test_parse_wasm_hash_invalid_hex() {
         let hash_str = "zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz";
         assert!(parse_wasm_hash(hash_str).is_err());
+    }
+
+    #[test]
+    fn test_parse_min_resource_fee_valid() {
+        assert_eq!(parse_min_resource_fee("0").unwrap(), 0);
+        assert_eq!(parse_min_resource_fee("1000").unwrap(), 1000);
+        assert_eq!(parse_min_resource_fee("  1234  ").unwrap(), 1234);
+        assert_eq!(
+            parse_min_resource_fee(&u32::MAX.to_string()).unwrap(),
+            u32::MAX
+        );
+    }
+
+    #[test]
+    fn test_parse_min_resource_fee_empty_is_error() {
+        let err = parse_min_resource_fee("").unwrap_err();
+        assert!(err.to_string().contains("invalid min_resource_fee"));
+    }
+
+    #[test]
+    fn test_parse_min_resource_fee_non_numeric_is_error() {
+        for raw in ["N/A", "unavailable", "12.5", "abc", "-1"] {
+            assert!(
+                parse_min_resource_fee(raw).is_err(),
+                "expected error for {raw:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn test_parse_min_resource_fee_overflow_is_error() {
+        // Fits in u64 but exceeds u32 — must error, never silently truncate to 0.
+        let raw = (u32::MAX as u64 + 1).to_string();
+        let err = parse_min_resource_fee(&raw).unwrap_err();
+        assert!(err
+            .to_string()
+            .contains("exceeds the supported u32 fee range"));
     }
 
     #[test]
