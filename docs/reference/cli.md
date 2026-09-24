@@ -102,10 +102,10 @@ sdkt
 │   ├── --disable <RULE_ID>   (repeatable)
 │   └── --rules <PATH>        (repeatable; external rule paths)
 ├── identity
-│   ├── generate <name>
+│   ├── generate <name>       [--format pretty|json]
 │   ├── import <name> <secret>
-│   ├── list
-│   ├── show <name>
+│   ├── list                  [--format pretty|json]
+│   ├── show <name>           [--format pretty|json]
 │   ├── delete <name>
 │   ├── default <name>
 │   └── fund <name>           [--network-profile <NAME>] [--format pretty|json]
