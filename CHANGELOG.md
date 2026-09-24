@@ -21,6 +21,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Client generation and XDR encoding.** CLI support for generating clients and encoding XDR values, including `symbol:VALUE` as a Soroban `ScVal::Symbol` (values longer than 32 bytes fail with a clear error).
 - **Local plugin ecosystem and signed plugin bundles.** Local plugin loading/ecosystem support, plus a signed, reproducible plugin bundle format with e2e/compatibility coverage.
 - **On-chain inspection tooling.** Enriched on-chain contract inspection, upgrade-safety verification, live-contract ABI for events decode, and on-chain ABI for storage decode.
+- **`tx simulate --abi-contract`.** Transaction simulation can now fetch a deployed contract's on-chain WASM and decode the primary result with its ABI, matching the existing `--abi-contract` support in `events`/`storage`. `--abi` and `--abi-contract` are mutually exclusive.
 - **Windows x86_64 release binary.** Packaged Windows builds are available alongside existing platforms.
 - **Website and Web Playground.** Public landing page and a browser-based contract inspector (Web Playground MVP).
 

@@ -2827,6 +2827,7 @@ dependencies = [
  "base64 0.23.1",
  "clap",
  "clap_complete",
+ "hex",
  "predicates",
  "sdkt-audit",
  "sdkt-audit-example-rule",
