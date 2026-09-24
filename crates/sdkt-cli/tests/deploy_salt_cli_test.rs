@@ -10,7 +10,6 @@ use predicates::prelude::*;
 fn sdkt(dir: &std::path::Path) -> Command {
     let mut cmd = Command::cargo_bin("sdkt").expect("sdkt binary built");
     cmd.env("SDKT_NETWORK_DIR", dir);
-    cmd.env("SDKT_IDENTITY_DIR", dir.join("identity"));
     cmd
 }
 
@@ -20,11 +19,7 @@ fn cli_deploy_fails_on_missing_wasm_file() {
     let missing_wasm = dir.path().join("missing.wasm");
 
     sdkt(dir.path())
-        .args(["identity", "generate", "alice"])
-        .assert()
-        .success();
-
-    sdkt(dir.path())
+        .env("SDKT_IDENTITY_DIR", dir.path().join("identity"))
         .args([
             "deploy",
             "--wasm",
