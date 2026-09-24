@@ -4103,6 +4103,10 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
                 }
             }
 
+            // Read WASM file
+            let wasm_bytes =
+                fs::read(&wasm).map_err(|e| format!("Error reading WASM file {}: {}", wasm, e))?;
+
             // Load identity for signing
             let identity_store = sdkt_storage::IdentityStore::new()
                 .map_err(|e| format!("Failed to access identity store: {}", e))?;
@@ -4117,9 +4121,6 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
             let signer = sdkt_xdr::sign::Ed25519Signer::from_seed(&signing_key.to_bytes());
 
             let client = SorobanRpcClient::from_config(&network_config);
-
-            // Read WASM file
-            let wasm_bytes = fs::read(&wasm).unwrap_or_default();
 
             // Source account is the identity's public key
             let source_account = identity_obj.public_key.clone();
