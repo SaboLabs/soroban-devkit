@@ -107,29 +107,20 @@ fn init_generated_cargo_toml_valid() {
 
 #[test]
 fn init_generated_project_compiles_successfully() {
-    // This is an integration test protecting 1 (Regression Protection).
-    // It verifies that the generated `Cargo.toml` dependency graph
-    // (specifically `soroban-sdk`) actually resolves and compiles cleanly
-    // without triggering downstream transitive failures (e.g. ethnum transmute aborts).
-
     let tmp = TempDir::new().unwrap();
-    let project = tmp.path().join("build_proj");
+    let project = tmp.path().join("test_proj");
 
     sdkt()
-        .args(["init", project.to_str().unwrap(), "--minimal"])
+        .args(["init", project.to_str().unwrap()])
         .assert()
         .success();
 
-    // Verify it builds using standard cargo check. We check rather than build
-    // to keep the test suite execution time low, but `check` is sufficient
-    // to catch trait constraint or transmute failures in the dependency graph.
-
     let status = StdCommand::new("cargo")
-        .arg("check")
+        .arg("test")
         .current_dir(&project)
         .status()
-        .expect("cargo check failed to execute");
-    assert!(status.success(), "Scaffolded project failed to compile");
+        .expect("cargo test failed to execute");
+    assert!(status.success(), "Scaffolded project failed cargo test");
 }
 
 #[test]
