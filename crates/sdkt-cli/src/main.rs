@@ -664,6 +664,18 @@ enum IdentityAction {
 
 #[derive(Subcommand)]
 enum PluginAction {
+    /// Scaffold a new sdkt-audit plugin rule crate
+    Init {
+        /// Plugin rule project name (directory). The rule id is derived from
+        /// this name (e.g. my-rule → MY-RULE-001).
+        name: String,
+        /// Overwrite existing directory
+        #[arg(long, default_value_t = false)]
+        force: bool,
+        /// Output format (pretty or json)
+        #[arg(short, long, default_value = "pretty")]
+        format: String,
+    },
     /// List installed plugins
     List {
         /// Output format (pretty or json)
@@ -5125,6 +5137,52 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
             // In JSON mode stdout carries only the JSON document; warnings and
             // notes stay on stderr exactly as in pretty mode, so the output can
             // be piped straight into a parser.
+            PluginAction::Init {
+                name,
+                force,
+                format,
+            } => {
+                use sdkt_core::scaffold::{generate_plugin_project, PluginScaffoldConfig};
+
+                let fmt = parse_format_str(&format);
+                let scaffold_cfg = PluginScaffoldConfig {
+                    name: name.clone(),
+                    force,
+                };
+
+                match generate_plugin_project(&scaffold_cfg) {
+                    Ok(result) => {
+                        if fmt == OutputFormat::Json {
+                            let json = serde_json::json!({
+                                "status": "created",
+                                "plugin": name,
+                                "files": result.files_created,
+                            });
+                            println!("{}", serde_json::to_string_pretty(&json)?);
+                        } else {
+                            println!("✓ Created plugin rule project '{}'", name);
+                            for f in &result.files_created {
+                                println!("  ✓ {}", f);
+                            }
+                            println!(
+                                "✓ Ready — in the new project directory, run: cargo build --release --features plugins"
+                            );
+                        }
+                    }
+                    Err(e) => {
+                        if fmt == OutputFormat::Json {
+                            let json = serde_json::json!({
+                                "status": "error",
+                                "message": e.to_string(),
+                            });
+                            println!("{}", serde_json::to_string_pretty(&json)?);
+                        } else {
+                            eprintln!("Error: {}", e);
+                        }
+                        process::exit(1);
+                    }
+                }
+            }
             PluginAction::List { format } => {
                 let fmt = parse_format_str(&format);
                 let plugins = sdkt_audit::plugin_store::list();

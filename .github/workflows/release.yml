@@ -237,6 +237,7 @@ jobs:
       - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable
       - name: Publish crates (dependency order)
+        id: publish-crates
         if: ${{ env.CARGO_REGISTRY_TOKEN != '' }}
         env:
           CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
@@ -245,3 +246,13 @@ jobs:
             echo "== cargo publish -p $c =="
             cargo publish -p "$c"
           done
+
+      # Now that sdkt-audit is live on crates.io, check the scaffolded plugin
+      # resolves it unpatch, i.e. that the documented standalone build works.
+      # Token stays scoped to the publish step; this runs only when publishing
+      # actually succeeded (and is skipped when it was skipped).
+      - name: Check standalone scaffold against published crates
+        if: steps.publish-crates.outcome == 'success'
+        run: |
+          cargo test -p sdkt-cli --test plugin_init_cli_test \
+            plugin_init_scaffold_resolves_published_audit -- --ignored

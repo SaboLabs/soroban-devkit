@@ -106,6 +106,51 @@ major version, and wraps each plugin in a `PluginRule` implementing `AuditRule`.
 Only `#[repr(C)]` flat data crosses the FFI — **no Rust trait objects or `Box`
 cross the boundary**, and plugin-owned memory is freed inside the plugin.
 
+### Scaffolding a plugin project
+
+`sdkt plugin init` generates a standalone, buildable rule crate so you do not
+have to copy the reference implementation by hand:
+
+```bash
+sdkt plugin init my-rule        # name becomes the rule id: MY-RULE-001
+cd my-rule
+cargo build --release --features plugins          # produces the native cdylib for your platform
+cp target/release/libmy_rule.so plugin/           # .so on Linux, .dylib on macOS, my_rule.dll on Windows
+sdkt plugin pack plugin/ --output my_rule.sdktplugin
+sdkt plugin install plugin/libmy_rule.so
+sdkt audit contracts/token/src/lib.rs --rules my_rule
+```
+
+The scaffold names the artifact and `plugin.toml` entry for the platform you
+run `sdkt plugin init` on (`libmy_rule.so` on Linux, `libmy_rule.dylib` on
+macOS, `my_rule.dll` on Windows) so the pack/install commands resolve to the
+file `cargo build` actually produced.
+
+The scaffold derives everything from the project name: crate/lib name
+(`my-rule` → `my_rule`), rule id (`MY-RULE-001`), and the placeholder trigger
+function (`sdkt_my_rule_trigger`). Generated layout:
+
+```
+my-rule/
+  Cargo.toml             # standalone crate ([workspace] empty), sdkt-audit from crates.io
+  src/lib.rs             # AuditRule impl with TODO-marked check() + unit tests
+  src/plugin_abi.rs      # native C-ABI exports (feature `plugins`)
+  src/plugin_abi_wasm.rs # WASM ABI exports (feature `wasm-plugins`)
+  plugin/plugin.toml     # pre-staged native metadata for pack/install
+  plugin-wasm/plugin.toml # pre-staged WASM metadata for pack/install
+  README.md              # build -> pack -> install -> audit walkthrough
+  .gitignore
+```
+
+`src/lib.rs` ships unit tests that fire the placeholder rule on a trivially
+matching function name and assert silence on a normal one, so `cargo test
+--features plugins` proves the wiring works before you write any logic. Replace
+the `TODO` in `check()` with your rule; keep the C-ABI files untouched.
+
+Use `--force` to overwrite an existing scaffolded directory and `--format json`
+for machine-readable output. See `docs/reference/cli.md` for the full command
+reference.
+
 ### C-ABI contract (stable)
 
 | Symbol | Signature | Purpose |
@@ -282,6 +327,7 @@ abi_minor = 0
 ### CLI
 
 ```bash
+sdkt plugin init ./path/to/my-rule                 # scaffold a new rule project
 sdkt plugin list                                  # installed plugins
 sdkt plugin show <id>                             # metadata
 sdkt plugin install ./my-plugin/my_rule.wasm      # copies + validates (local path)

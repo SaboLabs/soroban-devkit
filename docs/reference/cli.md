@@ -398,6 +398,7 @@ stable `id` declared in their `plugin.toml`.
 ```bash
 sdkt plugin list                                   # list installed plugins
 sdkt plugin list --format json                     # JSON output; every plugin subcommand accepts --format json
+sdkt plugin init ./path/to/my-rule                 # scaffold a new audit rule project
 sdkt plugin show <id>                              # show a plugin's metadata
 sdkt plugin install ./path/to/artifact.wasm        # install from a local file
 sdkt plugin remove <id>                            # remove (idempotent)

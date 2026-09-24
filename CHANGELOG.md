@@ -8,6 +8,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **`sdkt plugin init`.** Scaffold a new audit rule project (standalone crate, derived rule id, native/WASM ABI files, `plugin.toml`, README, and unit tests) derived from `crates/sdkt-audit-example-rule`, so a plugin author goes straight to `cargo build --release --features plugins` without hand-copying the reference implementation (#95).
 - **JSON output for plugin commands.** Every `sdkt plugin` subcommand (`list`, `show`, `install`, `remove`, `update`, `pack`, `verify-bundle`) accepts `--format json`. Stdout carries only the JSON document; the native-plugin warning and the unsigned-bundle note stay on stderr. (#54).
 - **Deployment fee breakdown in deploy output.** `sdkt deploy` exposes internal simulation fee calculations (`upload_fee`, `create_fee`, and `total_fee`) in `DeployResult` and displays them in both pretty and JSON output formats (#55).
 - **Real Soroban contract deployment.** `sdkt` can deploy Wasm contracts to a live network (upload Wasm, create the contract instance, and report the resulting contract ID), replacing the previous placeholder/stub path.
