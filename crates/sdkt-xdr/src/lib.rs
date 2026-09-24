@@ -24,8 +24,13 @@
 //! ```
 
 pub mod builder;
+pub mod envelope_view;
 pub mod sign;
 pub mod typed;
+pub use envelope_view::{
+    format_envelope_pretty, format_scval, view_envelope, view_envelope_base64, EnvelopeView,
+    EnvelopeViewError, OperationView, SignatureView, SorobanView,
+};
 pub use builder::{
     build_create_contract_tx, build_create_contract_tx_with_data, build_extend_footprint_tx,
     build_extend_footprint_tx_with_data, build_invoke_transaction,

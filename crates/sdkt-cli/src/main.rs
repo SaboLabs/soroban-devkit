@@ -16,8 +16,8 @@ use sdkt_wasm::spec::parse_contract_spec;
 use sdkt_xdr::abi_decode::decode_event_topics;
 use sdkt_xdr::decode;
 use sdkt_xdr::{
-    build_invoke_transaction, sign_transaction, Ed25519Signer, InvokeTransactionParams, Network,
-    SigningError, SigningOptions,
+    build_invoke_transaction, format_envelope_pretty, sign_transaction, view_envelope_base64,
+    Ed25519Signer, InvokeTransactionParams, Network, SigningError, SigningOptions,
 };
 use std::fs;
 use std::io::{self, Write};
@@ -832,6 +832,13 @@ enum TxAction {
     Validate {
         /// Base64 XDR transaction envelope or path to a file containing it
         #[arg(short, long)]
+        envelope: String,
+        #[arg(short, long, default_value = "pretty")]
+        format: String,
+    },
+    /// Decode a transaction envelope into a human-readable view (offline)
+    Decode {
+        /// Base64 XDR transaction envelope, or path to a file containing it
         envelope: String,
         #[arg(short, long, default_value = "pretty")]
         format: String,
@@ -2678,6 +2685,28 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
 
                 if !report.valid {
                     process::exit(1);
+                }
+            }
+            TxAction::Decode { envelope, format } => {
+                let fmt = parse_format_str(&format);
+                let env_data = if fs::metadata(&envelope).is_ok() {
+                    fs::read_to_string(&envelope)?
+                } else {
+                    envelope.clone()
+                };
+
+                match view_envelope_base64(env_data.trim()) {
+                    Ok(view) => {
+                        if fmt == OutputFormat::Json {
+                            println!("{}", serde_json::to_string(&view)?);
+                        } else {
+                            print!("{}", format_envelope_pretty(&view));
+                        }
+                    }
+                    Err(e) => {
+                        eprintln!("Error: {}", e);
+                        process::exit(1);
+                    }
                 }
             }
             TxAction::Simulate {
