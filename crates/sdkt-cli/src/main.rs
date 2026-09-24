@@ -428,12 +428,6 @@ enum Commands {
         contract_id: String,
         #[arg(short, long, default_value = "pretty")]
         format: String,
-        /// Start ledger sequence number for event search range
-        #[arg(long)]
-        start_ledger: Option<u32>,
-        /// End ledger sequence number for event search range
-        #[arg(long)]
-        end_ledger: Option<u32>,
         /// Path to contract WASM for ABI-aware decoding
         #[arg(long, value_name = "WASM")]
         abi: Option<String>,
@@ -2678,7 +2672,7 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
                                 "Fee: {}",
                                 tx_info
                                     .fee_charged
-                                    .map_or("N/A".to_string(), |v| format!("{v} stroops"))
+                                    .map_or("N/A".to_string(), |v| v.to_string())
                             );
                             println!(
                                 "Operations: {}",
@@ -2963,6 +2957,23 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
                             if let Some(xdr) = &res.result_xdr {
                                 println!("  Result XDR: {}", xdr);
                             }
+                            if let Some(error) = &res.error_code {
+                                println!("  Error:    {}", error);
+                            }
+                            if let Some(meta) = &res.result_meta_xdr {
+                                println!("  Result Meta XDR: {}", meta);
+                            }
+                            for event in &res.diagnostic_events {
+                                println!("  Diagnostic: {}", event);
+                            }
+                        }
+
+                        // A settled on-chain failure must not look like a
+                        // success to CI. `invoke` already exits non-zero here;
+                        // `tx submit` now matches it. A transaction that was
+                        // only submitted (no --wait) stays Pending and exits 0.
+                        if res.status == sdkt_rpc::TransactionStatus::Failed {
+                            std::process::exit(1);
                         }
                     }
                     Err(e) => {
@@ -3127,8 +3138,6 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
         Commands::Events {
             contract_id,
             format,
-            start_ledger,
-            end_ledger,
             abi,
             abi_contract,
             net,
@@ -3139,16 +3148,6 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
                 net.network_passphrase.clone(),
                 net.network_profile.clone(),
             );
-
-            // Reject inverted ranges before making RPC calls
-            if let (Some(start), Some(end)) = (start_ledger, end_ledger) {
-                if start > end {
-                    eprintln!(
-                        "Error: start ledger ({start}) cannot be greater than end ledger ({end})"
-                    );
-                    process::exit(1);
-                }
-            }
 
             // Resolve the ABI ContractSpec from one of two sources (mutually
             // exclusive): a local WASM file (`--abi`) or a deployed contract's
@@ -3186,7 +3185,7 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
                     None
                 };
 
-            match get_contract_events(&client, &contract_id, start_ledger, end_ledger).await {
+            match get_contract_events(&client, &contract_id).await {
                 Ok(events) => {
                     if let Some(spec) = contract_spec {
                         // ABI-aware decoding: topics[0] is the event symbol,
@@ -4533,6 +4532,7 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
                                 "function": res.function,
                                 "fee": res.fee,
                                 "resultXdr": res.result_xdr,
+                                "resultMetaXdr": res.result_meta_xdr,
                                 "errorCode": res.error_code,
                                 "errorResultXdr": res.error_result_xdr,
                                 "diagnosticEvents": res.diagnostic_events,
@@ -4547,6 +4547,9 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
                         println!("  Fee:      {} stroops", res.fee);
                         if let Some(ledger) = &res.result_xdr {
                             println!("  Result XDR: {}", ledger);
+                        }
+                        if let Some(meta) = &res.result_meta_xdr {
+                            println!("  Result Meta XDR: {}", meta);
                         }
                         if let Some(code) = &res.error_code {
                             println!("  Error:    {}", code);

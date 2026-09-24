@@ -31,9 +31,7 @@ pub use deploy::{
     deploy_contract, format_json, format_pretty, DeployOutcome, DeployResult, PartialDeployResult,
 };
 pub use error::RpcError;
-pub use events::{
-    get_contract_events, resolve_ledger_range, ContractEvent, EventFilter, GetEventsRequest,
-};
+pub use events::{get_contract_events, ContractEvent};
 pub use fee::{estimate_dynamic_fee, get_fee_stats, FeeDistribution, FeeStats};
 pub use inspect::{inspect_contract, ContractInspection, StorageKeyInfo, TtlInfoSummary};
 pub use invoke::{invoke_contract, InvokeResult};
@@ -46,9 +44,9 @@ pub use storage::{
     read_contract_state, read_ledger_entry, ExtendResult, StateReadResult, TtlEntry, TtlInfo,
 };
 pub use submission::{
-    get_transaction_status, poll_transaction, send_transaction, submit_and_wait, PollConfig,
-    SendTransactionRequest, SendTransactionResponse, SubmissionResult, TransactionStatus,
-    TransactionStatusResponse,
+    diagnostic_events_from_meta_xdr, extract_failure_code, get_transaction_status,
+    poll_transaction, send_transaction, submit_and_wait, PollConfig, SendTransactionRequest,
+    SendTransactionResponse, SubmissionResult, TransactionStatus, TransactionStatusResponse,
 };
 pub use transaction::{inspect_transaction, TransactionInspection};
 pub use wasm::get_wasm_metadata;
