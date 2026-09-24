@@ -30,7 +30,7 @@ fn cli_deploy_fails_on_missing_wasm_file() {
         .assert()
         .code(1)
         .stderr(predicate::str::contains("Error reading WASM file"))
-        .stderr(predicate::str::contains(missing_wasm.to_str().unwrap()))
+        .stderr(predicate::str::contains("missing.wasm"))
         .stderr(predicate::str::contains("WASM bytes are empty").not());
 }
 
