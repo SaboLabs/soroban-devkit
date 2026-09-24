@@ -1062,7 +1062,11 @@ enum StorageAction {
         #[arg(long)]
         instance: bool,
         /// Durability of a typed data key: `persistent` (default) or `temporary`.
-        #[arg(long, value_name = "persistent|temporary", default_value = "persistent")]
+        #[arg(
+            long,
+            value_name = "persistent|temporary",
+            default_value = "persistent"
+        )]
         durability: String,
         #[arg(short, long, default_value = "pretty")]
         format: String,
@@ -5766,30 +5770,30 @@ mod storage_read_key_tests {
 
     #[test]
     fn rejects_no_key_source() {
-        let err = resolve_storage_read_key(CONTRACT, None, None, &[], false, "persistent")
-            .unwrap_err();
+        let err =
+            resolve_storage_read_key(CONTRACT, None, None, &[], false, "persistent").unwrap_err();
         assert!(err.contains("provide a key"));
     }
 
     #[test]
     fn rejects_multiple_key_sources() {
-        let err =
-            resolve_storage_read_key(CONTRACT, Some("AAAA"), Some("bal"), &[], false, "persistent")
-                .unwrap_err();
+        let err = resolve_storage_read_key(
+            CONTRACT,
+            Some("AAAA"),
+            Some("bal"),
+            &[],
+            false,
+            "persistent",
+        )
+        .unwrap_err();
         assert!(err.contains("only one of"));
     }
 
     #[test]
     fn rejects_key_arg_without_map_key() {
-        let err = resolve_storage_read_key(
-            CONTRACT,
-            None,
-            None,
-            &args(&["u32:1"]),
-            true,
-            "persistent",
-        )
-        .unwrap_err();
+        let err =
+            resolve_storage_read_key(CONTRACT, None, None, &args(&["u32:1"]), true, "persistent")
+                .unwrap_err();
         assert!(err.contains("--key-arg requires --map-key"));
     }
 
@@ -5803,16 +5807,14 @@ mod storage_read_key_tests {
 
     #[test]
     fn rejects_empty_key_xdr() {
-        let err =
-            resolve_storage_read_key(CONTRACT, Some("   "), None, &[], false, "persistent")
-                .unwrap_err();
+        let err = resolve_storage_read_key(CONTRACT, Some("   "), None, &[], false, "persistent")
+            .unwrap_err();
         assert!(err.contains("must not be empty"));
     }
 
     #[test]
     fn instance_builds_persistent_instance_key() {
-        let out =
-            resolve_storage_read_key(CONTRACT, None, None, &[], true, "persistent").unwrap();
+        let out = resolve_storage_read_key(CONTRACT, None, None, &[], true, "persistent").unwrap();
         match sdkt_xdr::decode_ledger_key(&out).unwrap() {
             LedgerKey::ContractData(d) => {
                 assert_eq!(d.key, ScVal::LedgerKeyContractInstance);
@@ -5895,15 +5897,8 @@ mod storage_read_key_tests {
 
     #[test]
     fn rejects_invalid_durability() {
-        let err = resolve_storage_read_key(
-            CONTRACT,
-            None,
-            Some("bal"),
-            &[],
-            false,
-            "forever",
-        )
-        .unwrap_err();
+        let err = resolve_storage_read_key(CONTRACT, None, Some("bal"), &[], false, "forever")
+            .unwrap_err();
         assert!(err.contains("invalid durability"));
     }
 }

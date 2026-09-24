@@ -126,7 +126,9 @@ pub fn build_map_key(symbol: &str, arg_scvals_b64: &[String]) -> Result<ScVal, D
     // out-of-charset symbol would silently build a key no contract ever writes.
     if symbol.is_empty()
         || symbol.len() > 32
-        || !symbol.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'_')
+        || !symbol
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || b == b'_')
     {
         return Err(DecodeError::Extraction(format!(
             "invalid symbol {symbol:?}: must be 1..=32 chars of [a-zA-Z0-9_]"
