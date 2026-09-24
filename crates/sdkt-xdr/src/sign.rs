@@ -72,6 +72,18 @@ impl Network {
         }
     }
 
+    /// Map a network passphrase (e.g. from a saved profile) onto the matching
+    /// [`Network`] variant. Standard Testnet/Mainnet/Futurenet passphrases
+    /// resolve to the canonical variants; anything else becomes [`Network::Custom`].
+    pub fn from_passphrase(passphrase: &str) -> Network {
+        match passphrase {
+            "Test SDF Network ; September 2015" => Network::Testnet,
+            "Public Global Stellar Network ; September 2015" => Network::Mainnet,
+            "Test SDF Future Network ; October 2022" => Network::Futurenet,
+            other => Network::Custom(other.to_string()),
+        }
+    }
+
     /// The 32-byte network ID: `Sha256(passphrase)`.
     pub fn network_id(&self) -> [u8; 32] {
         let mut h = Sha256::new();
@@ -370,6 +382,32 @@ mod tests {
         assert_eq!(
             Network::parse("somethingelse"),
             Network::Custom("somethingelse".into())
+        );
+    }
+
+    #[test]
+    fn test_network_from_passphrase() {
+        // Standard passphrases map to the canonical variants (same as --network labels).
+        assert_eq!(
+            Network::from_passphrase("Test SDF Network ; September 2015"),
+            Network::Testnet
+        );
+        assert_eq!(
+            Network::from_passphrase("Public Global Stellar Network ; September 2015"),
+            Network::Mainnet
+        );
+        assert_eq!(
+            Network::from_passphrase("Test SDF Future Network ; October 2022"),
+            Network::Futurenet
+        );
+        // Custom / private passphrases stay Custom so signing matches the profile.
+        assert_eq!(
+            Network::from_passphrase("My Custom Passphrase ; 2026"),
+            Network::Custom("My Custom Passphrase ; 2026".into())
+        );
+        assert_eq!(
+            Network::from_passphrase("Standalone"),
+            Network::Custom("Standalone".into())
         );
     }
 

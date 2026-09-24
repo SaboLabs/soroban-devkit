@@ -929,8 +929,13 @@ enum TxAction {
         #[arg(short = 'I', long, default_value = "default")]
         identity: String,
         /// Network: testnet | mainnet | futurenet | custom:<passphrase>
-        #[arg(short, long, default_value = "testnet")]
-        network: String,
+        /// Defaults to testnet when neither this nor `--network-profile` is set.
+        #[arg(short, long)]
+        network: Option<String>,
+        /// Use a saved network profile (see `sdkt network add`) for the signing
+        /// passphrase. Mutually exclusive with `--network`.
+        #[arg(long, value_name = "NAME")]
+        network_profile: Option<String>,
         /// Output format
         #[arg(short, long, default_value = "pretty")]
         format: String,
@@ -3013,23 +3018,55 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
                 output,
                 identity,
                 network,
+                network_profile,
                 format,
             } => {
                 let fmt = parse_format_str(&format);
 
-                // --- Network resolution (strict; reject unknown labels) ---
-                let network = match network.trim().to_ascii_lowercase().as_str() {
-                    "testnet" => Network::Testnet,
-                    "mainnet" => Network::Mainnet,
-                    "futurenet" => Network::Futurenet,
-                    other if other.starts_with("custom:") => Network::parse(other),
-                    _ => {
+                // --- Network resolution ---
+                // `--network` (fixed labels / custom:<passphrase>) and
+                // `--network-profile` (passphrase from NetworkStore) are mutually
+                // exclusive. When neither is set, default to testnet.
+                let network = match (network.as_deref(), network_profile.as_deref()) {
+                    (Some(_), Some(_)) => {
                         eprintln!(
-                            "Error: invalid network '{}' (expected testnet|mainnet|futurenet|custom:<passphrase>)",
-                            network
+                            "Error: --network and --network-profile are mutually exclusive; provide only one"
                         );
                         process::exit(1);
                     }
+                    (None, Some(name)) => {
+                        let store = match NetworkStore::new() {
+                            Ok(s) => s,
+                            Err(e) => {
+                                eprintln!("Error: cannot open network store: {}", e);
+                                process::exit(1);
+                            }
+                        };
+                        let profile = match store.get(name) {
+                            Ok(p) => p,
+                            Err(e) => {
+                                eprintln!("Error: network profile '{}' not found: {}", name, e);
+                                process::exit(1);
+                            }
+                        };
+                        Network::from_passphrase(&profile.network_passphrase)
+                    }
+                    (Some(label), None) => {
+                        match label.trim().to_ascii_lowercase().as_str() {
+                            "testnet" => Network::Testnet,
+                            "mainnet" => Network::Mainnet,
+                            "futurenet" => Network::Futurenet,
+                            other if other.starts_with("custom:") => Network::parse(other),
+                            _ => {
+                                eprintln!(
+                                    "Error: invalid network '{}' (expected testnet|mainnet|futurenet|custom:<passphrase>)",
+                                    label
+                                );
+                                process::exit(1);
+                            }
+                        }
+                    }
+                    (None, None) => Network::Testnet,
                 };
 
                 // --- Input resolution (file or inline base64) ---

@@ -270,3 +270,223 @@ fn cannot_write_output_errors() {
     assert!(stderr.contains("cannot write output"), "stderr: {}", stderr);
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+fn run_sign_with_network_dir(
+    dir: &std::path::Path,
+    network_dir: &std::path::Path,
+    args: &[&str],
+) -> (bool, String, String) {
+    let out = Command::new(env!("CARGO_BIN_EXE_sdkt"))
+        .env("SDKT_IDENTITY_DIR", dir)
+        .env("SDKT_NETWORK_DIR", network_dir)
+        .args(["tx", "sign"])
+        .args(args)
+        .output()
+        .expect("failed to run sdkt tx sign");
+    (
+        out.status.success(),
+        String::from_utf8_lossy(&out.stdout).to_string(),
+        String::from_utf8_lossy(&out.stderr).to_string(),
+    )
+}
+
+fn add_network_profile(network_dir: &std::path::Path, name: &str, passphrase: &str) {
+    let out = Command::new(env!("CARGO_BIN_EXE_sdkt"))
+        .env("SDKT_NETWORK_DIR", network_dir)
+        .args([
+            "network",
+            "add",
+            name,
+            "--rpc-url",
+            "https://rpc.example.com",
+            "--passphrase",
+            passphrase,
+        ])
+        .output()
+        .expect("failed to run sdkt network add");
+    assert!(
+        out.status.success(),
+        "network add failed: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+}
+
+#[test]
+fn sign_with_network_profile_testnet_passphrase() {
+    let dir = std::env::temp_dir().join(format!("sdkt_sign_prof_tn_{}", std::process::id()));
+    let net_dir = dir.join("networks");
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::create_dir_all(&net_dir).unwrap();
+    gen_identity(&dir, "alice");
+    add_network_profile(&net_dir, "mynet", "Test SDF Network ; September 2015");
+    let unsigned = build_unsigned(&dir);
+    let signed = dir.join("signed.xdr");
+
+    let (ok, stdout, stderr) = run_sign_with_network_dir(
+        &dir,
+        &net_dir,
+        &[
+            "--input",
+            unsigned.to_str().unwrap(),
+            "--output",
+            signed.to_str().unwrap(),
+            "--identity",
+            "alice",
+            "--network-profile",
+            "mynet",
+        ],
+    );
+    assert!(ok, "sign with network-profile should succeed, stderr: {}", stderr);
+    assert!(stdout.contains("written to"), "stdout: {}", stdout);
+    assert!(
+        std::fs::read_to_string(&signed).unwrap().trim().len() > 50,
+        "signed envelope too short"
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn sign_with_network_profile_custom_passphrase() {
+    let dir = std::env::temp_dir().join(format!("sdkt_sign_prof_cu_{}", std::process::id()));
+    let net_dir = dir.join("networks");
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::create_dir_all(&net_dir).unwrap();
+    gen_identity(&dir, "alice");
+    add_network_profile(&net_dir, "sandbox", "My Custom Passphrase ; 2026");
+    let unsigned = build_unsigned(&dir);
+
+    let (ok, stdout, stderr) = run_sign_with_network_dir(
+        &dir,
+        &net_dir,
+        &[
+            "--input",
+            unsigned.to_str().unwrap(),
+            "--identity",
+            "alice",
+            "--network-profile",
+            "sandbox",
+        ],
+    );
+    assert!(ok, "sign with custom profile should succeed, stderr: {}", stderr);
+    assert!(
+        stdout.contains("Signed Transaction Envelope"),
+        "stdout: {}",
+        stdout
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn sign_network_and_profile_mutually_exclusive() {
+    let dir = std::env::temp_dir().join(format!("sdkt_sign_excl_{}", std::process::id()));
+    let net_dir = dir.join("networks");
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::create_dir_all(&net_dir).unwrap();
+    gen_identity(&dir, "alice");
+    add_network_profile(&net_dir, "mynet", "Test SDF Network ; September 2015");
+    let unsigned = build_unsigned(&dir);
+
+    let (ok, _, stderr) = run_sign_with_network_dir(
+        &dir,
+        &net_dir,
+        &[
+            "--input",
+            unsigned.to_str().unwrap(),
+            "--identity",
+            "alice",
+            "--network",
+            "testnet",
+            "--network-profile",
+            "mynet",
+        ],
+    );
+    assert!(!ok, "both --network and --network-profile must fail");
+    assert!(
+        stderr.contains("mutually exclusive"),
+        "stderr: {}",
+        stderr
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn sign_unknown_network_profile_errors() {
+    let dir = std::env::temp_dir().join(format!("sdkt_sign_ghost_{}", std::process::id()));
+    let net_dir = dir.join("networks");
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::create_dir_all(&net_dir).unwrap();
+    gen_identity(&dir, "alice");
+    let unsigned = build_unsigned(&dir);
+
+    let (ok, _, stderr) = run_sign_with_network_dir(
+        &dir,
+        &net_dir,
+        &[
+            "--input",
+            unsigned.to_str().unwrap(),
+            "--identity",
+            "alice",
+            "--network-profile",
+            "ghost",
+        ],
+    );
+    assert!(!ok, "unknown profile must fail");
+    assert!(
+        stderr.contains("not found"),
+        "stderr: {}",
+        stderr
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn sign_network_profile_matches_network_label() {
+    // A profile whose passphrase is the Testnet passphrase must produce the
+    // same signed envelope as `--network testnet`.
+    let dir = std::env::temp_dir().join(format!("sdkt_sign_equiv_{}", std::process::id()));
+    let net_dir = dir.join("networks");
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::create_dir_all(&net_dir).unwrap();
+    gen_identity(&dir, "alice");
+    add_network_profile(&net_dir, "tn", "Test SDF Network ; September 2015");
+    let unsigned = build_unsigned(&dir);
+    let via_label = dir.join("via_label.xdr");
+    let via_profile = dir.join("via_profile.xdr");
+
+    let (ok1, _, stderr1) = run_sign_with_network_dir(
+        &dir,
+        &net_dir,
+        &[
+            "--input",
+            unsigned.to_str().unwrap(),
+            "--output",
+            via_label.to_str().unwrap(),
+            "--identity",
+            "alice",
+            "--network",
+            "testnet",
+        ],
+    );
+    assert!(ok1, "label sign failed: {}", stderr1);
+
+    let (ok2, _, stderr2) = run_sign_with_network_dir(
+        &dir,
+        &net_dir,
+        &[
+            "--input",
+            unsigned.to_str().unwrap(),
+            "--output",
+            via_profile.to_str().unwrap(),
+            "--identity",
+            "alice",
+            "--network-profile",
+            "tn",
+        ],
+    );
+    assert!(ok2, "profile sign failed: {}", stderr2);
+
+    let a = std::fs::read_to_string(&via_label).unwrap();
+    let b = std::fs::read_to_string(&via_profile).unwrap();
+    assert_eq!(a, b, "profile-resolved Testnet must match --network testnet");
+    let _ = std::fs::remove_dir_all(&dir);
+}
