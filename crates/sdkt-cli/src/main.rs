@@ -1526,6 +1526,58 @@ fn resolve_tx_input(input: &str) -> Result<String, String> {
     Ok(input.to_string())
 }
 
+
+
+#[cfg(test)]
+mod resolve_tx_input_tests {
+    use super::resolve_tx_input;
+    use std::fs;
+    use std::io::Write;
+
+    #[test]
+    fn missing_path_like_file_errors() {
+        let err = resolve_tx_input("/no/such/file.xdr").unwrap_err();
+        assert!(
+            err.contains("invalid file") && err.contains("no such file"),
+            "err: {}",
+            err
+        );
+    }
+
+    #[test]
+    fn missing_relative_xdr_errors() {
+        let err = resolve_tx_input("./missing-envelope.xdr").unwrap_err();
+        assert!(err.contains("invalid file"), "err: {}", err);
+    }
+
+    #[test]
+    fn inline_base64_passthrough() {
+        let inline = "AAAAAgAAAABkQMdGsjCv3zavZlW5740YkOCNy0wKb9E8LPuJ2dXq1Q=";
+        assert_eq!(resolve_tx_input(inline).unwrap(), inline);
+    }
+
+    #[test]
+    fn existing_file_is_read() {
+        let dir = std::env::temp_dir().join(format!(
+            "sdkt_resolve_tx_input_{}_{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("envelope.xdr");
+        {
+            let mut f = fs::File::create(&path).unwrap();
+            write!(f, "file-contents-xyz").unwrap();
+        }
+        let got = resolve_tx_input(path.to_str().unwrap()).unwrap();
+        assert_eq!(got, "file-contents-xyz");
+        let _ = fs::remove_dir_all(&dir);
+    }
+}
+
 /// Render a `ContractFunction`'s signature as `name(params) -> outputs`.
 fn sig_string(f: &sdkt_wasm::ContractFunction) -> String {
     let params: Vec<String> = f
@@ -2643,10 +2695,12 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
             }
             TxAction::Validate { envelope, format } => {
                 let fmt = parse_format_str(&format);
-                let env_data = if fs::metadata(&envelope).is_ok() {
-                    fs::read_to_string(&envelope)?
-                } else {
-                    envelope.clone()
+                let env_data = match resolve_tx_input(&envelope) {
+                    Ok(s) => s,
+                    Err(e) => {
+                        eprintln!("Error: {}", e);
+                        process::exit(1);
+                    }
                 };
 
                 use sdkt_core::validation::validate_base64;
@@ -2692,10 +2746,12 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
                     net.network_profile.clone(),
                 );
 
-                let env_data = if fs::metadata(&envelope).is_ok() {
-                    fs::read_to_string(&envelope)?
-                } else {
-                    envelope.clone()
+                let env_data = match resolve_tx_input(&envelope) {
+                    Ok(s) => s,
+                    Err(e) => {
+                        eprintln!("Error: {}", e);
+                        process::exit(1);
+                    }
                 };
 
                 match simulate_transaction(&client, &env_data).await {
@@ -2829,10 +2885,12 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
                 use sdkt_rpc::{submit_and_wait, PollConfig};
                 use std::time::Duration;
 
-                let env_data = if fs::metadata(&envelope).is_ok() {
-                    fs::read_to_string(&envelope)?
-                } else {
-                    envelope.clone()
+                let env_data = match resolve_tx_input(&envelope) {
+                    Ok(s) => s,
+                    Err(e) => {
+                        eprintln!("Error: {}", e);
+                        process::exit(1);
+                    }
                 };
 
                 let poll_cfg = PollConfig {

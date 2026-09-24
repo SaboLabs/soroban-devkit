@@ -28,3 +28,18 @@ fn test_cli_tx_simulate_invalid_envelope() {
         .failure()
         .stdout(predicates::str::contains("Could not unmarshal transaction"));
 }
+
+
+#[test]
+fn test_cli_tx_simulate_missing_envelope_file() {
+    let mut cmd = Command::cargo_bin("sdkt").unwrap();
+    let assert = cmd
+        .arg("tx")
+        .arg("simulate")
+        .arg("--envelope")
+        .arg("/no/such/tx-simulate-envelope.xdr")
+        .assert();
+    assert
+        .failure()
+        .stderr(predicates::str::contains("invalid file"));
+}

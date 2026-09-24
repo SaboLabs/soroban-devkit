@@ -43,3 +43,18 @@ fn test_cli_submit_json_output_format() {
     // The main point is to ensure we don't panic and we exit cleanly with a code.
     assert.failure();
 }
+
+
+#[test]
+fn test_cli_submit_missing_envelope_file() {
+    let mut cmd = Command::cargo_bin("sdkt").unwrap();
+    let assert = cmd
+        .arg("tx")
+        .arg("submit")
+        .arg("--envelope")
+        .arg("/no/such/tx-submit-envelope.xdr")
+        .assert();
+    assert
+        .failure()
+        .stderr(predicates::str::contains("invalid file"));
+}
