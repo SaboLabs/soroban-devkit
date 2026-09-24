@@ -15,16 +15,16 @@ use base64::engine::general_purpose::STANDARD;
 use base64::Engine;
 use predicates::prelude::*;
 use sdkt_xdr::{encode_ledger_key, LedgerKeyParams};
-use stellar_xdr::{
-    ContractCodeEntry, ContractCodeEntryExt, ContractDataDurability, ContractDataEntry,
-    ContractExecutable, ContractId, ExtensionPoint, Hash, LedgerEntry, LedgerEntryData,
-    LedgerEntryExt, LedgerEntryType, Limits, Limited, ScAddress, ScContractInstance, ScVal,
-    WriteXdr,
-};
 use std::io::{Read, Write};
 use std::net::TcpListener;
 use std::thread;
 use std::time::Duration;
+use stellar_xdr::{
+    ContractCodeEntry, ContractCodeEntryExt, ContractDataDurability, ContractDataEntry,
+    ContractExecutable, ContractId, ExtensionPoint, Hash, LedgerEntry, LedgerEntryData,
+    LedgerEntryExt, LedgerEntryType, Limited, Limits, ScAddress, ScContractInstance, ScVal,
+    WriteXdr,
+};
 use tempfile::tempdir;
 
 /// A real contractspecv0 WASM fixture declaring functions that return `u32`.
@@ -151,10 +151,12 @@ fn mock_rpc_server_with_abi(wasm_bytes: &'static [u8]) -> (String, &'static [u8]
                         r#"{{"jsonrpc":"2.0","id":1,"result":{{"entries":[{{"key":"{contract_code_key}","xdr":"{code_xdr}","lastModifiedLedgerSeq":1}}],"latestLedger":100}}}}"#
                     )
                 } else {
-                    r#"{"jsonrpc":"2.0","id":1,"result":{"entries":[],"latestLedger":100}}"#.to_string()
+                    r#"{"jsonrpc":"2.0","id":1,"result":{"entries":[],"latestLedger":100}}"#
+                        .to_string()
                 }
             } else {
-                r#"{"jsonrpc":"2.0","id":1,"error":{"code":-32601,"message":"method not found"}}"#.to_string()
+                r#"{"jsonrpc":"2.0","id":1,"error":{"code":-32601,"message":"method not found"}}"#
+                    .to_string()
             };
 
             let resp = format!(
@@ -168,6 +170,44 @@ fn mock_rpc_server_with_abi(wasm_bytes: &'static [u8]) -> (String, &'static [u8]
 
     thread::sleep(Duration::from_millis(50));
     (url, wasm_bytes)
+}
+
+/// Mock JSON-RPC server whose `simulateTransaction` returns a failed simulation
+/// (`result.error` set). Every ledger look-up returns empty entries, so any
+/// `--abi-contract` resolution would fail with "not found" if it were attempted.
+fn mock_rpc_server_with_sim_error() -> String {
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let addr = listener.local_addr().unwrap();
+    let url = format!("http://{}", addr);
+
+    thread::spawn(move || {
+        for conn in listener.incoming() {
+            let mut sock = match conn {
+                Ok(s) => s,
+                Err(_) => break,
+            };
+            let mut buf = [0u8; 16384];
+            let n = sock.read(&mut buf).unwrap_or(0);
+            let req = String::from_utf8_lossy(&buf[..n]).to_string();
+
+            let body = if req.contains("\"simulateTransaction\"") {
+                r#"{"jsonrpc":"2.0","id":1,"result":{"error":"host simulation failed: out of gas","latestLedger":"12345"}}"#
+                    .to_string()
+            } else {
+                r#"{"jsonrpc":"2.0","id":1,"result":{"entries":[],"latestLedger":100}}"#.to_string()
+            };
+
+            let resp = format!(
+                "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+                body.len(),
+                body
+            );
+            let _ = sock.write_all(resp.as_bytes());
+        }
+    });
+
+    thread::sleep(Duration::from_millis(50));
+    url
 }
 
 #[test]
@@ -335,6 +375,83 @@ fn tx_simulate_without_abi_preserves_behavior() {
 }
 
 #[test]
+fn tx_simulate_error_precedes_abi_contract_resolution() {
+    // A failed simulation must report its actual error even when --abi-contract
+    // points at a contract the network cannot resolve. The ABI lookup must not
+    // run, so its "not found" error must never mask the simulation error.
+    let dir = tempdir().unwrap();
+    let url = mock_rpc_server_with_sim_error();
+    add_mock_profile(dir.path(), &url);
+
+    sdkt_isolated(dir.path())
+        .args([
+            "tx",
+            "--network-profile",
+            "mocknet",
+            "simulate",
+            "--envelope",
+            "AAAAAQ==",
+            "--abi-contract",
+            CONTRACT_ID,
+        ])
+        .assert()
+        .failure()
+        .stdout(predicate::str::contains("Status: FAILED"))
+        .stdout(predicate::str::contains("out of gas"))
+        .stdout(predicate::str::contains("not found").not())
+        .stderr(predicate::str::contains("not found").not());
+}
+
+#[test]
+fn tx_simulate_error_precedes_local_abi_in_json_mode() {
+    // Same precedence in JSON mode with a broken local --abi file: the error
+    // field must carry the simulation error and no decodedResult / ABI error
+    // may appear.
+    let dir = tempdir().unwrap();
+    let url = mock_rpc_server_with_sim_error();
+    add_mock_profile(dir.path(), &url);
+
+    let output = sdkt_isolated(dir.path())
+        .args([
+            "tx",
+            "--network-profile",
+            "mocknet",
+            "simulate",
+            "--envelope",
+            "AAAAAQ==",
+            "--abi",
+            "/no/such.wasm",
+            "--format",
+            "json",
+        ])
+        .output()
+        .unwrap();
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        output.status.success(),
+        "Failed: stdout={stdout} stderr={stderr}"
+    );
+
+    let parsed: serde_json::Value = serde_json::from_str(&stdout)
+        .unwrap_or_else(|e| panic!("Invalid JSON: {e}\nOutput: {stdout}"));
+
+    assert_eq!(
+        parsed["error"], "host simulation failed: out of gas",
+        "simulation error must be preserved, not masked by the broken --abi"
+    );
+    assert!(
+        parsed.get("decodedResult").is_none(),
+        "no ABI decoding may be attempted on a failed simulation"
+    );
+    assert!(
+        !stdout.contains("Failed to read WASM"),
+        "ABI read error must not surface on a failed simulation: {stdout}"
+    );
+}
+
+#[test]
 fn valid_fixture_is_a_real_contractspec_wasm() {
     // Guard the mock's core assumption: the WASM bytes it serves over
     // `getLedgerEntries` must parse to a ContractSpec, or the whole on-chain ABI
@@ -364,7 +481,9 @@ fn ledger_key_discriminants_are_contract_variants() {
         let raw = STANDARD.decode(key).unwrap();
         let mut cursor = std::io::Cursor::new(raw);
         let mut l = Limited::new(&mut cursor, Limits::none());
-        stellar_xdr::LedgerKey::read_xdr(&mut l).unwrap().discriminant()
+        stellar_xdr::LedgerKey::read_xdr(&mut l)
+            .unwrap()
+            .discriminant()
     };
 
     assert_eq!(decode_key_type(&data_key), LedgerEntryType::ContractData);

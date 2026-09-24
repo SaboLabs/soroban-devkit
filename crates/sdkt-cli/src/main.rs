@@ -2712,134 +2712,156 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
 
                 match simulate_transaction(&client, &env_data).await {
                     Ok(sim) => {
-                        // Load ABI spec from one of two sources: a local WASM
-                        // file (`--abi`) or a deployed contract's on-chain WASM
-                        // fetched via the path (`--abi-contract`).
-                        let abi_spec: Option<sdkt_wasm::ContractSpec> =
-                            if let Some(wasm_path) = &abi {
-                                let wasm_bytes = std::fs::read(wasm_path)
-                                    .map_err(|e| format!("Failed to read WASM: {e}"))?;
-                                Some(
-                                    sdkt_wasm::parse_contract_spec(&wasm_bytes)
-                                        .map_err(|e| format!("Failed to parse ABI: {e}"))?,
-                                )
-                            } else if let Some(id) = abi_contract.as_ref() {
-                                // on-chain retrieval: inspect_contract -> wasm
-                                // hash, then get_wasm_bytecode -> raw bytes,
-                                // then parse_contract_spec.
-                                let inspection =
-                                    inspect_contract(&client, id).await.map_err(|e| match e {
-                                        sdkt_rpc::RpcError::ContractNotFound => {
-                                            format!("contract {} not found", id)
-                                        }
-                                        other => format!("{}", other),
-                                    })?;
-                                let deployed_bytes =
-                                    get_wasm_bytecode(&client, &inspection.wasm_hash)
-                                        .await
-                                        .map_err(|e| {
-                                            format!("could not fetch on-chain WASM for {}: {}", id, e)
-                                        })?;
-                                Some(
-                                    sdkt_wasm::parse_contract_spec(&deployed_bytes).map_err(|e| {
-                                        format!("failed to parse deployed ABI: {}", e)
-                                    })?,
-                                )
+                        // A failed simulation reports its own error immediately.
+                        // Resolving --abi / --abi-contract after a failure could
+                        // mask the real simulation error with a secondary ABI
+                        // lookup/fetch/parse error, so the failure path never
+                        // consults the ABI sources.
+                        if let Some(sim_err) = &sim.error {
+                            if fmt == OutputFormat::Json {
+                                let json_obj = serde_json::json!({
+                                    "error": sim.error,
+                                    "latestLedger": sim.latest_ledger,
+                                    "minResourceFee": sim.min_resource_fee,
+                                    "restorePreamble": sim.restore_preamble,
+                                    "cost": sim.cost,
+                                    "events": sim.events,
+                                    "stateChanges": sim.state_changes,
+                                    "results": sim.results,
+                                });
+                                println!("{}", serde_json::to_string(&json_obj)?);
                             } else {
-                                None
-                            };
+                                println!("Simulation Result:");
+                                println!("  Status: FAILED");
+                                println!("  Error: {sim_err}");
+                                process::exit(1);
+                            }
+                        } else {
+                            // Load ABI spec from one of two sources: a local WASM
+                            // file (`--abi`) or a deployed contract's on-chain WASM
+                            // fetched via the path (`--abi-contract`).
+                            let abi_spec: Option<sdkt_wasm::ContractSpec> =
+                                if let Some(wasm_path) = &abi {
+                                    let wasm_bytes = std::fs::read(wasm_path)
+                                        .map_err(|e| format!("Failed to read WASM: {e}"))?;
+                                    Some(
+                                        sdkt_wasm::parse_contract_spec(&wasm_bytes)
+                                            .map_err(|e| format!("Failed to parse ABI: {e}"))?,
+                                    )
+                                } else if let Some(id) = abi_contract.as_ref() {
+                                    // on-chain retrieval: inspect_contract -> wasm
+                                    // hash, then get_wasm_bytecode -> raw bytes,
+                                    // then parse_contract_spec.
+                                    let inspection = inspect_contract(&client, id).await.map_err(
+                                        |e| match e {
+                                            sdkt_rpc::RpcError::ContractNotFound => {
+                                                format!("contract {} not found", id)
+                                            }
+                                            other => format!("{}", other),
+                                        },
+                                    )?;
+                                    let deployed_bytes =
+                                        get_wasm_bytecode(&client, &inspection.wasm_hash)
+                                            .await
+                                            .map_err(|e| {
+                                                format!(
+                                                    "could not fetch on-chain WASM for {}: {}",
+                                                    id, e
+                                                )
+                                            })?;
+                                    Some(sdkt_wasm::parse_contract_spec(&deployed_bytes).map_err(
+                                        |e| format!("failed to parse deployed ABI: {}", e),
+                                    )?)
+                                } else {
+                                    None
+                                };
 
-                        // Decode primary result if ABI available
-                        let decoded_result = abi_spec.as_ref().and_then(|spec| {
-                            sim.results.first().and_then(|first_result| {
-                                sdkt_xdr::scval_from_base64(&first_result.xdr).map(|scval| {
-                                    sdkt_xdr::abi_decode::decode_with_abi(spec, &scval, None)
+                            // Decode primary result if ABI available
+                            let decoded_result = abi_spec.as_ref().and_then(|spec| {
+                                sim.results.first().and_then(|first_result| {
+                                    sdkt_xdr::scval_from_base64(&first_result.xdr).map(|scval| {
+                                        sdkt_xdr::abi_decode::decode_with_abi(spec, &scval, None)
+                                    })
                                 })
-                            })
-                        });
-
-                        if fmt == OutputFormat::Json {
-                            let mut json_obj = serde_json::json!({
-                                "error": sim.error,
-                                "latestLedger": sim.latest_ledger,
-                                "minResourceFee": sim.min_resource_fee,
-                                "restorePreamble": sim.restore_preamble,
-                                "cost": sim.cost,
-                                "events": sim.events,
-                                "stateChanges": sim.state_changes,
-                                "results": sim.results,
                             });
 
-                            if let Some(decoded) = &decoded_result {
-                                json_obj["decodedResult"] = serde_json::json!({
-                                    "raw": decoded.raw,
-                                    "label": decoded.label,
-                                    "matchedType": decoded.matched_type,
-                                    "fields": decoded.fields,
+                            if fmt == OutputFormat::Json {
+                                let mut json_obj = serde_json::json!({
+                                    "error": sim.error,
+                                    "latestLedger": sim.latest_ledger,
+                                    "minResourceFee": sim.min_resource_fee,
+                                    "restorePreamble": sim.restore_preamble,
+                                    "cost": sim.cost,
+                                    "events": sim.events,
+                                    "stateChanges": sim.state_changes,
+                                    "results": sim.results,
                                 });
-                            }
 
-                            println!("{}", serde_json::to_string(&json_obj)?);
-                        } else {
-                            println!("Simulation Result:");
-                            if let Some(err) = &sim.error {
-                                println!("  Status: FAILED");
-                                println!("  Error: {err}");
-                                process::exit(1);
-                            } else {
-                                println!("  Status: SUCCESS");
-                            }
-                            println!(
-                                "  Ledger: {}",
-                                sim.latest_ledger.as_deref().unwrap_or("N/A")
-                            );
-                            println!("  Min Resource Fee: {} stroops", sim.min_resource_fee);
-
-                            if let Some(preamble) = &sim.restore_preamble {
-                                println!("  Restore Preamble Required:");
-                                println!(
-                                    "    Min Resource Fee: {} stroops",
-                                    preamble.min_resource_fee
-                                );
-                                println!(
-                                    "    Transaction Data: ({} bytes)",
-                                    preamble.transaction_data.len()
-                                );
-                            }
-
-                            if let Some(cost) = &sim.cost {
-                                println!("  Cost:");
-                                println!("    CPU Instructions: {}", cost.cpu_insns);
-                                println!("    Memory Bytes: {}", cost.mem_bytes);
-                            }
-
-                            // Show decoded result if ABI was provided
-                            if let Some(decoded) = &decoded_result {
-                                println!("  Decoded Result: {}", decoded.label);
-                                if let Some(matched) = &decoded.matched_type {
-                                    println!("    ABI Type: {matched}");
+                                if let Some(decoded) = &decoded_result {
+                                    json_obj["decodedResult"] = serde_json::json!({
+                                        "raw": decoded.raw,
+                                        "label": decoded.label,
+                                        "matchedType": decoded.matched_type,
+                                        "fields": decoded.fields,
+                                    });
                                 }
-                                if let Some(fields) = &decoded.fields {
-                                    if !fields.is_empty() {
-                                        println!("    Fields:");
-                                        for (k, v) in fields {
-                                            println!("      {k}: {v}");
+
+                                println!("{}", serde_json::to_string(&json_obj)?);
+                            } else {
+                                println!("Simulation Result:");
+                                println!("  Status: SUCCESS");
+                                println!(
+                                    "  Ledger: {}",
+                                    sim.latest_ledger.as_deref().unwrap_or("N/A")
+                                );
+                                println!("  Min Resource Fee: {} stroops", sim.min_resource_fee);
+
+                                if let Some(preamble) = &sim.restore_preamble {
+                                    println!("  Restore Preamble Required:");
+                                    println!(
+                                        "    Min Resource Fee: {} stroops",
+                                        preamble.min_resource_fee
+                                    );
+                                    println!(
+                                        "    Transaction Data: ({} bytes)",
+                                        preamble.transaction_data.len()
+                                    );
+                                }
+
+                                if let Some(cost) = &sim.cost {
+                                    println!("  Cost:");
+                                    println!("    CPU Instructions: {}", cost.cpu_insns);
+                                    println!("    Memory Bytes: {}", cost.mem_bytes);
+                                }
+
+                                // Show decoded result if ABI was provided
+                                if let Some(decoded) = &decoded_result {
+                                    println!("  Decoded Result: {}", decoded.label);
+                                    if let Some(matched) = &decoded.matched_type {
+                                        println!("    ABI Type: {matched}");
+                                    }
+                                    if let Some(fields) = &decoded.fields {
+                                        if !fields.is_empty() {
+                                            println!("    Fields:");
+                                            for (k, v) in fields {
+                                                println!("      {k}: {v}");
+                                            }
                                         }
                                     }
                                 }
-                            }
 
-                            if !sim.events.is_empty() {
-                                println!("  Events: {} emitted", sim.events.len());
-                            }
-                            if !sim.state_changes.is_empty() {
-                                println!(
-                                    "  State Changes: {} entries modified",
-                                    sim.state_changes.len()
-                                );
-                            }
-                            if !sim.results.is_empty() {
-                                println!("  Operations: {} results", sim.results.len());
+                                if !sim.events.is_empty() {
+                                    println!("  Events: {} emitted", sim.events.len());
+                                }
+                                if !sim.state_changes.is_empty() {
+                                    println!(
+                                        "  State Changes: {} entries modified",
+                                        sim.state_changes.len()
+                                    );
+                                }
+                                if !sim.results.is_empty() {
+                                    println!("  Operations: {} results", sim.results.len());
+                                }
                             }
                         }
                     }
