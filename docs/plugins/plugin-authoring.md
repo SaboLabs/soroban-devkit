@@ -333,8 +333,21 @@ sdkt plugin show <id>                             # metadata
 sdkt plugin install ./my-plugin/my_rule.wasm      # copies + validates (local path)
 sdkt plugin remove <id>                           # idempotent
 sdkt plugin update <id> ./my-plugin/my_rule.wasm  # local-only update
-sdkt audit contract.rs --rules <id>               # resolve id → artifact
+sdkt audit contract.rs                            # runs built-in rules + all installed plugins
+sdkt audit contract.rs --rules <id>               # explicit subset selection / ad-hoc artifact
+sdkt audit contract.rs --no-plugins               # skip installed plugins, run built-ins only
 ```
+
+### Audit Execution with Installed Plugins
+
+When running `sdkt audit <file>`, the engine automatically discovers and loads installed plugins from the plugin store:
+
+- **Automatic loading (default):** All installed plugins in the local store are loaded into the rule registry and executed alongside built-in rules without requiring `--rules`.
+- **Rules summary reporting:** When plugin rules are loaded, the audit report includes a rules summary line indicating the breakdown (`Rules loaded: 5 built-in, 1 plugin`). Individual findings continue to carry the plugin's `rule_id`.
+- **Explicit selection (`--rules <id|path>`):** Passing `--rules` activates explicit subset selection. Only the specified rule IDs (resolved via the store) or raw filesystem paths are loaded; other installed plugins are not loaded.
+- **Opt-out (`--no-plugins`):** Passing `--no-plugins` bypasses the plugin store and runs only built-in rules.
+- **ABI compatibility:** If an installed plugin's `abi_major` does not match the host ABI version (`SDKT_AUDIT_ABI_MAJOR`), the plugin is skipped with a clear warning on `stderr` (`Warning: skipping plugin '<id>': ABI mismatch...`) and the audit completes without aborting.
+- **Zero-plugins baseline:** When no plugins are installed (or `--no-plugins` is passed), audit output is identical to built-in execution with no extra lines.
 
 ### Install validation (applied before the plugin is committed to the store)
 

@@ -64,9 +64,8 @@ pub struct PluginMeta {
 }
 
 impl PluginMeta {
-    /// Validate the metadata invariants that do not require touching the
-    /// artifact: id non-empty, kind recognized, abi_major matches the host.
-    pub fn validate(&self) -> Result<(), StoreError> {
+    /// Validate structural metadata invariants without checking ABI compatibility against the current host.
+    pub fn validate_basic(&self) -> Result<(), StoreError> {
         if self.id.trim().is_empty() {
             return Err(StoreError::InvalidMetadata("id must not be empty".into()));
         }
@@ -94,6 +93,13 @@ impl PluginMeta {
                 "artifact uses a reserved bundle path".into(),
             ));
         }
+        Ok(())
+    }
+
+    /// Validate the metadata invariants that do not require touching the
+    /// artifact: id non-empty, kind recognized, abi_major matches the host.
+    pub fn validate(&self) -> Result<(), StoreError> {
+        self.validate_basic()?;
         if self.abi_major != SDKT_AUDIT_ABI_MAJOR {
             return Err(StoreError::AbiMismatch {
                 plugin_major: self.abi_major,
@@ -402,11 +408,17 @@ fn sanitize_id(id: &str) -> String {
 }
 
 /// Read and validate a plugin's metadata from its directory.
+///
+/// Validates basic structural invariants without rejecting incompatible
+/// ABI major versions so callers can inspect `meta.abi_major` and produce
+/// appropriate compatibility warnings rather than dropping the plugin.
 pub fn read_meta(root: &Path, id: &str) -> Result<PluginMeta, StoreError> {
     let toml_path = plugin_dir(root, id).join("plugin.toml");
     let raw =
         std::fs::read_to_string(&toml_path).map_err(|_| StoreError::NotInstalled(id.into()))?;
-    parse_meta(&raw)
+    let meta: PluginMeta = toml::from_str(&raw).map_err(|e| StoreError::Toml(e.to_string()))?;
+    meta.validate_basic()?;
+    Ok(meta)
 }
 
 /// Parse `plugin.toml` content (exposed for unit testing).
