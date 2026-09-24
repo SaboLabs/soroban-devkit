@@ -428,12 +428,6 @@ enum Commands {
         contract_id: String,
         #[arg(short, long, default_value = "pretty")]
         format: String,
-        /// Start ledger sequence number for event search range
-        #[arg(long)]
-        start_ledger: Option<u32>,
-        /// End ledger sequence number for event search range
-        #[arg(long)]
-        end_ledger: Option<u32>,
         /// Path to contract WASM for ABI-aware decoding
         #[arg(long, value_name = "WASM")]
         abi: Option<String>,
@@ -581,6 +575,10 @@ enum Commands {
         /// Identity name whose account signs and pays for the invocation
         #[arg(short = 'I', long, default_value = "default")]
         identity: String,
+        /// Build and sign the envelope (sequence → simulate → build → sign) and
+        /// print it instead of submitting. No `sendTransaction`, no state change.
+        #[arg(long, default_value_t = false)]
+        build_only: bool,
         /// Output format (pretty or json)
         #[arg(short, long, default_value = "pretty")]
         format: String,
@@ -2678,7 +2676,7 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
                                 "Fee: {}",
                                 tx_info
                                     .fee_charged
-                                    .map_or("N/A".to_string(), |v| format!("{v} stroops"))
+                                    .map_or("N/A".to_string(), |v| v.to_string())
                             );
                             println!(
                                 "Operations: {}",
@@ -3127,8 +3125,6 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
         Commands::Events {
             contract_id,
             format,
-            start_ledger,
-            end_ledger,
             abi,
             abi_contract,
             net,
@@ -3139,16 +3135,6 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
                 net.network_passphrase.clone(),
                 net.network_profile.clone(),
             );
-
-            // Reject inverted ranges before making RPC calls
-            if let (Some(start), Some(end)) = (start_ledger, end_ledger) {
-                if start > end {
-                    eprintln!(
-                        "Error: start ledger ({start}) cannot be greater than end ledger ({end})"
-                    );
-                    process::exit(1);
-                }
-            }
 
             // Resolve the ABI ContractSpec from one of two sources (mutually
             // exclusive): a local WASM file (`--abi`) or a deployed contract's
@@ -3186,7 +3172,7 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
                     None
                 };
 
-            match get_contract_events(&client, &contract_id, start_ledger, end_ledger).await {
+            match get_contract_events(&client, &contract_id).await {
                 Ok(events) => {
                     if let Some(spec) = contract_spec {
                         // ABI-aware decoding: topics[0] is the event symbol,
@@ -4470,6 +4456,7 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
             function,
             args,
             identity,
+            build_only,
             format,
             net,
         } => {
@@ -4519,6 +4506,40 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
             };
 
             let client = SorobanRpcClient::from_config(&network_config);
+
+            // 4. `--build-only`: run the same preparation stages as a real
+            //    invocation and stop before submission, so the operator can
+            //    inspect the exact envelope that would go on the wire.
+            if build_only {
+                match sdkt_rpc::build_invoke_envelope(&client, &params, &signer, network).await {
+                    Ok(res) => {
+                        if fmt == OutputFormat::Json {
+                            println!(
+                                "{}",
+                                serde_json::json!({
+                                    "envelopeXdr": res.envelope_xdr,
+                                    "fee": res.fee,
+                                    "sequence": res.sequence,
+                                    "contractId": res.contract_id,
+                                    "function": res.function,
+                                    "submitted": false,
+                                })
+                            );
+                        } else {
+                            println!("Transaction Envelope (NOT submitted):");
+                            println!("{}", res.envelope_xdr);
+                            println!("  Fee:      {} stroops", res.fee);
+                            println!("  Sequence: {}", res.sequence);
+                        }
+                    }
+                    Err(e) => {
+                        eprintln!("Error building invoke transaction: {}", e);
+                        process::exit(1);
+                    }
+                }
+                return Ok(());
+            }
+
             let poll = sdkt_rpc::PollConfig::default();
 
             match sdkt_rpc::invoke_contract(&client, &params, &signer, network, &poll).await {
