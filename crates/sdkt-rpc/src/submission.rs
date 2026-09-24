@@ -5,8 +5,13 @@
 //! [`SorobanRpcClient`] for all HTTP/JSON-RPC transport.
 
 use crate::{RpcError, SorobanRpcClient};
+use base64::engine::general_purpose::STANDARD;
+use base64::Engine;
 use serde::{Deserialize, Deserializer, Serialize};
 use std::time::Duration;
+use stellar_xdr::{
+    ContractEvent, Limited, Limits, ReadXdr, TransactionMeta, WriteXdr,
+};
 
 /// Helper to deserialize either a string or an integer into an Option<String>.
 fn deserialize_optional_string_or_int<'de, D>(deserializer: D) -> Result<Option<String>, D::Error>
@@ -123,6 +128,14 @@ pub struct SubmissionResult {
     pub status: TransactionStatus,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub result_xdr: Option<String>,
+    /// Base64 `TransactionMeta` XDR from `getTransaction`, when available.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub result_meta_xdr: Option<String>,
+    /// Contract events (base64 `ContractEvent` XDR) extracted from `result_meta_xdr`
+    /// on successful settlement. Empty when the invocation emitted none or meta
+    /// could not be decoded.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub events: Vec<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub latest_ledger: Option<String>,
     /// Error code from sendTransaction (e.g. "tx_bad_auth"), when status == Failed.
@@ -150,6 +163,65 @@ impl Default for PollConfig {
             interval: Duration::from_secs(1),
         }
     }
+}
+
+
+/// Encode a `ContractEvent` as base64 XDR.
+fn encode_contract_event_b64(event: &ContractEvent) -> Option<String> {
+    let mut buf = Vec::new();
+    {
+        let mut lim = Limited::new(&mut buf, Limits::none());
+        event.write_xdr(&mut lim).ok()?;
+    }
+    Some(STANDARD.encode(buf))
+}
+
+/// Extract contract events from a base64 `TransactionMeta` XDR.
+///
+/// Supports:
+/// - `TransactionMeta::V3` → `soroban_meta.events`
+/// - `TransactionMeta::V4` → per-operation `events` plus top-level `TransactionEvent`s
+///
+/// Returns an empty list when meta is missing, undecodable, or contains no events.
+/// Never includes diagnostic-only failure events (those stay on `diagnostic_events`).
+pub fn extract_contract_events_from_meta_xdr(meta_xdr: &str) -> Vec<String> {
+    let Ok(raw) = STANDARD.decode(meta_xdr.trim()) else {
+        return Vec::new();
+    };
+    let mut cursor = std::io::Cursor::new(&raw);
+    let mut lim = Limited::new(&mut cursor, Limits::none());
+    let Ok(meta) = TransactionMeta::read_xdr(&mut lim) else {
+        return Vec::new();
+    };
+
+    let mut out = Vec::new();
+    match meta {
+        TransactionMeta::V3(v3) => {
+            if let Some(soroban) = v3.soroban_meta {
+                for ev in soroban.events.iter() {
+                    if let Some(b64) = encode_contract_event_b64(ev) {
+                        out.push(b64);
+                    }
+                }
+            }
+        }
+        TransactionMeta::V4(v4) => {
+            for op in v4.operations.iter() {
+                for ev in op.events.iter() {
+                    if let Some(b64) = encode_contract_event_b64(ev) {
+                        out.push(b64);
+                    }
+                }
+            }
+            for te in v4.events.iter() {
+                if let Some(b64) = encode_contract_event_b64(&te.event) {
+                    out.push(b64);
+                }
+            }
+        }
+        TransactionMeta::V0(_) | TransactionMeta::V1(_) | TransactionMeta::V2(_) => {}
+    }
+    out
 }
 
 /// Submit a signed transaction envelope (base64 XDR) to the network.
@@ -200,6 +272,8 @@ pub async fn submit_and_wait(
             hash,
             status: TransactionStatus::Failed,
             result_xdr: None,
+            result_meta_xdr: None,
+            events: Vec::new(),
             latest_ledger: sent.latest_ledger,
             error_code: sent.error_result,
             error_result_xdr: sent.error_result_xdr,
@@ -212,6 +286,8 @@ pub async fn submit_and_wait(
             hash,
             status: TransactionStatus::Pending,
             result_xdr: None,
+            result_meta_xdr: None,
+            events: Vec::new(),
             latest_ledger: None,
             error_code: None,
             error_result_xdr: None,
@@ -235,10 +311,17 @@ pub async fn poll_transaction(
 
         match status {
             TransactionStatus::Success => {
+                let events = res
+                    .result_meta_xdr
+                    .as_deref()
+                    .map(extract_contract_events_from_meta_xdr)
+                    .unwrap_or_default();
                 return Ok(SubmissionResult {
                     hash: hash.to_string(),
                     status,
                     result_xdr: res.result_xdr,
+                    result_meta_xdr: res.result_meta_xdr,
+                    events,
                     latest_ledger: res.latest_ledger,
                     error_code: None,
                     error_result_xdr: None,
@@ -250,6 +333,8 @@ pub async fn poll_transaction(
                     hash: hash.to_string(),
                     status,
                     result_xdr: res.result_xdr,
+                    result_meta_xdr: res.result_meta_xdr,
+                    events: Vec::new(),
                     latest_ledger: res.latest_ledger,
                     error_code: None,
                     error_result_xdr: None,
@@ -334,6 +419,8 @@ mod tests {
             hash: "abc".to_string(),
             status: TransactionStatus::Success,
             result_xdr: Some("xdr".to_string()),
+            result_meta_xdr: None,
+            events: Vec::new(),
             latest_ledger: Some("100".to_string()),
             error_code: None,
             error_result_xdr: None,
@@ -409,5 +496,115 @@ mod tests {
         assert_eq!(result.error_code.as_deref(), Some("tx_bad_auth"));
         assert_eq!(result.error_result_xdr.as_deref(), Some("AAAA"));
         assert_eq!(result.diagnostic_events, vec!["AAAAevent"]);
+    }
+
+    fn sample_contract_event() -> stellar_xdr::ContractEvent {
+        use stellar_xdr::{
+            ContractEventBody, ContractEventType, ContractEventV0, ExtensionPoint, ScVal, VecM,
+        };
+        stellar_xdr::ContractEvent {
+            ext: ExtensionPoint::V0,
+            contract_id: None,
+            type_: ContractEventType::Contract,
+            body: ContractEventBody::V0(ContractEventV0 {
+                topics: VecM::default(),
+                data: ScVal::Void,
+            }),
+        }
+    }
+
+    fn encode_meta_v3_with_events(events: Vec<stellar_xdr::ContractEvent>) -> String {
+        use stellar_xdr::{
+            ExtensionPoint, LedgerEntryChanges, ScVal, SorobanTransactionMeta,
+            SorobanTransactionMetaExt, TransactionMeta, TransactionMetaV3, VecM, WriteXdr,
+        };
+        let meta = TransactionMeta::V3(TransactionMetaV3 {
+            ext: ExtensionPoint::V0,
+            tx_changes_before: LedgerEntryChanges::default(),
+            operations: VecM::default(),
+            tx_changes_after: LedgerEntryChanges::default(),
+            soroban_meta: Some(SorobanTransactionMeta {
+                ext: SorobanTransactionMetaExt::V0,
+                events: events.try_into().unwrap(),
+                return_value: ScVal::Void,
+                diagnostic_events: VecM::default(),
+            }),
+        });
+        let mut buf = Vec::new();
+        {
+            let mut lim = Limited::new(&mut buf, Limits::none());
+            meta.write_xdr(&mut lim).unwrap();
+        }
+        STANDARD.encode(buf)
+    }
+
+    #[test]
+    fn extract_events_from_meta_with_contract_events() {
+        let event = sample_contract_event();
+        let expected = encode_contract_event_b64(&event).unwrap();
+        let meta = encode_meta_v3_with_events(vec![event]);
+        let extracted = extract_contract_events_from_meta_xdr(&meta);
+        assert_eq!(extracted, vec![expected]);
+    }
+
+    #[test]
+    fn extract_events_from_meta_without_events_is_empty() {
+        let meta = encode_meta_v3_with_events(Vec::new());
+        assert!(extract_contract_events_from_meta_xdr(&meta).is_empty());
+    }
+
+    #[test]
+    fn extract_events_from_invalid_meta_is_empty() {
+        assert!(extract_contract_events_from_meta_xdr("not-valid-xdr!!!").is_empty());
+    }
+
+    #[test]
+    fn status_response_deserializes_result_meta_xdr() {
+        let raw = r#"{
+            "status": "SUCCESS",
+            "latestLedger": "100",
+            "resultXdr": "AAAAres",
+            "resultMetaXdr": "AAAAmeta",
+            "error": null
+        }"#;
+        let resp: TransactionStatusResponse = serde_json::from_str(raw).unwrap();
+        assert_eq!(resp.result_meta_xdr.as_deref(), Some("AAAAmeta"));
+    }
+
+    #[tokio::test]
+    async fn poll_success_preserves_contract_events_from_meta() {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+        let event = sample_contract_event();
+        let expected = encode_contract_event_b64(&event).unwrap();
+        let meta = encode_meta_v3_with_events(vec![event]);
+        let meta_for_server = meta.clone();
+
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+
+        tokio::spawn(async move {
+            let (mut sock, _) = listener.accept().await.unwrap();
+            let mut buf = [0u8; 8192];
+            let _ = sock.read(&mut buf).await.unwrap();
+            let resp = format!(
+                r#"{{"jsonrpc":"2.0","id":1,"result":{{"status":"SUCCESS","latestLedger":"101","resultXdr":"AAAAAg==","resultMetaXdr":"{meta_for_server}"}}}}"#
+            );
+            let http_resp = format!(
+                "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+                resp.len(),
+                resp
+            );
+            sock.write_all(http_resp.as_bytes()).await.unwrap();
+            let _ = sock.shutdown().await;
+        });
+
+        let client = SorobanRpcClient::new(&format!("http://{}", addr));
+        let result = poll_transaction(&client, "deadbeef", &PollConfig::default())
+            .await
+            .unwrap();
+        assert_eq!(result.status, TransactionStatus::Success);
+        assert_eq!(result.events, vec![expected]);
+        assert_eq!(result.result_meta_xdr.as_deref(), Some(meta.as_str()));
     }
 }

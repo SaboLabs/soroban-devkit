@@ -32,6 +32,9 @@ pub struct InvokeResult {
     pub fee: u32,
     /// Base64 `TransactionResult` XDR from the settled transaction, if any.
     pub result_xdr: Option<String>,
+    /// Contract events (base64 `ContractEvent` XDR) emitted by a successful
+    /// invocation. Empty when none were emitted or meta was unavailable.
+    pub events: Vec<String>,
     /// Error code from the network when status == FAILED.
     pub error_code: Option<String>,
     /// Base64 `TransactionResult` XDR of the error when status == FAILED.
@@ -150,6 +153,7 @@ pub async fn invoke_contract(
         function: params.function.clone(),
         fee: total_fee,
         result_xdr: submission.result_xdr,
+        events: submission.events,
         error_code: submission.error_code,
         error_result_xdr: submission.error_result_xdr,
         diagnostic_events: submission.diagnostic_events,
@@ -179,6 +183,7 @@ mod tests {
             function: "f".into(),
             fee: 250,
             result_xdr: Some("xdr".into()),
+            events: Vec::new(),
             error_code: None,
             error_result_xdr: None,
             diagnostic_events: Vec::new(),

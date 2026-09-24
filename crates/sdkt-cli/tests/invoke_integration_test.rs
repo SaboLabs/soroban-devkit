@@ -7,11 +7,56 @@
 //! NOT TESTED here: live Testnet submission (documented in docs/cli.md).
 
 use assert_cmd::Command;
+use base64::Engine;
 use predicates::prelude::*;
 use std::io::{Read, Write};
 use std::net::TcpListener;
 use std::thread;
+use stellar_xdr::{
+    ContractEvent, ContractEventBody, ContractEventType, ContractEventV0, ExtensionPoint,
+    LedgerEntryChanges, Limited, Limits, ScVal, SorobanTransactionMeta, SorobanTransactionMetaExt,
+    TransactionMeta, TransactionMetaV3, VecM, WriteXdr,
+};
 use tempfile::tempdir;
+
+/// Minimal V3 `TransactionMeta` containing one contract event (base64 XDR).
+fn sample_result_meta_xdr() -> (String, String) {
+    let event = ContractEvent {
+        ext: ExtensionPoint::V0,
+        contract_id: None,
+        type_: ContractEventType::Contract,
+        body: ContractEventBody::V0(ContractEventV0 {
+            topics: VecM::default(),
+            data: ScVal::Void,
+        }),
+    };
+    let mut event_buf = Vec::new();
+    {
+        let mut lim = Limited::new(&mut event_buf, Limits::none());
+        event.write_xdr(&mut lim).unwrap();
+    }
+    let event_b64 = base64::engine::general_purpose::STANDARD.encode(&event_buf);
+
+    let meta = TransactionMeta::V3(TransactionMetaV3 {
+        ext: ExtensionPoint::V0,
+        tx_changes_before: LedgerEntryChanges::default(),
+        operations: VecM::default(),
+        tx_changes_after: LedgerEntryChanges::default(),
+        soroban_meta: Some(SorobanTransactionMeta {
+            ext: SorobanTransactionMetaExt::V0,
+            events: vec![event].try_into().unwrap(),
+            return_value: ScVal::Void,
+            diagnostic_events: VecM::default(),
+        }),
+    });
+    let mut meta_buf = Vec::new();
+    {
+        let mut lim = Limited::new(&mut meta_buf, Limits::none());
+        meta.write_xdr(&mut lim).unwrap();
+    }
+    let meta_b64 = base64::engine::general_purpose::STANDARD.encode(&meta_buf);
+    (meta_b64, event_b64)
+}
 
 fn sdkt_isolated(dir: &std::path::Path) -> Command {
     let mut cmd = Command::cargo_bin("sdkt").unwrap();
@@ -40,12 +85,20 @@ const SOROBAN_DATA_XDR: &str = "AAAAAAAAAAAAAAAAAAAD6AAAAAoAAAAKAAAAAAAAAJY=";
 ///
 /// `requests` records each JSON-RPC method received, in order, joined by '\n'.
 fn mock_rpc_server(tx_failed: bool) -> (String, std::sync::Arc<std::sync::Mutex<Vec<String>>>) {
-    mock_rpc_server_with_send_error(tx_failed, false)
+    mock_rpc_server_with_options(tx_failed, false, None)
 }
 
 fn mock_rpc_server_with_send_error(
     tx_failed: bool,
     send_error: bool,
+) -> (String, std::sync::Arc<std::sync::Mutex<Vec<String>>>) {
+    mock_rpc_server_with_options(tx_failed, send_error, None)
+}
+
+fn mock_rpc_server_with_options(
+    tx_failed: bool,
+    send_error: bool,
+    result_meta_xdr: Option<String>,
 ) -> (String, std::sync::Arc<std::sync::Mutex<Vec<String>>>) {
     let listener = TcpListener::bind("127.0.0.1:0").unwrap();
     let addr = listener.local_addr().unwrap();
@@ -53,6 +106,7 @@ fn mock_rpc_server_with_send_error(
     let seen: std::sync::Arc<std::sync::Mutex<Vec<String>>> = Default::default();
     let seen_thread = seen.clone();
     let failed = tx_failed;
+    let meta_xdr = result_meta_xdr;
 
     thread::spawn(move || {
         for conn in listener.incoming() {
@@ -88,6 +142,10 @@ fn mock_rpc_server_with_send_error(
                 Some("getTransaction") => {
                     if failed {
                         r#"{"jsonrpc":"2.0","id":1,"result":{"status":"FAILED","latestLedger":"101","resultXdr":"AAAAf////g=="}}"#.to_string()
+                    } else if let Some(meta) = &meta_xdr {
+                        format!(
+                            r#"{{"jsonrpc":"2.0","id":1,"result":{{"status":"SUCCESS","latestLedger":"101","resultXdr":"AAAAAg==","resultMetaXdr":"{meta}"}}}}"#
+                        )
                     } else {
                         r#"{"jsonrpc":"2.0","id":1,"result":{"status":"SUCCESS","latestLedger":"101","resultXdr":"AAAAAg=="}}"#.to_string()
                     }
@@ -438,6 +496,107 @@ fn invoke_rpc_unreachable_errors_cleanly() {
     assert!(!output.status.success());
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(stderr.contains("Error"), "stderr={stderr}");
+}
+
+
+#[test]
+fn invoke_success_shows_contract_events_from_meta() {
+    let dir = tempdir().unwrap();
+    generate_identity(dir.path(), "alice");
+    let (meta, event_b64) = sample_result_meta_xdr();
+    let (url, _seen) = mock_rpc_server_with_options(false, false, Some(meta));
+    add_mock_profile(dir.path(), &url);
+
+    let output = sdkt_isolated(dir.path())
+        .args([
+            "invoke",
+            VALID_CONTRACT,
+            "transfer",
+            "--identity",
+            "alice",
+            "--network-profile",
+            "mocknet",
+        ])
+        .output()
+        .unwrap();
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        output.status.success(),
+        "Expected success. stdout={stdout} stderr={}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(stdout.contains("Invocation Result:"), "stdout={stdout}");
+    assert!(stdout.contains("Status:   SUCCESS"), "stdout={stdout}");
+    assert!(stdout.contains("Events:"), "stdout={stdout}");
+    assert!(stdout.contains(&event_b64), "stdout={stdout}");
+}
+
+#[test]
+fn invoke_success_json_includes_events() {
+    let dir = tempdir().unwrap();
+    generate_identity(dir.path(), "alice");
+    let (meta, event_b64) = sample_result_meta_xdr();
+    let (url, _seen) = mock_rpc_server_with_options(false, false, Some(meta));
+    add_mock_profile(dir.path(), &url);
+
+    let output = sdkt_isolated(dir.path())
+        .args([
+            "invoke",
+            VALID_CONTRACT,
+            "transfer",
+            "--identity",
+            "alice",
+            "--network-profile",
+            "mocknet",
+            "--format",
+            "json",
+        ])
+        .output()
+        .unwrap();
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        output.status.success(),
+        "stdout={stdout} stderr={}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let parsed: serde_json::Value =
+        serde_json::from_str(&stdout).unwrap_or_else(|e| panic!("Invalid JSON: {e}\n{stdout}"));
+    assert_eq!(parsed["status"], "SUCCESS");
+    assert_eq!(
+        parsed["events"],
+        serde_json::json!([event_b64])
+    );
+}
+
+#[test]
+fn invoke_success_without_events_omits_events_section() {
+    let dir = tempdir().unwrap();
+    generate_identity(dir.path(), "alice");
+    let (url, _seen) = mock_rpc_server(false);
+    add_mock_profile(dir.path(), &url);
+
+    let output = sdkt_isolated(dir.path())
+        .args([
+            "invoke",
+            VALID_CONTRACT,
+            "increment",
+            "--identity",
+            "alice",
+            "--network-profile",
+            "mocknet",
+        ])
+        .output()
+        .unwrap();
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(output.status.success(), "stdout={stdout}");
+    assert!(stdout.contains("Status:   SUCCESS"), "stdout={stdout}");
+    assert!(
+        !stdout.contains("Events:"),
+        "must not print empty Events section: {stdout}"
+    );
 }
 
 // ---------- Existing behavior unchanged ----------
