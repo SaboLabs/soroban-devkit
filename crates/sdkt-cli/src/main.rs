@@ -6,8 +6,8 @@ use sdkt_core::{DevKitConfig, NetworkConfig, OutputFormat};
 use sdkt_rpc::inspect::StorageSummary;
 use sdkt_rpc::wasm::get_wasm_bytecode;
 use sdkt_rpc::{
-    estimate_dynamic_fee, extend_footprint, get_contract_events, get_ttl_info, get_wasm_metadata,
-    inspect_account, inspect_contract, inspect_transaction, read_contract_state,
+    estimate_dynamic_fee, extend_footprint, get_contract_events, get_next_sequence, get_ttl_info,
+    get_wasm_metadata, inspect_account, inspect_contract, inspect_transaction, read_contract_state,
     simulate_transaction, SorobanRpcClient, StorageKeyInfo, TtlInfoSummary,
 };
 use sdkt_storage::WasmCache;
@@ -925,8 +925,11 @@ enum TxAction {
     Build {
         #[arg(long)]
         source: String,
+        /// Account sequence number to build against. When omitted, it is
+        /// resolved automatically from the network for `--source` (requires the
+        /// network/RPC flags to be resolvable, same as other RPC commands).
         #[arg(long)]
-        sequence: i64,
+        sequence: Option<i64>,
         #[arg(long, default_value = "100")]
         fee: u32,
         #[arg(long)]
@@ -3015,6 +3018,27 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
                 }
 
                 let parsed_args = parse_typed_args(&arg, false)?;
+
+                // Resolve the sequence: use the explicit `--sequence` override
+                // verbatim, otherwise fetch the account's next sequence from the
+                // network (same mechanism the deploy path already uses).
+                let sequence = match sequence {
+                    Some(explicit) => explicit,
+                    None => {
+                        let client = resolve_rpc_client(
+                            net.rpc_url.clone(),
+                            net.network_passphrase.clone(),
+                            net.network_profile.clone(),
+                        );
+                        match get_next_sequence(&client, &source_account).await {
+                            Ok(seq) => seq,
+                            Err(e) => {
+                                eprintln!("Error resolving sequence for {source_account}: {e}");
+                                process::exit(1);
+                            }
+                        }
+                    }
+                };
 
                 let params = InvokeTransactionParams {
                     source_account,
