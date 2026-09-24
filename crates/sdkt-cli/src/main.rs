@@ -2678,7 +2678,7 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
                                 "Fee: {}",
                                 tx_info
                                     .fee_charged
-                                    .map_or("N/A".to_string(), |v| v.to_string())
+                                    .map_or("N/A".to_string(), |v| format!("{v} stroops"))
                             );
                             println!(
                                 "Operations: {}",
