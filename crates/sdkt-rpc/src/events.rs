@@ -17,6 +17,8 @@ struct EventFilter {
     #[serde(rename = "type")]
     filter_type: String,
     contract_ids: Vec<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    topics: Option<Vec<Vec<String>>>,
 }
 
 #[derive(Serialize)]
@@ -50,6 +52,15 @@ pub async fn get_contract_events(
     client: &SorobanRpcClient,
     contract_id: &str,
 ) -> Result<Vec<ContractEvent>, RpcError> {
+    get_contract_events_with_topic(client, contract_id, None).await
+}
+
+/// Fetch contract events, optionally matching the first topic position.
+pub async fn get_contract_events_with_topic(
+    client: &SorobanRpcClient,
+    contract_id: &str,
+    topic: Option<&str>,
+) -> Result<Vec<ContractEvent>, RpcError> {
     // Determine a start ledger. For a robust tool, this should be configurable.
     // Here we query the latest ledger and look back up to 1000 ledgers.
     let latest_ledger_info =
@@ -69,6 +80,7 @@ pub async fn get_contract_events(
         filters: vec![EventFilter {
             filter_type: "contract".to_string(),
             contract_ids: vec![contract_id.to_string()],
+            topics: topic.map(|topic| vec![vec![topic.to_string()]]),
         }],
     };
 
@@ -86,4 +98,44 @@ pub async fn get_contract_events(
     }
 
     Ok(contract_events)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::EventFilter;
+
+    #[test]
+    fn event_filter_omits_topics_when_unfiltered() {
+        let filter = EventFilter {
+            filter_type: "contract".to_string(),
+            contract_ids: vec!["C...".to_string()],
+            topics: None,
+        };
+
+        assert_eq!(
+            serde_json::to_value(filter).unwrap(),
+            serde_json::json!({
+                "type": "contract",
+                "contractIds": ["C..."]
+            })
+        );
+    }
+
+    #[test]
+    fn event_filter_serializes_first_topic_matcher() {
+        let filter = EventFilter {
+            filter_type: "contract".to_string(),
+            contract_ids: vec!["C...".to_string()],
+            topics: Some(vec![vec!["encoded-transfer".to_string()]]),
+        };
+
+        assert_eq!(
+            serde_json::to_value(filter).unwrap(),
+            serde_json::json!({
+                "type": "contract",
+                "contractIds": ["C..."],
+                "topics": [["encoded-transfer"]]
+            })
+        );
+    }
 }

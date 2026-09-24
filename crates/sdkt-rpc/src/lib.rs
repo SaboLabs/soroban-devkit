@@ -31,7 +31,7 @@ pub use deploy::{
     deploy_contract, format_json, format_pretty, DeployOutcome, DeployResult, PartialDeployResult,
 };
 pub use error::RpcError;
-pub use events::{get_contract_events, ContractEvent};
+pub use events::{get_contract_events, get_contract_events_with_topic, ContractEvent};
 pub use fee::{estimate_dynamic_fee, get_fee_stats, FeeDistribution, FeeStats};
 pub use inspect::{inspect_contract, ContractInspection, StorageKeyInfo, TtlInfoSummary};
 pub use invoke::{invoke_contract, InvokeResult};

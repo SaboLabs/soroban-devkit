@@ -6,7 +6,8 @@ use sdkt_core::{DevKitConfig, NetworkConfig, OutputFormat};
 use sdkt_rpc::inspect::StorageSummary;
 use sdkt_rpc::wasm::get_wasm_bytecode;
 use sdkt_rpc::{
-    estimate_dynamic_fee, extend_footprint, get_contract_events, get_ttl_info, get_wasm_metadata,
+    estimate_dynamic_fee, extend_footprint, get_contract_events_with_topic, get_ttl_info,
+    get_wasm_metadata,
     inspect_account, inspect_contract, inspect_transaction, read_contract_state,
     simulate_transaction, SorobanRpcClient, StorageKeyInfo, TtlInfoSummary,
 };
@@ -426,6 +427,9 @@ enum Commands {
     /// Event explorer
     Events {
         contract_id: String,
+        /// Filter by the event name in the first topic position
+        #[arg(long, value_name = "NAME")]
+        topic: Option<String>,
         #[arg(short, long, default_value = "pretty")]
         format: String,
         /// Path to contract WASM for ABI-aware decoding
@@ -1421,8 +1425,28 @@ fn parse_typed_args(args: &[String], strict: bool) -> Result<Vec<String>, String
     Ok(parsed)
 }
 
-/// Encode typed `TYPE:VALUE` values to a single base64 XDR `ScVal` string.
-///
+fn encode_event_topic(topic: &str) -> Result<String, String> {
+    if topic.len() > 32 {
+        return Err(format!(
+            "event topic exceeds 32 bytes (got {} bytes)",
+            topic.len()
+        ));
+    }
+    if !topic
+        .bytes()
+        .all(|byte| byte.is_ascii_alphanumeric() || byte == b'_')
+    {
+        return Err(
+            "invalid event topic: use only ASCII letters, digits, and _".to_string(),
+        );
+    }
+
+    use sdkt_xdr::scval_to_base64;
+    use stellar_xdr::{ScSymbol, ScVal};
+    let symbol = ScSymbol::try_from(topic).map_err(|_| "invalid event topic".to_string())?;
+    scval_to_base64(&ScVal::Symbol(symbol)).map_err(|e| e.to_string())
+}
+
 /// This is the write-direction counterpart to `sdkt decode`. Supported types
 /// are the primitives this CLI already encodes elsewhere (`parse_typed_args`):
 /// `u32`, `i32`, `u64`, `i64`, `bool`, `address`, `string`, `symbol`. Exactly one value
@@ -3078,6 +3102,7 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
         },
         Commands::Events {
             contract_id,
+            topic,
             format,
             abi,
             abi_contract,
@@ -3097,6 +3122,11 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
                 eprintln!("Error: specify only one of --abi or --abi-contract");
                 process::exit(1);
             }
+
+            let encoded_topic = topic
+                .as_deref()
+                .map(encode_event_topic)
+                .transpose()?;
 
             let contract_spec: Option<sdkt_wasm::ContractSpec> =
                 if let Some(wasm_path) = abi.as_ref() {
@@ -3126,7 +3156,18 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
                     None
                 };
 
-            match get_contract_events(&client, &contract_id).await {
+            if let (Some(topic), Some(spec)) = (topic.as_deref(), contract_spec.as_ref()) {
+                if !spec.events.iter().any(|event| event.name == topic) {
+                    eprintln!(
+                        "warning: event topic '{}' is not declared in the provided ABI",
+                        topic
+                    );
+                }
+            }
+
+            match get_contract_events_with_topic(&client, &contract_id, encoded_topic.as_deref())
+                .await
+            {
                 Ok(events) => {
                     if let Some(spec) = contract_spec {
                         // ABI-aware decoding: topics[0] is the event symbol,
@@ -5334,6 +5375,24 @@ fn run_generate_client(wasm_path: &str, output: Option<&str>) -> Result<(), Stri
         None => print!("{}", code),
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod event_topic_tests {
+    use super::encode_event_topic;
+
+    #[test]
+    fn encodes_event_name_as_symbol_scval() {
+        let encoded = encode_event_topic("Transfer").unwrap();
+        let decoded = sdkt_xdr::scval_from_base64(&encoded).unwrap();
+
+        assert_eq!(decoded, stellar_xdr::ScVal::Symbol("Transfer".try_into().unwrap()));
+    }
+
+    #[test]
+    fn rejects_invalid_event_name() {
+        assert!(encode_event_topic("not-transfer").is_err());
+    }
 }
 
 #[cfg(test)]
