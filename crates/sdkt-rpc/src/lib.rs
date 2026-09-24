@@ -37,7 +37,7 @@ pub use events::{
 };
 pub use fee::{estimate_dynamic_fee, get_fee_stats, FeeDistribution, FeeStats};
 pub use inspect::{inspect_contract, ContractInspection, StorageKeyInfo, TtlInfoSummary};
-pub use invoke::{invoke_contract, InvokeResult};
+pub use invoke::{invoke_contract, simulate_invoke, InvokeResult, SimulatedInvoke, INCLUSION_FEE};
 pub use simulate::{
     simulate_transaction, validate_envelope, SimulateCost, SimulateOperationResult,
     SimulateResponse, SimulateTransactionRequest,

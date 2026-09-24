@@ -16,7 +16,8 @@ use sdkt_xdr::sign::{Ed25519Signer, Network, SigningOptions};
 use sdkt_xdr::sign_transaction;
 use sdkt_xdr::InvokeTransactionParams;
 use stellar_xdr::{
-    LedgerFootprint, SorobanResources, SorobanTransactionData, SorobanTransactionDataExt, VecM,
+    LedgerFootprint, SorobanAuthorizationEntry, SorobanResources, SorobanTransactionData,
+    SorobanTransactionDataExt, VecM,
 };
 
 /// Final result of a state-changing contract invocation.
@@ -48,6 +49,83 @@ fn parse_min_resource_fee(raw: &str) -> Result<u32, RpcError> {
     })?;
     u32::try_from(parsed)
         .map_err(|_| RpcError::Rpc(format!("simulation min_resource_fee overflowed u32: {raw}")))
+}
+
+/// Base inclusion fee added on top of the resource fee reported by simulation.
+///
+/// The resource fee dominates for Soroban transactions; this is only the
+/// per-operation inclusion component.
+pub const INCLUSION_FEE: u32 = 100;
+
+/// What a simulation pass tells us about an invocation.
+///
+/// Produced by [`simulate_invoke`] and consumed both by [`invoke_contract`],
+/// which goes on to sign and submit, and by `sdkt tx build`, which stops at the
+/// unsigned envelope.
+#[derive(Debug, Clone, PartialEq)]
+pub struct SimulatedInvoke {
+    /// Authoritative footprint and resources returned by the network.
+    pub soroban_data: SorobanTransactionData,
+    /// Authorization entries returned by simulation, if any.
+    pub auth_entries: Vec<SorobanAuthorizationEntry>,
+    /// Resource fee reported by simulation, in stroops.
+    pub min_resource_fee: u32,
+    /// [`INCLUSION_FEE`] + [`Self::min_resource_fee`], saturating.
+    pub total_fee: u32,
+}
+
+/// Simulate an invocation and adopt what the network reports: footprint, auth
+/// entries and resource fee.
+///
+/// `params.sequence` is used as given — callers that need the account's current
+/// sequence should fetch it first (see [`get_next_sequence`]).
+///
+/// # Errors
+///
+/// Returns [`RpcError::Rpc`] if the envelope cannot be built, the simulation
+/// call fails, the network reports a simulation error, or the response carries
+/// no `SorobanTransactionData`.
+pub async fn simulate_invoke(
+    client: &SorobanRpcClient,
+    params: &InvokeTransactionParams,
+) -> Result<SimulatedInvoke, RpcError> {
+    // Simulate with an empty V1 SorobanData (network requires ext V1).
+    let sim_envelope =
+        sdkt_xdr::build_invoke_transaction_with_data(params, empty_soroban_data(), Vec::new())
+            .map_err(|e| RpcError::Rpc(format!("Failed to build invoke transaction: {e}")))?;
+
+    let simulation = simulate_transaction(client, &sim_envelope)
+        .await
+        .map_err(|e| RpcError::Rpc(format!("Invoke simulation failed: {e}")))?;
+
+    if let Some(err) = &simulation.error {
+        return Err(RpcError::Rpc(format!("Invoke simulation error: {err}")));
+    }
+    if simulation.transaction_data.is_empty() {
+        return Err(RpcError::Rpc(
+            "Simulation did not return SorobanTransactionData".into(),
+        ));
+    }
+
+    let soroban_data = sdkt_xdr::parse_soroban_transaction_data(&simulation.transaction_data)
+        .map_err(|e| RpcError::Rpc(format!("Failed to parse SorobanTransactionData: {e}")))?;
+
+    let min_resource_fee = parse_min_resource_fee(&simulation.min_resource_fee)?;
+
+    // Auth entries returned by simulation (e.g. for contract-authorized calls).
+    let auth_entries = if simulation.results.is_empty() {
+        Vec::new()
+    } else {
+        sdkt_xdr::builder::parse_soroban_authorization_entries(&simulation.results[0].auth)
+            .map_err(|e| RpcError::Rpc(format!("Failed to parse auth entries: {e}")))?
+    };
+
+    Ok(SimulatedInvoke {
+        soroban_data,
+        auth_entries,
+        min_resource_fee,
+        total_fee: INCLUSION_FEE.saturating_add(min_resource_fee),
+    })
 }
 
 /// Build an empty `SorobanTransactionData` (ext V0) for the simulation pass.
@@ -87,48 +165,22 @@ pub async fn invoke_contract(
         ..params.clone()
     };
 
-    // 2. Simulate with an empty V1 SorobanData (network requires ext V1).
-    let sim_envelope =
-        sdkt_xdr::build_invoke_transaction_with_data(&sim_params, empty_soroban_data(), Vec::new())
-            .map_err(|e| RpcError::Rpc(format!("Failed to build invoke transaction: {e}")))?;
-
-    let simulation = simulate_transaction(client, &sim_envelope)
-        .await
-        .map_err(|e| RpcError::Rpc(format!("Invoke simulation failed: {e}")))?;
-
-    if let Some(err) = &simulation.error {
-        return Err(RpcError::Rpc(format!("Invoke simulation error: {err}")));
-    }
-    if simulation.transaction_data.is_empty() {
-        return Err(RpcError::Rpc(
-            "Simulation did not return SorobanTransactionData".into(),
-        ));
-    }
-
-    // 3. Adopt the authoritative footprint + resource fee from simulation.
-    let soroban_data = sdkt_xdr::parse_soroban_transaction_data(&simulation.transaction_data)
-        .map_err(|e| RpcError::Rpc(format!("Failed to parse SorobanTransactionData: {e}")))?;
-
-    let min_resource_fee = parse_min_resource_fee(&simulation.min_resource_fee)?;
-    let inclusion_fee: u32 = 100;
-    let total_fee = inclusion_fee.saturating_add(min_resource_fee);
-
-    // 4. Auth entries returned by simulation (e.g. for contract-authorized calls).
-    let auth_entries = if simulation.results.is_empty() {
-        Vec::new()
-    } else {
-        sdkt_xdr::builder::parse_soroban_authorization_entries(&simulation.results[0].auth)
-            .map_err(|e| RpcError::Rpc(format!("Failed to parse auth entries: {e}")))?
-    };
+    // 2-4. Simulate, then adopt the authoritative footprint, auth entries and
+    // resource fee the network reports.
+    let simulated = simulate_invoke(client, &sim_params).await?;
+    let total_fee = simulated.total_fee;
 
     // 5. Final envelope with real fees, then sign.
     let final_params = InvokeTransactionParams {
         fee: total_fee,
         ..sim_params
     };
-    let final_envelope =
-        sdkt_xdr::build_invoke_transaction_with_data(&final_params, soroban_data, auth_entries)
-            .map_err(|e| RpcError::Rpc(format!("Failed to build final invoke transaction: {e}")))?;
+    let final_envelope = sdkt_xdr::build_invoke_transaction_with_data(
+        &final_params,
+        simulated.soroban_data,
+        simulated.auth_entries,
+    )
+    .map_err(|e| RpcError::Rpc(format!("Failed to build final invoke transaction: {e}")))?;
 
     let signing_opts = SigningOptions::with(network);
     let signed_envelope = sign_transaction(&final_envelope, signer, &signing_opts)
