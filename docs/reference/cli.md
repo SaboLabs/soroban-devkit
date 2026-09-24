@@ -57,7 +57,18 @@ sdkt
 │   ├── sign                  [--input <xdr|file>] [--output <file>] [--identity <name>] [--network <testnet|mainnet|futurenet|custom:<p>>] [--format] (offline ED25519 signing)
 │   ├── submit <xdr>          [--wait] [--timeout <s>] [--interval <s>] [--format] (RPC)
 │   └── build                 [--source --sequence --contract --function --fee* --arg* --output]
-│                             (--fee <STROPS> overrides the fee, default 100 stroops)
+│                             Offline by default: the envelope carries only the
+│                             base inclusion fee (100 stroops) and prints a
+│                             warning, because a Soroban submission also needs
+│                             the resource fee.
+│                             Pass the network flags on `tx` (e.g.
+│                             `sdkt tx --network-profile testnet build ...`) to
+│                             simulate the invocation and adopt the reported
+│                             `minResourceFee` and footprint, exactly as
+│                             `invoke` does — the resulting envelope submits
+│                             without re-simulating.
+│                             `--fee <STROOPS>` overrides both and costs no
+│                             network round trip.
 │
 ├── events <contract-id>
 │   ├── --format <json|pretty>

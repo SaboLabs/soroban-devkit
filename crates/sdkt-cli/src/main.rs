@@ -925,6 +925,11 @@ enum TxAction {
         format: String,
     },
     /// Build a Soroban transaction envelope XDR
+    ///
+    /// Offline by default: the fee is the base inclusion fee only. Pass the
+    /// usual network flags (`--network-profile` / `--rpc-url`) to simulate the
+    /// invocation and adopt the resource fee and footprint the network reports.
+    /// An explicit `--fee` always wins over both.
     Build {
         #[arg(long)]
         source: String,
@@ -933,8 +938,10 @@ enum TxAction {
         /// network/RPC flags to be resolvable, same as other RPC commands).
         #[arg(long)]
         sequence: Option<i64>,
-        #[arg(long, default_value = "100")]
-        fee: u32,
+        /// Total fee in stroops. Overrides the network-derived fee when the
+        /// network flags are also given. Defaults to 100 (inclusion only).
+        #[arg(long)]
+        fee: Option<u32>,
         #[arg(long)]
         contract: String,
         #[arg(long)]
@@ -3137,18 +3144,33 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
 
                 let parsed_args = parse_typed_args(&arg, false)?;
 
+                // A build only stays fully offline when the caller pinned the
+                // sequence *and* named no network: resolving the sequence from
+                // the account is itself an RPC round trip, so once that happens
+                // there is a reachable network to price against too. `client`
+                // is `Some` exactly when this build may talk to one.
+                let client = if sequence.is_none()
+                    || network_is_explicit(
+                        &net.rpc_url,
+                        &net.network_passphrase,
+                        &net.network_profile,
+                    ) {
+                    Some(resolve_rpc_client(
+                        net.rpc_url.clone(),
+                        net.network_passphrase.clone(),
+                        net.network_profile.clone(),
+                    ))
+                } else {
+                    None
+                };
+
                 // Resolve the sequence: use the explicit `--sequence` override
                 // verbatim, otherwise fetch the account's next sequence from the
                 // network (same mechanism the deploy path already uses).
-                let sequence = match sequence {
-                    Some(explicit) => explicit,
-                    None => {
-                        let client = resolve_rpc_client(
-                            net.rpc_url.clone(),
-                            net.network_passphrase.clone(),
-                            net.network_profile.clone(),
-                        );
-                        match get_next_sequence(&client, &source_account).await {
+                let sequence = match (sequence, client.as_ref()) {
+                    (Some(explicit), _) => explicit,
+                    (None, Some(client)) => {
+                        match get_next_sequence(client, &source_account).await {
                             Ok(seq) => seq,
                             Err(e) => {
                                 eprintln!("Error resolving sequence for {source_account}: {e}");
@@ -3156,18 +3178,87 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
                             }
                         }
                     }
+                    // Unreachable: `client` is built whenever `sequence` is None.
+                    (None, None) => unreachable!("sequence lookup requires an RPC client"),
                 };
 
                 let params = InvokeTransactionParams {
                     source_account,
                     sequence,
-                    fee,
+                    fee: fee.unwrap_or(sdkt_rpc::INCLUSION_FEE),
                     contract_id: contract.clone(),
                     function: function.clone(),
                     args: parsed_args,
                 };
 
-                match build_invoke_transaction(&params) {
+                // Fee precedence:
+                //   1. an explicit --fee wins outright, online or not, and
+                //      costs no extra round trip;
+                //   2. otherwise, when this build already has a network to
+                //      talk to, simulate and adopt the resource fee and
+                //      footprint it reports, mirroring `invoke`;
+                //   3. otherwise stay fully offline and warn, because the base
+                //      inclusion fee alone will be rejected on submission.
+                //
+                // A simulation that cannot reach the network degrades to (3)
+                // rather than failing the build.
+                let built = match (fee, client.as_ref()) {
+                    (None, Some(client)) => {
+                        match sdkt_rpc::simulate_invoke(client, &params).await {
+                            Ok(sim) => {
+                                let priced = InvokeTransactionParams {
+                                    fee: sim.total_fee,
+                                    ..params.clone()
+                                };
+                                if fmt != OutputFormat::Json {
+                                    eprintln!(
+                                    "Fee from simulation: {} inclusion + {} resource = {} stroops",
+                                    sdkt_rpc::INCLUSION_FEE,
+                                    sim.min_resource_fee,
+                                    sim.total_fee
+                                );
+                                }
+                                sdkt_xdr::build_invoke_transaction_with_data(
+                                    &priced,
+                                    sim.soroban_data,
+                                    sim.auth_entries,
+                                )
+                                .map_err(|e| e.to_string())
+                            }
+                            // The operator named a network but we could not
+                            // reach it. Refusing here would turn a build that
+                            // used to succeed offline into a failure, so fall
+                            // back to the offline envelope and say plainly
+                            // that it is not priced for submission.
+                            Err(e) => {
+                                eprintln!(
+                                    "Warning: could not derive the fee from simulation \
+                                     ({e}); falling back to the base inclusion fee ({} \
+                                     stroops), which does not cover the Soroban resource \
+                                     fee. Pass --fee to set it explicitly.",
+                                    sdkt_rpc::INCLUSION_FEE
+                                );
+                                build_invoke_transaction(&params).map_err(|e| e.to_string())
+                            }
+                        }
+                    }
+                    // An explicit --fee, or nothing to simulate against: build
+                    // offline and only warn when the fee was not chosen.
+                    (explicit, _) => {
+                        if explicit.is_none() {
+                            eprintln!(
+                                "Warning: fee is the base inclusion fee ({} stroops) only and \
+                                 does not cover the Soroban resource fee. Re-run with \
+                                 --network-profile or --rpc-url to derive it from simulation, \
+                                 or pass --fee explicitly.",
+                                sdkt_rpc::INCLUSION_FEE
+                            );
+                        }
+                        build_invoke_transaction(&params).map_err(|e| e.to_string())
+                    }
+                };
+
+                match built {
                     Ok(env) => {
                         if let Some(ref path) = output {
                             if let Err(e) = fs::write(path, &env) {
