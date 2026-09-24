@@ -10,7 +10,33 @@ use predicates::prelude::*;
 fn sdkt(dir: &std::path::Path) -> Command {
     let mut cmd = Command::cargo_bin("sdkt").expect("sdkt binary built");
     cmd.env("SDKT_NETWORK_DIR", dir);
+    cmd.env("SDKT_IDENTITY_DIR", dir.join("identity"));
     cmd
+}
+
+#[test]
+fn cli_deploy_fails_on_missing_wasm_file() {
+    let dir = tempfile::tempdir().unwrap();
+    let missing_wasm = dir.path().join("missing.wasm");
+
+    sdkt(dir.path())
+        .args(["identity", "generate", "alice"])
+        .assert()
+        .success();
+
+    sdkt(dir.path())
+        .args([
+            "deploy",
+            "--wasm",
+            missing_wasm.to_str().unwrap(),
+            "--identity",
+            "alice",
+        ])
+        .assert()
+        .code(1)
+        .stderr(predicate::str::contains("Error reading WASM file"))
+        .stderr(predicate::str::contains(missing_wasm.to_str().unwrap()))
+        .stderr(predicate::str::contains("WASM bytes are empty").not());
 }
 
 #[test]

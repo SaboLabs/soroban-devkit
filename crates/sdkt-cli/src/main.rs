@@ -4119,7 +4119,8 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
             let client = SorobanRpcClient::from_config(&network_config);
 
             // Read WASM file
-            let wasm_bytes = fs::read(&wasm).unwrap_or_default();
+            let wasm_bytes =
+                fs::read(&wasm).map_err(|e| format!("Error reading WASM file {}: {}", wasm, e))?;
 
             // Source account is the identity's public key
             let source_account = identity_obj.public_key.clone();
