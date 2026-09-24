@@ -1628,6 +1628,46 @@ async fn run_upgrade_safety(
     Ok(())
 }
 
+
+/// Load a `ContractSpec` from a local WASM file (`--abi`).
+///
+/// Shared by Call, Simulate, Events, and Storage so local ABI error handling
+/// stays consistent instead of drifting across command handlers.
+fn load_local_abi(wasm_path: &str) -> Result<sdkt_wasm::ContractSpec, String> {
+    let wasm_bytes =
+        fs::read(wasm_path).map_err(|e| format!("Failed to read WASM: {}", e))?;
+    parse_contract_spec(&wasm_bytes).map_err(|e| format!("Failed to parse ABI: {}", e))
+}
+
+/// Resolve an optional ABI from either a local WASM (`--abi`) or an on-chain
+/// contract (`--abi-contract`). Callers must enforce mutual exclusivity first.
+async fn resolve_abi_spec(
+    abi: Option<&String>,
+    abi_contract: Option<&String>,
+    client: &SorobanRpcClient,
+) -> Result<Option<sdkt_wasm::ContractSpec>, String> {
+    if let Some(wasm_path) = abi {
+        return Ok(Some(load_local_abi(wasm_path)?));
+    }
+    if let Some(id) = abi_contract {
+        // on-chain retrieval: inspect_contract -> wasm hash, then
+        // get_wasm_bytecode -> raw bytes, then parse_contract_spec.
+        let inspection = inspect_contract(client, id).await.map_err(|e| match e {
+            sdkt_rpc::RpcError::ContractNotFound => {
+                format!("contract {} not found", id)
+            }
+            other => format!("{}", other),
+        })?;
+        let deployed_bytes = get_wasm_bytecode(client, &inspection.wasm_hash)
+            .await
+            .map_err(|e| format!("could not fetch on-chain WASM for {}: {}", id, e))?;
+        let spec = parse_contract_spec(&deployed_bytes)
+            .map_err(|e| format!("failed to parse deployed ABI: {}", e))?;
+        return Ok(Some(spec));
+    }
+    Ok(None)
+}
+
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Windows debug builds overflow the default 1 MB main-thread stack
     // (introduced by the invoke command's deeper async call chain). Unix
@@ -1965,38 +2005,8 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
             // Load ABI spec if provided. Two mutually exclusive sources:
             // a local WASM file (`--abi`) or a deployed contract's on-chain WASM
             // fetched via the path (`--abi-contract`).
-            if abi.is_some() && abi_contract.is_some() {
-                eprintln!("Error: specify only one of --abi or --abi-contract");
-                process::exit(1);
-            }
-
             let contract_spec: Option<sdkt_wasm::ContractSpec> =
-                if let Some(wasm_path) = abi.as_ref() {
-                    let wasm_bytes =
-                        fs::read(wasm_path).map_err(|e| format!("Failed to read WASM: {}", e))?;
-                    Some(
-                        parse_contract_spec(&wasm_bytes)
-                            .map_err(|e| format!("Failed to parse ABI: {}", e))?,
-                    )
-                } else if let Some(id) = abi_contract.as_ref() {
-                    // on-chain retrieval: inspect_contract -> wasm hash, then
-                    // get_wasm_bytecode -> raw bytes, then parse_contract_spec.
-                    let inspection = inspect_contract(&client, id).await.map_err(|e| match e {
-                        sdkt_rpc::RpcError::ContractNotFound => {
-                            format!("contract {} not found", id)
-                        }
-                        other => format!("{}", other),
-                    })?;
-                    let deployed_bytes = get_wasm_bytecode(&client, &inspection.wasm_hash)
-                        .await
-                        .map_err(|e| format!("could not fetch on-chain WASM for {}: {}", id, e))?;
-                    Some(
-                        parse_contract_spec(&deployed_bytes)
-                            .map_err(|e| format!("failed to parse deployed ABI: {}", e))?,
-                    )
-                } else {
-                    None
-                };
+                resolve_abi_spec(abi.as_ref(), abi_contract.as_ref(), &client).await?;
 
             match action {
                 StorageAction::Check {
@@ -2243,34 +2253,6 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
                         net.network_profile.clone(),
                     )?;
                     let client = SorobanRpcClient::from_config(&network_config);
-
-                    let contract_spec: Option<sdkt_wasm::ContractSpec> = if let Some(wasm_path) =
-                        abi.as_ref()
-                    {
-                        let wasm_bytes =
-                            fs::read(wasm_path).map_err(|e| format!("Failed to read WASM: {e}"))?;
-                        Some(
-                            parse_contract_spec(&wasm_bytes)
-                                .map_err(|e| format!("Failed to parse ABI: {e}"))?,
-                        )
-                    } else if let Some(id) = abi_contract.as_ref() {
-                        let inspection =
-                            inspect_contract(&client, id).await.map_err(|e| match &e {
-                                sdkt_rpc::RpcError::ContractNotFound => {
-                                    format!("contract {id} not found")
-                                }
-                                _ => format!("{e}"),
-                            })?;
-                        let deployed_bytes = get_wasm_bytecode(&client, &inspection.wasm_hash)
-                            .await
-                            .map_err(|e| format!("could not fetch on-chain WASM for {id}: {e}"))?;
-                        Some(
-                            parse_contract_spec(&deployed_bytes)
-                                .map_err(|e| format!("failed to parse deployed ABI: {e}"))?,
-                        )
-                    } else {
-                        None
-                    };
 
                     match read_contract_state(&client, &contract, &key_xdr, contract_spec.as_ref())
                         .await
@@ -2701,15 +2683,9 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
                 match simulate_transaction(&client, &env_data).await {
                     Ok(sim) => {
                         // Load ABI spec if --abi was provided
-                        let abi_spec = if let Some(wasm_path) = &abi {
-                            let wasm_bytes = std::fs::read(wasm_path)
-                                .map_err(|e| format!("Failed to read WASM: {e}"))?;
-                            match sdkt_wasm::parse_contract_spec(&wasm_bytes) {
-                                Ok(spec) => Some(spec),
-                                Err(e) => return Err(format!("Failed to parse ABI: {e}").into()),
-                            }
-                        } else {
-                            None
+                        let abi_spec = match &abi {
+                            Some(wasm_path) => Some(load_local_abi(wasm_path)?),
+                            None => None,
                         };
 
                         // Decode primary result if ABI available
@@ -3038,32 +3014,7 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
             }
 
             let contract_spec: Option<sdkt_wasm::ContractSpec> =
-                if let Some(wasm_path) = abi.as_ref() {
-                    let wasm_bytes =
-                        fs::read(wasm_path).map_err(|e| format!("Failed to read WASM: {}", e))?;
-                    Some(
-                        parse_contract_spec(&wasm_bytes)
-                            .map_err(|e| format!("Failed to parse ABI: {}", e))?,
-                    )
-                } else if let Some(id) = abi_contract.as_ref() {
-                    // on-chain retrieval: inspect_contract -> wasm hash, then
-                    // get_wasm_bytecode -> raw bytes, then parse_contract_spec.
-                    let inspection = inspect_contract(&client, id).await.map_err(|e| match e {
-                        sdkt_rpc::RpcError::ContractNotFound => {
-                            format!("contract {} not found", id)
-                        }
-                        other => format!("{}", other),
-                    })?;
-                    let deployed_bytes = get_wasm_bytecode(&client, &inspection.wasm_hash)
-                        .await
-                        .map_err(|e| format!("could not fetch on-chain WASM for {}: {}", id, e))?;
-                    Some(
-                        parse_contract_spec(&deployed_bytes)
-                            .map_err(|e| format!("failed to parse deployed ABI: {}", e))?,
-                    )
-                } else {
-                    None
-                };
+                resolve_abi_spec(abi.as_ref(), abi_contract.as_ref(), &client).await?;
 
             match get_contract_events(&client, &contract_id).await {
                 Ok(events) => {
@@ -4234,15 +4185,9 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
                         .unwrap_or_default();
 
                     // Load ABI spec if --abi was provided
-                    let abi_spec = if let Some(wasm_path) = &abi {
-                        let wasm_bytes = std::fs::read(wasm_path)
-                            .map_err(|e| format!("Failed to read WASM: {e}"))?;
-                        match sdkt_wasm::parse_contract_spec(&wasm_bytes) {
-                            Ok(spec) => Some(spec),
-                            Err(e) => return Err(format!("Failed to parse ABI: {e}").into()),
-                        }
-                    } else {
-                        None
+                    let abi_spec = match &abi {
+                        Some(wasm_path) => Some(load_local_abi(wasm_path)?),
+                        None => None,
                     };
 
                     // Decode result with ABI if available
