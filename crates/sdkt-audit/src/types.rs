@@ -35,6 +35,10 @@ pub struct Finding {
     pub message: String,
     /// Optional human-readable location (function name, or `fn:binding`).
     pub location: Option<String>,
+    /// Originating file path. Only set by multi-file (directory) audits so the
+    /// single-file output shape stays byte-identical to previous releases.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub file: Option<String>,
 }
 
 /// Aggregate counts by severity.

@@ -389,6 +389,7 @@ impl AuditRule for {struct_name} {{
                     severity: self.severity(),
                     message: format!("{{}} matched trigger function `{{}}`", "{rule_id}", s.fn_name),
                     location: Some(s.fn_name.clone()),
+                    file: None,
                 }});
             }}
         }}
