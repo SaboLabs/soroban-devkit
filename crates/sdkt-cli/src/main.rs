@@ -3835,8 +3835,12 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
             let path = match path {
                 Some(p) => p,
                 None => {
-                    eprintln!("Error: missing path to source file");
-                    process::exit(1);
+                    let mut cmd = Cli::command();
+                    cmd.error(
+                        clap::error::ErrorKind::MissingRequiredArgument,
+                        "the following required arguments were not provided:\n  <PATH>",
+                    )
+                    .exit();
                 }
             };
 
