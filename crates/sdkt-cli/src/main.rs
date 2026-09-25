@@ -4271,13 +4271,13 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
                                 if fmt == OutputFormat::Json {
                                     // In a real app we'd derive Serialize for CacheInfo,
                                     // but we can manually output JSON here or derive it in sdkt-storage
-                                    println!(
-                                        "{{\"network\":\"{}\",\"entry_count\":{},\"total_metadata_size_bytes\":{},\"total_wasm_size_bytes\":{}}}",
-                                        info.network,
-                                        info.entry_count,
-                                        info.total_metadata_size_bytes,
-                                        info.total_wasm_size_bytes
-                                    );
+                                    let json_out = serde_json::json!({
+                                        "network": info.network,
+                                        "entry_count": info.entry_count,
+                                        "total_metadata_size_bytes": info.total_metadata_size_bytes,
+                                        "total_wasm_size_bytes": info.total_wasm_size_bytes,
+                                    });
+                                    println!("{}", json_out.to_string());
                                 } else {
                                     println!("Cache Info for Network '{}':", info.network);
                                     println!("Entries: {}", info.entry_count);

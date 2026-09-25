@@ -25,6 +25,76 @@ fn test_cli_wasm_cache_info_json() {
 }
 
 #[test]
+fn test_cli_wasm_cache_info_json_escaped_quotes() {
+    let mut cmd = Command::cargo_bin("sdkt").unwrap();
+    let assert = cmd
+        .arg("wasm")
+        .arg("cache")
+        .arg("info")
+        .arg("--network")
+        .arg("a\"b")
+        .arg("--format")
+        .arg("json")
+        .assert();
+
+    let output = assert.success().get_output().stdout.clone();
+    let stdout_str = std::str::from_utf8(&output).unwrap();
+
+    let json: serde_json::Value = serde_json::from_str(stdout_str).expect("Valid JSON");
+    assert_eq!(json["network"], "a\"b");
+}
+
+#[test]
+fn test_cli_wasm_cache_info_json_escaped_backslash() {
+    let mut cmd = Command::cargo_bin("sdkt").unwrap();
+    let assert = cmd
+        .arg("wasm")
+        .arg("cache")
+        .arg("info")
+        .arg("--network")
+        .arg("a\\b")
+        .arg("--format")
+        .arg("json")
+        .assert();
+
+    let output = assert.success().get_output().stdout.clone();
+    let stdout_str = std::str::from_utf8(&output).unwrap();
+
+    let json: serde_json::Value = serde_json::from_str(stdout_str).expect("Valid JSON");
+    assert_eq!(json["network"], "a\\b");
+}
+
+#[test]
+fn test_cli_wasm_cache_info_json_stable_shape() {
+    // Clear cache first to ensure 0 values for deterministic output
+    let mut clear_cmd = Command::cargo_bin("sdkt").unwrap();
+    clear_cmd.arg("wasm").arg("cache").arg("clear").arg("--network").arg("testnet_stable_shape").assert().success();
+
+    let mut cmd = Command::cargo_bin("sdkt").unwrap();
+    let assert = cmd
+        .arg("wasm")
+        .arg("cache")
+        .arg("info")
+        .arg("--network")
+        .arg("testnet_stable_shape")
+        .arg("--format")
+        .arg("json")
+        .assert();
+
+    let output = assert.success().get_output().stdout.clone();
+    let stdout_str = std::str::from_utf8(&output).unwrap().trim();
+
+    // Verify it is byte-identical to the expected stable JSON shape
+    let expected = serde_json::json!({
+        "network": "testnet_stable_shape",
+        "entry_count": 0,
+        "total_metadata_size_bytes": 0,
+        "total_wasm_size_bytes": 0
+    }).to_string();
+    assert_eq!(stdout_str, expected);
+}
+
+#[test]
 fn test_cli_wasm_cache_clear() {
     let mut cmd = Command::cargo_bin("sdkt").unwrap();
     let assert = cmd
