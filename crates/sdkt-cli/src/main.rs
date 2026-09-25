@@ -2573,22 +2573,18 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
                         println!("Storage Keys: {}", inspection.storage_keys.len());
 
                         if let Some(spec) = contract_spec {
-                            if interface {
-                                println!("{}", render_contract_interface(&spec, markdown));
-                            } else {
-                                println!("\nABI Functions:");
-                                for f in &spec.functions {
-                                    println!("  - {} ({})", f.name, f.doc);
-                                }
-                                println!("\nABI Events:");
-                                for e in &spec.events {
-                                    println!("  - {}", e.name);
-                                }
-                                if !spec.custom_types.is_empty() {
-                                    println!("\nABI Custom Types:");
-                                    for t in &spec.custom_types {
-                                        println!("  - {} ({})", t.name, t.kind);
-                                    }
+                            println!("\nABI Functions:");
+                            for f in &spec.functions {
+                                println!("  - {} ({})", f.name, f.doc);
+                            }
+                            println!("\nABI Events:");
+                            for e in &spec.events {
+                                println!("  - {}", e.name);
+                            }
+                            if !spec.custom_types.is_empty() {
+                                println!("\nABI Custom Types:");
+                                for t in &spec.custom_types {
+                                    println!("  - {} ({})", t.name, t.kind);
                                 }
                             }
                         }
@@ -3840,22 +3836,26 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
             let audit_spec = if let Some(wasm_path) = abi.as_ref() {
                 let bytes = fs::read(wasm_path)
                     .map_err(|e| format!("Failed to read ABI WASM '{}': {}", wasm_path, e))?;
-                Some(parse_contract_spec(&bytes)
-                    .map_err(|e| format!("Failed to parse ABI WASM: {}", e))?)
+                Some(
+                    parse_contract_spec(&bytes)
+                        .map_err(|e| format!("Failed to parse ABI WASM: {}", e))?,
+                )
             } else if let Some(contract_id) = abi_contract.as_ref() {
                 let client = resolve_rpc_client(
                     net.rpc_url.clone(),
                     net.network_passphrase.clone(),
                     net.network_profile.clone(),
                 );
-                let inspection = inspect_contract(&client, contract_id)
-                    .await
-                    .map_err(|e| format!("Failed to inspect ABI contract {}: {}", contract_id, e))?;
+                let inspection = inspect_contract(&client, contract_id).await.map_err(|e| {
+                    format!("Failed to inspect ABI contract {}: {}", contract_id, e)
+                })?;
                 let bytes = get_wasm_bytecode(&client, &inspection.wasm_hash)
                     .await
                     .map_err(|e| format!("Failed to fetch ABI contract {}: {}", contract_id, e))?;
-                Some(parse_contract_spec(&bytes)
-                    .map_err(|e| format!("Failed to parse ABI WASM: {}", e))?)
+                Some(
+                    parse_contract_spec(&bytes)
+                        .map_err(|e| format!("Failed to parse ABI WASM: {}", e))?,
+                )
             } else {
                 None
             };
@@ -4042,12 +4042,19 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
             sdkt_audit_example_rule::register();
 
             let disabled_refs: Vec<&str> = disable.iter().map(String::as_str).collect();
-            match sdkt_audit::audit_source_with(&src, &disabled_refs) {
+            let audit_result = match audit_spec.as_ref() {
+                Some(spec) => sdkt_audit::audit_source_with_spec(&src, spec, &disabled_refs),
+                None => sdkt_audit::audit_source_with(&src, &disabled_refs),
+            };
+            match audit_result {
                 Ok(report) => {
                     if fmt == OutputFormat::Json {
                         println!("{}", serde_json::to_string(&report)?);
                     } else {
                         println!("Static Analysis Report: {}", path);
+                        if audit_spec.is_some() {
+                            println!("  Spec-correlated analysis: enabled");
+                        }
                         if loaded_plugins > 0 {
                             println!(
                                 "Rules loaded: 5 built-in, {} plugin{}",
