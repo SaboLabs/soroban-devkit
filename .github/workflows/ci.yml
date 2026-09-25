@@ -158,6 +158,7 @@ jobs:
 
     - name: Show toolchain versions
       run: |
+        git rev-parse HEAD
         rustc -Vv
         cargo -V
         wasm-bindgen --version
@@ -172,6 +173,14 @@ jobs:
           --target wasm32-unknown-unknown \
           --manifest-path crates/sdkt-playground/Cargo.toml
 
+    - name: Check raw WASM reproducibility
+      run: |
+        echo "Committed WASM:"
+        sha256sum website/playground/wasm/sdkt_playground_bg.wasm
+
+        echo "Fresh Cargo WASM:"
+        sha256sum crates/sdkt-playground/target/wasm32-unknown-unknown/release/sdkt_playground.wasm
+
     - name: Generate playground artifacts
       run: |
         tmp_dir="$(mktemp -d)"
@@ -185,6 +194,18 @@ jobs:
 
     - name: Check committed artifacts are fresh
       run: |
+        echo "Committed generated WASM:"
+        sha256sum website/playground/wasm/sdkt_playground_bg.wasm
+
+        echo "Generated WASM:"
+        sha256sum "$PLAYGROUND_WASM_OUT/sdkt_playground_bg.wasm"
+
+        echo "Committed generated JS:"
+        sha256sum website/playground/wasm/sdkt_playground.js
+
+        echo "Generated JS:"
+        sha256sum "$PLAYGROUND_WASM_OUT/sdkt_playground.js"
+
         cmp website/playground/wasm/sdkt_playground_bg.wasm \
           "$PLAYGROUND_WASM_OUT/sdkt_playground_bg.wasm"
 
