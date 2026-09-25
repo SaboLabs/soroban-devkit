@@ -8,6 +8,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+ main
 - **`sdkt plugin init`.** Scaffold a new audit rule project (standalone crate, derived rule id, native/WASM ABI files, `plugin.toml`, README, and unit tests) derived from `crates/sdkt-audit-example-rule`, so a plugin author goes straight to `cargo build --release --features plugins` without hand-copying the reference implementation (#95).
 - **JSON output for plugin commands.** Every `sdkt plugin` subcommand (`list`, `show`, `install`, `remove`, `update`, `pack`, `verify-bundle`) accepts `--format json`. Stdout carries only the JSON document; the native-plugin warning and the unsigned-bundle note stay on stderr. (#54).
 - **Deployment fee breakdown in deploy output.** `sdkt deploy` exposes internal simulation fee calculations (`upload_fee`, `create_fee`, and `total_fee`) in `DeployResult` and displays them in both pretty and JSON output formats (#55).
@@ -30,7 +31,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Website and Web Playground.** Public landing page and a browser-based contract inspector (Web Playground MVP).
 
 ### Fixed
-- `sdkt tx submit --wait` no longer reports an on-chain failure as a success. A settled `FAILED` transaction now exits non-zero, and the polling path keeps the `getTransaction` diagnostics it used to discard: `SubmissionResult.resultMetaXdr` carries the settled `TransactionMeta`, `errorCode` is derived from the settled `TransactionResult` (for example `tx_failed:invoke_host_function_trapped`) or the network `error` field, and `diagnosticEvents` are extracted from the settled Soroban meta (V3/V4). `sdkt invoke` picks up the same propagated diagnostics (#69).
+ main
 - `sdkt identity delete` now fails with a not-found error, and exits non-zero, when the identity does not exist, instead of reporting a removal that did not happen. `IdentityStore::remove` returns `StorageError::NotFound` in that case, matching `network remove` (#109).
 - `storage extend --ledgers` is documented as the relative TTL it is. The getting-started guides and the `ExtendFootprintParams::extend_to` doc comment described it as an absolute ledger sequence, but the protocol's `ExtendFootprintTTLOp.extendTo` means "at least N ledgers from the last closed ledger". Behaviour is unchanged; a regression test now pins that `N` reaches the operation as given (#110).
 - Generated client arguments use the `i64:` type tag for `i64` parameters (#105).

@@ -63,7 +63,7 @@ fn mock_events_rpc(latest_ledger: u32) -> (String, Arc<Mutex<MockRpcSeen>>) {
                     r#"{{"jsonrpc":"2.0","id":1,"result":{{"id":"mock","protocolVersion":22,"sequence":{latest_ledger}}}}}"#
                 ),
                 "getEvents" => {
-                    r#"{"jsonrpc":"2.0","id":1,"result":{"events":[]}}"#.to_string()
+                    r#"{"jsonrpc":"2.0","id":1,"result":{"events":[{"ledger":2000,"contractId":"CCVVW7N4R3KNY72QJQKQY3T753C2H34E6XJIVJQOQSQE3C3M3U72QJQK","topic":["AAAAAwAAACo=","AAAAAwAAAAc="],"value":"AAAAAwAAACo="}]}}"#.to_string()
                 }
                 _ => {
                     r#"{"jsonrpc":"2.0","id":1,"error":{"code":-32601,"message":"method not found"}}"#.to_string()
@@ -95,7 +95,44 @@ fn test_events_format_json() {
 
     cmd.assert()
         .success()
-        .stdout(predicate::str::contains("[]"));
+        .stdout(predicate::str::contains("AAAAAwAAACo="))
+        .stdout(predicate::str::contains("AAAAAwAAAAc="));
+}
+
+#[test]
+fn test_events_abi_json_preserves_raw_topics_and_value() {
+    let (rpc_url, _seen) = mock_events_rpc(2500);
+    let wasm_path = format!("{}/tests/fixtures/us_new.wasm", env!("CARGO_MANIFEST_DIR"));
+
+    let mut cmd = Command::cargo_bin("sdkt").unwrap();
+    cmd.arg("events")
+        .arg(CONTRACT_ID)
+        .arg("--rpc-url")
+        .arg(&rpc_url)
+        .arg("--abi")
+        .arg(&wasm_path)
+        .arg("--format")
+        .arg("json");
+
+    let output = cmd.assert().success().get_output().stdout.clone();
+    let json: serde_json::Value = serde_json::from_slice(&output).unwrap();
+
+    let event = &json[0];
+
+    assert_eq!(
+        event["topics"],
+        serde_json::json!(["AAAAAwAAACo=", "AAAAAwAAAAc="])
+    );
+    assert_eq!(event["value"], "AAAAAwAAACo=");
+
+    let decoded = event["decoded"]
+        .as_array()
+        .expect("decoded should be an array");
+
+    assert!(
+        !decoded.is_empty(),
+        "decoded event data should not be empty"
+    );
 }
 
 #[test]

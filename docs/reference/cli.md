@@ -39,13 +39,16 @@ sdkt
 │   ├── --args <TYPE:VALUE>...    (same typed-args as `call` / `tx build`;
 │   │                            strict: unknown types are rejected)
 │   ├── --identity <name>        (signs and pays; default: "default")
+│   ├── --no-wait                (return after submission with status PENDING)
 │   ├── --format <json|pretty>
 │   └── --network-profile <NAME> / --rpc-url <URL> / --network-passphrase <P>
 │
 │   State-changing end-to-end flow in one command:
 │     fetch account sequence → simulate → build final envelope (authoritative
 │     footprint + fees + auth entries from simulation) → sign with the local
-│     identity → submit → poll until settled. Exit code 0 only on SUCCESS.
+│     identity → submit → poll until settled. With --no-wait, return after
+│     submission with the hash and PENDING status. Exit code 0 only on SUCCESS
+│     unless --no-wait was supplied.
 │   Result decoding is limited to the transaction-level `TransactionResult`
 │   XDR (no ABI-aware result decode yet). Inherits the mainnet safety guard
 │   (see below). Live Testnet smoke test is documented but NOT exercised in CI.
@@ -57,7 +60,18 @@ sdkt
 │   ├── sign                  [--input <xdr|file>] [--output <file>] [--identity <name>] [--network <testnet|mainnet|futurenet|custom:<p>>] [--format] (offline ED25519 signing)
 │   ├── submit <xdr>          [--wait] [--timeout <s>] [--interval <s>] [--format] (RPC)
 │   └── build                 [--source --sequence --contract --function --fee* --arg* --output]
-│                             (--fee <STROPS> overrides the fee, default 100 stroops)
+│                             Offline by default: the envelope carries only the
+│                             base inclusion fee (100 stroops) and prints a
+│                             warning, because a Soroban submission also needs
+│                             the resource fee.
+│                             Pass the network flags on `tx` (e.g.
+│                             `sdkt tx --network-profile testnet build ...`) to
+│                             simulate the invocation and adopt the reported
+│                             `minResourceFee` and footprint, exactly as
+│                             `invoke` does — the resulting envelope submits
+│                             without re-simulating.
+│                             `--fee <STROOPS>` overrides both and costs no
+│                             network round trip.
 │
 ├── events <contract-id>
 │   ├── --format <json|pretty>

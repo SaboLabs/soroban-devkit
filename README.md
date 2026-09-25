@@ -227,6 +227,9 @@ sdkt deploy \
 
 # 8. Invoke a contract function (state-changing: sequence → simulate → sign → submit → poll)
 sdkt invoke <CONTRACT_ID> increment --args u32:1 --identity my-deployer --network-profile testnet
+
+# Submit and return immediately with the transaction hash
+sdkt invoke <CONTRACT_ID> increment --args u32:1 --identity my-deployer --no-wait --network-profile testnet
 ```
 
 For a detailed explanation of each step, see [Deploy a single contract](#deploy-a-single-contract).
@@ -269,6 +272,7 @@ See [`docs/plugin-authoring.md`](docs/plugins/plugin-authoring.md) for how to bu
 | `sdkt diff` | Offline comparison of WASM binaries and API surfaces. |
 | `sdkt diff --old-wasm <A> --new-wasm <B>` | Offline ABI/function/event/type diff of two WASM files. Add `--upgrade-safety` for a breaking-change verdict. |
 | `sdkt build` | Compile workspace rust contracts into optimized WASMs. |
+| `sdkt deploy --wasm <file> [--salt <salt>] [--arg <type:value>...]` | Upload WASM + instantiate. Salt is auto-generated if omitted (see [Deploy a single contract](#deploy-a-single-contract) below). Pass constructor arguments via repeated `--arg type:value` flags (uses `CreateContractV2`). Add `--deny-breaking --old-wasm <deployed.wasm>` to abort on a non-backwards-compatible upgrade. |
 | `sdkt project deploy` | Deploy multi-contract workspace orchestrating topological dependency sorting. |
 | `sdkt verify --contract <ID> [--wasm <file>] [--network <net>]` | Verify a deployed contract matches a local WASM (offline hash vs on-chain hash). |
 | `sdkt health --contract <ID> [--wasm <file>] [--network <net>]` | Unified read-only contract posture report (WASM, storage, TTL, health verdict). |
@@ -340,6 +344,11 @@ directory differs.
   address across networks. Provide explicitly for deterministic/reproducible deployment.
 - `--identity <name>`: ED25519 identity from `sdkt identity` used to sign both
   transactions (upload + instantiate). Defaults to `default`.
+- `--arg <type:value>`: Constructor argument in `type:value` format (e.g. `--arg u32:42`,
+  `--arg string:hello`, `--arg bool:true`, `--arg bytes:0a0b`, `--arg address:G...`,
+  `--arg symbol:init`). Pre-encoded base64 ScVal strings are also accepted as-is.
+  Can be repeated for multiple constructor arguments. Contracts deployed with arguments use
+  `CreateContractV2`.
 - `--format <pretty|json>`: Output format (default `pretty`).
 - `--deny-breaking`: Abort if the new WASM is not backwards-compatible with the
   currently deployed contract. Requires `--old-wasm`.
@@ -354,9 +363,10 @@ directory differs.
 5. **Upload** — build an `UploadContractWasm` transaction, simulate, apply the
    returned `SorobanTransactionData` and authorization entries, sign, submit,
    and poll for confirmation.
-6. **Instantiate** — build a `CreateContract` transaction with the WASM hash from
-   the upload and the user-supplied salt, simulate, finalize, sign, submit,
-   and poll for confirmation.
+6. **Instantiate** — build a `CreateContract` (or `CreateContractV2` when constructor
+   arguments are provided via `--arg`) transaction with the WASM hash from
+   the upload, the user-supplied salt, and any constructor arguments, simulate,
+   finalize, sign, submit, and poll for confirmation.
 7. Derive the contract ID from `Hash(networkId || HashIdPreimage::ContractId{...})`
    and report the deployment result.
 
@@ -471,7 +481,6 @@ The lock file (`sdkt.lock`) records each dependency's source, git URL,
 requested reference, and resolved commit SHA (when available), so fetches are
 reproducible. Local path deps remain unchanged in the lock.
 
-| `sdkt deploy --wasm <file> [--salt <salt>]` | Upload WASM + instantiate. Salt is auto-generated if omitted (see [Deploy a single contract](#deploy-a-single-contract) below). Add `--deny-breaking --old-wasm <deployed.wasm>` to abort on a non-backwards-compatible upgrade. |
 ### Network profiles
 
 Save an RPC endpoint once and reference it from any RPC command instead of

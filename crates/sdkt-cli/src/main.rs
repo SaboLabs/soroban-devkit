@@ -6,8 +6,8 @@ use sdkt_core::{DevKitConfig, NetworkConfig, OutputFormat};
 use sdkt_rpc::inspect::StorageSummary;
 use sdkt_rpc::wasm::get_wasm_bytecode;
 use sdkt_rpc::{
-    estimate_dynamic_fee, extend_footprint, get_contract_events, get_ttl_info, get_wasm_metadata,
-    inspect_account, inspect_contract, inspect_transaction, read_contract_state,
+    estimate_dynamic_fee, extend_footprint, get_contract_events, get_next_sequence, get_ttl_info,
+    get_wasm_metadata, inspect_account, inspect_contract, inspect_transaction, read_contract_state,
     simulate_transaction, SorobanRpcClient, StorageKeyInfo, TtlInfoSummary,
 };
 use sdkt_storage::WasmCache;
@@ -19,6 +19,7 @@ use sdkt_xdr::{
     build_invoke_transaction, sign_transaction, Ed25519Signer, InvokeTransactionParams, Network,
     SigningError, SigningOptions,
 };
+use sha2::{Digest, Sha256};
 use std::fs;
 use std::io::{self, Write};
 use std::path::Path;
@@ -488,6 +489,9 @@ enum Commands {
         /// flag validates the path and runs the registered rules.)
         #[arg(long, value_name = "PATH", action = clap::ArgAction::Append)]
         rules: Vec<String>,
+        /// Skip loading installed plugins automatically from the plugin store
+        #[arg(long, default_value_t = false)]
+        no_plugins: bool,
     },
     /// Manage Soroban identities (keys)
     Identity {
@@ -520,11 +524,22 @@ enum Commands {
         /// Deployment salt (40 hex chars = 20 bytes). Auto-generated if omitted.
         #[arg(short, long)]
         salt: Option<String>,
+        /// Display the deterministic contract address before submitting.
+        #[arg(long, default_value_t = false)]
+        show_address: bool,
+        /// Predict the address and WASM hash without submitting transactions.
+        #[arg(long, default_value_t = false)]
+        dry_run: bool,
         #[arg(short, long, default_value = "pretty")]
         format: String,
         /// Identity name to sign deployment transactions
         #[arg(short, long, default_value = "default")]
         identity: String,
+        /// Constructor arguments: `type:value` (e.g. `u32:100`, `string:hello`,
+        /// `bool:true`, `bytes:0a0b`, `address:G...`). Base64-encoded ScVal strings
+        /// are also accepted as-is. Can be repeated.
+        #[arg(long)]
+        arg: Vec<String>,
         /// Abort deployment if the upgrade is not backwards-compatible.
         /// Requires --old-wasm (the currently deployed WASM) to be supplied.
         #[arg(long, default_value_t = false)]
@@ -578,6 +593,9 @@ enum Commands {
         /// Output format (pretty or json)
         #[arg(short, long, default_value = "pretty")]
         format: String,
+        /// Return after submission with the transaction hash instead of polling for settlement
+        #[arg(long)]
+        no_wait: bool,
         #[command(flatten)]
         net: NetworkArgs,
     },
@@ -911,13 +929,23 @@ enum TxAction {
         format: String,
     },
     /// Build a Soroban transaction envelope XDR
+    ///
+    /// Offline by default: the fee is the base inclusion fee only. Pass the
+    /// usual network flags (`--network-profile` / `--rpc-url`) to simulate the
+    /// invocation and adopt the resource fee and footprint the network reports.
+    /// An explicit `--fee` always wins over both.
     Build {
         #[arg(long)]
         source: String,
+        /// Account sequence number to build against. When omitted, it is
+        /// resolved automatically from the network for `--source` (requires the
+        /// network/RPC flags to be resolvable, same as other RPC commands).
         #[arg(long)]
-        sequence: i64,
-        #[arg(long, default_value = "100")]
-        fee: u32,
+        sequence: Option<i64>,
+        /// Total fee in stroops. Overrides the network-derived fee when the
+        /// network flags are also given. Defaults to 100 (inclusion only).
+        #[arg(long)]
+        fee: Option<u32>,
         #[arg(long)]
         contract: String,
         #[arg(long)]
@@ -1078,14 +1106,38 @@ enum StorageAction {
         #[arg(short, long, default_value = "pretty")]
         format: String,
     },
-    /// Read a contract's storage entry by its complete `LedgerKey` (base64 XDR).
+    /// Read a contract's storage entry.
+    ///
+    /// The entry can be identified either by a complete raw `LedgerKey`
+    /// (`--key-xdr`, base64 or hex) or by a typed key specification built from
+    /// the contract's own types (`--map-key`/`--key-arg`, or `--instance`).
     Read {
-        /// Contract ID whose storage entry should be read.
+        /// Contract ID whose storage entry should be read (C... StrKey).
         #[arg(long)]
         contract: String,
-        /// Complete base64-encoded `LedgerKey` identifying the storage entry.
+        /// Complete base64/hex-encoded `LedgerKey` (escape hatch for advanced
+        /// use). Mutually exclusive with the typed key options.
         #[arg(long, value_name = "BASE64_XDR")]
-        key_xdr: String,
+        key_xdr: Option<String>,
+        /// Leading symbol of a typed data key — the map/enum-variant name.
+        /// Combined with `--key-arg` this builds `ScVec[symbol, args...]`,
+        /// e.g. `--map-key balances --key-arg address:G...`.
+        #[arg(long, value_name = "SYMBOL")]
+        map_key: Option<String>,
+        /// Repeatable typed key component (`TYPE:VALUE`, e.g. `address:G...`,
+        /// `u32:100`) appended after `--map-key`. Requires `--map-key`.
+        #[arg(long, value_name = "TYPE:VALUE")]
+        key_arg: Vec<String>,
+        /// Read the contract's instance-storage entry (always persistent).
+        #[arg(long)]
+        instance: bool,
+        /// Durability of a typed data key: `persistent` (default) or `temporary`.
+        #[arg(
+            long,
+            value_name = "persistent|temporary",
+            default_value = "persistent"
+        )]
+        durability: String,
         #[arg(short, long, default_value = "pretty")]
         format: String,
     },
@@ -1442,10 +1494,25 @@ fn parse_typed_args(args: &[String], strict: bool) -> Result<Vec<String>, String
                     scval_to_base64(&addr.into_scval().map_err(|e| e.to_string())?)
                         .map_err(|e| e.to_string())?
                 }
+                "symbol" => {
+                    use stellar_xdr::{ScSymbol, ScVal};
+                    if v.len() > 32 {
+                        return Err(format!("symbol exceeds 32 bytes (got {} bytes)", v.len()));
+                    }
+                    if !v.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'_') {
+                        return Err(
+                            "invalid symbol value: use only ASCII letters, digits, and _".into(),
+                        );
+                    }
+                    let sym_val = ScVal::Symbol(
+                        ScSymbol::try_from(v).map_err(|_| "invalid symbol value".to_string())?,
+                    );
+                    scval_to_base64(&sym_val).map_err(|e| e.to_string())?
+                }
                 _ => {
                     if strict {
                         return Err(format!(
-                            "unknown arg type '{t}'. Use u32|i32|u64|i64|u128|i128|bool|string|bytes|address"
+                            "unknown arg type '{t}'. Use u32|i32|u64|i64|u128|i128|bool|string|symbol|bytes|address"
                         ));
                     }
                     a.clone() // passthrough: pre-encoded base64 ScVal
@@ -1461,6 +1528,79 @@ fn parse_typed_args(args: &[String], strict: bool) -> Result<Vec<String>, String
         }
     }
     Ok(parsed)
+}
+
+/// Parse a `storage read` durability value into `ContractDataDurability`.
+fn parse_durability(s: &str) -> Result<stellar_xdr::ContractDataDurability, String> {
+    match s.trim().to_ascii_lowercase().as_str() {
+        "persistent" | "p" => Ok(stellar_xdr::ContractDataDurability::Persistent),
+        "temporary" | "temp" | "t" => Ok(stellar_xdr::ContractDataDurability::Temporary),
+        other => Err(format!(
+            "invalid durability '{other}' (expected persistent|temporary)"
+        )),
+    }
+}
+
+/// Resolve the effective base64 `LedgerKey` for `storage read` from its mutually
+/// exclusive key sources: the raw `--key-xdr` escape hatch, a typed
+/// `--map-key`/`--key-arg` spec, or `--instance`.
+///
+/// Pure (no network/I/O) so the key-construction and validation logic is
+/// unit-testable without a live RPC.
+fn resolve_storage_read_key(
+    contract: &str,
+    key_xdr: Option<&str>,
+    map_key: Option<&str>,
+    key_arg: &[String],
+    instance: bool,
+    durability: &str,
+) -> Result<String, String> {
+    let sources = [key_xdr.is_some(), map_key.is_some(), instance]
+        .into_iter()
+        .filter(|b| *b)
+        .count();
+    if sources == 0 {
+        return Err(
+            "provide a key via --key-xdr <BASE64|HEX>, --map-key <SYMBOL> \
+             [--key-arg TYPE:VALUE ...], or --instance"
+                .to_string(),
+        );
+    }
+    if sources > 1 {
+        return Err("specify only one of --key-xdr, --map-key, or --instance".to_string());
+    }
+    if !key_arg.is_empty() && map_key.is_none() {
+        return Err("--key-arg requires --map-key".to_string());
+    }
+
+    if let Some(raw) = key_xdr {
+        if raw.trim().is_empty() {
+            return Err("--key-xdr must not be empty".to_string());
+        }
+        // Escape hatch: pass the raw LedgerKey through unchanged.
+        return Ok(raw.to_string());
+    }
+
+    // Typed construction.
+    let (key, dur) = if instance {
+        // Instance storage is a single, always-persistent ledger entry.
+        (
+            stellar_xdr::ScVal::LedgerKeyContractInstance,
+            stellar_xdr::ContractDataDurability::Persistent,
+        )
+    } else {
+        let symbol = map_key.expect("map_key present when instance/key_xdr absent");
+        let args_b64 = parse_typed_args(key_arg, true)?;
+        let key = sdkt_xdr::build_map_key(symbol, &args_b64).map_err(|e| e.to_string())?;
+        (key, parse_durability(durability)?)
+    };
+
+    sdkt_xdr::encode_ledger_key(&sdkt_xdr::LedgerKeyParams::ContractDataEntry {
+        contract: contract.to_string(),
+        key,
+        durability: dur,
+    })
+    .map_err(|e| format!("failed to build LedgerKey: {e}"))
 }
 
 /// Encode typed `TYPE:VALUE` values to a single base64 XDR `ScVal` string.
@@ -2271,6 +2411,10 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
                 StorageAction::Read {
                     contract,
                     key_xdr,
+                    map_key,
+                    key_arg,
+                    instance,
+                    durability,
                     format,
                 } => {
                     let fmt = parse_format_str(&format);
@@ -2279,10 +2423,24 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
                         eprintln!("Error: --contract must not be empty");
                         process::exit(1);
                     }
-                    if key_xdr.trim().is_empty() {
-                        eprintln!("Error: --key-xdr must not be empty");
-                        process::exit(1);
-                    }
+
+                    // Resolve the LedgerKey from exactly one source: the raw
+                    // `--key-xdr` escape hatch, a typed `--map-key` spec, or
+                    // `--instance`.
+                    let key_xdr = match resolve_storage_read_key(
+                        &contract,
+                        key_xdr.as_deref(),
+                        map_key.as_deref(),
+                        &key_arg,
+                        instance,
+                        &durability,
+                    ) {
+                        Ok(k) => k,
+                        Err(e) => {
+                            eprintln!("Error: {e}");
+                            process::exit(1);
+                        }
+                    };
 
                     let network_config = resolve_network_config(
                         net.rpc_url.clone(),
@@ -2753,7 +2911,7 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
                     envelope.clone()
                 };
 
-                match simulate_transaction(&client, &env_data).await {
+                match simulate_transaction(&client, env_data.trim()).await {
                     Ok(sim) => {
                         // A failed simulation reports its own error immediately.
                         // Resolving --abi / --abi-contract after a failure could
@@ -2943,7 +3101,7 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
                     interval: Duration::from_secs(interval),
                 };
 
-                match submit_and_wait(&client, &env_data, wait, &poll_cfg).await {
+                match submit_and_wait(&client, env_data.trim(), wait, &poll_cfg).await {
                     Ok(res) => {
                         if fmt == OutputFormat::Json {
                             println!("{}", serde_json::to_string(&res)?);
@@ -3007,16 +3165,121 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
 
                 let parsed_args = parse_typed_args(&arg, false)?;
 
+                // A build only stays fully offline when the caller pinned the
+                // sequence *and* named no network: resolving the sequence from
+                // the account is itself an RPC round trip, so once that happens
+                // there is a reachable network to price against too. `client`
+                // is `Some` exactly when this build may talk to one.
+                let client = if sequence.is_none()
+                    || network_is_explicit(
+                        &net.rpc_url,
+                        &net.network_passphrase,
+                        &net.network_profile,
+                    ) {
+                    Some(resolve_rpc_client(
+                        net.rpc_url.clone(),
+                        net.network_passphrase.clone(),
+                        net.network_profile.clone(),
+                    ))
+                } else {
+                    None
+                };
+
+                // Resolve the sequence: use the explicit `--sequence` override
+                // verbatim, otherwise fetch the account's next sequence from the
+                // network (same mechanism the deploy path already uses).
+                let sequence = match (sequence, client.as_ref()) {
+                    (Some(explicit), _) => explicit,
+                    (None, Some(client)) => {
+                        match get_next_sequence(client, &source_account).await {
+                            Ok(seq) => seq,
+                            Err(e) => {
+                                eprintln!("Error resolving sequence for {source_account}: {e}");
+                                process::exit(1);
+                            }
+                        }
+                    }
+                    // Unreachable: `client` is built whenever `sequence` is None.
+                    (None, None) => unreachable!("sequence lookup requires an RPC client"),
+                };
+
                 let params = InvokeTransactionParams {
                     source_account,
                     sequence,
-                    fee,
+                    fee: fee.unwrap_or(sdkt_rpc::INCLUSION_FEE),
                     contract_id: contract.clone(),
                     function: function.clone(),
                     args: parsed_args,
                 };
 
-                match build_invoke_transaction(&params) {
+                // Fee precedence:
+                //   1. an explicit --fee wins outright, online or not, and
+                //      costs no extra round trip;
+                //   2. otherwise, when this build already has a network to
+                //      talk to, simulate and adopt the resource fee and
+                //      footprint it reports, mirroring `invoke`;
+                //   3. otherwise stay fully offline and warn, because the base
+                //      inclusion fee alone will be rejected on submission.
+                //
+                // A simulation that cannot reach the network degrades to (3)
+                // rather than failing the build.
+                let built = match (fee, client.as_ref()) {
+                    (None, Some(client)) => {
+                        match sdkt_rpc::simulate_invoke(client, &params).await {
+                            Ok(sim) => {
+                                let priced = InvokeTransactionParams {
+                                    fee: sim.total_fee,
+                                    ..params.clone()
+                                };
+                                if fmt != OutputFormat::Json {
+                                    eprintln!(
+                                    "Fee from simulation: {} inclusion + {} resource = {} stroops",
+                                    sdkt_rpc::INCLUSION_FEE,
+                                    sim.min_resource_fee,
+                                    sim.total_fee
+                                );
+                                }
+                                sdkt_xdr::build_invoke_transaction_with_data(
+                                    &priced,
+                                    sim.soroban_data,
+                                    sim.auth_entries,
+                                )
+                                .map_err(|e| e.to_string())
+                            }
+                            // The operator named a network but we could not
+                            // reach it. Refusing here would turn a build that
+                            // used to succeed offline into a failure, so fall
+                            // back to the offline envelope and say plainly
+                            // that it is not priced for submission.
+                            Err(e) => {
+                                eprintln!(
+                                    "Warning: could not derive the fee from simulation \
+                                     ({e}); falling back to the base inclusion fee ({} \
+                                     stroops), which does not cover the Soroban resource \
+                                     fee. Pass --fee to set it explicitly.",
+                                    sdkt_rpc::INCLUSION_FEE
+                                );
+                                build_invoke_transaction(&params).map_err(|e| e.to_string())
+                            }
+                        }
+                    }
+                    // An explicit --fee, or nothing to simulate against: build
+                    // offline and only warn when the fee was not chosen.
+                    (explicit, _) => {
+                        if explicit.is_none() {
+                            eprintln!(
+                                "Warning: fee is the base inclusion fee ({} stroops) only and \
+                                 does not cover the Soroban resource fee. Re-run with \
+                                 --network-profile or --rpc-url to derive it from simulation, \
+                                 or pass --fee explicitly.",
+                                sdkt_rpc::INCLUSION_FEE
+                            );
+                        }
+                        build_invoke_transaction(&params).map_err(|e| e.to_string())
+                    }
+                };
+
+                match built {
                     Ok(env) => {
                         if let Some(ref path) = output {
                             if let Err(e) = fs::write(path, &env) {
@@ -3210,6 +3473,8 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
                                     serde_json::json!({
                                         "contract_id": ev.contract_id,
                                         "ledger": ev.ledger,
+                                        "topics": ev.topics,
+                                        "value": ev.value,
                                         "decoded": decoded.iter().map(|d| serde_json::json!({
                                             "raw": d.raw,
                                             "label": d.label,
@@ -3524,96 +3789,213 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
             format,
             disable,
             rules,
+            no_plugins,
         } => {
             let fmt = parse_format_str(&format);
 
-            // Validate/resolve each --rules entry. A bare filesystem path keeps
-            // the // behavior unchanged. A plugin *id* (not an existing
-            // file) is resolved through the local store () to its artifact
-            // path; if the store has it, we use that path for the existing loader.
-            for r in &rules {
-                let resolved = sdkt_audit::plugin_store::resolve(r)
-                    .unwrap_or_else(|| std::path::PathBuf::from(r));
-                if !resolved.exists() {
-                    eprintln!("Error: rule path '{}' does not exist", r);
-                    process::exit(1);
+            if !rules.is_empty() {
+                // Validate/resolve each --rules entry before reading source.
+                for r in &rules {
+                    if let Some(meta) = sdkt_audit::plugin_store::show(r) {
+                        if meta.abi_major != sdkt_audit::plugin_abi::SDKT_AUDIT_ABI_MAJOR {
+                            eprintln!(
+                                "Warning: skipping plugin '{}': ABI mismatch (plugin v{}.x, host v{}.x)",
+                                r, meta.abi_major, sdkt_audit::plugin_abi::SDKT_AUDIT_ABI_MAJOR
+                            );
+                            continue;
+                        }
+                    }
+
+                    let resolved = sdkt_audit::plugin_store::resolve(r)
+                        .unwrap_or_else(|| std::path::PathBuf::from(r));
+                    if !resolved.exists() {
+                        eprintln!("Error: rule path '{}' does not exist", r);
+                        process::exit(1);
+                    }
                 }
             }
 
             let src = fs::read_to_string(&path)
                 .map_err(|e| format!("Failed to read source '{}': {}", path, e))?;
 
-            for r in &rules {
-                // Re-resolve: a plugin id maps to its stored artifact path; a raw
-                // path is used verbatim. This preserves the – loader flow.
-                let resolved = sdkt_audit::plugin_store::resolve(r)
-                    .unwrap_or_else(|| std::path::PathBuf::from(r));
-                let path_r = resolved.as_path();
+            #[allow(unused_mut)]
+            let mut loaded_plugins = 0usize;
 
-                // Directories pass through as no-ops (validated for existence above).
-                if path_r.is_dir() {
-                    continue;
+            if rules.is_empty() {
+                if !no_plugins {
+                    let installed = sdkt_audit::plugin_store::list();
+                    for meta in installed {
+                        if meta.abi_major != sdkt_audit::plugin_abi::SDKT_AUDIT_ABI_MAJOR {
+                            eprintln!(
+                                "Warning: skipping plugin '{}': ABI mismatch (plugin v{}.x, host v{}.x)",
+                                meta.id, meta.abi_major, sdkt_audit::plugin_abi::SDKT_AUDIT_ABI_MAJOR
+                            );
+                            continue;
+                        }
+
+                        let Some(artifact_path) = sdkt_audit::plugin_store::resolve(&meta.id)
+                        else {
+                            eprintln!("Warning: skipping plugin '{}': artifact not found", meta.id);
+                            continue;
+                        };
+
+                        let ext = artifact_path
+                            .extension()
+                            .and_then(|e| e.to_str())
+                            .map(|e| e.to_ascii_lowercase())
+                            .unwrap_or_default();
+
+                        match ext.as_str() {
+                            "so" | "dylib" | "dll" => {
+                                #[cfg(feature = "plugins")]
+                                {
+                                    match sdkt_audit::load_and_register(&artifact_path, &src) {
+                                        Ok(_) => loaded_plugins += 1,
+                                        Err(e) => eprintln!(
+                                            "Warning: skipping native plugin '{}': {}",
+                                            meta.id, e
+                                        ),
+                                    }
+                                }
+                                #[cfg(not(feature = "plugins"))]
+                                {
+                                    eprintln!(
+                                        "Warning: skipping native plugin '{}': build compiled without `plugins` feature",
+                                        meta.id
+                                    );
+                                }
+                            }
+                            "wasm" => {
+                                #[cfg(feature = "wasm-plugins")]
+                                {
+                                    match sdkt_audit::load_and_register_wasm(&artifact_path, &src) {
+                                        Ok(_) => loaded_plugins += 1,
+                                        Err(e) => eprintln!(
+                                            "Warning: skipping WASM plugin '{}': {}",
+                                            meta.id, e
+                                        ),
+                                    }
+                                }
+                                #[cfg(not(feature = "wasm-plugins"))]
+                                {
+                                    eprintln!(
+                                        "Warning: skipping WASM plugin '{}': build compiled without `wasm-plugins` feature",
+                                        meta.id
+                                    );
+                                }
+                            }
+                            _ => {
+                                eprintln!(
+                                    "Warning: skipping plugin '{}': unsupported artifact format",
+                                    meta.id
+                                );
+                            }
+                        }
+                    }
                 }
+            } else {
+                for r in &rules {
+                    if let Some(meta) = sdkt_audit::plugin_store::show(r) {
+                        if meta.abi_major != sdkt_audit::plugin_abi::SDKT_AUDIT_ABI_MAJOR {
+                            continue;
+                        }
+                    }
 
-                let ext = path_r
-                    .extension()
-                    .and_then(|e| e.to_str())
-                    .map(|e| e.to_ascii_lowercase())
-                    .unwrap_or_default();
+                    let resolved = sdkt_audit::plugin_store::resolve(r)
+                        .unwrap_or_else(|| std::path::PathBuf::from(r));
+                    let path_r = resolved.as_path();
 
-                match ext.as_str() {
-                    "so" | "dylib" | "dll" => {
-                        #[cfg(feature = "plugins")]
-                        {
-                            if let Err(e) = sdkt_audit::load_and_register(path_r, &src) {
-                                eprintln!("Error loading native plugin '{}': {}", r, e);
+                    // Directories pass through as no-ops (validated for existence above).
+                    if path_r.is_dir() {
+                        continue;
+                    }
+
+                    let ext = path_r
+                        .extension()
+                        .and_then(|e| e.to_str())
+                        .map(|e| e.to_ascii_lowercase())
+                        .unwrap_or_default();
+
+                    match ext.as_str() {
+                        "so" | "dylib" | "dll" => {
+                            #[cfg(feature = "plugins")]
+                            {
+                                match sdkt_audit::load_and_register(path_r, &src) {
+                                    Ok(_) => loaded_plugins += 1,
+                                    Err(e) => {
+                                        if matches!(
+                                            e,
+                                            sdkt_audit::PluginLoadError::AbiMismatch { .. }
+                                        ) {
+                                            eprintln!(
+                                                "Warning: skipping native plugin '{}': {}",
+                                                r, e
+                                            );
+                                            continue;
+                                        }
+                                        eprintln!("Error loading native plugin '{}': {}", r, e);
+                                        process::exit(1);
+                                    }
+                                }
+                            }
+                            #[cfg(not(feature = "plugins"))]
+                            {
+                                eprintln!(
+                                    "Error: '{}' is a native plugin artifact but this build was compiled \
+                                     without the `plugins` feature. Rebuild with --features plugins.",
+                                    r
+                                );
                                 process::exit(1);
                             }
                         }
-                        #[cfg(not(feature = "plugins"))]
-                        {
+                        "wasm" => {
+                            #[cfg(feature = "wasm-plugins")]
+                            {
+                                match sdkt_audit::load_and_register_wasm(path_r, &src) {
+                                    Ok(_) => loaded_plugins += 1,
+                                    Err(e) => {
+                                        if matches!(
+                                            e,
+                                            sdkt_audit::WasmPluginLoadError::AbiMismatch { .. }
+                                        ) {
+                                            eprintln!(
+                                                "Warning: skipping WASM plugin '{}': {}",
+                                                r, e
+                                            );
+                                            continue;
+                                        }
+                                        eprintln!("Error loading WASM plugin '{}': {}", r, e);
+                                        process::exit(1);
+                                    }
+                                }
+                            }
+                            #[cfg(not(feature = "wasm-plugins"))]
+                            {
+                                eprintln!(
+                                    "Error: '{}' is a WASM plugin artifact but this build was compiled \
+                                     without the `wasm-plugins` feature. Rebuild with --features wasm-plugins.",
+                                    r
+                                );
+                                process::exit(1);
+                            }
+                        }
+                        "rs" => {
+                            // semantic: source files passed in --rules are existence-validated
+                            // above but not loaded at runtime (built-in rules register themselves).
+                        }
+                        _ => {
                             eprintln!(
-                                "Error: '{}' is a native plugin artifact but this build was compiled \
-                                 without the `plugins` feature. Rebuild with --features plugins.",
+                                "Error: Unsupported plugin format: {}\n\nSupported plugin formats:\n  .so\n  .dll\n  .dylib\n  .wasm",
                                 r
                             );
                             process::exit(1);
                         }
-                    }
-                    "wasm" => {
-                        #[cfg(feature = "wasm-plugins")]
-                        {
-                            if let Err(e) = sdkt_audit::load_and_register_wasm(path_r, &src) {
-                                eprintln!("Error loading WASM plugin '{}': {}", r, e);
-                                process::exit(1);
-                            }
-                        }
-                        #[cfg(not(feature = "wasm-plugins"))]
-                        {
-                            eprintln!(
-                                "Error: '{}' is a WASM plugin artifact but this build was compiled \
-                                 without the `wasm-plugins` feature. Rebuild with --features wasm-plugins.",
-                                r
-                            );
-                            process::exit(1);
-                        }
-                    }
-                    "rs" => {
-                        // semantic: source files passed in --rules are existence-validated
-                        // above but not loaded at runtime (built-in rules register themselves).
-                    }
-                    _ => {
-                        eprintln!(
-                            "Error: Unsupported plugin format: {}\n\nSupported plugin formats:\n  .so\n  .dll\n  .dylib\n  .wasm",
-                            r
-                        );
-                        process::exit(1);
                     }
                 }
             }
 
             // When the `plugins` feature is enabled, link the reference example
-            // rule into the registry. Off by default → -identical behavior.
+            // rule into the registry. Off by default → identical behavior.
             #[cfg(feature = "plugins")]
             sdkt_audit_example_rule::register();
 
@@ -3624,6 +4006,13 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
                         println!("{}", serde_json::to_string(&report)?);
                     } else {
                         println!("Static Analysis Report: {}", path);
+                        if loaded_plugins > 0 {
+                            println!(
+                                "Rules loaded: 5 built-in, {} plugin{}",
+                                loaded_plugins,
+                                if loaded_plugins == 1 { "" } else { "s" }
+                            );
+                        }
                         println!(
                             "Severity: {} critical, {} warning, {} info ({} total)",
                             report.summary.critical,
@@ -4135,8 +4524,11 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
         Commands::Deploy {
             wasm,
             salt,
+            show_address,
+            dry_run,
             format,
             identity,
+            arg,
             deny_breaking,
             old_wasm,
             net,
@@ -4196,6 +4588,11 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
             // Parse and validate salt (if provided) BEFORE identity lookup (fail fast on bad input)
             let salt_bytes = salt.as_ref().map(|s| parse_salt_hex(s)).transpose()?;
 
+            // Parse and validate constructor arguments (fail fast on bad input)
+            let parsed_args = parse_typed_args(&arg, false)?;
+            sdkt_xdr::parse_scval_args(&parsed_args)
+                .map_err(|e| format!("Invalid constructor argument: {}", e))?;
+
             // Optional deploy guard: abort on a backwards-incompatible upgrade.
             if deny_breaking {
                 let baseline = old_wasm.ok_or_else(|| {
@@ -4245,14 +4642,63 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
             // Source account is the identity's public key
             let source_account = identity_obj.public_key.clone();
 
-            use sdkt_rpc::deploy_contract;
-            match deploy_contract(
+            // Contract IDs are deterministic. Calculate the prediction from
+            // local inputs before making any RPC call, so --dry-run remains
+            // entirely offline.
+            let prediction_salt = if show_address || dry_run {
+                Some(salt_bytes.unwrap_or_else(sdkt_rpc::deploy::generate_salt))
+            } else {
+                salt_bytes
+            };
+            let predicted = if let Some(prediction_salt) = prediction_salt {
+                let wasm_hash: [u8; 32] = Sha256::digest(&wasm_bytes).into();
+                let contract_id = sdkt_xdr::derive_contract_id(
+                    &network.network_id(),
+                    &source_account,
+                    &prediction_salt,
+                    &wasm_hash,
+                )
+                .map_err(|e| format!("Failed to derive predicted contract ID: {}", e))?;
+                Some((contract_id, hex::encode(wasm_hash), prediction_salt))
+            } else {
+                None
+            };
+
+            if let Some((contract_id, wasm_hash, prediction_salt)) = &predicted {
+                if dry_run {
+                    if fmt == OutputFormat::Json {
+                        println!(
+                            "{}",
+                            serde_json::json!({
+                                "status": "dry_run",
+                                "contractId": contract_id,
+                                "wasmHash": wasm_hash,
+                                "salt": hex::encode(prediction_salt),
+                                "submitted": false,
+                            })
+                        );
+                    } else {
+                        println!("Predicted Contract ID: {}", contract_id);
+                        println!("WASM Hash: {}", wasm_hash);
+                        println!("Salt: {}", hex::encode(prediction_salt));
+                        println!("No transactions submitted.");
+                    }
+                    return Ok(());
+                }
+                eprintln!("Predicted Contract ID: {}", contract_id);
+                eprintln!("WASM Hash: {}", wasm_hash);
+                eprintln!("Salt: {}", hex::encode(prediction_salt));
+            }
+
+            use sdkt_rpc::deploy_contract_with_args;
+            match deploy_contract_with_args(
                 &client,
                 &wasm_bytes,
                 &source_account,
                 &signer,
                 network,
-                salt_bytes,
+                prediction_salt,
+                parsed_args,
             )
             .await
             {
@@ -4470,6 +4916,7 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
             args,
             identity,
             format,
+            no_wait,
             net,
         } => {
             let fmt = parse_format_str(&format);
@@ -4520,7 +4967,9 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
             let client = SorobanRpcClient::from_config(&network_config);
             let poll = sdkt_rpc::PollConfig::default();
 
-            match sdkt_rpc::invoke_contract(&client, &params, &signer, network, &poll).await {
+            match sdkt_rpc::invoke_contract(&client, &params, &signer, network, &poll, !no_wait)
+                .await
+            {
                 Ok(res) => {
                     if fmt == OutputFormat::Json {
                         println!(
@@ -4561,7 +5010,7 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
                             println!("  Diagnostic: {}", ev);
                         }
                     }
-                    if res.status != "SUCCESS" {
+                    if res.status != "SUCCESS" && !(no_wait && res.status == "PENDING") {
                         process::exit(1);
                     }
                 }
@@ -5838,5 +6287,151 @@ mod m23_tests {
         };
         let json2 = serde_json::to_string(&r2).unwrap();
         assert!(json2.contains("\"verified\":null") || !json2.contains("\"verified\""));
+    }
+}
+
+#[cfg(test)]
+mod storage_read_key_tests {
+    use super::*;
+    use stellar_xdr::{ContractDataDurability, LedgerKey, ScVal};
+
+    const CONTRACT: &str = "CAE3U7JKESRWZHPEQ72DVNGOQ6WPA7HSPQZL5YV46NPCE4TMUPAGYMEC";
+
+    fn args(vals: &[&str]) -> Vec<String> {
+        vals.iter().map(|s| s.to_string()).collect()
+    }
+
+    #[test]
+    fn rejects_no_key_source() {
+        let err =
+            resolve_storage_read_key(CONTRACT, None, None, &[], false, "persistent").unwrap_err();
+        assert!(err.contains("provide a key"));
+    }
+
+    #[test]
+    fn rejects_multiple_key_sources() {
+        let err = resolve_storage_read_key(
+            CONTRACT,
+            Some("AAAA"),
+            Some("bal"),
+            &[],
+            false,
+            "persistent",
+        )
+        .unwrap_err();
+        assert!(err.contains("only one of"));
+    }
+
+    #[test]
+    fn rejects_key_arg_without_map_key() {
+        let err =
+            resolve_storage_read_key(CONTRACT, None, None, &args(&["u32:1"]), true, "persistent")
+                .unwrap_err();
+        assert!(err.contains("--key-arg requires --map-key"));
+    }
+
+    #[test]
+    fn escape_hatch_passes_raw_key_through() {
+        let raw = "AAAABQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=";
+        let out =
+            resolve_storage_read_key(CONTRACT, Some(raw), None, &[], false, "persistent").unwrap();
+        assert_eq!(out, raw);
+    }
+
+    #[test]
+    fn rejects_empty_key_xdr() {
+        let err = resolve_storage_read_key(CONTRACT, Some("   "), None, &[], false, "persistent")
+            .unwrap_err();
+        assert!(err.contains("must not be empty"));
+    }
+
+    #[test]
+    fn instance_builds_persistent_instance_key() {
+        let out = resolve_storage_read_key(CONTRACT, None, None, &[], true, "persistent").unwrap();
+        match sdkt_xdr::decode_ledger_key(&out).unwrap() {
+            LedgerKey::ContractData(d) => {
+                assert_eq!(d.key, ScVal::LedgerKeyContractInstance);
+                assert_eq!(d.durability, ContractDataDurability::Persistent);
+            }
+            other => panic!("expected ContractData, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn typed_map_key_persistent_and_temporary_differ() {
+        let persistent = resolve_storage_read_key(
+            CONTRACT,
+            None,
+            Some("balances"),
+            &args(&["u32:100"]),
+            false,
+            "persistent",
+        )
+        .unwrap();
+        let temporary = resolve_storage_read_key(
+            CONTRACT,
+            None,
+            Some("balances"),
+            &args(&["u32:100"]),
+            false,
+            "temporary",
+        )
+        .unwrap();
+        assert_ne!(persistent, temporary);
+
+        match sdkt_xdr::decode_ledger_key(&persistent).unwrap() {
+            LedgerKey::ContractData(d) => {
+                assert_eq!(d.durability, ContractDataDurability::Persistent);
+                match d.key {
+                    ScVal::Vec(Some(v)) => {
+                        assert_eq!(v.len(), 2);
+                        assert_eq!(v[0], ScVal::Symbol("balances".try_into().unwrap()));
+                        assert_eq!(v[1], ScVal::U32(100));
+                    }
+                    other => panic!("expected ScVec key, got {other:?}"),
+                }
+            }
+            other => panic!("expected ContractData, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn typed_output_equals_raw_key_xdr_path() {
+        // The typed path and the raw escape hatch must resolve to the same key:
+        // feeding the typed output back as --key-xdr is a no-op.
+        let typed = resolve_storage_read_key(
+            CONTRACT,
+            None,
+            Some("bal"),
+            &args(&["u32:7"]),
+            false,
+            "persistent",
+        )
+        .unwrap();
+        let via_raw =
+            resolve_storage_read_key(CONTRACT, Some(&typed), None, &[], false, "persistent")
+                .unwrap();
+        assert_eq!(typed, via_raw);
+    }
+
+    #[test]
+    fn rejects_unknown_key_arg_type() {
+        let err = resolve_storage_read_key(
+            CONTRACT,
+            None,
+            Some("bal"),
+            &args(&["weird:1"]),
+            false,
+            "persistent",
+        )
+        .unwrap_err();
+        assert!(err.contains("unknown arg type"));
+    }
+
+    #[test]
+    fn rejects_invalid_durability() {
+        let err = resolve_storage_read_key(CONTRACT, None, Some("bal"), &[], false, "forever")
+            .unwrap_err();
+        assert!(err.contains("invalid durability"));
     }
 }

@@ -43,7 +43,7 @@
     <div>
       <h1>Soroban DevKit</h1>
       <p class="tagline">The CLI toolkit for Stellar Soroban developers.</p>
-      <p class="sub">Build, inspect, analyze, simulate, and deploy Soroban
+      <p class="sub">Build, inspect, analyze, invoke, and deploy Soroban
         contracts from one developer-focused CLI.</p>
       <div class="btns">
         <a class="btn btn-primary" href="#install">Get Started</a>
@@ -109,25 +109,25 @@ Compatible: <span class="t-bad">NO</span>
   <div class="wrap">
     <div class="section-num">01</div><p class="eyebrow">Features</p>
     <h2 class="h2">Everything a Soroban dev needs, in one CLI</h2>
-    <p class="lead">sdkt consolidates the fragmented developer lifecycle — contract
-      inspection, XDR decoding, storage TTL analysis, static security analysis,
-      WASM diffing, and multi-contract deployment orchestration — into a single
-      CLI.</p>
+    <p class="lead">sdkt consolidates the full developer lifecycle — contract
+      inspection, invocation, XDR decoding, storage TTL management, security
+      auditing, WASM diffing, and deployment — into a single CLI.</p>
     <div class="feature-grid">
       <div class="card">
+        <h3><svg class="card-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polygon points="5 3 19 12 5 21 5 3"/></svg> Contract Invocation</h3>
+        <p>State-changing execution in one command (sequence → simulate → sign → submit → poll) with <code>sdkt invoke</code>, or instant read-only simulation with <code>sdkt call</code>.</p>
+      </div>
+      <div class="card">
         <h3><svg class="card-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="M20 20l-4.5-4.5"/></svg> Contract Inspection</h3>
-        <p>Read a contract's ABI, functions, events, and metadata from any compiled
-          WASM, fully offline. <code>sdkt wasm inspect</code></p>
+        <p>Read a contract's ABI, functions, events, and metadata from compiled WASM or live on-chain contracts. <code>sdkt wasm inspect</code> · <code>sdkt inspect</code></p>
       </div>
       <div class="card">
-        <h3><svg class="card-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M8 6l-5 6 5 6"/><path d="M16 6l5 6-5 6"/></svg> XDR Decoding</h3>
-        <p>Decode base64 XDR to JSON for <code>ScVal</code>, transaction envelopes,
-          and contract events. <code>sdkt decode</code></p>
+        <h3><svg class="card-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><ellipse cx="12" cy="6" rx="8" ry="3"/><path d="M4 6v12c0 1.7 3.6 3 8 3s8-1.3 8-3V6"/><path d="M4 12c0 1.7 3.6 3 8 3s8-1.3 8-3"/></svg> Storage &amp; TTL Management</h3>
+        <p>Analyze storage rent and categorize entries (<code>sdkt storage analyze</code>), read typed entries (<code>sdkt storage read</code>), and extend footprint TTL (<code>sdkt storage extend</code>).</p>
       </div>
       <div class="card">
-        <h3><svg class="card-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><ellipse cx="12" cy="6" rx="8" ry="3"/><path d="M4 6v12c0 1.7 3.6 3 8 3s8-1.3 8-3V6"/><path d="M4 12c0 1.7 3.6 3 8 3s8-1.3 8-3"/></svg> Storage TTL &amp; Rent Analysis</h3>
-        <p>Check storage TTL / rent visibility and classify Instance, Persistent,
-          and Temporary entries. <code>sdkt storage analyze</code></p>
+        <h3><svg class="card-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z"/><polyline points="22,6 12,13 2,6"/></svg> Event Explorer</h3>
+        <p>Query, filter, and inspect contract events across ledger windows with on-chain or local ABI decoding. <code>sdkt events</code></p>
       </div>
       <div class="card">
         <h3><svg class="card-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3l8 3v6c0 5-3.4 8-8 9-4.6-1-8-4-8-9V6z"/><path d="M9 12l2.2 2.2L15.5 10"/></svg> Static Security Audit</h3>
@@ -162,31 +162,28 @@ Compatible: <span class="t-bad">NO</span>
           deploying. <code>sdkt diff --upgrade-safety</code></p>
       </div>
       <div class="card">
-        <h3><svg class="card-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 7h13l-3-3"/><path d="M20 17H7l3 3"/></svg> Transaction Workflow</h3>
-        <p>Build, validate, simulate, sign, and submit Soroban transactions — with
-          fully offline ED25519 signing. <code>sdkt tx sign</code></p>
-      </div>
-      <div class="card">
         <h3><svg class="card-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 2l9 5-9 5-9-5z"/><path d="M3 12l9 5 9-5"/><path d="M3 17l9 5 9-5"/></svg> Build &amp; Deploy</h3>
-        <p>Compile workspace contracts into optimized WASMs and deploy with a
-          <code>--deny-breaking</code> upgrade guard. <code>sdkt deploy</code></p>
+        <p>Compile contracts into WASM and deploy with automated salt generation, constructor arguments, and a <code>--deny-breaking</code> upgrade guard. <code>sdkt deploy</code></p>
       </div>
       <div class="card">
-        <h3><svg class="card-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 12h4l2-5 3 10 2.5-5H21"/></svg> Contract Health Reports</h3>
-        <p>Unified read-only posture report covering WASM, storage, TTL, and a
-          health verdict. <code>sdkt health</code></p>
+        <h3><svg class="card-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg> Identity &amp; Keystore</h3>
+        <p>Manage ED25519 local signing identities offline (<code>sdkt identity</code>) and fund testnet accounts with one click via Friendbot (<code>sdkt identity fund</code>).</p>
       </div>
       <div class="card">
-        <h3><svg class="card-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="3" width="7" height="7" rx="1.5"/><rect x="8.5" y="14" width="7" height="7" rx="1.5"/><path d="M6.5 10v2h11v-2"/><path d="M12 12v2"/></svg> Multi-Contract Projects</h3>
-        <p>Workspace orchestration with topological deploy ordering, lock files,
-          and reproducible dependency fetches. <code>sdkt project deploy</code></p>
+        <h3><svg class="card-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="2" y="4" width="20" height="16" rx="2"/><line x1="2" y1="10" x2="22" y2="10"/></svg> Account &amp; Fee Insights</h3>
+        <p>Inspect account balances, sequence numbers, and signers with <code>sdkt account</code>, and query dynamic base fee estimates with <code>sdkt fee estimate</code>.</p>
+      </div>
+      <div class="card">
+        <h3><svg class="card-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M8 6l-5 6 5 6"/><path d="M16 6l5 6-5 6"/></svg> XDR Encoding &amp; Decoding</h3>
+        <p>Decode base64 XDR to JSON for <code>ScVal</code>, envelopes, and events (<code>sdkt decode</code>), or encode typed values into XDR (<code>sdkt encode</code>).</p>
+      </div>
+      <div class="card">
+        <h3><svg class="card-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 7h13l-3-3"/><path d="M20 17H7l3 3"/></svg> Transaction Pipeline</h3>
+        <p>Granular manual control to build, validate, simulate, sign, and submit envelopes — with fully offline ED25519 signing. <code>sdkt tx *</code></p>
       </div>
       <div class="card">
         <h3><svg class="card-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 3h6v6H9z"/><path d="M3 9h6v6H3z"/><path d="M15 9h6v6h-6z"/><path d="M9 15h6v6H9z"/><path d="M12 12h.01"/></svg> Plugin System</h3>
-        <p>Extend <code>sdkt audit</code> with custom rules. Pack, verify, install,
-          and manage plugins via <code>sdkt plugin pack</code>,
-          <code>sdkt plugin verify-bundle</code>, and <code>sdkt plugin install</code>.
-          Supports native (.so/.dylib/.dll) and sandboxed WASM plugins.</p>
+        <p>Extend <code>sdkt audit</code> with custom rules. Pack, verify, install, and execute plugins automatically via <code>sdkt plugin</code>. Supports native and WASM plugins.</p>
       </div>
     </div>
   </div>
@@ -198,7 +195,7 @@ Compatible: <span class="t-bad">NO</span>
     <div class="section-num">02</div><p class="eyebrow">Developer Workflow</p>
     <h2 class="h2">From contract to chain, one flow</h2>
     <p class="lead">Every stage maps to real sdkt commands. Stages 01–04 run
-      offline; only the deployed-contract reads and stage 05 need an RPC endpoint.</p>
+      offline; only deployed-contract reads, deploy, and invocation need an RPC endpoint.</p>
     <div class="flow">
       <div class="flow-step">
         <div class="flow-n">01</div>
@@ -213,17 +210,22 @@ Compatible: <span class="t-bad">NO</span>
       <div class="flow-step">
         <div class="flow-n">03</div>
         <div class="flow-t">Validate</div>
-        <div class="flow-c"><span>sdkt diff --upgrade-safety</span><span>sdkt tx simulate --envelope</span></div>
+        <div class="flow-c"><span>sdkt diff --upgrade-safety</span><span>sdkt storage check &lt;contract-id&gt;</span></div>
       </div>
       <div class="flow-step">
         <div class="flow-n">04</div>
-        <div class="flow-t">Build</div>
-        <div class="flow-c"><span>sdkt build</span><span>sdkt lock generate</span></div>
+        <div class="flow-t">Build &amp; Fund</div>
+        <div class="flow-c"><span>sdkt build</span><span>sdkt identity generate &lt;id&gt; &amp;&amp; sdkt identity fund &lt;id&gt;</span></div>
       </div>
       <div class="flow-step">
         <div class="flow-n">05</div>
         <div class="flow-t">Deploy</div>
-        <div class="flow-c"><span>sdkt deploy --wasm --salt</span><span>sdkt verify --contract</span></div>
+        <div class="flow-c"><span>sdkt deploy --wasm &lt;file&gt;</span><span>sdkt verify &lt;contract-id&gt;</span></div>
+      </div>
+      <div class="flow-step">
+        <div class="flow-n">06</div>
+        <div class="flow-t">Invoke</div>
+        <div class="flow-c"><span>sdkt invoke &lt;contract-id&gt; &lt;fn&gt; --args &lt;type:val&gt; --identity &lt;id&gt; (primary one-command flow)</span><span>sdkt call &lt;contract-id&gt; &lt;fn&gt; --args &lt;type:val&gt; (read-only simulation)</span><span>Advanced: sdkt tx build → tx simulate → tx sign → tx submit</span></div>
       </div>
     </div>
   </div>
@@ -236,6 +238,31 @@ Compatible: <span class="t-bad">NO</span>
       surface in this repository.</p>
 
     <div class="install-grid" style="margin-top:2rem">
+      <div class="term">
+        <div class="term-bar">
+          <span class="term-title">contract invocation (invoke &amp; call)</span>
+        </div>
+        <div class="term-body">
+<div class="t-comment"># 1. state-changing: sequence → simulate → sign → submit → poll</div>
+<div class="t-cmd">sdkt invoke CA3D5KRYM6CB7OWQ6TWYRR3Z4T7ZQVNOOAX2TNQD2KDW35D2GFFQDBS5 increment \
+  --args u32:1 --identity alice --network-profile testnet</div>
+<div class="t-out">Invocation Result:
+  Contract: CA3D5KRYM6CB7OWQ6TWYRR3Z4T7ZQVNOOAX2TNQD2KDW35D2GFFQDBS5
+  Function: increment
+  Hash:     deadbeefcafe1234567890abcdef1234567890abcdef1234567890abcdef1234
+  Status:   <span class="t-v">SUCCESS</span>
+  Fee:      250 stroops
+  Result XDR: AAAAAgAAAAE=</div>
+<div class="t-out">&nbsp;</div>
+<div class="t-comment"># 2. read-only: simulate execution without fees or state change</div>
+<div class="t-cmd">sdkt call CA3D5KRYM6CB7OWQ6TWYRR3Z4T7ZQVNOOAX2TNQD2KDW35D2GFFQDBS5 get_count \
+  --network-profile testnet</div>
+<div class="t-out">Contract:  CA3D5KRYM6CB7OWQ6TWYRR3Z4T7ZQVNOOAX2TNQD2KDW35D2GFFQDBS5
+Function:  get_count
+Result:    42</div>
+        </div>
+      </div>
+
       <div class="term">
         <div class="term-bar">
           <span class="term-title">static security audit</span>
@@ -260,7 +287,7 @@ Severity: 0 critical, 1 warning, 0 info (1 total)
 
       <div class="term">
         <div class="term-bar">
-          <span class="term-title">build → sign → submit</span>
+          <span class="term-title">advanced transaction pipeline (step-by-step)</span>
         </div>
         <div class="term-body">
 <div class="t-comment"># 1. create a local signing identity (offline)</div>
@@ -284,12 +311,41 @@ Severity: 0 critical, 1 warning, 0 info (1 total)
 <div class="t-cmd">sdkt tx submit --envelope signed.xdr</div>
         </div>
       </div>
+
+      <div class="term">
+        <div class="term-bar">
+          <span class="term-title">account, events &amp; storage inspection</span>
+        </div>
+        <div class="term-body">
+<div class="t-comment"># fund an identity via testnet Friendbot faucet</div>
+<div class="t-cmd">sdkt identity fund alice --network-profile testnet</div>
+<div class="t-out">Funded identity 'alice' successfully.</div>
+<div class="t-out">&nbsp;</div>
+<div class="t-comment"># inspect account balances and signers</div>
+<div class="t-cmd">sdkt account GAAZI4TCR3TY5OJHCTJC2A4QSY6CJWJH5IAJTGKIN2ER7LBNVKOCCWN7 \
+  --network-profile testnet</div>
+<div class="t-out">Account:
+
+Address: GAAZI4TCR3TY5OJHCTJC2A4QSY6CJWJH5IAJTGKIN2ER7LBNVKOCCWN7
+Sequence: 123456789
+
+Balances:
+  Asset: native
+  Balance: 10000.0000000
+
+Signers:
+  Public Key: GAAZI4TCR3TY5OJHCTJC2A4QSY6CJWJH5IAJTGKIN2ER7LBNVKOCCWN7
+  Weight: 1</div>
+        </div>
+      </div>
     </div>
 
     <p class="note">Most commands accept <code>--format json</code> for scripting and CI
       integration. Commands that need an RPC endpoint accept
       <code>--rpc-url</code>, <code>--network-passphrase</code>, or a saved
-      <code>--network-profile</code>.</p>
+      <code>--network-profile</code>. For contract calls, <code>sdkt invoke</code> automates
+      the full transaction lifecycle, while the granular <code>sdkt tx *</code> commands
+      remain available for custom pipelines.</p>
   </div>
 </section>
 
@@ -301,8 +357,8 @@ Severity: 0 critical, 1 warning, 0 info (1 total)
     <div class="two-col">
       <div>
         <p>Soroban developers work across multiple development workflows including
-          contract inspection, XDR handling, storage and TTL analysis, static
-          security review, transaction simulation and signing, and deployment.</p>
+          contract inspection, invocation, XDR handling, storage and TTL management,
+          static security review, transaction simulation and signing, and deployment.</p>
         <p>In practice that means context-switching across several CLI tools and
           hand-written RPC scripts. Soroban DevKit brings the supported workflows
           into a unified CLI with consistent flags, consistent
@@ -341,15 +397,15 @@ Severity: 0 critical, 1 warning, 0 info (1 total)
       <div>
         <ul class="plain-list">
           <li><strong>Soroban RPC.</strong> Contract inspection, storage and TTL
-            reads, events, transaction simulate/submit, fee statistics, and on-chain
-            WASM metadata.</li>
+            reads, events, contract invocation (invoke &amp; call), transaction
+            simulate/submit, fee statistics, and on-chain WASM metadata.</li>
           <li><strong>Stellar XDR.</strong> <code>ScVal</code>,
             <code>TransactionEnvelope</code>, and <code>ContractEvent</code> decoding,
             plus typed envelope construction and ED25519 signing.</li>
           <li><strong>Horizon.</strong> Account balances and signers via
             <code>sdkt account</code>.</li>
-          <li><strong>Network profiles.</strong> Save an RPC URL and passphrase once,
-            reuse it from any RPC command.</li>
+          <li><strong>Network profiles.</strong> Save an RPC URL, passphrase, and
+            Friendbot faucet once, reuse it from any RPC command.</li>
         </ul>
       </div>
     </div>
@@ -456,10 +512,12 @@ cargo install --path crates/sdkt-cli</pre>
         </div>
         <div class="foot-col">
           <h4>Documentation</h4>
-          <a href="https://github.com/SaboLabs/soroban-devkit/blob/main/docs/quick-start.md" rel="noopener">Quick Start</a>
-          <a href="https://github.com/SaboLabs/soroban-devkit/blob/main/docs/installation.md" rel="noopener">Installation</a>
-          <a href="https://github.com/SaboLabs/soroban-devkit/blob/main/docs/cli.md" rel="noopener">CLI Reference</a>
-          <a href="https://github.com/SaboLabs/soroban-devkit/blob/main/docs/examples.md" rel="noopener">Examples</a>
+          <a href="https://github.com/SaboLabs/soroban-devkit/blob/main/docs/getting-started/quick-start.md" rel="noopener">Quick Start</a>
+          <a href="https://github.com/SaboLabs/soroban-devkit/blob/main/docs/getting-started/installation.md" rel="noopener">Installation</a>
+          <a href="https://github.com/SaboLabs/soroban-devkit/blob/main/docs/getting-started/getting-started.md" rel="noopener">Getting Started</a>
+          <a href="https://github.com/SaboLabs/soroban-devkit/blob/main/docs/getting-started/examples.md" rel="noopener">Examples</a>
+          <a href="https://github.com/SaboLabs/soroban-devkit/blob/main/docs/reference/cli.md" rel="noopener">CLI Reference</a>
+          <a href="https://github.com/SaboLabs/soroban-devkit/blob/main/docs/plugins/plugin-authoring.md" rel="noopener">Plugin Authoring</a>
         </div>
         <div class="foot-col">
           <h4>Community</h4>
