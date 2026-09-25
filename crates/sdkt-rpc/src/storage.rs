@@ -221,6 +221,23 @@ pub async fn extend_footprint(
     })
 }
 
+/// Check whether a contract is live on-chain at `contract_id`.
+///
+/// Uses the cheapest possible existence probe: a single `getLedgerEntries`
+/// call for the contract's instance singleton key (see [`instance_ledger_key`]).
+/// Returns `Ok(true)` when the ledger responds with the instance entry and
+/// `Ok(false)` when the entry is absent. This is the on-chain verification used
+/// by `sdkt project deploy --skip-deployed` so a stale `.sdkt-deployments.json`
+/// entry (contract deleted / never existed) does not cause a skip.
+pub async fn contract_exists(
+    client: &SorobanRpcClient,
+    contract_id: &str,
+) -> Result<bool, RpcError> {
+    let key = instance_ledger_key(contract_id)?;
+    let response = client.get_contract_storage("", &[key]).await?;
+    Ok(!response.entries.is_empty())
+}
+
 /// Read a single ledger entry by its `LedgerKey` (base64 XDR).
 ///
 /// Calls `getLedgerEntries` and returns the decoded `LedgerEntry`. If the
@@ -456,6 +473,81 @@ mod tests {
     #[test]
     fn test_collect_extend_keys_rejects_bad_contract() {
         assert!(collect_extend_keys("not-a-contract", &[]).is_err());
+    }
+
+    #[tokio::test]
+    async fn test_contract_exists_checks_on_chain_not_record_file() {
+        use std::io::{Read, Write};
+        use std::net::TcpListener;
+        use std::thread;
+
+        // Mock `getLedgerEntries` that returns an entry (contract live).
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = listener.local_addr().unwrap();
+        let url = format!("http://{addr}");
+
+        thread::spawn(move || {
+            for conn in listener.incoming() {
+                let mut sock = match conn {
+                    Ok(s) => s,
+                    Err(_) => break,
+                };
+                let mut buf = [0u8; 16384];
+                let n = sock.read(&mut buf).unwrap_or(0);
+                let req = String::from_utf8_lossy(&buf[..n]).to_string();
+                let body = if req.contains("getLedgerEntries") {
+                    let entry = "AAAAAQAAAABpc25nAAAA".to_string();
+                    format!(
+                        r#"{{"jsonrpc":"2.0","id":1,"result":{{"entries":[{{"key":"AAAAAA==","xdr":"{entry}","lastModifiedLedgerSeq":1}}],"latestLedger":100}}}}"#
+                    )
+                } else {
+                    r#"{"jsonrpc":"2.0","id":1,"error":{"code":-32601,"message":"method not found"}}"#
+                        .to_string()
+                };
+                let resp = format!(
+                    "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+                    body.len(),
+                    body
+                );
+                let _ = sock.write_all(resp.as_bytes());
+            }
+        });
+
+        let c = "CAE3U7JKESRWZHPEQ72DVNGOQ6WPA7HSPQZL5YV46NPCE4TMUPAGYMEC";
+        let client = crate::SorobanRpcClient::new(&url);
+        assert!(
+            contract_exists(&client, c).await.unwrap(),
+            "instance entry present at recorded address -> exists"
+        );
+
+        // Mock that serves an empty entries array -> recorded contract is gone.
+        let listener2 = TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr2 = listener2.local_addr().unwrap();
+        let url2 = format!("http://{addr2}");
+        thread::spawn(move || {
+            for conn in listener2.incoming() {
+                let mut sock = match conn {
+                    Ok(s) => s,
+                    Err(_) => break,
+                };
+                let mut buf = [0u8; 16384];
+                let n = sock.read(&mut buf).unwrap_or(0);
+                let _req = String::from_utf8_lossy(&buf[..n]).to_string();
+                let body = r#"{"jsonrpc":"2.0","id":1,"result":{"entries":[],"latestLedger":100}}"#;
+                let resp = format!(
+                    "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+                    body.len(),
+                    body
+                );
+                let _ = sock.write_all(resp.as_bytes());
+            }
+        });
+
+        let client2 = crate::SorobanRpcClient::new(&url2);
+        assert!(
+            !contract_exists(&client2, c).await.unwrap(),
+            "empty entries at recorded address -> contract no longer exists"
+        );
     }
 
     #[test]
