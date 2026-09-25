@@ -28,13 +28,14 @@ pub use account::{
 pub use client::SorobanRpcClient;
 pub use client::{fund_account, FundResult};
 pub use deploy::{
-    deploy_contract, format_json, format_pretty, DeployOutcome, DeployResult, PartialDeployResult,
+    create_contract, deploy_contract, deploy_contract_with_args, format_json, format_pretty,
+    CreateContractArgs, DeployOutcome, DeployResult, PartialDeployResult,
 };
 pub use error::RpcError;
 pub use events::{get_contract_events, ContractEvent};
 pub use fee::{estimate_dynamic_fee, get_fee_stats, FeeDistribution, FeeStats};
 pub use inspect::{inspect_contract, ContractInspection, StorageKeyInfo, TtlInfoSummary};
-pub use invoke::{build_invoke_envelope, invoke_contract, InvokeBuildResult, InvokeResult};
+ main
 pub use simulate::{
     simulate_transaction, validate_envelope, SimulateCost, SimulateOperationResult,
     SimulateResponse, SimulateTransactionRequest,

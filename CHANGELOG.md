@@ -8,7 +8,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
-- **`sdkt invoke --build-only`.** Runs the full preparation pipeline — sequence fetch, simulation, authoritative footprint/auth/fee adoption, envelope build and signing — and stops before submission, printing the signed base64 envelope plus the computed fee and sequence (`envelopeXdr`/`fee`/`sequence`/`submitted: false` in JSON). It performs no `sendTransaction` and no polling, leaves state unchanged, and exits 0; the mainnet safety guard still runs and simulation failures surface exactly as on the submit path. The emitted envelope is byte-for-byte what `invoke` would have submitted, so it round-trips through `tx validate` / `tx sign` / `tx submit` for pre-submission review and air-gapped signing workflows (#73).
+main
 - **`sdkt plugin init`.** Scaffold a new audit rule project (standalone crate, derived rule id, native/WASM ABI files, `plugin.toml`, README, and unit tests) derived from `crates/sdkt-audit-example-rule`, so a plugin author goes straight to `cargo build --release --features plugins` without hand-copying the reference implementation (#95).
 - **JSON output for plugin commands.** Every `sdkt plugin` subcommand (`list`, `show`, `install`, `remove`, `update`, `pack`, `verify-bundle`) accepts `--format json`. Stdout carries only the JSON document; the native-plugin warning and the unsigned-bundle note stay on stderr. (#54).
 - **Deployment fee breakdown in deploy output.** `sdkt deploy` exposes internal simulation fee calculations (`upload_fee`, `create_fee`, and `total_fee`) in `DeployResult` and displays them in both pretty and JSON output formats (#55).
@@ -31,6 +31,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Website and Web Playground.** Public landing page and a browser-based contract inspector (Web Playground MVP).
 
 ### Fixed
+- Updated public landing page content (`website/index.html`) to reflect shipped CLI capabilities, adding contract invocation (`invoke` / `call`), event exploration, storage read/extend, account inspection, and Friendbot funding, updating the workflow to feature `invoke` as the primary execution path, adding a real `invoke` terminal demo, and fixing/expanding documentation footer links (#82).
 - `sdkt identity delete` now fails with a not-found error, and exits non-zero, when the identity does not exist, instead of reporting a removal that did not happen. `IdentityStore::remove` returns `StorageError::NotFound` in that case, matching `network remove` (#109).
 - `storage extend --ledgers` is documented as the relative TTL it is. The getting-started guides and the `ExtendFootprintParams::extend_to` doc comment described it as an absolute ledger sequence, but the protocol's `ExtendFootprintTTLOp.extendTo` means "at least N ledgers from the last closed ledger". Behaviour is unchanged; a regression test now pins that `N` reaches the operation as given (#110).
 - Generated client arguments use the `i64:` type tag for `i64` parameters (#105).

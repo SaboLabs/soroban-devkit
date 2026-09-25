@@ -340,3 +340,86 @@ fn storage_read_rejects_invalid_base64_offline() {
         .assert()
         .failure();
 }
+
+#[test]
+fn storage_read_help_shows_typed_key_options() {
+    sdkt()
+        .args(["storage", "read", "--help"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("--map-key"))
+        .stdout(predicate::str::contains("--key-arg"))
+        .stdout(predicate::str::contains("--instance"))
+        .stdout(predicate::str::contains("--durability"));
+}
+
+#[test]
+fn storage_read_rejects_multiple_key_sources_offline() {
+    sdkt()
+        .args([
+            "storage",
+            "read",
+            "--contract",
+            VALID_CONTRACT,
+            "--key-xdr",
+            "AAAABQ==",
+            "--map-key",
+            "balances",
+        ])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("only one of"));
+}
+
+#[test]
+fn storage_read_rejects_key_arg_without_map_key_offline() {
+    sdkt()
+        .args([
+            "storage",
+            "read",
+            "--contract",
+            VALID_CONTRACT,
+            "--instance",
+            "--key-arg",
+            "u32:1",
+        ])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("--key-arg requires --map-key"));
+}
+
+#[test]
+fn storage_read_rejects_unknown_key_arg_type_offline() {
+    sdkt()
+        .args([
+            "storage",
+            "read",
+            "--contract",
+            VALID_CONTRACT,
+            "--map-key",
+            "balances",
+            "--key-arg",
+            "weird:1",
+        ])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("unknown arg type"));
+}
+
+#[test]
+fn storage_read_rejects_invalid_durability_offline() {
+    sdkt()
+        .args([
+            "storage",
+            "read",
+            "--contract",
+            VALID_CONTRACT,
+            "--map-key",
+            "balances",
+            "--durability",
+            "forever",
+        ])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("invalid durability"));
+}
