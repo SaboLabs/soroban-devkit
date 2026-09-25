@@ -1,3 +1,4 @@
+
 use std::io::{Read, Write};
 use std::net::{TcpListener, TcpStream};
 use std::sync::{Arc, Mutex};
@@ -63,7 +64,7 @@ fn mock_events_rpc(latest_ledger: u32) -> (String, Arc<Mutex<MockRpcSeen>>) {
                     r#"{{"jsonrpc":"2.0","id":1,"result":{{"id":"mock","protocolVersion":22,"sequence":{latest_ledger}}}}}"#
                 ),
                 "getEvents" => {
-                    r#"{"jsonrpc":"2.0","id":1,"result":{"events":[{"ledger":2000,"contractId":"CCVVW7N4R3KNY72QJQKQY3T753C2H34E6XJIVJQOQSQE3C3M3U72QJQK","topic":["raw-topic-1","raw-topic-2"],"value":"raw-event-value"}]}}"#.to_string()
+                    r#"{"jsonrpc":"2.0","id":1,"result":{"events":[{"ledger":2000,"contractId":"CCVVW7N4R3KNY72QJQKQY3T753C2H34E6XJIVJQOQSQE3C3M3U72QJQK","topic":["AAAAAwAAACo=","AAAAAwAAAAc="],"value":"AAAAAwAAACo="}]}}"#.to_string()
                 }
                 _ => {
                     r#"{"jsonrpc":"2.0","id":1,"error":{"code":-32601,"message":"method not found"}}"#.to_string()
@@ -95,8 +96,8 @@ fn test_events_format_json() {
 
     cmd.assert()
         .success()
-        .stdout(predicate::str::contains("raw-topic-1"))
-        .stdout(predicate::str::contains("raw-event-value"));
+        .stdout(predicate::str::contains("AAAAAwAAACo="))
+        .stdout(predicate::str::contains("AAAAAwAAAAc="));
 }
 
 #[test]
@@ -124,10 +125,18 @@ fn test_events_abi_json_preserves_raw_topics_and_value() {
 
     assert_eq!(
         event["topics"],
-        serde_json::json!(["raw-topic-1", "raw-topic-2"])
+        serde_json::json!(["AAAAAwAAACo=", "AAAAAwAAAAc="])
     );
-    assert_eq!(event["value"], "raw-event-value");
-    assert!(event.get("decoded").is_some());
+    assert_eq!(event["value"], "AAAAAwAAACo=");
+
+    let decoded = event["decoded"]
+        .as_array()
+        .expect("decoded should be an array");
+
+    assert!(
+        !decoded.is_empty(),
+        "decoded event data should not be empty"
+    );
 }
 
 #[test]
@@ -265,3 +274,4 @@ fn test_events_default_lookback() {
     assert_eq!(events_req["params"]["startLedger"], 1500);
     assert!(events_req["params"].get("endLedger").is_none());
 }
+
