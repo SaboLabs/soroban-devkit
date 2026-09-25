@@ -5575,11 +5575,13 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
                             let identity_store = sdkt_storage::IdentityStore::new()
                                 .map_err(|e| format!("Failed to access identity store: {}", e))?;
                             let identity_obj = identity_store
-                                .get("default")
+                                .get_default()
                                 .map_err(|e| format!("Default identity not found: {}", e))?;
-                            let signing_key = identity_store
-                                .load_signing_key("default")
-                                .map_err(|e| format!("Failed to load signing key: {}", e))?;
+                            let signing_key =
+                                identity_store
+                                    .load_signing_key(&identity_obj.name)
+                                    .map_err(|e| format!("Failed to load signing key: {}", e))?;
+
                             let signer =
                                 sdkt_xdr::sign::Ed25519Signer::from_seed(&signing_key.to_bytes());
                             let source_account = identity_obj.public_key.clone();
