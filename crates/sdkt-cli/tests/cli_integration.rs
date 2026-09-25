@@ -41,6 +41,17 @@ fn help_lists_all_top_level_commands() {
 }
 
 #[test]
+fn call_and_invoke_help_document_json_arguments() {
+    for command in ["call", "invoke"] {
+        sdkt_isolated()
+            .args([command, "--help"])
+            .assert()
+            .success()
+            .stdout(predicate::str::contains("--args-json"));
+    }
+}
+
+#[test]
 fn version_reports_current_release() {
     sdkt_isolated()
         .arg("--version")

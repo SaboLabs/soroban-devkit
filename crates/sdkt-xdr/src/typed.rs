@@ -47,27 +47,43 @@ pub fn json_to_scval(value: &serde_json::Value) -> Result<ScVal, ScValError> {
         serde_json::Value::String(value) => value.clone().into_scval(),
         serde_json::Value::Number(number) => {
             if let Some(value) = number.as_u64() {
-                if value <= u32::MAX as u64 { Ok(ScVal::U32(value as u32)) }
-                else { Ok(ScVal::U64(value)) }
+                if value <= u32::MAX as u64 {
+                    Ok(ScVal::U32(value as u32))
+                } else {
+                    Ok(ScVal::U64(value))
+                }
             } else if let Some(value) = number.as_i64() {
-                if value >= i32::MIN as i64 && value <= i32::MAX as i64 { Ok(ScVal::I32(value as i32)) }
-                else { Ok(ScVal::I64(value)) }
+                if value >= i32::MIN as i64 && value <= i32::MAX as i64 {
+                    Ok(ScVal::I32(value as i32))
+                } else {
+                    Ok(ScVal::I64(value))
+                }
             } else {
                 Err(ScValError::Json(number.to_string()))
             }
         }
         serde_json::Value::Array(values) => {
-            let values = values.iter().map(json_to_scval).collect::<Result<Vec<_>, _>>()?;
-            Ok(ScVal::Vec(Some(ScVec(VecM::try_from(values).map_err(|_| ScValError::TooLong)?))))
+            let values = values
+                .iter()
+                .map(json_to_scval)
+                .collect::<Result<Vec<_>, _>>()?;
+            Ok(ScVal::Vec(Some(ScVec(
+                VecM::try_from(values).map_err(|_| ScValError::TooLong)?,
+            ))))
         }
         serde_json::Value::Object(values) => {
-            let entries = values.iter().map(|(key, value)| {
-                Ok(ScMapEntry {
-                    key: key.clone().into_scval()?,
-                    val: json_to_scval(value)?,
+            let entries = values
+                .iter()
+                .map(|(key, value)| {
+                    Ok(ScMapEntry {
+                        key: key.clone().into_scval()?,
+                        val: json_to_scval(value)?,
+                    })
                 })
-            }).collect::<Result<Vec<_>, ScValError>>()?;
-            Ok(ScVal::Map(Some(ScMap(VecM::try_from(entries).map_err(|_| ScValError::TooLong)?))))
+                .collect::<Result<Vec<_>, ScValError>>()?;
+            Ok(ScVal::Map(Some(ScMap(
+                VecM::try_from(entries).map_err(|_| ScValError::TooLong)?,
+            ))))
         }
     }
 }
@@ -76,13 +92,16 @@ pub fn json_to_scval(value: &serde_json::Value) -> Result<ScVal, ScValError> {
 pub fn json_args_to_base64(input: &str) -> Result<Vec<String>, ScValError> {
     let value: serde_json::Value = serde_json::from_str(input)
         .map_err(|error| ScValError::Json(format!("{error}: {input}")))?;
-    let values = value.as_array().ok_or_else(|| {
-        ScValError::Json(format!("expected a JSON array of arguments: {input}"))
-    })?;
-    values.iter().map(|value| {
-        let scval = json_to_scval(value)?;
-        scval_to_base64(&scval).map_err(|error| ScValError::Json(error.to_string()))
-    }).collect()
+    let values = value
+        .as_array()
+        .ok_or_else(|| ScValError::Json(format!("expected a JSON array of arguments: {input}")))?;
+    values
+        .iter()
+        .map(|value| {
+            let scval = json_to_scval(value)?;
+            scval_to_base64(&scval).map_err(|error| ScValError::Json(error.to_string()))
+        })
+        .collect()
 }
 impl std::error::Error for ScValError {}
 
@@ -453,14 +472,23 @@ mod tests {
         let encoded = json_args_to_base64(r#"[{"name":"alice","amount":100},null,true]"#).unwrap();
         assert_eq!(encoded.len(), 3);
         assert!(matches!(scval_from_base64(&encoded[1]), Some(ScVal::Void)));
-        assert!(matches!(scval_from_base64(&encoded[2]), Some(ScVal::Bool(true))));
-        assert!(matches!(scval_from_base64(&encoded[0]), Some(ScVal::Map(_))));
+        assert!(matches!(
+            scval_from_base64(&encoded[2]),
+            Some(ScVal::Bool(true))
+        ));
+        assert!(matches!(
+            scval_from_base64(&encoded[0]),
+            Some(ScVal::Map(_))
+        ));
     }
 
     #[test]
     fn json_arguments_reject_non_array_and_invalid_json() {
         assert!(json_args_to_base64(r#"{"value":1}"#).is_err());
-        assert!(json_args_to_base64("not-json").unwrap_err().to_string().contains("not-json"));
+        assert!(json_args_to_base64("not-json")
+            .unwrap_err()
+            .to_string()
+            .contains("not-json"));
     }
 
     #[test]
