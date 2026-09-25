@@ -440,6 +440,17 @@ Store root precedence (lowest → highest): `<cwd>/.sdkt/plugins`,
 - `--format json` is supported on all read-style commands, every `plugin` subcommand, and on `diff`, `audit`, `deploy`, `init` for scripting / CI.
 - `diff --upgrade-safety` and `deploy --deny-breaking` implement the Upgrade Safety Guard (see `ROADMAP.md`).
 - `audit` implements the static-analysis rules (AUTH-001/002/003/004, MOVE-001).
+- `audit` also accepts a **directory**: it recursively collects every `*.rs`
+  file under the tree (hidden dirs and `target` skipped) in sorted path order,
+  so output is deterministic and independent of readdir order. Findings carry
+  their originating file path (`file` field, multi-file mode only). A file that
+  cannot be read or parsed yields an `IO-001` / `PARSE-001` diagnostic finding
+  instead of aborting the run. With `--format json` the multi-file output is
+  `{"files": [{"file": …, "report": {…existing AuditReport…}}], "totals":
+  {"files", "files_with_findings", "critical", "warning", "info", "total"}}`,
+  additive to the single-file shape, which is unchanged. Exit codes follow the
+  existing convention: 0 on success (including runs with findings), non-zero
+  only on hard errors (path unreadable, no `*.rs` files found).
 - **Mainnet safety.** Mutating commands (`tx submit`, `invoke`, `deploy`, `project deploy`) refuse to target mainnet unless you explicitly select the network — via `--network-profile`, `--rpc-url`, or `--network-passphrase`. A testnet-default passphrase pointed at a mainnet endpoint is rejected before any request is sent, protecting against signing for the wrong network.
 
 ## Error Handling

@@ -27,6 +27,7 @@ impl AuditRule for Auth001 {
                         s.fn_name
                     ),
                     location: Some(s.fn_name.clone()),
+                    file: None,
                 });
             }
         }
@@ -57,6 +58,7 @@ impl AuditRule for Auth002 {
                         s.fn_name
                     ),
                     location: Some(s.fn_name.clone()),
+                    file: None,
                 });
             }
         }
@@ -101,6 +103,7 @@ impl AuditRule for Auth003 {
                         s.fn_name
                     ),
                     location: Some(s.fn_name.clone()),
+                    file: None,
                 });
             }
         }
@@ -136,6 +139,7 @@ impl AuditRule for Auth004 {
                         s.fn_name
                     ),
                     location: Some(s.fn_name.clone()),
+                    file: None,
                 });
             }
         }
@@ -167,6 +171,7 @@ impl AuditRule for Move001 {
                             name, s.fn_name, count
                         ),
                         location: Some(format!("{}:{}", s.fn_name, name)),
+                        file: None,
                     });
                 }
             }

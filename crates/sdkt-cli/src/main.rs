@@ -483,7 +483,8 @@ enum Commands {
     },
     /// Static security analysis of a Soroban contract source file (Gap C)
     Audit {
-        /// Path to the Rust source file (.rs) to analyze
+        /// Path to the Rust source file (.rs) to analyze, or a directory, in
+        /// which case every `*.rs` under it is analyzed recursively
         path: String,
         #[arg(short, long, default_value = "pretty")]
         format: String,
@@ -1417,6 +1418,70 @@ async fn verify_contract(
         verification_status: status,
         explanation,
     })
+}
+
+/// Recursively collect `*.rs` files under `root`, sorted lexicographically so
+/// multi-file audit output is deterministic and independent of readdir order.
+/// Hidden directories (`.git`, …) and build output (`target`) are skipped.
+fn collect_rs_sources(root: &str) -> Result<Vec<String>, String> {
+    fn walk(dir: &std::path::Path, out: &mut Vec<String>) -> Result<(), String> {
+        let mut entries: Vec<std::path::PathBuf> = fs::read_dir(dir)
+            .map_err(|e| format!("Failed to read directory '{}': {}", dir.display(), e))?
+            .filter_map(|e| e.ok().map(|e| e.path()))
+            .collect();
+        entries.sort();
+        for p in entries {
+            let name = p
+                .file_name()
+                .and_then(|n| n.to_str())
+                .unwrap_or_default()
+                .to_string();
+            if p.is_dir() {
+                if name.starts_with('.') || name == "target" {
+                    continue;
+                }
+                walk(&p, out)?;
+            } else if p.extension().and_then(|e| e.to_str()) == Some("rs") {
+                out.push(p.display().to_string());
+            }
+        }
+        Ok(())
+    }
+
+    let mut out = Vec::new();
+    walk(std::path::Path::new(root), &mut out)?;
+    Ok(out)
+}
+
+/// Pretty-print one audit report. Extracted from the single-file handler so
+/// directory mode emits exactly the same per-file format (byte-identical with
+/// the historical single-file output).
+fn print_audit_report(path: &str, loaded_plugins: usize, report: &sdkt_audit::AuditReport) {
+    println!("Static Analysis Report: {}", path);
+    if loaded_plugins > 0 {
+        println!(
+            "Rules loaded: 5 built-in, {} plugin{}",
+            loaded_plugins,
+            if loaded_plugins == 1 { "" } else { "s" }
+        );
+    }
+    println!(
+        "Severity: {} critical, {} warning, {} info ({} total)",
+        report.summary.critical, report.summary.warning, report.summary.info, report.summary.total
+    );
+    if report.is_clean() {
+        println!("No issues found.");
+    } else {
+        println!();
+        for f in &report.findings {
+            let loc = f
+                .location
+                .as_ref()
+                .map(|l| format!(" [{}]", l))
+                .unwrap_or_default();
+            println!("  [{}] {} {}: {}", f.severity, f.rule_id, loc, f.message);
+        }
+    }
 }
 
 fn parse_format_str(s: &str) -> OutputFormat {
@@ -3816,8 +3881,35 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
                 }
             }
 
-            let src = fs::read_to_string(&path)
-                .map_err(|e| format!("Failed to read source '{}': {}", path, e))?;
+            let is_dir = std::path::Path::new(&path).is_dir();
+
+            // Directory mode (#178): recursively discover *.rs files under the
+            // tree, sorted lexicographically so output is independent of
+            // readdir order. Single-file mode keeps the original fast path.
+            let audit_files: Vec<String> = if is_dir {
+                match collect_rs_sources(&path) {
+                    Ok(files) if files.is_empty() => {
+                        eprintln!("Error: no Rust source files found under '{}'", path);
+                        process::exit(1);
+                    }
+                    Ok(files) => files,
+                    Err(e) => {
+                        eprintln!("Error: {}", e);
+                        process::exit(1);
+                    }
+                }
+            } else {
+                vec![path.clone()]
+            };
+
+            // Plugin loading validates against the first source; the rules
+            // themselves run per file below (rules receive the scanned source
+            // at audit time, not at load time).
+            let src = match audit_files.first() {
+                Some(first) => fs::read_to_string(first)
+                    .map_err(|e| format!("Failed to read source '{}': {}", first, e))?,
+                None => String::new(),
+            };
 
             #[allow(unused_mut)]
             let mut loaded_plugins = 0usize;
@@ -4001,44 +4093,121 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
             sdkt_audit_example_rule::register();
 
             let disabled_refs: Vec<&str> = disable.iter().map(String::as_str).collect();
-            match sdkt_audit::audit_source_with(&src, &disabled_refs) {
-                Ok(report) => {
-                    if fmt == OutputFormat::Json {
-                        println!("{}", serde_json::to_string(&report)?);
-                    } else {
-                        println!("Static Analysis Report: {}", path);
-                        if loaded_plugins > 0 {
-                            println!(
-                                "Rules loaded: 5 built-in, {} plugin{}",
-                                loaded_plugins,
-                                if loaded_plugins == 1 { "" } else { "s" }
-                            );
-                        }
-                        println!(
-                            "Severity: {} critical, {} warning, {} info ({} total)",
-                            report.summary.critical,
-                            report.summary.warning,
-                            report.summary.info,
-                            report.summary.total
-                        );
-                        if report.is_clean() {
-                            println!("No issues found.");
+
+            if !is_dir {
+                // Single-file fast path: output bytes and exit codes are
+                // identical to previous releases.
+                match sdkt_audit::audit_source_with(&src, &disabled_refs) {
+                    Ok(report) => {
+                        if fmt == OutputFormat::Json {
+                            println!("{}", serde_json::to_string(&report)?);
                         } else {
-                            println!();
-                            for f in &report.findings {
-                                let loc = f
-                                    .location
-                                    .as_ref()
-                                    .map(|l| format!(" [{}]", l))
-                                    .unwrap_or_default();
-                                println!("  [{}] {} {}: {}", f.severity, f.rule_id, loc, f.message);
-                            }
+                            print_audit_report(&path, loaded_plugins, &report);
                         }
                     }
+                    Err(e) => {
+                        eprintln!("Error auditing source: {}", e);
+                        process::exit(1);
+                    }
                 }
-                Err(e) => {
-                    eprintln!("Error auditing source: {}", e);
-                    process::exit(1);
+            } else {
+                // Directory mode (#178): audit every discovered file in sorted
+                // order. A file that cannot be read or parsed yields a
+                // diagnostic finding (IO-001 / PARSE-001) instead of aborting
+                // the remaining files.
+                let mut per_file: Vec<serde_json::Value> = Vec::new();
+                let mut totals = sdkt_audit::AuditSummary::default();
+                let mut files_with_findings = 0usize;
+
+                for fpath in &audit_files {
+                    let report = match fs::read_to_string(fpath) {
+                        Ok(file_src) => {
+                            match sdkt_audit::audit_source_with(&file_src, &disabled_refs) {
+                                Ok(mut report) => {
+                                    for f in report.findings.iter_mut() {
+                                        if f.file.is_none() {
+                                            f.file = Some(fpath.clone());
+                                        }
+                                    }
+                                    report
+                                }
+                                Err(e) => {
+                                    let mut report = sdkt_audit::AuditReport::default();
+                                    // The diagnostic carries a rule id like any
+                                    // other finding, so `--disable PARSE-001`
+                                    // silences it too.
+                                    if !disabled_refs.contains(&"PARSE-001") {
+                                        report.add(sdkt_audit::Finding {
+                                            rule_id: "PARSE-001".to_string(),
+                                            severity: sdkt_audit::Severity::Warning,
+                                            message: format!("Failed to parse file: {}", e),
+                                            location: None,
+                                            file: Some(fpath.clone()),
+                                        });
+                                    }
+                                    report
+                                }
+                            }
+                        }
+                        Err(e) => {
+                            let mut report = sdkt_audit::AuditReport::default();
+                            if !disabled_refs.contains(&"IO-001") {
+                                report.add(sdkt_audit::Finding {
+                                    rule_id: "IO-001".to_string(),
+                                    severity: sdkt_audit::Severity::Warning,
+                                    message: format!("Failed to read file: {}", e),
+                                    location: None,
+                                    file: Some(fpath.clone()),
+                                });
+                            }
+                            report
+                        }
+                    };
+
+                    if fmt == OutputFormat::Json {
+                        per_file.push(serde_json::json!({
+                            "file": fpath,
+                            "report": report,
+                        }));
+                    } else {
+                        print_audit_report(fpath, loaded_plugins, &report);
+                    }
+
+                    totals.critical += report.summary.critical;
+                    totals.warning += report.summary.warning;
+                    totals.info += report.summary.info;
+                    totals.total += report.summary.total;
+                    if !report.is_clean() {
+                        files_with_findings += 1;
+                    }
+                }
+
+                if fmt == OutputFormat::Json {
+                    println!(
+                        "{}",
+                        serde_json::to_string(&serde_json::json!({
+                            "files": per_file,
+                            "totals": {
+                                "files": audit_files.len(),
+                                "files_with_findings": files_with_findings,
+                                "critical": totals.critical,
+                                "warning": totals.warning,
+                                "info": totals.info,
+                                "total": totals.total,
+                            },
+                        }))?
+                    );
+                } else {
+                    println!();
+                    println!(
+                        "Audited {} files ({} with findings)",
+                        audit_files.len(),
+                        files_with_findings
+                    );
+                    println!(
+                        "Severity: {} critical, {} warning, {} info ({} total)",
+                        totals.critical, totals.warning, totals.info, totals.total
+                    );
                 }
             }
         }

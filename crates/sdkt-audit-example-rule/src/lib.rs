@@ -40,6 +40,7 @@ impl AuditRule for ExampleRule {
                     severity: self.severity(),
                     message: format!("Example rule matched trigger function `{}`", s.fn_name),
                     location: Some(s.fn_name.clone()),
+                    file: None,
                 });
             }
         }

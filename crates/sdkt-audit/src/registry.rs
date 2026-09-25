@@ -134,6 +134,7 @@ mod tests {
                 severity: Severity::Info,
                 message: "stub fired".into(),
                 location: None,
+                file: None,
             });
         }
     }
