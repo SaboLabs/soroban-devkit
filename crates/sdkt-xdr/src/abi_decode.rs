@@ -89,7 +89,12 @@ fn matches_custom_type(fields: &[(String, String)], custom_type: &ContractType) 
 
     let actual = fields
         .iter()
-        .map(|(name, _)| name.trim_matches('"').trim_start_matches("sym(\"").trim_end_matches("\")").to_ascii_lowercase())
+        .map(|(name, _)| {
+            name.trim_matches('"')
+                .trim_start_matches("sym(\"")
+                .trim_end_matches("\")")
+                .to_ascii_lowercase()
+        })
         .collect::<std::collections::BTreeSet<_>>();
     let expected = custom_type
         .members
@@ -280,8 +285,14 @@ mod tests {
                 kind: "struct".into(),
                 doc: String::new(),
                 members: vec![
-                    TypeMember { name: "x".into(), doc: String::new() },
-                    TypeMember { name: "y".into(), doc: String::new() },
+                    TypeMember {
+                        name: "x".into(),
+                        doc: String::new(),
+                    },
+                    TypeMember {
+                        name: "y".into(),
+                        doc: String::new(),
+                    },
                 ],
             },
             ContractType {
@@ -289,15 +300,30 @@ mod tests {
                 kind: "struct".into(),
                 doc: String::new(),
                 members: vec![
-                    TypeMember { name: "width".into(), doc: String::new() },
-                    TypeMember { name: "height".into(), doc: String::new() },
+                    TypeMember {
+                        name: "width".into(),
+                        doc: String::new(),
+                    },
+                    TypeMember {
+                        name: "height".into(),
+                        doc: String::new(),
+                    },
                 ],
             },
         ];
-        let val = ScVal::Map(Some(ScMap(VecM::try_from(vec![
-            ScMapEntry { key: ScVal::Symbol(ScSymbol("width".try_into().unwrap())), val: ScVal::U64(100) },
-            ScMapEntry { key: ScVal::Symbol(ScSymbol("height".try_into().unwrap())), val: ScVal::U64(200) },
-        ]).unwrap())));
+        let val = ScVal::Map(Some(ScMap(
+            VecM::try_from(vec![
+                ScMapEntry {
+                    key: ScVal::Symbol(ScSymbol("width".try_into().unwrap())),
+                    val: ScVal::U64(100),
+                },
+                ScMapEntry {
+                    key: ScVal::Symbol(ScSymbol("height".try_into().unwrap())),
+                    val: ScVal::U64(200),
+                },
+            ])
+            .unwrap(),
+        )));
 
         let decoded = decode_with_abi(&spec, &val, None);
         assert_eq!(decoded.matched_type.as_deref(), Some("udt:Rect"));
@@ -311,14 +337,29 @@ mod tests {
             kind: "struct".into(),
             doc: String::new(),
             members: vec![
-                TypeMember { name: "x".into(), doc: String::new() },
-                TypeMember { name: "y".into(), doc: String::new() },
+                TypeMember {
+                    name: "x".into(),
+                    doc: String::new(),
+                },
+                TypeMember {
+                    name: "y".into(),
+                    doc: String::new(),
+                },
             ],
         });
-        let val = ScVal::Map(Some(ScMap(VecM::try_from(vec![
-            ScMapEntry { key: ScVal::Symbol(ScSymbol("width".try_into().unwrap())), val: ScVal::U64(100) },
-            ScMapEntry { key: ScVal::Symbol(ScSymbol("height".try_into().unwrap())), val: ScVal::U64(200) },
-        ]).unwrap())));
+        let val = ScVal::Map(Some(ScMap(
+            VecM::try_from(vec![
+                ScMapEntry {
+                    key: ScVal::Symbol(ScSymbol("width".try_into().unwrap())),
+                    val: ScVal::U64(100),
+                },
+                ScMapEntry {
+                    key: ScVal::Symbol(ScSymbol("height".try_into().unwrap())),
+                    val: ScVal::U64(200),
+                },
+            ])
+            .unwrap(),
+        )));
         assert!(decode_with_abi(&spec, &val, None).matched_type.is_none());
     }
 }
