@@ -213,7 +213,11 @@ fn project_deploy_forwards_decoded_salt_to_deploy_contract() {
     let dir = temp_dir("forward");
     write_project_fixture(&dir);
     sdkt_isolated(&dir)
-        .args(["identity", "generate", "default"])
+        .args(["identity", "generate", "deployer"])
+        .assert()
+        .success();
+    sdkt_isolated(&dir)
+        .args(["identity", "default", "deployer"])
         .assert()
         .success();
 
@@ -247,11 +251,15 @@ fn project_deploy_forwards_decoded_salt_to_deploy_contract() {
     assert_eq!(json["status"], "success");
     assert!(json["contracts_deployed"]["token"].is_string());
 
+    // `create_contract` may submit the same signed envelope more than once
+    // (send, then submit-and-wait), so check every submission, not a count.
     let salts = recorded.lock().unwrap().clone();
-    assert_eq!(salts.len(), 1, "expected exactly one create-contract call");
-    assert_eq!(
-        salts.first().copied(),
-        Some(VALID_SALT_BYTES),
-        "deploy_contract must receive the decoded --salt, not a generated one"
-    );
+    assert!(!salts.is_empty(), "expected a create-contract submission");
+    for salt in salts {
+        assert_eq!(
+            Some(salt),
+            Some(VALID_SALT_BYTES),
+            "deploy_contract must receive the decoded --salt, not a generated one"
+        );
+    }
 }
