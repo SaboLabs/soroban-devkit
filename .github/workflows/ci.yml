@@ -150,7 +150,8 @@ jobs:
       with:
         targets: wasm32-unknown-unknown
 
-    - uses: Swatinem/rust-cache@v2
+    # Temporarily disabled while diagnosing WASM reproducibility.
+    # - uses: Swatinem/rust-cache@v2
 
     - name: Install wasm-bindgen CLI
       run: cargo install wasm-bindgen-cli --version 0.2.127 --locked
