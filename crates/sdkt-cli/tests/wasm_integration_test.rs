@@ -68,7 +68,14 @@ fn test_cli_wasm_cache_info_json_escaped_backslash() {
 fn test_cli_wasm_cache_info_json_stable_shape() {
     // Clear cache first to ensure 0 values for deterministic output
     let mut clear_cmd = Command::cargo_bin("sdkt").unwrap();
-    clear_cmd.arg("wasm").arg("cache").arg("clear").arg("--network").arg("testnet_stable_shape").assert().success();
+    clear_cmd
+        .arg("wasm")
+        .arg("cache")
+        .arg("clear")
+        .arg("--network")
+        .arg("testnet_stable_shape")
+        .assert()
+        .success();
 
     let mut cmd = Command::cargo_bin("sdkt").unwrap();
     let assert = cmd
@@ -90,7 +97,8 @@ fn test_cli_wasm_cache_info_json_stable_shape() {
         "entry_count": 0,
         "total_metadata_size_bytes": 0,
         "total_wasm_size_bytes": 0
-    }).to_string();
+    })
+    .to_string();
     assert_eq!(stdout_str, expected);
 }
 
