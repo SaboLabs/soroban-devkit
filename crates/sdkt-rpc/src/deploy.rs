@@ -6,6 +6,7 @@ use crate::submission::{
 use crate::SorobanRpcClient;
 use sdkt_xdr::sign::{Ed25519Signer, Network, SigningOptions};
 use sdkt_xdr::sign_transaction;
+use serde::{Deserialize, Serialize};
 use stellar_xdr::{
     LedgerFootprint, SorobanResources, SorobanTransactionData, SorobanTransactionDataExt, VecM,
 };
@@ -62,6 +63,45 @@ impl std::fmt::Display for DeployOutcome {
             }
         }
     }
+}
+
+/// Result of comparing a freshly deployed contract's on-chain WASM hash against
+/// the local artifact that was uploaded.
+///
+/// This is the data behind the `Verified:` line emitted by `sdkt deploy` and
+/// the `verification` object in its JSON output.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct DeployVerification {
+    /// WASM hash reported by the ledger for the deployed contract.
+    pub on_chain_wasm_hash: String,
+    /// Hash of the local artifact bytes handed to the deploy flow.
+    pub local_wasm_hash: String,
+    /// True when the two hashes are equal.
+    pub matches: bool,
+}
+
+/// Verify that a deployed contract executes the artifact that was just uploaded.
+///
+/// Reuses the read-only inspection path (`inspect_contract` -> `getLedgerEntries`,
+/// the same path `sdkt verify` uses) plus the offline WASM metadata parser, so it
+/// adds no RPC calls beyond what verification already makes. The caller passes the
+/// artifact bytes it already holds, so there is no second file read.
+pub async fn verify_deployed_wasm(
+    client: &SorobanRpcClient,
+    contract_id: &str,
+    wasm_bytes: &[u8],
+) -> Result<DeployVerification, RpcError> {
+    let meta = sdkt_wasm::parse_metadata(wasm_bytes)
+        .map_err(|e| RpcError::Rpc(format!("Failed to parse WASM metadata: {}", e)))?;
+
+    let inspection = crate::inspect::inspect_contract(client, contract_id).await?;
+
+    let matches = inspection.wasm_hash == meta.hash;
+    Ok(DeployVerification {
+        on_chain_wasm_hash: inspection.wasm_hash,
+        local_wasm_hash: meta.hash,
+        matches,
+    })
 }
 
 /// Parse a hex-encoded WASM hash string into a 32-byte array.
@@ -865,5 +905,39 @@ mod tests {
             }
             other => panic!("Unexpected error variant: {other:?}"),
         }
+    }
+
+    #[test]
+    fn test_deploy_verification_json_shape() {
+        let matches = DeployVerification {
+            on_chain_wasm_hash: "aa".repeat(32),
+            local_wasm_hash: "aa".repeat(32),
+            matches: true,
+        };
+        let json = serde_json::to_value(&matches).unwrap();
+        assert_eq!(json["matches"], true);
+        assert_eq!(json["on_chain_wasm_hash"], "aa".repeat(32));
+        assert_eq!(json["local_wasm_hash"], "aa".repeat(32));
+
+        let mismatch = DeployVerification {
+            on_chain_wasm_hash: "bb".repeat(32),
+            local_wasm_hash: "aa".repeat(32),
+            matches: false,
+        };
+        let json = serde_json::to_value(&mismatch).unwrap();
+        assert_eq!(json["matches"], false);
+        assert_ne!(json["on_chain_wasm_hash"], json["local_wasm_hash"]);
+    }
+
+    #[test]
+    fn test_deploy_verification_parity_flag_tracks_hash_equality() {
+        let on_chain = "cc".repeat(32);
+        let local = "cc".repeat(32);
+        let v = DeployVerification {
+            matches: on_chain == local,
+            on_chain_wasm_hash: on_chain,
+            local_wasm_hash: local,
+        };
+        assert!(v.matches);
     }
 }
