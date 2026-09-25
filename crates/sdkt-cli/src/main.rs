@@ -6464,12 +6464,19 @@ mod project_deploy_salt_tests {
 
     #[test]
     fn omitted_salt_means_auto_generate() {
-        assert_eq!(parse_project_deploy_salt(&["sdkt", "project", "deploy"]), None);
+        assert_eq!(
+            parse_project_deploy_salt(&["sdkt", "project", "deploy"]),
+            None
+        );
     }
 
     #[test]
     fn invalid_salt_is_rejected() {
-        assert!(parse_salt_hex("deploy").unwrap_err().contains("Invalid --salt"));
-        assert!(parse_salt_hex(&"z".repeat(40)).unwrap_err().contains("not a hex digit"));
+        assert!(parse_salt_hex("deploy")
+            .unwrap_err()
+            .contains("Invalid --salt"));
+        assert!(parse_salt_hex(&"z".repeat(40))
+            .unwrap_err()
+            .contains("not a hex digit"));
     }
 }
