@@ -985,6 +985,23 @@ enum TxAction {
         #[arg(short, long, default_value = "pretty")]
         format: String,
     },
+    /// Wrap an existing transaction envelope into a fee-bump envelope
+    Wrap {
+        /// Base64 XDR transaction envelope or path to a file containing it
+        #[arg(short, long)]
+        envelope: String,
+        /// Fee source account public key (G...) or identity name
+        #[arg(long)]
+        fee_source: String,
+        /// Fee-bump fee in stroops
+        #[arg(long)]
+        fee: i64,
+        #[arg(short, long, default_value = "pretty")]
+        format: String,
+        /// Optional file path to write the output envelope XDR
+        #[arg(short, long)]
+        output: Option<String>,
+    },
 }
 
 #[derive(Subcommand)]
@@ -1706,11 +1723,32 @@ fn resolve_tx_input(input: &str) -> Result<String, String> {
         return fs::read_to_string(input)
             .map_err(|e| format!("invalid file '{}': cannot read ({})", input, e));
     }
-    let looks_like_path = input.contains('/')
+    let is_explicit_path = input.starts_with("./")
+        || input.starts_with(".\\")
+        || input.starts_with("../")
+        || input.starts_with("..\\")
+        || input.starts_with('/')
+        || input.starts_with('\\')
+        || (input.len() >= 3
+            && input.as_bytes()[1] == b':'
+            && (input.as_bytes()[2] == b'/' || input.as_bytes()[2] == b'\\'))
         || input.contains('\\')
         || input.ends_with(".xdr")
         || input.ends_with(".txt");
-    if looks_like_path {
+    if is_explicit_path {
+        return Err(format!(
+            "invalid file '{}': no such file or directory",
+            input
+        ));
+    }
+    use stellar_xdr::ReadXdr;
+    if input.contains('/')
+        && stellar_xdr::TransactionEnvelope::from_xdr_base64(
+            input.trim(),
+            stellar_xdr::Limits::none(),
+        )
+        .is_err()
+    {
         return Err(format!(
             "invalid file '{}': no such file or directory",
             input
@@ -3382,6 +3420,79 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
                             | SigningError::Sign(_) => "internal signing error".to_string(),
                         };
                         eprintln!("Error signing transaction: {}", msg);
+                        process::exit(1);
+                    }
+                }
+            }
+            TxAction::Wrap {
+                envelope,
+                fee_source,
+                fee,
+                format,
+                output,
+            } => {
+                let fmt = parse_format_str(&format);
+
+                // --- Input resolution (file or inline base64) ---
+                let env_data = match resolve_tx_input(&envelope) {
+                    Ok(s) => s,
+                    Err(e) => {
+                        eprintln!("Error: {}", e);
+                        process::exit(1);
+                    }
+                };
+
+                // --- Fee source resolution (public key or identity keystore) ---
+                let mut fee_source_account = fee_source.trim().to_string();
+                if fee_source_account.is_empty() {
+                    eprintln!("Error: missing fee source (use --fee-source <account|identity>)");
+                    process::exit(1);
+                }
+                if !fee_source_account.starts_with('G') && !fee_source_account.starts_with('M') {
+                    use sdkt_storage::IdentityStore;
+                    if let Ok(store) = IdentityStore::new() {
+                        if let Ok(identity) = store.get(&fee_source_account) {
+                            fee_source_account = identity.public_key;
+                        }
+                    }
+                }
+
+                use sdkt_xdr::{build_fee_bump_transaction, FeeBumpParams};
+                let params = FeeBumpParams {
+                    inner_envelope_b64: env_data.trim().to_string(),
+                    fee_source: fee_source_account,
+                    fee,
+                };
+
+                match build_fee_bump_transaction(&params) {
+                    Ok(wrap_res) => {
+                        if let Some(ref path) = output {
+                            if let Err(e) = fs::write(path, &wrap_res.envelope_b64) {
+                                eprintln!("Error: cannot write output to '{}': {}", path, e);
+                                process::exit(1);
+                            }
+                            if fmt != OutputFormat::Json {
+                                println!("Fee-bump transaction envelope written to {}", path);
+                            }
+                        }
+
+                        if fmt == OutputFormat::Json {
+                            let json_str = serde_json::to_string(&wrap_res)?;
+                            println!("{}", json_str);
+                        } else {
+                            println!("Fee-Bump Transaction:");
+                            println!("  Fee Source:    {}", wrap_res.fee_source);
+                            println!("  Inner Fee:     {} stroops", wrap_res.inner_fee);
+                            println!("  Fee-Bump Fee:  {} stroops", wrap_res.fee);
+                            if output.is_none() {
+                                println!();
+                                println!("Envelope (Base64):");
+                                println!("{}", wrap_res.envelope_b64);
+                            }
+                        }
+                    }
+                    Err(e) => {
+                        eprintln!("Error wrapping transaction: {}", e);
                         process::exit(1);
                     }
                 }

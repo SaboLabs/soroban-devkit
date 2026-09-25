@@ -6,18 +6,54 @@
 use crate::DecodeError;
 use base64::engine::general_purpose::STANDARD;
 use base64::Engine;
+use sdkt_core::{minimum_fee_bump_fee, MIN_FEE_STROOPS};
+use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use stellar_strkey::Strkey;
 use stellar_xdr::{
     AccountId, BytesM, ContractExecutable, ContractId, ContractIdPreimage,
     ContractIdPreimageFromAddress, CreateContractArgs, CreateContractArgsV2, ExtendFootprintTtlOp,
-    ExtensionPoint, Hash, HashIdPreimage, HashIdPreimageContractId, HostFunction,
+    ExtensionPoint, FeeBumpTransaction, FeeBumpTransactionEnvelope, FeeBumpTransactionExt,
+    FeeBumpTransactionInnerTx, Hash, HashIdPreimage, HashIdPreimageContractId, HostFunction,
     InvokeContractArgs, InvokeHostFunctionOp, LedgerFootprint, LedgerKey, Memo, MuxedAccount,
-    Operation, OperationBody, Preconditions, PublicKey, ReadXdr, ScAddress, ScSymbol, ScVal,
-    SequenceNumber, SorobanAuthorizationEntry, SorobanResources, SorobanTransactionData,
-    SorobanTransactionDataExt, Transaction, TransactionEnvelope, TransactionExt,
-    TransactionV1Envelope, Uint256, VecM, WriteXdr,
+    MuxedAccountMed25519, Operation, OperationBody, Preconditions, PublicKey, ReadXdr, ScAddress,
+    ScSymbol, ScVal, SequenceNumber, SorobanAuthorizationEntry, SorobanResources,
+    SorobanTransactionData, SorobanTransactionDataExt, Transaction, TransactionEnvelope,
+    TransactionExt, TransactionV1Envelope, Uint256, VecM, WriteXdr,
 };
+
+/// Parameters for wrapping an existing transaction envelope into a fee-bump envelope.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct FeeBumpParams {
+    /// Base64-encoded inner transaction envelope (must be a V1 envelope).
+    pub inner_envelope_b64: String,
+    /// Fee source account public key (G... or M...)
+    pub fee_source: String,
+    /// Fee-bump fee in stroops
+    pub fee: i64,
+}
+
+/// Result of wrapping a transaction envelope into a fee-bump envelope.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct FeeBumpWrapResult {
+    /// Base64-encoded wrapped FeeBump TransactionEnvelope
+    #[serde(rename = "envelope")]
+    pub envelope_b64: String,
+    /// Inner transaction fee in stroops
+    pub inner_fee: u32,
+    /// Total fee-bump fee in stroops
+    pub fee: i64,
+    /// Fee-bump fee alias (same as fee, for output clarity)
+    pub fee_bump_fee: i64,
+    /// Fee source account public key or strkey
+    pub fee_source: String,
+    /// Inner transaction operation count
+    pub inner_operations: usize,
+    /// Effective operation count (inner operations + 1)
+    pub effective_operations: usize,
+    /// Minimum required fee-bump fee in stroops
+    pub min_fee: i64,
+}
 
 /// Parameters for building a basic contract invocation transaction.
 #[derive(Debug, Clone)]
@@ -47,6 +83,23 @@ pub fn decode_account_id(pubkey: &str) -> Result<AccountId, DecodeError> {
         }
         _ => Err(DecodeError::Extraction(
             "Expected ED25519 Public Key".into(),
+        )),
+    }
+}
+
+/// Decode a G... or M... StrKey into a `MuxedAccount`.
+pub fn decode_muxed_account(source: &str) -> Result<MuxedAccount, DecodeError> {
+    let key = Strkey::from_string(source)
+        .map_err(|e| DecodeError::Extraction(format!("Invalid fee source key: {}", e)))?;
+
+    match key {
+        Strkey::PublicKeyEd25519(pk) => Ok(MuxedAccount::Ed25519(Uint256(pk.0))),
+        Strkey::MuxedAccountEd25519(m) => Ok(MuxedAccount::MuxedEd25519(MuxedAccountMed25519 {
+            id: m.id,
+            ed25519: Uint256(m.ed25519),
+        })),
+        _ => Err(DecodeError::Extraction(
+            "Expected ED25519 Public Key or Muxed Account".into(),
         )),
     }
 }
@@ -865,6 +918,108 @@ fn encode_envelope(envelope: TransactionEnvelope) -> Result<String, DecodeError>
     let mut l = stellar_xdr::Limited::new(&mut buf, stellar_xdr::Limits::none());
     envelope.write_xdr(&mut l).map_err(DecodeError::XdrWrite)?;
     Ok(STANDARD.encode(&buf))
+}
+
+/// Builds a fee-bump transaction envelope from a base64-encoded inner transaction envelope.
+pub fn build_fee_bump_transaction(
+    params: &FeeBumpParams,
+) -> Result<FeeBumpWrapResult, DecodeError> {
+    let raw = STANDARD.decode(params.inner_envelope_b64.trim())?;
+    if raw.is_empty() {
+        return Err(DecodeError::EmptyPayload);
+    }
+    let mut cursor = std::io::Cursor::new(&raw);
+    let mut l = stellar_xdr::Limited::new(&mut cursor, stellar_xdr::Limits::none());
+    let envelope = TransactionEnvelope::read_xdr(&mut l)
+        .map_err(|e| DecodeError::XdrParse("TransactionEnvelope".into(), e))?;
+
+    let (_, result) = wrap_fee_bump_envelope(envelope, &params.fee_source, params.fee)?;
+    Ok(result)
+}
+
+/// Wraps a decoded `TransactionEnvelope` into a `FeeBumpTransactionEnvelope`.
+///
+/// Ensures:
+/// 1. The input envelope is a V1 envelope (`TransactionEnvelope::Tx`).
+/// 2. If it is already a fee-bump, or a V0 envelope, a clear error is returned.
+/// 3. The fee is at least the protocol-mandated minimum fee.
+/// 4. The inner transaction (including its existing signatures) is preserved byte-for-byte.
+pub fn wrap_fee_bump_envelope(
+    envelope: TransactionEnvelope,
+    fee_source: &str,
+    fee: i64,
+) -> Result<(TransactionEnvelope, FeeBumpWrapResult), DecodeError> {
+    let v1 = match envelope {
+        TransactionEnvelope::Tx(v1) => v1,
+        TransactionEnvelope::TxFeeBump(_) => {
+            return Err(DecodeError::InvalidEnvelopeType(
+                "cannot wrap an envelope that is already a fee-bump transaction".into(),
+            ));
+        }
+        TransactionEnvelope::TxV0(_) => {
+            return Err(DecodeError::InvalidEnvelopeType(
+                "cannot wrap V0 envelope: fee-bump requires a V1 transaction envelope".into(),
+            ));
+        }
+    };
+
+    let inner_fee = v1.tx.fee;
+    let inner_ops = v1.tx.operations.len();
+    let min_fee = minimum_fee_bump_fee(inner_fee, inner_ops, MIN_FEE_STROOPS);
+    if fee < min_fee {
+        return Err(DecodeError::FeeTooLow {
+            fee,
+            min: min_fee,
+            inner_fee,
+            operations: inner_ops,
+        });
+    }
+
+    let muxed = decode_muxed_account(fee_source)?;
+
+    let fee_bump_tx = FeeBumpTransaction {
+        fee_source: muxed,
+        fee,
+        inner_tx: FeeBumpTransactionInnerTx::Tx(v1),
+        ext: FeeBumpTransactionExt::V0,
+    };
+
+    let fee_bump_env = FeeBumpTransactionEnvelope {
+        tx: fee_bump_tx,
+        signatures: VecM::default(),
+    };
+
+    let outer_envelope = TransactionEnvelope::TxFeeBump(fee_bump_env);
+    let envelope_b64 = encode_envelope(outer_envelope.clone())?;
+
+    let effective_operations = std::cmp::max(1, inner_ops) + 1;
+    let result = FeeBumpWrapResult {
+        envelope_b64,
+        inner_fee,
+        fee,
+        fee_bump_fee: fee,
+        fee_source: fee_source.to_string(),
+        inner_operations: inner_ops,
+        effective_operations,
+        min_fee,
+    };
+
+    Ok((outer_envelope, result))
+}
+
+/// Extract the inner `TransactionEnvelope` (as a V1 envelope) from a fee-bump envelope.
+pub fn extract_inner_envelope(
+    envelope: &TransactionEnvelope,
+) -> Result<TransactionEnvelope, DecodeError> {
+    match envelope {
+        TransactionEnvelope::TxFeeBump(fb) => {
+            let FeeBumpTransactionInnerTx::Tx(v1) = &fb.tx.inner_tx;
+            Ok(TransactionEnvelope::Tx(v1.clone()))
+        }
+        _ => Err(DecodeError::InvalidEnvelopeType(
+            "envelope is not a fee-bump transaction".into(),
+        )),
+    }
 }
 
 fn empty_soroban_data_with_keys(keys: &[LedgerKey]) -> Result<SorobanTransactionData, DecodeError> {
@@ -1861,5 +2016,178 @@ mod extend_tests {
             },
             _ => panic!("Expected V1 envelope"),
         }
+    }
+
+    #[test]
+    fn test_fee_bump_roundtrip_inner_equality() {
+        let params = InvokeTransactionParams {
+            source_account: "GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF".into(),
+            sequence: 42,
+            fee: 100,
+            contract_id: "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAD2KM".into(),
+            function: "hello".into(),
+            args: vec![],
+        };
+        let original_inner_b64 = build_invoke_transaction(&params).unwrap();
+
+        let fee_bump_params = FeeBumpParams {
+            inner_envelope_b64: original_inner_b64.clone(),
+            fee_source: "GBRPYHIL2CI3FNQ4BXLFMNDLFJUNPU2HY3ZMFSHONUCEOASW7QC7OX2H".into(),
+            fee: 200,
+        };
+        let wrap_res = build_fee_bump_transaction(&fee_bump_params).unwrap();
+        assert_eq!(wrap_res.inner_fee, 100);
+        assert_eq!(wrap_res.fee, 200);
+        assert_eq!(wrap_res.inner_operations, 1);
+        assert_eq!(wrap_res.effective_operations, 2);
+
+        // Decode the wrapped fee-bump envelope
+        let raw = STANDARD.decode(&wrap_res.envelope_b64).unwrap();
+        let mut cursor = std::io::Cursor::new(&raw);
+        let mut l = Limited::new(&mut cursor, Limits::none());
+        let outer_env = TransactionEnvelope::read_xdr(&mut l).unwrap();
+
+        // Extract inner and compare base64
+        let inner_env = extract_inner_envelope(&outer_env).unwrap();
+        let mut buf = Vec::new();
+        let mut l = Limited::new(&mut buf, Limits::none());
+        inner_env.write_xdr(&mut l).unwrap();
+        let roundtrip_inner_b64 = STANDARD.encode(&buf);
+
+        assert_eq!(original_inner_b64, roundtrip_inner_b64);
+    }
+
+    #[test]
+    fn test_fee_bump_signing_and_signature_preservation() {
+        use crate::sign::{
+            sign_transaction, verify_signature, Ed25519Signer, Network, Signer, SigningOptions,
+        };
+
+        let alice = Ed25519Signer::from_seed(&[1u8; 32]);
+        let bob = Ed25519Signer::from_seed(&[2u8; 32]);
+        let alice_pk = stellar_strkey::Strkey::PublicKeyEd25519(
+            stellar_strkey::ed25519::PublicKey(*alice.public_key_bytes()),
+        )
+        .to_string();
+        let bob_pk = stellar_strkey::Strkey::PublicKeyEd25519(stellar_strkey::ed25519::PublicKey(
+            *bob.public_key_bytes(),
+        ))
+        .to_string();
+
+        let params = InvokeTransactionParams {
+            source_account: alice_pk.to_string(),
+            sequence: 100,
+            fee: 100,
+            contract_id: "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAD2KM".into(),
+            function: "test".into(),
+            args: vec![],
+        };
+        let inner_b64 = build_invoke_transaction(&params).unwrap();
+
+        let opts = SigningOptions::with(Network::Testnet);
+        // Alice signs the inner transaction
+        let signed_inner_b64 = sign_transaction(&inner_b64, &alice, &opts).unwrap();
+
+        // Wrap the signed inner envelope with Bob as fee source
+        let fee_bump_params = FeeBumpParams {
+            inner_envelope_b64: signed_inner_b64,
+            fee_source: bob_pk.to_string(),
+            fee: 300,
+        };
+        let wrap_res = build_fee_bump_transaction(&fee_bump_params).unwrap();
+
+        // Bob signs the outer fee-bump envelope
+        let signed_fee_bump_b64 = sign_transaction(&wrap_res.envelope_b64, &bob, &opts).unwrap();
+
+        // Decode the signed fee-bump envelope
+        let raw = STANDARD.decode(&signed_fee_bump_b64).unwrap();
+        let mut cursor = std::io::Cursor::new(&raw);
+        let mut l = Limited::new(&mut cursor, Limits::none());
+        let outer_env = TransactionEnvelope::read_xdr(&mut l).unwrap();
+
+        // Verify Bob's signature is on the fee-bump layer
+        assert!(verify_signature(&outer_env, &bob, &opts));
+        // Verify Alice's signature is NOT on the outer fee-bump layer
+        assert!(!verify_signature(&outer_env, &alice, &opts));
+
+        // Extract inner and verify Alice's signature is preserved on the inner layer
+        let inner_env = extract_inner_envelope(&outer_env).unwrap();
+        assert!(verify_signature(&inner_env, &alice, &opts));
+        // Verify Bob's signature is NOT on the inner layer
+        assert!(!verify_signature(&inner_env, &bob, &opts));
+    }
+
+    #[test]
+    fn test_fee_bump_fee_validation() {
+        let params = InvokeTransactionParams {
+            source_account: "GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF".into(),
+            sequence: 1,
+            fee: 500,
+            contract_id: "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAD2KM".into(),
+            function: "hello".into(),
+            args: vec![],
+        };
+        let inner_b64 = build_invoke_transaction(&params).unwrap();
+
+        // Inner fee is 500 stroops for 1 op => minimum bump fee is 1000 stroops
+        let fee_bump_low = FeeBumpParams {
+            inner_envelope_b64: inner_b64.clone(),
+            fee_source: "GBRPYHIL2CI3FNQ4BXLFMNDLFJUNPU2HY3ZMFSHONUCEOASW7QC7OX2H".into(),
+            fee: 999,
+        };
+        let err = build_fee_bump_transaction(&fee_bump_low).unwrap_err();
+        match err {
+            DecodeError::FeeTooLow {
+                fee,
+                min,
+                inner_fee,
+                operations,
+            } => {
+                assert_eq!(fee, 999);
+                assert_eq!(min, 1000);
+                assert_eq!(inner_fee, 500);
+                assert_eq!(operations, 1);
+            }
+            other => panic!("expected FeeTooLow error, got {other:?}"),
+        }
+        assert!(err.to_string().contains("below required minimum of 1000"));
+
+        // Boundary fee 1000 succeeds
+        let fee_bump_exact = FeeBumpParams {
+            inner_envelope_b64: inner_b64,
+            fee_source: "GBRPYHIL2CI3FNQ4BXLFMNDLFJUNPU2HY3ZMFSHONUCEOASW7QC7OX2H".into(),
+            fee: 1000,
+        };
+        assert!(build_fee_bump_transaction(&fee_bump_exact).is_ok());
+    }
+
+    #[test]
+    fn test_fee_bump_rejects_wrapping_fee_bump() {
+        let params = InvokeTransactionParams {
+            source_account: "GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF".into(),
+            sequence: 1,
+            fee: 100,
+            contract_id: "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAD2KM".into(),
+            function: "hello".into(),
+            args: vec![],
+        };
+        let inner_b64 = build_invoke_transaction(&params).unwrap();
+
+        let wrap_params = FeeBumpParams {
+            inner_envelope_b64: inner_b64,
+            fee_source: "GBRPYHIL2CI3FNQ4BXLFMNDLFJUNPU2HY3ZMFSHONUCEOASW7QC7OX2H".into(),
+            fee: 200,
+        };
+        let wrapped = build_fee_bump_transaction(&wrap_params).unwrap();
+
+        // Attempting to wrap the wrapped envelope
+        let wrap_again = FeeBumpParams {
+            inner_envelope_b64: wrapped.envelope_b64,
+            fee_source: "GBRPYHIL2CI3FNQ4BXLFMNDLFJUNPU2HY3ZMFSHONUCEOASW7QC7OX2H".into(),
+            fee: 400,
+        };
+        let err = build_fee_bump_transaction(&wrap_again).unwrap_err();
+        assert!(matches!(err, DecodeError::InvalidEnvelopeType(_)));
+        assert!(err.to_string().contains("already a fee-bump"));
     }
 }

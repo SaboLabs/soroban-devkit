@@ -30,6 +30,6 @@ pub use project::{resolve_deploy_order, validate_project, ProjectError, Resolved
 pub use sync::{apply_updates, plan_updates, SyncError, UpdateChange, UpdateReport, UpdateStatus};
 pub use tx_builder::{BuilderError, TxBuilder};
 pub use validation::{
-    validate, validate_base64, validate_raw, TransactionValidationReport, ValidationError,
-    ValidationWarning,
+    minimum_fee_bump_fee, validate, validate_base64, validate_raw, TransactionValidationReport,
+    ValidationError, ValidationWarning, MIN_FEE_STROOPS,
 };

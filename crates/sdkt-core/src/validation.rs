@@ -37,6 +37,8 @@ pub enum ValidationError {
     EmptyOperations,
     /// The base fee is below the network minimum.
     FeeTooLow { fee: u32, min: u32 },
+    /// A fee-bump envelope has fee below the required protocol minimum.
+    FeeBumpFeeTooLow { fee: i64, min: i64 },
     /// The sequence number is not a positive value.
     InvalidSequence(i64),
     /// The transaction has no source account (cannot be expressed).
@@ -56,6 +58,9 @@ impl ValidationError {
             ValidationError::EmptyOperations => "transaction has no operations".into(),
             ValidationError::FeeTooLow { fee, min } => {
                 format!("fee {fee} stroops below minimum {min}")
+            }
+            ValidationError::FeeBumpFeeTooLow { fee, min } => {
+                format!("fee-bump fee {fee} stroops below minimum {min}")
             }
             ValidationError::InvalidSequence(s) => format!("invalid sequence number {s}"),
             ValidationError::MissingSourceAccount => "missing source account".into(),
@@ -78,6 +83,25 @@ pub enum ValidationWarning {
     NonContractOperation(String),
 }
 
+/// Compute the minimum required fee-bump fee in stroops for an inner transaction
+/// according to Stellar protocol rules (CAP-0015).
+///
+/// Under CAP-0015:
+/// - Effective operation count for the fee-bump envelope is `N + 1`, where `N` is
+///   the number of operations in the inner transaction (minimum 1).
+/// - The fee-bump fee must satisfy two conditions:
+///   1. `fee >= (N + 1) * base_fee`
+///   2. `fee_rate(bump) >= fee_rate(inner)`, i.e.
+///      `fee / (N + 1) >= inner_fee / N` => `fee * N >= inner_fee * (N + 1)`
+pub fn minimum_fee_bump_fee(inner_fee: u32, num_operations: usize, base_fee: u32) -> i64 {
+    let n = std::cmp::max(1, num_operations) as i64;
+    let n_plus_1 = n + 1;
+    let base_fee_req = n_plus_1 * (base_fee as i64);
+    let inner_fee_i64 = inner_fee as i64;
+    let rate_req = (inner_fee_i64 * n_plus_1 + n - 1) / n;
+    std::cmp::max(base_fee_req, rate_req)
+}
+
 /// Validate a decoded transaction envelope.
 ///
 /// Pure: performs no I/O and no RPC. Supply the envelope you already decoded
@@ -90,9 +114,9 @@ pub fn validate(envelope: &TransactionEnvelope) -> TransactionValidationReport {
         TransactionEnvelope::Tx(tx) => validate_tx(&tx.tx, &mut errors, &mut warnings),
         TransactionEnvelope::TxV0(tx) => validate_v0(&tx.tx, &mut errors, &mut warnings),
         TransactionEnvelope::TxFeeBump(fb) => {
-            // Fee-bump envelopes wrap a nested transaction; validate the inner one.
+            // Fee-bump envelopes wrap a nested transaction; validate fee-bump and the inner tx.
             let stellar_xdr::FeeBumpTransactionInnerTx::Tx(v1) = &fb.tx.inner_tx;
-            validate_tx(&v1.tx, &mut errors, &mut warnings);
+            validate_fee_bump(fb, v1, &mut errors, &mut warnings);
         }
     }
 
@@ -192,6 +216,40 @@ fn validate_v0(
         _ => {}
     }
     for op in tx.operations.iter() {
+        validate_operation(op, errors, warnings);
+    }
+}
+
+fn validate_fee_bump(
+    fb: &stellar_xdr::FeeBumpTransactionEnvelope,
+    v1: &stellar_xdr::TransactionV1Envelope,
+    errors: &mut Vec<ValidationError>,
+    warnings: &mut Vec<ValidationWarning>,
+) {
+    let min_fee = minimum_fee_bump_fee(v1.tx.fee, v1.tx.operations.len(), MIN_FEE_STROOPS);
+    if fb.tx.fee < min_fee {
+        errors.push(ValidationError::FeeBumpFeeTooLow {
+            fee: fb.tx.fee,
+            min: min_fee,
+        });
+    }
+
+    if v1.tx.operations.is_empty() {
+        errors.push(ValidationError::EmptyOperations);
+    }
+
+    if v1.tx.seq_num.0 <= 0 {
+        errors.push(ValidationError::InvalidSequence(v1.tx.seq_num.0));
+    }
+
+    match &v1.tx.memo {
+        Memo::Hash(_) | Memo::Return(_) => {
+            warnings.push(ValidationWarning::UnusualMemo(format!("{:?}", v1.tx.memo)));
+        }
+        _ => {}
+    }
+
+    for op in v1.tx.operations.iter() {
         validate_operation(op, errors, warnings);
     }
 }
@@ -378,5 +436,69 @@ mod tests {
             .warnings
             .iter()
             .any(|w| matches!(w, ValidationWarning::NonContractOperation(_))));
+    }
+
+    #[test]
+    fn test_minimum_fee_bump_fee_calculations() {
+        // 1 op, 100 stroops inner fee -> min 200
+        assert_eq!(minimum_fee_bump_fee(100, 1, 100), 200);
+
+        // 1 op, 500 stroops inner fee -> min 1000
+        assert_eq!(minimum_fee_bump_fee(500, 1, 100), 1000);
+
+        // 2 ops, 250 stroops inner fee -> min 375
+        assert_eq!(minimum_fee_bump_fee(250, 2, 100), 375);
+
+        // 3 ops, 200 stroops inner fee -> min 400 (base fee dominates: 4 * 100 = 400)
+        assert_eq!(minimum_fee_bump_fee(200, 3, 100), 400);
+
+        // 1 op, 50 stroops inner fee -> min 200 (base fee dominates: 2 * 100 = 200)
+        assert_eq!(minimum_fee_bump_fee(50, 1, 100), 200);
+
+        // 0 ops degenerate case -> min 200
+        assert_eq!(minimum_fee_bump_fee(100, 0, 100), 200);
+    }
+
+    #[test]
+    fn test_fee_bump_validation() {
+        use stellar_xdr::{
+            FeeBumpTransaction, FeeBumpTransactionEnvelope, FeeBumpTransactionExt,
+            FeeBumpTransactionInnerTx,
+        };
+
+        let inner_env = make_envelope(100, 10, vec![make_invoke_contract_op("hello")], Memo::None);
+        let TransactionEnvelope::Tx(v1) = inner_env else {
+            panic!()
+        };
+
+        // Minimum required fee for 1 op with 100 inner fee is 200
+        let make_fee_bump = |fee: i64| {
+            TransactionEnvelope::TxFeeBump(FeeBumpTransactionEnvelope {
+                tx: FeeBumpTransaction {
+                    fee_source: dummy_source(),
+                    fee,
+                    inner_tx: FeeBumpTransactionInnerTx::Tx(v1.clone()),
+                    ext: FeeBumpTransactionExt::V0,
+                },
+                signatures: VecM::default(),
+            })
+        };
+
+        // Fee of 200 is valid
+        let report = validate(&make_fee_bump(200));
+        assert!(report.valid);
+        assert!(report.errors.is_empty());
+
+        // Fee of 199 is too low
+        let report = validate(&make_fee_bump(199));
+        assert!(!report.valid);
+        assert_eq!(
+            report.errors,
+            vec![ValidationError::FeeBumpFeeTooLow { fee: 199, min: 200 }]
+        );
+        assert_eq!(
+            report.errors[0].message(),
+            "fee-bump fee 199 stroops below minimum 200"
+        );
     }
 }

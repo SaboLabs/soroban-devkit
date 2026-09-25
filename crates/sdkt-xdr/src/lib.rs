@@ -30,11 +30,13 @@ pub use builder::{
     build_create_contract_tx, build_create_contract_tx_with_data,
     build_create_contract_tx_with_data_and_auth, build_create_contract_v2_tx,
     build_create_contract_v2_tx_with_data, build_create_contract_v2_tx_with_data_and_auth,
-    build_extend_footprint_tx, build_extend_footprint_tx_with_data, build_invoke_transaction,
-    build_invoke_transaction_with_data, build_upload_wasm_tx, build_upload_wasm_tx_with_data,
-    decode_account_id, decode_contract_id, decode_ledger_key, derive_contract_id,
-    merge_footprint_keys, parse_scval_args, parse_soroban_transaction_data, CreateContractParams,
-    CreateContractV2Params, ExtendFootprintParams, InvokeTransactionParams, UploadWasmParams,
+    build_extend_footprint_tx, build_extend_footprint_tx_with_data, build_fee_bump_transaction,
+    build_invoke_transaction, build_invoke_transaction_with_data, build_upload_wasm_tx,
+    build_upload_wasm_tx_with_data, decode_account_id, decode_contract_id, decode_ledger_key,
+    decode_muxed_account, derive_contract_id, extract_inner_envelope, merge_footprint_keys,
+    parse_scval_args, parse_soroban_transaction_data, wrap_fee_bump_envelope, CreateContractParams,
+    CreateContractV2Params, ExtendFootprintParams, FeeBumpParams, FeeBumpWrapResult,
+    InvokeTransactionParams, UploadWasmParams,
 };
 pub use sign::{
     sign_envelope_with, sign_transaction, verify_signature, Ed25519Signer, Network, Signer,
@@ -78,6 +80,15 @@ pub enum DecodeError {
     Json(#[from] serde_json::Error),
     #[error("Extraction error: {0}")]
     Extraction(String),
+    #[error("Fee-bump fee {fee} stroops is below required minimum of {min} stroops (inner fee: {inner_fee} stroops, operations: {operations})")]
+    FeeTooLow {
+        fee: i64,
+        min: i64,
+        inner_fee: u32,
+        operations: usize,
+    },
+    #[error("Invalid envelope type for fee-bump: {0}")]
+    InvalidEnvelopeType(String),
 }
 
 /// Parameters for constructing a `LedgerKey`.
