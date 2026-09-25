@@ -19,7 +19,7 @@ WASM_BINDGEN_VERSION="0.2.127"
 OUT_DIR="website/playground/wasm"
 
 echo "==> Building sdkt-playground for wasm32-unknown-unknown (release)"
-cargo build -p sdkt-playground --release \
+cargo build -p sdkt-playground --locked --release \
   --target wasm32-unknown-unknown \
   --manifest-path crates/sdkt-playground/Cargo.toml
 
