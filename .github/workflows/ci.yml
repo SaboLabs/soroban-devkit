@@ -155,6 +155,12 @@ jobs:
     - name: Install wasm-bindgen CLI
       run: cargo install wasm-bindgen-cli --version 0.2.127 --locked
 
+    - name: Show toolchain versions
+      run: |
+        rustc -Vv
+        cargo -V
+        wasm-bindgen --version
+
     - name: Check sdkt-playground
       run: cargo check --locked --manifest-path crates/sdkt-playground/Cargo.toml --target wasm32-unknown-unknown
 
