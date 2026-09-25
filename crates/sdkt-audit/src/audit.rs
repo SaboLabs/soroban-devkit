@@ -97,7 +97,7 @@ pub(crate) fn is_initialize(name: &str) -> bool {
 }
 
 /// Strip a `Type::` prefix so heuristics match the bare method name.
-fn unqualified(name: &str) -> &str {
+pub(crate) fn unqualified(name: &str) -> &str {
     name.rsplit("::").next().unwrap_or(name)
 }
 
@@ -278,6 +278,7 @@ pub fn audit_source_with_spec(
 mod tests {
     use super::*;
     use crate::rules::{Auth001, Auth002, Auth003, Move001};
+    use sdkt_wasm::spec::ContractFunction;
 
     fn report_for(src: &str) -> AuditReport {
         audit_source(src).unwrap()
@@ -341,6 +342,24 @@ mod tests {
         let src = "pub fn initialize(admin: Address) { require_auth(); }";
         let rep = report_for(src);
         assert!(!has(&rep, "AUTH-003"));
+    }
+
+    #[test]
+    fn auth003_matches_qualified_impl_method_against_unqualified_spec() {
+        let src = "impl Token { pub fn initialize(admin: Address) { } }";
+        let spec = ContractSpec {
+            env_meta: None,
+            functions: vec![ContractFunction {
+                name: "initialize".into(),
+                doc: String::new(),
+                parameters: vec![],
+                outputs: vec![],
+            }],
+            custom_types: vec![],
+            events: vec![],
+        };
+        let rep = audit_source_with_spec(src, &spec, &[]).unwrap();
+        assert!(has(&rep, "AUTH-003"));
     }
 
     #[test]

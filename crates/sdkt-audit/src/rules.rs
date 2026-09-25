@@ -89,7 +89,9 @@ impl AuditRule for Auth003 {
                 Some(spec) => spec
                     .functions
                     .iter()
-                    .any(|f| f.name.to_lowercase() == s.fn_name.to_lowercase()),
+                    .any(|f| {
+                        f.name.eq_ignore_ascii_case(crate::audit::unqualified(&s.fn_name))
+                    }),
                 None => true,
             };
             if exported {
