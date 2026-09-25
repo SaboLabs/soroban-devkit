@@ -3,7 +3,7 @@
 //! This module provides the core decoding logic that maps raw `ScVal` values
 //! to human-readable representations using the contract's ABI (ContractSpec).
 
-use sdkt_wasm::spec::ContractSpec;
+use sdkt_wasm::spec::{ContractSpec, ContractType};
 use stellar_xdr::ScVal;
 
 /// Result of ABI-aware decoding.
@@ -49,9 +49,9 @@ pub fn decode_with_abi(
     }
 
     // Try to match against custom types (UDTs)
-    for custom_type in &spec.custom_types {
-        if let Some(fields) = extract_scval_fields(val, spec) {
-            if !fields.is_empty() {
+    if let Some(fields) = extract_scval_fields(val, spec) {
+        for custom_type in &spec.custom_types {
+            if matches_custom_type(&fields, custom_type) {
                 return AbiDecodedValue {
                     raw: raw.clone(),
                     label: format!(
@@ -77,6 +77,26 @@ pub fn decode_with_abi(
         matched_type: None,
         fields: extract_scval_fields(val, spec),
     }
+}
+
+/// Match a decoded struct-like value to a UDT by its field names and arity.
+/// Declaration order is intentionally irrelevant; a value with the same shape
+/// but different names must not inherit an arbitrary UDT label.
+fn matches_custom_type(fields: &[(String, String)], custom_type: &ContractType) -> bool {
+    if custom_type.members.is_empty() || fields.len() != custom_type.members.len() {
+        return false;
+    }
+
+    let actual = fields
+        .iter()
+        .map(|(name, _)| name.trim_matches('"').trim_start_matches("sym(\"").trim_end_matches("\")").to_ascii_lowercase())
+        .collect::<std::collections::BTreeSet<_>>();
+    let expected = custom_type
+        .members
+        .iter()
+        .map(|member| member.name.to_ascii_lowercase())
+        .collect::<std::collections::BTreeSet<_>>();
+    actual == expected
 }
 
 /// Convert ScVal to a human-readable string using basic type info.
@@ -187,8 +207,8 @@ pub fn decode_event_topics(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use sdkt_wasm::spec::ContractEvent;
-    use stellar_xdr::{ScSymbol, ScVal};
+    use sdkt_wasm::spec::{ContractEvent, ContractType, TypeMember};
+    use stellar_xdr::{ScMap, ScMapEntry, ScSymbol, ScVal, VecM};
 
     fn dummy_spec() -> ContractSpec {
         ContractSpec {
@@ -249,5 +269,56 @@ mod tests {
         assert!(decoded.label.contains("event[transfer]"));
         assert_eq!(decoded.matched_type.as_deref(), Some("event:transfer"));
         assert!(decoded.fields.is_none());
+    }
+
+    #[test]
+    fn matches_udt_by_field_names_not_declaration_order() {
+        let mut spec = dummy_spec();
+        spec.custom_types = vec![
+            ContractType {
+                name: "Point".into(),
+                kind: "struct".into(),
+                doc: String::new(),
+                members: vec![
+                    TypeMember { name: "x".into(), doc: String::new() },
+                    TypeMember { name: "y".into(), doc: String::new() },
+                ],
+            },
+            ContractType {
+                name: "Rect".into(),
+                kind: "struct".into(),
+                doc: String::new(),
+                members: vec![
+                    TypeMember { name: "width".into(), doc: String::new() },
+                    TypeMember { name: "height".into(), doc: String::new() },
+                ],
+            },
+        ];
+        let val = ScVal::Map(Some(ScMap(VecM::try_from(vec![
+            ScMapEntry { key: ScVal::Symbol(ScSymbol("width".try_into().unwrap())), val: ScVal::U64(100) },
+            ScMapEntry { key: ScVal::Symbol(ScSymbol("height".try_into().unwrap())), val: ScVal::U64(200) },
+        ]).unwrap())));
+
+        let decoded = decode_with_abi(&spec, &val, None);
+        assert_eq!(decoded.matched_type.as_deref(), Some("udt:Rect"));
+    }
+
+    #[test]
+    fn unmatched_shape_does_not_receive_arbitrary_udt() {
+        let mut spec = dummy_spec();
+        spec.custom_types.push(ContractType {
+            name: "Point".into(),
+            kind: "struct".into(),
+            doc: String::new(),
+            members: vec![
+                TypeMember { name: "x".into(), doc: String::new() },
+                TypeMember { name: "y".into(), doc: String::new() },
+            ],
+        });
+        let val = ScVal::Map(Some(ScMap(VecM::try_from(vec![
+            ScMapEntry { key: ScVal::Symbol(ScSymbol("width".try_into().unwrap())), val: ScVal::U64(100) },
+            ScMapEntry { key: ScVal::Symbol(ScSymbol("height".try_into().unwrap())), val: ScVal::U64(200) },
+        ]).unwrap())));
+        assert!(decode_with_abi(&spec, &val, None).matched_type.is_none());
     }
 }
