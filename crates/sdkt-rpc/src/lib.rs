@@ -28,8 +28,9 @@ pub use account::{
 pub use client::SorobanRpcClient;
 pub use client::{fund_account, FundResult};
 pub use deploy::{
-    create_contract, deploy_contract, deploy_contract_with_args, format_json, format_pretty,
-    CreateContractArgs, DeployOutcome, DeployResult, PartialDeployResult,
+    create_contract, deploy_contract, deploy_contract_from_hash, deploy_contract_with_args,
+    format_json, format_pretty, CreateContractArgs, DeployOutcome, DeployResult,
+    PartialDeployResult,
 };
 pub use error::RpcError;
 pub use events::{

@@ -525,8 +525,15 @@ enum Commands {
     },
     /// Deploy a contract (Upload WASM + Instantiate)
     Deploy {
+        /// Path to the WASM binary to upload and deploy. Mutually exclusive with
+        /// `--wasm-hash`.
         #[arg(short, long)]
-        wasm: String,
+        wasm: Option<String>,
+        /// Create-only: deploy from already-uploaded code identified by its
+        /// 64-char hex WASM hash, skipping the upload step (resume a deploy whose
+        /// upload succeeded but create failed). Mutually exclusive with `--wasm`.
+        #[arg(long, value_name = "HASH")]
+        wasm_hash: Option<String>,
         /// Deployment salt (40 hex chars = 20 bytes). Auto-generated if omitted.
         #[arg(short, long)]
         salt: Option<String>,
@@ -4524,6 +4531,7 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
         }
         Commands::Deploy {
             wasm,
+            wasm_hash,
             salt,
             show_address,
             dry_run,
@@ -4535,6 +4543,24 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
             net,
         } => {
             let fmt = parse_format_str(&format);
+
+            // Exactly one code source: --wasm (upload + create) or --wasm-hash
+            // (create-only from already-uploaded code). Validate before any I/O.
+            match (wasm.is_some(), wasm_hash.is_some()) {
+                (true, true) => return Err("specify only one of --wasm or --wasm-hash".into()),
+                (false, false) => {
+                    return Err("provide either --wasm <FILE> or --wasm-hash <HASH>".into())
+                }
+                _ => {}
+            }
+            // --deny-breaking diffs two WASM binaries, so it needs the new WASM
+            // file; it is meaningless on the create-only --wasm-hash path.
+            if deny_breaking && wasm_hash.is_some() {
+                return Err(
+                    "--deny-breaking compares WASM binaries and cannot be used with --wasm-hash"
+                        .into(),
+                );
+            }
 
             // Local helper: parse 40-char hex into 20-byte salt; validate strictly
             fn parse_salt_hex(s: &str) -> Result<[u8; 20], String> {
@@ -4594,16 +4620,29 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
             sdkt_xdr::parse_scval_args(&parsed_args)
                 .map_err(|e| format!("Invalid constructor argument: {}", e))?;
 
-            // Optional deploy guard: abort on a backwards-incompatible upgrade.
+            // Read the new WASM before looking up the identity. This preserves
+            // the fail-fast behavior for a missing or unreadable file on the
+            // full-deploy path; create-only recovery does not need a file.
+            let preloaded_wasm = wasm
+                .as_ref()
+                .map(|path| {
+                    fs::read(path).map_err(|e| format!("Error reading WASM file {}: {}", path, e))
+                })
+                .transpose()?;
+
+            // The upgrade-safety check only needs the two local WASM files and
+            // must run before identity lookup so incompatible upgrades fail
+            // deterministically even without a configured identity.
             if deny_breaking {
-                let baseline = old_wasm.ok_or_else(|| {
+                let baseline = old_wasm.as_ref().ok_or_else(|| {
                     "The --deny-breaking flag requires --old-wasm <deployed.wasm> (the currently deployed contract)".to_string()
                 })?;
-                let old_bytes = fs::read(&baseline)
+                let old_bytes = fs::read(baseline)
                     .map_err(|e| format!("Failed to read OLD WASM '{}': {}", baseline, e))?;
-                let new_bytes = fs::read(&wasm)
-                    .map_err(|e| format!("Failed to read NEW WASM '{}': {}", wasm, e))?;
-                match sdkt_wasm::upgrade_safety_wasm(&old_bytes, &new_bytes) {
+                let new_bytes = preloaded_wasm
+                    .as_ref()
+                    .expect("full-deploy path preloads the new WASM");
+                match sdkt_wasm::upgrade_safety_wasm(&old_bytes, new_bytes) {
                     Ok(verdict) => {
                         if !verdict.compatible {
                             eprintln!("Deployment aborted: upgrade is NOT backwards-compatible.");
@@ -4621,88 +4660,103 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
                 }
             }
 
-            // Read WASM file
-            let wasm_bytes =
-                fs::read(&wasm).map_err(|e| format!("Error reading WASM file {}: {}", wasm, e))?;
-
-            // Load identity for signing
+            // Load identity for signing (shared by both code sources).
             let identity_store = sdkt_storage::IdentityStore::new()
                 .map_err(|e| format!("Failed to access identity store: {}", e))?;
             let identity_obj = identity_store
                 .get(&identity)
                 .map_err(|e| format!("Identity '{}' not found: {}", identity, e))?;
-
-            // Load signing key from storage
             let signing_key = identity_store
                 .load_signing_key(&identity)
                 .map_err(|e| format!("Failed to load signing key for '{}': {}", identity, e))?;
             let signer = sdkt_xdr::sign::Ed25519Signer::from_seed(&signing_key.to_bytes());
 
             let client = SorobanRpcClient::from_config(&network_config);
-
             // Source account is the identity's public key
             let source_account = identity_obj.public_key.clone();
 
-            // Contract IDs are deterministic. Calculate the prediction from
-            // local inputs before making any RPC call, so --dry-run remains
-            // entirely offline.
-            let prediction_salt = if show_address || dry_run {
-                Some(salt_bytes.unwrap_or_else(sdkt_rpc::deploy::generate_salt))
-            } else {
-                salt_bytes
-            };
-            let predicted = if let Some(prediction_salt) = prediction_salt {
-                let wasm_hash: [u8; 32] = Sha256::digest(&wasm_bytes).into();
-                let contract_id = sdkt_xdr::derive_contract_id(
-                    &network.network_id(),
+            let outcome_result = if let Some(hash) = wasm_hash.as_ref() {
+                // Create-only: deploy from already-uploaded code; no upload step.
+                sdkt_rpc::deploy_contract_from_hash(
+                    &client,
+                    hash,
                     &source_account,
-                    &prediction_salt,
-                    &wasm_hash,
+                    &signer,
+                    network,
+                    salt_bytes,
+                    parsed_args,
                 )
-                .map_err(|e| format!("Failed to derive predicted contract ID: {}", e))?;
-                Some((contract_id, hex::encode(wasm_hash), prediction_salt))
+                .await
             } else {
-                None
+                // Full deploy from a WASM file (present per the mutual-exclusion
+                // check above).
+                let wasm = wasm
+                    .as_ref()
+                    .expect("--wasm present on the full-deploy path");
+
+                let wasm_bytes = preloaded_wasm
+                    .as_ref()
+                    .expect("full-deploy path preloads the WASM");
+
+                // Contract IDs are deterministic. Calculate the prediction
+                // only for the full-WASM path; hash-only recovery already
+                // delegates its address handling to the RPC helper.
+                let prediction_salt = if show_address || dry_run {
+                    Some(salt_bytes.unwrap_or_else(sdkt_rpc::deploy::generate_salt))
+                } else {
+                    salt_bytes
+                };
+                let predicted = if let Some(prediction_salt) = prediction_salt.clone() {
+                    let wasm_digest: [u8; 32] = Sha256::digest(&wasm_bytes).into();
+                    let contract_id = sdkt_xdr::derive_contract_id(
+                        &network.network_id(),
+                        &source_account,
+                        &prediction_salt,
+                        &wasm_digest,
+                    )
+                    .map_err(|e| format!("Failed to derive predicted contract ID: {}", e))?;
+                    Some((contract_id, hex::encode(wasm_digest), prediction_salt))
+                } else {
+                    None
+                };
+                if let Some((contract_id, wasm_hash, prediction_salt)) = &predicted {
+                    if dry_run {
+                        if fmt == OutputFormat::Json {
+                            println!(
+                                "{}",
+                                serde_json::json!({
+                                    "status": "dry_run",
+                                    "contractId": contract_id,
+                                    "wasmHash": wasm_hash,
+                                    "salt": hex::encode(prediction_salt),
+                                    "submitted": false,
+                                })
+                            );
+                        } else {
+                            println!("Predicted Contract ID: {}", contract_id);
+                            println!("WASM Hash: {}", wasm_hash);
+                            println!("Salt: {}", hex::encode(prediction_salt));
+                            println!("No transactions submitted.");
+                        }
+                        return Ok(());
+                    }
+                    eprintln!("Predicted Contract ID: {}", contract_id);
+                    eprintln!("WASM Hash: {}", wasm_hash);
+                    eprintln!("Salt: {}", hex::encode(prediction_salt));
+                }
+                sdkt_rpc::deploy_contract_with_args(
+                    &client,
+                    &wasm_bytes,
+                    &source_account,
+                    &signer,
+                    network,
+                    prediction_salt,
+                    parsed_args,
+                )
+                .await
             };
 
-            if let Some((contract_id, wasm_hash, prediction_salt)) = &predicted {
-                if dry_run {
-                    if fmt == OutputFormat::Json {
-                        println!(
-                            "{}",
-                            serde_json::json!({
-                                "status": "dry_run",
-                                "contractId": contract_id,
-                                "wasmHash": wasm_hash,
-                                "salt": hex::encode(prediction_salt),
-                                "submitted": false,
-                            })
-                        );
-                    } else {
-                        println!("Predicted Contract ID: {}", contract_id);
-                        println!("WASM Hash: {}", wasm_hash);
-                        println!("Salt: {}", hex::encode(prediction_salt));
-                        println!("No transactions submitted.");
-                    }
-                    return Ok(());
-                }
-                eprintln!("Predicted Contract ID: {}", contract_id);
-                eprintln!("WASM Hash: {}", wasm_hash);
-                eprintln!("Salt: {}", hex::encode(prediction_salt));
-            }
-
-            use sdkt_rpc::deploy_contract_with_args;
-            match deploy_contract_with_args(
-                &client,
-                &wasm_bytes,
-                &source_account,
-                &signer,
-                network,
-                prediction_salt,
-                parsed_args,
-            )
-            .await
-            {
+            match outcome_result {
                 Ok(outcome) => match &outcome {
                     sdkt_rpc::DeployOutcome::Success(res) => {
                         if fmt == OutputFormat::Json {
