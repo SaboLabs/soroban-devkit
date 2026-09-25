@@ -2838,6 +2838,7 @@ dependencies = [
  "sdkt-xdr",
  "serde",
  "serde_json",
+ "sha2 0.11.0",
  "stellar-strkey 0.0.18",
  "stellar-xdr",
  "tempfile",
