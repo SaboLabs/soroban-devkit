@@ -101,6 +101,9 @@ fn deployed_spec_decodes_event_label() {
         events: vec![ContractEvent {
             name: "Mint".to_string(),
             doc: "Mint event".to_string(),
+            params: vec![],
+            prefix_topics: vec![],
+            data_format: "single_value".to_string(),
         }],
     };
 

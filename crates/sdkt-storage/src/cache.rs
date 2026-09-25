@@ -52,6 +52,7 @@ impl WasmCache {
     /// Returns the directory for a specific network (e.g., `testnet`).
     /// Creates the directory if it doesn't exist.
     fn network_dir(&self, network: &str) -> Result<PathBuf, StorageError> {
+        validate_network_name(network)?;
         let net_dir = self.base_dir.join("wasm").join(network);
         if !net_dir.exists() {
             fs::create_dir_all(&net_dir).map_err(StorageError::Io)?;
@@ -153,6 +154,7 @@ impl WasmCache {
     /// working on fresh CI runners (Linux/macOS/Windows) where the cache path
     /// does not yet exist.
     pub fn cache_info(&self, network: &str) -> Result<CacheInfo, StorageError> {
+        validate_network_name(network)?;
         let net_dir = self.base_dir.join("wasm").join(network);
 
         let mut entry_count = 0;
@@ -191,6 +193,21 @@ impl WasmCache {
             total_wasm_size_bytes,
         })
     }
+}
+
+fn validate_network_name(network: &str) -> Result<(), StorageError> {
+    if network.is_empty()
+        || network == "."
+        || network == ".."
+        || network.contains('/')
+        || network.contains('\\')
+    {
+        return Err(StorageError::ConfigError(format!(
+            "invalid network name '{}': must be a non-empty path component",
+            network
+        )));
+    }
+    Ok(())
 }
 
 #[cfg(test)]
@@ -302,6 +319,27 @@ mod tests {
         let (cache, _dir) = get_temp_cache();
         let info = cache.cache_info("nonexistent-network").unwrap();
         assert_eq!(info.entry_count, 0);
+    }
+
+    #[test]
+    fn rejects_path_traversal_before_filesystem_access() {
+        let (cache, dir) = get_temp_cache();
+        let outside = dir.path().join("outside");
+        fs::create_dir_all(&outside).unwrap();
+
+        assert!(matches!(
+            cache.clear("../outside"),
+            Err(StorageError::ConfigError(_))
+        ));
+        assert!(outside.exists());
+        assert!(matches!(
+            cache.remove("nested/name", "hash"),
+            Err(StorageError::ConfigError(_))
+        ));
+        assert!(matches!(
+            cache.cache_info(""),
+            Err(StorageError::ConfigError(_))
+        ));
     }
 
     // ---------------------------------------------------------------------------

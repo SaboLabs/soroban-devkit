@@ -98,8 +98,8 @@ impl Contract {
     write_template(root, "src/lib.rs", lib_rs, &mut created)?;
 
     let sdkt_toml = r#"[network]
-default = "testnet"
 rpc_url = "https://soroban-testnet.stellar.org"
+passphrase = "Test SDF Network ; September 2015"
 
 [build]
 target = "wasm32-unknown-unknown"
@@ -110,8 +110,9 @@ target = "wasm32-unknown-unknown"
 
     if !config.minimal {
         let readme = format!(
-            "# {name}\n\nA Soroban smart contract project.\n\n## Build\n\n```\nsdkt build\n```\n\n## Test\n\n```\ncargo test\n```\n",
+            "# {name}\n\nA Soroban smart contract project.\n\n## Build\n\n```\nsdkt build\n```\n\n## Test\n\n```\ncargo test\n```\n\n## Deploy to Testnet\n\nCreate and fund a test identity, then deploy the compiled contract:\n\n```\nsdkt identity generate my-dev\nsdkt identity fund my-dev --network-profile testnet\nsdkt deploy --wasm target/wasm32-unknown-unknown/release/{crate_name}.wasm --identity my-dev --network-profile testnet\n```\n\n## Invoke\n\nReplace `<CONTRACT_ID>` with the deployed contract address:\n\n```\nsdkt call <CONTRACT_ID> hello --network-profile testnet\nsdkt invoke <CONTRACT_ID> hello --identity my-dev --network-profile testnet\n```\n",
             name = package_name,
+            crate_name = crate_name,
         );
         write_template(root, "README.md", &readme, &mut created)?;
 
@@ -886,6 +887,7 @@ fn write_template(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::config::DevKitConfig;
     use std::path::PathBuf;
 
     fn tmp_dir(name: &str) -> PathBuf {
@@ -913,6 +915,19 @@ mod tests {
         assert!(p.join(".gitignore").exists());
         assert!(p.join("tests/basic.rs").exists());
         assert_eq!(res.files_created.len(), 6);
+        let config = DevKitConfig::from_file(p.join(".sdkt.toml")).unwrap();
+        assert_eq!(
+            config.network.rpc_url,
+            "https://soroban-testnet.stellar.org"
+        );
+        assert_eq!(
+            config.network.passphrase,
+            "Test SDF Network ; September 2015"
+        );
+        let readme = fs::read_to_string(p.join("README.md")).unwrap();
+        assert!(readme.contains("## Deploy to Testnet"));
+        assert!(readme.contains("sdkt identity generate my-dev"));
+        assert!(readme.contains("sdkt invoke <CONTRACT_ID> hello"));
         let _ = fs::remove_dir_all(&p);
     }
 
