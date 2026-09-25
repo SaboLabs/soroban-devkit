@@ -115,7 +115,9 @@ fn read_http_body(sock: &mut std::net::TcpStream) -> String {
 /// Return the 20-byte salt of a create-contract envelope, or `None` for any
 /// other transaction (e.g. the WASM upload).
 fn create_contract_salt(envelope_b64: &str) -> Option<[u8; 20]> {
-    let bytes = base64::engine::general_purpose::STANDARD.decode(envelope_b64).ok()?;
+    let bytes = base64::engine::general_purpose::STANDARD
+        .decode(envelope_b64)
+        .ok()?;
     let env = TransactionEnvelope::from_xdr(bytes, Limits::none()).ok()?;
     let ops = match env {
         TransactionEnvelope::Tx(e) => e.tx.operations,
@@ -135,7 +137,10 @@ fn create_contract_salt(envelope_b64: &str) -> Option<[u8; 20]> {
         };
         // The 20-byte salt is left-aligned and zero-padded into a Uint256.
         let padded = from_address.salt.0;
-        assert!(padded[20..].iter().all(|b| *b == 0), "salt padding must be zero");
+        assert!(
+            padded[20..].iter().all(|b| *b == 0),
+            "salt padding must be zero"
+        );
         let mut salt = [0u8; 20];
         salt.copy_from_slice(&padded[..20]);
         Some(salt)
