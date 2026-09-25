@@ -2917,7 +2917,7 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
                     envelope.clone()
                 };
 
-                match simulate_transaction(&client, &env_data).await {
+                match simulate_transaction(&client, env_data.trim()).await {
                     Ok(sim) => {
                         // A failed simulation reports its own error immediately.
                         // Resolving --abi / --abi-contract after a failure could
@@ -3107,7 +3107,7 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
                     interval: Duration::from_secs(interval),
                 };
 
-                match submit_and_wait(&client, &env_data, wait, &poll_cfg).await {
+                match submit_and_wait(&client, env_data.trim(), wait, &poll_cfg).await {
                     Ok(res) => {
                         if fmt == OutputFormat::Json {
                             println!("{}", serde_json::to_string(&res)?);
