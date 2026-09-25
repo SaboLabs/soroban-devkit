@@ -109,12 +109,24 @@ sdkt storage analyze <CONTRACT_ID>
 # NOTE: `sdkt storage estimate` is NOT YET IMPLEMENTED (placeholder only —
 # it prints a stub message and does not compute a real storage-cost estimate).
 
-# Read a contract storage entry by its complete LedgerKey (base64 XDR)
+# Read a contract storage entry.
+# Option A — raw LedgerKey (base64 or hex XDR), the advanced escape hatch:
 sdkt storage read --contract <CONTRACT_ID> --key-xdr <BASE64_LEDGER_KEY>
 
+# Option B — typed key built from the contract's own types (same TYPE:VALUE
+# syntax as `sdkt call --args`). This builds ScVec[symbol, args...]:
+#   persistent map entry keyed by a symbol + address:
+sdkt storage read --contract <CONTRACT_ID> --map-key balances --key-arg address:G...
+#   composite key (symbol + multiple typed args):
+sdkt storage read --contract <CONTRACT_ID> --map-key allowance --key-arg address:G... --key-arg address:G...
+#   temporary durability (defaults to persistent):
+sdkt storage read --contract <CONTRACT_ID> --map-key session --key-arg u32:100 --durability temporary
+#   the contract's instance-storage entry:
+sdkt storage read --contract <CONTRACT_ID> --instance
+
 # Extend TTL of the contract instance (and optional extra keys)
-# --ledgers is an ABSOLUTE target ledger (extend_to), not a relative delta.
-# Example: current ledger + 17280 ≈ 17280 additional ledgers (~1 day at 5s/ledger).
+# --ledgers is relative: entries will live at least N ledgers past the current ledger.
+# Example: 17280 ledgers ≈ 1 day at 5s/ledger.
 sdkt storage extend --contract <CONTRACT_ID> --ledgers 17280 --identity my-deployer
 ```
 
@@ -141,6 +153,9 @@ sdkt tx simulate --envelope unsigned.xdr
 
 # 4b. Simulate with ABI-aware result decoding (requires contractspecv0 WASM)
 sdkt tx simulate --envelope unsigned.xdr --abi /path/to/contract.wasm
+
+# 4c. Simulate with on-chain ABI from a deployed contract (no local WASM needed)
+sdkt tx simulate --envelope unsigned.xdr --abi-contract C...CONTRACT_ID...
 
 # 5. Sign with the local identity (offline)
 sdkt tx sign --input unsigned.xdr --output signed.xdr --identity alice --network testnet
@@ -269,11 +284,15 @@ sdkt call C... balance --format json --network-profile testnet
 
 # ABI-aware result decoding (requires contractspecv0 WASM)
 sdkt call C... balance --abi /path/to/contract.wasm --format json --network-profile testnet
+
+# Same, but the ABI comes from the deployed contract (no local WASM needed)
+sdkt call C... balance --abi-contract C... --format json --network-profile testnet
 ```
 
 - `--args` accepts typed values: `u32:N`, `u64:N`, `i32:N`, `i64:N`, `bool:true|false`, `string:text`, `address:G...`
 - `--abi <wasm>` enables ABI-aware result decoding using the contract spec from a local WASM file. Without it, the raw base64 XDR result is shown.
-- When `--abi` is supplied and the function is found in the spec, the decoded human-readable label appears in the output. JSON includes both raw and decoded fields.
+- `--abi-contract <id>` resolves the ABI from the deployed contract over RPC instead (`inspect_contract` → `get_wasm_bytecode` → spec parse) — no local artifact needed. Mutually exclusive with `--abi`.
+- When an ABI is supplied and the function is found in the spec, the decoded human-readable label appears in the output. JSON includes both raw and decoded fields.
 - If the function is not in the ABI, the raw result is preserved and a warning is emitted to stderr.
 - If `--abi` WASM is invalid/unparseable, the command fails with a clear error.
 - No identity required — call is read-only via `simulateTransaction`

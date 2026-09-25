@@ -39,13 +39,16 @@ sdkt
 │   ├── --args <TYPE:VALUE>...    (same typed-args as `call` / `tx build`;
 │   │                            strict: unknown types are rejected)
 │   ├── --identity <name>        (signs and pays; default: "default")
+│   ├── --no-wait                (return after submission with status PENDING)
 │   ├── --format <json|pretty>
 │   └── --network-profile <NAME> / --rpc-url <URL> / --network-passphrase <P>
 │
 │   State-changing end-to-end flow in one command:
 │     fetch account sequence → simulate → build final envelope (authoritative
 │     footprint + fees + auth entries from simulation) → sign with the local
-│     identity → submit → poll until settled. Exit code 0 only on SUCCESS.
+│     identity → submit → poll until settled. With --no-wait, return after
+│     submission with the hash and PENDING status. Exit code 0 only on SUCCESS
+│     unless --no-wait was supplied.
 │   Result decoding is limited to the transaction-level `TransactionResult`
 │   XDR (no ABI-aware result decode yet). Inherits the mainnet safety guard
 │   (see below). Live Testnet smoke test is documented but NOT exercised in CI.
@@ -53,11 +56,22 @@ sdkt
 ├── tx
 │   ├── inspect <hash>        [--format]
 │   ├── validate <xdr>        [--format] (offline parse + structural checks)
-│   ├── simulate <xdr>        [--format] [--abi <wasm>] (RPC; surfaces restore preambles, costs, state changes; ABI-aware result decoding)
+│   ├── simulate <xdr>        [--format] [--abi <wasm>] [--abi-contract <id>] (RPC; surfaces restore preambles, costs, state changes; ABI-aware result decoding. `--abi-contract` fetches the deployed contract's on-chain WASM for decoding)
 │   ├── sign                  [--input <xdr|file>] [--output <file>] [--identity <name>] [--network <testnet|mainnet|futurenet|custom:<p>>] [--format] (offline ED25519 signing)
 │   ├── submit <xdr>          [--wait] [--timeout <s>] [--interval <s>] [--format] (RPC)
 │   └── build                 [--source --sequence --contract --function --fee* --arg* --output]
-│                             (--fee <STROPS> overrides the fee, default 100 stroops)
+│                             Offline by default: the envelope carries only the
+│                             base inclusion fee (100 stroops) and prints a
+│                             warning, because a Soroban submission also needs
+│                             the resource fee.
+│                             Pass the network flags on `tx` (e.g.
+│                             `sdkt tx --network-profile testnet build ...`) to
+│                             simulate the invocation and adopt the reported
+│                             `minResourceFee` and footprint, exactly as
+│                             `invoke` does — the resulting envelope submits
+│                             without re-simulating.
+│                             `--fee <STROOPS>` overrides both and costs no
+│                             network round trip.
 │
 ├── events <contract-id>
 │   ├── --format <json|pretty>
@@ -239,6 +253,10 @@ or git logic is duplicated; the same `compute_dependency_integrity` /
 │   ├── --args <TYPE:VALUE>...    (e.g. u32:100, address:G..., string:hello)
 │   ├── --abi <wasm>          (ABI-aware result decoding from a local WASM;
 │   │                            without it the raw base64 XDR result is shown)
+│   ├── --abi-contract <id>   (ABI-aware result decoding using the deployed
+│   │                            contract's on-chain WASM, fetched via the
+│   │                            inspection path; no local artifact needed.
+│   │                            Mutually exclusive with --abi.)
 │   ├── --format <json|pretty>
 │   └── --network-profile <NAME>
 └── deploy
@@ -397,6 +415,8 @@ stable `id` declared in their `plugin.toml`.
 
 ```bash
 sdkt plugin list                                   # list installed plugins
+sdkt plugin list --format json                     # JSON output; every plugin subcommand accepts --format json
+sdkt plugin init ./path/to/my-rule                 # scaffold a new audit rule project
 sdkt plugin show <id>                              # show a plugin's metadata
 sdkt plugin install ./path/to/artifact.wasm        # install from a local file
 sdkt plugin remove <id>                            # remove (idempotent)
@@ -417,7 +437,7 @@ schema and the install-validation rules.
 Store root precedence (lowest → highest): `<cwd>/.sdkt/plugins`,
 `<config-dir>/sdkt/plugins`, `$SDKT_PLUGIN_DIR`.
 
-- `--format json` is supported on all read-style commands and on `diff`, `audit`, `deploy`, `init` for scripting / CI.
+- `--format json` is supported on all read-style commands, every `plugin` subcommand, and on `diff`, `audit`, `deploy`, `init` for scripting / CI.
 - `diff --upgrade-safety` and `deploy --deny-breaking` implement the Upgrade Safety Guard (see `ROADMAP.md`).
 - `audit` implements the static-analysis rules (AUTH-001/002/003/004, MOVE-001).
 - **Mainnet safety.** Mutating commands (`tx submit`, `invoke`, `deploy`, `project deploy`) refuse to target mainnet unless you explicitly select the network — via `--network-profile`, `--rpc-url`, or `--network-passphrase`. A testnet-default passphrase pointed at a mainnet endpoint is rejected before any request is sent, protecting against signing for the wrong network.

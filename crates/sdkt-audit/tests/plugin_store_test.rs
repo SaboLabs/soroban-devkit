@@ -9,7 +9,7 @@
 
 use sdkt_audit::plugin_abi::SDKT_AUDIT_ABI_MAJOR;
 use sdkt_audit::plugin_store::{
-    install, list_in, parse_meta, remove, resolve, InstallOpts, StoreError,
+    install, list_in, parse_meta, remove, resolve, update, InstallOpts, StoreError,
 };
 use std::path::Path;
 use std::sync::Mutex;
@@ -140,4 +140,110 @@ fn store_root_fallback_without_env() {
         !path_str.is_empty(),
         "Fallback store root should not be empty"
     );
+}
+
+/// Regression: updating a plugin whose manifest renames the artifact must
+/// remove the previously-managed artifact file, leaving only the new one.
+#[test]
+fn update_with_renamed_artifact_removes_stale_file() {
+    let _g = ENV_LOCK.lock().unwrap();
+    let tmp = tempfile::tempdir().unwrap();
+    set_store_root(tmp.path());
+
+    // v1: artifact-a.wasm
+    let v1_dir = tmp.path().join("v1");
+    std::fs::create_dir_all(&v1_dir).unwrap();
+    let v1_artifact = v1_dir.join("artifact-a.wasm");
+    std::fs::write(&v1_artifact, b"v1-bytes").unwrap();
+    std::fs::write(
+        v1_dir.join("plugin.toml"),
+        meta_toml("wasm", SDKT_AUDIT_ABI_MAJOR, "artifact-a.wasm"),
+    )
+    .unwrap();
+    install(&v1_artifact, &InstallOpts::default()).expect("install v1");
+
+    let plugin_dir = tmp.path().join("example-rule");
+    assert!(plugin_dir.join("artifact-a.wasm").exists());
+
+    // v2: artifact-b.wasm
+    let v2_dir = tmp.path().join("v2");
+    std::fs::create_dir_all(&v2_dir).unwrap();
+    let v2_artifact = v2_dir.join("artifact-b.wasm");
+    std::fs::write(&v2_artifact, b"v2-bytes").unwrap();
+    std::fs::write(
+        v2_dir.join("plugin.toml"),
+        meta_toml("wasm", SDKT_AUDIT_ABI_MAJOR, "artifact-b.wasm"),
+    )
+    .unwrap();
+
+    let meta = update("example-rule", &v2_artifact).expect("update");
+    assert_eq!(meta.artifact, "artifact-b.wasm");
+
+    // New artifact present and usable; old artifact gone.
+    assert!(plugin_dir.join("artifact-b.wasm").exists());
+    assert!(
+        !plugin_dir.join("artifact-a.wasm").exists(),
+        "stale artifact-a.wasm should have been removed"
+    );
+    assert_eq!(
+        std::fs::read(plugin_dir.join("artifact-b.wasm")).unwrap(),
+        b"v2-bytes"
+    );
+
+    // Metadata points at the new artifact and resolve() finds it.
+    let installed = parse_meta(&std::fs::read_to_string(plugin_dir.join("plugin.toml")).unwrap())
+        .expect("parse installed meta");
+    assert_eq!(installed.artifact, "artifact-b.wasm");
+    let resolved = resolve("example-rule").expect("resolve");
+    assert_eq!(resolved, plugin_dir.join("artifact-b.wasm"));
+
+    // Only the new artifact remains in the plugin directory.
+    let mut names: Vec<String> = std::fs::read_dir(&plugin_dir)
+        .unwrap()
+        .flatten()
+        .map(|e| e.file_name().to_string_lossy().into_owned())
+        .collect();
+    names.sort();
+    assert_eq!(names, vec!["artifact-b.wasm", "plugin.toml"]);
+}
+
+/// Updating with an unchanged artifact filename must keep working and must not
+/// delete the (still-referenced) artifact.
+#[test]
+fn update_with_unchanged_artifact_keeps_file() {
+    let _g = ENV_LOCK.lock().unwrap();
+    let tmp = tempfile::tempdir().unwrap();
+    set_store_root(tmp.path());
+
+    let v1_dir = tmp.path().join("same-v1");
+    std::fs::create_dir_all(&v1_dir).unwrap();
+    let v1_artifact = v1_dir.join("rule.wasm");
+    std::fs::write(&v1_artifact, b"v1-bytes").unwrap();
+    std::fs::write(
+        v1_dir.join("plugin.toml"),
+        meta_toml("wasm", SDKT_AUDIT_ABI_MAJOR, "rule.wasm"),
+    )
+    .unwrap();
+    install(&v1_artifact, &InstallOpts::default()).expect("install v1");
+
+    let v2_dir = tmp.path().join("same-v2");
+    std::fs::create_dir_all(&v2_dir).unwrap();
+    let v2_artifact = v2_dir.join("rule.wasm");
+    std::fs::write(&v2_artifact, b"v2-bytes").unwrap();
+    std::fs::write(
+        v2_dir.join("plugin.toml"),
+        meta_toml("wasm", SDKT_AUDIT_ABI_MAJOR, "rule.wasm"),
+    )
+    .unwrap();
+
+    let meta = update("example-rule", &v2_artifact).expect("update");
+    assert_eq!(meta.artifact, "rule.wasm");
+
+    let plugin_dir = tmp.path().join("example-rule");
+    assert!(plugin_dir.join("rule.wasm").exists());
+    assert_eq!(
+        std::fs::read(plugin_dir.join("rule.wasm")).unwrap(),
+        b"v2-bytes"
+    );
+    assert!(resolve("example-rule").is_some());
 }

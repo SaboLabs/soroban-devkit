@@ -298,6 +298,7 @@ stable `id` declared in their `plugin.toml`.
 
 ```bash
 sdkt plugin list                                   # list installed plugins
+sdkt plugin list --format json                     # JSON output; every plugin subcommand accepts --format json
 sdkt plugin show <id>                              # show a plugin's metadata
 sdkt plugin install ./path/to/artifact.wasm        # install from a local file
 sdkt plugin remove <id>                            # remove (idempotent)
@@ -318,7 +319,7 @@ schema and the install-validation rules.
 Store root precedence (lowest → highest): `<cwd>/.sdkt/plugins`,
 `<config-dir>/sdkt/plugins`, `$SDKT_PLUGIN_DIR`.
 
-- `--format json` is supported on all read-style commands and on `diff`, `audit`, `deploy`, `init` for scripting / CI.
+- `--format json` is supported on all read-style commands, every `plugin` subcommand, and on `diff`, `audit`, `deploy`, `init` for scripting / CI.
 - `diff --upgrade-safety` and `deploy --deny-breaking` implement the Upgrade Safety Guard (see `ROADMAP.md`).
 - `audit` implements the static-analysis rules (AUTH-001/002/003/004, MOVE-001).
 - **Mainnet safety.** Mutating commands (`tx submit`, `invoke`, `deploy`, `project deploy`) refuse to target mainnet unless you explicitly select the network — via `--network-profile`, `--rpc-url`, or `--network-passphrase`. A testnet-default passphrase pointed at a mainnet endpoint is rejected before any request is sent, protecting against signing for the wrong network.

@@ -50,6 +50,8 @@ jobs:
 
       - name: Build example contracts to WASM
         working-directory: ${{ runner.temp }}/soroban-examples
+        env:
+          SOROBAN_SDK_BUILD_SYSTEM_SUPPORTS_SPEC_SHAKING_V2: 1
         run: |
           set -euo pipefail
           for c in token atomic_swap liquidity_pool timelock single_offer; do

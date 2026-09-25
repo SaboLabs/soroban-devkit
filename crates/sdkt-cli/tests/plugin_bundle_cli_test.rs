@@ -148,6 +148,144 @@ fn bundle_pack_and_verify_roundtrip_signed() {
         .stdout(predicate::str::contains("signature: VERIFIED"));
 }
 
+/// Parse a command's stdout as JSON, failing with the raw output if it is not.
+fn stdout_json(out: &assert_cmd::assert::Assert) -> serde_json::Value {
+    let stdout = String::from_utf8_lossy(&out.get_output().stdout).to_string();
+    serde_json::from_str(&stdout).unwrap_or_else(|e| panic!("stdout is not JSON: {e}\n{stdout}"))
+}
+
+#[test]
+fn bundle_pack_and_verify_json_unsigned() {
+    let root = TempDir::new().unwrap();
+    let src_dir = make_plugin_dir(&root, "wasm", "wasm");
+    let bundle = root.path().join("json.sdktplugin");
+
+    // The "NOT signed" note stays on stderr, so stdout remains pure JSON.
+    let packed = sdkt()
+        .args([
+            "plugin",
+            "pack",
+            src_dir.to_str().unwrap(),
+            "--output",
+            bundle.to_str().unwrap(),
+            "--format",
+            "json",
+        ])
+        .assert()
+        .success()
+        .stderr(predicate::str::contains("NOT signed"));
+    let packed = stdout_json(&packed);
+    assert_eq!(packed["status"], "packed");
+    assert_eq!(packed["output"], bundle.to_str().unwrap());
+    assert_eq!(packed["id"], "myrule");
+    assert_eq!(packed["version"], "1.0.0");
+    assert_eq!(packed["signed"], false);
+
+    let verified = stdout_json(
+        &sdkt()
+            .args([
+                "plugin",
+                "verify-bundle",
+                bundle.to_str().unwrap(),
+                "--format",
+                "json",
+            ])
+            .assert()
+            .success(),
+    );
+    assert_eq!(verified["valid"], true);
+    assert_eq!(verified["signed"], false);
+    assert_eq!(verified["plugin"]["id"], "myrule");
+    assert_eq!(verified["plugin"]["kind"], "wasm");
+}
+
+#[test]
+fn bundle_pack_and_verify_json_signed_and_mismatch() {
+    let root = TempDir::new().unwrap();
+    let src_dir = make_plugin_dir(&root, "wasm", "wasm");
+    let secret_path = root.path().join("secret.key");
+    fs::write(&secret_path, [0xab; 32]).unwrap();
+    let wrong_pub = root.path().join("public.key");
+    fs::write(&wrong_pub, [0xcd; 32]).unwrap();
+    let bundle = root.path().join("signed-json.sdktplugin");
+
+    let packed = stdout_json(
+        &sdkt()
+            .args([
+                "plugin",
+                "pack",
+                src_dir.to_str().unwrap(),
+                "--output",
+                bundle.to_str().unwrap(),
+                "--secret-key",
+                secret_path.to_str().unwrap(),
+                "--format",
+                "json",
+            ])
+            .assert()
+            .success(),
+    );
+    assert_eq!(packed["signed"], true);
+
+    let verified = stdout_json(
+        &sdkt()
+            .args([
+                "plugin",
+                "verify-bundle",
+                bundle.to_str().unwrap(),
+                "--format",
+                "json",
+            ])
+            .assert()
+            .success(),
+    );
+    assert_eq!(verified["valid"], true);
+    assert_eq!(verified["signed"], true);
+    assert_eq!(verified["plugin"]["id"], "myrule");
+
+    // A signature mismatch keeps the existing error contract.
+    sdkt()
+        .args([
+            "plugin",
+            "verify-bundle",
+            bundle.to_str().unwrap(),
+            "--public-key",
+            wrong_pub.to_str().unwrap(),
+            "--format",
+            "json",
+        ])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("signature verification failed"))
+        .stdout(predicate::str::is_empty());
+}
+
+#[test]
+fn bundle_pack_rejects_invalid_format_before_writing() {
+    let root = TempDir::new().unwrap();
+    let src_dir = make_plugin_dir(&root, "wasm", "wasm");
+    let bundle = root.path().join("never.sdktplugin");
+
+    sdkt()
+        .args([
+            "plugin",
+            "pack",
+            src_dir.to_str().unwrap(),
+            "--output",
+            bundle.to_str().unwrap(),
+            "--format",
+            "yaml",
+        ])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("Invalid format 'yaml'"))
+        .stdout(predicate::str::is_empty());
+    assert!(
+        !bundle.exists(),
+        "an invalid --format must fail before packing"
+    );
+}
+
 #[test]
 fn bundle_pack_missing_toml_errors() {
     let root = TempDir::new().unwrap();

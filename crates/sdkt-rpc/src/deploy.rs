@@ -19,6 +19,9 @@ pub struct DeployResult {
     pub create_hash: String,
     pub status: String,
     pub salt: String,
+    pub upload_fee: u32,
+    pub create_fee: u32,
+    pub total_fee: u64,
 }
 
 /// Partial deployment result when upload succeeds but create fails.
@@ -43,8 +46,8 @@ impl std::fmt::Display for DeployOutcome {
             DeployOutcome::Success(r) => {
                 write!(
                     f,
-                    "Deployment successful!\n  WASM Hash: {}\n  Contract ID: {}\n  Upload TX: {}\n  Create TX: {}",
-                    r.wasm_hash, r.contract_id, r.upload_hash, r.create_hash
+                    "Deployment successful!\n  WASM Hash: {}\n  Contract ID: {}\n  Upload TX: {}\n  Create TX: {}\n  Salt: {}\n  Status: {}\n  Upload Fee: {}\n  Create Fee: {}\n  Total Fee: {}",
+                    r.wasm_hash, r.contract_id, r.upload_hash, r.create_hash, r.salt, r.status, r.upload_fee, r.create_fee, r.total_fee
                 )
             }
             DeployOutcome::Partial(p) => {
@@ -73,6 +76,29 @@ pub fn parse_wasm_hash(hash_str: &str) -> Result<[u8; 32], RpcError> {
     Ok(result)
 }
 
+/// Parse the `min_resource_fee` returned by a simulation into a `u32` stroop
+/// amount.
+///
+/// The value arrives as a decimal string. A missing, empty, or non-numeric
+/// value is a hard error rather than a silent `0`: defaulting to zero would
+/// build a transaction whose fee is just the 100-stroop inclusion fee, which
+/// the network rejects with an opaque `txINSUFFICIENT_FEE` while hiding the
+/// fact that fee parsing failed.
+fn parse_min_resource_fee(raw: &str) -> Result<u32, RpcError> {
+    let trimmed = raw.trim();
+    let value: u64 = trimmed.parse().map_err(|_| {
+        RpcError::Rpc(format!(
+            "Simulation returned an invalid min_resource_fee: {trimmed:?} \
+             (expected a numeric stroop value)"
+        ))
+    })?;
+    u32::try_from(value).map_err(|_| {
+        RpcError::Rpc(format!(
+            "Simulation min_resource_fee {value} exceeds the supported u32 fee range"
+        ))
+    })
+}
+
 /// Generate a random 20-byte salt for contract ID derivation.
 pub fn generate_salt() -> [u8; 20] {
     let mut salt = [0u8; 20];
@@ -89,7 +115,7 @@ pub async fn upload_wasm(
     fee: u32,
     network: Network,
     signer: &Ed25519Signer,
-) -> Result<(String, String), RpcError> {
+) -> Result<(String, String, u32), RpcError> {
     use sdkt_xdr::builder::UploadWasmParams;
 
     if wasm_bytes.is_empty() {
@@ -148,12 +174,7 @@ pub async fn upload_wasm(
     };
 
     // Calculate fee from simulation
-    let min_resource_fee: u32 = simulation
-        .min_resource_fee
-        .parse()
-        .unwrap_or(0)
-        .try_into()
-        .unwrap_or(0);
+    let min_resource_fee: u32 = parse_min_resource_fee(&simulation.min_resource_fee)?;
 
     let inclusion_fee: u32 = 100;
     let total_fee = inclusion_fee + min_resource_fee;
@@ -212,7 +233,7 @@ pub async fn upload_wasm(
         )));
     }
 
-    Ok((wasm_hash, submission_result.hash))
+    Ok((wasm_hash, submission_result.hash, total_fee))
 }
 
 /// Create a contract instance from an uploaded WASM.
@@ -223,10 +244,14 @@ pub async fn create_contract(
     fee: u32,
     network: Network,
     signer: &Ed25519Signer,
-) -> Result<(String, String), RpcError> {
-    use sdkt_xdr::builder::CreateContractParams;
+) -> Result<(String, String, u32), RpcError> {
+    use sdkt_xdr::builder::{
+        build_create_contract_tx_with_data, build_create_contract_tx_with_data_and_auth,
+        build_create_contract_v2_tx_with_data, build_create_contract_v2_tx_with_data_and_auth,
+        CreateContractParams, CreateContractV2Params,
+    };
 
-    // Build initial V1 transaction for simulation (Soroban requires V1)
+    // Build initial transaction for simulation (Soroban requires V1 or V2)
     let initial_soroban_data = SorobanTransactionData {
         ext: SorobanTransactionDataExt::V0,
         resources: SorobanResources {
@@ -241,18 +266,34 @@ pub async fn create_contract(
         resource_fee: 0,
     };
 
-    let initial_envelope = sdkt_xdr::builder::build_create_contract_tx_with_data(
-        &CreateContractParams {
-            source_account: args.deployer_address.clone(),
-            sequence,
-            fee,
-            wasm_hash: args.wasm_hash,
-            deployer_address: args.deployer_address.clone(),
-            salt: args.salt,
-        },
-        initial_soroban_data,
-    )
-    .map_err(|e| RpcError::Rpc(format!("Failed to build create transaction: {}", e)))?;
+    let initial_envelope = if args.constructor_args.is_empty() {
+        build_create_contract_tx_with_data(
+            &CreateContractParams {
+                source_account: args.deployer_address.clone(),
+                sequence,
+                fee,
+                wasm_hash: args.wasm_hash,
+                deployer_address: args.deployer_address.clone(),
+                salt: args.salt,
+            },
+            initial_soroban_data,
+        )
+        .map_err(|e| RpcError::Rpc(format!("Failed to build create transaction: {}", e)))?
+    } else {
+        build_create_contract_v2_tx_with_data(
+            &CreateContractV2Params {
+                source_account: args.deployer_address.clone(),
+                sequence,
+                fee,
+                wasm_hash: args.wasm_hash,
+                deployer_address: args.deployer_address.clone(),
+                salt: args.salt,
+                constructor_args: args.constructor_args.clone(),
+            },
+            initial_soroban_data,
+        )
+        .map_err(|e| RpcError::Rpc(format!("Failed to build create v2 transaction: {}", e)))?
+    };
 
     // Simulate transaction
     let simulation = simulate_transaction(client, &initial_envelope)
@@ -275,12 +316,7 @@ pub async fn create_contract(
     };
 
     // Calculate fee from simulation
-    let min_resource_fee: u32 = simulation
-        .min_resource_fee
-        .parse()
-        .unwrap_or(0)
-        .try_into()
-        .unwrap_or(0);
+    let min_resource_fee: u32 = parse_min_resource_fee(&simulation.min_resource_fee)?;
 
     let inclusion_fee: u32 = 100;
     let total_fee = inclusion_fee + min_resource_fee;
@@ -294,19 +330,41 @@ pub async fn create_contract(
     };
 
     // Build final transaction with SorobanTransactionData, auth entries, and proper fee
-    let final_envelope = sdkt_xdr::builder::build_create_contract_tx_with_data_and_auth(
-        &CreateContractParams {
-            source_account: args.deployer_address.clone(),
-            sequence,
-            fee: total_fee,
-            wasm_hash: args.wasm_hash,
-            deployer_address: args.deployer_address.clone(),
-            salt: args.salt,
-        },
-        soroban_data,
-        auth_entries,
-    )
-    .map_err(|e| RpcError::Rpc(format!("Failed to build final create transaction: {}", e)))?;
+    let final_envelope = if args.constructor_args.is_empty() {
+        build_create_contract_tx_with_data_and_auth(
+            &CreateContractParams {
+                source_account: args.deployer_address.clone(),
+                sequence,
+                fee: total_fee,
+                wasm_hash: args.wasm_hash,
+                deployer_address: args.deployer_address.clone(),
+                salt: args.salt,
+            },
+            soroban_data,
+            auth_entries,
+        )
+        .map_err(|e| RpcError::Rpc(format!("Failed to build final create transaction: {}", e)))?
+    } else {
+        build_create_contract_v2_tx_with_data_and_auth(
+            &CreateContractV2Params {
+                source_account: args.deployer_address.clone(),
+                sequence,
+                fee: total_fee,
+                wasm_hash: args.wasm_hash,
+                deployer_address: args.deployer_address.clone(),
+                salt: args.salt,
+                constructor_args: args.constructor_args.clone(),
+            },
+            soroban_data,
+            auth_entries,
+        )
+        .map_err(|e| {
+            RpcError::Rpc(format!(
+                "Failed to build final create v2 transaction: {}",
+                e
+            ))
+        })?
+    };
 
     // Sign the final envelope
     let signing_opts = SigningOptions::with(network.clone());
@@ -351,7 +409,7 @@ pub async fn create_contract(
     )
     .map_err(|e| RpcError::Rpc(format!("Failed to derive contract ID: {}", e)))?;
 
-    Ok((contract_id, submission_result.hash))
+    Ok((contract_id, submission_result.hash, total_fee))
 }
 
 /// Deploy a contract: upload WASM, then create contract instance.
@@ -363,11 +421,37 @@ pub async fn deploy_contract(
     network: Network,
     user_salt: Option<[u8; 20]>,
 ) -> Result<DeployOutcome, RpcError> {
+    deploy_contract_with_args(
+        client,
+        wasm_bytes,
+        source_account,
+        signer,
+        network,
+        user_salt,
+        Vec::new(),
+    )
+    .await
+}
+
+/// Deploy a contract with constructor arguments: upload WASM, then create contract instance.
+pub async fn deploy_contract_with_args(
+    client: &SorobanRpcClient,
+    wasm_bytes: &[u8],
+    source_account: &str,
+    signer: &Ed25519Signer,
+    network: Network,
+    user_salt: Option<[u8; 20]>,
+    constructor_args: Vec<String>,
+) -> Result<DeployOutcome, RpcError> {
     use crate::account::get_next_sequence;
 
     if wasm_bytes.is_empty() {
         return Err(RpcError::Rpc("WASM bytes are empty".into()));
     }
+
+    // Validate constructor arguments early before uploading WASM
+    sdkt_xdr::parse_scval_args(&constructor_args)
+        .map_err(|e| RpcError::Rpc(format!("Invalid constructor argument: {}", e)))?;
 
     // Parse WASM hash
     let meta = sdkt_wasm::parse_metadata(wasm_bytes)
@@ -385,7 +469,7 @@ pub async fn deploy_contract(
     let mut sequence = get_next_sequence(client, source_account).await?;
 
     // Step 1: Upload WASM
-    let (_uploaded_wasm_hash, upload_hash) = match upload_wasm(
+    let (_uploaded_wasm_hash, upload_hash, upload_fee) = match upload_wasm(
         client,
         wasm_bytes,
         source_account,
@@ -408,9 +492,10 @@ pub async fn deploy_contract(
         wasm_hash,
         deployer_address: source_account.to_string(),
         salt,
+        constructor_args,
     };
 
-    let (contract_id, create_hash) =
+    let (contract_id, create_hash, create_fee) =
         match create_contract(client, &create_args, sequence, 100, network, signer).await {
             Ok(result) => result,
             Err(e) => {
@@ -422,6 +507,8 @@ pub async fn deploy_contract(
             }
         };
 
+    let total_fee = upload_fee as u64 + create_fee as u64;
+
     Ok(DeployOutcome::Success(DeployResult {
         wasm_hash: wasm_hash_str,
         contract_id,
@@ -429,14 +516,17 @@ pub async fn deploy_contract(
         create_hash,
         status: "SUCCESS".into(),
         salt: hex::encode(salt),
+        upload_fee,
+        create_fee,
+        total_fee,
     }))
 }
 
 /// Pretty-print a deployment result.
 pub fn format_pretty(res: &DeployResult) -> String {
     format!(
-        "Deployment Result:\n  WASM Hash: {}\n  Contract ID: {}\n  Upload Hash: {}\n  Create Hash: {}\n  Salt: {}\n  Status: {}",
-        res.wasm_hash, res.contract_id, res.upload_hash, res.create_hash, res.salt, res.status
+        "Deployment Result:\n  WASM Hash: {}\n  Contract ID: {}\n  Upload Hash: {}\n  Create Hash: {}\n  Salt: {}\n  Status: {}\n  Upload Fee: {}\n  Create Fee: {}\n  Total Fee: {}",
+        res.wasm_hash, res.contract_id, res.upload_hash, res.create_hash, res.salt, res.status, res.upload_fee, res.create_fee, res.total_fee
     )
 }
 
@@ -449,16 +539,20 @@ pub fn format_json(res: &DeployResult) -> String {
         "createHash": res.create_hash,
         "salt": res.salt,
         "status": res.status,
+        "uploadFee": res.upload_fee,
+        "createFee": res.create_fee,
+        "totalFee": res.total_fee,
     })
     .to_string()
 }
 
 /// Parameters for contract creation.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct CreateContractArgs {
     pub wasm_hash: [u8; 32],
     pub deployer_address: String,
     pub salt: [u8; 20],
+    pub constructor_args: Vec<String>,
 }
 
 #[cfg(test)]
@@ -483,6 +577,43 @@ mod tests {
     fn test_parse_wasm_hash_invalid_hex() {
         let hash_str = "zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz";
         assert!(parse_wasm_hash(hash_str).is_err());
+    }
+
+    #[test]
+    fn test_parse_min_resource_fee_valid() {
+        assert_eq!(parse_min_resource_fee("0").unwrap(), 0);
+        assert_eq!(parse_min_resource_fee("1000").unwrap(), 1000);
+        assert_eq!(parse_min_resource_fee("  1234  ").unwrap(), 1234);
+        assert_eq!(
+            parse_min_resource_fee(&u32::MAX.to_string()).unwrap(),
+            u32::MAX
+        );
+    }
+
+    #[test]
+    fn test_parse_min_resource_fee_empty_is_error() {
+        let err = parse_min_resource_fee("").unwrap_err();
+        assert!(err.to_string().contains("invalid min_resource_fee"));
+    }
+
+    #[test]
+    fn test_parse_min_resource_fee_non_numeric_is_error() {
+        for raw in ["N/A", "unavailable", "12.5", "abc", "-1"] {
+            assert!(
+                parse_min_resource_fee(raw).is_err(),
+                "expected error for {raw:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn test_parse_min_resource_fee_overflow_is_error() {
+        // Fits in u64 but exceeds u32 — must error, never silently truncate to 0.
+        let raw = (u32::MAX as u64 + 1).to_string();
+        let err = parse_min_resource_fee(&raw).unwrap_err();
+        assert!(err
+            .to_string()
+            .contains("exceeds the supported u32 fee range"));
     }
 
     #[test]
@@ -537,8 +668,59 @@ mod tests {
             create_hash: "c1".into(),
             status: "SUCCESS".into(),
             salt: "00112233445566778899aabbccddeeff00112233".into(),
+            upload_fee: 100,
+            create_fee: 200,
+            total_fee: 300,
         };
         assert_eq!(result.salt, "00112233445566778899aabbccddeeff00112233");
+    }
+
+    #[test]
+    fn test_deploy_result_fee_fields_and_total() {
+        let result = DeployResult {
+            wasm_hash: "abc123".into(),
+            contract_id: "C...".into(),
+            upload_hash: "u1".into(),
+            create_hash: "c1".into(),
+            status: "SUCCESS".into(),
+            salt: "00112233445566778899aabbccddeeff00112233".into(),
+            upload_fee: 1500,
+            create_fee: 2500,
+            total_fee: 4000,
+        };
+        assert_eq!(result.upload_fee, 1500);
+        assert_eq!(result.create_fee, 2500);
+        assert_eq!(result.total_fee, 4000);
+        assert_eq!(
+            result.total_fee,
+            result.upload_fee as u64 + result.create_fee as u64
+        );
+    }
+
+    #[test]
+    fn test_deploy_result_fee_overflow_safety() {
+        let upload_fee = u32::MAX;
+        let create_fee = u32::MAX;
+        let total_fee = upload_fee as u64 + create_fee as u64;
+        let result = DeployResult {
+            wasm_hash: "abc123".into(),
+            contract_id: "C...".into(),
+            upload_hash: "u1".into(),
+            create_hash: "c1".into(),
+            status: "SUCCESS".into(),
+            salt: "00112233445566778899aabbccddeeff00112233".into(),
+            upload_fee,
+            create_fee,
+            total_fee,
+        };
+        assert_eq!(result.upload_fee, u32::MAX);
+        assert_eq!(result.create_fee, u32::MAX);
+        assert_eq!(result.total_fee, 8589934590);
+        assert!(result.total_fee > u32::MAX as u64);
+        assert_eq!(
+            result.total_fee,
+            result.upload_fee as u64 + result.create_fee as u64
+        );
     }
 
     #[test]
@@ -584,7 +766,7 @@ mod tests {
     }
 
     #[test]
-    fn test_format_pretty_includes_salt() {
+    fn test_format_pretty_includes_salt_and_fees() {
         let result = DeployResult {
             wasm_hash: "abc".into(),
             contract_id: "C123".into(),
@@ -592,14 +774,20 @@ mod tests {
             create_hash: "c1".into(),
             status: "SUCCESS".into(),
             salt: "00112233445566778899aabbccddeeff00112233".into(),
+            upload_fee: 150,
+            create_fee: 250,
+            total_fee: 400,
         };
         let pretty = format_pretty(&result);
         assert!(pretty.contains("Salt:"));
         assert!(pretty.contains("00112233445566778899aabbccddeeff00112233"));
+        assert!(pretty.contains("Upload Fee: 150"));
+        assert!(pretty.contains("Create Fee: 250"));
+        assert!(pretty.contains("Total Fee: 400"));
     }
 
     #[test]
-    fn test_format_json_includes_salt() {
+    fn test_format_json_includes_salt_and_fees() {
         let result = DeployResult {
             wasm_hash: "abc".into(),
             contract_id: "C123".into(),
@@ -607,9 +795,75 @@ mod tests {
             create_hash: "c1".into(),
             status: "SUCCESS".into(),
             salt: "00112233445566778899aabbccddeeff00112233".into(),
+            upload_fee: 150,
+            create_fee: 250,
+            total_fee: 400,
         };
         let json = format_json(&result);
         assert!(json.contains("\"salt\""));
         assert!(json.contains("00112233445566778899aabbccddeeff00112233"));
+        assert!(json.contains("\"uploadFee\":150"));
+        assert!(json.contains("\"createFee\":250"));
+        assert!(json.contains("\"totalFee\":400"));
+    }
+
+    #[test]
+    fn test_deploy_outcome_display_includes_fees() {
+        let result = DeployResult {
+            wasm_hash: "abc".into(),
+            contract_id: "C123".into(),
+            upload_hash: "u1".into(),
+            create_hash: "c1".into(),
+            status: "SUCCESS".into(),
+            salt: "00112233445566778899aabbccddeeff00112233".into(),
+            upload_fee: 150,
+            create_fee: 250,
+            total_fee: 400,
+        };
+        let outcome = DeployOutcome::Success(result);
+        let display = format!("{}", outcome);
+        assert!(display.contains("Upload Fee: 150"));
+        assert!(display.contains("Create Fee: 250"));
+        assert!(display.contains("Total Fee: 400"));
+    }
+
+    #[test]
+    fn test_create_contract_args_constructor_args() {
+        let args = CreateContractArgs {
+            wasm_hash: [1u8; 32],
+            deployer_address: "GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF".into(),
+            salt: [2u8; 20],
+            constructor_args: vec!["AAAAAQAAAAoAAAAA".into()],
+        };
+        assert_eq!(args.constructor_args.len(), 1);
+        assert_eq!(args.constructor_args[0], "AAAAAQAAAAoAAAAA");
+
+        let default_args = CreateContractArgs::default();
+        assert!(default_args.constructor_args.is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_deploy_contract_with_invalid_constructor_args_fails_before_upload() {
+        let client = SorobanRpcClient::new("http://127.0.0.1:9999");
+        let signer = Ed25519Signer::from_seed(&[1u8; 32]);
+        let wasm = b"\0asm\x01\0\0\0";
+        let res = deploy_contract_with_args(
+            &client,
+            wasm,
+            "GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF",
+            &signer,
+            Network::Testnet,
+            None,
+            vec!["not_valid_base64_scval".into()],
+        )
+        .await;
+
+        let err = res.unwrap_err();
+        match err {
+            RpcError::Rpc(msg) => {
+                assert!(msg.contains("Invalid constructor argument"));
+            }
+            other => panic!("Unexpected error variant: {other:?}"),
+        }
     }
 }

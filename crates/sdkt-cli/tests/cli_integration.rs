@@ -673,7 +673,9 @@ fn make_local_git_repo() -> std::path::PathBuf {
             String::from_utf8_lossy(&o.stderr)
         );
     };
-    run(&["init", "-q"]);
+    // Pass --template="" to skip copying hook templates, which can fail on
+    // macOS/Homebrew git with "File exists" when the temp dir is reused.
+    run(&["init", "-q", "--template="]);
     run(&["config", "user.email", "t@sdkt.local"]);
     run(&["config", "user.name", "sdkt test"]);
     let f = dir.join("lib.rs");
