@@ -1,10 +1,16 @@
 use assert_cmd::Command;
+use base64::Engine as _;
 use predicates::prelude::*;
+use serde_json::json;
 use std::io::Read;
 use std::io::Write;
 use std::net::TcpListener;
 use std::thread;
 use std::time::Duration;
+use stellar_xdr::{
+    Limits, Operation, OperationResult, TransactionEnvelope, TransactionResult,
+    TransactionResultExt, TransactionResultResult, TransactionV1Envelope, WriteXdr,
+};
 use tempfile::tempdir;
 
 fn sdkt_tx_isolated(dir: &std::path::Path) -> Command {
@@ -56,6 +62,50 @@ fn mock_simulate_server(scval_b64: &str) -> String {
     url
 }
 
+fn mock_inspect_server() -> String {
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let url = format!("http://{}", listener.local_addr().unwrap());
+    let result = TransactionResult {
+        fee_charged: 12_500,
+        result: TransactionResultResult::TxSuccess(
+            vec![OperationResult::default(), OperationResult::default()]
+                .try_into()
+                .unwrap(),
+        ),
+        ext: TransactionResultExt::V0,
+    };
+    let mut envelope = TransactionV1Envelope::default();
+    envelope.tx.operations = vec![Operation::default(), Operation::default()]
+        .try_into()
+        .unwrap();
+    let encode = |value: Vec<u8>| base64::engine::general_purpose::STANDARD.encode(value);
+    let body = json!({
+        "jsonrpc": "2.0",
+        "id": 1,
+        "result": {
+            "status": "SUCCESS",
+            "ledger": 12_345,
+            "resultXdr": encode(result.to_xdr(Limits::none()).unwrap()),
+            "envelopeXdr": encode(TransactionEnvelope::Tx(envelope).to_xdr(Limits::none()).unwrap()),
+        }
+    })
+    .to_string();
+
+    thread::spawn(move || {
+        let (mut sock, _) = listener.accept().unwrap();
+        let mut request = [0u8; 8192];
+        let _ = sock.read(&mut request);
+        write!(
+            sock,
+            "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+            body.len(),
+            body
+        )
+        .unwrap();
+    });
+    url
+}
+
 /// Path to a real contractspecv0 WASM fixture with functions that return u32.
 static WASM_WITH_RETURN: &str = concat!(
     env!("CARGO_MANIFEST_DIR"),
@@ -90,6 +140,50 @@ fn test_tx_inspect_invalid_format() {
     cmd.assert()
         .failure()
         .stderr(predicate::str::contains("Invalid format"));
+}
+
+#[test]
+fn test_tx_inspect_pretty_reports_settled_fee_and_operations() {
+    let dir = tempdir().unwrap();
+    let rpc_url = mock_inspect_server();
+    add_mock_tx_profile(dir.path(), &rpc_url);
+
+    sdkt_tx_isolated(dir.path())
+        .args(["tx", "--network-profile", "mocknet", "inspect", "abc"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("Status: SUCCESS"))
+        .stdout(predicate::str::contains("Fee: 12500 stroops"))
+        .stdout(predicate::str::contains("Operations: 2"));
+}
+
+#[test]
+fn test_tx_inspect_json_reports_settled_fee_and_operations() {
+    let dir = tempdir().unwrap();
+    let rpc_url = mock_inspect_server();
+    add_mock_tx_profile(dir.path(), &rpc_url);
+
+    let output = sdkt_tx_isolated(dir.path())
+        .args([
+            "tx",
+            "--network-profile",
+            "mocknet",
+            "inspect",
+            "abc",
+            "--format",
+            "json",
+        ])
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let parsed: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(parsed["fee_charged"], 12_500);
+    assert_eq!(parsed["operation_count"], 2);
+    assert_eq!(parsed["ledger"], 12_345);
 }
 
 #[test]

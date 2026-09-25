@@ -64,9 +64,8 @@ pub struct PluginMeta {
 }
 
 impl PluginMeta {
-    /// Validate the metadata invariants that do not require touching the
-    /// artifact: id non-empty, kind recognized, abi_major matches the host.
-    pub fn validate(&self) -> Result<(), StoreError> {
+    /// Validate structural metadata invariants without checking ABI compatibility against the current host.
+    pub fn validate_basic(&self) -> Result<(), StoreError> {
         if self.id.trim().is_empty() {
             return Err(StoreError::InvalidMetadata("id must not be empty".into()));
         }
@@ -94,6 +93,13 @@ impl PluginMeta {
                 "artifact uses a reserved bundle path".into(),
             ));
         }
+        Ok(())
+    }
+
+    /// Validate the metadata invariants that do not require touching the
+    /// artifact: id non-empty, kind recognized, abi_major matches the host.
+    pub fn validate(&self) -> Result<(), StoreError> {
+        self.validate_basic()?;
         if self.abi_major != SDKT_AUDIT_ABI_MAJOR {
             return Err(StoreError::AbiMismatch {
                 plugin_major: self.abi_major,
@@ -402,11 +408,17 @@ fn sanitize_id(id: &str) -> String {
 }
 
 /// Read and validate a plugin's metadata from its directory.
+///
+/// Validates basic structural invariants without rejecting incompatible
+/// ABI major versions so callers can inspect `meta.abi_major` and produce
+/// appropriate compatibility warnings rather than dropping the plugin.
 pub fn read_meta(root: &Path, id: &str) -> Result<PluginMeta, StoreError> {
     let toml_path = plugin_dir(root, id).join("plugin.toml");
     let raw =
         std::fs::read_to_string(&toml_path).map_err(|_| StoreError::NotInstalled(id.into()))?;
-    parse_meta(&raw)
+    let meta: PluginMeta = toml::from_str(&raw).map_err(|e| StoreError::Toml(e.to_string()))?;
+    meta.validate_basic()?;
+    Ok(meta)
 }
 
 /// Parse `plugin.toml` content (exposed for unit testing).
@@ -439,7 +451,34 @@ pub fn list_in(root: &Path) -> Vec<PluginMeta> {
             out.push(meta);
         }
     }
-    out.sort_by(|a, b| a.id.cmp(&b.id));
+    // Order on every field, not just `id`: `install --id` stores a plugin under
+    // another directory without rewriting its manifest, so two entries can share
+    // an `id`, and `read_dir` order is unspecified. Entries that still compare
+    // equal are identical, so the listing is deterministic either way.
+    out.sort_by(|a, b| {
+        (
+            &a.id,
+            &a.version,
+            &a.name,
+            &a.author,
+            &a.description,
+            &a.kind,
+            &a.artifact,
+            a.abi_major,
+            a.abi_minor,
+        )
+            .cmp(&(
+                &b.id,
+                &b.version,
+                &b.name,
+                &b.author,
+                &b.description,
+                &b.kind,
+                &b.artifact,
+                b.abi_major,
+                b.abi_minor,
+            ))
+    });
     out
 }
 
@@ -539,11 +578,29 @@ pub fn install(local_source: &Path, opts: &InstallOpts) -> Result<PluginMeta, St
             .map_err(|e| StoreError::DryRunLoad(e.to_string()))?;
     }
 
+    // Capture the previously-managed artifact (if any) before committing, so a
+    // rename of the artifact filename during an update does not orphan the old
+    // file. Only the artifact referenced by this plugin's own metadata is ever
+    // considered; unrelated files are left untouched.
+    let previous_artifact = read_meta(&root, &id).ok().map(|old| old.artifact);
+
     // Commit: create dir, copy artifact + manifest.
     std::fs::create_dir_all(&dir)?;
     let dest_artifact = dir.join(&meta.artifact);
     std::fs::copy(local_source, &dest_artifact)?;
     std::fs::write(dir.join("plugin.toml"), raw)?;
+
+    // Remove the stale artifact only after the new one is committed, and only
+    // when the filename actually changed. Guard against path traversal so we
+    // never delete outside the plugin directory.
+    if let Some(old_artifact) = previous_artifact {
+        if old_artifact != meta.artifact {
+            let old_path = dir.join(&old_artifact);
+            if old_path.is_file() && is_safe_relative_path(Path::new(&old_artifact)) {
+                std::fs::remove_file(&old_path)?;
+            }
+        }
+    }
     Ok(meta)
 }
 
@@ -572,6 +629,47 @@ pub fn update(id: &str, local_source: &Path) -> Result<PluginMeta, StoreError> {
         force: true,
     };
     install(local_source, &opts)
+}
+
+#[cfg(test)]
+mod list_tests {
+    use super::*;
+    use std::fs;
+
+    fn write_entry(root: &Path, dir: &str, id: &str, version: &str) {
+        let d = root.join(dir);
+        fs::create_dir_all(&d).unwrap();
+        fs::write(
+            d.join("plugin.toml"),
+            format!(
+                "id = \"{id}\"\nname = \"Rule\"\nversion = \"{version}\"\nauthor = \"Test\"\n\
+                 description = \"d\"\nkind = \"wasm\"\nartifact = \"rule.wasm\"\n\
+                 abi_major = {SDKT_AUDIT_ABI_MAJOR}\nabi_minor = 0\n"
+            ),
+        )
+        .unwrap();
+    }
+
+    #[test]
+    fn list_is_deterministic_when_ids_collide() {
+        let root = tempfile::tempdir().unwrap();
+        // `install --id` keeps the manifest id, so two directories can hold the
+        // same id. The directory names run against version order, so directory
+        // order alone cannot produce the expected listing.
+        write_entry(root.path(), "a-alias", "same", "2.0.0");
+        write_entry(root.path(), "b-alias", "same", "1.0.0");
+        write_entry(root.path(), "0-first", "zeta", "1.0.0");
+
+        let listed: Vec<(String, String)> = list_in(root.path())
+            .into_iter()
+            .map(|m| (m.id, m.version))
+            .collect();
+        assert_eq!(
+            listed,
+            [("same", "1.0.0"), ("same", "2.0.0"), ("zeta", "1.0.0")]
+                .map(|(i, v)| (i.to_string(), v.to_string()))
+        );
+    }
 }
 
 #[cfg(test)]

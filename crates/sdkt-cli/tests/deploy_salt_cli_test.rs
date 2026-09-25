@@ -14,6 +14,27 @@ fn sdkt(dir: &std::path::Path) -> Command {
 }
 
 #[test]
+fn cli_deploy_fails_on_missing_wasm_file() {
+    let dir = tempfile::tempdir().unwrap();
+    let missing_wasm = dir.path().join("missing.wasm");
+
+    sdkt(dir.path())
+        .env("SDKT_IDENTITY_DIR", dir.path().join("identity"))
+        .args([
+            "deploy",
+            "--wasm",
+            missing_wasm.to_str().unwrap(),
+            "--identity",
+            "alice",
+        ])
+        .assert()
+        .code(1)
+        .stderr(predicate::str::contains("Error reading WASM file"))
+        .stderr(predicate::str::contains("missing.wasm"))
+        .stderr(predicate::str::contains("WASM bytes are empty").not());
+}
+
+#[test]
 fn cli_deploy_rejects_invalid_salt_non_hex() {
     let dir = std::env::temp_dir().join(format!(
         "sdkt-salt-{}-nonhex",

@@ -27,12 +27,14 @@ pub mod builder;
 pub mod sign;
 pub mod typed;
 pub use builder::{
-    build_create_contract_tx, build_create_contract_tx_with_data, build_extend_footprint_tx,
-    build_extend_footprint_tx_with_data, build_invoke_transaction,
+    build_create_contract_tx, build_create_contract_tx_with_data,
+    build_create_contract_tx_with_data_and_auth, build_create_contract_v2_tx,
+    build_create_contract_v2_tx_with_data, build_create_contract_v2_tx_with_data_and_auth,
+    build_extend_footprint_tx, build_extend_footprint_tx_with_data, build_invoke_transaction,
     build_invoke_transaction_with_data, build_upload_wasm_tx, build_upload_wasm_tx_with_data,
     decode_account_id, decode_contract_id, decode_ledger_key, derive_contract_id,
-    merge_footprint_keys, parse_soroban_transaction_data, CreateContractParams,
-    ExtendFootprintParams, InvokeTransactionParams, UploadWasmParams,
+    merge_footprint_keys, parse_scval_args, parse_soroban_transaction_data, CreateContractParams,
+    CreateContractV2Params, ExtendFootprintParams, InvokeTransactionParams, UploadWasmParams,
 };
 pub use sign::{
     sign_envelope_with, sign_transaction, verify_signature, Ed25519Signer, Network, Signer,
@@ -50,9 +52,10 @@ use serde_json::Value;
 pub use sdkt_core::OutputFormat;
 
 use stellar_xdr::{
-    ContractEvent, ContractExecutable, ContractId, Hash, LedgerEntry, LedgerEntryData, LedgerKey,
-    LedgerKeyContractCode, LedgerKeyContractData, Limited, Limits, ReadXdr, ScAddress, ScVal,
-    TransactionEnvelope, TransactionMeta, TransactionResult, WriteXdr,
+    ContractDataDurability, ContractEvent, ContractExecutable, ContractId, Hash, LedgerEntry,
+    LedgerEntryData, LedgerKey, LedgerKeyContractCode, LedgerKeyContractData, Limited, Limits,
+    ReadXdr, ScAddress, ScSymbol, ScVal, ScVec, TransactionEnvelope, TransactionMeta,
+    TransactionResult, VecM, WriteXdr,
 };
 use thiserror::Error;
 
@@ -83,6 +86,73 @@ pub enum LedgerKeyParams {
     ContractData(String),
     /// A contract's WASM code key. Takes the WASM hash as a hex string.
     ContractCode(String),
+    /// An arbitrary contract-data entry: the contract (`C...` StrKey or 32-byte
+    /// hex), the entry's key `ScVal`, and its durability. This is the general
+    /// form behind typed storage-key construction (e.g. a persistent map entry
+    /// keyed by `ScVec[symbol, address]`).
+    ContractDataEntry {
+        contract: String,
+        key: ScVal,
+        durability: ContractDataDurability,
+    },
+}
+
+/// Parse a contract identifier supplied as either a `C...` StrKey or a 32-byte
+/// hex string into its raw 32-byte contract ID.
+fn parse_contract_id_bytes(contract: &str) -> Result<[u8; 32], DecodeError> {
+    let trimmed = contract.trim();
+    if let Ok(stellar_strkey::Strkey::Contract(c)) = stellar_strkey::Strkey::from_string(trimmed) {
+        return Ok(c.0);
+    }
+    let bytes = hex::decode(trimmed).map_err(DecodeError::Hex)?;
+    if bytes.len() != 32 {
+        return Err(DecodeError::Extraction(
+            "contract must be a C... StrKey or 32-byte hex".to_string(),
+        ));
+    }
+    let mut id = [0u8; 32];
+    id.copy_from_slice(&bytes);
+    Ok(id)
+}
+
+/// Build a Soroban "enum/map"-style storage key `ScVal`: an `ScVec` whose first
+/// element is `symbol` and whose remaining elements are the decoded typed key
+/// arguments (each supplied as a Base64 `ScVal`).
+///
+/// This mirrors how the Soroban SDK encodes `DataKey`-style enum keys, e.g.
+/// `DataKey::Balance(addr)` → `ScVec[symbol("Balance"), address]`, so it also
+/// covers the single-symbol case (`ScVec[symbol("...")]`) when no args are given.
+pub fn build_map_key(symbol: &str, arg_scvals_b64: &[String]) -> Result<ScVal, DecodeError> {
+    // Soroban `Symbol`s are restricted to <=32 chars of [a-zA-Z0-9_]. `ScSymbol`
+    // itself only enforces the length bound, so validate the charset here — an
+    // out-of-charset symbol would silently build a key no contract ever writes.
+    if symbol.is_empty()
+        || symbol.len() > 32
+        || !symbol
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || b == b'_')
+    {
+        return Err(DecodeError::Extraction(format!(
+            "invalid symbol {symbol:?}: must be 1..=32 chars of [a-zA-Z0-9_]"
+        )));
+    }
+    let sym: ScSymbol = symbol.try_into().map_err(|_| {
+        DecodeError::Extraction(format!(
+            "invalid symbol {symbol:?}: must be <=32 chars of [a-zA-Z0-9_]"
+        ))
+    })?;
+    let mut elems: Vec<ScVal> = Vec::with_capacity(1 + arg_scvals_b64.len());
+    elems.push(ScVal::Symbol(sym));
+    for b64 in arg_scvals_b64 {
+        let scval = scval_from_base64(b64).ok_or_else(|| {
+            DecodeError::Extraction(format!("invalid Base64 ScVal key argument: {b64}"))
+        })?;
+        elems.push(scval);
+    }
+    let vec: VecM<ScVal> = elems
+        .try_into()
+        .map_err(|_| DecodeError::Extraction("too many key arguments".to_string()))?;
+    Ok(ScVal::Vec(Some(ScVec(vec))))
 }
 
 /// Encodes `LedgerKeyParams` into a Base64 XDR `LedgerKey`.
@@ -116,6 +186,18 @@ pub fn encode_ledger_key(params: &LedgerKeyParams) -> Result<String, DecodeError
 
             LedgerKey::ContractCode(LedgerKeyContractCode {
                 hash: Hash(wasm_hash),
+            })
+        }
+        LedgerKeyParams::ContractDataEntry {
+            contract,
+            key,
+            durability,
+        } => {
+            let contract_id = parse_contract_id_bytes(contract)?;
+            LedgerKey::ContractData(LedgerKeyContractData {
+                contract: ScAddress::Contract(ContractId(Hash(contract_id))),
+                key: key.clone(),
+                durability: *durability,
             })
         }
     };
@@ -494,6 +576,108 @@ mod tests {
         let pretty = decode(payload, Some("scval"), OutputFormat::Pretty).unwrap();
         assert!(!compact.contains('\n'));
         assert!(pretty.contains('\n'));
+    }
+
+    #[test]
+    fn test_build_map_key_symbol_and_u32() {
+        let u32_b64 = scval_to_base64(&ScVal::U32(100)).unwrap();
+        let key = build_map_key("balances", &[u32_b64]).unwrap();
+        match &key {
+            ScVal::Vec(Some(v)) => {
+                assert_eq!(v.len(), 2);
+                assert_eq!(v[0], ScVal::Symbol("balances".try_into().unwrap()));
+                assert_eq!(v[1], ScVal::U32(100));
+            }
+            other => panic!("expected ScVec, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn test_build_map_key_symbol_only_and_composite() {
+        // Single symbol -> ScVec[symbol]
+        let single = build_map_key("admin", &[]).unwrap();
+        match &single {
+            ScVal::Vec(Some(v)) => {
+                assert_eq!(v.len(), 1);
+                assert_eq!(v[0], ScVal::Symbol("admin".try_into().unwrap()));
+            }
+            other => panic!("expected ScVec, got {other:?}"),
+        }
+        // Composite symbol + two typed args
+        let a = scval_to_base64(&ScVal::U32(1)).unwrap();
+        let b = scval_to_base64(&ScVal::U32(2)).unwrap();
+        let composite = build_map_key("pair", &[a, b]).unwrap();
+        match &composite {
+            ScVal::Vec(Some(v)) => assert_eq!(v.len(), 3),
+            other => panic!("expected ScVec, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn test_encode_contract_data_entry_durability_changes_key() {
+        let contract = "0000000000000000000000000000000000000000000000000000000000000000";
+        let key = build_map_key("k", &[scval_to_base64(&ScVal::U32(7)).unwrap()]).unwrap();
+        let persistent = encode_ledger_key(&LedgerKeyParams::ContractDataEntry {
+            contract: contract.to_string(),
+            key: key.clone(),
+            durability: ContractDataDurability::Persistent,
+        })
+        .unwrap();
+        let temporary = encode_ledger_key(&LedgerKeyParams::ContractDataEntry {
+            contract: contract.to_string(),
+            key: key.clone(),
+            durability: ContractDataDurability::Temporary,
+        })
+        .unwrap();
+        assert_ne!(
+            persistent, temporary,
+            "durability must produce a different LedgerKey"
+        );
+
+        let decoded = decode_ledger_key(&persistent).unwrap();
+        match decoded {
+            LedgerKey::ContractData(d) => {
+                assert_eq!(d.durability, ContractDataDurability::Persistent);
+                assert_eq!(d.key, key);
+            }
+            other => panic!("expected ContractData, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn test_encode_contract_data_entry_accepts_strkey_and_hex() {
+        let id = [3u8; 32];
+        let hex_id = hex::encode(id);
+        let strkey = format!("{}", stellar_strkey::Contract(id));
+        let from_hex = encode_ledger_key(&LedgerKeyParams::ContractDataEntry {
+            contract: hex_id,
+            key: ScVal::LedgerKeyContractInstance,
+            durability: ContractDataDurability::Persistent,
+        })
+        .unwrap();
+        let from_strkey = encode_ledger_key(&LedgerKeyParams::ContractDataEntry {
+            contract: strkey,
+            key: ScVal::LedgerKeyContractInstance,
+            durability: ContractDataDurability::Persistent,
+        })
+        .unwrap();
+        assert_eq!(from_hex, from_strkey);
+    }
+
+    #[test]
+    fn test_build_map_key_rejects_invalid_symbol_and_arg() {
+        assert!(build_map_key("has spaces", &[]).is_err());
+        assert!(build_map_key("k", &["!!!not-base64!!!".to_string()]).is_err());
+    }
+
+    #[test]
+    fn test_encode_contract_data_entry_rejects_bad_contract() {
+        let err = encode_ledger_key(&LedgerKeyParams::ContractDataEntry {
+            contract: "not-a-contract".to_string(),
+            key: ScVal::LedgerKeyContractInstance,
+            durability: ContractDataDurability::Persistent,
+        });
+        assert!(err.is_err());
     }
 
     #[test]

@@ -113,8 +113,8 @@ sdkt storage analyze <CONTRACT_ID>
 sdkt storage read --contract <CONTRACT_ID> --key-xdr <BASE64_LEDGER_KEY>
 
 # Extend TTL of the contract instance (and optional extra keys)
-# --ledgers is an ABSOLUTE target ledger (extend_to), not a relative delta.
-# Example: current ledger + 17280 ≈ 17280 additional ledgers (~1 day at 5s/ledger).
+# --ledgers is relative: entries will live at least N ledgers past the current ledger.
+# Example: 17280 ledgers ≈ 1 day at 5s/ledger.
 sdkt storage extend --contract <CONTRACT_ID> --ledgers 17280 --identity my-deployer
 ```
 
@@ -269,11 +269,15 @@ sdkt call C... balance --format json --network-profile testnet
 
 # ABI-aware result decoding (requires contractspecv0 WASM)
 sdkt call C... balance --abi /path/to/contract.wasm --format json --network-profile testnet
+
+# Same, but the ABI comes from the deployed contract (no local WASM needed)
+sdkt call C... balance --abi-contract C... --format json --network-profile testnet
 ```
 
 - `--args` accepts typed values: `u32:N`, `u64:N`, `i32:N`, `i64:N`, `bool:true|false`, `string:text`, `address:G...`
 - `--abi <wasm>` enables ABI-aware result decoding using the contract spec from a local WASM file. Without it, the raw base64 XDR result is shown.
-- When `--abi` is supplied and the function is found in the spec, the decoded human-readable label appears in the output. JSON includes both raw and decoded fields.
+- `--abi-contract <id>` resolves the ABI from the deployed contract over RPC instead (`inspect_contract` → `get_wasm_bytecode` → spec parse) — no local artifact needed. Mutually exclusive with `--abi`.
+- When an ABI is supplied and the function is found in the spec, the decoded human-readable label appears in the output. JSON includes both raw and decoded fields.
 - If the function is not in the ABI, the raw result is preserved and a warning is emitted to stderr.
 - If `--abi` WASM is invalid/unparseable, the command fails with a clear error.
 - No identity required — call is read-only via `simulateTransaction`
@@ -290,6 +294,9 @@ sdkt invoke C... increment --args u32:1 --identity alice --network-profile testn
 
 # JSON output for scripting
 sdkt invoke C... set_admin --args address:G... --identity alice --format json --network-profile testnet
+
+# Submit without waiting for settlement (prints the hash with status PENDING)
+sdkt invoke C... increment --args u32:1 --identity alice --no-wait --network-profile testnet
 ```
 
 - `--args` uses the same `TYPE:VALUE` syntax as `call`, but is strict: an
@@ -300,6 +307,10 @@ sdkt invoke C... set_admin --args address:G... --identity alice --format json --
   inclusion fee); the footprint and auth entries come from the same simulation.
 - Output shows the transaction hash, final status, fee, and result XDR.
   Exit code is non-zero when the transaction fails or is rejected.
+- By default, `invoke` polls until the transaction settles. Use `--no-wait` to
+  return immediately after successful submission with the transaction hash and
+  `PENDING` status; this mode exits successfully and does not call
+  `getTransaction`.
 - Relation to `tx build/sign/submit`: `invoke` is the one-command equivalent of
   `tx build` (with a real sequence + simulated fees) → `tx sign` →
   `tx submit --wait`. Use the `tx` subcommands when you need to inspect or

@@ -111,11 +111,19 @@ impl IdentityStore {
     }
 
     /// Delete an identity.
+    ///
+    /// Returns [`StorageError::NotFound`] when no identity with that name
+    /// exists, matching `NetworkStore::remove`, so a mistyped name is reported
+    /// rather than treated as a successful removal.
     pub fn remove(&self, name: &str) -> Result<(), StorageError> {
         let path = self.dir.join(format!("{}.toml", name));
-        if path.exists() {
-            fs::remove_file(path).map_err(StorageError::Io)?;
+        if !path.exists() {
+            return Err(StorageError::NotFound(format!(
+                "Identity '{}' not found",
+                name
+            )));
         }
+        fs::remove_file(path).map_err(StorageError::Io)?;
 
         // If it was the default identity, clear the default symlink.
         let default_path = self.dir.join("default");
@@ -355,6 +363,30 @@ mod tests {
         let list2 = store.list().unwrap();
         assert_eq!(list2.len(), 1);
         assert_eq!(list2[0].name, "bob");
+    }
+
+    #[test]
+    fn test_remove_missing_identity_errors() {
+        let dir = tempdir().unwrap();
+        let store = IdentityStore::with_dir(dir.path()).unwrap();
+
+        match store.remove("ghost") {
+            Err(StorageError::NotFound(msg)) => assert_eq!(msg, "Identity 'ghost' not found"),
+            other => panic!("expected NotFound, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn test_remove_twice_errors_the_second_time() {
+        let dir = tempdir().unwrap();
+        let store = IdentityStore::with_dir(dir.path()).unwrap();
+        store.generate("alice").unwrap();
+
+        store.remove("alice").unwrap();
+        assert!(matches!(
+            store.remove("alice"),
+            Err(StorageError::NotFound(_))
+        ));
     }
 
     #[test]
