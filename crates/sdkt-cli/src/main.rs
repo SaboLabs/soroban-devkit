@@ -1544,10 +1544,18 @@ fn parse_typed_args(args: &[String], strict: bool) -> Result<Vec<String>, String
 
 fn render_contract_interface(spec: &sdkt_wasm::ContractSpec, markdown: bool) -> String {
     let mut out = String::new();
-    let heading = if markdown { "# Contract Interface" } else { "Contract Interface" };
+    let heading = if markdown {
+        "# Contract Interface"
+    } else {
+        "Contract Interface"
+    };
     out.push_str(heading);
     out.push_str("\n\n");
-    out.push_str(if markdown { "## Functions\n\n" } else { "Functions:\n" });
+    out.push_str(if markdown {
+        "## Functions\n\n"
+    } else {
+        "Functions:\n"
+    });
     for function in &spec.functions {
         let params = function
             .parameters
@@ -1555,22 +1563,68 @@ fn render_contract_interface(spec: &sdkt_wasm::ContractSpec, markdown: bool) -> 
             .map(|p| format!("{}: {}", p.name, p.type_.name))
             .collect::<Vec<_>>()
             .join(", ");
-        let outputs = function.outputs.iter().map(|t| t.name.as_str()).collect::<Vec<_>>().join(", ");
-        let signature = format!("{}({}) -> {}", function.name, params, if outputs.is_empty() { "()" } else { &outputs });
-        if markdown { out.push_str(&format!("- `{signature}`\n")); }
-        else { out.push_str(&format!("  {}\n", signature)); }
-        if !function.doc.is_empty() { out.push_str(&format!("  {}\n", function.doc)); }
+        let outputs = function
+            .outputs
+            .iter()
+            .map(|t| t.name.as_str())
+            .collect::<Vec<_>>()
+            .join(", ");
+        let signature = format!(
+            "{}({}) -> {}",
+            function.name,
+            params,
+            if outputs.is_empty() { "()" } else { &outputs }
+        );
+        if markdown {
+            out.push_str(&format!("- `{signature}`\n"));
+        } else {
+            out.push_str(&format!("  {}\n", signature));
+        }
+        if !function.doc.is_empty() {
+            out.push_str(&format!("  {}\n", function.doc));
+        }
     }
     if !spec.events.is_empty() {
-        out.push_str(if markdown { "\n## Events\n\n" } else { "\nEvents:\n" });
-        for event in &spec.events { out.push_str(&format!("{}{}\n", if markdown { "- " } else { "  " }, event.name)); }
+        out.push_str(if markdown {
+            "\n## Events\n\n"
+        } else {
+            "\nEvents:\n"
+        });
+        for event in &spec.events {
+            out.push_str(&format!(
+                "{}{}\n",
+                if markdown { "- " } else { "  " },
+                event.name
+            ));
+        }
     }
     if !spec.custom_types.is_empty() {
-        out.push_str(if markdown { "\n## Types\n\n" } else { "\nTypes:\n" });
+        out.push_str(if markdown {
+            "\n## Types\n\n"
+        } else {
+            "\nTypes:\n"
+        });
         for ty in &spec.custom_types {
-            let members = ty.members.iter().map(|m| m.name.as_str()).collect::<Vec<_>>().join(", ");
-            out.push_str(&format!("{}{}{}{}\n", if markdown { "- **" } else { "  " }, ty.name, if markdown { "**" } else { "" }, if members.is_empty() { format!(" ({})", ty.kind) } else { format!(" ({}) {{{}}}", ty.kind, members) }));
-            if !ty.doc.is_empty() { out.push_str(&format!("  {}\n", ty.doc)); }
+            let members = ty
+                .members
+                .iter()
+                .map(|m| m.name.as_str())
+                .collect::<Vec<_>>()
+                .join(", ");
+            out.push_str(&format!(
+                "{}{}{}{}\n",
+                if markdown { "- **" } else { "  " },
+                ty.name,
+                if markdown { "**" } else { "" },
+                if members.is_empty() {
+                    format!(" ({})", ty.kind)
+                } else {
+                    format!(" ({}) {{{}}}", ty.kind, members)
+                }
+            ));
+            if !ty.doc.is_empty() {
+                out.push_str(&format!("  {}\n", ty.doc));
+            }
         }
     }
     out.trim_end().to_string()
@@ -2566,7 +2620,11 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
                 return Err("specify only one of --abi or --abi-contract".into());
             }
             let markdown = format.eq_ignore_ascii_case("markdown");
-            let fmt = if markdown { OutputFormat::Pretty } else { parse_format_str(&format) };
+            let fmt = if markdown {
+                OutputFormat::Pretty
+            } else {
+                parse_format_str(&format)
+            };
             let client = resolve_rpc_client(
                 net.rpc_url.clone(),
                 net.network_passphrase.clone(),
@@ -2588,8 +2646,10 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
                 let deployed = get_wasm_bytecode(&client, &inspection.wasm_hash)
                     .await
                     .map_err(|e| format!("Failed to fetch ABI contract {}: {}", id, e))?;
-                Some(parse_contract_spec(&deployed)
-                    .map_err(|e| format!("Failed to parse ABI: {}", e))?)
+                Some(
+                    parse_contract_spec(&deployed)
+                        .map_err(|e| format!("Failed to parse ABI: {}", e))?,
+                )
             } else {
                 None
             };
@@ -2610,6 +2670,16 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
                             println!("{}", json_str);
                         }
                     } else {
+                        if interface {
+                            if let Some(spec) = contract_spec.as_ref() {
+                                println!("{}", render_contract_interface(spec, markdown));
+                                return Ok(());
+                            }
+                            return Err(
+                                "--interface requires --abi or --abi-contract so the contract spec can be rendered"
+                                    .into(),
+                            );
+                        }
                         println!("Contract Inspection");
                         println!("Contract ID: {}", inspection.contract_id);
                         println!("WASM Hash: {}", inspection.wasm_hash);
