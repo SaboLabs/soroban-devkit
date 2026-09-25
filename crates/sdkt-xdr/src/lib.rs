@@ -42,7 +42,7 @@ pub use sign::{
 };
 pub use typed::{
     decode_scvals, decode_scvals_ref, encode_scvals, scval_from_base64, scval_to_base64, Address,
-    FromScVal, IntoScVal, ScValError,
+    json_args_to_base64, json_to_scval, FromScVal, IntoScVal, ScValError,
 };
 
 use base64::engine::general_purpose::STANDARD;

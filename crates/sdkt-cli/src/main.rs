@@ -569,6 +569,9 @@ enum Commands {
         /// Typed arguments (e.g. u32:100, address:G..., string:hello, bool:true)
         #[arg(short, long, value_name = "TYPE:VALUE")]
         args: Vec<String>,
+        /// Composite arguments as a JSON array; appended after --args values.
+        #[arg(long, value_name = "JSON")]
+        args_json: Vec<String>,
         #[arg(short, long, default_value = "pretty")]
         format: String,
         /// Path to contract WASM for ABI-aware result decoding
@@ -593,6 +596,9 @@ enum Commands {
         /// Typed arguments (e.g. u32:100, address:G..., string:hello, bool:true)
         #[arg(short, long, value_name = "TYPE:VALUE")]
         args: Vec<String>,
+        /// Composite arguments as a JSON array; appended after --args values.
+        #[arg(long, value_name = "JSON")]
+        args_json: Vec<String>,
         /// Identity name whose account signs and pays for the invocation
         #[arg(short = 'I', long, default_value = "default")]
         identity: String,
@@ -4001,12 +4007,19 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
             sdkt_audit_example_rule::register();
 
             let disabled_refs: Vec<&str> = disable.iter().map(String::as_str).collect();
-            match sdkt_audit::audit_source_with(&src, &disabled_refs) {
+            let audit_result = match audit_spec.as_ref() {
+                Some(spec) => sdkt_audit::audit_source_with_spec(&src, spec, &disabled_refs),
+                None => sdkt_audit::audit_source_with(&src, &disabled_refs),
+            };
+            match audit_result {
                 Ok(report) => {
                     if fmt == OutputFormat::Json {
                         println!("{}", serde_json::to_string(&report)?);
                     } else {
                         println!("Static Analysis Report: {}", path);
+                        if audit_spec.is_some() {
+                            println!("  Spec-correlated analysis: enabled");
+                        }
                         if loaded_plugins > 0 {
                             println!(
                                 "Rules loaded: 5 built-in, {} plugin{}",
@@ -4755,6 +4768,7 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
             contract_id,
             function,
             args,
+            args_json,
             format,
             abi,
             abi_contract,
@@ -4780,7 +4794,12 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
             )?;
 
             // Parse typed args into base64-encoded ScVal (reuse existing parser)
-            let parsed_args = parse_typed_args(&args, true)?;
+            let mut parsed_args = parse_typed_args(&args, true)?;
+            for json in &args_json {
+                parsed_args.extend(
+                    sdkt_xdr::json_args_to_base64(json).map_err(|e| e.to_string())?,
+                );
+            }
 
             // Read-only: use a zero-fake sequence + arbitrary fee + identity placeholder
             // This tx will NOT be signed or submitted — only simulated.
@@ -4915,6 +4934,7 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
             contract_id,
             function,
             args,
+            args_json,
             identity,
             format,
             no_wait,
@@ -4954,7 +4974,12 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
 
             // 3. Parse typed args (shared parser; strict — typos must not be
             //    silently treated as pre-encoded ScVal on a state-changing path).
-            let parsed_args = parse_typed_args(&args, true)?;
+                let mut parsed_args = parse_typed_args(&args, true)?;
+                for json in &args_json {
+                    parsed_args.extend(
+                        sdkt_xdr::json_args_to_base64(json).map_err(|e| e.to_string())?,
+                    );
+                }
 
             let params = InvokeTransactionParams {
                 source_account: identity_obj.public_key.clone(),
