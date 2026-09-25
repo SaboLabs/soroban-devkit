@@ -373,9 +373,15 @@ enum Commands {
         contract_id: String,
         #[arg(short, long, default_value = "pretty")]
         format: String,
+        /// Render the complete contract interface instead of the name-only ABI view.
+        #[arg(long, default_value_t = false)]
+        interface: bool,
         /// Path to contract WASM for ABI-aware storage inspection
         #[arg(long, value_name = "WASM")]
         abi: Option<String>,
+        /// Use the ABI of a deployed contract fetched from RPC.
+        #[arg(long, value_name = "CONTRACT_ID")]
+        abi_contract: Option<String>,
         #[command(flatten)]
         net: NetworkArgs,
     },
@@ -1536,6 +1542,40 @@ fn parse_typed_args(args: &[String], strict: bool) -> Result<Vec<String>, String
     Ok(parsed)
 }
 
+fn render_contract_interface(spec: &sdkt_wasm::ContractSpec, markdown: bool) -> String {
+    let mut out = String::new();
+    let heading = if markdown { "# Contract Interface" } else { "Contract Interface" };
+    out.push_str(heading);
+    out.push_str("\n\n");
+    out.push_str(if markdown { "## Functions\n\n" } else { "Functions:\n" });
+    for function in &spec.functions {
+        let params = function
+            .parameters
+            .iter()
+            .map(|p| format!("{}: {}", p.name, p.type_.name))
+            .collect::<Vec<_>>()
+            .join(", ");
+        let outputs = function.outputs.iter().map(|t| t.name.as_str()).collect::<Vec<_>>().join(", ");
+        let signature = format!("{}({}) -> {}", function.name, params, if outputs.is_empty() { "()" } else { &outputs });
+        if markdown { out.push_str(&format!("- `{signature}`\n")); }
+        else { out.push_str(&format!("  {}\n", signature)); }
+        if !function.doc.is_empty() { out.push_str(&format!("  {}\n", function.doc)); }
+    }
+    if !spec.events.is_empty() {
+        out.push_str(if markdown { "\n## Events\n\n" } else { "\nEvents:\n" });
+        for event in &spec.events { out.push_str(&format!("{}{}\n", if markdown { "- " } else { "  " }, event.name)); }
+    }
+    if !spec.custom_types.is_empty() {
+        out.push_str(if markdown { "\n## Types\n\n" } else { "\nTypes:\n" });
+        for ty in &spec.custom_types {
+            let members = ty.members.iter().map(|m| m.name.as_str()).collect::<Vec<_>>().join(", ");
+            out.push_str(&format!("{}{}{}{}\n", if markdown { "- **" } else { "  " }, ty.name, if markdown { "**" } else { "" }, if members.is_empty() { format!(" ({})", ty.kind) } else { format!(" ({}) {{{}}}", ty.kind, members) }));
+            if !ty.doc.is_empty() { out.push_str(&format!("  {}\n", ty.doc)); }
+        }
+    }
+    out.trim_end().to_string()
+}
+
 /// Parse a `storage read` durability value into `ContractDataDurability`.
 fn parse_durability(s: &str) -> Result<stellar_xdr::ContractDataDurability, String> {
     match s.trim().to_ascii_lowercase().as_str() {
@@ -2517,10 +2557,16 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
         Commands::Inspect {
             contract_id,
             format,
+            interface,
             abi,
+            abi_contract,
             net,
         } => {
-            let fmt = parse_format_str(&format);
+            if abi.is_some() && abi_contract.is_some() {
+                return Err("specify only one of --abi or --abi-contract".into());
+            }
+            let markdown = format.eq_ignore_ascii_case("markdown");
+            let fmt = if markdown { OutputFormat::Pretty } else { parse_format_str(&format) };
             let client = resolve_rpc_client(
                 net.rpc_url.clone(),
                 net.network_passphrase.clone(),
@@ -2535,6 +2581,15 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
                     parse_contract_spec(&wasm_bytes)
                         .map_err(|e| format!("Failed to parse ABI: {}", e))?,
                 )
+            } else if let Some(id) = abi_contract.as_ref() {
+                let inspection = inspect_contract(&client, id)
+                    .await
+                    .map_err(|e| format!("Failed to inspect ABI contract {}: {}", id, e))?;
+                let deployed = get_wasm_bytecode(&client, &inspection.wasm_hash)
+                    .await
+                    .map_err(|e| format!("Failed to fetch ABI contract {}: {}", id, e))?;
+                Some(parse_contract_spec(&deployed)
+                    .map_err(|e| format!("Failed to parse ABI: {}", e))?)
             } else {
                 None
             };
@@ -2547,11 +2602,7 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
                                 "contract_id": inspection.contract_id,
                                 "wasm_hash": inspection.wasm_hash,
                                 "storage_keys": inspection.storage_keys.len(),
-                                "abi": serde_json::json!({
-                                    "functions": spec.functions.iter().map(|f| f.name.as_str()).collect::<Vec<_>>(),
-                                    "events": spec.events.iter().map(|e| e.name.as_str()).collect::<Vec<_>>(),
-                                    "custom_types": spec.custom_types.iter().map(|t| t.name.as_str()).collect::<Vec<_>>()
-                                })
+                                "abi": spec
                             }))?;
                             println!("{}", json_str);
                         } else {
