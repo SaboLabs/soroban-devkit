@@ -138,3 +138,50 @@ jobs:
 
     - name: Run committed offline example smoke test
       run: bash scripts/smoke_examples.sh
+
+  playground-wasm:
+    name: playground WASM freshness
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v7
+
+    - name: Set up Rust
+      uses: dtolnay/rust-toolchain@1.88.0
+      with:
+        targets: wasm32-unknown-unknown
+
+    - uses: Swatinem/rust-cache@v2
+
+    - name: Install wasm-bindgen CLI
+      run: cargo install wasm-bindgen-cli --version 0.2.127 --locked
+
+    - name: Check sdkt-playground
+      run: cargo check --locked --manifest-path crates/sdkt-playground/Cargo.toml --target wasm32-unknown-unknown
+
+    - name: Build playground WASM
+      run: |
+        cargo build --locked \
+          --release \
+          --target wasm32-unknown-unknown \
+          --manifest-path crates/sdkt-playground/Cargo.toml
+
+    - name: Generate playground artifacts
+      run: |
+        tmp_dir="$(mktemp -d)"
+        echo "PLAYGROUND_WASM_OUT=$tmp_dir" >> "$GITHUB_ENV"
+
+        wasm-bindgen \
+          --target web \
+          --no-typescript \
+          --out-dir "$tmp_dir" \
+          crates/sdkt-playground/target/wasm32-unknown-unknown/release/sdkt_playground.wasm
+
+    - name: Check committed artifacts are fresh
+      run: |
+        cmp website/playground/wasm/sdkt_playground_bg.wasm \
+          "$PLAYGROUND_WASM_OUT/sdkt_playground_bg.wasm"
+
+        cmp website/playground/wasm/sdkt_playground.js \
+          "$PLAYGROUND_WASM_OUT/sdkt_playground.js"
+
+        echo "Playground WASM artifacts are up to date."
