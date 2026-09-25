@@ -97,10 +97,12 @@ sdkt
 │   ├── --format <json|pretty>
 │   └── --upgrade-safety      (emit UpgradeVerdict)
 │
-├── audit <path.rs>
+├── audit [path.rs]
+│   ├── --list-rules          (list available audit rules and exit)
 │   ├── --format <json|pretty>
 │   ├── --disable <RULE_ID>   (repeatable)
-│   └── --rules <PATH>        (repeatable; external rule paths)
+│   ├── --rules <PATH>        (repeatable; external rule paths)
+│   └── --no-plugins          (skip loading installed plugins)
 ├── identity
 │   ├── generate <name>
 │   ├── import <name> <secret>
@@ -322,6 +324,7 @@ Store root precedence (lowest → highest): `<cwd>/.sdkt/plugins`,
 - `--format json` is supported on all read-style commands, every `plugin` subcommand, and on `diff`, `audit`, `deploy`, `init` for scripting / CI.
 - `diff --upgrade-safety` and `deploy --deny-breaking` implement the Upgrade Safety Guard (see `ROADMAP.md`).
 - `audit` implements the static-analysis rules (AUTH-001/002/003/004, MOVE-001).
+- `audit --list-rules` discovers all registered built-in rules (with id, severity, and description). Supports `--format json` and does not require a source path argument.
 - **Mainnet safety.** Mutating commands (`tx submit`, `invoke`, `deploy`, `project deploy`) refuse to target mainnet unless you explicitly select the network — via `--network-profile`, `--rpc-url`, or `--network-passphrase`. A testnet-default passphrase pointed at a mainnet endpoint is rejected before any request is sent, protecting against signing for the wrong network.
 
 ## Error Handling
