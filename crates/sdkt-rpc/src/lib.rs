@@ -2,11 +2,6 @@
 //!
 //! Exposes clients and methods to query the Soroban RPC endpoint for contract
 //! inspection, XDR retrieval, and storage proofs.
-//!
-//! # Modules
-//!
-//! - [`SorobanRpcClient`] — main client
-//! - [`RpcError`] — structured error types
 
 pub mod account;
 pub mod client;
@@ -32,10 +27,15 @@ pub use deploy::{
     CreateContractArgs, DeployOutcome, DeployResult, PartialDeployResult,
 };
 pub use error::RpcError;
-pub use events::{get_contract_events, ContractEvent};
+pub use events::{
+    get_contract_events, resolve_ledger_range, ContractEvent, EventFilter, GetEventsRequest,
+};
 pub use fee::{estimate_dynamic_fee, get_fee_stats, FeeDistribution, FeeStats};
 pub use inspect::{inspect_contract, ContractInspection, StorageKeyInfo, TtlInfoSummary};
- main
+pub use invoke::{
+    build_invoke_envelope, invoke_contract, simulate_invoke, InvokeBuildResult, InvokeResult,
+    SimulatedInvoke, INCLUSION_FEE,
+};
 pub use simulate::{
     simulate_transaction, validate_envelope, SimulateCost, SimulateOperationResult,
     SimulateResponse, SimulateTransactionRequest,
