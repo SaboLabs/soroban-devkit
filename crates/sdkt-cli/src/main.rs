@@ -3467,6 +3467,8 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
                                     serde_json::json!({
                                         "contract_id": ev.contract_id,
                                         "ledger": ev.ledger,
+                                        "topics": ev.topics,
+                                        "value": ev.value,        
                                         "decoded": decoded.iter().map(|d| serde_json::json!({
                                             "raw": d.raw,
                                             "label": d.label,
@@ -4693,7 +4695,7 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
             }
         }
         Commands::Call {
-            contract_id,
+            ,
             function,
             args,
             format,
@@ -4729,7 +4731,7 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
                 source_account: "GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF".into(),
                 sequence: 0,
                 fee: 0,
-                contract_id: contract_id.clone(),
+                : contract_id.clone(),
                 function: function.clone(),
                 args: parsed_args,
             };
