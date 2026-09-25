@@ -19,6 +19,7 @@ use sdkt_xdr::{
     build_invoke_transaction, sign_transaction, Ed25519Signer, InvokeTransactionParams, Network,
     SigningError, SigningOptions,
 };
+use sha2::{Digest, Sha256};
 use std::fs;
 use std::io::{self, Write};
 use std::path::Path;
@@ -529,6 +530,12 @@ enum Commands {
         /// Deployment salt (40 hex chars = 20 bytes). Auto-generated if omitted.
         #[arg(short, long)]
         salt: Option<String>,
+        /// Display the deterministic contract address before submitting.
+        #[arg(long, default_value_t = false)]
+        show_address: bool,
+        /// Predict the address and WASM hash without submitting transactions.
+        #[arg(long, default_value_t = false)]
+        dry_run: bool,
         #[arg(short, long, default_value = "pretty")]
         format: String,
         /// Identity name to sign deployment transactions
@@ -4516,6 +4523,8 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
         Commands::Deploy {
             wasm,
             salt,
+            show_address,
+            dry_run,
             format,
             identity,
             arg,
@@ -4632,6 +4641,54 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
             // Source account is the identity's public key
             let source_account = identity_obj.public_key.clone();
 
+            // Contract IDs are deterministic. Calculate the prediction from
+            // local inputs before making any RPC call, so --dry-run remains
+            // entirely offline.
+            let prediction_salt = if show_address || dry_run {
+                Some(salt_bytes.unwrap_or_else(sdkt_rpc::deploy::generate_salt))
+            } else {
+                salt_bytes
+            };
+            let predicted = if let Some(prediction_salt) = prediction_salt {
+                let wasm_hash: [u8; 32] = Sha256::digest(&wasm_bytes).into();
+                let contract_id = sdkt_xdr::derive_contract_id(
+                    &network.network_id(),
+                    &source_account,
+                    &prediction_salt,
+                    &wasm_hash,
+                )
+                .map_err(|e| format!("Failed to derive predicted contract ID: {}", e))?;
+                Some((contract_id, hex::encode(wasm_hash), prediction_salt))
+            } else {
+                None
+            };
+
+            if let Some((contract_id, wasm_hash, prediction_salt)) = &predicted {
+                if dry_run {
+                    if fmt == OutputFormat::Json {
+                        println!(
+                            "{}",
+                            serde_json::json!({
+                                "status": "dry_run",
+                                "contractId": contract_id,
+                                "wasmHash": wasm_hash,
+                                "salt": hex::encode(prediction_salt),
+                                "submitted": false,
+                            })
+                        );
+                    } else {
+                        println!("Predicted Contract ID: {}", contract_id);
+                        println!("WASM Hash: {}", wasm_hash);
+                        println!("Salt: {}", hex::encode(prediction_salt));
+                        println!("No transactions submitted.");
+                    }
+                    return Ok(());
+                }
+                eprintln!("Predicted Contract ID: {}", contract_id);
+                eprintln!("WASM Hash: {}", wasm_hash);
+                eprintln!("Salt: {}", hex::encode(prediction_salt));
+            }
+
             use sdkt_rpc::deploy_contract_with_args;
             match deploy_contract_with_args(
                 &client,
@@ -4639,7 +4696,7 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
                 &source_account,
                 &signer,
                 network,
-                salt_bytes,
+                prediction_salt,
                 parsed_args,
             )
             .await
