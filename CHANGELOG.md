@@ -8,6 +8,67 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **Discovery of audit rules via `sdkt audit --list-rul# Changelog
+
+All notable changes to this project will be documented in this file.
+
+The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
+and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
+
+## [Unreleased]
+
+### Added
+- **Discovery of audit rules via `sdkt audit --list-rules`.** Added `--list-rules` flag to `sdkt audit` to discover all registered built-in rules with their ID, severity, and concise description without requiring a source file path. Supports `--format json` emitting a structured JSON array of rule metadata (`id`, `severity`, `description`), with deterministic registry ordering and immunity to `--disable` filters (#182).
+- **Automatic execution of installed plugins during `sdkt audit`.** Installed plugins in the local plugin store run automatically during `sdkt audit` without requiring `--rules <id>`. `--rules` remains available for explicit rule selection and ad-hoc artifacts, and `--no-plugins` allows skipping installed plugins. Incompatible plugin ABIs emit a warning and are skipped without aborting the audit, and audits with plugins loaded display a rules summary line (#80).
+- **Constructor argument support in `sdkt deploy`.** Added repeated `--arg <type:value>` flag to `sdkt deploy` accepting typed arguments (`u32`, `i32`, `u64`, `i64`, `u128`, `i128`, `bool`, `string`, `symbol`, `bytes`, `address`, or pre-encoded base64 ScVal). When constructor arguments are present, deployment uses Soroban's `HostFunction::CreateContractV2(CreateContractArgsV2)` for creation-time constructor execution. Zero-argument deployments preserve the existing `CreateContract` V1 path. Added `build_create_contract_v2_tx`, `build_create_contract_v2_tx_with_data`, and `build_create_contract_v2_tx_with_data_and_auth` builders to `sdkt-xdr` and updated auth entry parsing to handle `SorobanAuthorizedFunction::CreateContractV2HostFn` (#58).
+- **Configurable event query ranges.** `sdkt events` accepts `--start-ledger <N>` and `--end-ledger <N>` flags to query specific ledger ranges. Ranges default to the prior 1000-ledger window if omitted, single bounds query from/to latest or relative windows, and inverted ranges (`start > end`) are rejected before RPC dispatch (#57).
+- **Network-aware fee estimation for `sdkt tx build`.** `tx build` hard-coded a 100-stroop inclusion fee and never consulted the network, and emitted the envelope with no Soroban footprint at all, so the documented `tx build` → `tx sign` → `tx submit` workflow produced transactions the network rejects. Whenever the build already has a network to talk to — the operator named one (`--network-profile` / `--rpc-url` on `tx`), or the sequence is being auto-fetched — `build` now simulates the invocation and adopts the reported `minResourceFee` and footprint, mirroring `invoke`. A build that pins `--sequence` and names no network stays fully offline and unchanged, but now warns that the fee is inclusion-only. An explicit `--fee` still takes precedence and costs no network round trip. The simulate-and-adopt step is shared with `invoke` via the new `sdkt_rpc::simulate_invoke` (#76).
+- **`sdkt plugin init`.** Scaffold a new audit rule project (standalone crate, derived rule id, native/WASM ABI files, `plugin.toml`, README, and unit tests) derived from `crates/sdkt-audit-example-rule`, so a plugin author goes straight to `cargo build --release --features plugins` without hand-copying the reference implementation (#95).
+- **JSON output for plugin commands.** Every `sdkt plugin` subcommand (`list`, `show`, `install`, `remove`, `update`, `pack`, `verify-bundle`) accepts `--format json`. Stdout carries only the JSON document; the native-plugin warning and the unsigned-bundle note stay on stderr. (#54).
+- **Actual fee and operation count in `sdkt tx inspect`.** Settled transactions now decode `resultXdr` and `envelopeXdr` to report the fee charged and number of operations in pretty and JSON output; pending/not-found or malformed XDR keeps those fields absent (#71).
+- **Deployment fee breakdown in deploy output.** `sdkt deploy` exposes internal simulation fee calculations (`upload_fee`, `create_fee`, and `total_fee`) in `DeployResult` and displays them in both pretty and JSON output formats (#55).
+- **Real Soroban contract deployment.** `sdkt` can deploy Wasm contracts to a live network (upload Wasm, create the contract instance, and report the resulting contract ID), replacing the previous placeholder/stub path.
+- **Auto-generated deployment salt.** Deploy flows generate a salt when the operator does not supply one, so routine deployments no longer require a hand-crafted hex salt.
+- **Contract TTL extension.** Operators can extend a contract instance’s TTL via the CLI/storage helpers.
+- **Contract state read by LedgerKey.** Read on-chain contract state using a LedgerKey, for inspection and tooling workflows.
+- **Friendbot funding.** Identity/account helpers can request Friendbot funding on supported test networks.
+- **Read-only contract call.** `sdkt` can perform a read-only contract call against a live contract.
+- **ABI-aware result decoding for contract call and simulation.** Call and transaction-simulation paths can decode results using contract ABI metadata when available.
+- **Real account inspection.** Account inspection talks to the network and reports live account state instead of a stub.
+- **State-changing contract invoke.** `sdkt invoke` submits state-changing contract invocations (with JSON output improvements noted under Fixed).
+- **`sdkt doctor`.** New diagnostics command that checks local toolchain/environment readiness (CI- and Windows-safe checks).
+- **Client generation and XDR encoding.** CLI support for generating clients and encoding XDR values, including `symbol:VALUE` as a Soroban `ScVal::Symbol` (values longer than 32 bytes fail with a clear error).
+- **Local plugin ecosystem and signed plugin bundles.** Local plugin loading/ecosystem support, plus a signed, reproducible plugin bundle format with e2e/compatibility coverage.
+- **On-chain inspection tooling.** Enriched on-chain contract inspection, upgrade-safety verification, live-contract ABI for events decode, and on-chain ABI for storage decode.
+- **`tx simulate --abi-contract`.** Transaction simulation can now fetch a deployed contract's on-chain WASM and decode the primary result with its ABI, matching the existing `--abi-contract` support in `events`/`storage`. `--abi` and `--abi-contract` are mutually exclusive.
+- **`call --abi-contract`.** Read-only calls can decode the result using the deployed contract's on-chain WASM (`inspect_contract` → `get_wasm_bytecode` → `parse_contract_spec`) instead of requiring a local artifact, matching `events`/`storage`/`tx simulate`. `--abi` and `--abi-contract` are mutually exclusive; local `--abi` and no-flag behavior are unchanged.
+- **Windows x86_64 release binary.** Packaged Windows builds are available alongside existing platforms.
+- **Website and Web Playground.** Public landing page and a browser-based contract inspector (Web Playground MVP).
+
+### Fixed
+- Updated public landing page content (`website/index.html`) to reflect shipped CLI capabilities, adding contract invocation (`invoke` / `call`), event exploration, storage read/extend, account inspection, and Friendbot funding, updating the workflow to feature `invoke` as the primary execution path, adding a real `invoke` terminal demo, and fixing/expanding documentation footer links (#82).
+- `sdkt identity delete` now fails with a not-found error, and exits non-zero, when the identity does not exist, instead of reporting a removal that did not happen. `IdentityStore::remove` returns `StorageError::NotFound` in that case, matching `network remove` (#109).
+- `storage extend --ledgers` is documented as the relative TTL it is. The getting-started guides and the `ExtendFootprintParams::extend_to` doc comment described it as an absolute ledger sequence, but the protocol's `ExtendFootprintTTLOp.extendTo` means "at least N ledgers from the last closed ledger". Behaviour is unchanged; a regression test now pins that `N` reaches the operation as given (#110).
+- Generated client arguments use the `i64:` type tag for `i64` parameters (#105).
+- `sdkt deploy` now reports the file path and read error when its WASM file cannot be read (#49).
+- Deploy salt validation distinguishes invalid length from invalid hex, with clearer error messages (#51).
+- `sdkt invoke --format json` includes `errorResultXdr` when an RPC submission fails, matching the existing pretty output. The field is `null` when the RPC response has no error result XDR.
+- RPC/XDR compatibility restorations for live Soroban LedgerEntry handling, on-chain inspection paths, and contract-instance TTL queries.
+- Windows debug stack overflow avoided by running async main on an 8MB-stack thread.
+- AUTH-004 audit rule registration/behavior improvements (plus additional AUTH/MOVE unit coverage).
+
+### Changed
+- Public docs refreshed for deployment, contributor onboarding, security-model wording, Windows availability, GitBook navigation, and README positioning. Historical internal/planning docs were archived or removed where appropriate.
+
+## [v2.5.0] - 2026-08-08
+
+### Added
+- **Release polish & SCF readiness. Containerized distribution via a
+  maintained multi-stage `Dockerfile` (+ `.dockerignore`); a conservative
+  mainnet-safety guard on mutating RPC commands (`tx submit`, `deploy`,
+  `project deploy`) that refuses mainnet unless the operator explicitly selects
+  the network; `docs/scf.md` positioning the project for SCF grant tracks;
+es`.** Added `--list-rules` flag to `sdkt audit` to discover all registered built-in rules with their ID, severity, and concise description without requiring a source file path. Supports `--format json` emitting a structured JSON array of rule metadata (`id`, `severity`, `description`), with deterministic registry ordering and immunity to `--disable` filters (#182).
 - **Automatic execution of installed plugins during `sdkt audit`.** Installed plugins in the local plugin store run automatically during `sdkt audit` without requiring `--rules <id>`. `--rules` remains available for explicit rule selection and ad-hoc artifacts, and `--no-plugins` allows skipping installed plugins. Incompatible plugin ABIs emit a warning and are skipped without aborting the audit, and audits with plugins loaded display a rules summary line (#80).
 - **Constructor argument support in `sdkt deploy`.** Added repeated `--arg <type:value>` flag to `sdkt deploy` accepting typed arguments (`u32`, `i32`, `u64`, `i64`, `u128`, `i128`, `bool`, `string`, `symbol`, `bytes`, `address`, or pre-encoded base64 ScVal). When constructor arguments are present, deployment uses Soroban's `HostFunction::CreateContractV2(CreateContractArgsV2)` for creation-time constructor execution. Zero-argument deployments preserve the existing `CreateContract` V1 path. Added `build_create_contract_v2_tx`, `build_create_contract_v2_tx_with_data`, and `build_create_contract_v2_tx_with_data_and_auth` builders to `sdkt-xdr` and updated auth entry parsing to handle `SorobanAuthorizedFunction::CreateContractV2HostFn` (#58).
 - **Configurable event query ranges.** `sdkt events` accepts `--start-ledger <N>` and `--end-ledger <N>` flags to query specific ledger ranges. Ranges default to the prior 1000-ledger window if omitted, single bounds query from/to latest or relative windows, and inverted ranges (`start > end`) are rejected before RPC dispatch (#57).
