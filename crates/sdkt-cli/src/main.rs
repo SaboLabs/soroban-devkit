@@ -3474,6 +3474,8 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
                                     serde_json::json!({
                                         "contract_id": ev.contract_id,
                                         "ledger": ev.ledger,
+                                        "topics": ev.topics,
+                                        "value": ev.value,
                                         "decoded": decoded.iter().map(|d| serde_json::json!({
                                             "raw": d.raw,
                                             "label": d.label,
