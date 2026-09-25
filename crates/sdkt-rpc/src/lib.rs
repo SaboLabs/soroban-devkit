@@ -33,7 +33,8 @@ pub use deploy::{
 };
 pub use error::RpcError;
 pub use events::{
-    get_contract_events, resolve_ledger_range, ContractEvent, EventFilter, GetEventsRequest,
+    get_contract_events, get_contract_events_page, resolve_ledger_range, ContractEvent,
+    EventFilter, EventPage, GetEventsRequest, PagingTokens,
 };
 pub use fee::{estimate_dynamic_fee, get_fee_stats, FeeDistribution, FeeStats};
 pub use inspect::{inspect_contract, ContractInspection, StorageKeyInfo, TtlInfoSummary};
