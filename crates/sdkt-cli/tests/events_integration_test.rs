@@ -1,4 +1,3 @@
-
 use std::io::{Read, Write};
 use std::net::{TcpListener, TcpStream};
 use std::sync::{Arc, Mutex};
@@ -103,10 +102,7 @@ fn test_events_format_json() {
 #[test]
 fn test_events_abi_json_preserves_raw_topics_and_value() {
     let (rpc_url, _seen) = mock_events_rpc(2500);
-    let wasm_path = format!(
-        "{}/tests/fixtures/us_new.wasm",
-        env!("CARGO_MANIFEST_DIR")
-    );
+    let wasm_path = format!("{}/tests/fixtures/us_new.wasm", env!("CARGO_MANIFEST_DIR"));
 
     let mut cmd = Command::cargo_bin("sdkt").unwrap();
     cmd.arg("events")
@@ -274,4 +270,3 @@ fn test_events_default_lookback() {
     assert_eq!(events_req["params"]["startLedger"], 1500);
     assert!(events_req["params"].get("endLedger").is_none());
 }
-
