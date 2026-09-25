@@ -553,6 +553,12 @@ enum Commands {
         /// Path to the currently deployed (baseline) WASM, used with --deny-breaking.
         #[arg(long, value_name = "WASM")]
         old_wasm: Option<String>,
+        /// Skip the post-deploy on-chain WASM hash verification.
+        ///
+        /// Verification adds one read-only RPC round-trip per deployed contract;
+        /// skipping it restores the historical deploy behavior exactly.
+        #[arg(long = "no-verify", default_value_t = false)]
+        no_verify: bool,
         #[command(flatten)]
         net: NetworkArgs,
     },
@@ -996,6 +1002,10 @@ enum ProjectCommand {
         salt: String,
         #[arg(short, long, default_value = "pretty")]
         format: String,
+        /// Skip the post-deploy on-chain WASM hash verification for each
+        /// deployed contract.
+        #[arg(long = "no-verify", default_value_t = false)]
+        no_verify: bool,
     },
 }
 
@@ -1368,6 +1378,96 @@ fn verification_outcome(
             "OnChainOnly".to_string(),
             "No local WASM provided; reporting on-chain hash only.".to_string(),
         ),
+    }
+}
+
+/// Exit code returned when a deployment settled but on-chain verification did
+/// not confirm the deployed artifact.
+///
+/// Distinct from the generic `1` failure code so CI can tell "deploy failed"
+/// apart from "deployed, but unverified".
+const EXIT_CODE_VERIFICATION_FAILED: i32 = 3;
+
+/// Serialize a successful deploy result, optionally embedding the post-deploy
+/// verification report.
+///
+/// With `verification == None` (the `--no-verify` path) this is byte-for-byte
+/// identical to [`sdkt_rpc::format_json`]. With a report it additionally adds
+/// `verified` (the tri-state match verdict) and the full `verification` object,
+/// so JSON consumers can gate on `verified == false` without parsing prose.
+fn deploy_success_json(
+    res: &sdkt_rpc::DeployResult,
+    verification: Option<&sdkt_rpc::DeployVerification>,
+) -> String {
+    let mut obj = serde_json::Map::new();
+    obj.insert("wasmHash".to_string(), serde_json::json!(res.wasm_hash));
+    obj.insert("contractId".to_string(), serde_json::json!(res.contract_id));
+    obj.insert("uploadHash".to_string(), serde_json::json!(res.upload_hash));
+    obj.insert("createHash".to_string(), serde_json::json!(res.create_hash));
+    obj.insert("salt".to_string(), serde_json::json!(res.salt));
+    obj.insert("status".to_string(), serde_json::json!(res.status));
+    obj.insert("uploadFee".to_string(), serde_json::json!(res.upload_fee));
+    obj.insert("createFee".to_string(), serde_json::json!(res.create_fee));
+    obj.insert("totalFee".to_string(), serde_json::json!(res.total_fee));
+    if let Some(report) = verification {
+        obj.insert("verified".to_string(), serde_json::json!(report.matches));
+        obj.insert(
+            "verification".to_string(),
+            serde_json::to_value(report).unwrap_or(serde_json::Value::Null),
+        );
+    }
+    serde_json::Value::Object(obj).to_string()
+}
+
+/// Pretty-mode verification line appended to a successful deploy result.
+fn deploy_verification_pretty(report: &sdkt_rpc::DeployVerification) -> String {
+    if report.matches {
+        format!(
+            "  Verified: on-chain WASM hash matches local artifact ✓ ({})",
+            report.on_chain_wasm_hash
+        )
+    } else {
+        format!(
+            "  Verified: MISMATCH — on-chain {} does not match local {}",
+            report.on_chain_wasm_hash, report.local_wasm_hash
+        )
+    }
+}
+
+/// True when a deploy verification report is a mismatch CI should catch.
+fn deploy_verification_failed(report: &sdkt_rpc::DeployVerification) -> bool {
+    !report.matches
+}
+
+/// Verify one contract during a project deploy, returning its JSON node and
+/// whether verification failed.
+///
+/// Warnings are emitted here (to stderr) so JSON output on stdout stays a pure
+/// document, matching the CLI's existing stream discipline.
+async fn project_deploy_verify(
+    client: &SorobanRpcClient,
+    contract_id: &str,
+    wasm_bytes: &[u8],
+    alias: &str,
+) -> (serde_json::Value, bool) {
+    match sdkt_rpc::verify_deployed_wasm(client, contract_id, wasm_bytes).await {
+        Ok(report) => {
+            let failed = deploy_verification_failed(&report);
+            if failed {
+                eprintln!(
+                    "    ⚠ Verification failed for '{}': on-chain {} does not match local {}",
+                    alias, report.on_chain_wasm_hash, report.local_wasm_hash,
+                );
+            }
+            (serde_json::to_value(&report).unwrap(), failed)
+        }
+        Err(e) => {
+            eprintln!(
+                "    ⚠ Verification could not complete for '{}': {}",
+                alias, e
+            );
+            (serde_json::Value::Null, true)
+        }
     }
 }
 
@@ -4532,6 +4632,7 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
             arg,
             deny_breaking,
             old_wasm,
+            no_verify,
             net,
         } => {
             let fmt = parse_format_str(&format);
@@ -4705,10 +4806,58 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
             {
                 Ok(outcome) => match &outcome {
                     sdkt_rpc::DeployOutcome::Success(res) => {
+                        // Post-deploy verification: confirm the on-chain WASM
+                        // hash matches the artifact we just deployed. Reuses the
+                        // bytes already in memory (no second file read) and one
+                        // read-only inspection round-trip.
+                        let verification = if no_verify {
+                            None
+                        } else {
+                            Some(
+                                sdkt_rpc::verify_deployed_wasm(
+                                    &client,
+                                    &res.contract_id,
+                                    &wasm_bytes,
+                                )
+                                .await,
+                            )
+                        };
+
                         if fmt == OutputFormat::Json {
-                            println!("{}", sdkt_rpc::format_json(res));
+                            println!(
+                                "{}",
+                                deploy_success_json(
+                                    res,
+                                    verification.as_ref().and_then(|v| v.as_ref().ok()),
+                                )
+                            );
                         } else {
                             println!("{}", sdkt_rpc::format_pretty(res));
+                            if let Some(Ok(report)) = &verification {
+                                println!("{}", deploy_verification_pretty(report));
+                            }
+                        }
+
+                        match &verification {
+                            Some(Ok(report)) if deploy_verification_failed(report) => {
+                                eprintln!(
+                                    "⚠ Warning: deployment settled but the on-chain WASM hash does not match the local artifact.\n  Contract ID : {}\n  On-chain    : {}\n  Local       : {}\n  Re-run: sdkt verify {} --wasm {}",
+                                    res.contract_id,
+                                    report.on_chain_wasm_hash,
+                                    report.local_wasm_hash,
+                                    res.contract_id,
+                                    wasm,
+                                );
+                                process::exit(EXIT_CODE_VERIFICATION_FAILED);
+                            }
+                            Some(Err(e)) => {
+                                eprintln!(
+                                    "⚠ Warning: deployment settled but on-chain verification could not complete: {}",
+                                    e
+                                );
+                                process::exit(EXIT_CODE_VERIFICATION_FAILED);
+                            }
+                            _ => {}
                         }
                     }
                     sdkt_rpc::DeployOutcome::Partial(p) => {
@@ -5499,7 +5648,11 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
             }
         },
         Commands::Project { action, net } => match action {
-            ProjectCommand::Deploy { salt: _, format } => {
+            ProjectCommand::Deploy {
+                salt: _,
+                format,
+                no_verify,
+            } => {
                 let fmt = parse_format_str(&format);
                 let config = load_config();
 
@@ -5528,6 +5681,10 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
                         }
 
                         let mut results = std::collections::HashMap::new();
+                        // Per-contract verification status (JSON only) plus the
+                        // aliases whose on-chain hash did not match.
+                        let mut verification = serde_json::Map::new();
+                        let mut verification_failures: Vec<String> = Vec::new();
 
                         for contract in resolved {
                             if fmt != OutputFormat::Json {
@@ -5597,6 +5754,22 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
                                             if fmt != OutputFormat::Json {
                                                 println!("    ✓ Contract ID: {}", res.contract_id);
                                             }
+                                            if !no_verify {
+                                                let alias = contract.alias.clone();
+                                                let (value, failed) = project_deploy_verify(
+                                                    &client,
+                                                    &res.contract_id,
+                                                    &wasm_bytes,
+                                                    &alias,
+                                                )
+                                                .await;
+                                                if failed {
+                                                    verification_failures.push(alias.clone());
+                                                } else if fmt != OutputFormat::Json {
+                                                    println!("    ✓ Verified: on-chain WASM hash matches local artifact");
+                                                }
+                                                verification.insert(alias, value);
+                                            }
                                             results.insert(contract.alias, res.contract_id.clone());
                                         }
                                         sdkt_rpc::DeployOutcome::Partial(p) => {
@@ -5617,13 +5790,30 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
                         }
 
                         if fmt == OutputFormat::Json {
-                            let json = serde_json::json!({
+                            let mut json = serde_json::json!({
                                 "status": "success",
                                 "contracts_deployed": results,
                             });
+                            if !no_verify {
+                                if let Some(obj) = json.as_object_mut() {
+                                    obj.insert(
+                                        "verification".to_string(),
+                                        serde_json::Value::Object(verification),
+                                    );
+                                }
+                            }
                             println!("{}", serde_json::to_string(&json).unwrap());
                         } else {
                             println!("✓ Project deployment complete.");
+                        }
+
+                        if !verification_failures.is_empty() {
+                            eprintln!(
+                                "⚠ Warning: {} contract(s) failed on-chain verification: {}",
+                                verification_failures.len(),
+                                verification_failures.join(", ")
+                            );
+                            std::process::exit(EXIT_CODE_VERIFICATION_FAILED);
                         }
                     }
                     Err(e) => {
@@ -6430,5 +6620,96 @@ mod storage_read_key_tests {
         let err = resolve_storage_read_key(CONTRACT, None, Some("bal"), &[], false, "forever")
             .unwrap_err();
         assert!(err.contains("invalid durability"));
+    }
+}
+
+/// Post-deploy verification output/exit-code contract ().
+#[cfg(test)]
+mod deploy_verify_tests {
+    use super::*;
+
+    fn sample_result() -> sdkt_rpc::DeployResult {
+        sdkt_rpc::DeployResult {
+            wasm_hash: "abcd1234".to_string(),
+            contract_id: "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAD2KM".to_string(),
+            upload_hash: "aaaa".to_string(),
+            create_hash: "bbbb".to_string(),
+            status: "SUCCESS".to_string(),
+            salt: "00112233445566778899aabbccddeeff00112233".to_string(),
+            upload_fee: 150,
+            create_fee: 250,
+            total_fee: 400,
+        }
+    }
+
+    fn verified_report() -> sdkt_rpc::DeployVerification {
+        let hash = "aa".repeat(32);
+        sdkt_rpc::DeployVerification {
+            on_chain_wasm_hash: hash.clone(),
+            local_wasm_hash: hash,
+            matches: true,
+        }
+    }
+
+    fn mismatch_report() -> sdkt_rpc::DeployVerification {
+        sdkt_rpc::DeployVerification {
+            on_chain_wasm_hash: "aa".repeat(32),
+            local_wasm_hash: "bb".repeat(32),
+            matches: false,
+        }
+    }
+
+    #[test]
+    fn no_verify_json_is_identical_to_legacy_format() {
+        // The --no-verify path must not change a single byte of the JSON shape.
+        let res = sample_result();
+        assert_eq!(deploy_success_json(&res, None), sdkt_rpc::format_json(&res));
+    }
+
+    #[test]
+    fn json_embeds_verified_true_and_report() {
+        let res = sample_result();
+        let report = verified_report();
+        let json: serde_json::Value =
+            serde_json::from_str(&deploy_success_json(&res, Some(&report))).unwrap();
+        assert_eq!(json["verified"], serde_json::json!(true));
+        assert_eq!(json["verification"]["matches"], serde_json::json!(true));
+        assert_eq!(json["verification"]["on_chain_wasm_hash"], "aa".repeat(32));
+        // Legacy deploy fields are preserved.
+        assert_eq!(json["contractId"], res.contract_id);
+        assert_eq!(json["totalFee"], 400);
+    }
+
+    #[test]
+    fn json_embeds_verified_false_on_mismatch() {
+        let res = sample_result();
+        let report = mismatch_report();
+        let json: serde_json::Value =
+            serde_json::from_str(&deploy_success_json(&res, Some(&report))).unwrap();
+        assert_eq!(json["verified"], serde_json::json!(false));
+        assert_eq!(json["verification"]["matches"], serde_json::json!(false));
+        assert_eq!(json["verification"]["local_wasm_hash"], "bb".repeat(32));
+    }
+
+    #[test]
+    fn pretty_line_reports_match_and_mismatch() {
+        let ok = deploy_verification_pretty(&verified_report());
+        assert!(ok.contains("matches local artifact"), "{ok}");
+        let bad = deploy_verification_pretty(&mismatch_report());
+        assert!(bad.contains("MISMATCH"), "{bad}");
+        assert!(bad.contains(&"bb".repeat(32)), "{bad}");
+    }
+
+    #[test]
+    fn failure_classification_only_for_mismatch() {
+        assert!(deploy_verification_failed(&mismatch_report()));
+        assert!(!deploy_verification_failed(&verified_report()));
+    }
+
+    #[test]
+    #[test]
+    fn verification_failure_exit_code_is_distinct() {
+        assert_ne!(EXIT_CODE_VERIFICATION_FAILED, 0);
+        assert_ne!(EXIT_CODE_VERIFICATION_FAILED, 1);
     }
 }
