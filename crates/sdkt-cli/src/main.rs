@@ -1810,13 +1810,18 @@ fn load_config() -> DevKitConfig {
     }
 }
 
-/// Resolve a `--input` value to envelope text.
+/// Resolve a transaction envelope argument (`--input` / `--envelope`) to
+/// envelope text.
 ///
-/// Filesystem rules (matching the rest of the `tx` subcommands):
+/// Filesystem rules shared by `tx sign`, `tx validate`, `tx simulate` and
+/// `tx submit`:
 /// - If the path exists, read it as a file.
 /// - If it does not exist but looks like a (missing) path, report a clear
 ///   "invalid file" error instead of silently mis-parsing it as base64.
 /// - Otherwise treat the value as an inline base64 string.
+///
+/// `/` is part of the standard base64 alphabet, so a value that is
+/// well-formed base64 is never treated as a path, even if it contains `/`.
 fn resolve_tx_input(input: &str) -> Result<String, String> {
     if fs::metadata(input).is_ok() {
         return fs::read_to_string(input)
@@ -1826,13 +1831,52 @@ fn resolve_tx_input(input: &str) -> Result<String, String> {
         || input.contains('\\')
         || input.ends_with(".xdr")
         || input.ends_with(".txt");
-    if looks_like_path {
+    if looks_like_path && !is_standard_base64(input.trim()) {
         return Err(format!(
             "invalid file '{}': no such file or directory",
             input
         ));
     }
     Ok(input.to_string())
+}
+
+/// Whether `s` is padded standard base64 (`A-Z a-z 0-9 + /`, length a multiple
+/// of four, at most two trailing `=`).
+fn is_standard_base64(s: &str) -> bool {
+    let body = s.trim_end_matches('=');
+    !s.is_empty()
+        && s.len().is_multiple_of(4)
+        && s.len() - body.len() <= 2
+        && body
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || b == b'+' || b == b'/')
+}
+
+#[cfg(test)]
+mod tx_input_tests {
+    use super::{is_standard_base64, resolve_tx_input};
+
+    #[test]
+    fn base64_check_accepts_padded_standard_alphabet() {
+        assert!(is_standard_base64("AAAA/+8="));
+        assert!(is_standard_base64("AA=="));
+        assert!(!is_standard_base64(""));
+        assert!(!is_standard_base64("AAA"));
+        assert!(!is_standard_base64("A==="));
+        assert!(!is_standard_base64("tx/unsigned.xdr"));
+        assert!(!is_standard_base64("AA=A"));
+    }
+
+    #[test]
+    fn missing_path_is_reported_but_slashed_base64_passes_through() {
+        let err = resolve_tx_input("no/such/tx.xdr").unwrap_err();
+        assert_eq!(
+            err,
+            "invalid file 'no/such/tx.xdr': no such file or directory"
+        );
+        assert_eq!(resolve_tx_input("AAAA/+8=").unwrap(), "AAAA/+8=");
+        assert_eq!(resolve_tx_input("not-base64").unwrap(), "not-base64");
+    }
 }
 
 /// Render a `ContractFunction`'s signature as `name(params) -> outputs`.
@@ -2970,10 +3014,12 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
             }
             TxAction::Validate { envelope, format } => {
                 let fmt = parse_format_str(&format);
-                let env_data = if fs::metadata(&envelope).is_ok() {
-                    fs::read_to_string(&envelope)?
-                } else {
-                    envelope.clone()
+                let env_data = match resolve_tx_input(&envelope) {
+                    Ok(s) => s,
+                    Err(e) => {
+                        eprintln!("Error: {}", e);
+                        process::exit(1);
+                    }
                 };
 
                 use sdkt_core::validation::validate_base64;
@@ -3021,17 +3067,18 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
                 }
 
                 let fmt = parse_format_str(&format);
+                let env_data = match resolve_tx_input(&envelope) {
+                    Ok(s) => s,
+                    Err(e) => {
+                        eprintln!("Error: {}", e);
+                        process::exit(1);
+                    }
+                };
                 let client = resolve_rpc_client(
                     net.rpc_url.clone(),
                     net.network_passphrase.clone(),
                     net.network_profile.clone(),
                 );
-
-                let env_data = if fs::metadata(&envelope).is_ok() {
-                    fs::read_to_string(&envelope)?
-                } else {
-                    envelope.clone()
-                };
 
                 match simulate_transaction(&client, env_data.trim()).await {
                     Ok(sim) => {
@@ -3203,6 +3250,13 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
                 format,
             } => {
                 let fmt = parse_format_str(&format);
+                let env_data = match resolve_tx_input(&envelope) {
+                    Ok(s) => s,
+                    Err(e) => {
+                        eprintln!("Error: {}", e);
+                        process::exit(1);
+                    }
+                };
                 let client = resolve_rpc_client_mutating(
                     net.rpc_url.clone(),
                     net.network_passphrase.clone(),
@@ -3211,12 +3265,6 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
 
                 use sdkt_rpc::{submit_and_wait, PollConfig};
                 use std::time::Duration;
-
-                let env_data = if fs::metadata(&envelope).is_ok() {
-                    fs::read_to_string(&envelope)?
-                } else {
-                    envelope.clone()
-                };
 
                 let poll_cfg = PollConfig {
                     timeout: Duration::from_secs(timeout),
