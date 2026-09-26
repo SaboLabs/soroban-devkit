@@ -2,6 +2,16 @@ use std::fs;
 use std::io;
 use std::path::Path;
 
+/// The exact `soroban-sdk` version `sdkt init` writes into a generated
+/// `Cargo.toml` (#111). Bump only to a release verified to give a project where
+/// `cargo check`, `cargo test` and a plain
+/// `cargo build --target wasm32v1-none --release` all succeed.
+const SCAFFOLD_SOROBAN_SDK_VERSION: &str = "27.0.6";
+
+/// Minimum Rust for the generated project: `soroban-sdk` 25+ declares
+/// `rust-version = "1.91.0"`, above this workspace's own MSRV.
+const SCAFFOLD_RUST_VERSION: &str = "1.91";
+
 /// Configuration for project scaffolding.
 #[derive(Debug, Clone)]
 pub struct ScaffoldConfig {
@@ -52,20 +62,24 @@ pub fn generate_project(config: &ScaffoldConfig) -> io::Result<ScaffoldResult> {
 
     let crate_name = package_name.replace('-', "_");
 
+    // Pinned exactly (#111): a floating requirement let the resolver pick a
+    // `soroban-env-host` whose open `ed25519-dalek` range breaks `testutils`.
+    // `lib` next to `cdylib` lets `tests/basic.rs` link the crate.
     let cargo_toml = format!(
         r#"[package]
 name = "{name}"
 version = "0.1.0"
 edition = "2021"
+rust-version = "{rust}"
 
 [dependencies]
-soroban-sdk = "21.0.0"
+soroban-sdk = "={sdk}"
 
 [dev-dependencies]
-soroban-sdk = {{ version = "21.0.0", features = ["testutils"] }}
+soroban-sdk = {{ version = "={sdk}", features = ["testutils"] }}
 
 [lib]
-crate-type = ["cdylib"]
+crate-type = ["lib", "cdylib"]
 
 [profile.release]
 opt-level = "z"
@@ -78,6 +92,8 @@ codegen-units = 1
 lto = true
 "#,
         name = package_name,
+        rust = SCAFFOLD_RUST_VERSION,
+        sdk = SCAFFOLD_SOROBAN_SDK_VERSION,
     );
     write_template(root, "Cargo.toml", &cargo_toml, &mut created)?;
 
@@ -128,7 +144,7 @@ use soroban_sdk::Env;
 #[test]
 fn test_hello() {{
     let env = Env::default();
-    let contract_id = env.register_contract(None, Contract);
+    let contract_id = env.register(Contract, ());
     let client = ContractClient::new(&env, &contract_id);
     assert_eq!(client.hello(), 42);
 }}
@@ -980,6 +996,37 @@ mod tests {
         let content = fs::read_to_string(p.join("Cargo.toml")).unwrap();
         assert!(content.contains("[profile.release]"));
         assert!(content.contains("panic = \"abort\""));
+        let _ = fs::remove_dir_all(&p);
+    }
+
+    /// #111: the generated manifest must pin the verified soroban-sdk exactly
+    /// (a caret requirement floats onto a `soroban-env-host` whose open
+    /// `ed25519-dalek` range breaks `cargo test`), and build a `lib` so the
+    /// generated integration test can link the crate.
+    #[test]
+    fn cargo_toml_pins_verified_sdk_and_links_for_tests() {
+        let p = tmp_dir("sdkpin");
+        generate_project(&cfg(&p, false, false)).unwrap();
+        let cargo = fs::read_to_string(p.join("Cargo.toml")).unwrap();
+        let pinned = format!("soroban-sdk = \"={SCAFFOLD_SOROBAN_SDK_VERSION}\"");
+        let dev_pinned = format!(
+            "soroban-sdk = {{ version = \"={SCAFFOLD_SOROBAN_SDK_VERSION}\", features = [\"testutils\"] }}"
+        );
+        assert!(cargo.contains(&pinned), "{cargo}");
+        assert!(cargo.contains(&dev_pinned), "{cargo}");
+        assert!(
+            cargo.contains("crate-type = [\"lib\", \"cdylib\"]"),
+            "{cargo}"
+        );
+        let rust = format!("rust-version = \"{SCAFFOLD_RUST_VERSION}\"");
+        assert!(cargo.contains(&rust), "{cargo}");
+
+        let test = fs::read_to_string(p.join("tests/basic.rs")).unwrap();
+        assert!(test.contains("env.register(Contract, ())"), "{test}");
+        assert!(
+            !test.contains("register_contract"),
+            "deprecated since soroban-sdk 22"
+        );
         let _ = fs::remove_dir_all(&p);
     }
 

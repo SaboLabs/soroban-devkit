@@ -132,6 +132,50 @@ fn init_generated_project_compiles_successfully() {
     assert!(status.success(), "Scaffolded project failed to compile");
 }
 
+/// #111: a full (non-minimal) scaffold must pass both `cargo check` and
+/// `cargo test`; the latter compiles `tests/basic.rs` and soroban-sdk's
+/// `testutils` graph. `cargo check` on a `--minimal` scaffold (above) never
+/// builds either, which is how the `ed25519-dalek` 3.0.0 breakage went
+/// unnoticed. Both commands share one project so the graph compiles once.
+///
+/// Ignored on windows-gnu hosts only: GNU ld cannot link the generated
+/// `cdylib` there ("export ordinal too large"), a PE/COFF export limit that
+/// MSVC's linker - used by CI's Windows job - does not hit.
+#[test]
+#[cfg_attr(
+    all(windows, target_env = "gnu"),
+    ignore = "GNU ld exceeds the PE/COFF export ordinal limit linking the generated cdylib"
+)]
+fn init_generated_project_passes_cargo_check_and_test() {
+    let tmp = TempDir::new().unwrap();
+    let project = tmp.path().join("test_proj");
+
+    sdkt()
+        .args(["init", project.to_str().unwrap()])
+        .assert()
+        .success();
+    assert!(project.join("tests/basic.rs").exists());
+
+    for args in [&["check"][..], &["test"][..]] {
+        let output = StdCommand::new("cargo")
+            .args(args)
+            .current_dir(&project)
+            .output()
+            .expect("cargo failed to execute");
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert!(
+            output.status.success(),
+            "generated project failed `cargo {}`:\n{stdout}\n{stderr}",
+            args.join(" ")
+        );
+        if args == ["test"] {
+            // The generated integration test must actually run, not just compile.
+            assert!(stdout.contains("test_hello"), "{stdout}");
+        }
+    }
+}
+
 #[test]
 fn init_sdkt_toml_has_network() {
     let tmp = TempDir::new().unwrap();
