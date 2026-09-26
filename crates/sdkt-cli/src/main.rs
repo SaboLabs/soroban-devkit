@@ -2657,6 +2657,32 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
                 process::exit(1);
             }
 
+            let analyze_extra_keys = if let StorageAction::Analyze {
+                contract_id,
+                key_xdr,
+                map_key,
+                key_arg,
+                durability,
+                ..
+            } = &action
+            {
+                match resolve_storage_analyze_keys(
+                    contract_id,
+                    key_xdr,
+                    map_key.as_deref(),
+                    key_arg,
+                    durability,
+                ) {
+                    Ok(k) => Some(k),
+                    Err(e) => {
+                        eprintln!("Error: {e}");
+                        process::exit(1);
+                    }
+                }
+            } else {
+                None
+            };
+
             let client = resolve_rpc_client(
                 net.rpc_url.clone(),
                 net.network_passphrase.clone(),
@@ -2666,10 +2692,6 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
             // Load ABI spec if provided. Two mutually exclusive sources:
             // a local WASM file (`--abi`) or a deployed contract's on-chain WASM
             // fetched via the path (`--abi-contract`).
-            if abi.is_some() && abi_contract.is_some() {
-                eprintln!("Error: specify only one of --abi or --abi-contract");
-                process::exit(1);
-            }
 
             let contract_spec: Option<sdkt_wasm::ContractSpec> =
                 if let Some(wasm_path) = abi.as_ref() {
@@ -2771,28 +2793,11 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
                 StorageAction::Estimate { .. } => unreachable!(),
                 StorageAction::Analyze {
                     contract_id,
-                    key_xdr,
-                    map_key,
-                    key_arg,
-                    instance: _,
-                    durability,
                     format,
+                    ..
                 } => {
                     let fmt = parse_format_str(&format);
-
-                    let extra_keys = match resolve_storage_analyze_keys(
-                        &contract_id,
-                        &key_xdr,
-                        map_key.as_deref(),
-                        &key_arg,
-                        &durability,
-                    ) {
-                        Ok(k) => k,
-                        Err(e) => {
-                            eprintln!("Error: {e}");
-                            process::exit(1);
-                        }
-                    };
+                    let extra_keys = analyze_extra_keys.expect("resolved for Analyze");
 
                     let client = resolve_rpc_client(
                         net.rpc_url.clone(),

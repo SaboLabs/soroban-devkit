@@ -269,6 +269,25 @@ fn storage_analyze_rejects_invalid_durability_offline() {
         .stderr(predicate::str::contains("invalid durability"));
 }
 
+#[test]
+fn storage_analyze_rejects_invalid_key_xdr_before_abi_contract_rpc() {
+    // When --abi-contract is set, key validation must happen before any RPC
+    // request to inspect or fetch contract WASM.
+    sdkt()
+        .args([
+            "storage",
+            "--abi-contract",
+            VALID_CONTRACT,
+            "analyze",
+            VALID_CONTRACT,
+            "--key-xdr",
+            "not-a-valid-ledger-key",
+        ])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("invalid LedgerKey"));
+}
+
 // ---------------- Mock RPC integration tests ----------------
 
 #[test]
