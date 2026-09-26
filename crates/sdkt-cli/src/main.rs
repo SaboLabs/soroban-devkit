@@ -1209,8 +1209,25 @@ enum StorageAction {
         #[arg(short, long, default_value = "pretty")]
         format: String,
     },
+    /// Estimate storage rent cost for a WASM contract offline based on its ContractSpec.
+    ///
+    /// Computes an offline baseline storage cost breakdown per storage class
+    /// (Instance, Persistent, Temporary) and total cost in stroops and XLM, using the
+    /// rent approximation (100 stroops/ledger/entry).
+    ///
+    /// Note: This is an offline baseline derived from the contract's declared ABI.
+    /// Dynamic runtime entries (e.g. user balances created during contract execution)
+    /// cannot be predicted offline. For live on-chain storage inspection, use
+    /// `sdkt storage analyze`.
     Estimate {
+        /// Path to the compiled contract WASM file.
         wasm: String,
+        /// Number of ledgers to estimate extension cost for (default: 17280, ~1 day at 5s/ledger).
+        #[arg(short, long, default_value = "17280")]
+        ledgers: u32,
+        /// Output format (pretty or json).
+        #[arg(short, long, default_value = "pretty")]
+        format: String,
     },
     /// Analyze a contract's storage layout (Instance/Persistent/Temporary
     /// categorization, TTL summary, and per-entry detail).
@@ -2634,8 +2651,41 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
                         }
                     }
                 }
-                StorageAction::Estimate { wasm } => {
-                    println!("Storage Estimate for {} (Not yet implemented)", wasm);
+                StorageAction::Estimate {
+                    wasm,
+                    ledgers,
+                    format,
+                } => {
+                    let fmt = parse_format_str(&format);
+                    let wasm_bytes = match fs::read(&wasm) {
+                        Ok(b) => b,
+                        Err(e) => {
+                            eprintln!("Error: cannot read WASM '{}': {}", wasm, e);
+                            process::exit(1);
+                        }
+                    };
+
+                    let spec = match parse_contract_spec(&wasm_bytes) {
+                        Ok(s) => s,
+                        Err(e) => {
+                            eprintln!("Error: {}: {}", wasm, e);
+                            process::exit(1);
+                        }
+                    };
+
+                    let estimate =
+                        sdkt_storage::estimate_storage_from_spec(&spec, &wasm, ledgers);
+
+                    match fmt {
+                        OutputFormat::Json => {
+                            let json_str = serde_json::to_string_pretty(&estimate)
+                                .expect("storage cost estimate serializes");
+                            println!("{}", json_str);
+                        }
+                        _ => {
+                            print!("{}", estimate);
+                        }
+                    }
                 }
                 StorageAction::Analyze {
                     contract_id,
