@@ -13,6 +13,7 @@
 pub mod audit;
 pub mod error;
 pub mod plugin_abi;
+pub mod plugin_doctor;
 pub mod plugin_store;
 pub mod registry;
 pub mod rules;
@@ -31,6 +32,10 @@ pub use audit::{
     scan_all_functions_str, AuditContext, AuditRule, FnScan,
 };
 pub use error::AuditError;
+pub use plugin_doctor::{
+    doctor, doctor_installed, doctor_installed_with_root, doctor_with_root, DoctorReport,
+    DoctorStage, DoctorStageStatus, DOCTOR_SAMPLE_CONTRACT,
+};
 pub use plugin_store::{
     install_bundle, pack_bundle, verify_bundle, BundleVerification, InstallOpts, PluginMeta,
     StoreError,
