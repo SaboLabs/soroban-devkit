@@ -228,8 +228,7 @@ sdkt deploy \
 # 8. Invoke a contract function (state-changing: sequence → simulate → sign → submit → poll)
 sdkt invoke <CONTRACT_ID> increment --args u32:1 --identity my-deployer --network-profile testnet
 
-# Submit and return immediately with the transaction hash
-sdkt invoke <CONTRACT_ID> increment --args u32:1 --identity my-deployer --no-wait --network-profile testnet
+main
 ```
 
 For a detailed explanation of each step, see [Deploy a single contract](#deploy-a-single-contract).
@@ -260,13 +259,13 @@ See [`docs/plugin-authoring.md`](docs/plugins/plugin-authoring.md) for how to bu
 | `sdkt storage estimate <wasm-path>` | Estimate storage cost for a WASM. |
 | `sdkt storage read <contract-id> --key-xdr <BASE64_XDR>` | Read a contract storage entry by its complete LedgerKey. ABI optional for ScVal formatting. |
 | `sdkt storage extend <contract-id> --ledgers <N>` | Extend TTL of known footprint keys (`ExtendFootprintTtl`). Instance key is always included; extra keys via `--key`. Does not restore archived entries. |
-| `sdkt tx inspect <hash>` | Transaction status, ledger inclusion, actual fee charged, and operation count for settled transactions. |
+| `sdkt tx inspect <hash>` | Transaction status / ledger inclusion. |
 | `sdkt tx validate --envelope <xdr>` | Offline pre-flight validation of an envelope (parses + structural checks). |
 | `sdkt tx simulate <xdr>` | Offline pre-flight via `simulateTransaction` (RPC). `--abi <wasm>` decodes the invoke result via the contract spec. |
 | `sdkt tx sign --input <xdr> --identity <name>` | Sign an envelope with a local ED25519 identity — fully offline. |
 | `sdkt tx submit <xdr>` | Submit a transaction (with optional poll; RPC). |
 | `sdkt tx build` | Typed envelope builder. |
-| `sdkt events <contract-id>` | Emitted-contract event explorer (`--abi <wasm>`, `--start-ledger`, `--end-ledger`). |
+| `sdkt events <contract-id>` | Emitted-contract event explorer (`--abi <wasm>`). |
 | `sdkt account <address>` | Account balances + signers (Horizon-enriched). |
 | `sdkt call <contract> <function> [--args TYPE:VALUE...]` | Read-only contract invocation. No signing, no submission. Returns result + events. `--abi <wasm>` decodes the result via the contract spec; `--abi-contract <id>` fetches the deployed contract's on-chain WASM instead. |
 | `sdkt diff` | Offline comparison of WASM binaries and API surfaces. |

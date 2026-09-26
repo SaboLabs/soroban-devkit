@@ -39,6 +39,7 @@ sdkt
 │   ├── --args <TYPE:VALUE>...    (same typed-args as `call` / `tx build`;
 │   │                            strict: unknown types are rejected)
 │   ├── --identity <name>        (signs and pays; default: "default")
+│   ├── --build-only             (stop before submission; print the envelope)
 │   ├── --format <json|pretty>
 │   └── --network-profile <NAME> / --rpc-url <URL> / --network-passphrase <P>
 │
@@ -46,6 +47,13 @@ sdkt
 │     fetch account sequence → simulate → build final envelope (authoritative
 │     footprint + fees + auth entries from simulation) → sign with the local
 │     identity → submit → poll until settled. Exit code 0 only on SUCCESS.
+│   `--build-only` runs the same preparation stages and stops before
+│     `sendTransaction`: no submission, no polling, no state change. It prints
+│     the signed base64 envelope plus the computed fee and sequence (pretty:
+│     `Transaction Envelope (NOT submitted):`; JSON: `envelopeXdr`, `fee`,
+│     `sequence`, `submitted: false`) and exits 0. The envelope is
+│     byte-for-byte what `invoke` would submit, so it round-trips through
+│     `tx validate` / `tx sign` / `tx submit`.
 │   Result decoding is limited to the transaction-level `TransactionResult`
 │   XDR (no ABI-aware result decode yet). Inherits the mainnet safety guard
 │   (see below). Live Testnet smoke test is documented but NOT exercised in CI.

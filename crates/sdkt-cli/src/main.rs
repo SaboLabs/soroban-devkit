@@ -607,6 +607,9 @@ enum Commands {
         /// Return after submission with the transaction hash instead of polling for settlement
         #[arg(long)]
         no_wait: bool,
+        /// Build and sign the invocation envelope, print it, and stop without submitting (#73)
+        #[arg(long)]
+        build_only: bool,
         #[command(flatten)]
         net: NetworkArgs,
     },
@@ -5105,6 +5108,7 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
             identity,
             format,
             no_wait,
+            build_only,
             net,
         } => {
             let fmt = parse_format_str(&format);
@@ -5154,6 +5158,42 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
 
             let client = SorobanRpcClient::from_config(&network_config);
             let poll = sdkt_rpc::PollConfig::default();
+
+            // `--build-only`: stop after the envelope is built and signed. Nothing
+            // is submitted, so the prepared envelope can be inspected (or handed to
+            // `sdkt tx validate` / `sdkt tx submit`) without a signed transaction
+            // ever reaching the network from this path.
+            if build_only {
+                match sdkt_rpc::build_invoke_envelope(&client, &params, &signer, network).await {
+                    Ok(res) => {
+                        if fmt == OutputFormat::Json {
+                            println!(
+                                "{}",
+                                serde_json::json!({
+                                    "envelopeXdr": res.envelope_xdr,
+                                    "fee": res.fee,
+                                    "sequence": res.sequence,
+                                    "contractId": res.contract_id,
+                                    "function": res.function,
+                                    "submitted": false,
+                                })
+                            );
+                        } else {
+                            println!("Transaction Envelope (NOT submitted):");
+                            println!("  Contract: {}", res.contract_id);
+                            println!("  Function: {}", res.function);
+                            println!("  Fee:      {} stroops", res.fee);
+                            println!("  Sequence: {}", res.sequence);
+                            println!("{}", res.envelope_xdr);
+                        }
+                        return Ok(());
+                    }
+                    Err(e) => {
+                        eprintln!("Error building invoke transaction: {}", e);
+                        process::exit(1);
+                    }
+                }
+            }
 
             match sdkt_rpc::invoke_contract(&client, &params, &signer, network, &poll, !no_wait)
                 .await

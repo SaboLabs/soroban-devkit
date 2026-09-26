@@ -295,8 +295,7 @@ sdkt invoke C... increment --args u32:1 --identity alice --network-profile testn
 # JSON output for scripting
 sdkt invoke C... set_admin --args address:G... --identity alice --format json --network-profile testnet
 
-# Submit without waiting for settlement (prints the hash with status PENDING)
-sdkt invoke C... increment --args u32:1 --identity alice --no-wait --network-profile testnet
+ main
 ```
 
 - `--args` uses the same `TYPE:VALUE` syntax as `call`, but is strict: an
@@ -307,16 +306,14 @@ sdkt invoke C... increment --args u32:1 --identity alice --no-wait --network-pro
   inclusion fee); the footprint and auth entries come from the same simulation.
 - Output shows the transaction hash, final status, fee, and result XDR.
   Exit code is non-zero when the transaction fails or is rejected.
-- By default, `invoke` polls until the transaction settles. Use `--no-wait` to
-  return immediately after successful submission with the transaction hash and
-  `PENDING` status; this mode exits successfully and does not call
-  `getTransaction`.
+ main
 - Relation to `tx build/sign/submit`: `invoke` is the one-command equivalent of
   `tx build` (with a real sequence + simulated fees) → `tx sign` →
-  `tx submit --wait`. Use the `tx` subcommands when you need to inspect or
+  `tx submit --wait`; `invoke --build-only` covers the first two without the
+  `tx` round-trip. Use the `tx` subcommands when you need to inspect or
   modify the envelope between steps; use `invoke` for the common straight path.
 - Limitations (core implementation): single-operation only, no ABI-aware
-  result decoding of the return value, no `--fee` override, no dry-run flag.
+  result decoding of the return value, no `--fee` override.
   A live Testnet smoke test is documented here but NOT exercised in CI.
 
 ## CI gating (copy-paste)

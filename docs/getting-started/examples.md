@@ -309,6 +309,14 @@ sdkt invoke C... increment --args u32:1 --identity alice --network-profile testn
 
 # JSON output for scripting
 sdkt invoke C... set_admin --args address:G... --identity alice --format json --network-profile testnet
+
+# Build and sign the envelope, but do not submit it
+sdkt invoke C... set_admin --args address:G... --identity alice --network-profile testnet --build-only
+# → prints the base64 envelope plus the simulated fee and sequence.
+# Feed it straight back into the offline/remote path:
+sdkt tx validate --envelope <that-xdr>
+sdkt tx sign     --input <that-xdr> --identity other --output signed.txt
+sdkt tx submit   --envelope signed.txt --wait
 ```
 
 - `--args` uses the same `TYPE:VALUE` syntax as `call`, but is strict: an
@@ -319,12 +327,21 @@ sdkt invoke C... set_admin --args address:G... --identity alice --format json --
   inclusion fee); the footprint and auth entries come from the same simulation.
 - Output shows the transaction hash, final status, fee, and result XDR.
   Exit code is non-zero when the transaction fails or is rejected.
+- `--build-only` runs sequence fetch → simulation → envelope build → signing
+  and stops before submission: no `sendTransaction`, no polling, no state
+  change. It prints the envelope (pretty: `Transaction Envelope (NOT submitted):`
+  block; JSON: `envelopeXdr` plus `fee` and `sequence`) and exits 0. The mainnet
+  safety guard still applies, and simulation failures surface exactly as they do
+  on the submit path. The emitted envelope is byte-for-byte what `invoke` would
+  have submitted, so it round-trips through `tx validate` / `tx sign` /
+  `tx submit`.
 - Relation to `tx build/sign/submit`: `invoke` is the one-command equivalent of
   `tx build` (with a real sequence + simulated fees) → `tx sign` →
-  `tx submit --wait`. Use the `tx` subcommands when you need to inspect or
+  `tx submit --wait`; `invoke --build-only` covers the first two without the
+  `tx` round-trip. Use the `tx` subcommands when you need to inspect or
   modify the envelope between steps; use `invoke` for the common straight path.
 - Limitations (core implementation): single-operation only, no ABI-aware
-  result decoding of the return value, no `--fee` override, no dry-run flag.
+  result decoding of the return value, no `--fee` override.
   A live Testnet smoke test is documented here but NOT exercised in CI.
 
 ## CI gating (copy-paste)
