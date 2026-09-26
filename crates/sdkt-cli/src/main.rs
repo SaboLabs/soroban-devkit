@@ -4177,9 +4177,45 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
             rules,
             no_plugins,
         } => {
-            let fmt = parse_format_str(&format);
+            // Audit supports three output formats: pretty, json, sarif.
+            // We parse the format here rather than through the shared
+            // `parse_format_str` helper so we can extend it without changing
+            // the shared OutputFormat enum used by other commands.
+            #[derive(PartialEq)]
+            enum AuditFormat {
+                Pretty,
+                Json,
+                Sarif,
+            }
+            let audit_fmt = match format.to_lowercase().as_str() {
+                "pretty" => AuditFormat::Pretty,
+                "json" => AuditFormat::Json,
+                "sarif" => AuditFormat::Sarif,
+                other => {
+                    eprintln!(
+                        "Invalid format '{}'. Use 'pretty', 'json', or 'sarif'.",
+                        other
+                    );
+                    process::exit(1);
+                }
+            };
+            // Keep `fmt` as OutputFormat for the list_rules branch which uses
+            // the same pretty/JSON distinction.
+            let fmt = match &audit_fmt {
+                AuditFormat::Json => OutputFormat::Json,
+                _ => OutputFormat::Pretty,
+            };
 
             if list_rules {
+                // SARIF is not meaningful for listing rules — reject early so
+                // automation never receives unexpected plain text on stdout.
+                if audit_fmt == AuditFormat::Sarif {
+                    eprintln!(
+                        "Error: --format sarif is not supported with --list-rules. \
+                         Use --format json or --format pretty."
+                    );
+                    process::exit(1);
+                }
                 let all = sdkt_audit::all_rules();
                 if fmt == OutputFormat::Json {
                     let items: Vec<sdkt_audit::RuleInfo> = all
@@ -4433,7 +4469,28 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
             let disabled_refs: Vec<&str> = disable.iter().map(String::as_str).collect();
             match sdkt_audit::audit_source_with(&src, &disabled_refs) {
                 Ok(report) => {
-                    if fmt == OutputFormat::Json {
+                    if audit_fmt == AuditFormat::Sarif {
+                        // Collect rule metadata for the SARIF rules section.
+                        let rules_info: Vec<sdkt_audit::RuleInfo> = sdkt_audit::all_rules()
+                            .iter()
+                            .map(|r| sdkt_audit::RuleInfo {
+                                id: r.id().to_string(),
+                                severity: r.severity(),
+                                description: r.description().to_string(),
+                            })
+                            .collect();
+                        // Path-to-URI normalisation (backslash→slash, drive
+                        // strip, percent-encoding) is handled entirely inside
+                        // sdkt_audit::sarif so the raw CLI path is passed
+                        // through unchanged.
+                        let sarif_str = sdkt_audit::report_to_sarif_string(
+                            &report,
+                            &path,
+                            sdkt_version_string(),
+                            &rules_info,
+                        )?;
+                        println!("{}", sarif_str);
+                    } else if audit_fmt == AuditFormat::Json {
                         println!("{}", serde_json::to_string(&report)?);
                     } else {
                         println!("Static Analysis Report: {}", path);
