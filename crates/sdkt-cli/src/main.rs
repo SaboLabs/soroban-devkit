@@ -1019,6 +1019,12 @@ enum ProjectCommand {
         /// Deployment salt (40 hex chars = 20 bytes). Auto-generated if omitted.
         #[arg(short, long)]
         salt: Option<String>,
+        /// Skip aliases whose recorded contract ID still exists on-chain
+        /// (verified via getLedgerEntries against the `.sdkt-deployments.json`
+        /// record for this network profile). Resume an interrupted deploy
+        /// without re-deploying (and re-paying for) what already succeeded.
+        #[arg(long)]
+        skip_deployed: bool,
         #[arg(short, long, default_value = "pretty")]
         format: String,
     },
@@ -5728,7 +5734,11 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
             }
         },
         Commands::Project { action, net } => match action {
-            ProjectCommand::Deploy { salt, format } => {
+            ProjectCommand::Deploy {
+                salt,
+                skip_deployed,
+                format,
+            } => {
                 let fmt = parse_format_str(&format);
                 // Validate the salt before any network or identity work (fail fast).
                 let salt_bytes = salt.as_deref().map(parse_salt_hex).transpose()?;
@@ -5806,10 +5816,6 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
                         }
 
                         let mut results = std::collections::HashMap::new();
-                        let mut fresh_records: std::collections::HashMap<
-                            String,
-                            sdkt_core::deployment::DeploymentRecord,
-                        > = std::collections::HashMap::new();
                         let mut failure: Option<String> = None;
 
                         for contract in resolved {
@@ -5900,7 +5906,7 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
                                 &wasm_bytes,
                                 &source_account,
                                 &signer,
-                                network,
+                                network.clone(),
                                 salt_bytes,
                             )
                             .await
@@ -5913,8 +5919,12 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
                                         .duration_since(std::time::UNIX_EPOCH)
                                         .map(|d| d.as_secs())
                                         .unwrap_or(0);
-                                    fresh_records.insert(
-                                        contract.alias.clone(),
+                                    // Persist the record immediately so a crash,
+                                    // SIGINT, or early ? return after this point
+                                    // cannot lose this contract's ID.
+                                    record_file.set_record(
+                                        &network_key,
+                                        &contract.alias,
                                         sdkt_core::deployment::DeploymentRecord {
                                             contract_id: res.contract_id.clone(),
                                             wasm_hash: res.wasm_hash.clone(),
@@ -5923,6 +5933,7 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
                                             salt: Some(res.salt.clone()),
                                         },
                                     );
+                                    persist_records(&record_file);
                                     results.insert(contract.alias, res.contract_id);
                                 }
                                 Ok(sdkt_rpc::DeployOutcome::Partial(p)) => {
@@ -5946,11 +5957,11 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
                             }
                         }
 
-                        // Persist everything that landed (success or partial),
-                        // merging into whatever the record file already held.
-                        for (alias, record) in fresh_records {
-                            record_file.set_record(&network_key, &alias, record);
-                        }
+                        // Persist is called per-contract on success above.
+                        // Call once more here to cover the case where failure
+                        // broke out of the loop with no new records — a no-op
+                        // write that ensures any partial progress from a previous
+                        // run that modified record_file in memory is still saved.
                         persist_records(&record_file);
 
                         if let Some(err) = failure {

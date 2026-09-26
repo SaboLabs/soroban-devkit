@@ -63,14 +63,44 @@ impl DeploymentRecordFile {
         serde_json::from_str(&raw).map_err(|e| format!("Failed to parse {}: {e}", path.display()))
     }
 
-    /// Write the record file to `path`. Serialization errors (none expected for
-    /// this type) and I/O errors are returned to the caller, which warns but
-    /// never fails the deployment on a record-write problem.
+    /// Write the record file to `path`. Uses an atomic write: serializes to a
+    /// sibling temp file, syncs to disk, then renames over the target. This
+    /// prevents a crash or full-disk mid-write from leaving a partial or empty
+    /// file that would block subsequent deploys with a parse error.
+    ///
+    /// Serialization errors (none expected for this type) and I/O errors are
+    /// returned to the caller, which warns but never fails the deployment on a
+    /// record-write problem.
     pub fn write<P: AsRef<Path>>(&self, path: P) -> Result<(), String> {
+        use std::io::Write as _;
+
         let path = path.as_ref();
         let json = serde_json::to_string_pretty(self)
             .map_err(|e| format!("Failed to serialize deployment record: {e}"))?;
-        std::fs::write(path, json).map_err(|e| format!("Failed to write {}: {e}", path.display()))
+
+        // Write to a temp file in the same directory so the rename is
+        // guaranteed to be atomic on the same filesystem.
+        let parent = path.parent().unwrap_or_else(|| std::path::Path::new("."));
+        let tmp_path = parent.join(format!(
+            ".sdkt-deployments.tmp.{}",
+            std::process::id()
+        ));
+
+        let mut tmp_file = std::fs::File::create(&tmp_path)
+            .map_err(|e| format!("Failed to create temp record file {}: {e}", tmp_path.display()))?;
+        tmp_file
+            .write_all(json.as_bytes())
+            .map_err(|e| format!("Failed to write temp record file {}: {e}", tmp_path.display()))?;
+        tmp_file
+            .sync_all()
+            .map_err(|e| format!("Failed to sync temp record file {}: {e}", tmp_path.display()))?;
+        drop(tmp_file);
+
+        std::fs::rename(&tmp_path, path).map_err(|e| {
+            // Best-effort cleanup; ignore secondary error.
+            let _ = std::fs::remove_file(&tmp_path);
+            format!("Failed to rename temp record file to {}: {e}", path.display())
+        })
     }
 
     /// Records for a single network key, if any exist.
