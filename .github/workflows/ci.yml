@@ -172,6 +172,10 @@ jobs:
           --target wasm32-unknown-unknown \
           --manifest-path crates/sdkt-playground/Cargo.toml
 
+    - name: Show raw playground WASM hash
+      run: |
+        sha256sum crates/sdkt-playground/target/wasm32-unknown-unknown/release/sdkt_playground.wasm
+
     - name: Generate playground artifacts
       run: |
         tmp_dir="$(mktemp -d)"
