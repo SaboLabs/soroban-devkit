@@ -14,7 +14,7 @@ documentation = "https://docs.rs/sdkt-audit"
 [dependencies]
 syn = { version = "3", features = ["full", "visit"] }
 serde = { version = "1", features = ["derive"] }
-serde_json = { version = "1", optional = true }
+serde_json = { version = "1" }
 thiserror = "2"
 dirs = "7"
 toml = "1.1"
@@ -31,7 +31,7 @@ extism = { version = "1.30.0", optional = true }
 plugins = ["dep:libloading"]
 
 # WebAssembly plugin loading (Phase C). Off by default.
-wasm-plugins = ["dep:extism", "dep:serde_json"]
+wasm-plugins = ["dep:extism"]
 
 [dev-dependencies]
 tempfile = "3"
