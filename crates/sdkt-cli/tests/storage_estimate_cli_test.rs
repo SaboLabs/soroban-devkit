@@ -43,14 +43,14 @@ fn storage_estimate_pretty_output_us_old() {
         ))
         .stdout(predicate::str::contains("guaranteed_instance_singleton"))
         .stdout(predicate::str::contains("Persistent:"))
-        .stdout(predicate::str::contains("implied_udt_baseline"))
+        .stdout(predicate::str::contains("runtime_state_unknown"))
         .stdout(predicate::str::contains("Temporary:"))
         .stdout(predicate::str::contains("Entries:     0"))
         .stdout(predicate::str::contains("Cost:        0 stroops (0 XLM)"))
         .stdout(predicate::str::contains("Total Estimate:"))
-        .stdout(predicate::str::contains("Baseline Entries: 2"))
+        .stdout(predicate::str::contains("Baseline Entries: 1"))
         .stdout(predicate::str::contains(
-            "Total Cost:       3456000 stroops (0.3456 XLM)",
+            "Total Cost:       1728000 stroops (0.1728 XLM)",
         ))
         .stdout(predicate::str::contains(
             "Approximation Ceiling & Limitations:",
@@ -72,7 +72,7 @@ fn storage_estimate_pretty_output_us_new() {
         .stdout(predicate::str::contains("Persistent:"))
         .stdout(predicate::str::contains("Entries:     0"))
         .stdout(predicate::str::contains("Cost:        0 stroops (0 XLM)"))
-        .stdout(predicate::str::contains("zero_udts_declared"))
+        .stdout(predicate::str::contains("runtime_state_unknown"))
         .stdout(predicate::str::contains("Total Estimate:"))
         .stdout(predicate::str::contains("Baseline Entries: 1"))
         .stdout(predicate::str::contains(
@@ -90,9 +90,9 @@ fn storage_estimate_custom_ledgers() {
         .stdout(predicate::str::contains(
             "Cost:        10000 stroops (0.001 XLM)",
         ))
-        .stdout(predicate::str::contains("Baseline Entries: 2"))
+        .stdout(predicate::str::contains("Baseline Entries: 1"))
         .stdout(predicate::str::contains(
-            "Total Cost:       20000 stroops (0.002 XLM)",
+            "Total Cost:       10000 stroops (0.001 XLM)",
         ));
 }
 

@@ -747,15 +747,15 @@ mod storage_estimate {
             );
         }
 
-        // Specific values for us_old.wasm
+        // Specific values for us_old.wasm (guaranteed instance singleton baseline; persistent is unknown from ABI alone)
         assert_eq!(classes["instance"]["entry_count"], 1);
-        assert_eq!(classes["persistent"]["entry_count"], 1);
+        assert_eq!(classes["persistent"]["entry_count"], 0);
         assert_eq!(classes["temporary"]["entry_count"], 0);
 
         let total = v.get("total").expect("total object");
-        assert_eq!(total["baseline_entries"], 2);
-        assert_eq!(total["cost_stroops"], 3456000);
-        assert_eq!(total["cost_xlm"], "0.3456");
+        assert_eq!(total["baseline_entries"], 1);
+        assert_eq!(total["cost_stroops"], 1728000);
+        assert_eq!(total["cost_xlm"], "0.1728");
 
         let metrics = v.get("spec_metrics").expect("spec_metrics object");
         assert_eq!(metrics["functions_count"], 2);

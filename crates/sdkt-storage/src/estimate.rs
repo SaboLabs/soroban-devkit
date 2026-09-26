@@ -7,13 +7,14 @@
 //! # Ceiling and Honest Derivation
 //!
 //! An offline static analyzer reading only the WASM ABI can guarantee the contract
-//! instance singleton (1 entry), and observe declared custom data types (UDTs) that
-//! imply persistent storage schemas. It cannot predict dynamic runtime storage
+//! instance singleton (1 entry). It cannot predict dynamic runtime storage
 //! growth (e.g. arbitrary user account entries or map keys created by transaction
-//! execution) or ephemeral temporary storage usage.
+//! execution), determine which declared types are persisted, or predict ephemeral
+//! temporary storage usage.
 //!
-//! The estimate therefore represents a **structural lower-bound baseline** for the
-//! contract's initial footprint over the specified ledger duration.
+//! The estimate therefore represents a **guaranteed structural baseline** (the 1 instance
+//! entry) while reporting spec complexity metrics (functions, custom types, events)
+//! and explicitly explaining why persistent and temporary entries require runtime analysis.
 
 use sdkt_rpc::storage::calculate_extension_cost;
 use sdkt_wasm::ContractSpec;
@@ -179,8 +180,8 @@ impl fmt::Display for StorageCostEstimate {
 ///
 /// This is a pure function over the parsed contract spec:
 /// - **Instance**: 1 entry guaranteed for any deployed contract (the contract instance singleton).
-/// - **Persistent**: Implied baseline lower bound from declared custom data types (structs, unions, enums),
-///   excluding error enums. Dynamic runtime entries (e.g. user balances) cannot be predicted statically.
+/// - **Persistent**: 0 baseline entries. ABI custom type declarations describe schemas but cannot
+///   establish how many entries are stored at runtime; requires live storage analysis.
 /// - **Temporary**: Ephemeral storage is invocation-dependent and cannot be derived statically (0 baseline).
 /// - **Cost**: Derived using `sdkt_rpc::storage::calculate_extension_cost(ledgers)` per entry.
 pub fn estimate_storage_from_spec(
@@ -202,36 +203,15 @@ pub fn estimate_storage_from_spec(
         notes: "Contract instance singleton entry required for contract deployment".to_string(),
     };
 
-    // 2. Persistent storage: custom data types (structs, unions, enums) define contract
-    // data schemas / storage keys. Error enums define errors, not storage.
-    let data_udts = spec
-        .custom_types
-        .iter()
-        .filter(|t| t.kind != "error_enum")
-        .count() as u64;
-
-    let (persistent_entry_count, persistent_derivation, persistent_notes) = if data_udts > 0 {
-        (
-            data_udts,
-            "implied_udt_baseline".to_string(),
-            format!(
-                "Baseline lower bound from {data_udts} declared data UDT(s); dynamic runtime entries cannot be determined from spec alone"
-            ),
-        )
-    } else {
-        (
-            0,
-            "zero_udts_declared".to_string(),
-            "No data UDTs declared in spec; dynamic runtime entries cannot be determined from spec alone".to_string(),
-        )
-    };
-    let persistent_cost_stroops = persistent_entry_count * cost_per_entry_stroops;
+    // 2. Persistent storage: contractspecv0 declares ABI types but does not
+    // identify which types are persisted or how many entries exist at runtime.
     let persistent = ClassEstimate {
-        entry_count: persistent_entry_count,
-        cost_stroops: persistent_cost_stroops,
-        cost_xlm: format_stroops_to_xlm(persistent_cost_stroops),
-        derivation: persistent_derivation,
-        notes: persistent_notes,
+        entry_count: 0,
+        cost_stroops: 0,
+        cost_xlm: "0".to_string(),
+        derivation: "runtime_state_unknown".to_string(),
+        notes: "Persistent storage entries cannot be determined from the ABI alone; use live storage analysis"
+            .to_string(),
     };
 
     // 3. Temporary storage: ephemeral and invocation-dependent; cannot be derived offline.
@@ -368,18 +348,18 @@ mod tests {
             "guaranteed_instance_singleton"
         );
 
-        // Persistent: 0 (no UDTs)
+        // Persistent: 0 (runtime state cannot be determined from ABI alone)
         assert_eq!(est.classes.persistent.entry_count, 0);
         assert_eq!(est.classes.persistent.cost_stroops, 0);
         assert_eq!(est.classes.persistent.cost_xlm, "0");
-        assert_eq!(est.classes.persistent.derivation, "zero_udts_declared");
+        assert_eq!(est.classes.persistent.derivation, "runtime_state_unknown");
 
         // Temporary: 0
         assert_eq!(est.classes.temporary.entry_count, 0);
         assert_eq!(est.classes.temporary.cost_stroops, 0);
         assert_eq!(est.classes.temporary.cost_xlm, "0");
 
-        // Total
+        // Total: 1 guaranteed instance entry
         assert_eq!(est.total.baseline_entries, 1);
         assert_eq!(est.total.cost_stroops, 1_728_000);
         assert_eq!(est.total.cost_xlm, "0.1728");
@@ -399,23 +379,24 @@ mod tests {
         );
         let est = estimate_storage_from_spec(&spec, "token.wasm", DEFAULT_ESTIMATE_LEDGERS);
 
-        // Instance: 1, Persistent: 2, Temporary: 0 -> Total: 3
+        // Instance: 1 guaranteed, Persistent: 0, Temporary: 0 -> Total: 1
         assert_eq!(est.classes.instance.entry_count, 1);
-        assert_eq!(est.classes.persistent.entry_count, 2);
-        assert_eq!(est.classes.persistent.derivation, "implied_udt_baseline");
+        assert_eq!(est.classes.persistent.entry_count, 0);
+        assert_eq!(est.classes.persistent.derivation, "runtime_state_unknown");
         assert_eq!(est.classes.temporary.entry_count, 0);
 
-        assert_eq!(est.total.baseline_entries, 3);
-        assert_eq!(est.total.cost_stroops, 3 * 1_728_000);
-        assert_eq!(est.total.cost_xlm, format_stroops_to_xlm(3 * 1_728_000));
+        assert_eq!(est.total.baseline_entries, 1);
+        assert_eq!(est.total.cost_stroops, 1_728_000);
+        assert_eq!(est.total.cost_xlm, "0.1728");
 
+        // Custom types are tracked in SpecMetrics without inflating persistent entries
         assert_eq!(est.spec_metrics.functions_count, 2);
         assert_eq!(est.spec_metrics.custom_types_count, 2);
         assert_eq!(est.spec_metrics.events_count, 1);
     }
 
     #[test]
-    fn test_estimate_excludes_error_enums_from_persistent_storage() {
+    fn test_estimate_custom_ledgers_scaling() {
         let spec = make_test_spec(
             &["foo"],
             vec![("Error", "error_enum"), ("Record", "struct")],
@@ -427,15 +408,15 @@ mod tests {
         assert_eq!(est.cost_per_entry_stroops, 10_000);
         assert_eq!(est.cost_per_entry_xlm, "0.001");
 
-        // Error enum is excluded from persistent data UDT count -> 1 struct only
-        assert_eq!(est.classes.persistent.entry_count, 1);
-        assert_eq!(est.classes.persistent.cost_stroops, 10_000);
-        assert_eq!(est.classes.persistent.cost_xlm, "0.001");
+        // Instance: 1 entry, Persistent: 0, Total: 1
+        assert_eq!(est.classes.instance.entry_count, 1);
+        assert_eq!(est.classes.instance.cost_stroops, 10_000);
+        assert_eq!(est.classes.persistent.entry_count, 0);
 
-        // Total: 1 instance + 1 persistent = 2
-        assert_eq!(est.total.baseline_entries, 2);
-        assert_eq!(est.total.cost_stroops, 20_000);
-        assert_eq!(est.total.cost_xlm, "0.002");
+        assert_eq!(est.total.baseline_entries, 1);
+        assert_eq!(est.total.cost_stroops, 10_000);
+        assert_eq!(est.total.cost_xlm, "0.001");
+        assert_eq!(est.spec_metrics.custom_types_count, 2);
     }
 
     #[test]
@@ -451,8 +432,8 @@ mod tests {
         assert!(text.contains("1728000 stroops (0.1728 XLM)"));
         assert!(text.contains("Persistent:"));
         assert!(text.contains("Temporary:"));
-        assert!(text.contains("Baseline Entries: 2"));
-        assert!(text.contains("Total Cost:       3456000 stroops (0.3456 XLM)"));
+        assert!(text.contains("Baseline Entries: 1"));
+        assert!(text.contains("Total Cost:       1728000 stroops (0.1728 XLM)"));
         assert!(text.contains("Approximation Ceiling & Limitations:"));
     }
 
