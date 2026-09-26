@@ -1113,7 +1113,12 @@ enum ProjectCommand {
         /// Deployment salt (40 hex chars = 20 bytes). Auto-generated if omitted.
         #[arg(short, long)]
         salt: Option<String>,
-
+        /// Skip aliases whose recorded contract ID still exists on-chain
+        /// (verified via getLedgerEntries against the `.sdkt-deployments.json`
+        /// record for this network profile). Resume an interrupted deploy
+        /// without re-deploying (and re-paying for) what already succeeded.
+        #[arg(long)]
+        skip_deployed: bool,
         #[arg(short, long, default_value = "pretty")]
         format: String,
     },
@@ -6125,7 +6130,11 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
             }
         },
         Commands::Project { action, net } => match action {
-
+            ProjectCommand::Deploy {
+                salt,
+                skip_deployed,
+                format,
+            } => {
                 let fmt = parse_format_str(&format);
                 // Validate the salt before any network or identity work (fail fast).
                 let salt_bytes = salt.as_deref().map(parse_salt_hex).transpose()?;
@@ -6315,7 +6324,7 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
                                 &wasm_bytes,
                                 &source_account,
                                 &signer,
-
+                                network.clone(),
                                 salt_bytes,
                             )
                             .await
