@@ -2673,8 +2673,7 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
                         }
                     };
 
-                    let estimate =
-                        sdkt_storage::estimate_storage_from_spec(&spec, &wasm, ledgers);
+                    let estimate = sdkt_storage::estimate_storage_from_spec(&spec, &wasm, ledgers);
 
                     match fmt {
                         OutputFormat::Json => {

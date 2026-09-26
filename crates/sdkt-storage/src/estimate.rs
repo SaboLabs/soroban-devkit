@@ -139,7 +139,11 @@ impl fmt::Display for StorageCostEstimate {
         writeln!(f, "    Derivation:  {}", self.classes.instance.derivation)?;
         writeln!(f, "    Note:        {}", self.classes.instance.notes)?;
         writeln!(f, "  Persistent:")?;
-        writeln!(f, "    Entries:     {}", self.classes.persistent.entry_count)?;
+        writeln!(
+            f,
+            "    Entries:     {}",
+            self.classes.persistent.entry_count
+        )?;
         writeln!(
             f,
             "    Cost:        {} stroops ({} XLM)",
@@ -359,7 +363,10 @@ mod tests {
         assert_eq!(est.classes.instance.entry_count, 1);
         assert_eq!(est.classes.instance.cost_stroops, 1_728_000);
         assert_eq!(est.classes.instance.cost_xlm, "0.1728");
-        assert_eq!(est.classes.instance.derivation, "guaranteed_instance_singleton");
+        assert_eq!(
+            est.classes.instance.derivation,
+            "guaranteed_instance_singleton"
+        );
 
         // Persistent: 0 (no UDTs)
         assert_eq!(est.classes.persistent.entry_count, 0);

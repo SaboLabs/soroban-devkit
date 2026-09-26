@@ -691,12 +691,21 @@ mod storage_estimate {
 
         assert!(v.get("wasm_path").is_some(), "missing `wasm_path`");
         assert!(v.get("ledgers").is_some(), "missing `ledgers`");
-        assert!(v.get("cost_per_entry_stroops").is_some(), "missing `cost_per_entry_stroops`");
-        assert!(v.get("cost_per_entry_xlm").is_some(), "missing `cost_per_entry_xlm`");
+        assert!(
+            v.get("cost_per_entry_stroops").is_some(),
+            "missing `cost_per_entry_stroops`"
+        );
+        assert!(
+            v.get("cost_per_entry_xlm").is_some(),
+            "missing `cost_per_entry_xlm`"
+        );
         assert!(v.get("classes").is_some(), "missing `classes`");
         assert!(v.get("total").is_some(), "missing `total`");
         assert!(v.get("spec_metrics").is_some(), "missing `spec_metrics`");
-        assert!(v.get("approximation_ceiling").is_some(), "missing `approximation_ceiling`");
+        assert!(
+            v.get("approximation_ceiling").is_some(),
+            "missing `approximation_ceiling`"
+        );
     }
 
     #[test]
@@ -792,4 +801,3 @@ mod storage_estimate {
         assert_eq!(total["cost_xlm"], "0.001");
     }
 }
-
