@@ -33,6 +33,9 @@ pub struct Finding {
     pub rule_id: String,
     pub severity: Severity,
     pub message: String,
+    /// Originating source file for multi-file audits.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub file: Option<String>,
     /// Optional human-readable location (function name, or `fn:binding`).
     pub location: Option<String>,
 }

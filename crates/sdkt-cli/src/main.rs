@@ -482,8 +482,9 @@ enum Commands {
     },
     /// Static security analysis of a Soroban contract source file (Gap C)
     Audit {
-        /// Path to the Rust source file (.rs) to analyze
-        path: String,
+        /// Rust source file(s) or directory path(s) to analyze
+        #[arg(required = true, num_args = 1..)]
+        paths: Vec<String>,
         #[arg(short, long, default_value = "pretty")]
         format: String,
         /// Disable a rule by id (repeatable), e.g. --disable MOVE-001
@@ -1812,6 +1813,45 @@ async fn run_upgrade_safety(
         );
     }
     Ok(())
+}
+
+fn collect_rust_sources(path: &std::path::Path) -> Result<Vec<std::path::PathBuf>, std::io::Error> {
+    if path.is_file() {
+        return if path.extension().is_some_and(|ext| ext == "rs") {
+            Ok(vec![path.to_path_buf()])
+        } else {
+            Ok(Vec::new())
+        };
+    }
+
+    if !path.is_dir() {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::NotFound,
+            format!("path does not exist: {}", path.display()),
+        ));
+    }
+
+    let mut files = Vec::new();
+    let mut stack = vec![path.to_path_buf()];
+
+    while let Some(dir) = stack.pop() {
+        for entry in std::fs::read_dir(&dir)? {
+            let entry = entry?;
+            let entry_path = entry.path();
+            let file_type = entry.file_type()?;
+
+            if file_type.is_dir() {
+                stack.push(entry_path);
+            } else if file_type.is_file()
+                && entry_path.extension().is_some_and(|ext| ext == "rs")
+            {
+                files.push(entry_path);
+            }
+        }
+    }
+
+    files.sort();
+    Ok(files)
 }
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -3777,7 +3817,7 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
             }
         }
         Commands::Audit {
-            path,
+            paths,
             format,
             disable,
             rules,
@@ -3807,8 +3847,30 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
                 }
             }
 
-            let src = fs::read_to_string(&path)
-                .map_err(|e| format!("Failed to read source '{}': {}", path, e))?;
+            let mut source_paths = Vec::new();
+
+for input in &paths {
+    let input_path = std::path::Path::new(input);
+    let discovered = collect_rust_sources(input_path)
+        .map_err(|e| {
+    if paths.len() == 1
+        && input_path.extension().is_some_and(|ext| ext == "rs")
+    {
+        format!("Failed to read source '{}': {}", input, e)
+    } else {
+        format!("Failed to discover Rust sources '{}': {}", input, e)
+    }
+})?;
+
+    source_paths.extend(discovered);
+}
+
+source_paths.sort();
+source_paths.dedup();
+
+if source_paths.is_empty() {
+    return Err("No Rust source files (.rs) found in the supplied paths".into());
+}
 
             #[allow(unused_mut)]
             let mut loaded_plugins = 0usize;
@@ -3945,7 +4007,7 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
                             {
                                 match sdkt_audit::load_and_register_wasm(path_r, &src) {
                                     Ok(_) => loaded_plugins += 1,
-                                    Err(e) => {
+                                   Err(e) => {
                                         if matches!(
                                             e,
                                             sdkt_audit::WasmPluginLoadError::AbiMismatch { .. }
@@ -3971,16 +4033,11 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
                                 process::exit(1);
                             }
                         }
-                        "rs" => {
-                            // semantic: source files passed in --rules are existence-validated
-                            // above but not loaded at runtime (built-in rules register themselves).
-                        }
                         _ => {
                             eprintln!(
-                                "Error: Unsupported plugin format: {}\n\nSupported plugin formats:\n  .so\n  .dll\n  .dylib\n  .wasm",
+                                "Warning: skipping plugin '{}': unsupported artifact format",
                                 r
                             );
-                            process::exit(1);
                         }
                     }
                 }
@@ -3992,46 +4049,140 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
             sdkt_audit_example_rule::register();
 
             let disabled_refs: Vec<&str> = disable.iter().map(String::as_str).collect();
-            match sdkt_audit::audit_source_with(&src, &disabled_refs) {
-                Ok(report) => {
-                    if fmt == OutputFormat::Json {
-                        println!("{}", serde_json::to_string(&report)?);
-                    } else {
-                        println!("Static Analysis Report: {}", path);
-                        if loaded_plugins > 0 {
-                            println!(
-                                "Rules loaded: 5 built-in, {} plugin{}",
-                                loaded_plugins,
-                                if loaded_plugins == 1 { "" } else { "s" }
-                            );
-                        }
-                        println!(
-                            "Severity: {} critical, {} warning, {} info ({} total)",
-                            report.summary.critical,
-                            report.summary.warning,
-                            report.summary.info,
-                            report.summary.total
-                        );
-                        if report.is_clean() {
-                            println!("No issues found.");
-                        } else {
-                            println!();
-                            for f in &report.findings {
-                                let loc = f
-                                    .location
-                                    .as_ref()
-                                    .map(|l| format!(" [{}]", l))
-                                    .unwrap_or_default();
-                                println!("  [{}] {} {}: {}", f.severity, f.rule_id, loc, f.message);
-                            }
-                        }
-                    }
-                }
-                Err(e) => {
-                    eprintln!("Error auditing source: {}", e);
-                    process::exit(1);
+            let single_file = paths.len() == 1
+            && source_paths.len() == 1
+            && std::path::Path::new(&paths[0]).is_file();
+let multi_file = source_paths.len() > 1;
+
+let mut aggregate = sdkt_audit::AuditReport::default();
+let mut per_file = Vec::new();
+let mut had_file_errors = false;
+
+for source_path in &source_paths {
+    let source = match fs::read_to_string(source_path) {
+        Ok(source) => source,
+        Err(e) => {
+            had_file_errors = true;
+            aggregate.add(sdkt_audit::Finding {
+                rule_id: "AUDIT-IO".to_string(),
+                severity: sdkt_audit::Severity::Critical,
+                message: format!("Failed to read source: {}", e),
+                location: None,
+                file: Some(source_path.display().to_string()),
+            });
+            continue;
+        }
+    };
+
+    match sdkt_audit::audit_source_with(&source, &disabled_refs) {
+        Ok(mut report) => {
+            if multi_file {
+                for finding in &mut report.findings {
+                    finding.file = Some(source_path.display().to_string());
                 }
             }
+
+            for finding in &report.findings {
+                aggregate.add(finding.clone());
+            }
+
+            per_file.push((source_path.clone(), report));
+        }
+        Err(e) => {
+            if single_file {
+                eprintln!("Error auditing source: {}", e);
+                process::exit(1);
+            }
+
+            had_file_errors = true;
+
+            let finding = sdkt_audit::Finding {
+                rule_id: "AUDIT-PARSE".to_string(),
+                severity: sdkt_audit::Severity::Critical,
+                message: format!("Failed to audit source: {}", e),
+                location: None,
+                file: Some(source_path.display().to_string()),
+            };
+
+            let mut report = sdkt_audit::AuditReport::default();
+            report.add(finding.clone());
+
+            aggregate.add(finding);
+            per_file.push((source_path.clone(), report));
+        }
+    }
+}
+if fmt == OutputFormat::Json {
+    if multi_file {
+        #[derive(serde::Serialize)]
+        struct MultiFileAuditReport {
+            files: Vec<serde_json::Value>,
+            summary: sdkt_audit::AuditSummary,
+        }
+
+        let files = per_file
+            .iter()
+            .map(|(path, report)| {
+                serde_json::json!({
+                    "file": path.display().to_string(),
+                    "report": report,
+                })
+            })
+            .collect();
+
+        println!(
+            "{}",
+            serde_json::to_string(&MultiFileAuditReport {
+                files,
+                summary: aggregate.summary.clone(),
+            })?
+        );
+    } else {
+        println!("{}", serde_json::to_string(&aggregate)?);
+    }
+} else {
+    for (path, report) in &per_file {
+        println!("Static Analysis Report: {}", path.display());
+
+        println!(
+            "Severity: {} critical, {} warning, {} info ({} total)",
+            report.summary.critical,
+            report.summary.warning,
+            report.summary.info,
+            report.summary.total
+        );
+
+        if report.is_clean() {
+            println!("No issues found.");
+        } else {
+            println!();
+            for f in &report.findings {
+                let loc = f
+                    .location
+                    .as_ref()
+                    .map(|l| format!(" [{}]", l))
+                    .unwrap_or_default();
+                println!("  [{}] {} {}: {}", f.severity, f.rule_id, loc, f.message);
+            }
+        }
+
+        println!();
+    }
+
+    if multi_file {
+        println!(
+            "Aggregate Severity: {} critical, {} warning, {} info ({} total)",
+            aggregate.summary.critical,
+            aggregate.summary.warning,
+            aggregate.summary.info,
+            aggregate.summary.total
+        );
+    }
+}
+
+if had_file_errors {
+    process::exit(1);
+}
         }
         Commands::Wasm { action, net } => match action {
             WasmAction::Inspect { file, format } => {

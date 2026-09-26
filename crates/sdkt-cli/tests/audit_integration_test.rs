@@ -205,3 +205,90 @@ fn audit_example_plugin_rule_fires_with_plugins_feature() {
         "example plugin rule should fire"
     );
 }
+
+#[test]
+fn audit_directory_walks_nested_rust_files() {
+    let dir = TempDir::new().unwrap();
+    let nested = dir.path().join("nested");
+    std::fs::create_dir(&nested).unwrap();
+
+    write_fixture(
+        &dir,
+        "bad.rs",
+        "pub fn mint_token(to: Address) { }\n",
+    );
+
+    std::fs::write(
+        nested.join("transfer.rs"),
+        "pub fn transfer(from: Address, to: Address, amount: i128) { }\n",
+    )
+    .unwrap();
+
+    sdkt()
+        .args(["audit", dir.path().to_str().unwrap()])
+        .assert()
+        .success()
+        .stdout(predicates::str::contains("bad.rs"))
+        .stdout(predicates::str::contains("transfer.rs"))
+        .stdout(predicates::str::contains("Aggregate Severity"));
+}
+
+#[test]
+fn audit_directory_json_contains_per_file_reports_and_summary() {
+    let dir = TempDir::new().unwrap();
+
+    write_fixture(
+        &dir,
+        "a.rs",
+        "pub fn mint_token(to: Address) { }\n",
+    );
+    write_fixture(
+        &dir,
+        "b.rs",
+        "pub fn transfer(from: Address, to: Address, amount: i128) { }\n",
+    );
+
+    sdkt()
+        .args([
+            "audit",
+            dir.path().to_str().unwrap(),
+            "--format",
+            "json",
+        ])
+        .assert()
+        .success()
+        .stdout(predicates::str::contains("\"files\""))
+        .stdout(predicates::str::contains("\"summary\""))
+        .stdout(predicates::str::contains("\"file\""))
+        .stdout(predicates::str::contains("a.rs"))
+        .stdout(predicates::str::contains("b.rs"));
+}
+
+#[test]
+fn audit_directory_continues_after_unparseable_file() {
+    let dir = TempDir::new().unwrap();
+
+    write_fixture(
+        &dir,
+        "bad_syntax.rs",
+        "fn { not rust code ",
+    );
+    write_fixture(
+        &dir,
+        "valid.rs",
+        "pub fn mint_token(to: Address) { }\n",
+    );
+
+    sdkt()
+        .args([
+            "audit",
+            dir.path().to_str().unwrap(),
+            "--format",
+            "json",
+        ])
+        .assert()
+        .failure()
+        .stdout(predicates::str::contains("bad_syntax.rs"))
+        .stdout(predicates::str::contains("valid.rs"))
+        .stdout(predicates::str::contains("AUDIT-PARSE"));
+}

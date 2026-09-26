@@ -36,6 +36,7 @@ impl AuditRule for ExampleRule {
         for s in scans {
             if s.fn_name.contains("sdkt_example_trigger") {
                 report.add(Finding {
+                    file: None,
                     rule_id: self.id().to_string(),
                     severity: self.severity(),
                     message: format!("Example rule matched trigger function `{}`", s.fn_name),
