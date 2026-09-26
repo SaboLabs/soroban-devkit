@@ -73,6 +73,14 @@ sdkt
 │
 ├── events <contract-id>
 │   ├── --format <json|pretty>
+│   ├── --start-ledger <n>    (inclusive lower bound; when omitted, looks back
+│   │                          1000 ledgers from --end-ledger or the latest)
+│   ├── --end-ledger <n>      (inclusive upper bound; converted to the RPC's
+│   │                          exclusive endLedger internally)
+│   ├── --limit <n>           (maximum events per page; opts into pagination)
+│   ├── --cursor <token>      (continue from a previous page's next_cursor)
+│   ├── --follow              (keep fetching pages until the last one)
+│   ├── --max-pages <n>       (safety cap for --follow; default 10)
 │   ├── --abi <wasm>          (ABI-aware decode from a local WASM)
 │   └── --abi-contract <id>   (ABI-aware decode using the deployed contract's
 │                               on-chain WASM, fetched via the inspection path;
@@ -301,6 +309,36 @@ or git logic is duplicated; the same `compute_dependency_integrity` /
     ├── --deny-breaking        (abort if not backwards-compatible)
     └── --old-wasm <deployed>  (baseline, required by --deny-breaking)
 ```
+
+## Event pagination
+
+`events` returns one page per request by default — whatever the RPC decides to
+send. Pass `--limit <n>` to cap a page, and the command prints a cursor for the
+next page:
+
+```bash
+sdkt events C... --limit 100 --format json
+# {"events":[...],"next_cursor":"<token>","latest_ledger":2500}
+
+sdkt events C... --limit 100 --cursor "<token>" --format json
+# {"events":[...],"next_cursor":null,"latest_ledger":2501}   <- final page
+```
+
+Rules:
+
+- `next_cursor` is present only when a pagination flag was used, and is `null`
+  on the final page. Without `--limit`/`--cursor`/`--follow`, the output is the
+  bare JSON array of events, exactly as before.
+- `--follow` keeps requesting pages until the last one, bounded by
+  `--max-pages` (default 10). If the cap is reached while more events remain,
+  the command fails with an explicit message and the cursor to resume from,
+  rather than stopping silently or looping forever.
+- Pretty output prints `More events available (--cursor <token>)` when a page
+  boundary is reached.
+- The cursor is opaque: pass back exactly what the previous page returned. It
+  is echoed to the RPC as the request's `cursor` field, and the ledger range
+  resolved from `--start-ledger`/`--end-ledger` is unchanged by paging.
+- `--limit 0` and `--max-pages 0` are rejected.
 
 ## Network Profiles
 

@@ -6,9 +6,9 @@ use sdkt_core::{DevKitConfig, NetworkConfig, OutputFormat};
 use sdkt_rpc::inspect::StorageSummary;
 use sdkt_rpc::wasm::get_wasm_bytecode;
 use sdkt_rpc::{
-    estimate_dynamic_fee, extend_footprint, get_contract_events, get_next_sequence, get_ttl_info,
-    get_wasm_metadata, inspect_account, inspect_contract, inspect_transaction, read_contract_state,
-    simulate_transaction, SorobanRpcClient, StorageKeyInfo, TtlInfoSummary,
+    estimate_dynamic_fee, extend_footprint, get_contract_events_page, get_next_sequence,
+    get_ttl_info, get_wasm_metadata, inspect_account, inspect_contract, inspect_transaction,
+    read_contract_state, simulate_transaction, SorobanRpcClient, StorageKeyInfo, TtlInfoSummary,
 };
 use sdkt_storage::WasmCache;
 use sdkt_storage::{NetworkProfile, NetworkStore, StorageAnalyzer};
@@ -522,6 +522,18 @@ enum Commands {
         /// End ledger sequence number for event search range
         #[arg(long)]
         end_ledger: Option<u32>,
+        /// Maximum number of events to fetch in one page
+        #[arg(long, value_name = "N")]
+        limit: Option<u32>,
+        /// Continuation token from a previous page's next_cursor
+        #[arg(long, value_name = "TOKEN")]
+        cursor: Option<String>,
+        /// Follow pagination to completion, up to --max-pages pages
+        #[arg(long)]
+        follow: bool,
+        /// Safety cap on the number of pages --follow will fetch
+        #[arg(long, value_name = "N", default_value_t = 10)]
+        max_pages: u32,
         /// Path to contract WASM for ABI-aware decoding
         #[arg(long, value_name = "WASM")]
         abi: Option<String>,
@@ -2174,6 +2186,95 @@ async fn run_upgrade_safety(
     Ok(())
 }
 
+/// Accumulated events plus the pagination metadata the CLI reports.
+struct PagedEvents {
+    events: Vec<sdkt_rpc::ContractEvent>,
+    next_cursor: Option<String>,
+    latest_ledger: Option<u32>,
+    /// Whether any pagination flag was used. This decides the output shape:
+    /// without it the command prints exactly what it printed before.
+    paged_mode: bool,
+}
+
+/// Fetch events, optionally page by page.
+///
+/// Without a limit, cursor, or `follow`, this makes exactly one request and
+/// returns that response's events, which is what keeps the default invocation
+/// unchanged. `follow` keeps requesting pages — bounded by `max_pages` so a
+/// server that always echoes a cursor cannot loop forever.
+#[allow(clippy::too_many_arguments)]
+async fn fetch_event_pages(
+    client: &sdkt_rpc::SorobanRpcClient,
+    contract_id: &str,
+    start_ledger: Option<u32>,
+    end_ledger: Option<u32>,
+    limit: Option<u32>,
+    cursor: Option<&str>,
+    follow: bool,
+    max_pages: u32,
+) -> Result<PagedEvents, sdkt_rpc::RpcError> {
+    if limit == Some(0) {
+        return Err(sdkt_rpc::RpcError::Rpc(
+            "--limit must be greater than 0".to_string(),
+        ));
+    }
+    if follow && max_pages == 0 {
+        return Err(sdkt_rpc::RpcError::Rpc(
+            "--max-pages must be greater than 0".to_string(),
+        ));
+    }
+
+    let paged_mode = limit.is_some() || cursor.is_some() || follow;
+    let mut events: Vec<sdkt_rpc::ContractEvent> = Vec::new();
+    let mut next_cursor: Option<String> = None;
+    let mut latest_ledger: Option<u32> = None;
+    let mut page_cursor = cursor.map(str::to_string);
+    let mut pages_fetched: u32 = 0;
+
+    loop {
+        let page = sdkt_rpc::get_contract_events_page(
+            client,
+            contract_id,
+            start_ledger,
+            end_ledger,
+            limit,
+            page_cursor.as_deref(),
+        )
+        .await?;
+
+        pages_fetched += 1;
+        events.extend(page.events);
+        if page.latest_ledger.is_some() {
+            latest_ledger = page.latest_ledger;
+        }
+        next_cursor = page.next_cursor;
+
+        if !follow {
+            break;
+        }
+
+        match next_cursor.clone() {
+            Some(token) => {
+                if pages_fetched >= max_pages {
+                    return Err(sdkt_rpc::RpcError::Rpc(format!(
+                        "--follow stopped after {max_pages} pages with more events available; \
+                         increase --max-pages or continue with --cursor {token}"
+                    )));
+                }
+                page_cursor = Some(token);
+            }
+            None => break,
+        }
+    }
+
+    Ok(PagedEvents {
+        events,
+        next_cursor,
+        latest_ledger,
+        paged_mode,
+    })
+}
+
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Windows debug builds overflow the default 1 MB main-thread stack
     // (introduced by the invoke command's deeper async call chain). Unix
@@ -3776,6 +3877,10 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
             format,
             start_ledger,
             end_ledger,
+            limit,
+            cursor,
+            follow,
+            max_pages,
             abi,
             abi_contract,
             net,
@@ -3833,8 +3938,30 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
                     None
                 };
 
-            match get_contract_events(&client, &contract_id, start_ledger, end_ledger).await {
-                Ok(events) => {
+            match fetch_event_pages(
+                &client,
+                &contract_id,
+                start_ledger,
+                end_ledger,
+                limit,
+                cursor.as_deref(),
+                follow,
+                max_pages,
+            )
+            .await
+            {
+                Ok(paged) => {
+                    let events = paged.events;
+                    let next_cursor = paged.next_cursor;
+                    let latest_ledger = paged.latest_ledger;
+                    let paged_mode = paged.paged_mode;
+                    // Pretty output announces a page boundary; the JSON shape
+                    // carries the cursor itself as `next_cursor`.
+                    let continuation_hint = if paged_mode {
+                        next_cursor.clone()
+                    } else {
+                        None
+                    };
                     if let Some(spec) = contract_spec {
                         // ABI-aware decoding: topics[0] is the event symbol,
                         // remaining topics + the data value carry the payload.
@@ -3869,10 +3996,21 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
                                     })
                                 })
                                 .collect();
-                            let json_str = serde_json::to_string(&decoded_events)?;
+                            let json_str = if paged_mode {
+                                serde_json::to_string(&serde_json::json!({
+                                    "events": &decoded_events,
+                                    "next_cursor": &next_cursor,
+                                    "latest_ledger": &latest_ledger,
+                                }))?
+                            } else {
+                                serde_json::to_string(&decoded_events)?
+                            };
                             println!("{}", json_str);
                         } else {
                             println!("Contract Events (ABI-decoded):");
+                            if let Some(token) = &continuation_hint {
+                                println!("More events available (--cursor {token})");
+                            }
                             if events.is_empty() {
                                 println!("No events found.");
                             } else {
@@ -3913,10 +4051,21 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
                     } else {
                         // Original raw output
                         if fmt == OutputFormat::Json {
-                            let json_str = serde_json::to_string(&events)?;
+                            let json_str = if paged_mode {
+                                serde_json::to_string(&serde_json::json!({
+                                    "events": &events,
+                                    "next_cursor": &next_cursor,
+                                    "latest_ledger": &latest_ledger,
+                                }))?
+                            } else {
+                                serde_json::to_string(&events)?
+                            };
                             println!("{}", json_str);
                         } else {
                             println!("Contract Events:");
+                            if let Some(token) = &continuation_hint {
+                                println!("More events available (--cursor {token})");
+                            }
                             if events.is_empty() {
                                 println!("No events found.");
                             } else {
