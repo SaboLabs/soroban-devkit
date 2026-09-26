@@ -352,22 +352,39 @@ sdkt encode string:hello | xargs sdkt decode --type ScVal
 
 sdkt encode symbol:USD | xargs sdkt decode --type ScVal
 # {"symbol": "USD"}
+
+sdkt encode u128:340282366920938463463374607431768211455 | xargs sdkt decode --type ScVal
+# {"u128": "340282366920938463463374607431768211455"}
+
+sdkt encode i128:-1000 | xargs sdkt decode --type ScVal
+# {"i128": "-1000"}
+
+sdkt encode bytes:000aFF | xargs sdkt decode --type ScVal
+# {"bytes": "000aff"}
 ```
 
 ### Supported types (core subset)
 
-`u32`, `i32`, `u64`, `i64`, `bool`, `string`, `symbol` (up to 32 bytes),
-`address` (Stellar `G...` strkey).
+`u32`, `i32`, `u64`, `i64`, `u128`, `i128`, `bool`, `string`,
+`symbol` (up to 32 bytes), `bytes`, `address` (Stellar `G...` strkey).
 
 Exactly one value is encoded per invocation; the `TYPE:VALUE` syntax matches
 the typed-argument convention used by `sdkt call` and `sdkt invoke`.
 
+`u128` and `i128` accept decimal integers within their full 128-bit ranges.
+Their decoded JSON values are decimal strings, preserving all digits.
+`bytes` accepts hexadecimal pairs without a `0x` prefix, with either hex
+letter case. Surrounding whitespace is trimmed; empty input (`bytes:`)
+encodes empty bytes. Leading zero bytes are preserved, and decoded JSON
+uses lowercase hex. Pair parsing matches the runtime typed-argument parser,
+including its acceptance of a leading `+` in a pair (`bytes:+f` encodes `0f`).
+
 ### Unsupported (clear failure)
 
-Other types — `u128`, `i128`, `bytes`, `Vec`, `Map`, `Option`, `Result`,
-UDTs — are rejected with an error listing the supported types. Malformed
-values (bad numbers, invalid bools, invalid strkeys) fail with a message
-naming the offending value.
+Other types — `Vec`, `Map`, `Option`, `Result`, UDTs — are rejected with an
+error listing the supported types. Malformed values (bad or out-of-range
+numbers, invalid bools, invalid strkeys, odd-length or invalid hex) fail
+with a message naming the offending value.
 
 ## Generate client
 
