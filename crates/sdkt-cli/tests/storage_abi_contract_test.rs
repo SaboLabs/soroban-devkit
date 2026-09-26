@@ -114,6 +114,9 @@ fn deployed_spec_feeds_storage_abi_fields() {
         events: vec![ContractEvent {
             name: "Mint".to_string(),
             doc: "Mint event".to_string(),
+            params: vec![],
+            prefix_topics: vec![],
+            data_format: "single_value".to_string(),
         }],
     };
 

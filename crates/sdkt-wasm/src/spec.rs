@@ -84,6 +84,19 @@ pub struct TypeMember {
     pub name: String,
     /// Doc comment, if any.
     pub doc: String,
+    /// Types carried by this member. Struct fields have one type; tuple union
+    /// cases may carry several types.
+    pub types: Vec<ContractType>,
+}
+
+/// A parameter declared by a Soroban event.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ContractEventParameter {
+    pub name: String,
+    pub doc: String,
+    pub type_: ContractType,
+    /// `data` or `topic_list`, matching the XDR event parameter location.
+    pub location: String,
 }
 
 /// A declared Soroban event.
@@ -93,6 +106,9 @@ pub struct ContractEvent {
     pub name: String,
     /// Doc comment, if any.
     pub doc: String,
+    pub params: Vec<ContractEventParameter>,
+    pub prefix_topics: Vec<String>,
+    pub data_format: String,
 }
 
 /// Parses the Soroban contract spec from compiled WASM bytes.
@@ -191,6 +207,31 @@ fn decode_spec_section(
             ScSpecEntry::EventV0(e) => events.push(ContractEvent {
                 name: e.name.to_utf8_string_lossy(),
                 doc: e.doc.to_utf8_string_lossy(),
+                params: e
+                    .params
+                    .iter()
+                    .map(|p| ContractEventParameter {
+                        name: p.name.to_utf8_string_lossy(),
+                        doc: p.doc.to_utf8_string_lossy(),
+                        type_: map_type_def(&p.type_),
+                        location: match p.location {
+                            stellar_xdr::ScSpecEventParamLocationV0::Data => "data",
+                            stellar_xdr::ScSpecEventParamLocationV0::TopicList => "topic_list",
+                        }
+                        .to_string(),
+                    })
+                    .collect(),
+                prefix_topics: e
+                    .prefix_topics
+                    .iter()
+                    .map(|topic| topic.to_utf8_string_lossy())
+                    .collect(),
+                data_format: match e.data_format {
+                    stellar_xdr::ScSpecEventDataFormat::SingleValue => "single_value",
+                    stellar_xdr::ScSpecEventDataFormat::Vec => "vec",
+                    stellar_xdr::ScSpecEventDataFormat::Map => "map",
+                }
+                .to_string(),
             }),
         }
 
@@ -271,6 +312,7 @@ fn map_udt_struct(s: stellar_xdr::ScSpecUdtStructV0) -> ContractType {
             .map(|f| TypeMember {
                 name: f.name.to_utf8_string_lossy(),
                 doc: f.doc.to_utf8_string_lossy(),
+                types: vec![map_type_def(&f.type_)],
             })
             .collect(),
     }
@@ -288,10 +330,12 @@ fn map_udt_union(u: stellar_xdr::ScSpecUdtUnionV0) -> ContractType {
                 stellar_xdr::ScSpecUdtUnionCaseV0::VoidV0(v) => TypeMember {
                     name: v.name.to_utf8_string_lossy(),
                     doc: v.doc.to_utf8_string_lossy(),
+                    types: vec![],
                 },
                 stellar_xdr::ScSpecUdtUnionCaseV0::TupleV0(t) => TypeMember {
                     name: t.name.to_utf8_string_lossy(),
                     doc: t.doc.to_utf8_string_lossy(),
+                    types: t.type_.iter().map(map_type_def).collect(),
                 },
             })
             .collect(),
@@ -309,6 +353,7 @@ fn map_udt_enum(e: stellar_xdr::ScSpecUdtEnumV0) -> ContractType {
             .map(|c| TypeMember {
                 name: c.name.to_utf8_string_lossy(),
                 doc: c.doc.to_utf8_string_lossy(),
+                types: vec![],
             })
             .collect(),
     }
@@ -325,6 +370,7 @@ fn map_udt_error_enum(e: stellar_xdr::ScSpecUdtErrorEnumV0) -> ContractType {
             .map(|c| TypeMember {
                 name: c.name.to_utf8_string_lossy(),
                 doc: c.doc.to_utf8_string_lossy(),
+                types: vec![],
             })
             .collect(),
     }
@@ -485,5 +531,62 @@ pub(crate) mod tests {
         assert_eq!(spec.custom_types[0].name, "Point");
         assert_eq!(spec.custom_types[0].kind, "struct");
         assert_eq!(spec.custom_types[0].doc, "a point");
+    }
+
+    #[test]
+    fn preserves_struct_union_and_event_metadata() {
+        use stellar_xdr::{
+            ScSpecEventDataFormat, ScSpecEventParamLocationV0, ScSpecEventParamV0, ScSpecEventV0,
+            ScSpecUdtStructFieldV0, ScSpecUdtStructV0, ScSpecUdtUnionCaseTupleV0,
+            ScSpecUdtUnionCaseV0, ScSpecUdtUnionV0,
+        };
+
+        let point = ScSpecEntry::UdtStructV0(ScSpecUdtStructV0 {
+            doc: "point".try_into().unwrap(),
+            lib: "test".try_into().unwrap(),
+            name: "Point".try_into().unwrap(),
+            fields: vec![ScSpecUdtStructFieldV0 {
+                doc: "x coordinate".try_into().unwrap(),
+                name: "x".try_into().unwrap(),
+                type_: ScSpecTypeDef::U64,
+            }]
+            .try_into()
+            .unwrap(),
+        });
+        let choice = ScSpecEntry::UdtUnionV0(ScSpecUdtUnionV0 {
+            doc: "choice".try_into().unwrap(),
+            lib: "test".try_into().unwrap(),
+            name: "Choice".try_into().unwrap(),
+            cases: vec![ScSpecUdtUnionCaseV0::TupleV0(ScSpecUdtUnionCaseTupleV0 {
+                doc: "some value".try_into().unwrap(),
+                name: "Some".try_into().unwrap(),
+                type_: vec![ScSpecTypeDef::String].try_into().unwrap(),
+            })]
+            .try_into()
+            .unwrap(),
+        });
+        let event = ScSpecEntry::EventV0(ScSpecEventV0 {
+            doc: "transfer event".try_into().unwrap(),
+            lib: "test".try_into().unwrap(),
+            name: symbol_e("Transfer"),
+            prefix_topics: vec![symbol_e("TOKEN")].try_into().unwrap(),
+            params: vec![ScSpecEventParamV0 {
+                doc: "amount".try_into().unwrap(),
+                name: "amount".try_into().unwrap(),
+                type_: ScSpecTypeDef::U128,
+                location: ScSpecEventParamLocationV0::Data,
+            }]
+            .try_into()
+            .unwrap(),
+            data_format: ScSpecEventDataFormat::SingleValue,
+        });
+
+        let spec = parse_contract_spec(&spec_section(&[point, choice, event])).unwrap();
+        assert_eq!(spec.custom_types[0].members[0].types[0].name, "u64");
+        assert_eq!(spec.custom_types[1].members[0].types[0].name, "string");
+        assert_eq!(spec.events[0].prefix_topics, vec!["TOKEN"]);
+        assert_eq!(spec.events[0].params[0].type_.name, "u128");
+        assert_eq!(spec.events[0].params[0].location, "data");
+        assert_eq!(spec.events[0].data_format, "single_value");
     }
 }

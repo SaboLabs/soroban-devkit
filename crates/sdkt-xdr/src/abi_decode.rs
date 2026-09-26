@@ -198,6 +198,9 @@ mod tests {
             events: vec![ContractEvent {
                 name: "transfer".to_string(),
                 doc: "Transfer event".to_string(),
+                params: vec![],
+                prefix_topics: vec![],
+                data_format: "single_value".to_string(),
             }],
         }
     }

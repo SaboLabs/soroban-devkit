@@ -167,6 +167,9 @@ mod tests {
             events: vec![sdkt_wasm::ContractEvent {
                 name: "transfer".into(),
                 doc: String::new(),
+                params: vec![],
+                prefix_topics: vec![],
+                data_format: "single_value".into(),
             }],
         };
         let summary = ContractAbiSummary::from_spec(&spec);
