@@ -268,15 +268,14 @@ fn event_signature_eq(a: &ContractEvent, b: &ContractEvent) -> bool {
 }
 
 /// Compare two custom type definitions, ignoring doc comments (docs are not
-/// ABI). A change of kind (struct -> enum) or of any member's name or types is
-/// a definition change.
+/// ABI). A change of kind (struct -> enum), of any member's name or types, or
+/// of an enum case's discriminant is a definition change.
 fn type_definition_eq(a: &ContractType, b: &ContractType) -> bool {
     a.kind == b.kind
         && a.members.len() == b.members.len()
-        && a.members
-            .iter()
-            .zip(b.members.iter())
-            .all(|(x, y)| x.name == y.name && member_types_eq(&x.types, &y.types))
+        && a.members.iter().zip(b.members.iter()).all(|(x, y)| {
+            x.name == y.name && x.value == y.value && member_types_eq(&x.types, &y.types)
+        })
 }
 
 /// Classify named items present in `new` but not `old` (`added`) and `old` but
@@ -482,20 +481,31 @@ pub fn event_sig(e: &ContractEvent) -> String {
     format!("{}({}) -> {}", e.name, parts.join(", "), e.data_format)
 }
 
-/// Build a `kind name { member: type, ... }` definition string for a custom
-/// type.
+/// Build a `kind name { member, ... }` definition string for a custom type.
+///
+/// An enum or error-enum case renders as `Name=0`, showing the discriminant
+/// that decodes the case; a struct field or union case renders as
+/// `name: type` (or `name: void` for a void union case).
 pub fn type_sig(t: &ContractType) -> String {
     let members = t
         .members
         .iter()
         .map(|m| {
-            let types = m.types.iter().map(|ty| ty.name.clone()).collect::<Vec<_>>();
-            let shape = match types.len() {
-                0 => "void".to_string(),
-                1 => types.into_iter().next().unwrap_or_default(),
-                _ => format!("({})", types.join(", ")),
+            let Some(value) = m.value else {
+                let types = m.types.iter().map(|ty| ty.name.clone()).collect::<Vec<_>>();
+                let shape = match types.len() {
+                    0 => "void".to_string(),
+                    1 => types.into_iter().next().unwrap_or_default(),
+                    _ => format!("({})", types.join(", ")),
+                };
+                return format!("{}: {}", m.name, shape);
             };
-            format!("{}: {}", m.name, shape)
+            let types = m.types.iter().map(|ty| ty.name.clone()).collect::<Vec<_>>();
+            if types.is_empty() {
+                format!("{}={}", m.name, value)
+            } else {
+                format!("{}={}: ({})", m.name, value, types.join(", "))
+            }
         })
         .collect::<Vec<_>>();
     if members.is_empty() {
@@ -768,6 +778,88 @@ mod tests {
         let d = &v.breaking_changes[0].detail;
         assert!(d.contains("i128"), "detail should show the old type: {}", d);
         assert!(d.contains("u64"), "detail should show the new type: {}", d);
+    }
+
+    #[test]
+    fn detects_changed_enum_discriminant() {
+        use stellar_xdr::{ScSpecEntry, ScSpecUdtEnumCaseV0, ScSpecUdtEnumV0};
+        // Same case names, different discriminants: stored data that decoded
+        // as `Active` would now resolve to a different case.
+        let enum_with = |value: u32| {
+            ScSpecEntry::UdtEnumV0(ScSpecUdtEnumV0 {
+                doc: "".try_into().unwrap(),
+                lib: "soroban_sdk".try_into().unwrap(),
+                name: "Status".try_into().unwrap(),
+                cases: vec![
+                    ScSpecUdtEnumCaseV0 {
+                        doc: "".try_into().unwrap(),
+                        name: "Active".try_into().unwrap(),
+                        value: 0,
+                    },
+                    ScSpecUdtEnumCaseV0 {
+                        doc: "".try_into().unwrap(),
+                        name: "Paused".try_into().unwrap(),
+                        value,
+                    },
+                ]
+                .try_into()
+                .unwrap(),
+            })
+        };
+        let d = diff_wasm(
+            &spec_section(&[enum_with(1)]),
+            &spec_section(&[enum_with(2)]),
+        )
+        .unwrap();
+        assert_eq!(d.changed_types.len(), 1);
+        assert_eq!(d.changed_types[0].name, "Status");
+        assert_eq!(
+            d.changed_types[0].old.members[1].value,
+            Some(1),
+            "old discriminant must be retained"
+        );
+        assert_eq!(d.changed_types[0].new.members[1].value, Some(2));
+        // Breaking, with both discriminants visible in the detail.
+        let v = upgrade_safety(
+            &parse_contract_spec(&spec_section(&[enum_with(1)])).unwrap(),
+            &parse_contract_spec(&spec_section(&[enum_with(2)])).unwrap(),
+        );
+        assert!(!v.compatible);
+        assert_eq!(
+            v.breaking_changes[0].kind,
+            ChangeKind::ChangedTypeDefinition
+        );
+        assert!(
+            v.breaking_changes[0].detail.contains("Paused=1"),
+            "{}",
+            v.breaking_changes[0].detail
+        );
+        assert!(
+            v.breaking_changes[0].detail.contains("Paused=2"),
+            "{}",
+            v.breaking_changes[0].detail
+        );
+    }
+
+    #[test]
+    fn identical_enum_discriminants_produce_no_change() {
+        use stellar_xdr::{ScSpecEntry, ScSpecUdtEnumCaseV0, ScSpecUdtEnumV0};
+        let entry = ScSpecEntry::UdtEnumV0(ScSpecUdtEnumV0 {
+            doc: "".try_into().unwrap(),
+            lib: "soroban_sdk".try_into().unwrap(),
+            name: "Status".try_into().unwrap(),
+            cases: vec![ScSpecUdtEnumCaseV0 {
+                doc: "".try_into().unwrap(),
+                name: "Active".try_into().unwrap(),
+                value: 7,
+            }]
+            .try_into()
+            .unwrap(),
+        });
+        let wasm = spec_section(&[entry]);
+        let d = diff_wasm(&wasm, &wasm).unwrap();
+        assert!(d.changed_types.is_empty());
+        assert!(d.is_identical());
     }
 
     #[test]

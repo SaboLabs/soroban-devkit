@@ -89,6 +89,10 @@ pub struct TypeMember {
     /// none. Retained so a type whose members keep their names but change their
     /// types is still detectable as a definition change.
     pub types: Vec<ContractType>,
+    /// The case's discriminant, for enum and error-enum members only. This is
+    /// the numeric value an `ScVal` carries for the case, so a remapped
+    /// discriminant silently changes how existing data decodes.
+    pub value: Option<u32>,
 }
 
 /// A declared Soroban event.
@@ -297,6 +301,7 @@ fn map_udt_struct(s: stellar_xdr::ScSpecUdtStructV0) -> ContractType {
                 name: f.name.to_utf8_string_lossy(),
                 doc: f.doc.to_utf8_string_lossy(),
                 types: vec![map_type_def(&f.type_)],
+                value: None,
             })
             .collect(),
     }
@@ -315,11 +320,13 @@ fn map_udt_union(u: stellar_xdr::ScSpecUdtUnionV0) -> ContractType {
                     name: v.name.to_utf8_string_lossy(),
                     doc: v.doc.to_utf8_string_lossy(),
                     types: vec![],
+                    value: None,
                 },
                 stellar_xdr::ScSpecUdtUnionCaseV0::TupleV0(t) => TypeMember {
                     name: t.name.to_utf8_string_lossy(),
                     doc: t.doc.to_utf8_string_lossy(),
                     types: t.type_.iter().map(map_type_def).collect(),
+                    value: None,
                 },
             })
             .collect(),
@@ -338,6 +345,7 @@ fn map_udt_enum(e: stellar_xdr::ScSpecUdtEnumV0) -> ContractType {
                 name: c.name.to_utf8_string_lossy(),
                 doc: c.doc.to_utf8_string_lossy(),
                 types: vec![],
+                value: Some(c.value),
             })
             .collect(),
     }
@@ -355,6 +363,7 @@ fn map_udt_error_enum(e: stellar_xdr::ScSpecUdtErrorEnumV0) -> ContractType {
                 name: c.name.to_utf8_string_lossy(),
                 doc: c.doc.to_utf8_string_lossy(),
                 types: vec![],
+                value: Some(c.value),
             })
             .collect(),
     }
