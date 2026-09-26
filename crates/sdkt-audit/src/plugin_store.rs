@@ -39,6 +39,10 @@ use std::collections::BTreeMap;
 use std::io::Read;
 
 use crate::plugin_abi::SDKT_AUDIT_ABI_MAJOR;
+pub use crate::plugin_doctor::{
+    doctor, doctor_installed, doctor_installed_with_root, doctor_with_root, DoctorReport,
+    DoctorStage, DoctorStageStatus,
+};
 
 /// Metadata stored in each plugin's `plugin.toml`.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -154,20 +158,23 @@ pub struct BundleVerification {
     pub signed: bool,
 }
 
-fn is_safe_relative_path(path: &Path) -> bool {
+/// Validate that a relative path does not escape the parent directory (no path traversal).
+pub(crate) fn is_safe_relative_path(path: &Path) -> bool {
     !path.is_absolute()
         && path
             .components()
             .all(|c| matches!(c, std::path::Component::Normal(_)))
 }
 
-fn digest_hex(bytes: &[u8]) -> String {
+/// Compute hex-encoded SHA-256 digest of bytes.
+pub fn digest_hex(bytes: &[u8]) -> String {
     Sha256::digest(bytes)
         .iter()
         .map(|byte| format!("{byte:02x}"))
         .collect()
 }
 
+/// Create a stable TAR header with deterministic metadata.
 fn stable_header(size: u64) -> tar::Header {
     let mut h = tar::Header::new_gnu();
     h.set_size(size);
@@ -393,12 +400,12 @@ pub fn resolve_store_root() -> PathBuf {
 }
 
 /// Directory for a specific plugin id under the store root.
-fn plugin_dir(root: &Path, id: &str) -> PathBuf {
+pub(crate) fn plugin_dir(root: &Path, id: &str) -> PathBuf {
     root.join(sanitize_id(id))
 }
 
 /// Prevent path traversal in plugin ids (they become directory names).
-fn sanitize_id(id: &str) -> String {
+pub(crate) fn sanitize_id(id: &str) -> String {
     id.chars()
         .map(|c| match c {
             '/' | '\\' | '.' | ':' | ' ' => '_',
@@ -500,7 +507,7 @@ pub fn resolve(id: &str) -> Option<PathBuf> {
 }
 
 /// Validate that the artifact extension matches the declared kind.
-fn validate_kind_ext(meta: &PluginMeta, artifact_path: &Path) -> Result<(), StoreError> {
+pub(crate) fn validate_kind_ext(meta: &PluginMeta, artifact_path: &Path) -> Result<(), StoreError> {
     let ext = artifact_path
         .extension()
         .and_then(|e| e.to_str())

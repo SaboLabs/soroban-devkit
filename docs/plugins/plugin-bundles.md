@@ -36,4 +36,7 @@ sdkt plugin pack ./path/to/plugin-dir --secret-key ./secret.key
 
 # Verify a bundle
 sdkt plugin verify-bundle my-plugin.sdktplugin --public-key ./public.key
+
+# Run full diagnostics and self-check on a bundle
+sdkt plugin doctor my-plugin.sdktplugin
 ```

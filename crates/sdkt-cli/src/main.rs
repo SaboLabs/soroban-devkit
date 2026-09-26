@@ -780,6 +780,18 @@ enum PluginAction {
         #[arg(short, long, default_value = "pretty")]
         format: String,
     },
+    /// Run end-to-end diagnostics and self-check on an installed plugin, directory, or bundle
+    Doctor {
+        /// Target plugin id, directory, or .sdktplugin bundle
+        #[arg(required_unless_present = "all", conflicts_with = "all")]
+        target: Option<String>,
+        /// Run doctor across all installed plugins in the store
+        #[arg(long)]
+        all: bool,
+        /// Output format (pretty or json)
+        #[arg(short, long, default_value = "pretty")]
+        format: String,
+    },
 }
 
 #[derive(Subcommand)]
@@ -6065,6 +6077,98 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
                     }
                 }
                 let _ = std::fs::remove_dir_all(&staging);
+            }
+            PluginAction::Doctor {
+                target,
+                all,
+                format,
+            } => {
+                let fmt = parse_format_str(&format);
+                if all {
+                    let plugins = sdkt_audit::plugin_store::list();
+                    if plugins.is_empty() {
+                        if fmt == OutputFormat::Json {
+                            println!("{}", serde_json::json!({ "healthy": true, "reports": [] }));
+                        } else {
+                            println!("No plugins installed.");
+                        }
+                        process::exit(0);
+                    }
+                    let mut all_healthy = true;
+                    let mut reports = Vec::new();
+                    for p in &plugins {
+                        let report = sdkt_audit::plugin_doctor::doctor_installed(&p.id);
+                        if !report.healthy {
+                            all_healthy = false;
+                        }
+                        reports.push(report);
+                    }
+                    if fmt == OutputFormat::Json {
+                        let json =
+                            serde_json::json!({ "healthy": all_healthy, "reports": reports });
+                        println!("{}", serde_json::to_string_pretty(&json)?);
+                    } else {
+                        for (idx, report) in reports.iter().enumerate() {
+                            if idx > 0 {
+                                println!();
+                            }
+                            println!("=== Doctor: {} ===", report.target);
+                            for (s_idx, stage) in report.stages.iter().enumerate() {
+                                let tag = match stage.status {
+                                    sdkt_audit::plugin_doctor::DoctorStageStatus::Passed => {
+                                        "[PASS]"
+                                    }
+                                    sdkt_audit::plugin_doctor::DoctorStageStatus::Failed => {
+                                        "[FAIL]"
+                                    }
+                                };
+                                println!(
+                                    "{} Stage {} ({}): {}",
+                                    tag,
+                                    s_idx + 1,
+                                    stage.name,
+                                    stage.detail
+                                );
+                            }
+                            if report.healthy {
+                                println!("Plugin '{}' is healthy.", report.target);
+                            } else if let Some(failed) = report.failed_stage() {
+                                eprintln!("Error: plugin doctor failed at stage '{}'", failed.name);
+                            }
+                        }
+                    }
+                    if !all_healthy {
+                        process::exit(1);
+                    }
+                } else {
+                    let target = target.expect("target is required when --all is not specified");
+                    let report = sdkt_audit::plugin_doctor::doctor(&target);
+                    if fmt == OutputFormat::Json {
+                        println!("{}", serde_json::to_string_pretty(&report)?);
+                    } else {
+                        for (s_idx, stage) in report.stages.iter().enumerate() {
+                            let tag = match stage.status {
+                                sdkt_audit::plugin_doctor::DoctorStageStatus::Passed => "[PASS]",
+                                sdkt_audit::plugin_doctor::DoctorStageStatus::Failed => "[FAIL]",
+                            };
+                            println!(
+                                "{} Stage {} ({}): {}",
+                                tag,
+                                s_idx + 1,
+                                stage.name,
+                                stage.detail
+                            );
+                        }
+                        if report.healthy {
+                            println!("Plugin '{}' is healthy.", report.target);
+                        } else if let Some(failed) = report.failed_stage() {
+                            eprintln!("Error: plugin doctor failed at stage '{}'", failed.name);
+                        }
+                    }
+                    if !report.healthy {
+                        process::exit(report.exit_code());
+                    }
+                }
             }
         },
         Commands::Completions { shell } => {
