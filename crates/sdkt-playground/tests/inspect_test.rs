@@ -10,7 +10,7 @@
 //! cargo test --manifest-path crates/sdkt-playground/Cargo.toml
 //! ```
 
-use sdkt_playground::{inspect_parts, user_message_for_test as user_message};
+use sdkt_playground::{diff_parts, inspect_parts, user_message_for_test as user_message};
 use sdkt_wasm::WasmError;
 
 const US_OLD: &[u8] = include_bytes!("../../sdkt-cli/tests/fixtures/us_old.wasm");
@@ -56,6 +56,14 @@ fn second_fixture_differs_from_first() {
         old_fns,
         new_fns
     );
+}
+
+#[test]
+fn upgrade_diff_matches_library_verdict() {
+    let verdict = diff_parts(US_OLD, US_NEW).expect("fixture pair must diff");
+    assert!(!verdict.compatible);
+    assert!(verdict.breaking_changes.iter().any(|c| c.name == "mint"));
+    assert!(verdict.non_breaking_changes.iter().any(|c| c.name == "hello"));
 }
 
 #[test]

@@ -20,6 +20,8 @@
   const $ = (id) => document.getElementById(id);
   const dropzone = $('dropzone');
   const fileInput = $('fileInput');
+  const candidateInput = $('candidateInput');
+  const candidateName = $('candidateName');
   const filebar = $('filebar');
   const fname = $('fname');
   const fmeta = $('fmeta');
@@ -37,6 +39,9 @@
   let nextId = 1;
   const pending = new Map();
   let currentFile = null;
+  let currentBytes = null;
+  let candidateFile = null;
+  let candidateBytes = null;
   let inspected = false;
 
   // Monotonic selection generation. Every user selection (upload or example)
@@ -397,9 +402,53 @@
       specSec.appendChild(note);
     }
     results.appendChild(specSec);
+    renderUpgrade(null);
 
     results.classList.remove('hidden');
     inspected = true;
+  }
+
+  function changeLabel(change) {
+    const labels = {
+      removed_function: 'Removed function', changed_signature: 'Changed signature',
+      removed_event: 'Removed event', removed_type: 'Removed type',
+      added_function: 'Added function', added_event: 'Added event', added_type: 'Added type',
+    };
+    const label = labels[change.kind] || change.kind;
+    const suffix = ['removed_function', 'changed_signature', 'added_function'].includes(change.kind) ? '()' : '';
+    return label + ': ' + (change.name || '') + suffix;
+  }
+
+  function renderUpgrade(verdict) {
+    const sec = section('Upgrade Safety', verdict ? (verdict.compatible ? 'compatible' : 'breaking') : 'waiting');
+    if (!verdict) {
+      sec.appendChild(kvTable([['Status', 'Load a candidate WASM to compare it with the inspected base.']]));
+      results.appendChild(sec);
+      return;
+    }
+    const rows = [['Compatible', verdict.compatible ? 'yes' : 'no']];
+    sec.appendChild(kvTable(rows));
+    const changes = [...(verdict.breaking_changes || []), ...(verdict.non_breaking_changes || [])];
+    if (changes.length) {
+      sec.appendChild(kvChips(changes.map((change) => ({ k: change.kind, v: change.detail ? changeLabel(change) + ' — ' + change.detail : changeLabel(change) }))));
+    } else {
+      sec.appendChild(kvTable([['Changes', 'none']]));
+    }
+    results.appendChild(sec);
+  }
+
+  function compareFiles(gen) {
+    if (!currentBytes || !candidateBytes) return;
+    setStatus('loading', 'comparing…');
+    post({ type: 'diff', oldBytes: currentBytes, newBytes: candidateBytes }).then((verdict) => {
+      if (!isCurrent(gen)) return;
+      renderUpgrade(verdict);
+      setStatus('ok', verdict.compatible ? 'upgrade is compatible' : 'breaking changes detected');
+    }).catch((err) => {
+      if (!isCurrent(gen)) return;
+      setStatus('err', 'comparison failed');
+      showError(String(err && err.message ? err.message : err));
+    });
   }
 
   /* ---------- file flow ---------- */
@@ -424,6 +473,7 @@
   function inspectFile(file, gen) {
     file.arrayBuffer().then((buf) => {
       const bytes = new Uint8Array(buf);
+      currentBytes = bytes;
       return post({ type: 'inspect', bytes });
     }).then((result) => {
       if (!isCurrent(gen)) return;
@@ -431,6 +481,7 @@
         ? ' · ' + result.duration_ms + ' ms' : '';
       setStatus('ok', 'inspection complete' + dur);
       render(result);
+      compareFiles(gen);
     }).catch((err) => {
       if (!isCurrent(gen)) return;
       setStatus('err', 'inspection failed');
@@ -452,7 +503,14 @@
       .then((buf) => {
         if (!isCurrent(gen)) return;
         const file = new File([new Uint8Array(buf)], ex.label, { type: 'application/wasm' });
-        acceptFile(file, gen);
+        if (key === 'us_new' && currentFile) {
+          candidateFile = file;
+          candidateBytes = new Uint8Array(buf);
+          candidateName.textContent = file.name;
+          compareFiles(gen);
+        } else {
+          acceptFile(file, gen);
+        }
       })
       .catch((err) => {
         if (!isCurrent(gen)) return;
@@ -467,6 +525,10 @@
     // Invalidate any in-flight fetch/inspection so it cannot re-render after reset.
     beginSelection();
     currentFile = null;
+    currentBytes = null;
+    candidateFile = null;
+    candidateBytes = null;
+    candidateName.textContent = 'No candidate loaded';
     inspected = false;
     fileInput.value = '';
     filebar.hidden = true;
@@ -480,6 +542,24 @@
 
   fileInput.addEventListener('change', () => {
     if (fileInput.files && fileInput.files[0]) acceptFile(fileInput.files[0]);
+  });
+
+  candidateInput.addEventListener('change', () => {
+    const file = candidateInput.files && candidateInput.files[0];
+    if (!file || !currentFile) {
+      if (!currentFile) showError('Inspect a base WASM before choosing a candidate.');
+      return;
+    }
+    const gen = beginSelection();
+    candidateFile = file;
+    candidateName.textContent = file.name;
+    file.arrayBuffer().then((buf) => {
+      if (!isCurrent(gen)) return;
+      candidateBytes = new Uint8Array(buf);
+      compareFiles(gen);
+    }).catch((err) => {
+      if (isCurrent(gen)) showError(String(err && err.message ? err.message : err));
+    });
   });
 
   ['dragenter', 'dragover'].forEach((evt) =>
