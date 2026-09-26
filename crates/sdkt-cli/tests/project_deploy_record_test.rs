@@ -100,15 +100,17 @@ path = "contracts/token"
 }
 
 /// Create a usable signing identity for `project deploy`, which resolves the
-/// hardcoded `default` identity (a literal `default.toml`, not the symlink that
-/// `sdkt identity default` creates).
+/// hardcoded `default` identity via the `sdkt identity default` command (which
+/// creates the `default` symlink that `get_default` reads).
 fn generate_default_identity(dir: &Path) {
     sdkt(dir)
         .args(["identity", "generate", "alice"])
         .assert()
         .success();
-    let alice_toml = std::fs::read_to_string(dir.join("identity").join("alice.toml")).unwrap();
-    std::fs::write(dir.join("identity").join("default.toml"), alice_toml).unwrap();
+    sdkt(dir)
+        .args(["identity", "default", "alice"])
+        .assert()
+        .success();
 }
 
 /// Base64 XDR for a live contract instance entry — the shape `contract_exists`
