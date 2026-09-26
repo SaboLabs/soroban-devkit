@@ -287,8 +287,29 @@ sdkt plugin show <id>                             # metadata
 sdkt plugin install ./my-plugin/my_rule.wasm      # copies + validates (local path)
 sdkt plugin remove <id>                           # idempotent
 sdkt plugin update <id> ./my-plugin/my_rule.wasm  # local-only update
+sdkt plugin doctor <id|bundle|path>               # end-to-end plugin self-check & diagnostics
+sdkt plugin doctor --all                          # diagnose all installed plugins
 sdkt audit contract.rs --rules <id>               # resolve id → artifact
 ```
+
+### Diagnostic Self-Check (`sdkt plugin doctor`)
+
+`sdkt plugin doctor` walks the full plugin lifecycle for one plugin (or all installed plugins via `--all`), stopping at the first failing stage:
+
+1. **metadata**: `plugin.toml` presence, valid TOML parse, and structural field validation.
+2. **artifact**: declared artifact file exists at path and extension matches kind (`.wasm` for WASM, `.so`/`.dylib`/`.dll` for native).
+3. **integrity**: for `.sdktplugin` bundles, validates manifest digests and optional Ed25519 signatures.
+4. **compatibility**: verifies host and plugin ABI major versions match.
+5. **load**: verifies loader availability (feature gates) and symbol resolution (`sdkt_plugin_abi_version`, `sdkt_plugin_check`, etc.).
+6. **self-check**: executes a dry-run audit check against a sample contract source and reports findings and catch potential traps or panics.
+
+Exit codes map directly to the failure:
+- `0`: Plugin is healthy (all stages passed)
+- `1`..=`6`: Non-zero exit code corresponding to the first failing stage (e.g. `1` for metadata, `2` for artifact, etc.)
+
+In `--all` mode, the command exits with `0` when every installed plugin is healthy and with `1` if any plugin fails. The failing stage for each plugin is identified in its diagnostic report.
+
+Supports both human-readable and structured JSON output via `--format json`.
 
 ### Install validation (applied before the plugin is committed to the store)
 
