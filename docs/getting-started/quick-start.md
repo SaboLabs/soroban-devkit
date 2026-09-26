@@ -6,6 +6,8 @@ If you only want to inspect a WASM, skip install: [Web Playground](https://sabol
 
 If you have not installed `sdkt` yet, follow [README § Quick Start](https://github.com/SaboLabs/soroban-devkit#quick-start) first. This document assumes `sdkt` is on your `PATH` and reports a version when you run `sdkt --version`.
 
+> **Want the on-chain path next?** After this offline walkthrough, follow the [Testnet walkthrough](testnet-walkthrough.md) (identity → fund → deploy → invoke → events).
+
 ***
 
 ## Step 1 — Install
@@ -221,6 +223,7 @@ The signed envelope in `signed.xdr` is ready to broadcast with `sdkt tx submit -
 
 You now know the three core offline workflows. Continue with:
 
+* [**Testnet walkthrough**](testnet-walkthrough.md) — **on-chain loop**: identity → Friendbot fund → network profile → build → deploy → invoke → call → events / storage.
 * [**Web Playground**](https://sabolabs.github.io/soroban-devkit/playground/) — inspect your own `.wasm` in the browser (no install).
 * [**docs/examples.md**](./) — copy-paste recipes for every subcommand (decode, storage, tx, deploy) and CI gating patterns.
 * [**docs/compatibility.md**](../compatibility/compatibility.md) — which real-world Soroban contracts `sdkt` is validated against, and the compatibility matrix.
