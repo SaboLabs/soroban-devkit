@@ -221,14 +221,16 @@ pub async fn extend_footprint(
     })
 }
 
-/// Read a single ledger entry by its `LedgerKey` (base64 XDR).
+/// Read a single ledger entry by its `LedgerKey` (base64 XDR), together with
+/// the RPC-reported `liveUntilLedgerSeq` for that entry.
 ///
-/// Calls `getLedgerEntries` and returns the decoded `LedgerEntry`. If the
-/// requested entry is absent, returns a clear error rather than an empty value.
-pub async fn read_ledger_entry(
+/// Calls `getLedgerEntries` and returns the decoded `LedgerEntry` plus its
+/// absolute expiry ledger (if the network reports one). If the requested entry
+/// is absent, returns a clear error rather than an empty value.
+pub async fn read_ledger_entry_with_ttl(
     client: &SorobanRpcClient,
     key_b64: &str,
-) -> Result<stellar_xdr::LedgerEntry, RpcError> {
+) -> Result<(stellar_xdr::LedgerEntry, Option<u32>), RpcError> {
     let keys = vec![key_b64.to_string()];
     let response = client.get_contract_storage("", &keys).await?;
 
@@ -238,15 +240,30 @@ pub async fn read_ledger_entry(
         ));
     }
 
-    let entry_xdr = &response.entries[0].xdr;
+    let result = &response.entries[0];
     let entry_bytes = base64::engine::general_purpose::STANDARD
-        .decode(entry_xdr.trim())
+        .decode(result.xdr.trim())
         .map_err(|e| RpcError::Rpc(format!("Failed to decode LedgerEntry XDR: {e}")))?;
 
     let mut cursor = std::io::Cursor::new(&entry_bytes);
     let mut l = stellar_xdr::Limited::new(&mut cursor, stellar_xdr::Limits::none());
-    stellar_xdr::LedgerEntry::read_xdr(&mut l)
-        .map_err(|e| RpcError::Rpc(format!("Failed to parse LedgerEntry: {e}")))
+    let entry = stellar_xdr::LedgerEntry::read_xdr(&mut l)
+        .map_err(|e| RpcError::Rpc(format!("Failed to parse LedgerEntry: {e}")))?;
+
+    Ok((entry, result.live_until_ledger_seq))
+}
+
+/// Read a single ledger entry by its `LedgerKey` (base64 XDR).
+///
+/// Calls `getLedgerEntries` and returns the decoded `LedgerEntry`. If the
+/// requested entry is absent, returns a clear error rather than an empty value.
+pub async fn read_ledger_entry(
+    client: &SorobanRpcClient,
+    key_b64: &str,
+) -> Result<stellar_xdr::LedgerEntry, RpcError> {
+    read_ledger_entry_with_ttl(client, key_b64)
+        .await
+        .map(|(entry, _live_until)| entry)
 }
 
 /// Result of a successful `storage read` call.
@@ -258,6 +275,13 @@ pub struct StateReadResult {
     pub durability: Option<String>,
     pub value: serde_json::Value,
     pub live_until_ledger: Option<u32>,
+    /// Ledgers left before the entry expires, relative to the network's current
+    /// ledger. `None` when the entry reports no expiry, or when the caller did
+    /// not resolve the current ledger. Set by `sdkt storage read`.
+    pub ledgers_remaining: Option<u32>,
+    /// Whether [`Self::ledgers_remaining`] is at or below the toolkit's shared
+    /// near-expiry threshold. `None` when the remaining lifetime is unknown.
+    pub expiring_soon: Option<bool>,
 }
 
 /// Read a contract's storage entry by its `LedgerKey` (base64 XDR).
@@ -282,7 +306,7 @@ pub async fn read_contract_state(
         .map_err(|e| RpcError::Rpc(format!("Failed to re-encode LedgerKey: {e}")))?;
     let canonical_key_b64 = base64::engine::general_purpose::STANDARD.encode(&buf);
 
-    let entry = read_ledger_entry(client, &canonical_key_b64).await?;
+    let (entry, live_until_ledger) = read_ledger_entry_with_ttl(client, &canonical_key_b64).await?;
 
     let (entry_type, durability, value_json) = match &entry.data {
         LedgerEntryData::ContractData(cd) => {
@@ -338,7 +362,9 @@ pub async fn read_contract_state(
         entry_type,
         durability,
         value: value_json,
-        live_until_ledger: None,
+        live_until_ledger,
+        ledgers_remaining: None,
+        expiring_soon: None,
     })
 }
 
@@ -487,5 +513,44 @@ mod tests {
 
         let keys = parsed["footprint_keys"].as_array().unwrap();
         assert_eq!(keys.len(), 2);
+    }
+
+    #[test]
+    fn test_state_read_result_json_keeps_existing_keys_and_adds_ttl_context() {
+        let base = StateReadResult {
+            contract_id: "CABC".into(),
+            key: "AAAA".into(),
+            entry_type: "contract_data".into(),
+            durability: Some("persistent".into()),
+            value: serde_json::json!({ "xdr": "AAAA" }),
+            live_until_ledger: None,
+            ledgers_remaining: None,
+            expiring_soon: None,
+        };
+        let json: serde_json::Value =
+            serde_json::from_str(&serde_json::to_string(&base).unwrap()).unwrap();
+
+        // Pre-existing keys keep their names and shapes...
+        assert_eq!(json["contract_id"], "CABC");
+        assert_eq!(json["key"], "AAAA");
+        assert_eq!(json["entry_type"], "contract_data");
+        assert_eq!(json["durability"], "persistent");
+        assert_eq!(json["value"]["xdr"], "AAAA");
+        assert!(json["live_until_ledger"].is_null());
+        // ...and the TTL context is additive only.
+        assert!(json["ledgers_remaining"].is_null());
+        assert!(json["expiring_soon"].is_null());
+
+        let enriched = StateReadResult {
+            live_until_ledger: Some(185_432),
+            ledgers_remaining: Some(100_000),
+            expiring_soon: Some(false),
+            ..base
+        };
+        let json: serde_json::Value =
+            serde_json::from_str(&serde_json::to_string(&enriched).unwrap()).unwrap();
+        assert_eq!(json["live_until_ledger"], 185_432);
+        assert_eq!(json["ledgers_remaining"], 100_000);
+        assert_eq!(json["expiring_soon"], false);
     }
 }
