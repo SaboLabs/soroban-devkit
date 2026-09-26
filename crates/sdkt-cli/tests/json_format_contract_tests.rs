@@ -126,6 +126,65 @@ mod wasm_inspect {
     }
 
     #[test]
+    fn json_metadata_exports_and_imports_have_stable_lowercase_kind_strings() {
+        let out = sdkt()
+            .args(["wasm", "inspect", WASM_NEW, "--format", "json"])
+            .assert()
+            .success()
+            .get_output()
+            .stdout
+            .clone();
+        let v = assert_valid_json(&String::from_utf8_lossy(&out));
+        let meta = v.get("metadata").expect("metadata field");
+
+        let exports = meta
+            .get("exports")
+            .and_then(|e| e.as_array())
+            .expect("metadata.exports array");
+        assert!(!exports.is_empty(), "us_new.wasm should have exports");
+        for exp in exports {
+            let kind = exp
+                .get("kind")
+                .and_then(|k| k.as_str())
+                .expect("export kind string");
+            assert!(
+                matches!(
+                    kind,
+                    "func" | "table" | "memory" | "global" | "tag" | "func_exact"
+                ),
+                "export kind should be stable lowercase, got: {kind}"
+            );
+            assert!(
+                !kind.contains('(') && !kind.chars().next().is_some_and(|c| c.is_uppercase()),
+                "export kind must not leak debug or uppercase: {kind}"
+            );
+        }
+
+        let imports = meta
+            .get("imports")
+            .and_then(|i| i.as_array())
+            .expect("metadata.imports array");
+        assert!(!imports.is_empty(), "us_new.wasm should have imports");
+        for imp in imports {
+            let kind = imp
+                .get("kind")
+                .and_then(|k| k.as_str())
+                .expect("import kind string");
+            assert!(
+                matches!(
+                    kind,
+                    "func" | "table" | "memory" | "global" | "tag" | "func_exact"
+                ),
+                "import kind should be stable lowercase without index payload, got: {kind}"
+            );
+            assert!(
+                !kind.contains('(') && !kind.chars().next().is_some_and(|c| c.is_uppercase()),
+                "import kind must not leak debug format like Func(0): {kind}"
+            );
+        }
+    }
+
+    #[test]
     fn json_spec_has_function_array() {
         let out = sdkt()
             .args(["wasm", "inspect", WASM_NEW, "--format", "json"])
