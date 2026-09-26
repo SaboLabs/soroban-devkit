@@ -22,6 +22,9 @@ jobs:
     - name: Install wasm-bindgen CLI
       run: cargo install wasm-bindgen-cli --version 0.2.127 --locked
 
+    - name: Install wasm-tools
+      run: cargo install wasm-tools --version 1.259.0 --locked
+
     - name: Show toolchain versions
       run: |
         git rev-parse HEAD
@@ -53,8 +56,24 @@ jobs:
         echo "Generated JS:"
         sha256sum "$PLAYGROUND_WASM_OUT/sdkt_playground.js"
 
-        cmp website/playground/wasm/sdkt_playground_bg.wasm \
-          "$PLAYGROUND_WASM_OUT/sdkt_playground_bg.wasm"
+        NORMALIZED_DIR="$(mktemp -d)"
+
+        wasm-tools strip -a \
+          website/playground/wasm/sdkt_playground_bg.wasm \
+          -o "$NORMALIZED_DIR/committed.wasm"
+
+        wasm-tools strip -a \
+          "$PLAYGROUND_WASM_OUT/sdkt_playground_bg.wasm" \
+          -o "$NORMALIZED_DIR/generated.wasm"
+
+        echo "Normalized committed WASM:"
+        sha256sum "$NORMALIZED_DIR/committed.wasm"
+
+        echo "Normalized generated WASM:"
+        sha256sum "$NORMALIZED_DIR/generated.wasm"
+
+        cmp "$NORMALIZED_DIR/committed.wasm" \
+          "$NORMALIZED_DIR/generated.wasm"
 
         cmp website/playground/wasm/sdkt_playground.js \
           "$PLAYGROUND_WASM_OUT/sdkt_playground.js"
