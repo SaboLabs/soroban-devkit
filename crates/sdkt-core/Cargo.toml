@@ -24,3 +24,6 @@ semver = "1"
 serde_json = "1"
 tar = "0.4"
 zstd = "0.14"
+
+[dev-dependencies]
+tempfile = "3"

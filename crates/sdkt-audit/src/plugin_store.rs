@@ -39,6 +39,10 @@ use std::collections::BTreeMap;
 use std::io::Read;
 
 use crate::plugin_abi::SDKT_AUDIT_ABI_MAJOR;
+pub use crate::plugin_doctor::{
+    doctor, doctor_installed, doctor_installed_with_root, doctor_with_root, DoctorReport,
+    DoctorStage, DoctorStageStatus,
+};
 
 /// Metadata stored in each plugin's `plugin.toml`.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -154,20 +158,23 @@ pub struct BundleVerification {
     pub signed: bool,
 }
 
-fn is_safe_relative_path(path: &Path) -> bool {
+/// Validate that a relative path does not escape the parent directory (no path traversal).
+pub(crate) fn is_safe_relative_path(path: &Path) -> bool {
     !path.is_absolute()
         && path
             .components()
             .all(|c| matches!(c, std::path::Component::Normal(_)))
 }
 
-fn digest_hex(bytes: &[u8]) -> String {
+/// Compute hex-encoded SHA-256 digest of bytes.
+pub fn digest_hex(bytes: &[u8]) -> String {
     Sha256::digest(bytes)
         .iter()
         .map(|byte| format!("{byte:02x}"))
         .collect()
 }
 
+/// Create a stable TAR header with deterministic metadata.
 fn stable_header(size: u64) -> tar::Header {
     let mut h = tar::Header::new_gnu();
     h.set_size(size);
@@ -359,9 +366,9 @@ pub fn install_bundle(bundle: &Path, opts: &InstallOpts) -> Result<BundleVerific
             .as_nanos()
     ));
     let result = (|| {
-        let verified = verify_bundle(bundle, &staging, None)?;
+        let mut verified = verify_bundle(bundle, &staging, None)?;
         let source = staging.join(&verified.metadata.artifact);
-        install(&source, opts)?;
+        verified.metadata = install(&source, opts)?;
         Ok(verified)
     })();
     let _ = std::fs::remove_dir_all(&staging);
@@ -393,12 +400,12 @@ pub fn resolve_store_root() -> PathBuf {
 }
 
 /// Directory for a specific plugin id under the store root.
-fn plugin_dir(root: &Path, id: &str) -> PathBuf {
+pub(crate) fn plugin_dir(root: &Path, id: &str) -> PathBuf {
     root.join(sanitize_id(id))
 }
 
 /// Prevent path traversal in plugin ids (they become directory names).
-fn sanitize_id(id: &str) -> String {
+pub(crate) fn sanitize_id(id: &str) -> String {
     id.chars()
         .map(|c| match c {
             '/' | '\\' | '.' | ':' | ' ' => '_',
@@ -451,10 +458,8 @@ pub fn list_in(root: &Path) -> Vec<PluginMeta> {
             out.push(meta);
         }
     }
-    // Order on every field, not just `id`: `install --id` stores a plugin under
-    // another directory without rewriting its manifest, so two entries can share
-    // an `id`, and `read_dir` order is unspecified. Entries that still compare
-    // equal are identical, so the listing is deterministic either way.
+    // Keep listing deterministic even if a malformed legacy store contains
+    // multiple entries with the same manifest id.
     out.sort_by(|a, b| {
         (
             &a.id,
@@ -502,7 +507,7 @@ pub fn resolve(id: &str) -> Option<PathBuf> {
 }
 
 /// Validate that the artifact extension matches the declared kind.
-fn validate_kind_ext(meta: &PluginMeta, artifact_path: &Path) -> Result<(), StoreError> {
+pub(crate) fn validate_kind_ext(meta: &PluginMeta, artifact_path: &Path) -> Result<(), StoreError> {
     let ext = artifact_path
         .extension()
         .and_then(|e| e.to_str())
@@ -554,9 +559,13 @@ pub fn install(local_source: &Path, opts: &InstallOpts) -> Result<PluginMeta, St
     let raw = std::fs::read_to_string(&toml_path).map_err(|_| {
         StoreError::InvalidMetadata("plugin.toml not found next to the artifact".into())
     })?;
-    let meta = parse_meta(&raw)?;
+    let mut meta = parse_meta(&raw)?;
+    if let Some(id) = &opts.id {
+        meta.id = id.clone();
+        meta.validate()?;
+    }
 
-    let id = opts.id.clone().unwrap_or_else(|| meta.id.clone());
+    let id = meta.id.clone();
     validate_kind_ext(&meta, local_source)?;
 
     let root = resolve_store_root();
@@ -584,11 +593,13 @@ pub fn install(local_source: &Path, opts: &InstallOpts) -> Result<PluginMeta, St
     // considered; unrelated files are left untouched.
     let previous_artifact = read_meta(&root, &id).ok().map(|old| old.artifact);
 
-    // Commit: create dir, copy artifact + manifest.
+    // Commit: create dir, copy artifact + the effective metadata. Persisting
+    // the override keeps list/show/remove/discovery aligned with the directory.
     std::fs::create_dir_all(&dir)?;
     let dest_artifact = dir.join(&meta.artifact);
     std::fs::copy(local_source, &dest_artifact)?;
-    std::fs::write(dir.join("plugin.toml"), raw)?;
+    let stored_meta = toml::to_string(&meta).map_err(|e| StoreError::Toml(e.to_string()))?;
+    std::fs::write(dir.join("plugin.toml"), stored_meta)?;
 
     // Remove the stale artifact only after the new one is committed, and only
     // when the filename actually changed. Guard against path traversal so we
@@ -653,9 +664,9 @@ mod list_tests {
     #[test]
     fn list_is_deterministic_when_ids_collide() {
         let root = tempfile::tempdir().unwrap();
-        // `install --id` keeps the manifest id, so two directories can hold the
-        // same id. The directory names run against version order, so directory
-        // order alone cannot produce the expected listing.
+        // A corrupted legacy store can contain duplicate manifest ids. The
+        // directory names run against version order, so directory order alone
+        // cannot produce the expected listing.
         write_entry(root.path(), "a-alias", "same", "2.0.0");
         write_entry(root.path(), "b-alias", "same", "1.0.0");
         write_entry(root.path(), "0-first", "zeta", "1.0.0");
