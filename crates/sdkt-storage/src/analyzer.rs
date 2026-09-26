@@ -4,9 +4,16 @@ use base64::Engine;
 use sdkt_rpc::SorobanRpcClient;
 use stellar_xdr::{ContractDataDurability, LedgerKey, ReadXdr, ScVal};
 
+/// Ledger-time approximation used by every TTL estimate in the toolkit: Stellar
+/// closes a ledger roughly every 5 seconds.
+pub const SECONDS_PER_LEDGER: u64 = 5;
+
 /// Threshold (in ledgers) below which an entry is considered "expiring soon".
 /// ~1 day at 5s/ledger (17280 ledgers).
-const EXPIRING_SOON_LEDGERS: u32 = 17280;
+///
+/// Public so other commands that reason about expiry (`sdkt storage read`)
+/// share this one threshold instead of inventing their own.
+pub const EXPIRING_SOON_LEDGERS: u32 = 17_280;
 
 /// Classify a storage entry from its base64 XDR `LedgerKey`.
 ///

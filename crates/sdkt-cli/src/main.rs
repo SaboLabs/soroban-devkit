@@ -11,7 +11,9 @@ use sdkt_rpc::{
     simulate_transaction, SorobanRpcClient, StorageKeyInfo, TtlInfoSummary,
 };
 use sdkt_storage::WasmCache;
-use sdkt_storage::{NetworkProfile, NetworkStore, StorageAnalyzer};
+use sdkt_storage::{
+    NetworkProfile, NetworkStore, StorageAnalyzer, EXPIRING_SOON_LEDGERS, SECONDS_PER_LEDGER,
+};
 use sdkt_wasm::spec::parse_contract_spec;
 use sdkt_xdr::abi_decode::decode_event_topics;
 use sdkt_xdr::decode;
@@ -1282,6 +1284,60 @@ or confirm you are comparing the correct artifact."
     }
 
     ("healthy".to_string(), reasons)
+}
+
+/// Ledger-relative TTL context for `storage read`.
+///
+/// Turns an entry's absolute `live_until_ledger` into "how much life is left"
+/// relative to the current ledger, and flags near-expiry entries using the same
+/// [`EXPIRING_SOON_LEDGERS`] threshold the storage analyzer already uses for
+/// its "expiring soon" count — so `read` and `health` speak the same language.
+///
+/// Pure (no I/O), so the presentation rules are unit-testable.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct TtlContext {
+    live_until_ledger: u32,
+    ledgers_remaining: u32,
+    expiring_soon: bool,
+}
+
+impl TtlContext {
+    fn new(live_until_ledger: u32, current_ledger: u32) -> Self {
+        let ledgers_remaining = live_until_ledger.saturating_sub(current_ledger);
+        Self {
+            live_until_ledger,
+            ledgers_remaining,
+            expiring_soon: ledgers_remaining <= EXPIRING_SOON_LEDGERS,
+        }
+    }
+
+    /// The `Live Until` line, extended with the relative lifetime.
+    fn live_until_line(&self) -> String {
+        format!(
+            "  Live Until:     {} (ledger), {} ledgers remaining ({})",
+            self.live_until_ledger,
+            self.ledgers_remaining,
+            ledger_lifetime_label(self.ledgers_remaining)
+        )
+    }
+
+    /// A caution line — only when the entry is at/below the shared threshold.
+    fn caution_line(&self) -> Option<String> {
+        if !self.expiring_soon {
+            return None;
+        }
+        Some(format!(
+            "  Warning: entry is expiring soon ({} ledgers remaining, threshold {}). Extend with: sdkt storage extend",
+            self.ledgers_remaining, EXPIRING_SOON_LEDGERS
+        ))
+    }
+}
+
+/// Human-readable lifetime estimate for a remaining-ledger count, using the
+/// toolkit's documented 5s/ledger approximation.
+fn ledger_lifetime_label(ledgers_remaining: u32) -> String {
+    let seconds = u64::from(ledgers_remaining) * SECONDS_PER_LEDGER;
+    format!("~{:.1} days at 5s/ledger", seconds as f64 / 86_400.0)
 }
 
 /// Orchestrates the contract health report (read-only).
@@ -2649,7 +2705,24 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
                     match read_contract_state(&client, &contract, &key_xdr, contract_spec.as_ref())
                         .await
                     {
-                        Ok(res) => {
+                        Ok(mut res) => {
+                            // Enrich with ledger-relative TTL context. This is
+                            // best-effort: an entry without an expiry, or a
+                            // ledger fetch that fails, must never fail the read
+                            // itself — it just degrades to the absolute line.
+                            let ttl_ctx = match res.live_until_ledger {
+                                Some(live_until) => client
+                                    .get_ledger()
+                                    .await
+                                    .ok()
+                                    .map(|ledger| TtlContext::new(live_until, ledger.sequence)),
+                                None => None,
+                            };
+                            if let Some(ctx) = ttl_ctx {
+                                res.ledgers_remaining = Some(ctx.ledgers_remaining);
+                                res.expiring_soon = Some(ctx.expiring_soon);
+                            }
+
                             if fmt == OutputFormat::Json {
                                 println!("{}", serde_json::to_string(&res)?);
                             } else {
@@ -2660,8 +2733,20 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
                                 if let Some(dur) = &res.durability {
                                     println!("  Durability:     {dur}");
                                 }
-                                if let Some(ttl) = res.live_until_ledger {
-                                    println!("  Live Until:     {ttl} (ledger)");
+                                match ttl_ctx {
+                                    Some(ctx) => {
+                                        println!("{}", ctx.live_until_line());
+                                        if let Some(caution) = ctx.caution_line() {
+                                            println!("{caution}");
+                                        }
+                                    }
+                                    // No TTL, or the current ledger could not be
+                                    // read: keep the absolute-only line.
+                                    None => {
+                                        if let Some(ttl) = res.live_until_ledger {
+                                            println!("  Live Until:     {ttl} (ledger)");
+                                        }
+                                    }
                                 }
                                 println!(
                                     "  Value:          {}",
@@ -6808,5 +6893,57 @@ mod project_deploy_salt_tests {
         assert!(parse_salt_hex(&"z".repeat(40))
             .unwrap_err()
             .contains("not a hex digit"));
+    }
+}
+
+#[cfg(test)]
+mod storage_read_ttl_tests {
+    use super::*;
+
+    #[test]
+    fn far_from_expiry_shows_remaining_without_caution() {
+        let ctx = TtlContext::new(101_000, 1_000);
+        assert_eq!(ctx.ledgers_remaining, 100_000);
+        assert!(!ctx.expiring_soon);
+        assert_eq!(ctx.caution_line(), None);
+        assert_eq!(
+            ctx.live_until_line(),
+            "  Live Until:     101000 (ledger), 100000 ledgers remaining (~5.8 days at 5s/ledger)"
+        );
+    }
+
+    #[test]
+    fn remaining_at_threshold_warns_and_points_at_extend() {
+        // Boundary: remaining == threshold is "expiring soon".
+        let ctx = TtlContext::new(1_000 + EXPIRING_SOON_LEDGERS, 1_000);
+        assert_eq!(ctx.ledgers_remaining, EXPIRING_SOON_LEDGERS);
+        assert!(ctx.expiring_soon);
+        let caution = ctx.caution_line().expect("caution at the threshold");
+        assert!(caution.contains("sdkt storage extend"), "{caution}");
+        assert!(caution.contains(&EXPIRING_SOON_LEDGERS.to_string()), "{caution}");
+    }
+
+    #[test]
+    fn remaining_one_above_threshold_is_silent() {
+        let ctx = TtlContext::new(1_000 + EXPIRING_SOON_LEDGERS + 1, 1_000);
+        assert_eq!(ctx.ledgers_remaining, EXPIRING_SOON_LEDGERS + 1);
+        assert!(!ctx.expiring_soon);
+        assert_eq!(ctx.caution_line(), None);
+    }
+
+    #[test]
+    fn already_expired_entry_reports_zero_and_warns() {
+        // saturating_sub: a stale `live_until_ledger` never underflows.
+        let ctx = TtlContext::new(900, 1_000);
+        assert_eq!(ctx.ledgers_remaining, 0);
+        assert!(ctx.expiring_soon);
+        assert!(ctx.caution_line().is_some());
+    }
+
+    #[test]
+    fn lifetime_label_uses_the_documented_five_seconds_per_ledger() {
+        assert_eq!(ledger_lifetime_label(0), "~0.0 days at 5s/ledger");
+        assert_eq!(ledger_lifetime_label(17_280), "~1.0 days at 5s/ledger");
+        assert_eq!(ledger_lifetime_label(518_400), "~30.0 days at 5s/ledger");
     }
 }
