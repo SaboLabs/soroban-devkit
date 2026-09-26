@@ -5777,10 +5777,18 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
                     other => sdkt_xdr::sign::Network::Custom(other.to_string()),
                 };
 
-                // Per-network scope for the deployment record: testnet and
-                // mainnet deployments never collide.
+                // Per-network scope for the deployment record. When
+                // --network-passphrase is explicitly set it overrides whatever
+                // profile was resolved, so the record key must be derived from
+                // the resolved passphrase rather than the profile name.
+                // Otherwise use the profile name (if any) for a stable,
+                // human-readable key.
                 let network_key = sdkt_core::deployment::network_key(
-                    net.network_profile.as_deref(),
+                    if net.network_passphrase.is_some() {
+                        None
+                    } else {
+                        net.network_profile.as_deref()
+                    },
                     &network_config.passphrase,
                 );
                 let record_path = Path::new(sdkt_core::deployment::DEPLOYMENT_RECORD_FILE);
@@ -5793,14 +5801,27 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
                         }
                     };
 
-                // Persist the record file after the deploy loop, success or
-                // failure, so a mid-graph abort keeps the contracts that landed.
-                let persist_records =
-                    |record_file: &sdkt_core::deployment::DeploymentRecordFile| {
-                        if let Err(e) = record_file.write(record_path) {
-                            eprintln!("⚠ Warning: could not write deployment record: {}", e);
+                // Write the record file and return whether it succeeded.
+                // On failure, print the contract_id so the operator can
+                // recover without repeating the deployment.
+                let persist_records = |record_file: &sdkt_core::deployment::DeploymentRecordFile,
+                                       contract_id: Option<&str>|
+                 -> bool {
+                    match record_file.write(record_path) {
+                        Ok(()) => true,
+                        Err(e) => {
+                            if let Some(id) = contract_id {
+                                eprintln!(
+                                    "✗ Failed to write deployment record: {e}\n  \
+                                     Contract ID: {id} — save this value to recover without re-deploying."
+                                );
+                            } else {
+                                eprintln!("✗ Failed to write deployment record: {e}");
+                            }
+                            false
                         }
-                    };
+                    }
+                };
 
                 match sdkt_core::project::resolve_project(&config) {
                     Ok(resolved) => {
@@ -5921,7 +5942,9 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
                                         .unwrap_or(0);
                                     // Persist the record immediately so a crash,
                                     // SIGINT, or early ? return after this point
-                                    // cannot lose this contract's ID.
+                                    // cannot lose this contract's ID. Exit
+                                    // nonzero if the write fails — the contract
+                                    // is on-chain but the record is not durable.
                                     record_file.set_record(
                                         &network_key,
                                         &contract.alias,
@@ -5933,7 +5956,9 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
                                             salt: Some(res.salt.clone()),
                                         },
                                     );
-                                    persist_records(&record_file);
+                                    if !persist_records(&record_file, Some(&res.contract_id)) {
+                                        process::exit(1);
+                                    }
                                     results.insert(contract.alias, res.contract_id);
                                 }
                                 Ok(sdkt_rpc::DeployOutcome::Partial(p)) => {
@@ -5956,13 +5981,6 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
                                 }
                             }
                         }
-
-                        // Persist is called per-contract on success above.
-                        // Call once more here to cover the case where failure
-                        // broke out of the loop with no new records — a no-op
-                        // write that ensures any partial progress from a previous
-                        // run that modified record_file in memory is still saved.
-                        persist_records(&record_file);
 
                         if let Some(err) = failure {
                             eprintln!(
