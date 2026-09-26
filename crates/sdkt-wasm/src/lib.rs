@@ -93,7 +93,7 @@ pub fn parse_metadata(wasm_bytes: &[u8]) -> Result<WasmMetadata, WasmError> {
                     let export = export_res?;
                     meta.exports.push(WasmExport {
                         name: export.name.to_string(),
-                        kind: format!("{:?}", export.kind),
+                        kind: export_kind_str(export.kind).to_string(),
                     });
                 }
             }
@@ -105,7 +105,7 @@ pub fn parse_metadata(wasm_bytes: &[u8]) -> Result<WasmMetadata, WasmError> {
                         meta.imports.push(WasmImport {
                             module: import.module.to_string(),
                             name: import.name.to_string(),
-                            kind: format!("{:?}", import.ty),
+                            kind: import_kind_str(import.ty).to_string(),
                         });
                     }
                 }
@@ -118,6 +118,28 @@ pub fn parse_metadata(wasm_bytes: &[u8]) -> Result<WasmMetadata, WasmError> {
     }
 
     Ok(meta)
+}
+
+fn export_kind_str(kind: wasmparser::ExternalKind) -> &'static str {
+    match kind {
+        wasmparser::ExternalKind::Func => "func",
+        wasmparser::ExternalKind::Table => "table",
+        wasmparser::ExternalKind::Memory => "memory",
+        wasmparser::ExternalKind::Global => "global",
+        wasmparser::ExternalKind::Tag => "tag",
+        wasmparser::ExternalKind::FuncExact => "func_exact",
+    }
+}
+
+fn import_kind_str(ty: wasmparser::TypeRef) -> &'static str {
+    match ty {
+        wasmparser::TypeRef::Func(_) => "func",
+        wasmparser::TypeRef::Table(_) => "table",
+        wasmparser::TypeRef::Memory(_) => "memory",
+        wasmparser::TypeRef::Global(_) => "global",
+        wasmparser::TypeRef::Tag(_) => "tag",
+        wasmparser::TypeRef::FuncExact(_) => "func_exact",
+    }
 }
 
 #[cfg(test)]
@@ -157,10 +179,89 @@ mod tests {
 
     #[test]
     fn test_wasm_exports_parsing() {
-        // Just verify it doesn't crash on empty sections.
-        // More complex WASM requires a real binary blob.
         let meta = parse_metadata(WASM_WITH_EXPORTS).unwrap();
         assert_eq!(meta.size_bytes, 11);
         assert!(meta.exports.is_empty());
+    }
+
+    #[test]
+    fn test_export_kind_str() {
+        assert_eq!(export_kind_str(wasmparser::ExternalKind::Func), "func");
+        assert_eq!(export_kind_str(wasmparser::ExternalKind::Table), "table");
+        assert_eq!(export_kind_str(wasmparser::ExternalKind::Memory), "memory");
+        assert_eq!(export_kind_str(wasmparser::ExternalKind::Global), "global");
+        assert_eq!(export_kind_str(wasmparser::ExternalKind::Tag), "tag");
+        assert_eq!(
+            export_kind_str(wasmparser::ExternalKind::FuncExact),
+            "func_exact"
+        );
+    }
+
+    #[test]
+    fn test_import_kind_str() {
+        assert_eq!(import_kind_str(wasmparser::TypeRef::Func(0)), "func");
+        assert_eq!(import_kind_str(wasmparser::TypeRef::Func(42)), "func");
+        assert_eq!(
+            import_kind_str(wasmparser::TypeRef::Table(wasmparser::TableType {
+                element_type: wasmparser::RefType::FUNCREF,
+                table64: false,
+                initial: 0,
+                maximum: None,
+                shared: false,
+            })),
+            "table"
+        );
+        assert_eq!(
+            import_kind_str(wasmparser::TypeRef::Memory(wasmparser::MemoryType {
+                initial: 1,
+                maximum: None,
+                shared: false,
+                memory64: false,
+                page_size_log2: None,
+            })),
+            "memory"
+        );
+        assert_eq!(
+            import_kind_str(wasmparser::TypeRef::Global(wasmparser::GlobalType {
+                content_type: wasmparser::ValType::I32,
+                mutable: false,
+                shared: false,
+            })),
+            "global"
+        );
+        assert_eq!(
+            import_kind_str(wasmparser::TypeRef::Tag(wasmparser::TagType {
+                kind: wasmparser::TagKind::Exception,
+                func_type_idx: 0,
+            })),
+            "tag"
+        );
+        assert_eq!(
+            import_kind_str(wasmparser::TypeRef::FuncExact(10)),
+            "func_exact"
+        );
+    }
+
+    #[test]
+    fn test_parse_metadata_exports_and_imports_kind() {
+        // Minimal WASM binary with:
+        // - Type section (section 1): 1 function type () -> ()
+        // - Import section (section 2): module "m", name "imp", type 0 (func)
+        // - Export section (section 7): name "exp", kind 0 (func), idx 0
+        let wasm_bytes = [
+            0x00, 0x61, 0x73, 0x6d, 0x01, 0x00, 0x00, 0x00, // header
+            0x01, 0x04, 0x01, 0x60, 0x00, 0x00, // type section: 1 type
+            0x02, 0x09, 0x01, 0x01, b'm', 0x03, b'i', b'm', b'p', 0x00, 0x00, // import: func
+            0x07, 0x07, 0x01, 0x03, b'e', b'x', b'p', 0x00, 0x00, // export: func
+        ];
+        let meta = parse_metadata(&wasm_bytes).expect("valid wasm bytes");
+        assert_eq!(meta.imports.len(), 1);
+        assert_eq!(meta.imports[0].module, "m");
+        assert_eq!(meta.imports[0].name, "imp");
+        assert_eq!(meta.imports[0].kind, "func");
+
+        assert_eq!(meta.exports.len(), 1);
+        assert_eq!(meta.exports[0].name, "exp");
+        assert_eq!(meta.exports[0].kind, "func");
     }
 }
