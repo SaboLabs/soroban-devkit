@@ -235,3 +235,248 @@ fn existing_commands_work_without_profiles() {
         .assert()
         .success();
 }
+
+// ---------- `sdkt network check` (reachability) ----------
+
+/// Return an `http://127.0.0.1:<port>` URL that is guaranteed to refuse
+/// connections: the listener is bound to obtain a free port, then dropped so
+/// nothing is listening when the CLI probes it.
+fn refused_local_url() -> String {
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("bind ephemeral port");
+    let port = listener.local_addr().unwrap().port();
+    drop(listener);
+    format!("http://127.0.0.1:{}", port)
+}
+
+/// Read one HTTP/1.1 request (headers + body) from `stream`.
+fn read_http_request(stream: &mut std::net::TcpStream) -> String {
+    use std::io::Read;
+
+    let _ = stream.set_read_timeout(Some(std::time::Duration::from_secs(5)));
+    let mut buf: Vec<u8> = Vec::new();
+    let mut chunk = [0u8; 1024];
+    let mut header_end: Option<usize> = None;
+    let mut content_length = 0usize;
+
+    loop {
+        match stream.read(&mut chunk) {
+            Ok(0) | Err(_) => break,
+            Ok(n) => buf.extend_from_slice(&chunk[..n]),
+        }
+
+        if header_end.is_none() {
+            if let Some(pos) = buf.windows(4).position(|w| w == b"\r\n\r\n") {
+                header_end = Some(pos + 4);
+                let headers = String::from_utf8_lossy(&buf[..pos]).to_ascii_lowercase();
+                content_length = headers
+                    .lines()
+                    .find_map(|line| line.trim().strip_prefix("content-length:"))
+                    .and_then(|value| value.trim().parse::<usize>().ok())
+                    .unwrap_or(0);
+            }
+        }
+
+        if let Some(end) = header_end {
+            if buf.len() >= end + content_length {
+                break;
+            }
+        }
+    }
+
+    String::from_utf8_lossy(&buf).to_string()
+}
+
+/// Spawn a minimal JSON-RPC mock that answers `getLatestLedger` and
+/// `getHealth` on `127.0.0.1`. The returned URL is safe to use from the CLI
+/// child process. The server thread is detached and lives for the test
+/// process; it never touches the public internet.
+fn spawn_mock_rpc(sequence: u32, protocol_version: u32) -> String {
+    use std::io::Write;
+    use std::net::TcpListener;
+
+    let listener = TcpListener::bind("127.0.0.1:0").expect("bind mock RPC");
+    let addr = listener.local_addr().unwrap();
+
+    std::thread::spawn(move || loop {
+        let (mut stream, _) = match listener.accept() {
+            Ok(pair) => pair,
+            Err(_) => return,
+        };
+
+        let request = read_http_request(&mut stream);
+        let body = if request.contains("getHealth") {
+            r#"{"jsonrpc":"2.0","id":1,"result":{"status":"healthy"}}"#.to_string()
+        } else {
+            format!(
+                r#"{{"jsonrpc":"2.0","id":1,"result":{{"id":"ledger","protocolVersion":{},"sequence":{}}}}}"#,
+                protocol_version, sequence
+            )
+        };
+
+        let response = format!(
+            "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+            body.len(),
+            body
+        );
+        let _ = stream.write_all(response.as_bytes());
+        let _ = stream.flush();
+    });
+
+    format!("http://{}", addr)
+}
+
+#[test]
+fn network_check_missing_profile_fails() {
+    let dir = tempdir().unwrap();
+
+    sdkt(dir.path())
+        .args(["network", "check", "ghost"])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("not found"));
+}
+
+#[test]
+fn network_check_unreachable_profile_fails() {
+    let dir = tempdir().unwrap();
+    let url = refused_local_url();
+
+    sdkt(dir.path())
+        .args([
+            "network",
+            "add",
+            "dead",
+            "--rpc-url",
+            &url,
+            "--passphrase",
+            "Dead Network",
+        ])
+        .assert()
+        .success();
+
+    // Non-zero exit with an actionable message that names the URL tried.
+    sdkt(dir.path())
+        .args(["network", "check", "dead"])
+        .assert()
+        .failure()
+        .stdout(predicate::str::contains("is NOT reachable"))
+        .stdout(predicate::str::contains(&url))
+        .stdout(predicate::str::contains("unreachable"));
+}
+
+#[test]
+fn network_check_unreachable_json_shape() {
+    let dir = tempdir().unwrap();
+    let url = refused_local_url();
+
+    sdkt(dir.path())
+        .args([
+            "network",
+            "add",
+            "dead",
+            "--rpc-url",
+            &url,
+            "--passphrase",
+            "Dead Network",
+        ])
+        .assert()
+        .success();
+
+    sdkt(dir.path())
+        .args(["network", "check", "dead", "--format", "json"])
+        .assert()
+        .failure()
+        .stdout(predicate::str::contains("\"reachable\":false"))
+        .stdout(predicate::str::contains("\"status\":null"))
+        .stdout(predicate::str::contains("\"latest_ledger\":null"))
+        .stdout(predicate::str::contains("\"protocol_version\":null"))
+        .stdout(predicate::str::contains("\"error\":"));
+}
+
+#[test]
+fn network_check_healthy_mock_rpc_succeeds() {
+    let dir = tempdir().unwrap();
+    let url = spawn_mock_rpc(4242, 21);
+
+    sdkt(dir.path())
+        .args([
+            "network",
+            "add",
+            "mock",
+            "--rpc-url",
+            &url,
+            "--passphrase",
+            "Mock Network",
+        ])
+        .assert()
+        .success();
+
+    sdkt(dir.path())
+        .args(["network", "check", "mock"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("is reachable"))
+        .stdout(predicate::str::contains("Latest ledger:    4242"))
+        .stdout(predicate::str::contains("Protocol version: 21"));
+}
+
+#[test]
+fn network_check_healthy_mock_rpc_json_shape() {
+    let dir = tempdir().unwrap();
+    let url = spawn_mock_rpc(99, 20);
+
+    sdkt(dir.path())
+        .args([
+            "network",
+            "add",
+            "mock",
+            "--rpc-url",
+            &url,
+            "--passphrase",
+            "Mock Network",
+        ])
+        .assert()
+        .success();
+
+    sdkt(dir.path())
+        .args(["network", "check", "mock", "--format", "json"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("\"reachable\":true"))
+        .stdout(predicate::str::contains("\"status\":\"healthy\""))
+        .stdout(predicate::str::contains("\"latest_ledger\":99"))
+        .stdout(predicate::str::contains("\"protocol_version\":20"))
+        .stdout(predicate::str::contains("\"error\":null"));
+}
+
+#[test]
+fn network_check_does_not_mutate_stored_profile() {
+    let dir = tempdir().unwrap();
+    let url = refused_local_url();
+
+    sdkt(dir.path())
+        .args([
+            "network",
+            "add",
+            "stable",
+            "--rpc-url",
+            &url,
+            "--passphrase",
+            "Stable Network",
+        ])
+        .assert()
+        .success();
+
+    let path = dir.path().join("stable.json");
+    let before = std::fs::read_to_string(&path).unwrap();
+
+    // The check may fail (the endpoint is unreachable) but must not rewrite
+    // the on-disk profile.
+    sdkt(dir.path())
+        .args(["network", "check", "stable"])
+        .assert()
+        .failure();
+
+    let after = std::fs::read_to_string(&path).unwrap();
+    assert_eq!(before, after, "network check must not mutate the profile");
+}
