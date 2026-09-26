@@ -209,6 +209,86 @@ fn resolve_rpc_client_mutating(
     SorobanRpcClient::from_config(&cfg)
 }
 
+/// Outcome of an `sdkt network check <profile>` reachability probe.
+///
+/// Serializes to the structured JSON schema used by `--format json`:
+/// `profile`, `rpc_url`, `reachable`, `status`, `latest_ledger`,
+/// `protocol_version`, `error`. `error` is `None` (serialized as `null`) only
+/// when the endpoint is reachable *and* healthy.
+#[derive(Debug, serde::Serialize)]
+struct NetworkCheckOutcome {
+    profile: String,
+    rpc_url: String,
+    reachable: bool,
+    status: Option<String>,
+    latest_ledger: Option<u32>,
+    protocol_version: Option<u32>,
+    error: Option<String>,
+}
+
+impl NetworkCheckOutcome {
+    /// A profile is healthy only when the RPC endpoint answered a ledger
+    /// query *and* the subsequent health check reported `healthy`.
+    fn is_healthy(&self) -> bool {
+        self.reachable && self.error.is_none()
+    }
+}
+
+/// Probe a resolved network endpoint for reachability without mutating any
+/// stored profile.
+///
+/// `get_ledger()` is issued first because it exercises real connectivity
+/// (transport/HTTP + JSON-RPC) and returns the latest ledger sequence and
+/// protocol version. `get_health()` then reports the node's health string.
+/// A transport/connection failure on the ledger call means the endpoint is
+/// unreachable; a healthy ledger response followed by a failed or non-healthy
+/// health call means the endpoint is reachable but not usable.
+async fn probe_network_profile(profile: &str, cfg: &NetworkConfig) -> NetworkCheckOutcome {
+    let client = SorobanRpcClient::from_config(cfg);
+    let rpc_url = cfg.rpc_url.clone();
+
+    let mut outcome = NetworkCheckOutcome {
+        profile: profile.to_string(),
+        rpc_url: rpc_url.clone(),
+        reachable: false,
+        status: None,
+        latest_ledger: None,
+        protocol_version: None,
+        error: None,
+    };
+
+    match client.get_ledger().await {
+        Ok(ledger) => {
+            outcome.reachable = true;
+            outcome.latest_ledger = Some(ledger.sequence);
+            outcome.protocol_version = Some(ledger.protocol_version);
+
+            match client.get_health().await {
+                Ok(health) => {
+                    outcome.status = Some(health.status.clone());
+                    if !health.status.eq_ignore_ascii_case("healthy") {
+                        outcome.error = Some(format!(
+                            "RPC endpoint '{}' is reachable but reported health status '{}'",
+                            rpc_url, health.status
+                        ));
+                    }
+                }
+                Err(e) => {
+                    outcome.error = Some(format!(
+                        "RPC endpoint '{}' is reachable but the health check failed: {}",
+                        rpc_url, e
+                    ));
+                }
+            }
+        }
+        Err(e) => {
+            outcome.error = Some(format!("RPC endpoint '{}' is unreachable: {}", rpc_url, e));
+        }
+    }
+
+    outcome
+}
+
 /// Adapter that makes a closed consumer (EPIPE / `BrokenPipe`) look like a
 /// successful write.
 ///
@@ -835,6 +915,14 @@ enum NetworkAction {
     },
     /// Remove a network profile by name
     Remove {
+        /// Profile name
+        name: String,
+        /// Output format (pretty or json)
+        #[arg(short, long, default_value = "pretty")]
+        format: String,
+    },
+    /// Check that a saved profile's RPC endpoint is reachable
+    Check {
         /// Profile name
         name: String,
         /// Output format (pretty or json)
@@ -4685,6 +4773,62 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
                         println!("{}", serde_json::to_string(&json)?);
                     } else {
                         println!("Network profile '{}' removed.", name);
+                    }
+                }
+                NetworkAction::Check { name, format } => {
+                    let fmt = parse_format_str(&format);
+
+                    // Resolve through the same precedence path every other
+                    // network-aware command uses. `Check` is strictly
+                    // read-only: the stored profile is never written back.
+                    let cfg = match resolve_network_config(None, None, Some(name.clone())) {
+                        Ok(cfg) => cfg,
+                        Err(e) => {
+                            eprintln!("Error: {}", e);
+                            process::exit(1);
+                        }
+                    };
+
+                    let outcome = probe_network_profile(&name, &cfg).await;
+
+                    if fmt == OutputFormat::Json {
+                        println!("{}", serde_json::to_string(&outcome)?);
+                    } else if outcome.is_healthy() {
+                        println!("Network profile '{}' is reachable.", outcome.profile);
+                        println!("  RPC URL:          {}", outcome.rpc_url);
+                        println!(
+                            "  Status:           {}",
+                            outcome.status.as_deref().unwrap_or("unknown")
+                        );
+                        if let Some(seq) = outcome.latest_ledger {
+                            println!("  Latest ledger:    {}", seq);
+                        }
+                        if let Some(protocol) = outcome.protocol_version {
+                            println!("  Protocol version: {}", protocol);
+                        }
+                    } else {
+                        if outcome.reachable {
+                            println!(
+                                "Network profile '{}' is reachable but not healthy.",
+                                outcome.profile
+                            );
+                        } else {
+                            println!("Network profile '{}' is NOT reachable.", outcome.profile);
+                        }
+                        println!("  RPC URL:          {}", outcome.rpc_url);
+                        if let Some(seq) = outcome.latest_ledger {
+                            println!("  Latest ledger:    {}", seq);
+                        }
+                        if let Some(protocol) = outcome.protocol_version {
+                            println!("  Protocol version: {}", protocol);
+                        }
+                        if let Some(err) = &outcome.error {
+                            println!("  Error:            {}", err);
+                        }
+                    }
+
+                    if !outcome.is_healthy() {
+                        process::exit(1);
                     }
                 }
             }
