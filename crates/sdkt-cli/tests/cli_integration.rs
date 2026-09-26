@@ -12,17 +12,29 @@
 use assert_cmd::Command;
 use predicates::prelude::*;
 
+/// Unique suffix for temp dirs: process id + timestamp + counter.
+/// The counter guarantees no two calls collide, even on macOS where the
+/// clock only has microsecond precision.
+fn unique_suffix() -> String {
+    use std::sync::atomic::{AtomicU64, Ordering};
+    static COUNTER: AtomicU64 = AtomicU64::new(0);
+    let nanos = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_nanos();
+    format!(
+        "{}-{}-{}",
+        std::process::id(),
+        nanos,
+        COUNTER.fetch_add(1, Ordering::Relaxed)
+    )
+}
+
 /// Build a `sdkt` command with an isolated network-profile directory.
 fn sdkt_isolated() -> Command {
     let mut cmd = Command::cargo_bin("sdkt").expect("sdkt binary built");
     // Point network storage at a fresh temp dir for determinism.
-    let dir = std::env::temp_dir().join(format!(
-        "sdkt-it-{}",
-        std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
-            .as_nanos()
-    ));
+    let dir = std::env::temp_dir().join(format!("sdkt-it-{}", unique_suffix()));
     let _ = std::fs::create_dir_all(&dir);
     cmd.env("SDKT_NETWORK_DIR", &dir);
     cmd
@@ -105,13 +117,8 @@ fn completions_rejects_unknown_shell() {
 #[test]
 fn network_add_then_list_then_show_then_remove_json() {
     // Shared, isolated network directory for the whole flow.
-    let dir = std::env::temp_dir().join(format!(
-        "sdkt-it-flow-{}",
-        std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
-            .as_nanos()
-    ));
+    let dir = std::env::temp_dir().join(format!("sdkt-it-flow-{}", unique_suffix()));
+
     let _ = std::fs::create_dir_all(&dir);
     let _guard = {
         struct G(std::path::PathBuf);
@@ -651,13 +658,7 @@ fn package_validate_rejects_self_dependency() {
 // ---------------------------------------------------------------------------
 
 fn make_local_git_repo() -> std::path::PathBuf {
-    let dir = std::env::temp_dir().join(format!(
-        "sdkt-it-gitsrc-{}",
-        std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
-            .as_nanos()
-    ));
+    let dir = std::env::temp_dir().join(format!("sdkt-it-gitsrc-{}", unique_suffix()));
     let _ = std::fs::remove_dir_all(&dir);
     std::fs::create_dir_all(&dir).unwrap();
     let run = |args: &[&str]| {
@@ -902,13 +903,7 @@ fn package_fetch_writes_locked_dependencies() {
 /// stays at v1 until a test calls `advance_repo` (moves HEAD + re-tags), so
 /// `fetch` records the OLD commit and a later `update` has something to pull.
 fn make_advancing_repo() -> (std::path::PathBuf, String, String) {
-    let dir = std::env::temp_dir().join(format!(
-        "sdkt-it-sync-remote-{}",
-        std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
-            .as_nanos()
-    ));
+    let dir = std::env::temp_dir().join(format!("sdkt-it-sync-remote-{}", unique_suffix()));
     let _ = std::fs::remove_dir_all(&dir);
     std::fs::create_dir_all(&dir).unwrap();
     let run = |args: &[&str]| {
@@ -969,14 +964,7 @@ fn advance_repo(src: &std::path::Path) {
 /// Build a local "remote" with multiple semver tags so the version resolver
 /// has a choice. Tags: v1.0.0, v1.5.0, v2.0.0 (HEAD sits at v2.0.0).
 fn make_version_repo() -> (std::path::PathBuf, String, String, String) {
-    let dir = std::env::temp_dir().join(format!(
-        "sdkt-it-ver-remote-{}-{}",
-        std::process::id(),
-        std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
-            .as_nanos()
-    ));
+    let dir = std::env::temp_dir().join(format!("sdkt-it-ver-remote-{}", unique_suffix()));
     let _ = std::fs::remove_dir_all(&dir);
     std::fs::create_dir_all(&dir).unwrap();
     let run = |args: &[&str]| {
@@ -1435,14 +1423,7 @@ fn package_update_version_constraint_unsatisfied_reports_error() {
 /// Build a local "remote" git repo with a single tag `v1.0.0` for pack
 /// tests. Offline; no network.
 fn make_pack_repo() -> (std::path::PathBuf, String) {
-    let dir = std::env::temp_dir().join(format!(
-        "sdkt-it-m38-remote-{}-{}",
-        std::process::id(),
-        std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
-            .as_nanos()
-    ));
+    let dir = std::env::temp_dir().join(format!("sdkt-it-m38-remote-{}", unique_suffix()));
     let _ = std::fs::remove_dir_all(&dir);
     std::fs::create_dir_all(&dir).unwrap();
     let run = |args: &[&str]| {
