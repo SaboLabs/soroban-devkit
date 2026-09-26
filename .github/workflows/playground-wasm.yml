@@ -1,0 +1,62 @@
+name: Playground WASM freshness
+
+on:
+  push:
+  pull_request:
+    branches: [ "main" ]
+
+jobs:
+  playground-wasm:
+    name: playground WASM freshness
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v7
+      with:
+        persist-credentials: false
+
+    - name: Set up Rust
+      uses: dtolnay/rust-toolchain@1.88.0
+      with:
+        targets: wasm32-unknown-unknown
+
+    - name: Install wasm-bindgen CLI
+      run: cargo install wasm-bindgen-cli --version 0.2.127 --locked
+
+    - name: Show toolchain versions
+      run: |
+        git rev-parse HEAD
+        rustc -Vv
+        cargo -V
+        wasm-bindgen --version
+
+    - name: Check sdkt-playground
+      run: cargo check --locked --manifest-path crates/sdkt-playground/Cargo.toml --target wasm32-unknown-unknown
+
+    - name: Generate playground artifacts
+      run: |
+        PLAYGROUND_WASM_OUT="$(mktemp -d)"
+        export PLAYGROUND_WASM_OUT
+        bash website/playground/build.sh
+        echo "PLAYGROUND_WASM_OUT=$PLAYGROUND_WASM_OUT" >> "$GITHUB_ENV"
+
+    - name: Check committed artifacts are fresh
+      run: |
+        echo "Committed generated WASM:"
+        sha256sum website/playground/wasm/sdkt_playground_bg.wasm
+
+        echo "Generated WASM:"
+        sha256sum "$PLAYGROUND_WASM_OUT/sdkt_playground_bg.wasm"
+
+        echo "Committed generated JS:"
+        sha256sum website/playground/wasm/sdkt_playground.js
+
+        echo "Generated JS:"
+        sha256sum "$PLAYGROUND_WASM_OUT/sdkt_playground.js"
+
+        cmp website/playground/wasm/sdkt_playground_bg.wasm \
+          "$PLAYGROUND_WASM_OUT/sdkt_playground_bg.wasm"
+
+        cmp website/playground/wasm/sdkt_playground.js \
+          "$PLAYGROUND_WASM_OUT/sdkt_playground.js"
+
+        echo "Playground WASM artifacts are up to date."
