@@ -56,13 +56,21 @@ impl StorageAnalyzer {
         &self,
         contract_id: &str,
     ) -> Result<StorageReport, StorageError> {
+        self.inspect_contract_storage_keys(contract_id, &[]).await
+    }
+
+    pub async fn inspect_contract_storage_keys(
+        &self,
+        contract_id: &str,
+        extra_keys: &[String],
+    ) -> Result<StorageReport, StorageError> {
         if contract_id.is_empty() {
             return Err(StorageError::InvalidContractId(
                 "Contract ID cannot be empty".to_string(),
             ));
         }
 
-        let ttl_info = sdkt_rpc::get_ttl_info(&self.client, contract_id).await?;
+        let ttl_info = sdkt_rpc::get_ttl_info_for_keys(&self.client, contract_id, extra_keys).await?;
 
         if ttl_info.entries.is_empty() {
             return Ok(StorageReport {
@@ -151,9 +159,14 @@ impl StorageAnalyzer {
 mod tests {
     use super::*;
     use sdkt_rpc::SorobanRpcClient;
+    use std::io::{Read, Write};
+    use std::net::TcpListener;
+    use std::thread;
     use stellar_xdr::{
         ContractDataDurability, LedgerKey, LedgerKeyContractData, ScAddress, ScVal, WriteXdr,
     };
+
+    const TEST_CONTRACT: &str = "CAE3U7JKESRWZHPEQ72DVNGOQ6WPA7HSPQZL5YV46NPCE4TMUPAGYMEC";
 
     fn encode_ledger_key(key: &LedgerKey) -> String {
         let mut buf = Vec::new();
@@ -225,5 +238,151 @@ mod tests {
         let analyzer = StorageAnalyzer::new(client);
         let err = analyzer.inspect_contract_storage("").await.unwrap_err();
         assert!(matches!(err, StorageError::InvalidContractId(_)));
+    }
+
+    #[tokio::test]
+    async fn test_inspect_contract_storage_keys_rejects_invalid_key_offline() {
+        let client = SorobanRpcClient::new("http://127.0.0.1:1");
+        let analyzer = StorageAnalyzer::new(client);
+        let err = analyzer
+            .inspect_contract_storage_keys(TEST_CONTRACT, &["invalid-key".to_string()])
+            .await
+            .unwrap_err();
+        assert!(matches!(err, StorageError::Rpc(_)));
+    }
+
+    #[tokio::test]
+    async fn test_merged_classification_multiple_classes() {
+        let instance_key = encode_ledger_key(&LedgerKey::ContractData(LedgerKeyContractData {
+            contract: contract_address(),
+            key: ScVal::LedgerKeyContractInstance,
+            durability: ContractDataDurability::Persistent,
+        }));
+        let persistent_key = encode_ledger_key(&LedgerKey::ContractData(LedgerKeyContractData {
+            contract: contract_address(),
+            key: ScVal::U32(1),
+            durability: ContractDataDurability::Persistent,
+        }));
+        let temporary_key = encode_ledger_key(&LedgerKey::ContractData(LedgerKeyContractData {
+            contract: contract_address(),
+            key: ScVal::U32(2),
+            durability: ContractDataDurability::Temporary,
+        }));
+
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = listener.local_addr().unwrap();
+        let url = format!("http://{addr}");
+
+        let ik = instance_key.clone();
+        let pk = persistent_key.clone();
+        let tk = temporary_key.clone();
+
+        thread::spawn(move || {
+            for conn in listener.incoming() {
+                let Ok(mut sock) = conn else { break };
+                let mut buf = [0u8; 16384];
+                let n = sock.read(&mut buf).unwrap_or(0);
+                let req = String::from_utf8_lossy(&buf[..n]).to_string();
+                let body = if req.contains("getLatestLedger") {
+                    r#"{"jsonrpc":"2.0","id":1,"result":{"id":"mock","sequence":100}}"#.to_string()
+                } else if req.contains("getLedgerEntries") {
+                    format!(
+                        r#"{{"jsonrpc":"2.0","id":1,"result":{{"entries":[
+                            {{"key":"{ik}","xdr":"AAAAAQAAAABpc25nAAAA","lastModifiedLedgerSeq":100,"liveUntilLedgerSeq":200}},
+                            {{"key":"{pk}","xdr":"AAAAAQAAAABpc25nAAAA","lastModifiedLedgerSeq":100,"liveUntilLedgerSeq":300}},
+                            {{"key":"{tk}","xdr":"AAAAAQAAAABpc25nAAAA","lastModifiedLedgerSeq":100,"liveUntilLedgerSeq":400}}
+                        ],"latestLedger":100}}}}"#
+                    )
+                } else {
+                    r#"{"jsonrpc":"2.0","id":1,"error":{"code":-32601,"message":"not found"}}"#.to_string()
+                };
+                let resp = format!(
+                    "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+                    body.len(),
+                    body
+                );
+                let _ = sock.write_all(resp.as_bytes());
+            }
+        });
+
+        let client = SorobanRpcClient::new(&url);
+        let analyzer = StorageAnalyzer::new(client);
+
+        let report = analyzer
+            .inspect_contract_storage_keys(TEST_CONTRACT, &[persistent_key.clone(), temporary_key.clone()])
+            .await
+            .unwrap();
+
+        assert_eq!(report.total_entries, 3);
+        assert_eq!(report.instance_entries, 1);
+        assert_eq!(report.persistent_entries, 1);
+        assert_eq!(report.temporary_entries, 1);
+        assert_eq!(report.other_entries, 0);
+
+        assert_eq!(report.entries.len(), 3);
+        assert_eq!(report.entries[0].class, StorageClass::Instance);
+        assert_eq!(report.entries[0].current_ttl, 100);
+        assert_eq!(report.entries[1].class, StorageClass::Persistent);
+        assert_eq!(report.entries[1].current_ttl, 200);
+        assert_eq!(report.entries[2].class, StorageClass::Temporary);
+        assert_eq!(report.entries[2].current_ttl, 300);
+
+        let summary = report.ttl_summary.unwrap();
+        assert_eq!(summary.minimum_ttl, 100);
+        assert_eq!(summary.maximum_ttl, 300);
+        assert_eq!(summary.average_ttl, 200);
+    }
+
+    #[tokio::test]
+    async fn test_inspect_contract_storage_no_keys_instance_only() {
+        let instance_key = encode_ledger_key(&LedgerKey::ContractData(LedgerKeyContractData {
+            contract: contract_address(),
+            key: ScVal::LedgerKeyContractInstance,
+            durability: ContractDataDurability::Persistent,
+        }));
+
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = listener.local_addr().unwrap();
+        let url = format!("http://{addr}");
+
+        let ik = instance_key.clone();
+
+        thread::spawn(move || {
+            for conn in listener.incoming() {
+                let Ok(mut sock) = conn else { break };
+                let mut buf = [0u8; 16384];
+                let n = sock.read(&mut buf).unwrap_or(0);
+                let req = String::from_utf8_lossy(&buf[..n]).to_string();
+                let body = if req.contains("getLatestLedger") {
+                    r#"{"jsonrpc":"2.0","id":1,"result":{"id":"mock","sequence":100}}"#.to_string()
+                } else if req.contains("getLedgerEntries") {
+                    format!(
+                        r#"{{"jsonrpc":"2.0","id":1,"result":{{"entries":[
+                            {{"key":"{ik}","xdr":"AAAAAQAAAABpc25nAAAA","lastModifiedLedgerSeq":100,"liveUntilLedgerSeq":200}}
+                        ],"latestLedger":100}}}}"#
+                    )
+                } else {
+                    r#"{"jsonrpc":"2.0","id":1,"error":{"code":-32601,"message":"not found"}}"#.to_string()
+                };
+                let resp = format!(
+                    "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+                    body.len(),
+                    body
+                );
+                let _ = sock.write_all(resp.as_bytes());
+            }
+        });
+
+        let client = SorobanRpcClient::new(&url);
+        let analyzer = StorageAnalyzer::new(client);
+
+        let report = analyzer.inspect_contract_storage(TEST_CONTRACT).await.unwrap();
+
+        assert_eq!(report.total_entries, 1);
+        assert_eq!(report.instance_entries, 1);
+        assert_eq!(report.persistent_entries, 0);
+        assert_eq!(report.temporary_entries, 0);
+        assert_eq!(report.entries.len(), 1);
+        assert_eq!(report.entries[0].class, StorageClass::Instance);
     }
 }
