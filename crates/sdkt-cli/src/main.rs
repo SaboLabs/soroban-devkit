@@ -662,6 +662,9 @@ enum GenerateAction {
         /// Output file path (prints to stdout if omitted)
         #[arg(short, long, value_name = "PATH")]
         output: Option<String>,
+        /// Skip functions with unsupported types instead of aborting
+        #[arg(long)]
+        skip_unsupported: bool,
     },
 }
 
@@ -6081,8 +6084,12 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
             run_doctor(fmt);
         }
         Commands::Generate(action) => match action {
-            GenerateAction::Client { wasm, output } => {
-                if let Err(e) = run_generate_client(&wasm, output.as_deref()) {
+            GenerateAction::Client {
+                wasm,
+                output,
+                skip_unsupported,
+            } => {
+                if let Err(e) = run_generate_client(&wasm, output.as_deref(), skip_unsupported) {
                     eprintln!("Error: {e}");
                     process::exit(1);
                 }
@@ -6095,10 +6102,16 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
 
 /// Execute `sdkt generate client`: parse the ContractSpec from a local WASM
 /// and emit a deterministic typed Rust client (offline, no network).
-fn run_generate_client(wasm_path: &str, output: Option<&str>) -> Result<(), String> {
+fn run_generate_client(
+    wasm_path: &str,
+    output: Option<&str>,
+    skip_unsupported: bool,
+) -> Result<(), String> {
     let bytes = fs::read(wasm_path).map_err(|e| format!("cannot read WASM '{wasm_path}': {e}"))?;
     let spec = parse_contract_spec(&bytes).map_err(|e| format!("{wasm_path}: {e}"))?;
-    let code = sdkt_wasm::generate_client(&spec).map_err(|e| e.to_string())?;
+    let options = sdkt_wasm::GenerateOptions { skip_unsupported };
+    let code =
+        sdkt_wasm::generate_client_with_options(&spec, &options).map_err(|e| e.to_string())?;
     match output {
         Some(path) => {
             fs::write(path, &code).map_err(|e| format!("cannot write '{path}': {e}"))?;
