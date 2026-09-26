@@ -105,9 +105,8 @@ sdkt init my-project --minimal   # scaffolds a project + .sdkt.toml
 sdkt inspect <CONTRACT_ID> --abi contract.wasm
 sdkt storage check <CONTRACT_ID> --abi contract.wasm
 sdkt storage analyze <CONTRACT_ID>
-
-# NOTE: `sdkt storage estimate` is NOT YET IMPLEMENTED (placeholder only —
-# it prints a stub message and does not compute a real storage-cost estimate).
+# Estimate storage rent offline for a WASM contract (per-class breakdown and total)
+sdkt storage estimate contract.wasm
 
 # Read a contract storage entry by its complete LedgerKey (base64 XDR)
 sdkt storage read --contract <CONTRACT_ID> --key-xdr <BASE64_LEDGER_KEY>

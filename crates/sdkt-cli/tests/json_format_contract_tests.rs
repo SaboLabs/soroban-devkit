@@ -29,6 +29,19 @@
 //! ### `sdkt package validate --format json`
 //! - `valid`: boolean
 //! - `error`: string (when invalid)
+//!
+//! ### `sdkt storage estimate --format json`
+//! - `wasm_path`: string
+//! - `ledgers`: u32
+//! - `cost_per_entry_stroops`: u64
+//! - `cost_per_entry_xlm`: string
+//! - `classes`: object containing `instance`, `persistent`, and `temporary`
+//!   - `instance`: {entry_count, cost_stroops, cost_xlm, derivation, notes}
+//!   - `persistent`: {entry_count, cost_stroops, cost_xlm, derivation, notes}
+//!   - `temporary`: {entry_count, cost_stroops, cost_xlm, derivation, notes}
+//! - `total`: {baseline_entries, cost_stroops, cost_xlm}
+//! - `spec_metrics`: {functions_count, custom_types_count, events_count}
+//! - `approximation_ceiling`: string
 
 use assert_cmd::Command;
 use serde_json::Value;
@@ -645,5 +658,146 @@ mod cross_cutting {
             .stdout
             .clone();
         assert_valid_json(&String::from_utf8_lossy(&out));
+
+        // storage estimate
+        let out = sdkt()
+            .args(["storage", "estimate", WASM_OLD, "--format", "json"])
+            .assert()
+            .success()
+            .get_output()
+            .stdout
+            .clone();
+        assert_valid_json(&String::from_utf8_lossy(&out));
+    }
+}
+
+// ===========================================================================
+// sdkt storage estimate --format json
+// ===========================================================================
+
+mod storage_estimate {
+    use super::*;
+
+    #[test]
+    fn json_output_has_required_top_level_fields() {
+        let out = sdkt()
+            .args(["storage", "estimate", WASM_OLD, "--format", "json"])
+            .assert()
+            .success()
+            .get_output()
+            .stdout
+            .clone();
+        let v = assert_valid_json(&String::from_utf8_lossy(&out));
+
+        assert!(v.get("wasm_path").is_some(), "missing `wasm_path`");
+        assert!(v.get("ledgers").is_some(), "missing `ledgers`");
+        assert!(
+            v.get("cost_per_entry_stroops").is_some(),
+            "missing `cost_per_entry_stroops`"
+        );
+        assert!(
+            v.get("cost_per_entry_xlm").is_some(),
+            "missing `cost_per_entry_xlm`"
+        );
+        assert!(v.get("classes").is_some(), "missing `classes`");
+        assert!(v.get("total").is_some(), "missing `total`");
+        assert!(v.get("spec_metrics").is_some(), "missing `spec_metrics`");
+        assert!(
+            v.get("approximation_ceiling").is_some(),
+            "missing `approximation_ceiling`"
+        );
+    }
+
+    #[test]
+    fn json_classes_breakdown_schema_and_types() {
+        let out = sdkt()
+            .args(["storage", "estimate", WASM_OLD, "--format", "json"])
+            .assert()
+            .success()
+            .get_output()
+            .stdout
+            .clone();
+        let v = assert_valid_json(&String::from_utf8_lossy(&out));
+        let classes = v.get("classes").expect("classes object");
+
+        for class_name in ["instance", "persistent", "temporary"] {
+            let class_obj = classes.get(class_name).unwrap_or_else(|| {
+                panic!("missing `{class_name}` class object");
+            });
+
+            assert!(
+                class_obj.get("entry_count").is_some_and(|c| c.is_u64()),
+                "{class_name}: entry_count should be u64"
+            );
+            assert!(
+                class_obj.get("cost_stroops").is_some_and(|c| c.is_u64()),
+                "{class_name}: cost_stroops should be u64"
+            );
+            assert!(
+                class_obj.get("cost_xlm").is_some_and(|c| c.is_string()),
+                "{class_name}: cost_xlm should be string"
+            );
+            assert!(
+                class_obj.get("derivation").is_some_and(|c| c.is_string()),
+                "{class_name}: derivation should be string"
+            );
+            assert!(
+                class_obj.get("notes").is_some_and(|c| c.is_string()),
+                "{class_name}: notes should be string"
+            );
+        }
+
+        // Specific values for us_old.wasm (guaranteed instance singleton baseline; persistent is unknown from ABI alone)
+        assert_eq!(classes["instance"]["entry_count"], 1);
+        assert_eq!(classes["persistent"]["entry_count"], 0);
+        assert_eq!(classes["temporary"]["entry_count"], 0);
+
+        let total = v.get("total").expect("total object");
+        assert_eq!(total["baseline_entries"], 1);
+        assert_eq!(total["cost_stroops"], 1728000);
+        assert_eq!(total["cost_xlm"], "0.1728");
+
+        let metrics = v.get("spec_metrics").expect("spec_metrics object");
+        assert_eq!(metrics["functions_count"], 2);
+        assert_eq!(metrics["custom_types_count"], 1);
+        assert_eq!(metrics["events_count"], 1);
+    }
+
+    #[test]
+    fn json_custom_ledgers_scales_cost() {
+        let out = sdkt()
+            .args([
+                "storage",
+                "estimate",
+                WASM_NEW,
+                "--ledgers",
+                "100",
+                "--format",
+                "json",
+            ])
+            .assert()
+            .success()
+            .get_output()
+            .stdout
+            .clone();
+        let v = assert_valid_json(&String::from_utf8_lossy(&out));
+
+        assert_eq!(v["ledgers"], 100);
+        assert_eq!(v["cost_per_entry_stroops"], 10000);
+        assert_eq!(v["cost_per_entry_xlm"], "0.001");
+
+        // us_new.wasm has 0 UDTs -> 1 instance entry, 0 persistent
+        let classes = &v["classes"];
+        assert_eq!(classes["instance"]["entry_count"], 1);
+        assert_eq!(classes["instance"]["cost_stroops"], 10000);
+        assert_eq!(classes["instance"]["cost_xlm"], "0.001");
+        assert_eq!(classes["persistent"]["entry_count"], 0);
+        assert_eq!(classes["persistent"]["cost_stroops"], 0);
+        assert_eq!(classes["persistent"]["cost_xlm"], "0");
+
+        let total = &v["total"];
+        assert_eq!(total["baseline_entries"], 1);
+        assert_eq!(total["cost_stroops"], 10000);
+        assert_eq!(total["cost_xlm"], "0.001");
     }
 }
