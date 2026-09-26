@@ -8,7 +8,7 @@ use sdkt_rpc::wasm::get_wasm_bytecode;
 use sdkt_rpc::{
     estimate_dynamic_fee, extend_footprint, get_contract_events, get_next_sequence, get_ttl_info,
     get_wasm_metadata, inspect_account, inspect_contract, inspect_transaction, read_contract_state,
-    simulate_transaction, SorobanRpcClient, StorageKeyInfo, TtlInfoSummary,
+    restore_footprint, simulate_transaction, SorobanRpcClient, StorageKeyInfo, TtlInfoSummary,
 };
 use sdkt_storage::WasmCache;
 use sdkt_storage::{NetworkProfile, NetworkStore, StorageAnalyzer};
@@ -1234,6 +1234,27 @@ enum StorageAction {
         /// Identity name to sign the extend transaction. Defaults to "default".
         #[arg(short = 'I', long, default_value = "default")]
         identity: String,
+        #[arg(short, long, default_value = "pretty")]
+        format: String,
+    },
+    /// Restore archived contract storage via `RestoreFootprint`.
+    ///
+    /// Simulates the invocation that hit archived state, adopts the
+    /// `restorePreamble` footprint and minimum resource fee, then signs and
+    /// submits a `RestoreFootprint` transaction.
+    Restore {
+        /// Contract whose archived storage should be restored.
+        #[arg(long)]
+        contract: String,
+        /// Transaction envelope (base64 XDR) of the invocation that failed due to archived state.
+        #[arg(long)]
+        envelope: String,
+        /// Identity name to sign the restore transaction. Defaults to "default".
+        #[arg(short = 'I', long, default_value = "default")]
+        identity: String,
+        /// Dry-run: show what would be restored without submitting.
+        #[arg(long)]
+        dry_run: bool,
         #[arg(short, long, default_value = "pretty")]
         format: String,
     },
@@ -2763,6 +2784,116 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
                         }
                         Err(e) => {
                             eprintln!("Error extending storage TTL: {}", e);
+                            process::exit(1);
+                        }
+                    }
+                }
+                StorageAction::Restore {
+                    contract,
+                    envelope,
+                    identity,
+                    dry_run,
+                    format,
+                } => {
+                    let fmt = parse_format_str(&format);
+
+                    if contract.trim().is_empty() {
+                        eprintln!("Error: --contract / contract id must not be empty");
+                        process::exit(1);
+                    }
+                    if let Err(e) = sdkt_xdr::decode_contract_id(contract.trim()) {
+                        eprintln!("Error: invalid --contract '{}': {}", contract, e);
+                        process::exit(1);
+                    }
+                    if envelope.trim().is_empty() {
+                        eprintln!("Error: --envelope must not be empty");
+                        process::exit(1);
+                    }
+                    if let Err(e) =
+                        sdkt_xdr::decode(envelope.trim(), Some("TransactionEnvelope"), fmt)
+                    {
+                        eprintln!(
+                            "Error: --envelope is not a base64 XDR TransactionEnvelope: {}",
+                            e
+                        );
+                        process::exit(1);
+                    }
+
+                    let network_config = resolve_network_config(
+                        net.rpc_url.clone(),
+                        net.network_passphrase.clone(),
+                        net.network_profile.clone(),
+                    )?;
+                    let network = match network_config.passphrase.as_str() {
+                        "Test SDF Network ; September 2015" => sdkt_xdr::sign::Network::Testnet,
+                        "Public Global Stellar Network ; September 2015" => {
+                            sdkt_xdr::sign::Network::Mainnet
+                        }
+                        "Test SDF Future Network ; October 2022" => {
+                            sdkt_xdr::sign::Network::Futurenet
+                        }
+                        other => sdkt_xdr::sign::Network::Custom(other.to_string()),
+                    };
+                    let network_is_explicit = net.rpc_url.is_some()
+                        || net.network_passphrase.is_some()
+                        || net.network_profile.is_some();
+                    if let Err(e) =
+                        sdkt_core::guard_mutating_network(&network_config, network_is_explicit)
+                    {
+                        eprintln!("Error: {}", e);
+                        process::exit(1);
+                    }
+
+                    let identity_store = sdkt_storage::IdentityStore::new()
+                        .map_err(|e| format!("Failed to access identity store: {}", e))?;
+                    let identity_obj = identity_store
+                        .get(&identity)
+                        .map_err(|e| format!("Identity '{}' not found: {}", identity, e))?;
+                    let signing_key = identity_store.load_signing_key(&identity).map_err(|e| {
+                        format!("Failed to load signing key for '{}': {}", identity, e)
+                    })?;
+                    let signer = sdkt_xdr::sign::Ed25519Signer::from_seed(&signing_key.to_bytes());
+                    let source_account = identity_obj.public_key.clone();
+                    let client = SorobanRpcClient::from_config(&network_config);
+
+                    match restore_footprint(
+                        &client,
+                        contract.trim(),
+                        envelope.trim(),
+                        &source_account,
+                        &signer,
+                        network,
+                        dry_run,
+                    )
+                    .await
+                    {
+                        Ok(res) => {
+                            if fmt == OutputFormat::Json {
+                                println!("{}", serde_json::to_string(&res)?);
+                            } else {
+                                if dry_run {
+                                    println!("Storage Restore (dry run, not submitted)");
+                                } else {
+                                    println!("Storage Restore");
+                                }
+                                println!("  Contract:       {}", res.contract_id);
+                                println!("  Restored Keys:  {}", res.restored_keys);
+                                for (i, k) in res.footprint_keys.iter().enumerate() {
+                                    println!("    #{} {}", i + 1, k);
+                                }
+                                println!(
+                                    "  TX Hash:        {}",
+                                    res.hash.as_deref().unwrap_or("(not submitted)")
+                                );
+                                println!(
+                                    "  Fee:            {} stroops (min resource fee {})",
+                                    res.fee, res.min_resource_fee
+                                );
+                                println!("  Status:         {}", res.status);
+                            }
+                        }
+                        Err(e) => {
+                            eprintln!("Error restoring storage: {}", e);
                             process::exit(1);
                         }
                     }

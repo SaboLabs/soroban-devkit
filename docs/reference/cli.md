@@ -20,7 +20,8 @@ sdkt
 │   ├── analyze <contract-id> [--abi <wasm>] [--abi-contract <id>] [--format]
 │   ├── estimate <wasm-path>  [--format] (NOT YET IMPLEMENTED — placeholder only)
 │   ├── read --contract <contract-id> --key-xdr <BASE64_XDR> [--abi <wasm>] [--format]
-│   └── extend --contract <contract-id> --ledgers <N> [--key <xdr>]... [--identity <name>] [--format]
+│   ├── extend --contract <contract-id> --ledgers <N> [--key <xdr>]... [--identity <name>] [--format]
+│   └── restore --contract <contract-id> --envelope <xdr> [--dry-run] [--identity <name>] [--format]
 │
 │   `read` fetches a single ledger entry by its complete `LedgerKey` (base64 XDR).
 │   The instance key is NOT included automatically — supply the full key via --key-xdr.
@@ -30,6 +31,13 @@ sdkt
 │   key is always included in the read-only footprint. Additional `--key` values
 │   (base64 XDR or hex XDR) are merged and de-duplicated. This does NOT discover
 │   all contract storage and does NOT restore archived entries.
+│
+│   `restore` simulates `--envelope` (the invocation that failed on archived
+│   state), adopts the `restorePreamble` footprint and minimum resource fee, and
+│   submits a `RestoreFootprint` transaction. It fails without submitting when
+│   the simulation has no preamble (state is live) or the preamble footprint is
+│   empty or malformed. `--dry-run` prints the keys and fee without signing or
+│   submitting. It restores only; re-run the invocation afterwards.
 │
 │   `--abi <wasm>` supplies the ABI from a local WASM; `--abi-contract <id>` fetches
 │   the deployed contract's on-chain WASM and uses it as the ABI source
