@@ -567,7 +567,8 @@ upgrade-safety-on-release).
 
 ## Documentation
 
-- [docs/quick-start.md](docs/getting-started/quick-start.md) — five-minute first-time walkthrough.
+- [docs/quick-start.md](docs/getting-started/quick-start.md) — five-minute first-time walkthrough (offline).
+- [docs/testnet-walkthrough.md](docs/getting-started/testnet-walkthrough.md) — end-to-end Testnet loop: identity → fund → deploy → invoke → events / storage.
 - [docs/getting-started.md](docs/getting-started/getting-started.md) — deeper offline `diff` and `audit` examples.
 - [docs/examples.md](docs/getting-started/examples.md) — command recipes & CI gating.
 - [docs/installation.md](docs/getting-started/installation.md) — build / install / features.
