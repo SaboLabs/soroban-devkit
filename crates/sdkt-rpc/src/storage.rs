@@ -102,6 +102,24 @@ pub struct ExtendResult {
     pub fee: u32,
 }
 
+/// Result of a `RestoreFootprint` submission, or of a `--dry-run`.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct RestoreResult {
+    pub contract_id: String,
+    /// Ledger keys (base64 XDR) from the preamble footprint, read-only then read-write.
+    pub footprint_keys: Vec<String>,
+    /// Number of ledger keys the restore covers.
+    pub restored_keys: usize,
+    /// Transaction hash. `None` for a dry run, which submits nothing.
+    pub hash: Option<String>,
+    /// `SUCCESS` after a confirmed submission, `DRY_RUN` otherwise.
+    pub status: String,
+    /// Total transaction fee in stroops (inclusion fee + resource fee).
+    pub fee: u32,
+    /// `minResourceFee` reported by the restore preamble.
+    pub min_resource_fee: u32,
+}
+
 /// Parse `min_resource_fee` from simulation. Never silently default to zero.
 fn parse_min_resource_fee(raw: &str) -> Result<u32, RpcError> {
     let parsed: u64 = raw.parse().map_err(|_| {
@@ -219,6 +237,171 @@ pub async fn extend_footprint(
         status: "SUCCESS".into(),
         fee: total_fee,
     })
+}
+
+/// Inclusion fee added on top of the resource fee, matching `extend_footprint`.
+const RESTORE_INCLUSION_FEE: u32 = 100;
+
+/// Turn a simulation's `restorePreamble` into `RestoreFootprint` parameters.
+///
+/// Pure: no network access. The preamble's `transactionData` is adopted as-is
+/// (authoritative footprint and resource bounds), except that its
+/// `resource_fee` is raised to `minResourceFee` if it is lower, so the fee
+/// floor always holds. Returns the parameters and the reported
+/// `minResourceFee`.
+///
+/// # Errors
+/// Returns an actionable [`RpcError`] when there is no preamble (state is
+/// live), when the preamble is malformed, or when its footprint is empty.
+pub fn restore_params_from_simulation(
+    simulation: &crate::simulate::SimulateResponse,
+    source_account: &str,
+    sequence: i64,
+) -> Result<(sdkt_xdr::RestoreFootprintParams, u32), RpcError> {
+    let Some(preamble) = &simulation.restore_preamble else {
+        return Err(RpcError::Rpc(match &simulation.error {
+            Some(err) => {
+                format!("Nothing to restore: simulation failed without a restore preamble: {err}")
+            }
+            None => "Nothing to restore: simulation returned no restore preamble, \
+                     so the contract state this invocation touches is live"
+                .into(),
+        }));
+    };
+
+    let mut soroban_data: SorobanTransactionData =
+        sdkt_xdr::parse_soroban_transaction_data(&preamble.transaction_data).map_err(|e| {
+            RpcError::Rpc(format!(
+                "Restore preamble transactionData is malformed ({e}); \
+                 re-run the simulation against a healthy RPC node"
+            ))
+        })?;
+
+    let footprint = &soroban_data.resources.footprint;
+    if footprint.read_only.is_empty() && footprint.read_write.is_empty() {
+        return Err(RpcError::Rpc(
+            "Restore preamble footprint is empty: no archived entries to restore".into(),
+        ));
+    }
+
+    let min_resource_fee = parse_min_resource_fee(&preamble.min_resource_fee)?;
+    if soroban_data.resource_fee < i64::from(min_resource_fee) {
+        soroban_data.resource_fee = i64::from(min_resource_fee);
+    }
+    let resource_fee = u32::try_from(soroban_data.resource_fee).map_err(|_| {
+        RpcError::Rpc(format!(
+            "Restore preamble resource fee out of range: {}",
+            soroban_data.resource_fee
+        ))
+    })?;
+
+    let params = sdkt_xdr::RestoreFootprintParams {
+        source_account: source_account.to_string(),
+        sequence,
+        fee: RESTORE_INCLUSION_FEE.saturating_add(resource_fee),
+        soroban_data,
+    };
+    Ok((params, min_resource_fee))
+}
+
+/// Restore archived contract storage via `RestoreFootprint`.
+///
+/// Simulates `invocation_envelope` (typically the invocation that failed on
+/// archived state) to obtain its `restorePreamble`, then builds a
+/// `RestoreFootprint` transaction from the preamble's footprint and fee. With
+/// `dry_run` the transaction is built but neither signed nor submitted;
+/// otherwise it is signed and submitted, waiting for confirmation like
+/// `extend_footprint`.
+pub async fn restore_footprint(
+    client: &SorobanRpcClient,
+    contract_id: &str,
+    invocation_envelope: &str,
+    source_account: &str,
+    signer: &sdkt_xdr::sign::Ed25519Signer,
+    network: sdkt_xdr::sign::Network,
+    dry_run: bool,
+) -> Result<RestoreResult, RpcError> {
+    let simulation = crate::simulate::simulate_transaction(client, invocation_envelope)
+        .await
+        .map_err(|e| RpcError::Rpc(format!("Restore simulation failed: {e}")))?;
+
+    let sequence = crate::account::get_next_sequence(client, source_account).await?;
+    let (params, min_resource_fee) =
+        restore_params_from_simulation(&simulation, source_account, sequence)?;
+    let footprint_keys = extract_footprint_keys(&params.soroban_data)?;
+
+    let envelope = sdkt_xdr::build_restore_footprint_tx(&params)
+        .map_err(|e| RpcError::Rpc(format!("Failed to build restore transaction: {e}")))?;
+
+    let mut result = RestoreResult {
+        contract_id: contract_id.to_string(),
+        restored_keys: footprint_keys.len(),
+        footprint_keys,
+        hash: None,
+        status: "DRY_RUN".into(),
+        fee: params.fee,
+        min_resource_fee,
+    };
+    if dry_run {
+        return Ok(result);
+    }
+
+    let signing_opts = sdkt_xdr::sign::SigningOptions::with(network);
+    let signed_envelope = sdkt_xdr::sign_transaction(&envelope, signer, &signing_opts)
+        .map_err(|e| RpcError::Rpc(format!("Failed to sign restore transaction: {e}")))?;
+
+    let submission = crate::submission::submit_and_wait(
+        client,
+        &signed_envelope,
+        true,
+        &crate::submission::PollConfig::default(),
+    )
+    .await?;
+
+    if submission.status != crate::submission::TransactionStatus::Success {
+        let code = submission.error_code.as_deref().unwrap_or("unknown");
+        let diag = submission.error_result_xdr.as_deref().unwrap_or("");
+        return Err(RpcError::Rpc(format!(
+            "Restore transaction failed: code={code} {diag}"
+        )));
+    }
+
+    result.hash = Some(submission.hash);
+    result.status = "SUCCESS".into();
+    Ok(result)
+}
+
+/// Encode the footprint's ledger keys (read-only, then read-write) as base64 XDR.
+fn extract_footprint_keys(soroban_data: &SorobanTransactionData) -> Result<Vec<String>, RpcError> {
+    use stellar_xdr::{Limits, WriteXdr};
+    let footprint = &soroban_data.resources.footprint;
+    footprint
+        .read_only
+        .iter()
+        .chain(footprint.read_write.iter())
+        .map(|key| {
+            key.to_xdr(Limits::none())
+                .map(|raw| base64::engine::general_purpose::STANDARD.encode(raw))
+                .map_err(|e| RpcError::Rpc(format!("Failed to encode LedgerKey: {e}")))
+        })
+        .collect()
+}
+
+/// Check whether a contract is live on-chain at `contract_id`.
+///
+/// Uses the cheapest possible existence probe: a single `getLedgerEntries`
+/// call for the contract's instance singleton key (see [`instance_ledger_key`]).
+/// Returns `Ok(true)` when the ledger responds with the instance entry and
+/// `Ok(false)` when the entry is absent. This is the on-chain verification used
+/// by `sdkt project deploy --skip-deployed` so a stale `.sdkt-deployments.json`
+/// entry (contract deleted / never existed) does not cause a skip.
+pub async fn contract_exists(
+    client: &SorobanRpcClient,
+    contract_id: &str,
+) -> Result<bool, RpcError> {
+    let key = instance_ledger_key(contract_id)?;
+    let response = client.get_contract_storage("", &[key]).await?;
+    Ok(!response.entries.is_empty())
 }
 
 /// Read a single ledger entry by its `LedgerKey` (base64 XDR).
@@ -458,6 +641,81 @@ mod tests {
         assert!(collect_extend_keys("not-a-contract", &[]).is_err());
     }
 
+    #[tokio::test]
+    async fn test_contract_exists_checks_on_chain_not_record_file() {
+        use std::io::{Read, Write};
+        use std::net::TcpListener;
+        use std::thread;
+
+        // Mock `getLedgerEntries` that returns an entry (contract live).
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = listener.local_addr().unwrap();
+        let url = format!("http://{addr}");
+
+        thread::spawn(move || {
+            for conn in listener.incoming() {
+                let mut sock = match conn {
+                    Ok(s) => s,
+                    Err(_) => break,
+                };
+                let mut buf = [0u8; 16384];
+                let n = sock.read(&mut buf).unwrap_or(0);
+                let req = String::from_utf8_lossy(&buf[..n]).to_string();
+                let body = if req.contains("getLedgerEntries") {
+                    let entry = "AAAAAQAAAABpc25nAAAA".to_string();
+                    format!(
+                        r#"{{"jsonrpc":"2.0","id":1,"result":{{"entries":[{{"key":"AAAAAA==","xdr":"{entry}","lastModifiedLedgerSeq":1}}],"latestLedger":100}}}}"#
+                    )
+                } else {
+                    r#"{"jsonrpc":"2.0","id":1,"error":{"code":-32601,"message":"method not found"}}"#
+                        .to_string()
+                };
+                let resp = format!(
+                    "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+                    body.len(),
+                    body
+                );
+                let _ = sock.write_all(resp.as_bytes());
+            }
+        });
+
+        let c = "CAE3U7JKESRWZHPEQ72DVNGOQ6WPA7HSPQZL5YV46NPCE4TMUPAGYMEC";
+        let client = crate::SorobanRpcClient::new(&url);
+        assert!(
+            contract_exists(&client, c).await.unwrap(),
+            "instance entry present at recorded address -> exists"
+        );
+
+        // Mock that serves an empty entries array -> recorded contract is gone.
+        let listener2 = TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr2 = listener2.local_addr().unwrap();
+        let url2 = format!("http://{addr2}");
+        thread::spawn(move || {
+            for conn in listener2.incoming() {
+                let mut sock = match conn {
+                    Ok(s) => s,
+                    Err(_) => break,
+                };
+                let mut buf = [0u8; 16384];
+                let n = sock.read(&mut buf).unwrap_or(0);
+                let _req = String::from_utf8_lossy(&buf[..n]).to_string();
+                let body = r#"{"jsonrpc":"2.0","id":1,"result":{"entries":[],"latestLedger":100}}"#;
+                let resp = format!(
+                    "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+                    body.len(),
+                    body
+                );
+                let _ = sock.write_all(resp.as_bytes());
+            }
+        });
+
+        let client2 = crate::SorobanRpcClient::new(&url2);
+        assert!(
+            !contract_exists(&client2, c).await.unwrap(),
+            "empty entries at recorded address -> contract no longer exists"
+        );
+    }
+
     #[test]
     fn test_extend_result_json_is_valid_and_contains_key_fields() {
         // Verifies the structured JSON the CLI emits for `--format json`.
@@ -487,5 +745,119 @@ mod tests {
 
         let keys = parsed["footprint_keys"].as_array().unwrap();
         assert_eq!(keys.len(), 2);
+    }
+}
+
+#[cfg(test)]
+mod restore_tests {
+    use super::*;
+    use crate::simulate::SimulateResponse;
+    use stellar_xdr::{
+        ContractDataDurability, ContractId, Hash, LedgerFootprint, LedgerKey,
+        LedgerKeyContractData, Limits, ScAddress, ScVal, SorobanResources,
+        SorobanTransactionDataExt, VecM, WriteXdr,
+    };
+
+    const SOURCE: &str = "GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF";
+
+    fn preamble_data(read_write: Vec<LedgerKey>, resource_fee: i64) -> String {
+        let data = SorobanTransactionData {
+            ext: SorobanTransactionDataExt::V0,
+            resources: SorobanResources {
+                footprint: LedgerFootprint {
+                    read_only: VecM::default(),
+                    read_write: VecM::try_from(read_write).unwrap(),
+                },
+                instructions: 0,
+                disk_read_bytes: 1_000,
+                write_bytes: 1_000,
+            },
+            resource_fee,
+        };
+        base64::engine::general_purpose::STANDARD.encode(data.to_xdr(Limits::none()).unwrap())
+    }
+
+    fn instance_key() -> LedgerKey {
+        LedgerKey::ContractData(LedgerKeyContractData {
+            contract: ScAddress::Contract(ContractId(Hash([7; 32]))),
+            key: ScVal::LedgerKeyContractInstance,
+            durability: ContractDataDurability::Persistent,
+        })
+    }
+
+    fn simulation(preamble: Option<(&str, &str)>, error: Option<&str>) -> SimulateResponse {
+        let mut v = serde_json::json!({ "latestLedger": 100 });
+        if let Some((data, fee)) = preamble {
+            v["restorePreamble"] = serde_json::json!({
+                "transactionData": data,
+                "minResourceFee": fee,
+            });
+        }
+        if let Some(err) = error {
+            v["error"] = serde_json::json!(err);
+        }
+        serde_json::from_value(v).unwrap()
+    }
+
+    #[test]
+    fn adopts_preamble_footprint_unchanged() {
+        let data = preamble_data(vec![instance_key()], 5_000);
+        let sim = simulation(Some((&data, "5000")), None);
+        let (params, min_fee) = restore_params_from_simulation(&sim, SOURCE, 42).unwrap();
+
+        assert_eq!(min_fee, 5_000);
+        assert_eq!(params.sequence, 42);
+        assert_eq!(params.fee, RESTORE_INCLUSION_FEE + 5_000);
+        let expected = sdkt_xdr::parse_soroban_transaction_data(&data).unwrap();
+        assert_eq!(params.soroban_data, expected);
+    }
+
+    #[test]
+    fn raises_resource_fee_to_min_resource_fee() {
+        let data = preamble_data(vec![instance_key()], 1_000);
+        let sim = simulation(Some((&data, "7500")), None);
+        let (params, _) = restore_params_from_simulation(&sim, SOURCE, 1).unwrap();
+
+        assert_eq!(params.soroban_data.resource_fee, 7_500);
+        assert_eq!(params.fee, RESTORE_INCLUSION_FEE + 7_500);
+    }
+
+    #[test]
+    fn missing_preamble_means_nothing_to_restore() {
+        let err = restore_params_from_simulation(&simulation(None, None), SOURCE, 1).unwrap_err();
+        assert!(err.to_string().contains("Nothing to restore"), "{err}");
+        assert!(err.to_string().contains("live"), "{err}");
+    }
+
+    #[test]
+    fn missing_preamble_surfaces_simulation_error() {
+        let sim = simulation(None, Some("HostError: bad arg"));
+        let err = restore_params_from_simulation(&sim, SOURCE, 1).unwrap_err();
+        assert!(err.to_string().contains("HostError: bad arg"), "{err}");
+    }
+
+    #[test]
+    fn empty_preamble_footprint_is_rejected() {
+        let data = preamble_data(vec![], 100);
+        let sim = simulation(Some((&data, "100")), None);
+        let err = restore_params_from_simulation(&sim, SOURCE, 1).unwrap_err();
+        assert!(err.to_string().contains("footprint is empty"), "{err}");
+    }
+
+    #[test]
+    fn malformed_preamble_is_rejected() {
+        let sim = simulation(Some(("not-xdr", "100")), None);
+        let err = restore_params_from_simulation(&sim, SOURCE, 1).unwrap_err();
+        assert!(err.to_string().contains("malformed"), "{err}");
+    }
+
+    #[test]
+    fn footprint_keys_are_base64_ledger_keys() {
+        let data = preamble_data(vec![instance_key()], 100);
+        let parsed = sdkt_xdr::parse_soroban_transaction_data(&data).unwrap();
+        let keys = extract_footprint_keys(&parsed).unwrap();
+        let expected = base64::engine::general_purpose::STANDARD
+            .encode(instance_key().to_xdr(Limits::none()).unwrap());
+        assert_eq!(keys, vec![expected]);
     }
 }

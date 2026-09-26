@@ -39,8 +39,9 @@ pub use simulate::{
     SimulateResponse, SimulateTransactionRequest,
 };
 pub use storage::{
-    calculate_extension_cost, collect_extend_keys, extend_footprint, get_ttl_info,
-    read_contract_state, read_ledger_entry, ExtendResult, StateReadResult, TtlEntry, TtlInfo,
+    calculate_extension_cost, collect_extend_keys, contract_exists, extend_footprint, get_ttl_info,
+    read_contract_state, read_ledger_entry, restore_footprint, restore_params_from_simulation,
+    ExtendResult, RestoreResult, StateReadResult, TtlEntry, TtlInfo,
 };
 pub use submission::{
     diagnostic_events_from_meta_xdr, extract_failure_code, get_transaction_status,
