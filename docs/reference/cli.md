@@ -114,7 +114,9 @@ sdkt
 │   ├── --format <json|pretty>
 │   ├── --disable <RULE_ID>   (repeatable)
 │   ├── --rules <PATH>        (repeatable; external rule paths)
-│   └── --no-plugins          (skip loading installed plugins)
+│   ├── --no-plugins          (skip loading installed plugins)
+│   ├── --save-baseline <PATH> (persist the current report + rule-set/version metadata)
+│   └── --baseline <PATH>     (compare against a saved baseline; fail on new findings)
 ├── identity
 │   ├── generate <name>
 │   ├── import <name> <secret>
@@ -473,6 +475,7 @@ Store root precedence (lowest → highest): `<cwd>/.sdkt/plugins`,
 - `diff --upgrade-safety` and `deploy --deny-breaking` implement the Upgrade Safety Guard (see `ROADMAP.md`).
 - `audit` implements the static-analysis rules (AUTH-001/002/003/004, MOVE-001).
 - `audit --list-rules` discovers all registered built-in rules (with id, severity, and description). Supports `--format json` and does not require a source path argument.
+- `audit --save-baseline <PATH>` persists the current report as JSON together with the `sdkt` version and the active rule ids. `audit --baseline <PATH>` loads that file, diffs the current findings against it (keyed on `rule_id` + `location` + `message`), prints the new and resolved findings, and exits non-zero when new findings were introduced — the ratchet-style CI gate. A baseline produced by a different `sdkt` version or rule set produces a `Warning:` on stderr. Both flags work with `--format pretty` (default) and `--format json`; without either flag the audit output and exit code are unchanged.
 - **Mainnet safety.** Mutating commands (`tx submit`, `invoke`, `deploy`, `project deploy`) refuse to target mainnet unless you explicitly select the network — via `--network-profile`, `--rpc-url`, or `--network-passphrase`. A testnet-default passphrase pointed at a mainnet endpoint is rejected before any request is sent, protecting against signing for the wrong network.
 
 ## Error Handling

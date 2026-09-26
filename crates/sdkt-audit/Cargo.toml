@@ -14,7 +14,11 @@ documentation = "https://docs.rs/sdkt-audit"
 [dependencies]
 syn = { version = "3", features = ["full", "visit"] }
 serde = { version = "1", features = ["derive"] }
-serde_json = { version = "1", optional = true }
+# Required (not optional) for baseline persistence: `sdkt audit --save-baseline`
+# serializes the stable `AuditReport` JSON structure. `serde_json` was already a
+# resolved dependency of this crate (it previously rode in on the optional
+# `wasm-plugins` feature), so this does not add a crate to `Cargo.lock`.
+serde_json = { version = "1" }
 thiserror = "2"
 dirs = "7"
 toml = "1.1"
@@ -31,7 +35,7 @@ extism = { version = "1.30.0", optional = true }
 plugins = ["dep:libloading"]
 
 # WebAssembly plugin loading (Phase C). Off by default.
-wasm-plugins = ["dep:extism", "dep:serde_json"]
+wasm-plugins = ["dep:extism"]
 
 [dev-dependencies]
 tempfile = "3"
