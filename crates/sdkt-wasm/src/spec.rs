@@ -84,15 +84,47 @@ pub struct TypeMember {
     pub name: String,
     /// Doc comment, if any.
     pub doc: String,
+    /// The member's type(s). A struct field has exactly one; a union tuple case
+    /// carries one per tuple element; void union cases and enum cases have
+    /// none. Retained so a type whose members keep their names but change their
+    /// types is still detectable as a definition change.
+    pub types: Vec<ContractType>,
+    /// The case's discriminant, for enum and error-enum members only. This is
+    /// the numeric value an `ScVal` carries for the case, so a remapped
+    /// discriminant silently changes how existing data decodes.
+    pub value: Option<u32>,
 }
 
 /// A declared Soroban event.
+///
+/// The full XDR signature (`prefix_topics`, `params`, `data_format`) is
+/// retained so that an event which keeps its name but changes its shape is
+/// still comparable — see [`crate::spec_diff`].
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct ContractEvent {
     /// Event name.
     pub name: String,
     /// Doc comment, if any.
     pub doc: String,
+    /// Topic symbols emitted before the declared params.
+    pub prefix_topics: Vec<String>,
+    /// Ordered event parameters, each carrying its own topic-vs-data location.
+    pub params: Vec<EventParam>,
+    /// XDR data format (`single_value` / `vec` / `map`).
+    pub data_format: String,
+}
+
+/// A single parameter of a declared event (`ScSpecEventParamV0`).
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct EventParam {
+    /// Parameter name.
+    pub name: String,
+    /// Doc comment, if any.
+    pub doc: String,
+    /// Type, expressed as a [`ContractType`].
+    pub type_: ContractType,
+    /// Where the value is carried: `topic` or `data`.
+    pub location: String,
 }
 
 /// Parses the Soroban contract spec from compiled WASM bytes.
@@ -188,10 +220,7 @@ fn decode_spec_section(
             ScSpecEntry::UdtUnionV0(u) => custom_types.push(map_udt_union(u)),
             ScSpecEntry::UdtEnumV0(e) => custom_types.push(map_udt_enum(e)),
             ScSpecEntry::UdtErrorEnumV0(e) => custom_types.push(map_udt_error_enum(e)),
-            ScSpecEntry::EventV0(e) => events.push(ContractEvent {
-                name: e.name.to_utf8_string_lossy(),
-                doc: e.doc.to_utf8_string_lossy(),
-            }),
+            ScSpecEntry::EventV0(e) => events.push(map_event(e)),
         }
 
         let consumed = cursor.position() as usize;
@@ -271,6 +300,8 @@ fn map_udt_struct(s: stellar_xdr::ScSpecUdtStructV0) -> ContractType {
             .map(|f| TypeMember {
                 name: f.name.to_utf8_string_lossy(),
                 doc: f.doc.to_utf8_string_lossy(),
+                types: vec![map_type_def(&f.type_)],
+                value: None,
             })
             .collect(),
     }
@@ -288,10 +319,14 @@ fn map_udt_union(u: stellar_xdr::ScSpecUdtUnionV0) -> ContractType {
                 stellar_xdr::ScSpecUdtUnionCaseV0::VoidV0(v) => TypeMember {
                     name: v.name.to_utf8_string_lossy(),
                     doc: v.doc.to_utf8_string_lossy(),
+                    types: vec![],
+                    value: None,
                 },
                 stellar_xdr::ScSpecUdtUnionCaseV0::TupleV0(t) => TypeMember {
                     name: t.name.to_utf8_string_lossy(),
                     doc: t.doc.to_utf8_string_lossy(),
+                    types: t.type_.iter().map(map_type_def).collect(),
+                    value: None,
                 },
             })
             .collect(),
@@ -309,6 +344,8 @@ fn map_udt_enum(e: stellar_xdr::ScSpecUdtEnumV0) -> ContractType {
             .map(|c| TypeMember {
                 name: c.name.to_utf8_string_lossy(),
                 doc: c.doc.to_utf8_string_lossy(),
+                types: vec![],
+                value: Some(c.value),
             })
             .collect(),
     }
@@ -325,8 +362,42 @@ fn map_udt_error_enum(e: stellar_xdr::ScSpecUdtErrorEnumV0) -> ContractType {
             .map(|c| TypeMember {
                 name: c.name.to_utf8_string_lossy(),
                 doc: c.doc.to_utf8_string_lossy(),
+                types: vec![],
+                value: Some(c.value),
             })
             .collect(),
+    }
+}
+
+/// Maps an `EventV0` entry, retaining the full event signature (prefix
+/// topics, params, and data format) rather than just the name.
+fn map_event(e: stellar_xdr::ScSpecEventV0) -> ContractEvent {
+    ContractEvent {
+        name: e.name.to_utf8_string_lossy(),
+        doc: e.doc.to_utf8_string_lossy(),
+        prefix_topics: e
+            .prefix_topics
+            .iter()
+            .map(|t| t.to_utf8_string_lossy())
+            .collect(),
+        params: e
+            .params
+            .iter()
+            .map(|p| EventParam {
+                name: p.name.to_utf8_string_lossy(),
+                doc: p.doc.to_utf8_string_lossy(),
+                type_: map_type_def(&p.type_),
+                location: match p.location {
+                    stellar_xdr::ScSpecEventParamLocationV0::Data => "data".to_string(),
+                    stellar_xdr::ScSpecEventParamLocationV0::TopicList => "topic".to_string(),
+                },
+            })
+            .collect(),
+        data_format: match e.data_format {
+            stellar_xdr::ScSpecEventDataFormat::SingleValue => "single_value".to_string(),
+            stellar_xdr::ScSpecEventDataFormat::Vec => "vec".to_string(),
+            stellar_xdr::ScSpecEventDataFormat::Map => "map".to_string(),
+        },
     }
 }
 
@@ -404,24 +475,57 @@ pub(crate) mod tests {
     }
 
     pub(crate) fn event_entry(name: &str) -> ScSpecEntry {
-        use stellar_xdr::ScSpecEventV0;
+        event_entry_with_params(name, vec![])
+    }
+
+    pub(crate) fn event_entry_with_params(
+        name: &str,
+        params: Vec<(String, ScSpecTypeDef)>,
+    ) -> ScSpecEntry {
+        use stellar_xdr::{ScSpecEventParamLocationV0, ScSpecEventParamV0, ScSpecEventV0};
         ScSpecEntry::EventV0(ScSpecEventV0 {
             doc: "".try_into().unwrap(),
             lib: "soroban_sdk".try_into().unwrap(),
             name: symbol_e(name),
             prefix_topics: vec![].try_into().unwrap(),
-            params: vec![].try_into().unwrap(),
+            params: params
+                .into_iter()
+                .map(|(n, t)| ScSpecEventParamV0 {
+                    doc: "".try_into().unwrap(),
+                    name: n.try_into().unwrap(),
+                    type_: t,
+                    location: ScSpecEventParamLocationV0::Data,
+                })
+                .collect::<Vec<_>>()
+                .try_into()
+                .unwrap(),
             data_format: stellar_xdr::ScSpecEventDataFormat::SingleValue,
         })
     }
 
     pub(crate) fn udt_struct_entry(name: &str) -> ScSpecEntry {
-        use stellar_xdr::ScSpecUdtStructV0;
+        udt_struct_entry_with_fields(name, vec![])
+    }
+
+    pub(crate) fn udt_struct_entry_with_fields(
+        name: &str,
+        fields: Vec<(String, ScSpecTypeDef)>,
+    ) -> ScSpecEntry {
+        use stellar_xdr::{ScSpecUdtStructFieldV0, ScSpecUdtStructV0};
         ScSpecEntry::UdtStructV0(ScSpecUdtStructV0 {
             doc: "".try_into().unwrap(),
             lib: "soroban_sdk".try_into().unwrap(),
             name: name.try_into().unwrap(),
-            fields: vec![].try_into().unwrap(),
+            fields: fields
+                .into_iter()
+                .map(|(n, t)| ScSpecUdtStructFieldV0 {
+                    doc: "".try_into().unwrap(),
+                    name: n.try_into().unwrap(),
+                    type_: t,
+                })
+                .collect::<Vec<_>>()
+                .try_into()
+                .unwrap(),
         })
     }
 
@@ -485,5 +589,42 @@ pub(crate) mod tests {
         assert_eq!(spec.custom_types[0].name, "Point");
         assert_eq!(spec.custom_types[0].kind, "struct");
         assert_eq!(spec.custom_types[0].doc, "a point");
+    }
+
+    #[test]
+    fn event_retains_params() {
+        // An `EventV0` entry keeps its full signature, not just its name.
+        let wasm = spec_section(&[event_entry_with_params(
+            "Transfer",
+            vec![
+                ("from".to_string(), ScSpecTypeDef::Address),
+                ("amount".to_string(), ScSpecTypeDef::I128),
+            ],
+        )]);
+        let spec = parse_contract_spec(&wasm).unwrap();
+        assert_eq!(spec.events.len(), 1);
+        let ev = &spec.events[0];
+        assert_eq!(ev.name, "Transfer");
+        assert_eq!(ev.data_format, "single_value");
+        assert!(ev.prefix_topics.is_empty());
+        assert_eq!(ev.params.len(), 2);
+        assert_eq!(ev.params[0].name, "from");
+        assert_eq!(ev.params[0].type_.name, "address");
+        assert_eq!(ev.params[0].location, "data");
+        assert_eq!(ev.params[1].name, "amount");
+        assert_eq!(ev.params[1].type_.name, "i128");
+    }
+
+    #[test]
+    fn udt_struct_retains_field_types() {
+        let wasm = spec_section(&[udt_struct_entry_with_fields(
+            "Point",
+            vec![("x".to_string(), ScSpecTypeDef::I32)],
+        )]);
+        let spec = parse_contract_spec(&wasm).unwrap();
+        assert_eq!(spec.custom_types.len(), 1);
+        assert_eq!(spec.custom_types[0].members.len(), 1);
+        assert_eq!(spec.custom_types[0].members[0].name, "x");
+        assert_eq!(spec.custom_types[0].members[0].types[0].name, "i32");
     }
 }
