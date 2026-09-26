@@ -134,6 +134,11 @@ pub struct SubmissionResult {
     /// Diagnostic events (base64 ContractEvent XDR) from sendTransaction, when status == Failed.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub diagnostic_events: Vec<String>,
+    /// Base64 `TransactionMeta` XDR from the settled transaction. This carries
+    /// the Soroban return value (`SorobanTransactionMeta.returnValue`); the
+    /// `TransactionResult` in `result_xdr` does not.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub result_meta_xdr: Option<String>,
 }
 
 /// Configuration for transaction polling.
@@ -204,6 +209,7 @@ pub async fn submit_and_wait(
             error_code: sent.error_result,
             error_result_xdr: sent.error_result_xdr,
             diagnostic_events: sent.diagnostic_events,
+            result_meta_xdr: None,
         });
     }
 
@@ -216,6 +222,7 @@ pub async fn submit_and_wait(
             error_code: None,
             error_result_xdr: None,
             diagnostic_events: Vec::new(),
+            result_meta_xdr: None,
         });
     }
     poll_transaction(client, &hash, config).await
@@ -243,6 +250,7 @@ pub async fn poll_transaction(
                     error_code: None,
                     error_result_xdr: None,
                     diagnostic_events: Vec::new(),
+                    result_meta_xdr: res.result_meta_xdr,
                 });
             }
             TransactionStatus::Failed => {
@@ -254,6 +262,7 @@ pub async fn poll_transaction(
                     error_code: None,
                     error_result_xdr: None,
                     diagnostic_events: Vec::new(),
+                    result_meta_xdr: None,
                 });
             }
             TransactionStatus::NotFound | TransactionStatus::Pending => {
@@ -338,6 +347,7 @@ mod tests {
             error_code: None,
             error_result_xdr: None,
             diagnostic_events: Vec::new(),
+            result_meta_xdr: None,
         };
         let v = serde_json::to_value(&r).unwrap();
         assert_eq!(v["status"], "Success");

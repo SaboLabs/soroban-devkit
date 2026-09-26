@@ -33,6 +33,10 @@ pub struct InvokeResult {
     pub fee: u32,
     /// Base64 `TransactionResult` XDR from the settled transaction, if any.
     pub result_xdr: Option<String>,
+    /// Base64 `TransactionMeta` XDR from the settled transaction. Carries the
+    /// Soroban return value (`SorobanTransactionMeta.returnValue`) used for
+    /// ABI-aware result decoding.
+    pub result_meta_xdr: Option<String>,
     /// Error code from the network when status == FAILED.
     pub error_code: Option<String>,
     /// Base64 `TransactionResult` XDR of the error when status == FAILED.
@@ -203,6 +207,7 @@ pub async fn invoke_contract(
         function: params.function.clone(),
         fee: total_fee,
         result_xdr: submission.result_xdr,
+        result_meta_xdr: submission.result_meta_xdr,
         error_code: submission.error_code,
         error_result_xdr: submission.error_result_xdr,
         diagnostic_events: submission.diagnostic_events,
@@ -232,6 +237,7 @@ mod tests {
             function: "f".into(),
             fee: 250,
             result_xdr: Some("xdr".into()),
+            result_meta_xdr: None,
             error_code: None,
             error_result_xdr: None,
             diagnostic_events: Vec::new(),

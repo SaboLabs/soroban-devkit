@@ -164,6 +164,28 @@ sdkt tx sign --input unsigned.xdr --output signed.xdr --identity alice --network
 sdkt tx submit --envelope signed.xdr
 ```
 
+### Invoke a contract (signed + submitted) with ABI-aware result decoding
+
+`sdkt invoke` runs the full state-changing flow (sequence → simulate → sign →
+submit → poll). By default it prints the raw `TransactionResult` XDR. Pass an
+ABI to also decode the contract's return value; the raw result XDR is always
+kept in the output.
+
+```bash
+# Decode the return value using a local WASM's contract spec
+sdkt invoke <CONTRACT_ID> increment --identity alice --abi contract.wasm
+
+# Decode using the deployed contract's on-chain WASM (no local file needed)
+sdkt invoke <CONTRACT_ID> increment --identity alice --abi-contract <CONTRACT_ID>
+
+# JSON output includes resultXdr, resultMetaXdr, and a `decoded` object
+sdkt invoke <CONTRACT_ID> increment --identity alice --abi contract.wasm --format json
+```
+
+`--abi` and `--abi-contract` are mutually exclusive. If the return value cannot
+be resolved (no meta, or a value the ABI cannot match), the raw result is still
+shown — a decoded value is never fabricated.
+
 `tx sign` is **fully offline** — it signs with a local ED25519 keystore
 identity, so no RPC or secret exposure is involved. The `--network` flag
 (`testnet` | `mainnet` | `futurenet` | `custom:<passphrase>`) only selects the

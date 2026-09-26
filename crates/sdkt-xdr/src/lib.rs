@@ -299,6 +299,27 @@ pub fn extract_contract_data_value(
     }
 }
 
+/// Extract the Soroban contract return value (`ScVal`) from a base64/hex
+/// `TransactionMeta` XDR, if present.
+///
+/// The contract return value lives in `SorobanTransactionMeta.returnValue`
+/// (inside `TransactionMeta::V3`), not in the `TransactionResult`. Returns
+/// `Ok(None)` when the meta carries no Soroban return value (a classic
+/// transaction, or a meta version without Soroban data) so callers can fall
+/// back to raw output, and `Err` only when the input is not a decodable
+/// `TransactionMeta`.
+pub fn extract_return_value(meta_xdr: &str) -> Result<Option<ScVal>, DecodeError> {
+    let raw = detect_and_decode(meta_xdr)?;
+    let mut cursor = std::io::Cursor::new(&raw);
+    let mut l = Limited::new(&mut cursor, Limits::none());
+    let meta = TransactionMeta::read_xdr(&mut l)
+        .map_err(|e| DecodeError::XdrParse("TransactionMeta".to_string(), e))?;
+    Ok(match meta {
+        TransactionMeta::V3(v3) => v3.soroban_meta.map(|m| m.return_value),
+        _ => None,
+    })
+}
+
 fn extract_contract_data_value_standard(
     raw: &[u8],
 ) -> Result<stellar_xdr::ContractDataEntry, DecodeError> {
@@ -576,6 +597,47 @@ mod tests {
         let pretty = decode(payload, Some("scval"), OutputFormat::Pretty).unwrap();
         assert!(!compact.contains('\n'));
         assert!(pretty.contains('\n'));
+    }
+
+    #[test]
+    fn test_extract_return_value_present() {
+        let meta = make_soroban_meta_b64(Some(ScVal::U32(42)));
+        assert_eq!(extract_return_value(&meta).unwrap(), Some(ScVal::U32(42)));
+    }
+
+    fn make_soroban_meta_b64(return_value: Option<ScVal>) -> String {
+        use stellar_xdr::{
+            ExtensionPoint, LedgerEntryChanges, SorobanTransactionMeta, SorobanTransactionMetaExt,
+            TransactionMeta, TransactionMetaV3, VecM,
+        };
+        let soroban_meta = return_value.map(|rv| SorobanTransactionMeta {
+            ext: SorobanTransactionMetaExt::V0,
+            events: VecM::default(),
+            return_value: rv,
+            diagnostic_events: VecM::default(),
+        });
+        let meta = TransactionMeta::V3(TransactionMetaV3 {
+            ext: ExtensionPoint::V0,
+            tx_changes_before: LedgerEntryChanges(VecM::default()),
+            operations: VecM::default(),
+            tx_changes_after: LedgerEntryChanges(VecM::default()),
+            soroban_meta,
+        });
+        let mut buf = Vec::new();
+        let mut l = Limited::new(&mut buf, Limits::none());
+        meta.write_xdr(&mut l).unwrap();
+        STANDARD.encode(&buf)
+    }
+
+    #[test]
+    fn test_extract_return_value_absent_is_none() {
+        let meta = make_soroban_meta_b64(None);
+        assert_eq!(extract_return_value(&meta).unwrap(), None);
+    }
+
+    #[test]
+    fn test_extract_return_value_rejects_non_meta() {
+        assert!(extract_return_value("!!!not-xdr!!!").is_err());
     }
 
     #[test]
