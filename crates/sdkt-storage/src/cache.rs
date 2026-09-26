@@ -25,11 +25,22 @@ pub struct WasmCache {
 
 impl WasmCache {
     /// Creates a new `WasmCache` instance.
-    /// Uses the standard OS cache directory:
+    ///
+    /// The directory location can be overridden via the `SDKT_CACHE_DIR` environment
+    /// variable (checked first). If unset or empty, uses the standard OS cache directory:
     /// - Linux: `~/.cache/soroban-devkit/`
     /// - macOS: `~/Library/Caches/org.SaboLabs.soroban-devkit/`
     /// - Windows: `%LOCALAPPDATA%\SaboLabs\soroban-devkit\cache\`
     pub fn new() -> Result<Self, StorageError> {
+        if let Ok(dir) = std::env::var("SDKT_CACHE_DIR") {
+            let trimmed = dir.trim();
+            if !trimmed.is_empty() {
+                return Ok(Self {
+                    base_dir: PathBuf::from(trimmed),
+                });
+            }
+        }
+
         let proj_dirs =
             ProjectDirs::from("org", "SaboLabs", "soroban-devkit").ok_or_else(|| {
                 StorageError::Io(std::io::Error::new(
@@ -40,6 +51,11 @@ impl WasmCache {
 
         let base_dir = proj_dirs.cache_dir().to_path_buf();
         Ok(Self { base_dir })
+    }
+
+    /// Returns the base directory of the cache.
+    pub fn base_dir(&self) -> &Path {
+        &self.base_dir
     }
 
     /// Creates a cache instance targeting a specific directory (useful for testing).
@@ -332,5 +348,22 @@ mod tests {
             "Windows cache path should contain the 'soroban-devkit' app name, got: {}",
             cache.base_dir.display()
         );
+    }
+
+    #[test]
+    fn test_new_with_env_var_override() {
+        let tmp = TempDir::new().unwrap();
+        let key = "SDKT_CACHE_DIR";
+        let prev = std::env::var_os(key);
+        std::env::set_var(key, tmp.path());
+
+        let cache = WasmCache::new().expect("WasmCache::new() with SDKT_CACHE_DIR");
+        assert_eq!(cache.base_dir(), tmp.path());
+
+        if let Some(p) = prev {
+            std::env::set_var(key, p);
+        } else {
+            std::env::remove_var(key);
+        }
     }
 }
