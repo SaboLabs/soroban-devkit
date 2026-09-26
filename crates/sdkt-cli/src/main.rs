@@ -1239,6 +1239,29 @@ enum StorageAction {
     /// categorization, TTL summary, and per-entry detail).
     Analyze {
         contract_id: String,
+        /// Repeatable: extra ledger keys (base64 XDR or hex XDR) to include in
+        /// the analysis. The contract instance key is always included.
+        #[arg(long, value_name = "BASE64_XDR", alias = "key")]
+        key_xdr: Vec<String>,
+        /// Leading symbol of a typed data key — the map/enum-variant name.
+        /// Combined with `--key-arg` this builds `ScVec[symbol, args...]`,
+        /// e.g. `--map-key balances --key-arg address:G...`.
+        #[arg(long, value_name = "SYMBOL")]
+        map_key: Option<String>,
+        /// Repeatable typed key component (`TYPE:VALUE`, e.g. `address:G...`,
+        /// `u32:100`) appended after `--map-key`. Requires `--map-key`.
+        #[arg(long, value_name = "TYPE:VALUE")]
+        key_arg: Vec<String>,
+        /// Include the contract's instance-storage entry (always included by default).
+        #[arg(long)]
+        instance: bool,
+        /// Durability of a typed data key: `persistent` (default) or `temporary`.
+        #[arg(
+            long,
+            value_name = "persistent|temporary",
+            default_value = "persistent"
+        )]
+        durability: String,
         #[arg(short, long, default_value = "pretty")]
         format: String,
     },
@@ -1676,6 +1699,9 @@ fn parse_typed_args(args: &[String], strict: bool) -> Result<Vec<String>, String
                 "bytes" => {
                     let mut b = Vec::new();
                     let s = v.trim();
+                    if !s.is_ascii() {
+                        return Err(format!("invalid hex byte in: {v}"));
+                    }
                     if s.len() % 2 != 0 {
                         return Err(format!("invalid hex byte in: {v}"));
                     }
@@ -1890,6 +1916,47 @@ fn resolve_storage_read_key(
     .map_err(|e| format!("failed to build LedgerKey: {e}"))
 }
 
+/// Resolve the list of extra `LedgerKey`s for `storage analyze` from the supplied
+/// CLI arguments.
+///
+/// Accepts repeatable raw keys via `key_xdr` (`--key-xdr`/`--key`) and/or a typed
+/// key specification via `--map-key`/`--key-arg`/`--durability`.
+///
+/// Validates key specifications offline without network/RPC calls.
+fn resolve_storage_analyze_keys(
+    contract: &str,
+    key_xdr: &[String],
+    map_key: Option<&str>,
+    key_arg: &[String],
+    durability: &str,
+) -> Result<Vec<String>, String> {
+    if !key_arg.is_empty() && map_key.is_none() {
+        return Err("--key-arg requires --map-key".to_string());
+    }
+
+    let mut keys = Vec::new();
+
+    for raw in key_xdr {
+        if raw.trim().is_empty() {
+            return Err("--key-xdr must not be empty".to_string());
+        }
+        // Validate that raw is valid base64 or hex XDR for a LedgerKey
+        sdkt_xdr::decode_ledger_key(raw).map_err(|e| format!("invalid LedgerKey: {e}"))?;
+        keys.push(raw.to_string());
+    }
+
+    if let Some(symbol) = map_key {
+        let typed_key =
+            resolve_storage_read_key(contract, None, Some(symbol), key_arg, false, durability)?;
+        keys.push(typed_key);
+    } else if durability != "persistent" {
+        // Validate durability even if map_key is absent, so invalid durability flags error offline.
+        parse_durability(durability)?;
+    }
+
+    Ok(keys)
+}
+
 /// Encode typed `TYPE:VALUE` values to a single base64 XDR `ScVal` string.
 ///
 /// This is the write-direction counterpart to `sdkt decode`. Supported types
@@ -2034,6 +2101,15 @@ mod encode_tests {
                 assert_eq!(encoded, runtime[0], "{input} (strict={strict})");
             }
         }
+    }
+
+    #[test]
+    fn parse_typed_args_rejects_non_ascii_bytes_without_panic() {
+        let input = ["bytes:💥".to_string()];
+        let err = parse_typed_args(&input, true).unwrap_err();
+        assert!(err.contains("invalid hex byte"));
+        let err_non_strict = parse_typed_args(&input, false).unwrap_err();
+        assert!(err_non_strict.contains("invalid hex byte"));
     }
 }
 
@@ -2593,6 +2669,32 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
                 process::exit(1);
             }
 
+            let analyze_extra_keys = if let StorageAction::Analyze {
+                contract_id,
+                key_xdr,
+                map_key,
+                key_arg,
+                durability,
+                ..
+            } = &action
+            {
+                match resolve_storage_analyze_keys(
+                    contract_id,
+                    key_xdr,
+                    map_key.as_deref(),
+                    key_arg,
+                    durability,
+                ) {
+                    Ok(k) => Some(k),
+                    Err(e) => {
+                        eprintln!("Error: {e}");
+                        process::exit(1);
+                    }
+                }
+            } else {
+                None
+            };
+
             let client = resolve_rpc_client(
                 net.rpc_url.clone(),
                 net.network_passphrase.clone(),
@@ -2602,10 +2704,6 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
             // Load ABI spec if provided. Two mutually exclusive sources:
             // a local WASM file (`--abi`) or a deployed contract's on-chain WASM
             // fetched via the path (`--abi-contract`).
-            if abi.is_some() && abi_contract.is_some() {
-                eprintln!("Error: specify only one of --abi or --abi-contract");
-                process::exit(1);
-            }
 
             let contract_spec: Option<sdkt_wasm::ContractSpec> =
                 if let Some(wasm_path) = abi.as_ref() {
@@ -2708,8 +2806,11 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
                 StorageAction::Analyze {
                     contract_id,
                     format,
+                    ..
                 } => {
                     let fmt = parse_format_str(&format);
+                    let extra_keys = analyze_extra_keys.expect("resolved for Analyze");
+
                     let client = resolve_rpc_client(
                         net.rpc_url.clone(),
                         net.network_passphrase.clone(),
@@ -2717,7 +2818,10 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
                     );
                     let analyzer = sdkt_storage::StorageAnalyzer::new(client);
 
-                    match analyzer.inspect_contract_storage(&contract_id).await {
+                    match analyzer
+                        .inspect_contract_storage_keys(&contract_id, &extra_keys)
+                        .await
+                    {
                         Ok(report) => {
                             if fmt == OutputFormat::Json {
                                 println!("{}", serde_json::to_string(&report)?);
@@ -7439,6 +7543,107 @@ mod storage_read_key_tests {
     fn rejects_invalid_durability() {
         let err = resolve_storage_read_key(CONTRACT, None, Some("bal"), &[], false, "forever")
             .unwrap_err();
+        assert!(err.contains("invalid durability"));
+    }
+}
+
+#[cfg(test)]
+mod storage_analyze_key_resolution_tests {
+    use super::*;
+
+    const CONTRACT: &str = "CAE3U7JKESRWZHPEQ72DVNGOQ6WPA7HSPQZL5YV46NPCE4TMUPAGYMEC";
+
+    fn args(vals: &[&str]) -> Vec<String> {
+        vals.iter().map(|s| s.to_string()).collect()
+    }
+
+    #[test]
+    fn analyze_keys_empty_when_no_flags() {
+        let keys = resolve_storage_analyze_keys(CONTRACT, &[], None, &[], "persistent").unwrap();
+        assert!(keys.is_empty());
+    }
+
+    #[test]
+    fn analyze_keys_rejects_key_arg_without_map_key() {
+        let err =
+            resolve_storage_analyze_keys(CONTRACT, &[], None, &args(&["u32:1"]), "persistent")
+                .unwrap_err();
+        assert!(err.contains("--key-arg requires --map-key"));
+    }
+
+    #[test]
+    fn analyze_keys_rejects_empty_key_xdr() {
+        let err = resolve_storage_analyze_keys(CONTRACT, &args(&["   "]), None, &[], "persistent")
+            .unwrap_err();
+        assert!(err.contains("--key-xdr must not be empty"));
+    }
+
+    #[test]
+    fn analyze_keys_rejects_invalid_key_xdr() {
+        let err = resolve_storage_analyze_keys(
+            CONTRACT,
+            &args(&["not-a-valid-base64-or-hex"]),
+            None,
+            &[],
+            "persistent",
+        )
+        .unwrap_err();
+        assert!(err.contains("invalid LedgerKey"));
+    }
+
+    #[test]
+    fn analyze_keys_accepts_valid_raw_keys() {
+        let raw = "AAAABQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=";
+        let keys =
+            resolve_storage_analyze_keys(CONTRACT, &args(&[raw]), None, &[], "persistent").unwrap();
+        assert_eq!(keys, vec![raw]);
+    }
+
+    #[test]
+    fn analyze_keys_accepts_typed_key() {
+        let keys = resolve_storage_analyze_keys(
+            CONTRACT,
+            &[],
+            Some("balances"),
+            &args(&["u32:100"]),
+            "temporary",
+        )
+        .unwrap();
+        assert_eq!(keys.len(), 1);
+        let decoded = sdkt_xdr::decode_ledger_key(&keys[0]).unwrap();
+        match decoded {
+            stellar_xdr::LedgerKey::ContractData(d) => {
+                assert_eq!(d.durability, stellar_xdr::ContractDataDurability::Temporary);
+            }
+            other => panic!("expected ContractData, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn analyze_keys_merges_raw_and_typed_keys() {
+        let raw = "AAAABQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=";
+        let keys = resolve_storage_analyze_keys(
+            CONTRACT,
+            &args(&[raw]),
+            Some("balances"),
+            &args(&["u32:100"]),
+            "persistent",
+        )
+        .unwrap();
+        assert_eq!(keys.len(), 2);
+        assert_eq!(keys[0], raw);
+    }
+
+    #[test]
+    fn analyze_keys_rejects_invalid_durability() {
+        let err = resolve_storage_analyze_keys(CONTRACT, &[], Some("balances"), &[], "forever")
+            .unwrap_err();
+        assert!(err.contains("invalid durability"));
+    }
+
+    #[test]
+    fn analyze_keys_rejects_invalid_durability_without_map_key() {
+        let err = resolve_storage_analyze_keys(CONTRACT, &[], None, &[], "forever").unwrap_err();
         assert!(err.contains("invalid durability"));
     }
 }
