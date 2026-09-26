@@ -165,27 +165,12 @@ jobs:
     - name: Check sdkt-playground
       run: cargo check --locked --manifest-path crates/sdkt-playground/Cargo.toml --target wasm32-unknown-unknown
 
-    - name: Build playground WASM
-      run: |
-        cargo build --locked \
-          --release \
-          --target wasm32-unknown-unknown \
-          --manifest-path crates/sdkt-playground/Cargo.toml
-
-    - name: Show raw playground WASM hash
-      run: |
-        sha256sum crates/sdkt-playground/target/wasm32-unknown-unknown/release/sdkt_playground.wasm
-
     - name: Generate playground artifacts
       run: |
-        tmp_dir="$(mktemp -d)"
-        echo "PLAYGROUND_WASM_OUT=$tmp_dir" >> "$GITHUB_ENV"
-
-        wasm-bindgen \
-          --target web \
-          --no-typescript \
-          --out-dir "$tmp_dir" \
-          crates/sdkt-playground/target/wasm32-unknown-unknown/release/sdkt_playground.wasm
+        PLAYGROUND_WASM_OUT="$(mktemp -d)"
+        export PLAYGROUND_WASM_OUT
+        bash website/playground/build.sh
+        echo "PLAYGROUND_WASM_OUT=$PLAYGROUND_WASM_OUT" >> "$GITHUB_ENV"
 
     - name: Check committed artifacts are fresh
       run: |
