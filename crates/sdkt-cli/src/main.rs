@@ -2,7 +2,9 @@ use clap::{Args, CommandFactory, Parser, Subcommand};
 use clap_complete::Shell;
 use sdkt_core::fee::{FeeConfig, FeeEstimator, LedgerFeeSample, NetworkKind};
 use sdkt_core::fetch::DependencyFetcher;
-use sdkt_core::{DevKitConfig, NetworkConfig, OutputFormat};
+use sdkt_core::{
+    DevKitConfig, NetworkConfig, OutputFormat, MAINNET_PASSPHRASE, TESTNET_PASSPHRASE,
+};
 use sdkt_rpc::inspect::StorageSummary;
 use sdkt_rpc::wasm::get_wasm_bytecode;
 use sdkt_rpc::{
@@ -164,6 +166,125 @@ fn resolve_rpc_client(
     }
 }
 
+/// Target network resolution result for RPC commands that accept `--network`.
+struct TargetNetwork {
+    pub client: SorobanRpcClient,
+    #[allow(dead_code)]
+    pub config: NetworkConfig,
+    pub network_name: String,
+}
+
+impl std::fmt::Debug for TargetNetwork {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("TargetNetwork")
+            .field("config", &self.config)
+            .field("network_name", &self.network_name)
+            .finish()
+    }
+}
+
+/// Resolve the RPC client and canonical network name for commands that accept `--network`.
+///
+/// When `--network` is explicitly provided (`testnet`, `mainnet`, `futurenet`), it
+/// configures the well-known endpoint/passphrase and conflicts with `--rpc-url`,
+/// `--network-profile`, and `--network-passphrase`. When omitted, the network is resolved
+/// from `NetworkArgs` (profile, rpc-url, or defaults), and the canonical name is derived
+/// from the profile or passphrase.
+fn resolve_target_network(
+    network: Option<&str>,
+    net: &NetworkArgs,
+) -> Result<TargetNetwork, String> {
+    if let Some(explicit_net) = network {
+        let explicit_net = explicit_net.trim();
+        if !explicit_net.is_empty() {
+            if net.rpc_url.is_some()
+                || net.network_profile.is_some()
+                || net.network_passphrase.is_some()
+            {
+                return Err("--network conflicts with --rpc-url, --network-passphrase, and --network-profile".to_string());
+            }
+
+            let (rpc_url, passphrase, canonical_name) =
+                match explicit_net.to_ascii_lowercase().as_str() {
+                    "testnet" => (
+                        "https://soroban-testnet.stellar.org",
+                        TESTNET_PASSPHRASE,
+                        "testnet",
+                    ),
+                    "mainnet" => (
+                        "https://soroban-rpc.stellar.org",
+                        MAINNET_PASSPHRASE,
+                        "mainnet",
+                    ),
+                    "futurenet" => (
+                        "https://rpc-futurenet.stellar.org",
+                        "Test SDF Future Network ; October 2022",
+                        "futurenet",
+                    ),
+                    other => {
+                        return Err(format!(
+                            "invalid network '{}' (expected testnet|mainnet|futurenet)",
+                            other
+                        ));
+                    }
+                };
+
+            let cfg = NetworkConfig {
+                rpc_url: rpc_url.to_string(),
+                passphrase: passphrase.to_string(),
+                timeout_secs: Some(15),
+                pool_max_idle_per_host: Some(100),
+            };
+            return Ok(TargetNetwork {
+                client: SorobanRpcClient::from_config(&cfg),
+                config: cfg,
+                network_name: canonical_name.to_string(),
+            });
+        }
+    }
+
+    let cfg = resolve_network_config(
+        net.rpc_url.clone(),
+        net.network_passphrase.clone(),
+        net.network_profile.clone(),
+    )?;
+
+    let network_name = if let Some(ref profile) = net.network_profile {
+        profile.clone()
+    } else if cfg.passphrase == MAINNET_PASSPHRASE || is_mainnet_rpc_url(&cfg.rpc_url) {
+        "mainnet".to_string()
+    } else if cfg.passphrase == "Test SDF Future Network ; October 2022"
+        || is_futurenet_rpc_url(&cfg.rpc_url)
+    {
+        "futurenet".to_string()
+    } else if cfg.passphrase == TESTNET_PASSPHRASE || is_testnet_rpc_url(&cfg.rpc_url) {
+        "testnet".to_string()
+    } else {
+        "custom".to_string()
+    };
+
+    Ok(TargetNetwork {
+        client: SorobanRpcClient::from_config(&cfg),
+        config: cfg,
+        network_name,
+    })
+}
+
+fn is_mainnet_rpc_url(rpc_url: &str) -> bool {
+    let url = rpc_url.to_ascii_lowercase();
+    url.contains("stellar.org") && !url.contains("testnet") && !url.contains("futurenet")
+}
+
+fn is_futurenet_rpc_url(rpc_url: &str) -> bool {
+    let url = rpc_url.to_ascii_lowercase();
+    url.contains("futurenet")
+}
+
+fn is_testnet_rpc_url(rpc_url: &str) -> bool {
+    let url = rpc_url.to_ascii_lowercase();
+    url.contains("testnet")
+}
+
 /// Whether the operator explicitly named the target network (via `--rpc-url`,
 /// `--network-passphrase`, or `--network-profile`). When this is `false` the
 /// resolved [`NetworkConfig`] came entirely from built-in defaults (testnet),
@@ -320,6 +441,101 @@ mod resolver_tests {
         assert_eq!(cfg.rpc_url, "http://flag.example");
         assert_eq!(cfg.passphrase, "Test SDF Network ; September 2015");
     }
+
+    #[test]
+    fn resolve_target_network_explicit_builtins() {
+        let net = NetworkArgs::default();
+
+        // testnet
+        let target = resolve_target_network(Some("testnet"), &net).unwrap();
+        assert_eq!(target.network_name, "testnet");
+        assert_eq!(target.config.rpc_url, "https://soroban-testnet.stellar.org");
+        assert_eq!(target.config.passphrase, TESTNET_PASSPHRASE);
+
+        // mainnet
+        let target = resolve_target_network(Some("mainnet"), &net).unwrap();
+        assert_eq!(target.network_name, "mainnet");
+        assert_eq!(target.config.rpc_url, "https://soroban-rpc.stellar.org");
+        assert_eq!(target.config.passphrase, MAINNET_PASSPHRASE);
+
+        // futurenet
+        let target = resolve_target_network(Some("futurenet"), &net).unwrap();
+        assert_eq!(target.network_name, "futurenet");
+        assert_eq!(target.config.rpc_url, "https://rpc-futurenet.stellar.org");
+        assert_eq!(
+            target.config.passphrase,
+            "Test SDF Future Network ; October 2022"
+        );
+
+        // case insensitivity
+        let target = resolve_target_network(Some("MainNet"), &net).unwrap();
+        assert_eq!(target.network_name, "mainnet");
+    }
+
+    #[test]
+    fn resolve_target_network_invalid_network_error() {
+        let net = NetworkArgs::default();
+        let err = resolve_target_network(Some("unknown_net"), &net).unwrap_err();
+        assert!(err.contains("invalid network 'unknown_net'"));
+        assert!(err.contains("expected testnet|mainnet|futurenet"));
+    }
+
+    #[test]
+    fn resolve_target_network_conflicts() {
+        let net_rpc = NetworkArgs {
+            rpc_url: Some("http://custom.rpc".to_string()),
+            ..Default::default()
+        };
+        let err = resolve_target_network(Some("mainnet"), &net_rpc).unwrap_err();
+        assert_eq!(
+            err,
+            "--network conflicts with --rpc-url, --network-passphrase, and --network-profile"
+        );
+
+        let net_profile = NetworkArgs {
+            network_profile: Some("test-profile".to_string()),
+            ..Default::default()
+        };
+        let err = resolve_target_network(Some("testnet"), &net_profile).unwrap_err();
+        assert_eq!(
+            err,
+            "--network conflicts with --rpc-url, --network-passphrase, and --network-profile"
+        );
+
+        let net_pass = NetworkArgs {
+            network_passphrase: Some("Custom Passphrase".to_string()),
+            ..Default::default()
+        };
+        let err = resolve_target_network(Some("futurenet"), &net_pass).unwrap_err();
+        assert_eq!(
+            err,
+            "--network conflicts with --rpc-url, --network-passphrase, and --network-profile"
+        );
+    }
+
+    #[test]
+    fn resolve_target_network_none_falls_back_to_network_args() {
+        let net_default = NetworkArgs::default();
+        let target = resolve_target_network(None, &net_default).unwrap();
+        assert_eq!(target.network_name, "testnet");
+        assert_eq!(target.config.rpc_url, "https://soroban-testnet.stellar.org");
+
+        let net_mainnet_rpc = NetworkArgs {
+            rpc_url: Some("https://soroban-rpc.stellar.org".to_string()),
+            ..Default::default()
+        };
+        let target = resolve_target_network(None, &net_mainnet_rpc).unwrap();
+        assert_eq!(target.network_name, "mainnet");
+
+        let net_custom = NetworkArgs {
+            rpc_url: Some("http://127.0.0.1:8000".to_string()),
+            network_passphrase: Some("Standalone Network".to_string()),
+            ..Default::default()
+        };
+        let target = resolve_target_network(None, &net_custom).unwrap();
+        assert_eq!(target.network_name, "custom");
+        assert_eq!(target.config.rpc_url, "http://127.0.0.1:8000");
+    }
 }
 
 /// Soroban DevKit — unified toolkit for Stellar/Soroban development.
@@ -387,9 +603,16 @@ enum Commands {
         /// Path to a local WASM file to compare against the on-chain code
         #[arg(long, value_name = "WASM")]
         wasm: Option<String>,
-        /// Network to fetch the on-chain contract from
-        #[arg(short, long, default_value = "testnet")]
-        network: String,
+        /// Network to fetch the on-chain contract from (testnet | mainnet | futurenet)
+        #[arg(
+            short,
+            long,
+            value_name = "NETWORK",
+            conflicts_with = "rpc_url",
+            conflicts_with = "network_profile",
+            conflicts_with = "network_passphrase"
+        )]
+        network: Option<String>,
         /// Output format
         #[arg(short, long, default_value = "pretty")]
         format: String,
@@ -408,9 +631,16 @@ enum Commands {
         /// Optional local WASM to verify against the on-chain hash
         #[arg(long, value_name = "WASM")]
         wasm: Option<String>,
-        /// Network label for the report
-        #[arg(short, long, default_value = "testnet")]
-        network: String,
+        /// Network label for the report (testnet | mainnet | futurenet)
+        #[arg(
+            short,
+            long,
+            value_name = "NETWORK",
+            conflicts_with = "rpc_url",
+            conflicts_with = "network_profile",
+            conflicts_with = "network_passphrase"
+        )]
+        network: Option<String>,
         /// Output format
         #[arg(short, long, default_value = "pretty")]
         format: String,
@@ -833,13 +1063,23 @@ enum WasmAction {
     Metadata {
         #[arg(short, long)]
         contract: String,
-        #[arg(short, long, default_value = "testnet")]
-        network: String,
+        /// Network to fetch the on-chain contract from (testnet | mainnet | futurenet)
+        #[arg(
+            short,
+            long,
+            value_name = "NETWORK",
+            conflicts_with = "rpc_url",
+            conflicts_with = "network_profile",
+            conflicts_with = "network_passphrase"
+        )]
+        network: Option<String>,
         /// Force bypass the cache and fetch fresh from RPC
         #[arg(long, default_value_t = false)]
         refresh: bool,
         #[arg(short, long, default_value = "pretty")]
         format: String,
+        #[command(flatten)]
+        net: NetworkArgs,
     },
     /// Manage the local WASM cache
     Cache {
@@ -2597,11 +2837,15 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
             net,
         } => {
             let fmt = parse_format_str(&format);
-            let client = resolve_rpc_client(
-                net.rpc_url.clone(),
-                net.network_passphrase.clone(),
-                net.network_profile.clone(),
-            );
+            let target = match resolve_target_network(network.as_deref(), &net) {
+                Ok(t) => t,
+                Err(e) => {
+                    eprintln!("Error: {}", e);
+                    process::exit(1);
+                }
+            };
+            let client = target.client;
+            let network = target.network_name;
 
             // On-chain upgrade-safety verification: compare the live deployed
             // contract's interface against a local candidate WASM.
@@ -2706,11 +2950,15 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
             net,
         } => {
             let fmt = parse_format_str(&format);
-            let client = resolve_rpc_client(
-                net.rpc_url.clone(),
-                net.network_passphrase.clone(),
-                net.network_profile.clone(),
-            );
+            let target = match resolve_target_network(network.as_deref(), &net) {
+                Ok(t) => t,
+                Err(e) => {
+                    eprintln!("Error: {}", e);
+                    process::exit(1);
+                }
+            };
+            let client = target.client;
+            let network = target.network_name;
 
             // Read + hash the local WASM fully offline (no RPC).
             let local_bytes = match wasm.as_ref() {
@@ -4112,13 +4360,23 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
                 network,
                 refresh,
                 format,
+                net: sub_net,
             } => {
                 let fmt = parse_format_str(&format);
-                let client = resolve_rpc_client(
-                    net.rpc_url.clone(),
-                    net.network_passphrase.clone(),
-                    net.network_profile.clone(),
-                );
+                let net = NetworkArgs {
+                    network_profile: sub_net.network_profile.or(net.network_profile),
+                    rpc_url: sub_net.rpc_url.or(net.rpc_url),
+                    network_passphrase: sub_net.network_passphrase.or(net.network_passphrase),
+                };
+                let target = match resolve_target_network(network.as_deref(), &net) {
+                    Ok(t) => t,
+                    Err(e) => {
+                        eprintln!("Error: {}", e);
+                        process::exit(1);
+                    }
+                };
+                let client = target.client;
+                let network = target.network_name;
 
                 // Initialize cache
                 let cache = match WasmCache::new() {
