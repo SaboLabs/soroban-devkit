@@ -52,6 +52,14 @@
         <input type="file" id="fileInput" accept=".wasm,application/wasm">
       </div>
 
+      <div class="compare-slot">
+        <h2 class="example-title">Compare an upgrade</h2>
+        <p class="example-desc">Load a candidate WASM to run the offline upgrade-safety check.</p>
+        <label class="dz-btn" for="candidateInput">Choose candidate</label>
+        <input type="file" id="candidateInput" accept=".wasm,application/wasm">
+        <div class="candidate-name" id="candidateName">No candidate loaded</div>
+      </div>
+
       <aside class="example-panel" aria-label="Bundled example contracts">
         <h2 class="example-title">No contract handy?</h2>
         <p class="example-desc">Load a real compiled Soroban contract that ships with this page — inspected locally, same pipeline as a dropped file.</p>
@@ -64,7 +72,7 @@
           <button type="button" class="example-btn" data-example="us_new"
                   aria-label="Inspect the bundled example contract us_new.wasm">
             <span class="ex-name">Load example: <code>us_new.wasm</code></span>
-            <span class="ex-hint">hello() and increment() — exports + env metadata</span>
+            <span class="ex-hint">hello() and increment() — candidate upgrade</span>
           </button>
         </div>
         <p class="example-note">Marked <em>(bundled)</em> in the file bar — it is not from your disk.</p>

@@ -18,7 +18,7 @@
 //!   target/wasm32-unknown-unknown/release/sdkt_playground.wasm
 //! ```
 
-use sdkt_wasm::{parse_contract_spec, parse_metadata, WasmError};
+use sdkt_wasm::{diff_wasm, parse_contract_spec, parse_metadata, UpgradeVerdict, WasmError};
 use serde::Serialize;
 use wasm_bindgen::prelude::*;
 
@@ -88,6 +88,15 @@ pub fn inspect_wasm(bytes: &[u8]) -> Result<JsValue, JsValue> {
     serde_wasm_bindgen::to_value(&result).map_err(|e| JsValue::from_str(&e.to_string()))
 }
 
+/// Compare two Soroban contract WASM binaries using the same offline
+/// upgrade-safety classification as the CLI.
+#[wasm_bindgen]
+pub fn diff_wasm_result(old_bytes: &[u8], new_bytes: &[u8]) -> Result<JsValue, JsValue> {
+    let verdict = diff_parts(old_bytes, new_bytes)
+        .map_err(|e| JsValue::from_str(&user_message(&e)))?;
+    serde_wasm_bindgen::to_value(&verdict).map_err(|e| JsValue::from_str(&e.to_string()))
+}
+
 /// Version of the toolkit this playground build was produced from.
 #[wasm_bindgen]
 pub fn sdkt_version() -> String {
@@ -115,6 +124,12 @@ pub fn inspect_parts(bytes: &[u8]) -> Result<InspectionResult, WasmError> {
         spec,
         spec_error,
     })
+}
+
+/// Native-testable counterpart of [`diff_wasm_result`].
+pub fn diff_parts(old_bytes: &[u8], new_bytes: &[u8]) -> Result<UpgradeVerdict, WasmError> {
+    let diff = diff_wasm(old_bytes, new_bytes)?;
+    Ok(UpgradeVerdict::from_diff(&diff))
 }
 
 /// Expose the error mapping for tests without requiring a wasm target.

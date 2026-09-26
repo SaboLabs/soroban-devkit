@@ -187,6 +187,18 @@ code, kbd, pre { font-family: var(--mono); }
 /* ---------- upload row / examples ---------- */
 .upload-row { display: flex; gap: 1rem; align-items: stretch; }
 .upload-row .dropzone { flex: 1 1 auto; min-width: 0; }
+.compare-slot {
+  flex: 0 0 18.5rem;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--panel);
+  padding: 1.1rem 1.2rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+.compare-slot input[type="file"] { position: absolute; width: 1px; height: 1px; opacity: 0; pointer-events: none; }
+.candidate-name { font-family: var(--mono); font-size: 0.72rem; color: var(--dim); word-break: break-all; }
 .example-panel {
   flex: 0 0 18.5rem;
   border: 1px solid var(--line);
@@ -225,6 +237,7 @@ code, kbd, pre { font-family: var(--mono); }
 @media (max-width: 820px) {
   .upload-row { flex-direction: column; }
   .example-panel { flex: 1 1 auto; }
+  .compare-slot { flex: 1 1 auto; }
 }
 
 /* ---------- file bar ---------- */

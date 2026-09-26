@@ -8,7 +8,7 @@
  * inside this worker's WebAssembly instance, and are never transmitted. The
  * only fetch performed is for the playground's own static wasm runtime asset.
  */
-import init, { inspect_wasm, sdkt_version } from './wasm/sdkt_playground.js';
+import init, { diff_wasm_result, inspect_wasm, sdkt_version } from './wasm/sdkt_playground.js';
 
 let ready = null;
 
@@ -44,6 +44,17 @@ self.onmessage = async (event) => {
         const result = inspect_wasm(msg.bytes);
         result.duration_ms = +(performance.now() - t0).toFixed(2);
         ok(result);
+        break;
+      }
+
+      case 'diff': {
+        if (!(msg.oldBytes instanceof Uint8Array) || !(msg.newBytes instanceof Uint8Array) ||
+            msg.oldBytes.length === 0 || msg.newBytes.length === 0) {
+          fail('Load two non-empty .wasm files to compare them.');
+          return;
+        }
+        await boot();
+        ok(diff_wasm_result(msg.oldBytes, msg.newBytes));
         break;
       }
 
