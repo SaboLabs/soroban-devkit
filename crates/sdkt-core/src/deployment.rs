@@ -81,25 +81,35 @@ impl DeploymentRecordFile {
         // Write to a temp file in the same directory so the rename is
         // guaranteed to be atomic on the same filesystem.
         let parent = path.parent().unwrap_or_else(|| std::path::Path::new("."));
-        let tmp_path = parent.join(format!(
-            ".sdkt-deployments.tmp.{}",
-            std::process::id()
-        ));
+        let tmp_path = parent.join(format!(".sdkt-deployments.tmp.{}", std::process::id()));
 
-        let mut tmp_file = std::fs::File::create(&tmp_path)
-            .map_err(|e| format!("Failed to create temp record file {}: {e}", tmp_path.display()))?;
-        tmp_file
-            .write_all(json.as_bytes())
-            .map_err(|e| format!("Failed to write temp record file {}: {e}", tmp_path.display()))?;
-        tmp_file
-            .sync_all()
-            .map_err(|e| format!("Failed to sync temp record file {}: {e}", tmp_path.display()))?;
+        let mut tmp_file = std::fs::File::create(&tmp_path).map_err(|e| {
+            format!(
+                "Failed to create temp record file {}: {e}",
+                tmp_path.display()
+            )
+        })?;
+        tmp_file.write_all(json.as_bytes()).map_err(|e| {
+            format!(
+                "Failed to write temp record file {}: {e}",
+                tmp_path.display()
+            )
+        })?;
+        tmp_file.sync_all().map_err(|e| {
+            format!(
+                "Failed to sync temp record file {}: {e}",
+                tmp_path.display()
+            )
+        })?;
         drop(tmp_file);
 
         std::fs::rename(&tmp_path, path).map_err(|e| {
             // Best-effort cleanup; ignore secondary error.
             let _ = std::fs::remove_file(&tmp_path);
-            format!("Failed to rename temp record file to {}: {e}", path.display())
+            format!(
+                "Failed to rename temp record file to {}: {e}",
+                path.display()
+            )
         })
     }
 

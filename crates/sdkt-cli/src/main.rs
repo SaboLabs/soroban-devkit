@@ -5804,24 +5804,25 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
                 // Write the record file and return whether it succeeded.
                 // On failure, print the contract_id so the operator can
                 // recover without repeating the deployment.
-                let persist_records = |record_file: &sdkt_core::deployment::DeploymentRecordFile,
-                                       contract_id: Option<&str>|
-                 -> bool {
-                    match record_file.write(record_path) {
-                        Ok(()) => true,
-                        Err(e) => {
-                            if let Some(id) = contract_id {
-                                eprintln!(
+                let persist_records =
+                    |record_file: &sdkt_core::deployment::DeploymentRecordFile,
+                     contract_id: Option<&str>|
+                     -> bool {
+                        match record_file.write(record_path) {
+                            Ok(()) => true,
+                            Err(e) => {
+                                if let Some(id) = contract_id {
+                                    eprintln!(
                                     "✗ Failed to write deployment record: {e}\n  \
                                      Contract ID: {id} — save this value to recover without re-deploying."
                                 );
-                            } else {
-                                eprintln!("✗ Failed to write deployment record: {e}");
+                                } else {
+                                    eprintln!("✗ Failed to write deployment record: {e}");
+                                }
+                                false
                             }
-                            false
                         }
-                    }
-                };
+                    };
 
                 match sdkt_core::project::resolve_project(&config) {
                     Ok(resolved) => {
