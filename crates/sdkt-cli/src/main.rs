@@ -503,6 +503,14 @@ enum Commands {
         /// Skip loading installed plugins automatically from the plugin store
         #[arg(long, default_value_t = false)]
         no_plugins: bool,
+        /// Persist the current report (findings + rule-set/version metadata)
+        /// to this path so later runs can gate on new findings only
+        #[arg(long, value_name = "PATH")]
+        save_baseline: Option<String>,
+        /// Compare current findings against a saved baseline and report
+        /// new/resolved findings. Exits non-zero when new findings appear
+        #[arg(long, value_name = "PATH")]
+        baseline: Option<String>,
     },
     /// Manage Soroban identities (keys)
     Identity {
@@ -1475,6 +1483,17 @@ fn parse_format_str(s: &str) -> OutputFormat {
             process::exit(1);
         }
     }
+}
+
+/// One audit finding rendered for pretty output, e.g.
+/// `[critical] AUTH-003 [initialize]: missing require_auth`.
+fn format_audit_finding(f: &sdkt_audit::Finding) -> String {
+    let loc = f
+        .location
+        .as_ref()
+        .map(|l| format!(" [{}]", l))
+        .unwrap_or_default();
+    format!("[{}] {} {}: {}", f.severity, f.rule_id, loc, f.message)
 }
 
 /// Shared typed-argument parser used by `call`, `tx build`, and `invoke`.
@@ -3959,6 +3978,8 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
             disable,
             rules,
             no_plugins,
+            save_baseline,
+            baseline,
         } => {
             let fmt = parse_format_str(&format);
 
@@ -4214,8 +4235,74 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
             sdkt_audit_example_rule::register();
 
             let disabled_refs: Vec<&str> = disable.iter().map(String::as_str).collect();
+            // Active rule set, recorded as baseline provenance so a stale
+            // baseline (produced by a different rule set) can be flagged.
+            let current_rules: Vec<String> = sdkt_audit::all_rules()
+                .iter()
+                .map(|r| r.id().to_string())
+                .filter(|id| !disable.contains(id))
+                .collect();
+
             match sdkt_audit::audit_source_with(&src, &disabled_refs) {
                 Ok(report) => {
+                    // --save-baseline: persist this report (+ metadata) first.
+                    if let Some(baseline_path) = &save_baseline {
+                        let saved =
+                            sdkt_audit::AuditBaseline::new(report.clone(), current_rules.clone());
+                        if let Err(e) = saved.save(Path::new(baseline_path)) {
+                            eprintln!("Error saving baseline '{}': {}", baseline_path, e);
+                            process::exit(1);
+                        }
+                        if fmt != OutputFormat::Json {
+                            println!(
+                                "Report saved to {} ({} findings: {} critical, {} warning, {} info)",
+                                baseline_path,
+                                report.summary.total,
+                                report.summary.critical,
+                                report.summary.warning,
+                                report.summary.info
+                            );
+                        }
+                    }
+
+                    // --baseline: compare against the saved report and gate on
+                    // *new* findings only (ratchet-style CI gating).
+                    if let Some(baseline_path) = &baseline {
+                        let baseline_ref = Path::new(baseline_path);
+                        let loaded = match sdkt_audit::AuditBaseline::load(baseline_ref) {
+                            Ok(b) => b,
+                            Err(e) => {
+                                eprintln!("Error reading baseline '{}': {}", baseline_path, e);
+                                process::exit(1);
+                            }
+                        };
+                        let cmp = sdkt_audit::compare_to_baseline(&report, &loaded, &current_rules);
+                        for w in &cmp.warnings {
+                            eprintln!("Warning: {}", w);
+                        }
+                        if fmt == OutputFormat::Json {
+                            println!("{}", serde_json::to_string(&cmp)?);
+                        } else {
+                            println!(
+                                "Baseline: {} ({} known findings)",
+                                baseline_path, cmp.known_findings
+                            );
+                            println!("New findings: {}", cmp.new_count);
+                            for f in &cmp.new_findings {
+                                println!("  {}", format_audit_finding(f));
+                            }
+                            println!("Resolved: {}", cmp.resolved_count);
+                            for f in &cmp.resolved_findings {
+                                println!("  {}", format_audit_finding(f));
+                            }
+                        }
+                        if !cmp.passed {
+                            // New findings were introduced: fail the gate.
+                            process::exit(1);
+                        }
+                        return Ok(());
+                    }
+
                     if fmt == OutputFormat::Json {
                         println!("{}", serde_json::to_string(&report)?);
                     } else {
