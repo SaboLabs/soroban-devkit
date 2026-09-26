@@ -5,8 +5,52 @@
 //! [`SorobanRpcClient`] for all HTTP/JSON-RPC transport.
 
 use crate::{RpcError, SorobanRpcClient};
+use base64::Engine as _;
 use serde::{Deserialize, Deserializer, Serialize};
 use std::time::Duration;
+use stellar_xdr::{Limits, ReadXdr, TransactionMeta, WriteXdr};
+
+/// Extract contract-event XDR entries from a settled `resultMetaXdr` value.
+///
+/// Soroban events live in the V3 transaction-level meta. Newer V4 metadata
+/// stores them on each operation instead. Returning raw `ContractEvent` XDR
+/// keeps events available even when no ABI is supplied for decoding.
+pub fn extract_contract_events(result_meta_xdr: Option<&str>) -> Vec<String> {
+    let Some(encoded) = result_meta_xdr else {
+        return Vec::new();
+    };
+    let Ok(raw) = base64::engine::general_purpose::STANDARD.decode(encoded) else {
+        return Vec::new();
+    };
+    let Ok(meta) = TransactionMeta::from_xdr(
+        &raw,
+        Limits {
+            depth: 64,
+            len: 1_048_576,
+        },
+    ) else {
+        return Vec::new();
+    };
+
+    let events = match meta {
+        TransactionMeta::V3(meta) => meta
+            .soroban_meta
+            .map(|soroban| soroban.events.into_iter().collect())
+            .unwrap_or_default(),
+        TransactionMeta::V4(meta) => meta
+            .operations
+            .into_iter()
+            .flat_map(|operation| operation.events.into_iter())
+            .collect(),
+        TransactionMeta::V0(_) | TransactionMeta::V1(_) | TransactionMeta::V2(_) => Vec::new(),
+    };
+
+    events
+        .into_iter()
+        .filter_map(|event| event.to_xdr(Limits::none()).ok())
+        .map(|event| base64::engine::general_purpose::STANDARD.encode(event))
+        .collect()
+}
 
 /// Helper to deserialize either a string or an integer into an Option<String>.
 fn deserialize_optional_string_or_int<'de, D>(deserializer: D) -> Result<Option<String>, D::Error>
@@ -123,6 +167,9 @@ pub struct SubmissionResult {
     pub status: TransactionStatus,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub result_xdr: Option<String>,
+    /// Raw base64 ContractEvent XDR emitted by a successful Soroban transaction.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub events: Vec<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub latest_ledger: Option<String>,
     /// Error code from sendTransaction (e.g. "tx_bad_auth"), when status == Failed.
@@ -200,6 +247,7 @@ pub async fn submit_and_wait(
             hash,
             status: TransactionStatus::Failed,
             result_xdr: None,
+            events: Vec::new(),
             latest_ledger: sent.latest_ledger,
             error_code: sent.error_result,
             error_result_xdr: sent.error_result_xdr,
@@ -212,6 +260,7 @@ pub async fn submit_and_wait(
             hash,
             status: TransactionStatus::Pending,
             result_xdr: None,
+            events: Vec::new(),
             latest_ledger: None,
             error_code: None,
             error_result_xdr: None,
@@ -239,6 +288,7 @@ pub async fn poll_transaction(
                     hash: hash.to_string(),
                     status,
                     result_xdr: res.result_xdr,
+                    events: extract_contract_events(res.result_meta_xdr.as_deref()),
                     latest_ledger: res.latest_ledger,
                     error_code: None,
                     error_result_xdr: None,
@@ -250,6 +300,7 @@ pub async fn poll_transaction(
                     hash: hash.to_string(),
                     status,
                     result_xdr: res.result_xdr,
+                    events: Vec::new(),
                     latest_ledger: res.latest_ledger,
                     error_code: None,
                     error_result_xdr: None,
@@ -334,6 +385,7 @@ mod tests {
             hash: "abc".to_string(),
             status: TransactionStatus::Success,
             result_xdr: Some("xdr".to_string()),
+            events: Vec::new(),
             latest_ledger: Some("100".to_string()),
             error_code: None,
             error_result_xdr: None,
@@ -341,6 +393,33 @@ mod tests {
         };
         let v = serde_json::to_value(&r).unwrap();
         assert_eq!(v["status"], "Success");
+        assert!(v.get("events").is_none());
+    }
+
+    #[test]
+    fn extracts_raw_events_from_v3_transaction_meta() {
+        use stellar_xdr::{ContractEvent, Limits, SorobanTransactionMeta, TransactionMetaV3};
+
+        let event = ContractEvent::default();
+        let meta = TransactionMeta::V3(TransactionMetaV3 {
+            soroban_meta: Some(SorobanTransactionMeta {
+                events: vec![event.clone()].try_into().unwrap(),
+                ..Default::default()
+            }),
+            ..Default::default()
+        });
+        let encoded =
+            base64::engine::general_purpose::STANDARD.encode(meta.to_xdr(Limits::none()).unwrap());
+        let expected =
+            base64::engine::general_purpose::STANDARD.encode(event.to_xdr(Limits::none()).unwrap());
+
+        assert_eq!(extract_contract_events(Some(&encoded)), vec![expected]);
+    }
+
+    #[test]
+    fn empty_or_invalid_meta_has_no_events() {
+        assert!(extract_contract_events(None).is_empty());
+        assert!(extract_contract_events(Some("not-xdr")).is_empty());
     }
 
     #[test]
