@@ -24,8 +24,13 @@
 //! ```
 
 pub mod builder;
+pub mod envelope;
 pub mod sign;
 pub mod typed;
+pub use envelope::{
+    decode_envelope, decode_parsed_envelope, format_scval_human, EnvelopeSummary,
+    OperationSummary, SignatureSummary, SorobanDataSummary,
+};
 pub use builder::{
     build_create_contract_tx, build_create_contract_tx_with_data,
     build_create_contract_tx_with_data_and_auth, build_create_contract_v2_tx,

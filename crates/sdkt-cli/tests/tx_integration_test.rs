@@ -312,3 +312,119 @@ fn test_tx_simulate_with_invalid_abi_fails() {
         .failure()
         .stderr(predicate::str::contains("Failed to parse ABI"));
 }
+
+#[test]
+fn test_tx_decode_pretty_and_roundtrip() {
+    let dir = tempdir().unwrap();
+    let source = "GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF";
+    let contract = "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAD2KM";
+
+    // 1. Build an envelope using `sdkt tx build`
+    let output = sdkt_tx_isolated(dir.path())
+        .args([
+            "tx",
+            "build",
+            "--source",
+            source,
+            "--sequence",
+            "43",
+            "--fee",
+            "250",
+            "--contract",
+            contract,
+            "--function",
+            "increment",
+            "--arg",
+            "u32:42",
+        ])
+        .assert()
+        .success();
+
+    let envelope_b64 = String::from_utf8_lossy(&output.get_output().stdout)
+        .trim()
+        .to_string();
+
+    // 2. Decode the built envelope with `sdkt tx decode` (pretty format)
+    sdkt_tx_isolated(dir.path())
+        .args(["tx", "decode", &envelope_b64])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("Transaction Envelope:"))
+        .stdout(predicate::str::contains(&format!("Source: {source}")))
+        .stdout(predicate::str::contains("Sequence: 43"))
+        .stdout(predicate::str::contains("Fee: 250 stroops"))
+        .stdout(predicate::str::contains("Operations (1):"))
+        .stdout(predicate::str::contains("[0] InvokeContract"))
+        .stdout(predicate::str::contains(&format!("Contract: {contract}")))
+        .stdout(predicate::str::contains("Function: increment"))
+        .stdout(predicate::str::contains("Args: u32:42"));
+
+    // 3. Decode with `--format json`
+    let json_output = sdkt_tx_isolated(dir.path())
+        .args(["tx", "decode", &envelope_b64, "--format", "json"])
+        .assert()
+        .success();
+
+    let json_str = String::from_utf8_lossy(&json_output.get_output().stdout);
+    let json_val: serde_json::Value = serde_json::from_str(&json_str).unwrap();
+
+    assert_eq!(json_val["envelope_type"], "tx");
+    assert_eq!(json_val["source_account"], source);
+    assert_eq!(json_val["sequence"], 43);
+    assert_eq!(json_val["fee"], 250);
+    assert_eq!(json_val["operations"][0]["type_name"], "InvokeContract");
+    assert_eq!(json_val["operations"][0]["contract_id"], contract);
+    assert_eq!(json_val["operations"][0]["function_name"], "increment");
+    assert_eq!(json_val["operations"][0]["args"][0], "u32:42");
+}
+
+#[test]
+fn test_tx_decode_file_input() {
+    let dir = tempdir().unwrap();
+    let source = "GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF";
+    let contract = "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAD2KM";
+
+    let output = sdkt_tx_isolated(dir.path())
+        .args([
+            "tx",
+            "build",
+            "--source",
+            source,
+            "--sequence",
+            "10",
+            "--fee",
+            "100",
+            "--contract",
+            contract,
+            "--function",
+            "ping",
+        ])
+        .assert()
+        .success();
+
+    let envelope_b64 = String::from_utf8_lossy(&output.get_output().stdout)
+        .trim()
+        .to_string();
+
+    let file_path = dir.path().join("envelope.tx");
+    std::fs::write(&file_path, &envelope_b64).unwrap();
+
+    sdkt_tx_isolated(dir.path())
+        .args(["tx", "decode", file_path.to_str().unwrap()])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("Transaction Envelope:"))
+        .stdout(predicate::str::contains("Function: ping"));
+}
+
+#[test]
+fn test_tx_decode_invalid_input_exits_nonzero() {
+    let dir = tempdir().unwrap();
+
+    sdkt_tx_isolated(dir.path())
+        .args(["tx", "decode", "invalid_base64_payload!!!"])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("Error decoding transaction envelope"));
+}
+

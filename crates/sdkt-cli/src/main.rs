@@ -899,6 +899,16 @@ enum TxAction {
         #[arg(short, long, default_value = "pretty")]
         format: String,
     },
+    /// Decode a transaction envelope into a human-readable summary
+    Decode {
+        /// Base64 XDR transaction envelope or path to a file containing it
+        envelope: Option<String>,
+        /// Base64 XDR transaction envelope or path to a file containing it
+        #[arg(short, long)]
+        envelope_flag: Option<String>,
+        #[arg(short, long, default_value = "pretty")]
+        format: String,
+    },
     /// Validate a transaction envelope offline (pre-flight checks)
     Validate {
         /// Base64 XDR transaction envelope or path to a file containing it
@@ -2949,6 +2959,42 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
                     }
                     Err(e) => {
                         eprintln!("Error inspecting transaction: {}", e);
+                        process::exit(1);
+                    }
+                }
+            }
+            TxAction::Decode {
+                envelope,
+                envelope_flag,
+                format,
+            } => {
+                let fmt = parse_format_str(&format);
+                let env_input = match (envelope, envelope_flag) {
+                    (Some(e), _) => e,
+                    (None, Some(e)) => e,
+                    (None, None) => {
+                        eprintln!("Error: base64 transaction envelope input required");
+                        process::exit(1);
+                    }
+                };
+
+                let env_data = if fs::metadata(&env_input).is_ok() {
+                    fs::read_to_string(&env_input)?
+                } else {
+                    env_input
+                };
+
+                match sdkt_xdr::decode_envelope(env_data.trim()) {
+                    Ok(summary) => {
+                        if fmt == OutputFormat::Json {
+                            let json_str = serde_json::to_string_pretty(&summary)?;
+                            println!("{}", json_str);
+                        } else {
+                            print!("{}", summary.to_pretty_string());
+                        }
+                    }
+                    Err(e) => {
+                        eprintln!("Error decoding transaction envelope: {}", e);
                         process::exit(1);
                     }
                 }
