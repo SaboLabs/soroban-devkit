@@ -1012,11 +1012,19 @@ enum TxAction {
 
 #[derive(Subcommand)]
 enum ProjectCommand {
-    /// Deploy all contracts defined in the workspace
+    /// Deploy all contracts defined in the workspace. Every deployed contract
+    /// is persisted to `.sdkt-deployments.json` (per network profile) so a
+    /// failure mid-graph never loses the contracts that already landed.
     Deploy {
         /// Deployment salt (40 hex chars = 20 bytes). Auto-generated if omitted.
         #[arg(short, long)]
         salt: Option<String>,
+        /// Skip aliases whose recorded contract ID still exists on-chain
+        /// (verified via getLedgerEntries against the `.sdkt-deployments.json`
+        /// record for this network profile). Resume an interrupted deploy
+        /// without re-deploying (and re-paying for) what already succeeded.
+        #[arg(long)]
+        skip_deployed: bool,
         #[arg(short, long, default_value = "pretty")]
         format: String,
     },
@@ -5726,7 +5734,11 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
             }
         },
         Commands::Project { action, net } => match action {
-            ProjectCommand::Deploy { salt, format } => {
+            ProjectCommand::Deploy {
+                salt,
+                skip_deployed,
+                format,
+            } => {
                 let fmt = parse_format_str(&format);
                 // Validate the salt before any network or identity work (fail fast).
                 let salt_bytes = salt.as_deref().map(parse_salt_hex).transpose()?;
@@ -5747,18 +5759,135 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
                     net.network_profile.clone(),
                 );
 
+                // Resolve the effective network once so the record-file scope
+                // and the signed network match the same passphrase.
+                let network_config = resolve_network_config(
+                    net.rpc_url.clone(),
+                    net.network_passphrase.clone(),
+                    net.network_profile.clone(),
+                )?;
+
+                // Determine network from passphrase
+                let network = match network_config.passphrase.as_str() {
+                    "Test SDF Network ; September 2015" => sdkt_xdr::sign::Network::Testnet,
+                    "Public Global Stellar Network ; September 2015" => {
+                        sdkt_xdr::sign::Network::Mainnet
+                    }
+                    "Test SDF Future Network ; October 2022" => sdkt_xdr::sign::Network::Futurenet,
+                    other => sdkt_xdr::sign::Network::Custom(other.to_string()),
+                };
+
+                // Per-network scope for the deployment record. When
+                // --network-passphrase is explicitly set it overrides whatever
+                // profile was resolved, so the record key must be derived from
+                // the resolved passphrase rather than the profile name.
+                // Otherwise use the profile name (if any) for a stable,
+                // human-readable key.
+                let network_key = sdkt_core::deployment::network_key(
+                    if net.network_passphrase.is_some() {
+                        None
+                    } else {
+                        net.network_profile.as_deref()
+                    },
+                    &network_config.passphrase,
+                );
+                let record_path = Path::new(sdkt_core::deployment::DEPLOYMENT_RECORD_FILE);
+                let mut record_file =
+                    match sdkt_core::deployment::DeploymentRecordFile::read(record_path) {
+                        Ok(file) => file,
+                        Err(e) => {
+                            eprintln!("Error: {}", e);
+                            process::exit(1);
+                        }
+                    };
+
+                // Write the record file and return whether it succeeded.
+                // On failure, print the contract_id so the operator can
+                // recover without repeating the deployment.
+                let persist_records =
+                    |record_file: &sdkt_core::deployment::DeploymentRecordFile,
+                     contract_id: Option<&str>|
+                     -> bool {
+                        match record_file.write(record_path) {
+                            Ok(()) => true,
+                            Err(e) => {
+                                if let Some(id) = contract_id {
+                                    eprintln!(
+                                    "✗ Failed to write deployment record: {e}\n  \
+                                     Contract ID: {id} — save this value to recover without re-deploying."
+                                );
+                                } else {
+                                    eprintln!("✗ Failed to write deployment record: {e}");
+                                }
+                                false
+                            }
+                        }
+                    };
+
                 match sdkt_core::project::resolve_project(&config) {
                     Ok(resolved) => {
+                        // Contracts skipped via --skip-deployed (existing on-chain
+                        // record) count toward the resolved total for reporting.
+                        let total_planned = resolved.len();
+
                         if fmt != OutputFormat::Json {
                             println!(
                                 "✓ Project dependency graph resolved. Deploying {} contract(s).",
-                                resolved.len()
+                                total_planned
                             );
                         }
 
                         let mut results = std::collections::HashMap::new();
+                        let mut failure: Option<String> = None;
 
                         for contract in resolved {
+                            // --skip-deployed: honor the record only when the
+                            // recorded contract still exists on-chain. A record
+                            // file entry alone does not skip — the ledger is the
+                            // source of truth.
+                            if skip_deployed {
+                                if let Some(record) =
+                                    record_file.record_for(&network_key, &contract.alias)
+                                {
+                                    match sdkt_rpc::storage::contract_exists(
+                                        &client,
+                                        &record.contract_id,
+                                    )
+                                    .await
+                                    {
+                                        Ok(true) => {
+                                            if fmt != OutputFormat::Json {
+                                                println!(
+                                                    "  ✓ '{}' already deployed at {} (--skip-deployed)",
+                                                    contract.alias, record.contract_id
+                                                );
+                                            }
+                                            results.insert(
+                                                contract.alias.clone(),
+                                                record.contract_id.clone(),
+                                            );
+                                            continue;
+                                        }
+                                        Ok(false) => {
+                                            if fmt != OutputFormat::Json {
+                                                eprintln!(
+                                                    "    ⚠ Recorded contract for '{}' is no longer on-chain; re-deploying.",
+                                                    contract.alias
+                                                );
+                                            }
+                                        }
+                                        Err(e) => {
+                                            failure = Some(format!(
+                                                "Failed to verify recorded contract for '{}': {}",
+                                                contract.alias, e
+                                            ));
+                                            eprintln!("    ✗ {}", failure.as_ref().unwrap());
+                                            break;
+                                        }
+                                    }
+                                }
+                            }
+
                             if fmt != OutputFormat::Json {
                                 println!(
                                     "  Deploying alias '{}' from '{}'...",
@@ -5767,34 +5896,16 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
                                 );
                             }
 
-                            let wasm_bytes =
-                                fs::read(&contract.wasm_artifact).unwrap_or_else(|e| {
-                                    eprintln!(
+                            let wasm_bytes = match fs::read(&contract.wasm_artifact) {
+                                Ok(bytes) => bytes,
+                                Err(e) => {
+                                    failure = Some(format!(
                                         "Failed to read WASM for '{}': {}",
                                         contract.alias, e
-                                    );
-                                    std::process::exit(1);
-                                });
-
-                            // Resolve network config
-                            let network_config = resolve_network_config(
-                                net.rpc_url.clone(),
-                                net.network_passphrase.clone(),
-                                net.network_profile.clone(),
-                            )?;
-
-                            // Determine network from passphrase
-                            let network = match network_config.passphrase.as_str() {
-                                "Test SDF Network ; September 2015" => {
-                                    sdkt_xdr::sign::Network::Testnet
+                                    ));
+                                    eprintln!("    ✗ {}", failure.as_ref().unwrap());
+                                    break;
                                 }
-                                "Public Global Stellar Network ; September 2015" => {
-                                    sdkt_xdr::sign::Network::Mainnet
-                                }
-                                "Test SDF Future Network ; October 2022" => {
-                                    sdkt_xdr::sign::Network::Futurenet
-                                }
-                                other => sdkt_xdr::sign::Network::Custom(other.to_string()),
                             };
 
                             // Load identity for signing
@@ -5817,34 +5928,70 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
                                 &wasm_bytes,
                                 &source_account,
                                 &signer,
-                                network,
+                                network.clone(),
                                 salt_bytes,
                             )
                             .await
                             {
-                                Ok(outcome) => {
-                                    match &outcome {
-                                        sdkt_rpc::DeployOutcome::Success(res) => {
-                                            if fmt != OutputFormat::Json {
-                                                println!("    ✓ Contract ID: {}", res.contract_id);
-                                            }
-                                            results.insert(contract.alias, res.contract_id.clone());
-                                        }
-                                        sdkt_rpc::DeployOutcome::Partial(p) => {
-                                            eprintln!("    ⚠ Partial: upload succeeded, create failed: {}", p.error);
-                                            std::process::exit(1);
-                                        }
-                                        sdkt_rpc::DeployOutcome::Failure(e) => {
-                                            eprintln!("    ✗ Failed: {}", e);
-                                            std::process::exit(1);
-                                        }
+                                Ok(sdkt_rpc::DeployOutcome::Success(res)) => {
+                                    if fmt != OutputFormat::Json {
+                                        println!("    ✓ Contract ID: {}", res.contract_id);
                                     }
+                                    let timestamp = std::time::SystemTime::now()
+                                        .duration_since(std::time::UNIX_EPOCH)
+                                        .map(|d| d.as_secs())
+                                        .unwrap_or(0);
+                                    // Persist the record immediately so a crash,
+                                    // SIGINT, or early ? return after this point
+                                    // cannot lose this contract's ID. Exit
+                                    // nonzero if the write fails — the contract
+                                    // is on-chain but the record is not durable.
+                                    record_file.set_record(
+                                        &network_key,
+                                        &contract.alias,
+                                        sdkt_core::deployment::DeploymentRecord {
+                                            contract_id: res.contract_id.clone(),
+                                            wasm_hash: res.wasm_hash.clone(),
+                                            network: network_key.clone(),
+                                            timestamp,
+                                            salt: Some(res.salt.clone()),
+                                        },
+                                    );
+                                    if !persist_records(&record_file, Some(&res.contract_id)) {
+                                        process::exit(1);
+                                    }
+                                    results.insert(contract.alias, res.contract_id);
+                                }
+                                Ok(sdkt_rpc::DeployOutcome::Partial(p)) => {
+                                    failure = Some(p.error.clone());
+                                    eprintln!(
+                                        "    ⚠ Partial: upload succeeded, create failed: {}",
+                                        p.error
+                                    );
+                                    break;
+                                }
+                                Ok(sdkt_rpc::DeployOutcome::Failure(e)) => {
+                                    failure = Some(e.clone());
+                                    eprintln!("    ✗ Failed: {}", e);
+                                    break;
                                 }
                                 Err(e) => {
+                                    failure = Some(e.to_string());
                                     eprintln!("Deployment failed for '{}': {}", contract.alias, e);
-                                    std::process::exit(1);
+                                    break;
                                 }
                             }
+                        }
+
+                        if let Some(err) = failure {
+                            eprintln!(
+                                "⚠ Deployment record written to {} ({} of {} deployed)",
+                                sdkt_core::deployment::DEPLOYMENT_RECORD_FILE,
+                                results.len(),
+                                total_planned
+                            );
+                            eprintln!("Deployment failed: {}", err);
+                            process::exit(1);
                         }
 
                         if fmt == OutputFormat::Json {
@@ -5859,7 +6006,7 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
                     }
                     Err(e) => {
                         eprintln!("Error resolving project: {}", e);
-                        std::process::exit(1);
+                        process::exit(1);
                     }
                 }
             }

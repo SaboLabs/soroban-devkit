@@ -1,5 +1,6 @@
 pub mod build;
 pub mod config;
+pub mod deployment;
 pub mod fee;
 pub mod fetch;
 pub mod format;
@@ -16,6 +17,7 @@ pub use config::{
     ContractConfig, DecodeConfig, Dependency, DevKitConfig, GitReference, NetworkConfig,
     PackageConfig, StorageConfig,
 };
+pub use deployment::{network_key, DeploymentRecord, DeploymentRecordFile, DEPLOYMENT_RECORD_FILE};
 pub use fee::{FeeConfig, FeeError, FeeEstimator, LedgerFeeSample, NetworkKind, STROOPS_PER_XLM};
 pub use fetch::{DependencyFetcher, FetchError, FetchOutcome, GitFetcher, PathResolver};
 pub use format::OutputFormat;
