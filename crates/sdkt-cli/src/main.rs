@@ -996,9 +996,9 @@ enum TxAction {
 enum ProjectCommand {
     /// Deploy all contracts defined in the workspace
     Deploy {
-        /// Optional deployment salt base
-        #[arg(short, long, default_value = "deploy")]
-        salt: String,
+        /// Deployment salt (40 hex chars = 20 bytes). Auto-generated if omitted.
+        #[arg(short, long)]
+        salt: Option<String>,
         #[arg(short, long, default_value = "pretty")]
         format: String,
     },
@@ -1422,6 +1422,30 @@ async fn verify_contract(
         verification_status: status,
         explanation,
     })
+}
+
+/// Parse a `--salt` value (40 hex chars) into a 20-byte deployment salt.
+/// Shared by `deploy` and `project deploy`; validates strictly.
+fn parse_salt_hex(s: &str) -> Result<[u8; 20], String> {
+    let sh = s.trim();
+    if sh.len() != 40 {
+        return Err(format!(
+            "Invalid --salt: must be 20-byte hex (40 hex chars), got length {}",
+            sh.len()
+        ));
+    }
+    if let Some(pos) = sh.chars().position(|c| !c.is_ascii_hexdigit()) {
+        return Err(format!(
+            "Invalid --salt: character at index {} is not a hex digit",
+            pos
+        ));
+    }
+    let mut out = [0u8; 20];
+    for i in 0..20 {
+        out[i] = u8::from_str_radix(&sh[i * 2..i * 2 + 2], 16)
+            .map_err(|e| format!("Invalid --salt hex at byte {}: {}", i, e))?;
+    }
+    Ok(out)
 }
 
 fn parse_format_str(s: &str) -> OutputFormat {
@@ -4659,29 +4683,6 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
         } => {
             let fmt = parse_format_str(&format);
 
-            // Local helper: parse 40-char hex into 20-byte salt; validate strictly
-            fn parse_salt_hex(s: &str) -> Result<[u8; 20], String> {
-                let sh = s.trim();
-                if sh.len() != 40 {
-                    return Err(format!(
-                        "Invalid --salt: must be 20-byte hex (40 hex chars), got length {}",
-                        sh.len()
-                    ));
-                }
-                if let Some(pos) = sh.chars().position(|c| !c.is_ascii_hexdigit()) {
-                    return Err(format!(
-                        "Invalid --salt: character at index {} is not a hex digit",
-                        pos
-                    ));
-                }
-                let mut out = [0u8; 20];
-                for i in 0..20 {
-                    out[i] = u8::from_str_radix(&sh[i * 2..i * 2 + 2], 16)
-                        .map_err(|e| format!("Invalid --salt hex at byte {}: {}", i, e))?;
-                }
-                Ok(out)
-            }
-
             // Resolve network config FIRST for safety guard
             let network_config = resolve_network_config(
                 net.rpc_url.clone(),
@@ -5622,8 +5623,10 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
             }
         },
         Commands::Project { action, net } => match action {
-            ProjectCommand::Deploy { salt: _, format } => {
+            ProjectCommand::Deploy { salt, format } => {
                 let fmt = parse_format_str(&format);
+                // Validate the salt before any network or identity work (fail fast).
+                let salt_bytes = salt.as_deref().map(parse_salt_hex).transpose()?;
                 let config = load_config();
 
                 // 4.1 — advisory lock check. If an `sdkt.lock` exists, warn
@@ -5695,11 +5698,13 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
                             let identity_store = sdkt_storage::IdentityStore::new()
                                 .map_err(|e| format!("Failed to access identity store: {}", e))?;
                             let identity_obj = identity_store
-                                .get("default")
+                                .get_default()
                                 .map_err(|e| format!("Default identity not found: {}", e))?;
-                            let signing_key = identity_store
-                                .load_signing_key("default")
-                                .map_err(|e| format!("Failed to load signing key: {}", e))?;
+                            let signing_key =
+                                identity_store
+                                    .load_signing_key(&identity_obj.name)
+                                    .map_err(|e| format!("Failed to load signing key: {}", e))?;
+
                             let signer =
                                 sdkt_xdr::sign::Ed25519Signer::from_seed(&signing_key.to_bytes());
                             let source_account = identity_obj.public_key.clone();
@@ -5710,7 +5715,7 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
                                 &source_account,
                                 &signer,
                                 network,
-                                None,
+                                salt_bytes,
                             )
                             .await
                             {
@@ -6553,5 +6558,50 @@ mod storage_read_key_tests {
         let err = resolve_storage_read_key(CONTRACT, None, Some("bal"), &[], false, "forever")
             .unwrap_err();
         assert!(err.contains("invalid durability"));
+    }
+}
+
+#[cfg(test)]
+mod project_deploy_salt_tests {
+    use super::*;
+
+    const SALT: &str = "00112233445566778899aabbccddeeff00112233";
+
+    fn parse_project_deploy_salt(args: &[&str]) -> Option<String> {
+        let cli = Cli::try_parse_from(args).expect("args should parse");
+        match cli.command {
+            Commands::Project {
+                action: ProjectCommand::Deploy { salt, .. },
+                ..
+            } => salt,
+            _ => panic!("expected `project deploy`"),
+        }
+    }
+
+    #[test]
+    fn explicit_salt_is_captured_and_parsed() {
+        let salt = parse_project_deploy_salt(&["sdkt", "project", "deploy", "--salt", SALT]);
+        assert_eq!(salt.as_deref(), Some(SALT));
+
+        let bytes = parse_salt_hex(salt.as_deref().unwrap()).unwrap();
+        assert_eq!(hex::encode(bytes), SALT);
+    }
+
+    #[test]
+    fn omitted_salt_means_auto_generate() {
+        assert_eq!(
+            parse_project_deploy_salt(&["sdkt", "project", "deploy"]),
+            None
+        );
+    }
+
+    #[test]
+    fn invalid_salt_is_rejected() {
+        assert!(parse_salt_hex("deploy")
+            .unwrap_err()
+            .contains("Invalid --salt"));
+        assert!(parse_salt_hex(&"z".repeat(40))
+            .unwrap_err()
+            .contains("not a hex digit"));
     }
 }
