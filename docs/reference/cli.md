@@ -247,6 +247,41 @@ or git logic is duplicated; the same `compute_dependency_integrity` /
 │   Invalid graphs (unknown/self/duplicate dependency, cycle, duplicate name)
 │   fail fast with a clear error.
 │
+│   Deployment records: every successfully deployed contract is written to
+│   `.sdkt-deployments.json` in the project directory, keyed by network scope
+│   and then alias:
+│
+│     {
+│       "profiles": {
+│         "testnet": {
+│           "token": {
+│             "contract_id": "C…",
+│             "wasm_hash": "60cddae6…",
+│             "network": "testnet",
+│             "timestamp": 1700000000,
+│             "salt": "deploy"
+│           }
+│         }
+│       }
+│     }
+│
+│   The scope key is the explicit `--network-profile <NAME>` when given, else the
+│   network derived from the passphrase (`testnet`/`mainnet`/`futurenet`) or a
+│   `custom-<hash>` for unknown passphrases — so testnet and mainnet deploys never
+│   collide. Records are persisted after every contract, so if a deploy fails
+│   mid-graph the contracts that already landed are never lost; the alias →
+│   contract ID mapping is retained for the retry. On success the record is written
+│   too (additive; the stdout JSON/pretty output is unchanged).
+│
+│   `--skip-deployed` resumes an interrupted deploy: aliases whose recorded
+│   contract ID is verified to still exist on-chain (via `getLedgerEntries`) are
+│   skipped without re-deploying (and re-paying for) them, printed as
+│   `✓ '<alias>' already deployed at <contract_id>`. A record whose contract no
+│   longer exists on-chain is NOT trusted — sdkt warns
+│   `⚠ Recorded contract for '<alias>' is no longer on-chain; re-deploying.` and
+│   deploys it fresh, replacing the stale record. The default identity (see
+│   `sdkt identity`) is used to sign all deployments.
+│
 ├── call
 │   ├── <CONTRACT_ID>
 │   ├── <FUNCTION>

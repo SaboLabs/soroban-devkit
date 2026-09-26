@@ -2856,6 +2856,7 @@ dependencies = [
  "stellar-strkey 0.0.18",
  "stellar-xdr",
  "tar",
+ "tempfile",
  "thiserror 2.0.20",
  "toml 1.1.6+spec-1.1.0",
  "zstd 0.14.0",
