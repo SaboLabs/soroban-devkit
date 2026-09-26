@@ -110,6 +110,19 @@ fn test_cli_wasm_inspect_json() {
         .success()
         .stdout(predicates::str::contains("\"size_bytes\": 8"));
 }
+
+#[test]
+fn test_cli_wasm_inspect_contract_metadata() {
+    let fixture = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/us_new.wasm");
+    let mut cmd = Command::cargo_bin("sdkt").unwrap();
+    cmd.arg("wasm")
+        .arg("inspect")
+        .arg(fixture)
+        .assert()
+        .success()
+        .stdout(predicates::str::contains("Contract Meta ("))
+        .stdout(predicates::str::contains("cliver: 27.1.0"));
+}
 #[test]
 fn test_cli_wasm_metadata_missing_contract() {
     let mut cmd = Command::cargo_bin("sdkt").unwrap();
