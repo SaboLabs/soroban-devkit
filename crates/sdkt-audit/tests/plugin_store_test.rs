@@ -97,6 +97,45 @@ fn install_list_show_resolve_remove_lifecycle() {
 }
 
 #[test]
+fn install_with_id_override_preserves_identity_across_lifecycle() {
+    let _g = ENV_LOCK.lock().unwrap();
+    let tmp = tempfile::tempdir().unwrap();
+    set_store_root(tmp.path());
+
+    let src = tmp.path().join("ex.wasm");
+    std::fs::write(&src, b"dummy-wasm-bytes").unwrap();
+    std::fs::write(
+        tmp.path().join("plugin.toml"),
+        meta_toml("wasm", SDKT_AUDIT_ABI_MAJOR, "ex.wasm"),
+    )
+    .unwrap();
+
+    let meta = install(
+        &src,
+        &InstallOpts {
+            id: Some("override-name".into()),
+            force: false,
+        },
+    )
+    .expect("install with override");
+    assert_eq!(meta.id, "override-name");
+
+    let installed_manifest = tmp.path().join("override-name").join("plugin.toml");
+    let stored = std::fs::read_to_string(installed_manifest).unwrap();
+    assert_eq!(parse_meta(&stored).unwrap().id, "override-name");
+    assert_eq!(list_in(tmp.path())[0].id, "override-name");
+    assert_eq!(
+        sdkt_audit::plugin_store::show("override-name").unwrap().id,
+        "override-name"
+    );
+    assert!(resolve("override-name").is_some());
+
+    remove("override-name").unwrap();
+    assert!(!tmp.path().join("override-name").exists());
+    assert!(resolve("override-name").is_none());
+}
+
+#[test]
 fn kind_extension_mismatch_rejected() {
     let _g = ENV_LOCK.lock().unwrap();
     let tmp = tempfile::tempdir().unwrap();
