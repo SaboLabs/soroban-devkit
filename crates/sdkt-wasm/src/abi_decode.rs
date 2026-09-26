@@ -68,6 +68,9 @@ mod abi_tests {
         vec![ContractEvent {
             name: "transfer".to_string(),
             doc: "transfer event".to_string(),
+            prefix_topics: vec![],
+            params: vec![],
+            data_format: "single_value".to_string(),
         }]
     }
 

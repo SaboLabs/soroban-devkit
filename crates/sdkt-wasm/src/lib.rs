@@ -13,11 +13,12 @@ pub use client_gen::{
 };
 pub use spec::{
     parse_contract_spec, ContractEvent, ContractFunction, ContractParameter, ContractSpec,
-    ContractType,
+    ContractType, EventParam, TypeMember,
 };
 pub use spec_diff::{
-    diff_specs, diff_wasm, upgrade_safety, upgrade_safety_wasm, ChangeKind,
-    FunctionSignatureChange, SpecDiff, UpgradeVerdict, VerdictChange, WasmSummary,
+    diff_specs, diff_wasm, event_sig, type_sig, upgrade_safety, upgrade_safety_wasm, ChangeKind,
+    EventSignatureChange, FunctionSignatureChange, SpecDiff, TypeDefinitionChange, UpgradeVerdict,
+    VerdictChange, WasmSummary,
 };
 
 #[derive(Error, Debug)]

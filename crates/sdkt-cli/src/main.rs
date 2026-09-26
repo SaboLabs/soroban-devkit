@@ -1906,20 +1906,23 @@ fn print_upgrade_verdict(v: &sdkt_wasm::UpgradeVerdict) {
     println!("Compatible: {}", if v.compatible { "YES" } else { "NO" });
     println!();
     println!("Breaking:");
-    if v.breaking_changes.is_empty() {
-        println!("  (none)");
-    } else {
-        for c in &v.breaking_changes {
-            println!("  - {}", c.label());
-        }
-    }
+    print_verdict_changes(&v.breaking_changes);
     println!();
     println!("Non-breaking:");
-    if v.non_breaking_changes.is_empty() {
+    print_verdict_changes(&v.non_breaking_changes);
+}
+
+/// Print one verdict change per line, indented with its old/new shape when the
+/// engine recorded a detail (a signature, event, or type-definition change).
+fn print_verdict_changes(changes: &[sdkt_wasm::VerdictChange]) {
+    if changes.is_empty() {
         println!("  (none)");
-    } else {
-        for c in &v.non_breaking_changes {
-            println!("  - {}", c.label());
+        return;
+    }
+    for c in changes {
+        println!("  - {}", c.label());
+        for line in c.detail.lines() {
+            println!("    {}", line.trim_start());
         }
     }
 }
@@ -3929,6 +3932,14 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
                                     println!("  - {}", e);
                                 }
                             }
+                            if !report.changed_events.is_empty() {
+                                println!("Changed events ({}):", report.changed_events.len());
+                                for c in &report.changed_events {
+                                    println!("  ~ {} :", c.name);
+                                    println!("      old: {}", sdkt_wasm::event_sig(&c.old));
+                                    println!("      new: {}", sdkt_wasm::event_sig(&c.new));
+                                }
+                            }
                             if !report.added_types.is_empty() {
                                 println!("Added types ({}):", report.added_types.len());
                                 for t in &report.added_types {
@@ -3939,6 +3950,14 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
                                 println!("Removed types ({}):", report.removed_types.len());
                                 for t in &report.removed_types {
                                     println!("  - {}", t);
+                                }
+                            }
+                            if !report.changed_types.is_empty() {
+                                println!("Changed types ({}):", report.changed_types.len());
+                                for c in &report.changed_types {
+                                    println!("  ~ {} :", c.name);
+                                    println!("      old: {}", sdkt_wasm::type_sig(&c.old));
+                                    println!("      new: {}", sdkt_wasm::type_sig(&c.new));
                                 }
                             }
                         }
