@@ -76,8 +76,14 @@ fn mock_analyze_rpc(
                 let mut s = seen_thread.lock().unwrap();
                 s.methods.push(method.clone());
                 if method == "getLedgerEntries" {
-                    if let Some(keys) = parsed_req.as_ref().and_then(|v| v["params"]["keys"].as_array()) {
-                        let k_strs = keys.iter().filter_map(|k| k.as_str().map(str::to_string)).collect();
+                    if let Some(keys) = parsed_req
+                        .as_ref()
+                        .and_then(|v| v["params"]["keys"].as_array())
+                    {
+                        let k_strs = keys
+                            .iter()
+                            .filter_map(|k| k.as_str().map(str::to_string))
+                            .collect();
                         s.keys_queried.push(k_strs);
                     }
                 }
@@ -87,18 +93,17 @@ fn mock_analyze_rpc(
                 "getLatestLedger" => format!(
                     r#"{{"jsonrpc":"2.0","id":1,"result":{{"id":"mock","protocolVersion":22,"sequence":{latest_ledger}}}}}"#
                 ),
-                "getLedgerEntries" => {
-                    serde_json::json!({
-                        "jsonrpc": "2.0",
-                        "id": 1,
-                        "result": {
-                            "entries": entries_json,
-                            "latestLedger": latest_ledger
-                        }
-                    })
-                    .to_string()
-                }
-                _ => r#"{"jsonrpc":"2.0","id":1,"error":{"code":-32601,"message":"not found"}}"#.to_string(),
+                "getLedgerEntries" => serde_json::json!({
+                    "jsonrpc": "2.0",
+                    "id": 1,
+                    "result": {
+                        "entries": entries_json,
+                        "latestLedger": latest_ledger
+                    }
+                })
+                .to_string(),
+                _ => r#"{"jsonrpc":"2.0","id":1,"error":{"code":-32601,"message":"not found"}}"#
+                    .to_string(),
             };
 
             let resp = format!(
@@ -200,13 +205,7 @@ fn storage_analyze_help_shows_explicit_key_flags() {
 #[test]
 fn storage_analyze_rejects_key_arg_without_map_key_offline() {
     sdkt()
-        .args([
-            "storage",
-            "analyze",
-            VALID_CONTRACT,
-            "--key-arg",
-            "u32:1",
-        ])
+        .args(["storage", "analyze", VALID_CONTRACT, "--key-arg", "u32:1"])
         .assert()
         .failure()
         .stderr(predicate::str::contains("--key-arg requires --map-key"));
@@ -215,13 +214,7 @@ fn storage_analyze_rejects_key_arg_without_map_key_offline() {
 #[test]
 fn storage_analyze_rejects_empty_key_xdr_offline() {
     sdkt()
-        .args([
-            "storage",
-            "analyze",
-            VALID_CONTRACT,
-            "--key-xdr",
-            "",
-        ])
+        .args(["storage", "analyze", VALID_CONTRACT, "--key-xdr", ""])
         .assert()
         .failure()
         .stderr(predicate::str::contains("--key-xdr must not be empty"));
@@ -406,7 +399,8 @@ fn storage_analyze_with_typed_key_and_raw_key() {
         stellar_xdr::ContractDataDurability::Persistent,
     );
     // Typed temporary key for map-key "balances", arg "u32:100"
-    let map_key = sdkt_xdr::build_map_key("balances", &["AAAAAQAAAAEAAAAEAAAAAAAAAGQ=".to_string()]).unwrap();
+    let map_key =
+        sdkt_xdr::build_map_key("balances", &["AAAAAQAAAAEAAAAEAAAAAAAAAGQ=".to_string()]).unwrap();
     let typed_temporary_key = contract_data_key(
         VALID_CONTRACT,
         map_key,

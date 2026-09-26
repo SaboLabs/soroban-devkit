@@ -70,7 +70,8 @@ impl StorageAnalyzer {
             ));
         }
 
-        let ttl_info = sdkt_rpc::get_ttl_info_for_keys(&self.client, contract_id, extra_keys).await?;
+        let ttl_info =
+            sdkt_rpc::get_ttl_info_for_keys(&self.client, contract_id, extra_keys).await?;
 
         if ttl_info.entries.is_empty() {
             return Ok(StorageReport {
@@ -294,7 +295,8 @@ mod tests {
                         ],"latestLedger":100}}}}"#
                     )
                 } else {
-                    r#"{"jsonrpc":"2.0","id":1,"error":{"code":-32601,"message":"not found"}}"#.to_string()
+                    r#"{"jsonrpc":"2.0","id":1,"error":{"code":-32601,"message":"not found"}}"#
+                        .to_string()
                 };
                 let resp = format!(
                     "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
@@ -309,7 +311,10 @@ mod tests {
         let analyzer = StorageAnalyzer::new(client);
 
         let report = analyzer
-            .inspect_contract_storage_keys(TEST_CONTRACT, &[persistent_key.clone(), temporary_key.clone()])
+            .inspect_contract_storage_keys(
+                TEST_CONTRACT,
+                &[persistent_key.clone(), temporary_key.clone()],
+            )
             .await
             .unwrap();
 
@@ -362,7 +367,8 @@ mod tests {
                         ],"latestLedger":100}}}}"#
                     )
                 } else {
-                    r#"{"jsonrpc":"2.0","id":1,"error":{"code":-32601,"message":"not found"}}"#.to_string()
+                    r#"{"jsonrpc":"2.0","id":1,"error":{"code":-32601,"message":"not found"}}"#
+                        .to_string()
                 };
                 let resp = format!(
                     "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
@@ -376,7 +382,10 @@ mod tests {
         let client = SorobanRpcClient::new(&url);
         let analyzer = StorageAnalyzer::new(client);
 
-        let report = analyzer.inspect_contract_storage(TEST_CONTRACT).await.unwrap();
+        let report = analyzer
+            .inspect_contract_storage(TEST_CONTRACT)
+            .await
+            .unwrap();
 
         assert_eq!(report.total_entries, 1);
         assert_eq!(report.instance_entries, 1);

@@ -1943,14 +1943,8 @@ fn resolve_storage_analyze_keys(
     }
 
     if let Some(symbol) = map_key {
-        let typed_key = resolve_storage_read_key(
-            contract,
-            None,
-            Some(symbol),
-            key_arg,
-            false,
-            durability,
-        )?;
+        let typed_key =
+            resolve_storage_read_key(contract, None, Some(symbol), key_arg, false, durability)?;
         keys.push(typed_key);
     } else if durability != "persistent" {
         // Validate durability even if map_key is absent, so invalid durability flags error offline.
@@ -7554,8 +7548,9 @@ mod storage_analyze_key_resolution_tests {
 
     #[test]
     fn analyze_keys_rejects_key_arg_without_map_key() {
-        let err = resolve_storage_analyze_keys(CONTRACT, &[], None, &args(&["u32:1"]), "persistent")
-            .unwrap_err();
+        let err =
+            resolve_storage_analyze_keys(CONTRACT, &[], None, &args(&["u32:1"]), "persistent")
+                .unwrap_err();
         assert!(err.contains("--key-arg requires --map-key"));
     }
 
@@ -7582,8 +7577,8 @@ mod storage_analyze_key_resolution_tests {
     #[test]
     fn analyze_keys_accepts_valid_raw_keys() {
         let raw = "AAAABQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=";
-        let keys = resolve_storage_analyze_keys(CONTRACT, &args(&[raw]), None, &[], "persistent")
-            .unwrap();
+        let keys =
+            resolve_storage_analyze_keys(CONTRACT, &args(&[raw]), None, &[], "persistent").unwrap();
         assert_eq!(keys, vec![raw]);
     }
 
@@ -7624,14 +7619,8 @@ mod storage_analyze_key_resolution_tests {
 
     #[test]
     fn analyze_keys_rejects_invalid_durability() {
-        let err = resolve_storage_analyze_keys(
-            CONTRACT,
-            &[],
-            Some("balances"),
-            &[],
-            "forever",
-        )
-        .unwrap_err();
+        let err = resolve_storage_analyze_keys(CONTRACT, &[], Some("balances"), &[], "forever")
+            .unwrap_err();
         assert!(err.contains("invalid durability"));
     }
 

@@ -59,9 +59,7 @@ pub async fn get_ttl_info_for_keys(
     let ledger_info = client.get_ledger().await?;
     let current_ledger = ledger_info.sequence;
 
-    let storage_resp = client
-        .get_contract_storage(contract_id, &keys)
-        .await?;
+    let storage_resp = client.get_contract_storage(contract_id, &keys).await?;
 
     let mut entries = Vec::new();
     for entry in storage_resp.entries {
