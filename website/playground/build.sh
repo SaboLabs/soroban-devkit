@@ -7,19 +7,20 @@
 # asset alongside the playground page — no build step at deploy time.
 #
 # Requirements:
-# rustup target add wasm32-unknown-unknown
-# cargo install wasm-bindgen-cli --version 0.2.127 --locked
+# rustup toolchain install 1.88.0 --target wasm32-unknown-unknown
+# cargo +1.88.0 install wasm-bindgen-cli --version 0.2.127 --locked
 #
 # Usage: bash website/playground/build.sh
 set -euo pipefail
 
 cd "$(dirname "$0")/../.."   # repo root (website/playground -> website -> repo)
 
+RUST_TOOLCHAIN="1.88.0"
 WASM_BINDGEN_VERSION="0.2.127"
-OUT_DIR="website/playground/wasm"
+OUT_DIR="${PLAYGROUND_WASM_OUT:-website/playground/wasm}"
 
 echo "==> Building sdkt-playground for wasm32-unknown-unknown (release)"
-cargo build -p sdkt-playground --release \
+cargo +"${RUST_TOOLCHAIN}" build -p sdkt-playground --locked --release \
   --target wasm32-unknown-unknown \
   --manifest-path crates/sdkt-playground/Cargo.toml
 
