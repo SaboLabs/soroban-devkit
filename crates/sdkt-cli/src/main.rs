@@ -484,9 +484,13 @@ enum Commands {
     /// Static security analysis of a Soroban contract source file (Gap C)
     Audit {
         /// Path to the Rust source file (.rs) to analyze
-        path: String,
+        #[arg(required_unless_present = "list_rules")]
+        path: Option<String>,
         #[arg(short, long, default_value = "pretty")]
         format: String,
+        /// List available audit rules and exit
+        #[arg(long, default_value_t = false)]
+        list_rules: bool,
         /// Disable a rule by id (repeatable), e.g. --disable MOVE-001
         #[arg(long, value_name = "RULE_ID", action = clap::ArgAction::Append)]
         disable: Vec<String>,
@@ -3788,11 +3792,57 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
         Commands::Audit {
             path,
             format,
+            list_rules,
             disable,
             rules,
             no_plugins,
         } => {
             let fmt = parse_format_str(&format);
+
+            if list_rules {
+                let all = sdkt_audit::all_rules();
+                if fmt == OutputFormat::Json {
+                    let items: Vec<sdkt_audit::RuleInfo> = all
+                        .iter()
+                        .map(|r| sdkt_audit::RuleInfo {
+                            id: r.id().to_string(),
+                            severity: r.severity(),
+                            description: r.description().to_string(),
+                        })
+                        .collect();
+                    println!("{}", serde_json::to_string(&items)?);
+                } else {
+                    println!("Available audit rules ({}):", all.len());
+                    let id_width = all.iter().map(|r| r.id().len()).max().unwrap_or(8).max(8);
+                    let sev_width = all
+                        .iter()
+                        .map(|r| r.severity().to_string().len())
+                        .max()
+                        .unwrap_or(8)
+                        .max(8);
+                    for r in &all {
+                        println!(
+                            "  {:<id_width$}  {:<sev_width$}  {}",
+                            r.id(),
+                            r.severity(),
+                            r.description()
+                        );
+                    }
+                }
+                return Ok(());
+            }
+
+            let path = match path {
+                Some(p) => p,
+                None => {
+                    let mut cmd = Cli::command();
+                    cmd.error(
+                        clap::error::ErrorKind::MissingRequiredArgument,
+                        "the following required arguments were not provided:\n  <PATH>",
+                    )
+                    .exit();
+                }
+            };
 
             if !rules.is_empty() {
                 // Validate/resolve each --rules entry before reading source.
