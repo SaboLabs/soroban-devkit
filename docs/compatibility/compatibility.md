@@ -96,7 +96,10 @@ recommended follow-up (see Known Limitations).
    a persistent testnet contract to close the gap.
 2. **Build target coupling.** Current `soroban-sdk` (≥ 22) requires
    `wasm32v1-none` (not `wasm32-unknown-unknown`) on rustc ≥ 1.82. DevKit's
-   `init` scaffold uses `soroban-sdk = "21.0.0"` which still builds on the legacy target;
+   `init` scaffold pins `soroban-sdk = "=27.0.6"` (#111: every 21.x release now resolves an
+   `ed25519-dalek` that breaks `cargo test`), so generated projects need Rust 1.91+ and build with
+   `cargo build --target wasm32v1-none --release`; `sdkt build` still passes
+   `--target wasm32-unknown-unknown` and does not build them yet.
 3. **`audit` is heuristic, not a full borrow-checker.** MOVE-001 flags locals
    passed as call arguments multiple times (a possible move-after-use). On
    `atomic_swap` and `timelock` it surfaces 2–5 warnings that are false
