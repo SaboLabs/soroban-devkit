@@ -40,7 +40,8 @@ use std::io::Read;
 
 use crate::plugin_abi::SDKT_AUDIT_ABI_MAJOR;
 pub use crate::plugin_doctor::{
-    doctor, doctor_with_root, DoctorReport, DoctorStage, DoctorStageStatus,
+    doctor, doctor_installed, doctor_installed_with_root, doctor_with_root, DoctorReport,
+    DoctorStage, DoctorStageStatus,
 };
 
 /// Metadata stored in each plugin's `plugin.toml`.
@@ -157,13 +158,15 @@ pub struct BundleVerification {
     pub signed: bool,
 }
 
-fn is_safe_relative_path(path: &Path) -> bool {
+/// Validate that a relative path does not escape the parent directory (no path traversal).
+pub(crate) fn is_safe_relative_path(path: &Path) -> bool {
     !path.is_absolute()
         && path
             .components()
             .all(|c| matches!(c, std::path::Component::Normal(_)))
 }
 
+/// Compute hex-encoded SHA-256 digest of bytes.
 pub fn digest_hex(bytes: &[u8]) -> String {
     Sha256::digest(bytes)
         .iter()
@@ -171,6 +174,7 @@ pub fn digest_hex(bytes: &[u8]) -> String {
         .collect()
 }
 
+/// Create a stable TAR header with deterministic metadata.
 fn stable_header(size: u64) -> tar::Header {
     let mut h = tar::Header::new_gnu();
     h.set_size(size);

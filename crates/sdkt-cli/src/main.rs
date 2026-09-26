@@ -780,7 +780,7 @@ enum PluginAction {
     /// Run end-to-end diagnostics and self-check on an installed plugin, directory, or bundle
     Doctor {
         /// Target plugin id, directory, or .sdktplugin bundle
-        #[arg(required_unless_present = "all")]
+        #[arg(required_unless_present = "all", conflicts_with = "all")]
         target: Option<String>,
         /// Run doctor across all installed plugins in the store
         #[arg(long)]
@@ -6094,14 +6094,16 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
                     let mut all_healthy = true;
                     let mut reports = Vec::new();
                     for p in &plugins {
-                        let report = sdkt_audit::plugin_doctor::doctor(&p.id);
+                        let report = sdkt_audit::plugin_doctor::doctor_installed(&p.id);
                         if !report.healthy {
                             all_healthy = false;
                         }
                         reports.push(report);
                     }
                     if fmt == OutputFormat::Json {
-                        println!("{}", serde_json::to_string_pretty(&reports)?);
+                        let json =
+                            serde_json::json!({ "healthy": all_healthy, "reports": reports });
+                        println!("{}", serde_json::to_string_pretty(&json)?);
                     } else {
                         for (idx, report) in reports.iter().enumerate() {
                             if idx > 0 {

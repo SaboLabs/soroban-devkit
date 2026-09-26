@@ -108,6 +108,7 @@ impl DoctorReport {
     }
 }
 
+/// RAII guard to clean up a temporary directory upon drop.
 struct TempDirGuard(PathBuf);
 impl Drop for TempDirGuard {
     fn drop(&mut self) {
@@ -155,6 +156,29 @@ pub fn doctor_with_root(root: &Path, target: &str) -> DoctorReport {
     report
 }
 
+/// Run plugin doctor diagnostics strictly for an installed plugin `id` in the default store.
+pub fn doctor_installed(id: &str) -> DoctorReport {
+    let root = plugin_store::resolve_store_root();
+    doctor_installed_with_root(&root, id)
+}
+
+/// Run plugin doctor diagnostics strictly for an installed plugin `id` with an explicit store `root`.
+pub fn doctor_installed_with_root(root: &Path, id: &str) -> DoctorReport {
+    let mut report = DoctorReport::new(id);
+    let store_dir = plugin_store::plugin_dir(root, id);
+    if store_dir.exists() {
+        run_directory_doctor(&mut report, &store_dir);
+    } else {
+        report.add_stage(
+            "metadata",
+            DoctorStageStatus::Failed,
+            format!("plugin '{}' not found in store ({})", id, root.display()),
+        );
+    }
+    report
+}
+
+/// Execute doctor stages against a packed `.sdktplugin` bundle file.
 fn run_bundle_doctor(report: &mut DoctorReport, bundle_path: &Path) {
     let file = match std::fs::File::open(bundle_path) {
         Ok(f) => f,
@@ -305,6 +329,7 @@ fn run_bundle_doctor(report: &mut DoctorReport, bundle_path: &Path) {
     run_compatibility_load_and_check(report, &meta, &artifact_path);
 }
 
+/// Execute doctor stages against an unpacked plugin directory.
 fn run_directory_doctor(report: &mut DoctorReport, dir: &Path) {
     // Stage 1: metadata
     let toml_path = dir.join("plugin.toml");
@@ -370,7 +395,7 @@ fn run_directory_doctor(report: &mut DoctorReport, dir: &Path) {
     // Stage 3: integrity
     let manifest_path = dir.join("manifest.sha256");
     if manifest_path.exists() {
-        match verify_dir_manifest(dir, &manifest_path) {
+        match verify_dir_manifest(dir, &manifest_path, &meta.artifact) {
             Ok(signed) => {
                 let detail = if signed {
                     "manifest verified (signed)"
@@ -396,17 +421,28 @@ fn run_directory_doctor(report: &mut DoctorReport, dir: &Path) {
     run_compatibility_load_and_check(report, &meta, &artifact_path);
 }
 
-fn verify_dir_manifest(dir: &Path, manifest_path: &Path) -> Result<bool, String> {
+/// Verify directory integrity against `manifest.sha256`, checking digest matches,
+/// preventing path traversal, ensuring required files (`plugin.toml` and artifact) are covered,
+/// and validating signatures if present.
+fn verify_dir_manifest(dir: &Path, manifest_path: &Path, artifact: &str) -> Result<bool, String> {
     let manifest_bytes = std::fs::read(manifest_path).map_err(|e| e.to_string())?;
     let manifest_str = std::str::from_utf8(&manifest_bytes)
         .map_err(|_| "manifest.sha256 is not UTF-8".to_string())?;
+    let mut covered = std::collections::BTreeSet::new();
     for line in manifest_str.lines() {
         if line.trim().is_empty() {
             continue;
         }
-        let (expected_digest, rel_path) = line
-            .split_once("  ")
-            .ok_or_else(|| "invalid manifest line".to_string())?;
+        let (expected_digest, rel_path) = if let Some((d, p)) = line.split_once("  ") {
+            (d, p)
+        } else if let Some((d, p)) = line.split_once(' ') {
+            (d, p.trim_start())
+        } else {
+            return Err("invalid manifest line".to_string());
+        };
+        if !plugin_store::is_safe_relative_path(Path::new(rel_path)) {
+            return Err(format!("unsafe manifest path: {rel_path}"));
+        }
         let target_file = dir.join(rel_path);
         let bytes =
             std::fs::read(&target_file).map_err(|e| format!("cannot read {rel_path}: {e}"))?;
@@ -414,9 +450,18 @@ fn verify_dir_manifest(dir: &Path, manifest_path: &Path) -> Result<bool, String>
         if actual_digest != expected_digest {
             return Err(format!("digest mismatch: {rel_path}"));
         }
+        covered.insert(rel_path.to_string());
+    }
+    for required in ["plugin.toml", artifact] {
+        if !covered.contains(required) {
+            return Err(format!("manifest does not cover '{required}'"));
+        }
     }
     let sig_path = dir.join("signature.ed25519");
     let pubkey_path = dir.join("public_key.ed25519");
+    if sig_path.exists() != pubkey_path.exists() {
+        return Err("incomplete signature: signature and public key must both be present".into());
+    }
     if sig_path.exists() && pubkey_path.exists() {
         let sig_bytes = std::fs::read(sig_path).map_err(|e| e.to_string())?;
         let pubkey_bytes = std::fs::read(pubkey_path).map_err(|e| e.to_string())?;
@@ -437,6 +482,7 @@ fn verify_dir_manifest(dir: &Path, manifest_path: &Path) -> Result<bool, String>
     }
 }
 
+/// Run Stages 4 (compatibility), 5 (load), and 6 (self-check) on an artifact.
 #[allow(unused_variables)]
 fn run_compatibility_load_and_check(
     report: &mut DoctorReport,
@@ -576,6 +622,7 @@ fn run_compatibility_load_and_check(
     }
 }
 
+/// Run Stage 6 self-check against the sample contract source.
 #[allow(dead_code)]
 fn run_self_check(rule: &dyn AuditRule, report: &mut DoctorReport) {
     let scans = crate::audit::scan_all_functions_str(DOCTOR_SAMPLE_CONTRACT).unwrap_or_default();
@@ -624,6 +671,7 @@ mod tests {
     use std::fs;
     use tempfile::TempDir;
 
+    /// Helper to create dummy plugin directories for testing.
     fn write_plugin(dir: &Path, kind: &str, artifact: &str, abi_major: u32, create_artifact: bool) {
         fs::create_dir_all(dir).unwrap();
         let toml_content = format!(
@@ -766,5 +814,67 @@ abi_minor = 0
         assert_eq!(report_after.stages[2].name, "integrity");
         assert_eq!(report_after.stages[2].status, DoctorStageStatus::Failed);
         assert!(report_after.stages[2].detail.contains("digest mismatch"));
+    }
+
+    #[test]
+    fn test_dir_manifest_path_traversal_rejected() {
+        let tmp = TempDir::new().unwrap();
+        let dir = tmp.path().join("plugin");
+        write_plugin(&dir, "wasm", "rule.wasm", 1, true);
+
+        // Write a manifest with path traversal entry
+        let manifest =
+            "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855  ../outside.txt\n";
+        fs::write(dir.join("manifest.sha256"), manifest).unwrap();
+
+        let report = doctor_with_root(tmp.path(), dir.to_str().unwrap());
+        assert!(!report.healthy);
+        assert_eq!(report.stages[2].name, "integrity");
+        assert_eq!(report.stages[2].status, DoctorStageStatus::Failed);
+        assert!(report.stages[2].detail.contains("unsafe manifest path"));
+    }
+
+    #[test]
+    fn test_dir_manifest_missing_artifact_coverage_fails() {
+        let tmp = TempDir::new().unwrap();
+        let dir = tmp.path().join("plugin");
+        write_plugin(&dir, "wasm", "rule.wasm", 1, true);
+
+        // Manifest only covers plugin.toml, not rule.wasm
+        let toml_bytes = fs::read(dir.join("plugin.toml")).unwrap();
+        let toml_digest = plugin_store::digest_hex(&toml_bytes);
+        let manifest = format!("{toml_digest}  plugin.toml\n");
+        fs::write(dir.join("manifest.sha256"), manifest).unwrap();
+
+        let report = doctor_with_root(tmp.path(), dir.to_str().unwrap());
+        assert!(!report.healthy);
+        assert_eq!(report.stages[2].name, "integrity");
+        assert_eq!(report.stages[2].status, DoctorStageStatus::Failed);
+        assert!(report.stages[2]
+            .detail
+            .contains("manifest does not cover 'rule.wasm'"));
+    }
+
+    #[test]
+    fn test_dir_manifest_mismatched_signature_files_fails() {
+        let tmp = TempDir::new().unwrap();
+        let dir = tmp.path().join("plugin");
+        write_plugin(&dir, "wasm", "rule.wasm", 1, true);
+
+        let toml_bytes = fs::read(dir.join("plugin.toml")).unwrap();
+        let toml_digest = plugin_store::digest_hex(&toml_bytes);
+        let wasm_bytes = fs::read(dir.join("rule.wasm")).unwrap();
+        let wasm_digest = plugin_store::digest_hex(&wasm_bytes);
+        let manifest = format!("{toml_digest}  plugin.toml\n{wasm_digest}  rule.wasm\n");
+        fs::write(dir.join("manifest.sha256"), manifest).unwrap();
+
+        // Only write signature.ed25519 without public_key.ed25519
+        fs::write(dir.join("signature.ed25519"), b"fake-signature").unwrap();
+
+        let report = doctor_with_root(tmp.path(), dir.to_str().unwrap());
+        assert!(!report.healthy);
+        assert_eq!(report.stages[2].name, "integrity");
+        assert_eq!(report.stages[2].status, DoctorStageStatus::Failed);
+        assert!(report.stages[2].detail.contains("incomplete signature"));
     }
 }

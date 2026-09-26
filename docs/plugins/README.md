@@ -307,6 +307,8 @@ Exit codes map directly to the failure:
 - `0`: Plugin is healthy (all stages passed)
 - `1`..=`6`: Non-zero exit code corresponding to the first failing stage (e.g. `1` for metadata, `2` for artifact, etc.)
 
+In `--all` mode, the command exits with `0` when every installed plugin is healthy and with `1` if any plugin fails. The failing stage for each plugin is identified in its diagnostic report.
+
 Supports both human-readable and structured JSON output via `--format json`.
 
 ### Install validation (applied before the plugin is committed to the store)

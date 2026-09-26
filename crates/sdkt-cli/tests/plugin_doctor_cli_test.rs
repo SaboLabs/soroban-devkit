@@ -332,6 +332,7 @@ fn build_native_example_plugin() -> PathBuf {
     assert!(status.success());
     let patterns = [
         "libsdkt_audit_example_rule.so",
+        "libsdkt_audit_example_rule.dylib",
         "sdkt_audit_example_rule.dll",
     ];
     for name in patterns {
@@ -519,4 +520,68 @@ fn doctor_all_empty_store() {
     assert_eq!(output.status.code(), Some(0));
     let json: Value = serde_json::from_slice(&output.stdout).unwrap();
     assert_eq!(json["healthy"], true);
+    assert!(json["reports"].as_array().unwrap().is_empty());
+}
+
+#[test]
+fn doctor_target_conflicts_with_all() {
+    let store = TempDir::new().unwrap();
+    sdkt(&store)
+        .args(["plugin", "doctor", "some-target", "--all"])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("cannot be used with"));
+}
+
+#[test]
+fn doctor_all_non_empty_store_json_shape() {
+    let store = TempDir::new().unwrap();
+    make_plugin_dir(store.path(), "test-rule", "wasm", "wasm", 1);
+
+    let output = sdkt(&store)
+        .args(["plugin", "doctor", "--all", "--format", "json"])
+        .output()
+        .unwrap();
+
+    let json: Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert!(json.get("healthy").is_some());
+    let reports = json["reports"]
+        .as_array()
+        .expect("reports must be an array");
+    assert_eq!(reports.len(), 1);
+    assert_eq!(reports[0]["target"], "test-rule");
+    assert!(reports[0]["stages"].as_array().is_some());
+}
+
+#[test]
+fn doctor_all_installed_does_not_shadow_cwd() {
+    let store = TempDir::new().unwrap();
+    make_plugin_dir(store.path(), "my-shadow-test", "wasm", "wasm", 1);
+
+    // Create a temporary working directory containing a directory named "my-shadow-test"
+    // with invalid metadata (bad toml)
+    let cwd_tmp = TempDir::new().unwrap();
+    let shadowed_dir = cwd_tmp.path().join("my-shadow-test");
+    fs::create_dir_all(&shadowed_dir).unwrap();
+    fs::write(
+        shadowed_dir.join("plugin.toml"),
+        "invalid = toml content [broken",
+    )
+    .unwrap();
+
+    // Run doctor --all inside cwd_tmp
+    // It should check the store-installed plugin (which has valid metadata), NOT the broken cwd directory
+    let output = sdkt(&store)
+        .current_dir(cwd_tmp.path())
+        .args(["plugin", "doctor", "--all", "--format", "json"])
+        .output()
+        .unwrap();
+
+    let json: Value = serde_json::from_slice(&output.stdout).unwrap();
+    let reports = json["reports"].as_array().unwrap();
+    assert_eq!(reports.len(), 1);
+    // Metadata stage in store plugin should pass!
+    let stages = reports[0]["stages"].as_array().unwrap();
+    assert_eq!(stages[0]["name"], "metadata");
+    assert_eq!(stages[0]["status"], "passed");
 }

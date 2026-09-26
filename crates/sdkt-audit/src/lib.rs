@@ -33,7 +33,8 @@ pub use audit::{
 };
 pub use error::AuditError;
 pub use plugin_doctor::{
-    doctor, doctor_with_root, DoctorReport, DoctorStage, DoctorStageStatus, DOCTOR_SAMPLE_CONTRACT,
+    doctor, doctor_installed, doctor_installed_with_root, doctor_with_root, DoctorReport,
+    DoctorStage, DoctorStageStatus, DOCTOR_SAMPLE_CONTRACT,
 };
 pub use plugin_store::{
     install_bundle, pack_bundle, verify_bundle, BundleVerification, InstallOpts, PluginMeta,
