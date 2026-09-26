@@ -350,7 +350,8 @@ enum Commands {
     },
     /// Encode typed values (TYPE:VALUE) to base64 XDR (reverse of decode)
     Encode {
-        /// Typed values to encode, e.g. u32:100 address:G... string:hello
+        /// One typed value: u32, i32, u64, i64, u128, i128, bool, string, symbol, bytes, or address.
+        /// Examples: u128:1000000 i128:-1000 bytes:deadbeef
         #[arg(value_name = "TYPE:VALUE", num_args = 1..)]
         values: Vec<String>,
     },
@@ -478,9 +479,13 @@ enum Commands {
     /// Static security analysis of a Soroban contract source file (Gap C)
     Audit {
         /// Path to the Rust source file (.rs) to analyze
-        path: String,
+        #[arg(required_unless_present = "list_rules")]
+        path: Option<String>,
         #[arg(short, long, default_value = "pretty")]
         format: String,
+        /// List available audit rules and exit
+        #[arg(long, default_value_t = false)]
+        list_rules: bool,
         /// Disable a rule by id (repeatable), e.g. --disable MOVE-001
         #[arg(long, value_name = "RULE_ID", action = clap::ArgAction::Append)]
         disable: Vec<String>,
@@ -651,6 +656,9 @@ enum GenerateAction {
         /// Output file path (prints to stdout if omitted)
         #[arg(short, long, value_name = "PATH")]
         output: Option<String>,
+        /// Skip functions with unsupported types instead of aborting
+        #[arg(long)]
+        skip_unsupported: bool,
     },
 }
 
@@ -985,9 +993,9 @@ enum TxAction {
 enum ProjectCommand {
     /// Deploy all contracts defined in the workspace
     Deploy {
-        /// Optional deployment salt base
-        #[arg(short, long, default_value = "deploy")]
-        salt: String,
+        /// Deployment salt (40 hex chars = 20 bytes). Auto-generated if omitted.
+        #[arg(short, long)]
+        salt: Option<String>,
         #[arg(short, long, default_value = "pretty")]
         format: String,
     },
@@ -1413,6 +1421,30 @@ async fn verify_contract(
     })
 }
 
+/// Parse a `--salt` value (40 hex chars) into a 20-byte deployment salt.
+/// Shared by `deploy` and `project deploy`; validates strictly.
+fn parse_salt_hex(s: &str) -> Result<[u8; 20], String> {
+    let sh = s.trim();
+    if sh.len() != 40 {
+        return Err(format!(
+            "Invalid --salt: must be 20-byte hex (40 hex chars), got length {}",
+            sh.len()
+        ));
+    }
+    if let Some(pos) = sh.chars().position(|c| !c.is_ascii_hexdigit()) {
+        return Err(format!(
+            "Invalid --salt: character at index {} is not a hex digit",
+            pos
+        ));
+    }
+    let mut out = [0u8; 20];
+    for i in 0..20 {
+        out[i] = u8::from_str_radix(&sh[i * 2..i * 2 + 2], 16)
+            .map_err(|e| format!("Invalid --salt hex at byte {}: {}", i, e))?;
+    }
+    Ok(out)
+}
+
 fn parse_format_str(s: &str) -> OutputFormat {
     match s.to_lowercase().as_str() {
         "json" => OutputFormat::Json,
@@ -1607,9 +1639,9 @@ fn resolve_storage_read_key(
 ///
 /// This is the write-direction counterpart to `sdkt decode`. Supported types
 /// are the primitives this CLI already encodes elsewhere (`parse_typed_args`):
-/// `u32`, `i32`, `u64`, `i64`, `bool`, `address`, `string`, `symbol`. Exactly one value
-/// is encoded per invocation; passing more than one is rejected to keep the
-/// output unambiguous.
+/// `u32`, `i32`, `u64`, `i64`, `u128`, `i128`, `bool`, `address`, `string`,
+/// `symbol`, `bytes`. Exactly one value is encoded per invocation; passing
+/// more than one is rejected to keep the output unambiguous.
 fn run_encode(values: &[String]) -> Result<String, String> {
     if values.is_empty() {
         return Err("no input provided: pass a value like u32:100".to_string());
@@ -1649,12 +1681,42 @@ fn run_encode(values: &[String]) -> Result<String, String> {
             .map_err(|_| format!("invalid i64 value: {raw}"))?
             .into_scval()
             .map_err(|e| e.to_string())?,
+        "u128" => raw
+            .parse::<u128>()
+            .map_err(|_| format!("invalid u128 value: {raw}"))?
+            .into_scval()
+            .map_err(|e| e.to_string())?,
+        "i128" => raw
+            .parse::<i128>()
+            .map_err(|_| format!("invalid i128 value: {raw}"))?
+            .into_scval()
+            .map_err(|e| e.to_string())?,
         "bool" => raw
             .parse::<bool>()
             .map_err(|_| format!("invalid bool value: {raw}"))?
             .into_scval()
             .map_err(|e| e.to_string())?,
         "string" => raw.to_string().into_scval().map_err(|e| e.to_string())?,
+        "bytes" => {
+            let hex = raw.trim();
+            // Match parse_typed_args' trimming and per-pair radix semantics,
+            // but reject non-ASCII before slicing at byte offsets.
+            if !hex.is_ascii() {
+                return Err(format!("invalid bytes value: {raw} (expected ASCII hex)"));
+            }
+            if hex.len() % 2 != 0 {
+                return Err(format!(
+                    "invalid bytes value: {raw} (hex must have an even number of digits)"
+                ));
+            }
+            let mut bytes = Vec::with_capacity(hex.len() / 2);
+            for i in (0..hex.len()).step_by(2) {
+                let byte = u8::from_str_radix(&hex[i..i + 2], 16)
+                    .map_err(|_| format!("invalid bytes value: {raw} (invalid hex byte)"))?;
+                bytes.push(byte);
+            }
+            bytes.into_scval().map_err(|e| e.to_string())?
+        }
         "symbol" => {
             if raw.len() > 32 {
                 return Err(format!("symbol exceeds 32 bytes (got {} bytes)", raw.len()));
@@ -1670,12 +1732,54 @@ fn run_encode(values: &[String]) -> Result<String, String> {
             .map_err(|e| e.to_string())?,
         other => {
             return Err(format!(
-                "unknown type '{other}'. Use u32|i32|u64|i64|bool|string|symbol|address"
+                "unknown type '{other}'. Use u32|i32|u64|i64|u128|i128|bool|string|symbol|bytes|address"
             ))
         }
     };
 
     scval_to_base64(&scval).map_err(|e| e.to_string())
+}
+
+#[cfg(test)]
+mod encode_tests {
+    use super::{parse_typed_args, run_encode};
+
+    #[test]
+    fn new_types_match_runtime_typed_arguments() {
+        for input in [
+            "u128:0",
+            "u128:+42",
+            "u128:18446744073709551617",
+            "u128:340282366920938463463374607431768211455",
+            "U128:1000000",
+            "i128:0",
+            "i128:-0",
+            "i128:+42",
+            "i128:-1000",
+            "i128:18446744073709551617",
+            "i128:-18446744073709551617",
+            "i128:170141183460469231731687303715884105727",
+            "i128:-170141183460469231731687303715884105728",
+            "I128:-1",
+            "bytes:000aFF",
+            "ByTeS:DeAdBeEf",
+            "bytes:",
+            "bytes: \t\n",
+            "bytes:\u{2003}000aFF\u{2003}",
+            "bytes:\u{2003}",
+            // The runtime parser accepts a leading plus in each radix pair.
+            "bytes:+f",
+            "bytes:0a+F",
+        ] {
+            let args = [input.to_string()];
+            let encoded = run_encode(&args).unwrap_or_else(|e| panic!("{input}: {e}"));
+            for strict in [false, true] {
+                let runtime =
+                    parse_typed_args(&args, strict).unwrap_or_else(|e| panic!("{input}: {e}"));
+                assert_eq!(encoded, runtime[0], "{input} (strict={strict})");
+            }
+        }
+    }
 }
 
 fn load_config() -> DevKitConfig {
@@ -3787,11 +3891,57 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
         Commands::Audit {
             path,
             format,
+            list_rules,
             disable,
             rules,
             no_plugins,
         } => {
             let fmt = parse_format_str(&format);
+
+            if list_rules {
+                let all = sdkt_audit::all_rules();
+                if fmt == OutputFormat::Json {
+                    let items: Vec<sdkt_audit::RuleInfo> = all
+                        .iter()
+                        .map(|r| sdkt_audit::RuleInfo {
+                            id: r.id().to_string(),
+                            severity: r.severity(),
+                            description: r.description().to_string(),
+                        })
+                        .collect();
+                    println!("{}", serde_json::to_string(&items)?);
+                } else {
+                    println!("Available audit rules ({}):", all.len());
+                    let id_width = all.iter().map(|r| r.id().len()).max().unwrap_or(8).max(8);
+                    let sev_width = all
+                        .iter()
+                        .map(|r| r.severity().to_string().len())
+                        .max()
+                        .unwrap_or(8)
+                        .max(8);
+                    for r in &all {
+                        println!(
+                            "  {:<id_width$}  {:<sev_width$}  {}",
+                            r.id(),
+                            r.severity(),
+                            r.description()
+                        );
+                    }
+                }
+                return Ok(());
+            }
+
+            let path = match path {
+                Some(p) => p,
+                None => {
+                    let mut cmd = Cli::command();
+                    cmd.error(
+                        clap::error::ErrorKind::MissingRequiredArgument,
+                        "the following required arguments were not provided:\n  <PATH>",
+                    )
+                    .exit();
+                }
+            };
 
             if !rules.is_empty() {
                 // Validate/resolve each --rules entry before reading source.
@@ -4534,29 +4684,6 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
             net,
         } => {
             let fmt = parse_format_str(&format);
-
-            // Local helper: parse 40-char hex into 20-byte salt; validate strictly
-            fn parse_salt_hex(s: &str) -> Result<[u8; 20], String> {
-                let sh = s.trim();
-                if sh.len() != 40 {
-                    return Err(format!(
-                        "Invalid --salt: must be 20-byte hex (40 hex chars), got length {}",
-                        sh.len()
-                    ));
-                }
-                if let Some(pos) = sh.chars().position(|c| !c.is_ascii_hexdigit()) {
-                    return Err(format!(
-                        "Invalid --salt: character at index {} is not a hex digit",
-                        pos
-                    ));
-                }
-                let mut out = [0u8; 20];
-                for i in 0..20 {
-                    out[i] = u8::from_str_radix(&sh[i * 2..i * 2 + 2], 16)
-                        .map_err(|e| format!("Invalid --salt hex at byte {}: {}", i, e))?;
-                }
-                Ok(out)
-            }
 
             // Resolve network config FIRST for safety guard
             let network_config = resolve_network_config(
@@ -5502,8 +5629,10 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
             }
         },
         Commands::Project { action, net } => match action {
-            ProjectCommand::Deploy { salt: _, format } => {
+            ProjectCommand::Deploy { salt, format } => {
                 let fmt = parse_format_str(&format);
+                // Validate the salt before any network or identity work (fail fast).
+                let salt_bytes = salt.as_deref().map(parse_salt_hex).transpose()?;
                 let config = load_config();
 
                 // 4.1 — advisory lock check. If an `sdkt.lock` exists, warn
@@ -5575,11 +5704,13 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
                             let identity_store = sdkt_storage::IdentityStore::new()
                                 .map_err(|e| format!("Failed to access identity store: {}", e))?;
                             let identity_obj = identity_store
-                                .get("default")
+                                .get_default()
                                 .map_err(|e| format!("Default identity not found: {}", e))?;
-                            let signing_key = identity_store
-                                .load_signing_key("default")
-                                .map_err(|e| format!("Failed to load signing key: {}", e))?;
+                            let signing_key =
+                                identity_store
+                                    .load_signing_key(&identity_obj.name)
+                                    .map_err(|e| format!("Failed to load signing key: {}", e))?;
+
                             let signer =
                                 sdkt_xdr::sign::Ed25519Signer::from_seed(&signing_key.to_bytes());
                             let source_account = identity_obj.public_key.clone();
@@ -5590,7 +5721,7 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
                                 &source_account,
                                 &signer,
                                 network,
-                                None,
+                                salt_bytes,
                             )
                             .await
                             {
@@ -5956,8 +6087,12 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
             run_doctor(fmt);
         }
         Commands::Generate(action) => match action {
-            GenerateAction::Client { wasm, output } => {
-                if let Err(e) = run_generate_client(&wasm, output.as_deref()) {
+            GenerateAction::Client {
+                wasm,
+                output,
+                skip_unsupported,
+            } => {
+                if let Err(e) = run_generate_client(&wasm, output.as_deref(), skip_unsupported) {
                     eprintln!("Error: {e}");
                     process::exit(1);
                 }
@@ -5970,10 +6105,16 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
 
 /// Execute `sdkt generate client`: parse the ContractSpec from a local WASM
 /// and emit a deterministic typed Rust client (offline, no network).
-fn run_generate_client(wasm_path: &str, output: Option<&str>) -> Result<(), String> {
+fn run_generate_client(
+    wasm_path: &str,
+    output: Option<&str>,
+    skip_unsupported: bool,
+) -> Result<(), String> {
     let bytes = fs::read(wasm_path).map_err(|e| format!("cannot read WASM '{wasm_path}': {e}"))?;
     let spec = parse_contract_spec(&bytes).map_err(|e| format!("{wasm_path}: {e}"))?;
-    let code = sdkt_wasm::generate_client(&spec).map_err(|e| e.to_string())?;
+    let options = sdkt_wasm::GenerateOptions { skip_unsupported };
+    let code =
+        sdkt_wasm::generate_client_with_options(&spec, &options).map_err(|e| e.to_string())?;
     match output {
         Some(path) => {
             fs::write(path, &code).map_err(|e| format!("cannot write '{path}': {e}"))?;
@@ -6433,5 +6574,50 @@ mod storage_read_key_tests {
         let err = resolve_storage_read_key(CONTRACT, None, Some("bal"), &[], false, "forever")
             .unwrap_err();
         assert!(err.contains("invalid durability"));
+    }
+}
+
+#[cfg(test)]
+mod project_deploy_salt_tests {
+    use super::*;
+
+    const SALT: &str = "00112233445566778899aabbccddeeff00112233";
+
+    fn parse_project_deploy_salt(args: &[&str]) -> Option<String> {
+        let cli = Cli::try_parse_from(args).expect("args should parse");
+        match cli.command {
+            Commands::Project {
+                action: ProjectCommand::Deploy { salt, .. },
+                ..
+            } => salt,
+            _ => panic!("expected `project deploy`"),
+        }
+    }
+
+    #[test]
+    fn explicit_salt_is_captured_and_parsed() {
+        let salt = parse_project_deploy_salt(&["sdkt", "project", "deploy", "--salt", SALT]);
+        assert_eq!(salt.as_deref(), Some(SALT));
+
+        let bytes = parse_salt_hex(salt.as_deref().unwrap()).unwrap();
+        assert_eq!(hex::encode(bytes), SALT);
+    }
+
+    #[test]
+    fn omitted_salt_means_auto_generate() {
+        assert_eq!(
+            parse_project_deploy_salt(&["sdkt", "project", "deploy"]),
+            None
+        );
+    }
+
+    #[test]
+    fn invalid_salt_is_rejected() {
+        assert!(parse_salt_hex("deploy")
+            .unwrap_err()
+            .contains("Invalid --salt"));
+        assert!(parse_salt_hex(&"z".repeat(40))
+            .unwrap_err()
+            .contains("not a hex digit"));
     }
 }

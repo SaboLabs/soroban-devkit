@@ -129,6 +129,56 @@ fn plugin_install_list_show_remove_lifecycle() {
     let _ = fs::remove_dir_all(&store);
 }
 
+#[test]
+fn plugin_install_with_id_override_uses_effective_identity() {
+    let store = tempfile::TempDir::new().unwrap();
+    let source = fixture_plugin(store.path());
+    let source = source.to_str().unwrap();
+
+    sdkt()
+        .env("SDKT_PLUGIN_DIR", store.path())
+        .args(["plugin", "install", source, "--id", "override-name"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("Installed plugin 'override-name'"));
+
+    sdkt()
+        .env("SDKT_PLUGIN_DIR", store.path())
+        .args(["plugin", "list"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("override-name"));
+
+    sdkt()
+        .env("SDKT_PLUGIN_DIR", store.path())
+        .args(["plugin", "show", "override-name"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("id: override-name"));
+
+    let contract = dummy_src(store.path());
+    sdkt()
+        .env("SDKT_PLUGIN_DIR", store.path())
+        .args([
+            "audit",
+            contract.to_str().unwrap(),
+            "--rules",
+            "override-name",
+        ])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("wasm-plugins"));
+
+    sdkt()
+        .env("SDKT_PLUGIN_DIR", store.path())
+        .args(["plugin", "remove", "override-name"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("Removed plugin"));
+
+    assert!(!store.path().join("override-name").exists());
+}
+
 /// Parse a command's stdout as JSON, failing with the raw output if it is not.
 fn stdout_json(out: &assert_cmd::assert::Assert) -> serde_json::Value {
     let stdout = String::from_utf8_lossy(&out.get_output().stdout).to_string();
