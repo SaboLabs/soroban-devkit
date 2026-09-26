@@ -2535,6 +2535,53 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
             abi_contract,
             net,
         } => {
+            // Storage estimate is completely offline and self-contained; dispatch
+            // before shared storage RPC client setup or on-chain ABI resolution.
+            if let StorageAction::Estimate {
+                wasm,
+                ledgers,
+                format,
+            } = &action
+            {
+                if abi.is_some() || abi_contract.is_some() {
+                    eprintln!(
+                        "Error: --abi and --abi-contract options do not apply to 'storage estimate'"
+                    );
+                    process::exit(1);
+                }
+
+                let fmt = parse_format_str(format);
+                let wasm_bytes = match fs::read(wasm) {
+                    Ok(b) => b,
+                    Err(e) => {
+                        eprintln!("Error: cannot read WASM '{}': {}", wasm, e);
+                        process::exit(1);
+                    }
+                };
+
+                let spec = match parse_contract_spec(&wasm_bytes) {
+                    Ok(s) => s,
+                    Err(e) => {
+                        eprintln!("Error: {}: {}", wasm, e);
+                        process::exit(1);
+                    }
+                };
+
+                let estimate = sdkt_storage::estimate_storage_from_spec(&spec, wasm, *ledgers);
+
+                match fmt {
+                    OutputFormat::Json => {
+                        let json_str = serde_json::to_string_pretty(&estimate)
+                            .expect("storage cost estimate serializes");
+                        println!("{}", json_str);
+                    }
+                    _ => {
+                        print!("{}", estimate);
+                    }
+                }
+                return Ok(());
+            }
+
             if abi.is_some() && abi_contract.is_some() {
                 eprintln!("Error: specify only one of --abi or --abi-contract");
                 process::exit(1);
@@ -2651,41 +2698,7 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
                         }
                     }
                 }
-                StorageAction::Estimate {
-                    wasm,
-                    ledgers,
-                    format,
-                } => {
-                    let fmt = parse_format_str(&format);
-                    let wasm_bytes = match fs::read(&wasm) {
-                        Ok(b) => b,
-                        Err(e) => {
-                            eprintln!("Error: cannot read WASM '{}': {}", wasm, e);
-                            process::exit(1);
-                        }
-                    };
-
-                    let spec = match parse_contract_spec(&wasm_bytes) {
-                        Ok(s) => s,
-                        Err(e) => {
-                            eprintln!("Error: {}: {}", wasm, e);
-                            process::exit(1);
-                        }
-                    };
-
-                    let estimate = sdkt_storage::estimate_storage_from_spec(&spec, &wasm, ledgers);
-
-                    match fmt {
-                        OutputFormat::Json => {
-                            let json_str = serde_json::to_string_pretty(&estimate)
-                                .expect("storage cost estimate serializes");
-                            println!("{}", json_str);
-                        }
-                        _ => {
-                            print!("{}", estimate);
-                        }
-                    }
-                }
+                StorageAction::Estimate { .. } => unreachable!(),
                 StorageAction::Analyze {
                     contract_id,
                     format,

@@ -117,3 +117,31 @@ fn storage_estimate_rejects_missing_file() {
         .failure()
         .stderr(predicate::str::contains("cannot read WASM"));
 }
+
+#[test]
+fn storage_estimate_rejects_inapplicable_abi_flag() {
+    sdkt()
+        .args(["storage", "--abi", WASM_OLD, "estimate", WASM_OLD])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains(
+            "--abi and --abi-contract options do not apply to 'storage estimate'",
+        ));
+}
+
+#[test]
+fn storage_estimate_rejects_inapplicable_abi_contract_flag_without_rpc() {
+    sdkt()
+        .args([
+            "storage",
+            "--abi-contract",
+            "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+            "estimate",
+            WASM_OLD,
+        ])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains(
+            "--abi and --abi-contract options do not apply to 'storage estimate'",
+        ));
+}
