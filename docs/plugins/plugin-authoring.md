@@ -133,19 +133,20 @@ function (`sdkt_my_rule_trigger`). Generated layout:
 ```
 my-rule/
   Cargo.toml             # standalone crate ([workspace] empty), sdkt-audit from crates.io
-  src/lib.rs             # AuditRule impl with TODO-marked check() + unit tests
+  src/lib.rs             # AuditRule impl with TODO-marked check()
   src/plugin_abi.rs      # native C-ABI exports (feature `plugins`)
   src/plugin_abi_wasm.rs # WASM ABI exports (feature `wasm-plugins`)
   plugin/plugin.toml     # pre-staged native metadata for pack/install
   plugin-wasm/plugin.toml # pre-staged WASM metadata for pack/install
+  tests/rule_test.rs     # integration test proving the rule wiring
   README.md              # build -> pack -> install -> audit walkthrough
   .gitignore
 ```
 
-`src/lib.rs` ships unit tests that fire the placeholder rule on a trivially
-matching function name and assert silence on a normal one, so `cargo test
---features plugins` proves the wiring works before you write any logic. Replace
-the `TODO` in `check()` with your rule; keep the C-ABI files untouched.
+`tests/rule_test.rs` fires the placeholder rule on a trivially matching
+function name and asserts silence on a normal one, so `cargo test --features
+plugins` proves the wiring works before you write any logic. Replace the `TODO`
+in `check()` with your rule; keep the C-ABI files untouched.
 
 Use `--force` to overwrite an existing scaffolded directory and `--format json`
 for machine-readable output. See `docs/reference/cli.md` for the full command

@@ -82,7 +82,8 @@ fn generate_client_help() {
         .assert()
         .success()
         .stdout(predicate::str::contains("typed Rust client"))
-        .stdout(predicate::str::contains("--output"));
+        .stdout(predicate::str::contains("--output"))
+        .stdout(predicate::str::contains("--skip-unsupported"));
 }
 
 #[test]
@@ -92,4 +93,55 @@ fn generate_help_lists_client() {
         .assert()
         .success()
         .stdout(predicate::str::contains("client"));
+}
+
+#[test]
+fn generate_client_skip_unsupported_on_supported_contract_matches_default() {
+    let tmp = TempDir::new().unwrap();
+    let out_default = tmp.path().join("default.rs");
+    let out_skip = tmp.path().join("skip.rs");
+
+    sdkt()
+        .args(["generate", "client", TEST_WASM, "-o"])
+        .arg(&out_default)
+        .assert()
+        .success();
+
+    sdkt()
+        .args(["generate", "client", TEST_WASM, "--skip-unsupported", "-o"])
+        .arg(&out_skip)
+        .assert()
+        .success();
+
+    let default_code = fs::read_to_string(&out_default).unwrap();
+    let skip_code = fs::read_to_string(&out_skip).unwrap();
+    assert_eq!(
+        default_code, skip_code,
+        "output with --skip-unsupported must be identical when contract has no unsupported types"
+    );
+    assert!(!skip_code.contains("Skipped"));
+}
+
+#[test]
+fn generate_client_compiles_with_rustc() {
+    let tmp = TempDir::new().unwrap();
+    let client_rs = tmp.path().join("client.rs");
+
+    sdkt()
+        .args(["generate", "client", TEST_WASM, "--skip-unsupported", "-o"])
+        .arg(&client_rs)
+        .assert()
+        .success();
+
+    let status = std::process::Command::new("rustc")
+        .args(["--crate-type", "lib", "--emit", "metadata"])
+        .arg(&client_rs)
+        .arg("--out-dir")
+        .arg(tmp.path())
+        .status()
+        .expect("failed to run rustc");
+    assert!(
+        status.success(),
+        "generated client code must compile with rustc"
+    );
 }
