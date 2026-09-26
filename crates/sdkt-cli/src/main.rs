@@ -670,16 +670,29 @@ enum GenerateAction {
 
 #[derive(Subcommand)]
 enum IdentityAction {
+    /// Generate a new ED25519 identity
     Generate {
         name: String,
+        /// Output format (pretty or json)
+        #[arg(short, long, default_value = "pretty")]
+        format: String,
     },
     Import {
         name: String,
         secret: String,
     },
-    List,
+    /// List all saved identities
+    List {
+        /// Output format (pretty or json)
+        #[arg(short, long, default_value = "pretty")]
+        format: String,
+    },
+    /// Show a single identity by name
     Show {
         name: String,
+        /// Output format (pretty or json)
+        #[arg(short, long, default_value = "pretty")]
+        format: String,
     },
     Delete {
         name: String,
@@ -4469,22 +4482,43 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
             use sdkt_storage::IdentityStore;
             let store = IdentityStore::new()?;
             match action {
-                IdentityAction::Generate { name } => {
+                IdentityAction::Generate { name, format } => {
+                    let fmt = parse_format_str(&format);
                     let identity = store.generate(&name)?;
-                    println!("Identity '{}' generated successfully.", identity.name);
-                    println!("Public Key: {}", identity.public_key);
+                    if fmt == OutputFormat::Json {
+                        // Public metadata only (name + public_key); Identity never holds secrets.
+                        println!("{}", serde_json::to_string(&identity)?);
+                    } else {
+                        println!("Identity '{}' generated successfully.", identity.name);
+                        println!("Public Key: {}", identity.public_key);
+                    }
                 }
                 IdentityAction::Import { name, secret } => {
                     let identity = store.import(&name, &secret)?;
                     println!("Identity '{}' imported successfully.", identity.name);
                     println!("Public Key: {}", identity.public_key);
                 }
-                IdentityAction::List => {
+                IdentityAction::List { format } => {
+                    let fmt = parse_format_str(&format);
                     let mut list = store.list()?;
                     list.sort_by(|a, b| a.name.cmp(&b.name));
                     let default_id = store.get_default().ok();
 
-                    if list.is_empty() {
+                    if fmt == OutputFormat::Json {
+                        let items: Vec<serde_json::Value> = list
+                            .iter()
+                            .map(|id| {
+                                let is_def =
+                                    default_id.as_ref().is_some_and(|d| d.name == id.name);
+                                serde_json::json!({
+                                    "name": id.name,
+                                    "public_key": id.public_key,
+                                    "default": is_def,
+                                })
+                            })
+                            .collect();
+                        println!("{}", serde_json::to_string(&items)?);
+                    } else if list.is_empty() {
                         println!("No identities found.");
                     } else {
                         println!("Identities:");
@@ -4499,10 +4533,16 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
                         }
                     }
                 }
-                IdentityAction::Show { name } => {
+                IdentityAction::Show { name, format } => {
+                    let fmt = parse_format_str(&format);
                     let identity = store.get(&name)?;
-                    println!("Identity: {}", identity.name);
-                    println!("Public Key: {}", identity.public_key);
+                    if fmt == OutputFormat::Json {
+                        // Public metadata only — mirrors pretty fields (name + public_key).
+                        println!("{}", serde_json::to_string(&identity)?);
+                    } else {
+                        println!("Identity: {}", identity.name);
+                        println!("Public Key: {}", identity.public_key);
+                    }
                 }
                 IdentityAction::Delete { name } => {
                     store.remove(&name)?;
