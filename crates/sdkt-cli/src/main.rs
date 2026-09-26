@@ -4297,6 +4297,11 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
                         println!("  - {}", section);
                     }
 
+                    println!("\nContract Meta ({}):", metadata.contract_meta.len());
+                    for entry in &metadata.contract_meta {
+                        println!("  - {}: {}", entry.key, entry.value);
+                    }
+
                     println!("\nExported Functions ({}):", metadata.exports.len());
                     for export in &metadata.exports {
                         println!("  - {} [{}]", export.name, export.kind);
@@ -4423,7 +4428,11 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
                 }
 
                 if fmt == OutputFormat::Json {
-                    let json_str = serde_json::to_string(&inspection)?;
+                    let mut json = serde_json::to_value(&inspection)?;
+                    if let serde_json::Value::Object(fields) = &mut json {
+                        fields.insert("metadata".to_string(), serde_json::to_value(&meta)?);
+                    }
+                    let json_str = serde_json::to_string(&json)?;
                     println!("{}", json_str);
                 } else {
                     println!("WASM Metadata:");
@@ -4436,6 +4445,10 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
                     println!("Exports: {}", meta.exports.len());
                     println!("Imports: {}", meta.imports.len());
                     println!("Custom Sections: {}", meta.custom_sections.len());
+                    println!("Contract Meta ({}):", meta.contract_meta.len());
+                    for entry in &meta.contract_meta {
+                        println!("  {}: {}", entry.key, entry.value);
+                    }
                     if let Some(abi) = &inspection.abi {
                         println!(
                             "Functions ({}): {}",

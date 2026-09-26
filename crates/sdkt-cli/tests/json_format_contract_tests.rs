@@ -123,6 +123,10 @@ mod wasm_inspect {
             meta.get("exports").is_some_and(|e| e.is_array()),
             "metadata.exports should be an array"
         );
+        assert!(
+            meta.get("contract_meta").is_some_and(|e| e.is_array()),
+            "metadata.contract_meta should be an array"
+        );
     }
 
     #[test]

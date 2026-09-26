@@ -85,7 +85,7 @@ sdkt
 │   └── estimate              (manual value entry, type-prefixed)
 │
 ├── wasm
-│   ├── inspect <file.wasm>  Offline inspection of a local WASM file (sections, exports, spec)
+│   ├── inspect <file.wasm>  Offline inspection of a local WASM file (sections, exports, spec, contract metadata)
 │   ├── metadata --contract <contract>  [--network testnet] [--refresh] [--format]
 │   └── cache                 (info | remove | clear)
 │

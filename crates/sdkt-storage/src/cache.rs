@@ -212,6 +212,7 @@ mod tests {
             exports: vec![],
             imports: vec![],
             custom_sections: vec![],
+            contract_meta: vec![],
         }
     }
 

@@ -1,5 +1,7 @@
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
+use std::io::Cursor;
+use stellar_xdr::{Limited, Limits, ReadXdr, ScMetaEntry};
 use thiserror::Error;
 use wasmparser::{Parser, Payload};
 
@@ -30,6 +32,8 @@ pub enum WasmError {
     NoContractSpec,
     #[error("XDR decode error in contract spec: {0}")]
     SpecXdr(stellar_xdr::Error),
+    #[error("XDR decode error in contract metadata: {0}")]
+    MetaXdr(stellar_xdr::Error),
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -40,6 +44,15 @@ pub struct WasmMetadata {
     pub exports: Vec<WasmExport>,
     pub imports: Vec<WasmImport>,
     pub custom_sections: Vec<String>,
+    /// Author-declared provenance entries from the `contractmetav0` section.
+    #[serde(default)]
+    pub contract_meta: Vec<ContractMetadataEntry>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ContractMetadataEntry {
+    pub key: String,
+    pub value: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -82,6 +95,7 @@ pub fn parse_metadata(wasm_bytes: &[u8]) -> Result<WasmMetadata, WasmError> {
         exports: Vec::new(),
         imports: Vec::new(),
         custom_sections: Vec::new(),
+        contract_meta: Vec::new(),
     };
 
     let parser = Parser::new(0);
@@ -114,12 +128,38 @@ pub fn parse_metadata(wasm_bytes: &[u8]) -> Result<WasmMetadata, WasmError> {
             }
             Payload::CustomSection(reader) => {
                 meta.custom_sections.push(reader.name().to_string());
+                if reader.name() == "contractmetav0" {
+                    meta.contract_meta
+                        .extend(decode_contract_meta(reader.data())?);
+                }
             }
             _ => {}
         }
     }
 
     Ok(meta)
+}
+
+fn decode_contract_meta(data: &[u8]) -> Result<Vec<ContractMetadataEntry>, WasmError> {
+    let mut entries = Vec::new();
+    let mut remaining = data;
+    while !remaining.is_empty() {
+        let mut cursor = Cursor::new(remaining);
+        let mut limited = Limited::new(&mut cursor, Limits::none());
+        let entry = ScMetaEntry::read_xdr(&mut limited).map_err(WasmError::MetaXdr)?;
+        match entry {
+            ScMetaEntry::ScMetaV0(meta) => entries.push(ContractMetadataEntry {
+                key: meta.key.to_utf8_string_lossy(),
+                value: meta.val.to_utf8_string_lossy(),
+            }),
+        }
+        let consumed = cursor.position() as usize;
+        if consumed == 0 {
+            return Err(WasmError::MetaXdr(stellar_xdr::Error::Invalid));
+        }
+        remaining = &remaining[consumed..];
+    }
+    Ok(entries)
 }
 
 #[cfg(test)]
@@ -152,6 +192,7 @@ mod tests {
         assert!(meta.exports.is_empty());
         assert!(meta.imports.is_empty());
         assert!(meta.custom_sections.is_empty());
+        assert!(meta.contract_meta.is_empty());
 
         let expected_hash = hex::encode(Sha256::digest(VALID_EMPTY_WASM));
         assert_eq!(meta.hash, expected_hash);
@@ -164,5 +205,13 @@ mod tests {
         let meta = parse_metadata(WASM_WITH_EXPORTS).unwrap();
         assert_eq!(meta.size_bytes, 11);
         assert!(meta.exports.is_empty());
+    }
+
+    #[test]
+    fn malformed_contract_metadata_is_classified() {
+        assert!(matches!(
+            decode_contract_meta(&[0, 0, 0]),
+            Err(WasmError::MetaXdr(_))
+        ));
     }
 }
