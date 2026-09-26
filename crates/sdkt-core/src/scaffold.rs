@@ -866,6 +866,7 @@ fn rule_fires_on_trigger_function() {{
         fn_name: format!("{{}}_admin", "{trigger}"),
         require_auth: 0,
         invoke_contract: 0,
+            operation_order: Vec::new(),
         bound: Default::default(),
         usage: Default::default(),
     }}];
@@ -887,6 +888,7 @@ fn rule_silent_on_normal_function() {{
         fn_name: "balance_of".to_string(),
         require_auth: 0,
         invoke_contract: 0,
+            operation_order: Vec::new(),
         bound: Default::default(),
         usage: Default::default(),
     }}];

@@ -36,10 +36,20 @@ pub struct FnScan {
     pub fn_name: String,
     pub require_auth: usize,
     pub invoke_contract: usize,
+    /// Conservative source-order markers used by ordering-sensitive rules.
+    #[serde(default)]
+    pub operation_order: Vec<OperationMarker>,
     /// Local bindings (let-bindings + parameters) eligible for move tracking.
     pub bound: HashSet<String>,
     /// Argument-usage count per bound local (move heuristic signal).
     pub usage: HashMap<String, usize>,
+}
+
+/// A source-level operation recognized by an ordering-sensitive audit rule.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub enum OperationMarker {
+    ExternalInvocation,
+    StateWrite,
 }
 
 impl FnScan {
@@ -48,6 +58,7 @@ impl FnScan {
             fn_name,
             require_auth: 0,
             invoke_contract: 0,
+            operation_order: Vec::new(),
             bound: HashSet::new(),
             usage: HashMap::new(),
         }
@@ -124,6 +135,12 @@ impl<'ast, 'a> Visit<'ast> for FnVisitor<'a> {
                 }
                 if name == "invoke_contract" {
                     self.scan.invoke_contract += 1;
+                    self.scan
+                        .operation_order
+                        .push(OperationMarker::ExternalInvocation);
+                }
+                if matches!(name.as_str(), "set" | "write" | "set_contract_data") {
+                    self.scan.operation_order.push(OperationMarker::StateWrite);
                 }
             }
         }
@@ -140,6 +157,12 @@ impl<'ast, 'a> Visit<'ast> for FnVisitor<'a> {
         }
         if method == "invoke_contract" {
             self.scan.invoke_contract += 1;
+            self.scan
+                .operation_order
+                .push(OperationMarker::ExternalInvocation);
+        }
+        if matches!(method.as_str(), "set" | "write" | "set_contract_data") {
+            self.scan.operation_order.push(OperationMarker::StateWrite);
         }
         self.count_ident(&node.receiver);
         for arg in &node.args {
@@ -235,6 +258,7 @@ pub fn all_rules() -> Vec<Box<dyn AuditRule>> {
         Box::new(crate::rules::Auth003),
         Box::new(crate::rules::Auth004),
         Box::new(crate::rules::Move001),
+        Box::new(crate::rules::Cei001),
     ]
 }
 

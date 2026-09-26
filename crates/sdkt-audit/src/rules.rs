@@ -1,6 +1,6 @@
 //! Built-in audit rules. Each implements [`crate::audit::AuditRule`].
 
-use crate::audit::{AuditContext, AuditRule, FnScan};
+use crate::audit::{AuditContext, AuditRule, FnScan, OperationMarker};
 use crate::types::{AuditReport, Finding, Severity};
 
 /// AUTH-001 — Missing `require_auth()` on a privileged/admin function.
@@ -174,6 +174,43 @@ impl AuditRule for Move001 {
     }
 }
 
+/// CEI-001 — external invocation before a later state write.
+pub struct Cei001;
+
+impl AuditRule for Cei001 {
+    fn id(&self) -> &'static str {
+        "CEI-001"
+    }
+    fn severity(&self) -> Severity {
+        Severity::Warning
+    }
+    fn description(&self) -> &'static str {
+        "External contract invocation precedes a state write (CEI ordering hazard)"
+    }
+    fn check(&self, scans: &[FnScan], _ctx: &AuditContext, report: &mut AuditReport) {
+        for scan in scans {
+            let mut saw_external = false;
+            if scan.operation_order.iter().any(|marker| match marker {
+                OperationMarker::ExternalInvocation => {
+                    saw_external = true;
+                    false
+                }
+                OperationMarker::StateWrite => saw_external,
+            }) {
+                report.add(Finding {
+                    rule_id: self.id().to_string(),
+                    severity: self.severity(),
+                    message: format!(
+                        "Function `{}` invokes an external contract before a later state write; review CEI ordering",
+                        scan.fn_name
+                    ),
+                    location: Some(scan.fn_name.clone()),
+                });
+            }
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -184,11 +221,55 @@ mod tests {
     }
 
     #[test]
+    fn cei001_respects_operation_order() {
+        let vulnerable = FnScan {
+            fn_name: "swap".into(),
+            require_auth: 0,
+            invoke_contract: 1,
+            operation_order: vec![
+                OperationMarker::ExternalInvocation,
+                OperationMarker::StateWrite,
+            ],
+            bound: Default::default(),
+            usage: Default::default(),
+        };
+        let safe = FnScan {
+            operation_order: vec![
+                OperationMarker::StateWrite,
+                OperationMarker::ExternalInvocation,
+            ],
+            ..vulnerable.clone()
+        };
+        let mut report = AuditReport::default();
+        Cei001.check(
+            &[vulnerable],
+            &crate::audit::AuditContext { spec: None },
+            &mut report,
+        );
+        assert_eq!(
+            report
+                .findings
+                .iter()
+                .filter(|f| f.rule_id == "CEI-001")
+                .count(),
+            1
+        );
+        report = AuditReport::default();
+        Cei001.check(
+            &[safe],
+            &crate::audit::AuditContext { spec: None },
+            &mut report,
+        );
+        assert!(!has(&report, "CEI-001"));
+    }
+
+    #[test]
     fn auth001_flags_mint_without_auth() {
         let scans = vec![FnScan {
             fn_name: "mint_token".into(),
             require_auth: 0,
             invoke_contract: 0,
+            operation_order: Vec::new(),
             bound: Default::default(),
             usage: Default::default(),
         }];
@@ -206,6 +287,7 @@ mod tests {
             fn_name: "initialize".into(),
             require_auth: 0,
             invoke_contract: 0,
+            operation_order: Vec::new(),
             bound: Default::default(),
             usage: Default::default(),
         }];
@@ -223,6 +305,7 @@ mod tests {
             fn_name: "balance_of".into(),
             require_auth: 0,
             invoke_contract: 0,
+            operation_order: Vec::new(),
             bound: Default::default(),
             usage: Default::default(),
         }];
@@ -240,6 +323,7 @@ mod tests {
             fn_name: "mint_token".into(),
             require_auth: 1,
             invoke_contract: 0,
+            operation_order: Vec::new(),
             bound: Default::default(),
             usage: Default::default(),
         }];
@@ -257,6 +341,7 @@ mod tests {
             fn_name: "cross_call".into(),
             require_auth: 0,
             invoke_contract: 1,
+            operation_order: Vec::new(),
             bound: Default::default(),
             usage: Default::default(),
         }];
@@ -274,6 +359,7 @@ mod tests {
             fn_name: "cross_call".into(),
             require_auth: 1,
             invoke_contract: 1,
+            operation_order: Vec::new(),
             bound: Default::default(),
             usage: Default::default(),
         }];
@@ -291,6 +377,7 @@ mod tests {
             fn_name: "local_call".into(),
             require_auth: 0,
             invoke_contract: 0,
+            operation_order: Vec::new(),
             bound: Default::default(),
             usage: Default::default(),
         }];
@@ -308,6 +395,7 @@ mod tests {
             fn_name: "initialize".into(),
             require_auth: 0,
             invoke_contract: 0,
+            operation_order: Vec::new(),
             bound: Default::default(),
             usage: Default::default(),
         }];
@@ -325,6 +413,7 @@ mod tests {
             fn_name: "init_token".into(),
             require_auth: 0,
             invoke_contract: 0,
+            operation_order: Vec::new(),
             bound: Default::default(),
             usage: Default::default(),
         }];
@@ -342,6 +431,7 @@ mod tests {
             fn_name: "initialize".into(),
             require_auth: 1,
             invoke_contract: 0,
+            operation_order: Vec::new(),
             bound: Default::default(),
             usage: Default::default(),
         }];
@@ -359,6 +449,7 @@ mod tests {
             fn_name: "transfer".into(),
             require_auth: 0,
             invoke_contract: 0,
+            operation_order: Vec::new(),
             bound: Default::default(),
             usage: Default::default(),
         }];
@@ -379,6 +470,7 @@ mod tests {
             fn_name: "do_swap".into(),
             require_auth: 0,
             invoke_contract: 0,
+            operation_order: Vec::new(),
             bound: Default::default(),
             usage,
         }];
@@ -399,6 +491,7 @@ mod tests {
             fn_name: "do_swap".into(),
             require_auth: 0,
             invoke_contract: 0,
+            operation_order: Vec::new(),
             bound: Default::default(),
             usage,
         }];
@@ -416,6 +509,7 @@ mod tests {
             fn_name: "do_nothing".into(),
             require_auth: 0,
             invoke_contract: 0,
+            operation_order: Vec::new(),
             bound: Default::default(),
             usage: Default::default(),
         }];
@@ -432,6 +526,7 @@ mod tests {
             fn_name: "transfer_from".into(),
             require_auth: 0,
             invoke_contract: 0,
+            operation_order: Vec::new(),
             bound: Default::default(),
             usage: Default::default(),
         }];
@@ -449,6 +544,7 @@ mod tests {
             fn_name: "transfer".into(),
             require_auth: 1,
             invoke_contract: 0,
+            operation_order: Vec::new(),
             bound: Default::default(),
             usage: Default::default(),
         }];
@@ -466,6 +562,7 @@ mod tests {
             fn_name: "balance_of".into(),
             require_auth: 0,
             invoke_contract: 0,
+            operation_order: Vec::new(),
             bound: Default::default(),
             usage: Default::default(),
         }];
@@ -485,6 +582,7 @@ mod tests {
             fn_name: "transfer_ownership".into(),
             require_auth: 0,
             invoke_contract: 0,
+            operation_order: Vec::new(),
             bound: Default::default(),
             usage: Default::default(),
         }];
@@ -502,6 +600,7 @@ mod tests {
             fn_name: "admin_transfer".into(),
             require_auth: 0,
             invoke_contract: 0,
+            operation_order: Vec::new(),
             bound: Default::default(),
             usage: Default::default(),
         }];
