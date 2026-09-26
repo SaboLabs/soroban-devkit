@@ -3288,6 +3288,12 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
                             if let Some(xdr) = &res.result_xdr {
                                 println!("  Result XDR: {}", xdr);
                             }
+                            if !res.events.is_empty() {
+                                println!("  Events:");
+                                for event in &res.events {
+                                    println!("    {}", event);
+                                }
+                            }
                         }
                     }
                     Err(e) => {
@@ -5209,6 +5215,7 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
                                 "function": res.function,
                                 "fee": res.fee,
                                 "resultXdr": res.result_xdr,
+                                "events": res.events,
                                 "errorCode": res.error_code,
                                 "errorResultXdr": res.error_result_xdr,
                                 "diagnosticEvents": res.diagnostic_events,
@@ -5223,6 +5230,12 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
                         println!("  Fee:      {} stroops", res.fee);
                         if let Some(ledger) = &res.result_xdr {
                             println!("  Result XDR: {}", ledger);
+                        }
+                        if !res.events.is_empty() {
+                            println!("  Events:");
+                            for event in &res.events {
+                                println!("    {}", event);
+                            }
                         }
                         if let Some(code) = &res.error_code {
                             println!("  Error:    {}", code);
