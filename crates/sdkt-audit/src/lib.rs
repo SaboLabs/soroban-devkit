@@ -29,7 +29,7 @@ pub mod plugin_loader_wasm;
 
 pub use audit::{
     all_rules, audit_source, audit_source_with, audit_source_with_spec, scan_all_functions,
-    scan_all_functions_str, AuditContext, AuditRule, FnScan,
+    scan_all_functions_str, AuditContext, AuditRule, FnScan, OperationMarker,
 };
 pub use error::AuditError;
 pub use plugin_doctor::{
@@ -43,7 +43,7 @@ pub use plugin_store::{
 pub use registry::{
     register_builtin_rules, register_rule, run_registered, BoxedRule, RuleRegistry,
 };
-pub use rules::{Auth001, Auth002, Auth003, Auth004, Move001};
+pub use rules::{Auth001, Auth002, Auth003, Auth004, Cei001, Move001};
 pub use types::{AuditReport, AuditSummary, Finding, RuleInfo, Severity};
 
 #[cfg(feature = "plugins")]

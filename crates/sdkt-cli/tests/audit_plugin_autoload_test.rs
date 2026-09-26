@@ -216,7 +216,7 @@ abi_minor = 0
         .assert()
         .success()
         .stdout(predicate::str::contains(
-            "Rules loaded: 5 built-in, 1 plugin",
+            "Rules loaded: 6 built-in, 1 plugin",
         ))
         .stdout(predicate::str::contains("EXAMPLE-001"))
         .stdout(predicate::str::contains("sdkt_example_trigger_admin"));
@@ -234,7 +234,7 @@ abi_minor = 0
         .assert()
         .success()
         .stdout(predicate::str::contains(
-            "Rules loaded: 5 built-in, 1 plugin",
+            "Rules loaded: 6 built-in, 1 plugin",
         ))
         .stdout(predicate::str::contains("EXAMPLE-001"));
 

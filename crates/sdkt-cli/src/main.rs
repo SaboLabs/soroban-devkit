@@ -16,8 +16,8 @@ use sdkt_wasm::spec::parse_contract_spec;
 use sdkt_xdr::abi_decode::decode_event_topics;
 use sdkt_xdr::decode;
 use sdkt_xdr::{
-    build_invoke_transaction, sign_transaction, Ed25519Signer, InvokeTransactionParams, Network,
-    SigningError, SigningOptions,
+    build_invoke_transaction, sign_transaction, wrap_fee_bump_transaction, Ed25519Signer,
+    InvokeTransactionParams, Network, SigningError, SigningOptions,
 };
 use sha2::{Digest, Sha256};
 use std::fs;
@@ -922,6 +922,20 @@ enum TxAction {
         /// Base64 XDR transaction envelope or path to a file containing it
         #[arg(short, long)]
         envelope: String,
+        #[arg(short, long, default_value = "pretty")]
+        format: String,
+    },
+    /// Wrap a V1 transaction envelope in a fee-bump envelope.
+    Wrap {
+        /// Base64 XDR envelope or path to a file containing it.
+        #[arg(short, long)]
+        envelope: String,
+        /// Fee-source identity name or G... account.
+        #[arg(long)]
+        fee_source: String,
+        /// Total fee offered by the fee-bump transaction, in stroops.
+        #[arg(long)]
+        fee: u64,
         #[arg(short, long, default_value = "pretty")]
         format: String,
     },
@@ -3056,6 +3070,56 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
                     process::exit(1);
                 }
             }
+            TxAction::Wrap {
+                envelope,
+                fee_source,
+                fee,
+                format,
+            } => {
+                let fmt = parse_format_str(&format);
+                let env_data = match resolve_tx_input(&envelope) {
+                    Ok(s) => s,
+                    Err(e) => {
+                        eprintln!("Error: {}", e);
+                        process::exit(1);
+                    }
+                };
+                let mut fee_source_account = fee_source.clone();
+                if !fee_source_account.starts_with('G') || fee_source_account.len() != 56 {
+                    use sdkt_storage::IdentityStore;
+                    let store = match IdentityStore::new() {
+                        Ok(store) => store,
+                        Err(e) => {
+                            eprintln!("Error: cannot open identity store: {}", e);
+                            process::exit(1);
+                        }
+                    };
+                    fee_source_account = match store.get(&fee_source) {
+                        Ok(identity) => identity.public_key,
+                        Err(_) => {
+                            eprintln!("Error: unknown fee-source identity '{}'", fee_source);
+                            process::exit(1);
+                        }
+                    };
+                }
+                match wrap_fee_bump_transaction(env_data.trim(), &fee_source_account, fee) {
+                    Ok(result) => {
+                        if fmt == OutputFormat::Json {
+                            println!("{}", serde_json::to_string(&result)?);
+                        } else {
+                            println!("Fee-bump transaction:");
+                            println!("  Inner fee:       {} stroops", result.inner_fee);
+                            println!("  Fee-bump total:  {} stroops", result.fee_bump_total);
+                            println!("  Envelope (Base64):");
+                            println!("{}", result.envelope);
+                        }
+                    }
+                    Err(e) => {
+                        eprintln!("Error wrapping transaction: {}", e);
+                        process::exit(1);
+                    }
+                }
+            }
             TxAction::Simulate {
                 envelope,
                 format,
@@ -4222,7 +4286,7 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
                         println!("Static Analysis Report: {}", path);
                         if loaded_plugins > 0 {
                             println!(
-                                "Rules loaded: 5 built-in, {} plugin{}",
+                                "Rules loaded: 6 built-in, {} plugin{}",
                                 loaded_plugins,
                                 if loaded_plugins == 1 { "" } else { "s" }
                             );
