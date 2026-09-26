@@ -1699,6 +1699,9 @@ fn parse_typed_args(args: &[String], strict: bool) -> Result<Vec<String>, String
                 "bytes" => {
                     let mut b = Vec::new();
                     let s = v.trim();
+                    if !s.is_ascii() {
+                        return Err(format!("invalid hex byte in: {v}"));
+                    }
                     if s.len() % 2 != 0 {
                         return Err(format!("invalid hex byte in: {v}"));
                     }
@@ -2098,6 +2101,15 @@ mod encode_tests {
                 assert_eq!(encoded, runtime[0], "{input} (strict={strict})");
             }
         }
+    }
+
+    #[test]
+    fn parse_typed_args_rejects_non_ascii_bytes_without_panic() {
+        let input = ["bytes:💥".to_string()];
+        let err = parse_typed_args(&input, true).unwrap_err();
+        assert!(err.contains("invalid hex byte"));
+        let err_non_strict = parse_typed_args(&input, false).unwrap_err();
+        assert!(err_non_strict.contains("invalid hex byte"));
     }
 }
 

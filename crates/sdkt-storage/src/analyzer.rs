@@ -85,6 +85,7 @@ impl StorageAnalyzer {
         let mut total_ttl: u64 = 0;
         let mut expiring_soon = 0;
         let mut total_cost: u64 = 0;
+        let mut ttl_bearing_entries = 0usize;
 
         let mut instance_entries = 0;
         let mut persistent_entries = 0;
@@ -93,26 +94,29 @@ impl StorageAnalyzer {
         let mut detailed: Vec<StorageEntry> = Vec::with_capacity(ttl_info.entries.len());
 
         for entry in &ttl_info.entries {
-            let ttl = entry.current_ttl;
-            if ttl < min_ttl {
-                min_ttl = ttl;
-            }
-            if ttl > max_ttl {
-                max_ttl = ttl;
-            }
-            total_ttl += ttl as u64;
-
-            if ttl < EXPIRING_SOON_LEDGERS {
-                expiring_soon += 1;
-            }
-            total_cost += entry.extension_cost_stroops;
-
             let class = classify_key(&entry.key);
             match class {
                 StorageClass::Instance => instance_entries += 1,
                 StorageClass::Persistent => persistent_entries += 1,
                 StorageClass::Temporary => temporary_entries += 1,
                 StorageClass::Other => other_entries += 1,
+            }
+
+            if class != StorageClass::Other {
+                let ttl = entry.current_ttl;
+                if ttl < min_ttl {
+                    min_ttl = ttl;
+                }
+                if ttl > max_ttl {
+                    max_ttl = ttl;
+                }
+                total_ttl += ttl as u64;
+
+                if ttl < EXPIRING_SOON_LEDGERS {
+                    expiring_soon += 1;
+                }
+                total_cost += entry.extension_cost_stroops;
+                ttl_bearing_entries += 1;
             }
 
             detailed.push(StorageEntry {
@@ -125,22 +129,19 @@ impl StorageAnalyzer {
         }
 
         let count = ttl_info.entries.len();
-        let average_ttl = if count > 0 {
-            (total_ttl / count as u64) as u32
+        let ttl_summary = if ttl_bearing_entries > 0 {
+            let average_ttl = (total_ttl / ttl_bearing_entries as u64) as u32;
+            let minimum_ttl = if min_ttl == u32::MAX { 0 } else { min_ttl };
+            Some(TtlInfoSummary {
+                minimum_ttl,
+                maximum_ttl: max_ttl,
+                average_ttl,
+                expiring_entries_count: expiring_soon,
+                estimated_rent_cost: Some(total_cost),
+            })
         } else {
-            0
+            None
         };
-        if min_ttl == u32::MAX {
-            min_ttl = 0;
-        }
-
-        let ttl_summary = Some(TtlInfoSummary {
-            minimum_ttl: min_ttl,
-            maximum_ttl: max_ttl,
-            average_ttl,
-            expiring_entries_count: expiring_soon,
-            estimated_rent_cost: Some(total_cost),
-        });
 
         Ok(StorageReport {
             contract_id: contract_id.to_string(),
@@ -164,7 +165,8 @@ mod tests {
     use std::net::TcpListener;
     use std::thread;
     use stellar_xdr::{
-        ContractDataDurability, LedgerKey, LedgerKeyContractData, ScAddress, ScVal, WriteXdr,
+        AccountId, ContractDataDurability, LedgerKey, LedgerKeyAccount, LedgerKeyContractData,
+        PublicKey, ScAddress, ScVal, Uint256, WriteXdr,
     };
 
     const TEST_CONTRACT: &str = "CAE3U7JKESRWZHPEQ72DVNGOQ6WPA7HSPQZL5YV46NPCE4TMUPAGYMEC";
@@ -393,5 +395,128 @@ mod tests {
         assert_eq!(report.temporary_entries, 0);
         assert_eq!(report.entries.len(), 1);
         assert_eq!(report.entries[0].class, StorageClass::Instance);
+    }
+
+    #[tokio::test]
+    async fn test_other_entries_excluded_from_ttl_aggregates() {
+        let instance_key = encode_ledger_key(&LedgerKey::ContractData(LedgerKeyContractData {
+            contract: contract_address(),
+            key: ScVal::LedgerKeyContractInstance,
+            durability: ContractDataDurability::Persistent,
+        }));
+        let account_key = encode_ledger_key(&LedgerKey::Account(LedgerKeyAccount {
+            account_id: AccountId(PublicKey::PublicKeyTypeEd25519(Uint256([1u8; 32]))),
+        }));
+
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = listener.local_addr().unwrap();
+        let url = format!("http://{addr}");
+
+        let ik = instance_key.clone();
+        let ak = account_key.clone();
+
+        thread::spawn(move || {
+            for conn in listener.incoming() {
+                let Ok(mut sock) = conn else { break };
+                let mut buf = [0u8; 16384];
+                let n = sock.read(&mut buf).unwrap_or(0);
+                let req = String::from_utf8_lossy(&buf[..n]).to_string();
+                let body = if req.contains("getLatestLedger") {
+                    r#"{"jsonrpc":"2.0","id":1,"result":{"id":"mock","sequence":100}}"#.to_string()
+                } else if req.contains("getLedgerEntries") {
+                    format!(
+                        r#"{{"jsonrpc":"2.0","id":1,"result":{{"entries":[
+                            {{"key":"{ik}","xdr":"AAAAAQAAAABpc25nAAAA","lastModifiedLedgerSeq":100,"liveUntilLedgerSeq":20100}},
+                            {{"key":"{ak}","xdr":"AAAAAQAAAABpc25nAAAA","lastModifiedLedgerSeq":100}}
+                        ],"latestLedger":100}}}}"#
+                    )
+                } else {
+                    r#"{"jsonrpc":"2.0","id":1,"error":{"code":-32601,"message":"not found"}}"#
+                        .to_string()
+                };
+                let resp = format!(
+                    "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+                    body.len(),
+                    body
+                );
+                let _ = sock.write_all(resp.as_bytes());
+            }
+        });
+
+        let client = SorobanRpcClient::new(&url);
+        let analyzer = StorageAnalyzer::new(client);
+
+        let report = analyzer
+            .inspect_contract_storage_keys(TEST_CONTRACT, &[account_key])
+            .await
+            .unwrap();
+
+        assert_eq!(report.total_entries, 2);
+        assert_eq!(report.instance_entries, 1);
+        assert_eq!(report.other_entries, 1);
+
+        // Account entry without liveUntilLedgerSeq has current_ttl = 0 and class = Other.
+        // It must NOT drag down minimum_ttl to 0, nor be counted in average_ttl or expiring_soon.
+        let summary = report
+            .ttl_summary
+            .expect("ttl_summary present for instance entry");
+        assert_eq!(summary.minimum_ttl, 20000);
+        assert_eq!(summary.maximum_ttl, 20000);
+        assert_eq!(summary.average_ttl, 20000);
+        assert_eq!(summary.expiring_entries_count, 0);
+    }
+
+    #[tokio::test]
+    async fn test_all_other_entries_omits_ttl_summary() {
+        let account_key = encode_ledger_key(&LedgerKey::Account(LedgerKeyAccount {
+            account_id: AccountId(PublicKey::PublicKeyTypeEd25519(Uint256([2u8; 32]))),
+        }));
+
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = listener.local_addr().unwrap();
+        let url = format!("http://{addr}");
+
+        let ak = account_key.clone();
+
+        thread::spawn(move || {
+            for conn in listener.incoming() {
+                let Ok(mut sock) = conn else { break };
+                let mut buf = [0u8; 16384];
+                let n = sock.read(&mut buf).unwrap_or(0);
+                let req = String::from_utf8_lossy(&buf[..n]).to_string();
+                let body = if req.contains("getLatestLedger") {
+                    r#"{"jsonrpc":"2.0","id":1,"result":{"id":"mock","sequence":100}}"#.to_string()
+                } else if req.contains("getLedgerEntries") {
+                    // Only the account entry is returned by the RPC
+                    format!(
+                        r#"{{"jsonrpc":"2.0","id":1,"result":{{"entries":[
+                            {{"key":"{ak}","xdr":"AAAAAQAAAABpc25nAAAA","lastModifiedLedgerSeq":100}}
+                        ],"latestLedger":100}}}}"#
+                    )
+                } else {
+                    r#"{"jsonrpc":"2.0","id":1,"error":{"code":-32601,"message":"not found"}}"#
+                        .to_string()
+                };
+                let resp = format!(
+                    "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+                    body.len(),
+                    body
+                );
+                let _ = sock.write_all(resp.as_bytes());
+            }
+        });
+
+        let client = SorobanRpcClient::new(&url);
+        let analyzer = StorageAnalyzer::new(client);
+
+        let report = analyzer
+            .inspect_contract_storage_keys(TEST_CONTRACT, &[account_key])
+            .await
+            .unwrap();
+
+        assert_eq!(report.total_entries, 1);
+        assert_eq!(report.other_entries, 1);
+        assert_eq!(report.instance_entries, 0);
+        assert!(report.ttl_summary.is_none());
     }
 }
