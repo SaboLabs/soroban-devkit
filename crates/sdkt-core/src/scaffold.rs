@@ -162,6 +162,7 @@ pub const PLUGIN_SCAFFOLD_FILES: &[&str] = &[
     "plugin/plugin.toml",
     "plugin-wasm/plugin.toml",
     "README.md",
+    "tests/rule_test.rs",
     ".gitignore",
 ];
 
@@ -297,6 +298,7 @@ pub fn generate_plugin_project(config: &PluginScaffoldConfig) -> io::Result<Scaf
     fs::create_dir_all(root.join("src"))?;
     fs::create_dir_all(root.join("plugin"))?;
     fs::create_dir_all(root.join("plugin-wasm"))?;
+    fs::create_dir_all(root.join("tests"))?;
 
     let mut created = Vec::new();
 
@@ -314,6 +316,9 @@ serde = {{ version = "1", optional = true, features = ["derive"] }}
 serde_json = {{ version = "1", optional = true }}
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+sdkt-audit = {{ version = "{audit_version}" }}
+
+[target.'cfg(not(target_arch = "wasm32"))'.dev-dependencies]
 sdkt-audit = {{ version = "{audit_version}" }}
 
 [features]
@@ -408,44 +413,6 @@ mod plugin_abi;
 /// JSON-ABI exports for sandboxed WASM loading (Phase C).
 #[cfg(all(feature = "wasm-plugins", target_arch = "wasm32"))]
 mod plugin_abi_wasm;
-
-#[cfg(all(test, not(target_arch = "wasm32")))]
-mod tests {{
-    use super::*;
-
-    /// Proves the rule is wired, not merely compiling: a trivially-matching
-    /// function name must produce exactly one finding carrying the rule id.
-    #[test]
-    fn rule_fires_on_trigger_function() {{
-        let scans = vec![FnScan {{
-            fn_name: format!("{{}}_admin", "{trigger}"),
-            require_auth: 0,
-            invoke_contract: 0,
-            bound: Default::default(),
-            usage: Default::default(),
-        }}];
-        let ctx = AuditContext {{ spec: None }};
-        let mut report = AuditReport::default();
-        {struct_name}.check(&scans, &ctx, &mut report);
-        assert_eq!(report.summary.total, 1, "placeholder rule must fire on a matching function");
-        assert_eq!(report.findings[0].rule_id, "{rule_id}");
-    }}
-
-    #[test]
-    fn rule_silent_on_normal_function() {{
-        let scans = vec![FnScan {{
-            fn_name: "balance_of".to_string(),
-            require_auth: 0,
-            invoke_contract: 0,
-            bound: Default::default(),
-            usage: Default::default(),
-        }}];
-        let ctx = AuditContext {{ spec: None }};
-        let mut report = AuditReport::default();
-        {struct_name}.check(&scans, &ctx, &mut report);
-        assert!(report.is_clean());
-    }}
-}}
 "#,
         struct_name = struct_name,
         rule_id = rule_id,
@@ -849,10 +816,10 @@ sdkt plugin install plugin-wasm/{lib_name}.wasm
 cargo test --features plugins
 ```
 
-The scaffold ships a unit test that proves the placeholder rule is wired: it
-must produce exactly one finding when a function name contains `{trigger}`, and
-stay silent otherwise. Replace that logic with your real check, then update the
-test.
+The scaffold ships `tests/rule_test.rs` which proves the placeholder rule is
+wired: it must produce exactly one finding when a function name contains
+`{trigger}`, and stay silent otherwise. Replace that logic with your real check,
+then update the test.
 
 See `docs/plugins/plugin-authoring.md` in the Soroban DevKit repository for the full
 authoring guide.
@@ -864,6 +831,61 @@ authoring guide.
         artifact = artifact,
     );
     write_template(root, "README.md", &readme, &mut created)?;
+
+    let rule_test = format!(
+        r#"//! Integration test for the scaffolded plugin rule.
+//!
+//! Proves the placeholder rule is wired end-to-end: a trivially matching
+//! function name produces a finding, while a non-matching name stays silent.
+//! Run with `cargo test --features plugins`.
+
+use {lib_name}::{struct_name};
+use sdkt_audit::{{AuditContext, AuditReport, AuditRule, FnScan}};
+
+/// A function whose name contains the trigger word must produce exactly one
+/// finding carrying the rule id.
+#[test]
+fn rule_fires_on_trigger_function() {{
+    let scans = vec![FnScan {{
+        fn_name: format!("{{}}_admin", "{trigger}"),
+        require_auth: 0,
+        invoke_contract: 0,
+        bound: Default::default(),
+        usage: Default::default(),
+    }}];
+    let ctx = AuditContext {{ spec: None }};
+    let mut report = AuditReport::default();
+    {struct_name}.check(&scans, &ctx, &mut report);
+    assert_eq!(
+        report.summary.total, 1,
+        "placeholder rule must fire on a matching function"
+    );
+    assert_eq!(report.findings[0].rule_id, "{rule_id}");
+}}
+
+/// A function whose name does **not** contain the trigger word must produce
+/// zero findings.
+#[test]
+fn rule_silent_on_normal_function() {{
+    let scans = vec![FnScan {{
+        fn_name: "balance_of".to_string(),
+        require_auth: 0,
+        invoke_contract: 0,
+        bound: Default::default(),
+        usage: Default::default(),
+    }}];
+    let ctx = AuditContext {{ spec: None }};
+    let mut report = AuditReport::default();
+    {struct_name}.check(&scans, &ctx, &mut report);
+    assert!(report.is_clean());
+}}
+"#,
+        lib_name = lib_name,
+        struct_name = struct_name,
+        rule_id = rule_id,
+        trigger = trigger,
+    );
+    write_template(root, "tests/rule_test.rs", &rule_test, &mut created)?;
 
     write_template(root, ".gitignore", "/target\n/.sdkt\n/plugin/*.so\n/plugin/*.dylib\n/plugin/*.dll\n/plugin/*.wasm\n/plugin-wasm/*.wasm\n*.sdktplugin\n", &mut created)?;
 
