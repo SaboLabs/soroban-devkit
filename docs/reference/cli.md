@@ -398,6 +398,9 @@ sdkt generate client target/wasm32-unknown-unknown/release/my_contract.wasm
 
 # Write it to a file
 sdkt generate client contract.wasm --output src/client.rs
+
+# Generate a partial client, skipping unsupported functions
+sdkt generate client contract.wasm --skip-unsupported --output src/client.rs
 ```
 
 ### Output
@@ -420,11 +423,23 @@ Parameters and single return values of these primitive types are supported:
 
 ### Unsupported (clear failure)
 
-Any other type — UDTs, `Option`, `Result`, `Vec`, `Map`, `Tuple`, `BytesN`,
-`Val`, multiple return values — aborts generation with an error naming the
-function, the type, and the position (parameter or return). Nothing partial
+By default, any other type — UDTs, `Option`, `Result`, `Vec`, `Map`, `Tuple`,
+`BytesN`, `Val`, multiple return values — aborts generation with an error naming
+the function, the type, and the position (parameter or return). Nothing partial
 is emitted. A WASM without a `contractspecv0` section is rejected as
 "not a Soroban contract".
+
+### Partial generation (`--skip-unsupported`)
+
+Pass `--skip-unsupported` to generate call builders for the supported subset of
+functions instead of aborting the entire command:
+- Supported functions are generated in original spec order.
+- Skipped functions and their specific reasons are listed deterministically in
+  the generated file header comment.
+- If all functions in the contract are supported, output is identical to the
+  default (no-flag) output.
+- If all functions in the contract are unsupported, valid non-crashing output is
+  produced with an empty `contract_functions()` and an explanatory header.
 
 ## Plugin management
 

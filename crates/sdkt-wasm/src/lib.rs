@@ -8,7 +8,9 @@ pub mod client_gen;
 pub mod spec;
 pub mod spec_diff;
 pub use abi_decode::{find_event_abi, find_type_abi, format_scval_abi, DecodedValue};
-pub use client_gen::{generate_client, ClientGenError};
+pub use client_gen::{
+    generate_client, generate_client_with_options, ClientGenError, GenerateOptions,
+};
 pub use spec::{
     parse_contract_spec, ContractEvent, ContractFunction, ContractParameter, ContractSpec,
     ContractType,
