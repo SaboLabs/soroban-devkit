@@ -379,7 +379,24 @@
     }
     results.appendChild(csSec);
 
-    // 5. Contract specification (optional)
+    // 5. Structural metrics (present in newer metadata payloads).
+    const metricsSec = section('Structural Metrics', 'WASM structure');
+    const memory = meta.memory || null;
+    const memoryValue = memory
+      ? String(memory.initial_pages ?? 0) + ' pages (max: ' +
+        (memory.maximum_pages === null || memory.maximum_pages === undefined
+          ? 'unbounded' : String(memory.maximum_pages) + ' pages') + ')'
+      : 'none';
+    metricsSec.appendChild(kvTable([
+      ['Functions (declared)', String(meta.function_count ?? 0)],
+      ['Memory', memoryValue],
+      ['Tables', String(meta.table_count ?? 0)],
+      ['Globals', String(meta.global_count ?? 0)],
+      ['Data Segments', String(meta.data_segment_count ?? 0)],
+    ]));
+    results.appendChild(metricsSec);
+
+    // 6. Contract specification (optional)
     const specSec = section('Contract Specification', spec ? 'available' : 'not present');
     if (spec) {
       specSec.appendChild(renderFunctions(spec.functions || []));
