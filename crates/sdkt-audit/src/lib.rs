@@ -17,6 +17,7 @@ pub mod plugin_doctor;
 pub mod plugin_store;
 pub mod registry;
 pub mod rules;
+pub mod sarif;
 pub mod types;
 
 #[cfg(feature = "plugins")]
@@ -44,6 +45,7 @@ pub use registry::{
     register_builtin_rules, register_rule, run_registered, BoxedRule, RuleRegistry,
 };
 pub use rules::{Auth001, Auth002, Auth003, Auth004, Move001};
+pub use sarif::{report_to_sarif_string, to_sarif, SarifLog};
 pub use types::{AuditReport, AuditSummary, Finding, RuleInfo, Severity};
 
 #[cfg(feature = "plugins")]

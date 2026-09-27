@@ -105,9 +105,8 @@ sdkt init my-project --minimal   # scaffolds a project + .sdkt.toml
 sdkt inspect <CONTRACT_ID> --abi contract.wasm
 sdkt storage check <CONTRACT_ID> --abi contract.wasm
 sdkt storage analyze <CONTRACT_ID>
-
-# NOTE: `sdkt storage estimate` is NOT YET IMPLEMENTED (placeholder only —
-# it prints a stub message and does not compute a real storage-cost estimate).
+# Estimate storage rent offline for a WASM contract (per-class breakdown and total)
+sdkt storage estimate contract.wasm
 
 # Read a contract storage entry.
 # Option A — raw LedgerKey (base64 or hex XDR), the advanced escape hatch:
@@ -131,6 +130,34 @@ sdkt storage extend --contract <CONTRACT_ID> --ledgers 17280 --identity my-deplo
 ```
 
 ### Transaction lifecycle
+
+### Composite JSON arguments
+
+`call` and `invoke` accept repeated `--args-json` values. Each value is a JSON
+array whose elements are encoded as positional Soroban arguments, in order;
+the encoded values are appended after any `--args` values.
+
+| JSON value | Soroban value |
+| --- | --- |
+| `null` | `Void` |
+| `true` / `false` | `Bool` |
+| JSON string | `String` |
+| integer in signed 32-bit range | `I32` |
+| non-negative integer up to unsigned 32-bit range | `U32` |
+| larger signed integer | `I64` |
+| larger non-negative integer | `U64` |
+| JSON array | `Vec` |
+| JSON object | `Map<String, ScVal>` |
+
+For example:
+
+```bash
+sdkt call C... transfer --args-json '["alice", {"amount": 100}, null]'
+sdkt invoke C... transfer --args-json '["alice", {"amount": 100}]'
+```
+
+Malformed JSON, non-array roots, unsupported number representations, and values
+that exceed Soroban collection limits fail before any RPC request is sent.
 
 Build, validate, simulate, sign, and submit a Soroban transaction:
 

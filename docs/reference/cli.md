@@ -18,10 +18,11 @@ sdkt
 ├── storage
 │   ├── check <contract-id>   [--abi <wasm>] [--abi-contract <id>] [--format]
 │   ├── analyze <contract-id> [--abi <wasm>] [--abi-contract <id>] [--format]
-│   ├── estimate <wasm-path>  [--format] (NOT YET IMPLEMENTED — placeholder only)
+│   ├── estimate <wasm-path>  [--ledgers <N>] [--format <pretty|json>]
 │   ├── read --contract <contract-id> --key-xdr <BASE64_XDR> [--abi <wasm>] [--format]
 │   ├── extend --contract <contract-id> --ledgers <N> [--key <xdr>]... [--identity <name>] [--format]
 │   └── restore --contract <contract-id> --envelope <xdr> [--dry-run] [--identity <name>] [--format]
+
 │
 │   `read` fetches a single ledger entry by its complete `LedgerKey` (base64 XDR).
 │   The instance key is NOT included automatically — supply the full key via --key-xdr.
