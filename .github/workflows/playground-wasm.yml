@@ -107,6 +107,9 @@ jobs:
                 out[key] = normalize_value(child);
                 continue;
               }
+              if ((key === 'prefix_topics' || key === 'params') && Array.isArray(child) && child.length === 0) {
+                continue;
+              }
               if (key === 'kind' && typeof child === 'string') {
                 out[key] = normalize_kind(child);
               } else {
