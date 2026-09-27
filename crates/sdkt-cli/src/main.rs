@@ -2,13 +2,15 @@ use clap::{Args, CommandFactory, Parser, Subcommand};
 use clap_complete::Shell;
 use sdkt_core::fee::{FeeConfig, FeeEstimator, LedgerFeeSample, NetworkKind};
 use sdkt_core::fetch::DependencyFetcher;
-use sdkt_core::{DevKitConfig, NetworkConfig, OutputFormat};
+use sdkt_core::{
+    DevKitConfig, NetworkConfig, OutputFormat, MAINNET_PASSPHRASE, TESTNET_PASSPHRASE,
+};
 use sdkt_rpc::inspect::StorageSummary;
 use sdkt_rpc::wasm::get_wasm_bytecode;
 use sdkt_rpc::{
     estimate_dynamic_fee, extend_footprint, get_contract_events, get_next_sequence, get_ttl_info,
     get_wasm_metadata, inspect_account, inspect_contract, inspect_transaction, read_contract_state,
-    simulate_transaction, SorobanRpcClient, StorageKeyInfo, TtlInfoSummary,
+    restore_footprint, simulate_transaction, SorobanRpcClient, StorageKeyInfo, TtlInfoSummary,
 };
 use sdkt_storage::WasmCache;
 use sdkt_storage::{NetworkProfile, NetworkStore, StorageAnalyzer};
@@ -164,6 +166,125 @@ fn resolve_rpc_client(
     }
 }
 
+/// Target network resolution result for RPC commands that accept `--network`.
+struct TargetNetwork {
+    pub client: SorobanRpcClient,
+    #[allow(dead_code)]
+    pub config: NetworkConfig,
+    pub network_name: String,
+}
+
+impl std::fmt::Debug for TargetNetwork {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("TargetNetwork")
+            .field("config", &self.config)
+            .field("network_name", &self.network_name)
+            .finish()
+    }
+}
+
+/// Resolve the RPC client and canonical network name for commands that accept `--network`.
+///
+/// When `--network` is explicitly provided (`testnet`, `mainnet`, `futurenet`), it
+/// configures the well-known endpoint/passphrase and conflicts with `--rpc-url`,
+/// `--network-profile`, and `--network-passphrase`. When omitted, the network is resolved
+/// from `NetworkArgs` (profile, rpc-url, or defaults), and the canonical name is derived
+/// from the profile or passphrase.
+fn resolve_target_network(
+    network: Option<&str>,
+    net: &NetworkArgs,
+) -> Result<TargetNetwork, String> {
+    if let Some(explicit_net) = network {
+        let explicit_net = explicit_net.trim();
+        if !explicit_net.is_empty() {
+            if net.rpc_url.is_some()
+                || net.network_profile.is_some()
+                || net.network_passphrase.is_some()
+            {
+                return Err("--network conflicts with --rpc-url, --network-passphrase, and --network-profile".to_string());
+            }
+
+            let (rpc_url, passphrase, canonical_name) =
+                match explicit_net.to_ascii_lowercase().as_str() {
+                    "testnet" => (
+                        "https://soroban-testnet.stellar.org",
+                        TESTNET_PASSPHRASE,
+                        "testnet",
+                    ),
+                    "mainnet" => (
+                        "https://soroban-rpc.stellar.org",
+                        MAINNET_PASSPHRASE,
+                        "mainnet",
+                    ),
+                    "futurenet" => (
+                        "https://rpc-futurenet.stellar.org",
+                        "Test SDF Future Network ; October 2022",
+                        "futurenet",
+                    ),
+                    other => {
+                        return Err(format!(
+                            "invalid network '{}' (expected testnet|mainnet|futurenet)",
+                            other
+                        ));
+                    }
+                };
+
+            let cfg = NetworkConfig {
+                rpc_url: rpc_url.to_string(),
+                passphrase: passphrase.to_string(),
+                timeout_secs: Some(15),
+                pool_max_idle_per_host: Some(100),
+            };
+            return Ok(TargetNetwork {
+                client: SorobanRpcClient::from_config(&cfg),
+                config: cfg,
+                network_name: canonical_name.to_string(),
+            });
+        }
+    }
+
+    let cfg = resolve_network_config(
+        net.rpc_url.clone(),
+        net.network_passphrase.clone(),
+        net.network_profile.clone(),
+    )?;
+
+    let network_name = if let Some(ref profile) = net.network_profile {
+        profile.clone()
+    } else if cfg.passphrase == MAINNET_PASSPHRASE || is_mainnet_rpc_url(&cfg.rpc_url) {
+        "mainnet".to_string()
+    } else if cfg.passphrase == "Test SDF Future Network ; October 2022"
+        || is_futurenet_rpc_url(&cfg.rpc_url)
+    {
+        "futurenet".to_string()
+    } else if cfg.passphrase == TESTNET_PASSPHRASE || is_testnet_rpc_url(&cfg.rpc_url) {
+        "testnet".to_string()
+    } else {
+        "custom".to_string()
+    };
+
+    Ok(TargetNetwork {
+        client: SorobanRpcClient::from_config(&cfg),
+        config: cfg,
+        network_name,
+    })
+}
+
+fn is_mainnet_rpc_url(rpc_url: &str) -> bool {
+    let url = rpc_url.to_ascii_lowercase();
+    url.contains("stellar.org") && !url.contains("testnet") && !url.contains("futurenet")
+}
+
+fn is_futurenet_rpc_url(rpc_url: &str) -> bool {
+    let url = rpc_url.to_ascii_lowercase();
+    url.contains("futurenet")
+}
+
+fn is_testnet_rpc_url(rpc_url: &str) -> bool {
+    let url = rpc_url.to_ascii_lowercase();
+    url.contains("testnet")
+}
+
 /// Whether the operator explicitly named the target network (via `--rpc-url`,
 /// `--network-passphrase`, or `--network-profile`). When this is `false` the
 /// resolved [`NetworkConfig`] came entirely from built-in defaults (testnet),
@@ -207,6 +328,86 @@ fn resolve_rpc_client_mutating(
         process::exit(1);
     }
     SorobanRpcClient::from_config(&cfg)
+}
+
+/// Outcome of an `sdkt network check <profile>` reachability probe.
+///
+/// Serializes to the structured JSON schema used by `--format json`:
+/// `profile`, `rpc_url`, `reachable`, `status`, `latest_ledger`,
+/// `protocol_version`, `error`. `error` is `None` (serialized as `null`) only
+/// when the endpoint is reachable *and* healthy.
+#[derive(Debug, serde::Serialize)]
+struct NetworkCheckOutcome {
+    profile: String,
+    rpc_url: String,
+    reachable: bool,
+    status: Option<String>,
+    latest_ledger: Option<u32>,
+    protocol_version: Option<u32>,
+    error: Option<String>,
+}
+
+impl NetworkCheckOutcome {
+    /// A profile is healthy only when the RPC endpoint answered a ledger
+    /// query *and* the subsequent health check reported `healthy`.
+    fn is_healthy(&self) -> bool {
+        self.reachable && self.error.is_none()
+    }
+}
+
+/// Probe a resolved network endpoint for reachability without mutating any
+/// stored profile.
+///
+/// `get_ledger()` is issued first because it exercises real connectivity
+/// (transport/HTTP + JSON-RPC) and returns the latest ledger sequence and
+/// protocol version. `get_health()` then reports the node's health string.
+/// A transport/connection failure on the ledger call means the endpoint is
+/// unreachable; a healthy ledger response followed by a failed or non-healthy
+/// health call means the endpoint is reachable but not usable.
+async fn probe_network_profile(profile: &str, cfg: &NetworkConfig) -> NetworkCheckOutcome {
+    let client = SorobanRpcClient::from_config(cfg);
+    let rpc_url = cfg.rpc_url.clone();
+
+    let mut outcome = NetworkCheckOutcome {
+        profile: profile.to_string(),
+        rpc_url: rpc_url.clone(),
+        reachable: false,
+        status: None,
+        latest_ledger: None,
+        protocol_version: None,
+        error: None,
+    };
+
+    match client.get_ledger().await {
+        Ok(ledger) => {
+            outcome.reachable = true;
+            outcome.latest_ledger = Some(ledger.sequence);
+            outcome.protocol_version = Some(ledger.protocol_version);
+
+            match client.get_health().await {
+                Ok(health) => {
+                    outcome.status = Some(health.status.clone());
+                    if !health.status.eq_ignore_ascii_case("healthy") {
+                        outcome.error = Some(format!(
+                            "RPC endpoint '{}' is reachable but reported health status '{}'",
+                            rpc_url, health.status
+                        ));
+                    }
+                }
+                Err(e) => {
+                    outcome.error = Some(format!(
+                        "RPC endpoint '{}' is reachable but the health check failed: {}",
+                        rpc_url, e
+                    ));
+                }
+            }
+        }
+        Err(e) => {
+            outcome.error = Some(format!("RPC endpoint '{}' is unreachable: {}", rpc_url, e));
+        }
+    }
+
+    outcome
 }
 
 /// Adapter that makes a closed consumer (EPIPE / `BrokenPipe`) look like a
@@ -320,6 +521,101 @@ mod resolver_tests {
         assert_eq!(cfg.rpc_url, "http://flag.example");
         assert_eq!(cfg.passphrase, "Test SDF Network ; September 2015");
     }
+
+    #[test]
+    fn resolve_target_network_explicit_builtins() {
+        let net = NetworkArgs::default();
+
+        // testnet
+        let target = resolve_target_network(Some("testnet"), &net).unwrap();
+        assert_eq!(target.network_name, "testnet");
+        assert_eq!(target.config.rpc_url, "https://soroban-testnet.stellar.org");
+        assert_eq!(target.config.passphrase, TESTNET_PASSPHRASE);
+
+        // mainnet
+        let target = resolve_target_network(Some("mainnet"), &net).unwrap();
+        assert_eq!(target.network_name, "mainnet");
+        assert_eq!(target.config.rpc_url, "https://soroban-rpc.stellar.org");
+        assert_eq!(target.config.passphrase, MAINNET_PASSPHRASE);
+
+        // futurenet
+        let target = resolve_target_network(Some("futurenet"), &net).unwrap();
+        assert_eq!(target.network_name, "futurenet");
+        assert_eq!(target.config.rpc_url, "https://rpc-futurenet.stellar.org");
+        assert_eq!(
+            target.config.passphrase,
+            "Test SDF Future Network ; October 2022"
+        );
+
+        // case insensitivity
+        let target = resolve_target_network(Some("MainNet"), &net).unwrap();
+        assert_eq!(target.network_name, "mainnet");
+    }
+
+    #[test]
+    fn resolve_target_network_invalid_network_error() {
+        let net = NetworkArgs::default();
+        let err = resolve_target_network(Some("unknown_net"), &net).unwrap_err();
+        assert!(err.contains("invalid network 'unknown_net'"));
+        assert!(err.contains("expected testnet|mainnet|futurenet"));
+    }
+
+    #[test]
+    fn resolve_target_network_conflicts() {
+        let net_rpc = NetworkArgs {
+            rpc_url: Some("http://custom.rpc".to_string()),
+            ..Default::default()
+        };
+        let err = resolve_target_network(Some("mainnet"), &net_rpc).unwrap_err();
+        assert_eq!(
+            err,
+            "--network conflicts with --rpc-url, --network-passphrase, and --network-profile"
+        );
+
+        let net_profile = NetworkArgs {
+            network_profile: Some("test-profile".to_string()),
+            ..Default::default()
+        };
+        let err = resolve_target_network(Some("testnet"), &net_profile).unwrap_err();
+        assert_eq!(
+            err,
+            "--network conflicts with --rpc-url, --network-passphrase, and --network-profile"
+        );
+
+        let net_pass = NetworkArgs {
+            network_passphrase: Some("Custom Passphrase".to_string()),
+            ..Default::default()
+        };
+        let err = resolve_target_network(Some("futurenet"), &net_pass).unwrap_err();
+        assert_eq!(
+            err,
+            "--network conflicts with --rpc-url, --network-passphrase, and --network-profile"
+        );
+    }
+
+    #[test]
+    fn resolve_target_network_none_falls_back_to_network_args() {
+        let net_default = NetworkArgs::default();
+        let target = resolve_target_network(None, &net_default).unwrap();
+        assert_eq!(target.network_name, "testnet");
+        assert_eq!(target.config.rpc_url, "https://soroban-testnet.stellar.org");
+
+        let net_mainnet_rpc = NetworkArgs {
+            rpc_url: Some("https://soroban-rpc.stellar.org".to_string()),
+            ..Default::default()
+        };
+        let target = resolve_target_network(None, &net_mainnet_rpc).unwrap();
+        assert_eq!(target.network_name, "mainnet");
+
+        let net_custom = NetworkArgs {
+            rpc_url: Some("http://127.0.0.1:8000".to_string()),
+            network_passphrase: Some("Standalone Network".to_string()),
+            ..Default::default()
+        };
+        let target = resolve_target_network(None, &net_custom).unwrap();
+        assert_eq!(target.network_name, "custom");
+        assert_eq!(target.config.rpc_url, "http://127.0.0.1:8000");
+    }
 }
 
 /// Soroban DevKit — unified toolkit for Stellar/Soroban development.
@@ -350,7 +646,8 @@ enum Commands {
     },
     /// Encode typed values (TYPE:VALUE) to base64 XDR (reverse of decode)
     Encode {
-        /// Typed values to encode, e.g. u32:100 address:G... string:hello
+        /// One typed value: u32, i32, u64, i64, u128, i128, bool, string, symbol, bytes, or address.
+        /// Examples: u128:1000000 i128:-1000 bytes:deadbeef
         #[arg(value_name = "TYPE:VALUE", num_args = 1..)]
         values: Vec<String>,
     },
@@ -373,9 +670,15 @@ enum Commands {
         contract_id: String,
         #[arg(short, long, default_value = "pretty")]
         format: String,
+        /// Render the complete contract interface instead of the name-only ABI view.
+        #[arg(long, default_value_t = false)]
+        interface: bool,
         /// Path to contract WASM for ABI-aware storage inspection
         #[arg(long, value_name = "WASM")]
         abi: Option<String>,
+        /// Use the ABI of a deployed contract fetched from RPC.
+        #[arg(long, value_name = "CONTRACT_ID")]
+        abi_contract: Option<String>,
         #[command(flatten)]
         net: NetworkArgs,
     },
@@ -387,9 +690,16 @@ enum Commands {
         /// Path to a local WASM file to compare against the on-chain code
         #[arg(long, value_name = "WASM")]
         wasm: Option<String>,
-        /// Network to fetch the on-chain contract from
-        #[arg(short, long, default_value = "testnet")]
-        network: String,
+        /// Network to fetch the on-chain contract from (testnet | mainnet | futurenet)
+        #[arg(
+            short,
+            long,
+            value_name = "NETWORK",
+            conflicts_with = "rpc_url",
+            conflicts_with = "network_profile",
+            conflicts_with = "network_passphrase"
+        )]
+        network: Option<String>,
         /// Output format
         #[arg(short, long, default_value = "pretty")]
         format: String,
@@ -408,9 +718,16 @@ enum Commands {
         /// Optional local WASM to verify against the on-chain hash
         #[arg(long, value_name = "WASM")]
         wasm: Option<String>,
-        /// Network label for the report
-        #[arg(short, long, default_value = "testnet")]
-        network: String,
+        /// Network label for the report (testnet | mainnet | futurenet)
+        #[arg(
+            short,
+            long,
+            value_name = "NETWORK",
+            conflicts_with = "rpc_url",
+            conflicts_with = "network_profile",
+            conflicts_with = "network_passphrase"
+        )]
+        network: Option<String>,
         /// Output format
         #[arg(short, long, default_value = "pretty")]
         format: String,
@@ -484,9 +801,13 @@ enum Commands {
     /// Static security analysis of a Soroban contract source file (Gap C)
     Audit {
         /// Path to the Rust source file (.rs) to analyze
-        path: String,
+        #[arg(required_unless_present = "list_rules")]
+        path: Option<String>,
         #[arg(short, long, default_value = "pretty")]
         format: String,
+        /// List available audit rules and exit
+        #[arg(long, default_value_t = false)]
+        list_rules: bool,
         /// Disable a rule by id (repeatable), e.g. --disable MOVE-001
         #[arg(long, value_name = "RULE_ID", action = clap::ArgAction::Append)]
         disable: Vec<String>,
@@ -569,6 +890,9 @@ enum Commands {
         /// Typed arguments (e.g. u32:100, address:G..., string:hello, bool:true)
         #[arg(short, long, value_name = "TYPE:VALUE")]
         args: Vec<String>,
+        /// Composite arguments as a JSON array; appended after --args values.
+        #[arg(long, value_name = "JSON")]
+        args_json: Vec<String>,
         #[arg(short, long, default_value = "pretty")]
         format: String,
         /// Path to contract WASM for ABI-aware result decoding
@@ -593,6 +917,9 @@ enum Commands {
         /// Typed arguments (e.g. u32:100, address:G..., string:hello, bool:true)
         #[arg(short, long, value_name = "TYPE:VALUE")]
         args: Vec<String>,
+        /// Composite arguments as a JSON array; appended after --args values.
+        #[arg(long, value_name = "JSON")]
+        args_json: Vec<String>,
         /// Identity name whose account signs and pays for the invocation
         #[arg(short = 'I', long, default_value = "default")]
         identity: String,
@@ -602,6 +929,9 @@ enum Commands {
         /// Return after submission with the transaction hash instead of polling for settlement
         #[arg(long)]
         no_wait: bool,
+        /// Build and sign the invocation envelope, print it, and stop without submitting (#73)
+        #[arg(long)]
+        build_only: bool,
         #[command(flatten)]
         net: NetworkArgs,
     },
@@ -657,6 +987,9 @@ enum GenerateAction {
         /// Output file path (prints to stdout if omitted)
         #[arg(short, long, value_name = "PATH")]
         output: Option<String>,
+        /// Skip functions with unsupported types instead of aborting
+        #[arg(long)]
+        skip_unsupported: bool,
     },
 }
 
@@ -717,9 +1050,10 @@ enum PluginAction {
         #[arg(short, long, default_value = "pretty")]
         format: String,
     },
-    /// Install a plugin from a local artifact + sibling plugin.toml
+    /// Install a plugin from a local artifact + sibling plugin.toml, or from a
+    /// `.sdktplugin` bundle (verified before anything is installed)
     Install {
-        /// Path to the local plugin artifact (.so/.dylib/.dll/.wasm)
+        /// Path to the local plugin artifact (.so/.dylib/.dll/.wasm) or `.sdktplugin` bundle
         source: String,
         /// Override the plugin id from metadata (rarely needed)
         #[arg(long)]
@@ -727,6 +1061,10 @@ enum PluginAction {
         /// Overwrite an existing install of the same id
         #[arg(long)]
         force: bool,
+        /// Require the bundle to be signed by this Ed25519 public key file (32 bytes, raw);
+        /// unsigned bundles are refused
+        #[arg(long)]
+        public_key: Option<String>,
         /// Output format (pretty or json)
         #[arg(short, long, default_value = "pretty")]
         format: String,
@@ -768,6 +1106,18 @@ enum PluginAction {
         /// Optional Ed25519 public key file for signature verification (32 bytes, raw)
         #[arg(long)]
         public_key: Option<String>,
+        /// Output format (pretty or json)
+        #[arg(short, long, default_value = "pretty")]
+        format: String,
+    },
+    /// Run end-to-end diagnostics and self-check on an installed plugin, directory, or bundle
+    Doctor {
+        /// Target plugin id, directory, or .sdktplugin bundle
+        #[arg(required_unless_present = "all", conflicts_with = "all")]
+        target: Option<String>,
+        /// Run doctor across all installed plugins in the store
+        #[arg(long)]
+        all: bool,
         /// Output format (pretty or json)
         #[arg(short, long, default_value = "pretty")]
         format: String,
@@ -818,6 +1168,14 @@ enum NetworkAction {
         #[arg(short, long, default_value = "pretty")]
         format: String,
     },
+    /// Check that a saved profile's RPC endpoint is reachable
+    Check {
+        /// Profile name
+        name: String,
+        /// Output format (pretty or json)
+        #[arg(short, long, default_value = "pretty")]
+        format: String,
+    },
 }
 
 #[derive(Subcommand)]
@@ -833,13 +1191,23 @@ enum WasmAction {
     Metadata {
         #[arg(short, long)]
         contract: String,
-        #[arg(short, long, default_value = "testnet")]
-        network: String,
+        /// Network to fetch the on-chain contract from (testnet | mainnet | futurenet)
+        #[arg(
+            short,
+            long,
+            value_name = "NETWORK",
+            conflicts_with = "rpc_url",
+            conflicts_with = "network_profile",
+            conflicts_with = "network_passphrase"
+        )]
+        network: Option<String>,
         /// Force bypass the cache and fetch fresh from RPC
         #[arg(long, default_value_t = false)]
         refresh: bool,
         #[arg(short, long, default_value = "pretty")]
         format: String,
+        #[command(flatten)]
+        net: NetworkArgs,
     },
     /// Manage the local WASM cache
     Cache {
@@ -989,11 +1357,19 @@ enum TxAction {
 
 #[derive(Subcommand)]
 enum ProjectCommand {
-    /// Deploy all contracts defined in the workspace
+    /// Deploy all contracts defined in the workspace. Every deployed contract
+    /// is persisted to `.sdkt-deployments.json` (per network profile) so a
+    /// failure mid-graph never loses the contracts that already landed.
     Deploy {
-        /// Optional deployment salt base
-        #[arg(short, long, default_value = "deploy")]
-        salt: String,
+        /// Deployment salt (40 hex chars = 20 bytes). Auto-generated if omitted.
+        #[arg(short, long)]
+        salt: Option<String>,
+        /// Skip aliases whose recorded contract ID still exists on-chain
+        /// (verified via getLedgerEntries against the `.sdkt-deployments.json`
+        /// record for this network profile). Resume an interrupted deploy
+        /// without re-deploying (and re-paying for) what already succeeded.
+        #[arg(long)]
+        skip_deployed: bool,
         #[arg(short, long, default_value = "pretty")]
         format: String,
     },
@@ -1084,13 +1460,53 @@ enum StorageAction {
         #[arg(short, long, default_value = "pretty")]
         format: String,
     },
+    /// Estimate storage rent cost for a WASM contract offline based on its ContractSpec.
+    ///
+    /// Computes an offline baseline storage cost breakdown per storage class
+    /// (Instance, Persistent, Temporary) and total cost in stroops and XLM, using the
+    /// rent approximation (100 stroops/ledger/entry).
+    ///
+    /// Note: This is an offline baseline derived from the contract's declared ABI.
+    /// Dynamic runtime entries (e.g. user balances created during contract execution)
+    /// cannot be predicted offline. For live on-chain storage inspection, use
+    /// `sdkt storage analyze`.
     Estimate {
+        /// Path to the compiled contract WASM file.
         wasm: String,
+        /// Number of ledgers to estimate extension cost for (default: 17280, ~1 day at 5s/ledger).
+        #[arg(short, long, default_value = "17280")]
+        ledgers: u32,
+        /// Output format (pretty or json).
+        #[arg(short, long, default_value = "pretty")]
+        format: String,
     },
     /// Analyze a contract's storage layout (Instance/Persistent/Temporary
     /// categorization, TTL summary, and per-entry detail).
     Analyze {
         contract_id: String,
+        /// Repeatable: extra ledger keys (base64 XDR or hex XDR) to include in
+        /// the analysis. The contract instance key is always included.
+        #[arg(long, value_name = "BASE64_XDR", alias = "key")]
+        key_xdr: Vec<String>,
+        /// Leading symbol of a typed data key — the map/enum-variant name.
+        /// Combined with `--key-arg` this builds `ScVec[symbol, args...]`,
+        /// e.g. `--map-key balances --key-arg address:G...`.
+        #[arg(long, value_name = "SYMBOL")]
+        map_key: Option<String>,
+        /// Repeatable typed key component (`TYPE:VALUE`, e.g. `address:G...`,
+        /// `u32:100`) appended after `--map-key`. Requires `--map-key`.
+        #[arg(long, value_name = "TYPE:VALUE")]
+        key_arg: Vec<String>,
+        /// Include the contract's instance-storage entry (always included by default).
+        #[arg(long)]
+        instance: bool,
+        /// Durability of a typed data key: `persistent` (default) or `temporary`.
+        #[arg(
+            long,
+            value_name = "persistent|temporary",
+            default_value = "persistent"
+        )]
+        durability: String,
         #[arg(short, long, default_value = "pretty")]
         format: String,
     },
@@ -1109,6 +1525,27 @@ enum StorageAction {
         /// Identity name to sign the extend transaction. Defaults to "default".
         #[arg(short = 'I', long, default_value = "default")]
         identity: String,
+        #[arg(short, long, default_value = "pretty")]
+        format: String,
+    },
+    /// Restore archived contract storage via `RestoreFootprint`.
+    ///
+    /// Simulates the invocation that hit archived state, adopts the
+    /// `restorePreamble` footprint and minimum resource fee, then signs and
+    /// submits a `RestoreFootprint` transaction.
+    Restore {
+        /// Contract whose archived storage should be restored.
+        #[arg(long)]
+        contract: String,
+        /// Transaction envelope (base64 XDR) of the invocation that failed due to archived state.
+        #[arg(long)]
+        envelope: String,
+        /// Identity name to sign the restore transaction. Defaults to "default".
+        #[arg(short = 'I', long, default_value = "default")]
+        identity: String,
+        /// Dry-run: show what would be restored without submitting.
+        #[arg(long)]
+        dry_run: bool,
         #[arg(short, long, default_value = "pretty")]
         format: String,
     },
@@ -1419,6 +1856,30 @@ async fn verify_contract(
     })
 }
 
+/// Parse a `--salt` value (40 hex chars) into a 20-byte deployment salt.
+/// Shared by `deploy` and `project deploy`; validates strictly.
+fn parse_salt_hex(s: &str) -> Result<[u8; 20], String> {
+    let sh = s.trim();
+    if sh.len() != 40 {
+        return Err(format!(
+            "Invalid --salt: must be 20-byte hex (40 hex chars), got length {}",
+            sh.len()
+        ));
+    }
+    if let Some(pos) = sh.chars().position(|c| !c.is_ascii_hexdigit()) {
+        return Err(format!(
+            "Invalid --salt: character at index {} is not a hex digit",
+            pos
+        ));
+    }
+    let mut out = [0u8; 20];
+    for i in 0..20 {
+        out[i] = u8::from_str_radix(&sh[i * 2..i * 2 + 2], 16)
+            .map_err(|e| format!("Invalid --salt hex at byte {}: {}", i, e))?;
+    }
+    Ok(out)
+}
+
 fn parse_format_str(s: &str) -> OutputFormat {
     match s.to_lowercase().as_str() {
         "json" => OutputFormat::Json,
@@ -1437,6 +1898,29 @@ fn parse_format_str(s: &str) -> OutputFormat {
 /// `InvokeTransactionParams::args`. Values without a recognized `TYPE:` prefix
 /// are passed through as-is (assumed pre-encoded base64 ScVal), matching the
 /// historical `tx build` behavior.
+/// Decode a `bytes:` hex value, shared by `parse_typed_args` and `run_encode`
+/// so both report the same error for the same input. Non-ASCII input is
+/// rejected up front: slicing at byte offsets would otherwise land inside a
+/// multi-byte character and panic.
+fn parse_hex_bytes(raw: &str) -> Result<Vec<u8>, String> {
+    let hex = raw.trim();
+    if !hex.is_ascii() {
+        return Err(format!("invalid bytes value: {raw} (expected ASCII hex)"));
+    }
+    if !hex.len().is_multiple_of(2) {
+        return Err(format!(
+            "invalid bytes value: {raw} (hex must have an even number of digits)"
+        ));
+    }
+    (0..hex.len())
+        .step_by(2)
+        .map(|i| {
+            u8::from_str_radix(&hex[i..i + 2], 16)
+                .map_err(|_| format!("invalid bytes value: {raw} (invalid hex byte)"))
+        })
+        .collect()
+}
+
 fn parse_typed_args(args: &[String], strict: bool) -> Result<Vec<String>, String> {
     use sdkt_xdr::{scval_to_base64, Address, IntoScVal};
     let mut parsed = Vec::new();
@@ -1481,16 +1965,7 @@ fn parse_typed_args(args: &[String], strict: bool) -> Result<Vec<String>, String
                 "string" => scval_to_base64(&v.into_scval().map_err(|e| e.to_string())?)
                     .map_err(|e| e.to_string())?,
                 "bytes" => {
-                    let mut b = Vec::new();
-                    let s = v.trim();
-                    if s.len() % 2 != 0 {
-                        return Err(format!("invalid hex byte in: {v}"));
-                    }
-                    for i in (0..s.len()).step_by(2) {
-                        let byte = u8::from_str_radix(&s[i..i + 2], 16)
-                            .map_err(|_| format!("invalid hex byte in: {v}"))?;
-                        b.push(byte);
-                    }
+                    let b = parse_hex_bytes(v)?;
                     scval_to_base64(&b.into_scval().map_err(|e| e.to_string())?)
                         .map_err(|e| e.to_string())?
                 }
@@ -1534,6 +2009,94 @@ fn parse_typed_args(args: &[String], strict: bool) -> Result<Vec<String>, String
         }
     }
     Ok(parsed)
+}
+
+fn render_contract_interface(spec: &sdkt_wasm::ContractSpec, markdown: bool) -> String {
+    let mut out = String::new();
+    let heading = if markdown {
+        "# Contract Interface"
+    } else {
+        "Contract Interface"
+    };
+    out.push_str(heading);
+    out.push_str("\n\n");
+    out.push_str(if markdown {
+        "## Functions\n\n"
+    } else {
+        "Functions:\n"
+    });
+    for function in &spec.functions {
+        let params = function
+            .parameters
+            .iter()
+            .map(|p| format!("{}: {}", p.name, p.type_.name))
+            .collect::<Vec<_>>()
+            .join(", ");
+        let outputs = function
+            .outputs
+            .iter()
+            .map(|t| t.name.as_str())
+            .collect::<Vec<_>>()
+            .join(", ");
+        let signature = format!(
+            "{}({}) -> {}",
+            function.name,
+            params,
+            if outputs.is_empty() { "()" } else { &outputs }
+        );
+        if markdown {
+            out.push_str(&format!("- `{signature}`\n"));
+        } else {
+            out.push_str(&format!("  {}\n", signature));
+        }
+        if !function.doc.is_empty() {
+            out.push_str(&format!("  {}\n", function.doc));
+        }
+    }
+    if !spec.events.is_empty() {
+        out.push_str(if markdown {
+            "\n## Events\n\n"
+        } else {
+            "\nEvents:\n"
+        });
+        for event in &spec.events {
+            out.push_str(&format!(
+                "{}{}\n",
+                if markdown { "- " } else { "  " },
+                event.name
+            ));
+        }
+    }
+    if !spec.custom_types.is_empty() {
+        out.push_str(if markdown {
+            "\n## Types\n\n"
+        } else {
+            "\nTypes:\n"
+        });
+        for ty in &spec.custom_types {
+            let members = ty
+                .members
+                .iter()
+                .map(|m| m.name.as_str())
+                .collect::<Vec<_>>()
+                .join(", ");
+            out.push_str(&format!(
+                "{}{}{}{}\n",
+                if markdown { "- **" } else { "  " },
+                ty.name,
+                if markdown { "**" } else { "" },
+                if members.is_empty() {
+                    format!(" ({})", ty.kind)
+                } else {
+                    format!(" ({}) {{{}}}", ty.kind, members)
+                }
+            ));
+            if !ty.doc.is_empty() {
+                out.push_str(&format!("  {}\n", ty.doc));
+            }
+        }
+    }
+    out.trim_end().to_string()
 }
 
 /// Parse a `storage read` durability value into `ContractDataDurability`.
@@ -1609,13 +2172,54 @@ fn resolve_storage_read_key(
     .map_err(|e| format!("failed to build LedgerKey: {e}"))
 }
 
+/// Resolve the list of extra `LedgerKey`s for `storage analyze` from the supplied
+/// CLI arguments.
+///
+/// Accepts repeatable raw keys via `key_xdr` (`--key-xdr`/`--key`) and/or a typed
+/// key specification via `--map-key`/`--key-arg`/`--durability`.
+///
+/// Validates key specifications offline without network/RPC calls.
+fn resolve_storage_analyze_keys(
+    contract: &str,
+    key_xdr: &[String],
+    map_key: Option<&str>,
+    key_arg: &[String],
+    durability: &str,
+) -> Result<Vec<String>, String> {
+    if !key_arg.is_empty() && map_key.is_none() {
+        return Err("--key-arg requires --map-key".to_string());
+    }
+
+    let mut keys = Vec::new();
+
+    for raw in key_xdr {
+        if raw.trim().is_empty() {
+            return Err("--key-xdr must not be empty".to_string());
+        }
+        // Validate that raw is valid base64 or hex XDR for a LedgerKey
+        sdkt_xdr::decode_ledger_key(raw).map_err(|e| format!("invalid LedgerKey: {e}"))?;
+        keys.push(raw.to_string());
+    }
+
+    if let Some(symbol) = map_key {
+        let typed_key =
+            resolve_storage_read_key(contract, None, Some(symbol), key_arg, false, durability)?;
+        keys.push(typed_key);
+    } else if durability != "persistent" {
+        // Validate durability even if map_key is absent, so invalid durability flags error offline.
+        parse_durability(durability)?;
+    }
+
+    Ok(keys)
+}
+
 /// Encode typed `TYPE:VALUE` values to a single base64 XDR `ScVal` string.
 ///
 /// This is the write-direction counterpart to `sdkt decode`. Supported types
 /// are the primitives this CLI already encodes elsewhere (`parse_typed_args`):
-/// `u32`, `i32`, `u64`, `i64`, `bool`, `address`, `string`, `symbol`. Exactly one value
-/// is encoded per invocation; passing more than one is rejected to keep the
-/// output unambiguous.
+/// `u32`, `i32`, `u64`, `i64`, `u128`, `i128`, `bool`, `address`, `string`,
+/// `symbol`, `bytes`. Exactly one value is encoded per invocation; passing
+/// more than one is rejected to keep the output unambiguous.
 fn run_encode(values: &[String]) -> Result<String, String> {
     if values.is_empty() {
         return Err("no input provided: pass a value like u32:100".to_string());
@@ -1655,12 +2259,25 @@ fn run_encode(values: &[String]) -> Result<String, String> {
             .map_err(|_| format!("invalid i64 value: {raw}"))?
             .into_scval()
             .map_err(|e| e.to_string())?,
+        "u128" => raw
+            .parse::<u128>()
+            .map_err(|_| format!("invalid u128 value: {raw}"))?
+            .into_scval()
+            .map_err(|e| e.to_string())?,
+        "i128" => raw
+            .parse::<i128>()
+            .map_err(|_| format!("invalid i128 value: {raw}"))?
+            .into_scval()
+            .map_err(|e| e.to_string())?,
         "bool" => raw
             .parse::<bool>()
             .map_err(|_| format!("invalid bool value: {raw}"))?
             .into_scval()
             .map_err(|e| e.to_string())?,
         "string" => raw.to_string().into_scval().map_err(|e| e.to_string())?,
+        "bytes" => parse_hex_bytes(raw)?
+            .into_scval()
+            .map_err(|e| e.to_string())?,
         "symbol" => {
             if raw.len() > 32 {
                 return Err(format!("symbol exceeds 32 bytes (got {} bytes)", raw.len()));
@@ -1676,12 +2293,80 @@ fn run_encode(values: &[String]) -> Result<String, String> {
             .map_err(|e| e.to_string())?,
         other => {
             return Err(format!(
-                "unknown type '{other}'. Use u32|i32|u64|i64|bool|string|symbol|address"
+                "unknown type '{other}'. Use u32|i32|u64|i64|u128|i128|bool|string|symbol|bytes|address"
             ))
         }
     };
 
     scval_to_base64(&scval).map_err(|e| e.to_string())
+}
+
+#[cfg(test)]
+mod encode_tests {
+    use super::{parse_typed_args, run_encode};
+
+    #[test]
+    fn new_types_match_runtime_typed_arguments() {
+        for input in [
+            "u128:0",
+            "u128:+42",
+            "u128:18446744073709551617",
+            "u128:340282366920938463463374607431768211455",
+            "U128:1000000",
+            "i128:0",
+            "i128:-0",
+            "i128:+42",
+            "i128:-1000",
+            "i128:18446744073709551617",
+            "i128:-18446744073709551617",
+            "i128:170141183460469231731687303715884105727",
+            "i128:-170141183460469231731687303715884105728",
+            "I128:-1",
+            "bytes:000aFF",
+            "ByTeS:DeAdBeEf",
+            "bytes:",
+            "bytes: \t\n",
+            "bytes:\u{2003}000aFF\u{2003}",
+            "bytes:\u{2003}",
+            // The runtime parser accepts a leading plus in each radix pair.
+            "bytes:+f",
+            "bytes:0a+F",
+        ] {
+            let args = [input.to_string()];
+            let encoded = run_encode(&args).unwrap_or_else(|e| panic!("{input}: {e}"));
+            for strict in [false, true] {
+                let runtime =
+                    parse_typed_args(&args, strict).unwrap_or_else(|e| panic!("{input}: {e}"));
+                assert_eq!(encoded, runtime[0], "{input} (strict={strict})");
+            }
+        }
+    }
+
+    #[test]
+    fn parse_typed_args_rejects_non_ascii_bytes_without_panic() {
+        // "a€" has an even byte length (1 + 3), so only the ASCII guard stops
+        // the pair slicing from cutting into the '€'.
+        for value in ["💥", "a€"] {
+            let input = [format!("bytes:{value}")];
+            let expected = format!("invalid bytes value: {value} (expected ASCII hex)");
+            for strict in [false, true] {
+                let err = parse_typed_args(&input, strict).unwrap_err();
+                assert_eq!(err, expected, "strict={strict}");
+            }
+            assert_eq!(run_encode(&input).unwrap_err(), expected);
+        }
+    }
+
+    #[test]
+    fn parse_typed_args_bytes_errors_match_encode() {
+        for input in ["bytes:abc", "bytes:zz", "bytes: 0g "] {
+            let args = [input.to_string()];
+            let encode_err = run_encode(&args).unwrap_err();
+            for strict in [false, true] {
+                assert_eq!(parse_typed_args(&args, strict).unwrap_err(), encode_err);
+            }
+        }
+    }
 }
 
 fn load_config() -> DevKitConfig {
@@ -1694,13 +2379,18 @@ fn load_config() -> DevKitConfig {
     }
 }
 
-/// Resolve a `--input` value to envelope text.
+/// Resolve a transaction envelope argument (`--input` / `--envelope`) to
+/// envelope text.
 ///
-/// Filesystem rules (matching the rest of the `tx` subcommands):
+/// Filesystem rules shared by `tx sign`, `tx validate`, `tx simulate` and
+/// `tx submit`:
 /// - If the path exists, read it as a file.
 /// - If it does not exist but looks like a (missing) path, report a clear
 ///   "invalid file" error instead of silently mis-parsing it as base64.
 /// - Otherwise treat the value as an inline base64 string.
+///
+/// `/` is part of the standard base64 alphabet, so a value that is
+/// well-formed base64 is never treated as a path, even if it contains `/`.
 fn resolve_tx_input(input: &str) -> Result<String, String> {
     if fs::metadata(input).is_ok() {
         return fs::read_to_string(input)
@@ -1710,13 +2400,52 @@ fn resolve_tx_input(input: &str) -> Result<String, String> {
         || input.contains('\\')
         || input.ends_with(".xdr")
         || input.ends_with(".txt");
-    if looks_like_path {
+    if looks_like_path && !is_standard_base64(input.trim()) {
         return Err(format!(
             "invalid file '{}': no such file or directory",
             input
         ));
     }
     Ok(input.to_string())
+}
+
+/// Whether `s` is padded standard base64 (`A-Z a-z 0-9 + /`, length a multiple
+/// of four, at most two trailing `=`).
+fn is_standard_base64(s: &str) -> bool {
+    let body = s.trim_end_matches('=');
+    !s.is_empty()
+        && s.len().is_multiple_of(4)
+        && s.len() - body.len() <= 2
+        && body
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || b == b'+' || b == b'/')
+}
+
+#[cfg(test)]
+mod tx_input_tests {
+    use super::{is_standard_base64, resolve_tx_input};
+
+    #[test]
+    fn base64_check_accepts_padded_standard_alphabet() {
+        assert!(is_standard_base64("AAAA/+8="));
+        assert!(is_standard_base64("AA=="));
+        assert!(!is_standard_base64(""));
+        assert!(!is_standard_base64("AAA"));
+        assert!(!is_standard_base64("A==="));
+        assert!(!is_standard_base64("tx/unsigned.xdr"));
+        assert!(!is_standard_base64("AA=A"));
+    }
+
+    #[test]
+    fn missing_path_is_reported_but_slashed_base64_passes_through() {
+        let err = resolve_tx_input("no/such/tx.xdr").unwrap_err();
+        assert_eq!(
+            err,
+            "invalid file 'no/such/tx.xdr': no such file or directory"
+        );
+        assert_eq!(resolve_tx_input("AAAA/+8=").unwrap(), "AAAA/+8=");
+        assert_eq!(resolve_tx_input("not-base64").unwrap(), "not-base64");
+    }
 }
 
 /// Render a `ContractFunction`'s signature as `name(params) -> outputs`.
@@ -1933,6 +2662,24 @@ fn command_on_path(program: &str) -> bool {
     path_contains_command(&std::env::var_os("PATH").unwrap_or_default(), program)
 }
 
+/// Read a raw 32-byte Ed25519 public key file, exiting with a clear error on failure.
+fn read_public_key_or_exit(
+    key_path: &str,
+) -> sdkt_audit::plugin_store::ed25519_dalek::VerifyingKey {
+    let bytes = std::fs::read(key_path).unwrap_or_else(|e| {
+        eprintln!("Error reading public key: {}", e);
+        process::exit(1);
+    });
+    let arr: [u8; 32] = bytes.try_into().unwrap_or_else(|_| {
+        eprintln!("Error: public key must be exactly 32 bytes");
+        process::exit(1);
+    });
+    sdkt_audit::plugin_store::ed25519_dalek::VerifyingKey::from_bytes(&arr).unwrap_or_else(|_| {
+        eprintln!("Error: invalid Ed25519 public key");
+        process::exit(1);
+    })
+}
+
 /// True when `installed` (the line-separated output of
 /// `rustup target list --installed`) contains a WASM target that `sdkt build`
 /// can compile contracts with. The build engine hardcodes
@@ -2144,10 +2891,83 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
             abi_contract,
             net,
         } => {
+            // Storage estimate is completely offline and self-contained; dispatch
+            // before shared storage RPC client setup or on-chain ABI resolution.
+            if let StorageAction::Estimate {
+                wasm,
+                ledgers,
+                format,
+            } = &action
+            {
+                if abi.is_some() || abi_contract.is_some() {
+                    eprintln!(
+                        "Error: --abi and --abi-contract options do not apply to 'storage estimate'"
+                    );
+                    process::exit(1);
+                }
+
+                let fmt = parse_format_str(format);
+                let wasm_bytes = match fs::read(wasm) {
+                    Ok(b) => b,
+                    Err(e) => {
+                        eprintln!("Error: cannot read WASM '{}': {}", wasm, e);
+                        process::exit(1);
+                    }
+                };
+
+                let spec = match parse_contract_spec(&wasm_bytes) {
+                    Ok(s) => s,
+                    Err(e) => {
+                        eprintln!("Error: {}: {}", wasm, e);
+                        process::exit(1);
+                    }
+                };
+
+                let estimate = sdkt_storage::estimate_storage_from_spec(&spec, wasm, *ledgers);
+
+                match fmt {
+                    OutputFormat::Json => {
+                        let json_str = serde_json::to_string_pretty(&estimate)
+                            .expect("storage cost estimate serializes");
+                        println!("{}", json_str);
+                    }
+                    _ => {
+                        print!("{}", estimate);
+                    }
+                }
+                return Ok(());
+            }
+
             if abi.is_some() && abi_contract.is_some() {
                 eprintln!("Error: specify only one of --abi or --abi-contract");
                 process::exit(1);
             }
+
+            let analyze_extra_keys = if let StorageAction::Analyze {
+                contract_id,
+                key_xdr,
+                map_key,
+                key_arg,
+                durability,
+                ..
+            } = &action
+            {
+                match resolve_storage_analyze_keys(
+                    contract_id,
+                    key_xdr,
+                    map_key.as_deref(),
+                    key_arg,
+                    durability,
+                ) {
+                    Ok(k) => Some(k),
+                    Err(e) => {
+                        eprintln!("Error: {e}");
+                        process::exit(1);
+                    }
+                }
+            } else {
+                None
+            };
 
             let client = resolve_rpc_client(
                 net.rpc_url.clone(),
@@ -2158,10 +2978,6 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
             // Load ABI spec if provided. Two mutually exclusive sources:
             // a local WASM file (`--abi`) or a deployed contract's on-chain WASM
             // fetched via the path (`--abi-contract`).
-            if abi.is_some() && abi_contract.is_some() {
-                eprintln!("Error: specify only one of --abi or --abi-contract");
-                process::exit(1);
-            }
 
             let contract_spec: Option<sdkt_wasm::ContractSpec> =
                 if let Some(wasm_path) = abi.as_ref() {
@@ -2260,14 +3076,15 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
                         }
                     }
                 }
-                StorageAction::Estimate { wasm } => {
-                    println!("Storage Estimate for {} (Not yet implemented)", wasm);
-                }
+                StorageAction::Estimate { .. } => unreachable!(),
                 StorageAction::Analyze {
                     contract_id,
                     format,
+                    ..
                 } => {
                     let fmt = parse_format_str(&format);
+                    let extra_keys = analyze_extra_keys.expect("resolved for Analyze");
+
                     let client = resolve_rpc_client(
                         net.rpc_url.clone(),
                         net.network_passphrase.clone(),
@@ -2275,7 +3092,10 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
                     );
                     let analyzer = sdkt_storage::StorageAnalyzer::new(client);
 
-                    match analyzer.inspect_contract_storage(&contract_id).await {
+                    match analyzer
+                        .inspect_contract_storage_keys(&contract_id, &extra_keys)
+                        .await
+                    {
                         Ok(report) => {
                             if fmt == OutputFormat::Json {
                                 println!("{}", serde_json::to_string(&report)?);
@@ -2414,6 +3234,116 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
                         }
                     }
                 }
+                StorageAction::Restore {
+                    contract,
+                    envelope,
+                    identity,
+                    dry_run,
+                    format,
+                } => {
+                    let fmt = parse_format_str(&format);
+
+                    if contract.trim().is_empty() {
+                        eprintln!("Error: --contract / contract id must not be empty");
+                        process::exit(1);
+                    }
+                    if let Err(e) = sdkt_xdr::decode_contract_id(contract.trim()) {
+                        eprintln!("Error: invalid --contract '{}': {}", contract, e);
+                        process::exit(1);
+                    }
+                    if envelope.trim().is_empty() {
+                        eprintln!("Error: --envelope must not be empty");
+                        process::exit(1);
+                    }
+                    if let Err(e) =
+                        sdkt_xdr::decode(envelope.trim(), Some("TransactionEnvelope"), fmt)
+                    {
+                        eprintln!(
+                            "Error: --envelope is not a base64 XDR TransactionEnvelope: {}",
+                            e
+                        );
+                        process::exit(1);
+                    }
+
+                    let network_config = resolve_network_config(
+                        net.rpc_url.clone(),
+                        net.network_passphrase.clone(),
+                        net.network_profile.clone(),
+                    )?;
+                    let network = match network_config.passphrase.as_str() {
+                        "Test SDF Network ; September 2015" => sdkt_xdr::sign::Network::Testnet,
+                        "Public Global Stellar Network ; September 2015" => {
+                            sdkt_xdr::sign::Network::Mainnet
+                        }
+                        "Test SDF Future Network ; October 2022" => {
+                            sdkt_xdr::sign::Network::Futurenet
+                        }
+                        other => sdkt_xdr::sign::Network::Custom(other.to_string()),
+                    };
+                    let network_is_explicit = net.rpc_url.is_some()
+                        || net.network_passphrase.is_some()
+                        || net.network_profile.is_some();
+                    if let Err(e) =
+                        sdkt_core::guard_mutating_network(&network_config, network_is_explicit)
+                    {
+                        eprintln!("Error: {}", e);
+                        process::exit(1);
+                    }
+
+                    let identity_store = sdkt_storage::IdentityStore::new()
+                        .map_err(|e| format!("Failed to access identity store: {}", e))?;
+                    let identity_obj = identity_store
+                        .get(&identity)
+                        .map_err(|e| format!("Identity '{}' not found: {}", identity, e))?;
+                    let signing_key = identity_store.load_signing_key(&identity).map_err(|e| {
+                        format!("Failed to load signing key for '{}': {}", identity, e)
+                    })?;
+                    let signer = sdkt_xdr::sign::Ed25519Signer::from_seed(&signing_key.to_bytes());
+                    let source_account = identity_obj.public_key.clone();
+                    let client = SorobanRpcClient::from_config(&network_config);
+
+                    match restore_footprint(
+                        &client,
+                        contract.trim(),
+                        envelope.trim(),
+                        &source_account,
+                        &signer,
+                        network,
+                        dry_run,
+                    )
+                    .await
+                    {
+                        Ok(res) => {
+                            if fmt == OutputFormat::Json {
+                                println!("{}", serde_json::to_string(&res)?);
+                            } else {
+                                if dry_run {
+                                    println!("Storage Restore (dry run, not submitted)");
+                                } else {
+                                    println!("Storage Restore");
+                                }
+                                println!("  Contract:       {}", res.contract_id);
+                                println!("  Restored Keys:  {}", res.restored_keys);
+                                for (i, k) in res.footprint_keys.iter().enumerate() {
+                                    println!("    #{} {}", i + 1, k);
+                                }
+                                println!(
+                                    "  TX Hash:        {}",
+                                    res.hash.as_deref().unwrap_or("(not submitted)")
+                                );
+                                println!(
+                                    "  Fee:            {} stroops (min resource fee {})",
+                                    res.fee, res.min_resource_fee
+                                );
+                                println!("  Status:         {}", res.status);
+                            }
+                        }
+                        Err(e) => {
+                            eprintln!("Error restoring storage: {}", e);
+                            process::exit(1);
+                        }
+                    }
+                }
                 StorageAction::Read {
                     contract,
                     key_xdr,
@@ -2517,10 +3447,20 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
         Commands::Inspect {
             contract_id,
             format,
+            interface,
             abi,
+            abi_contract,
             net,
         } => {
-            let fmt = parse_format_str(&format);
+            if abi.is_some() && abi_contract.is_some() {
+                return Err("specify only one of --abi or --abi-contract".into());
+            }
+            let markdown = format.eq_ignore_ascii_case("markdown");
+            let fmt = if markdown {
+                OutputFormat::Pretty
+            } else {
+                parse_format_str(&format)
+            };
             let client = resolve_rpc_client(
                 net.rpc_url.clone(),
                 net.network_passphrase.clone(),
@@ -2535,6 +3475,17 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
                     parse_contract_spec(&wasm_bytes)
                         .map_err(|e| format!("Failed to parse ABI: {}", e))?,
                 )
+            } else if let Some(id) = abi_contract.as_ref() {
+                let inspection = inspect_contract(&client, id)
+                    .await
+                    .map_err(|e| format!("Failed to inspect ABI contract {}: {}", id, e))?;
+                let deployed = get_wasm_bytecode(&client, &inspection.wasm_hash)
+                    .await
+                    .map_err(|e| format!("Failed to fetch ABI contract {}: {}", id, e))?;
+                Some(
+                    parse_contract_spec(&deployed)
+                        .map_err(|e| format!("Failed to parse ABI: {}", e))?,
+                )
             } else {
                 None
             };
@@ -2547,11 +3498,7 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
                                 "contract_id": inspection.contract_id,
                                 "wasm_hash": inspection.wasm_hash,
                                 "storage_keys": inspection.storage_keys.len(),
-                                "abi": serde_json::json!({
-                                    "functions": spec.functions.iter().map(|f| f.name.as_str()).collect::<Vec<_>>(),
-                                    "events": spec.events.iter().map(|e| e.name.as_str()).collect::<Vec<_>>(),
-                                    "custom_types": spec.custom_types.iter().map(|t| t.name.as_str()).collect::<Vec<_>>()
-                                })
+                                "abi": spec
                             }))?;
                             println!("{}", json_str);
                         } else {
@@ -2559,6 +3506,16 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
                             println!("{}", json_str);
                         }
                     } else {
+                        if interface {
+                            if let Some(spec) = contract_spec.as_ref() {
+                                println!("{}", render_contract_interface(spec, markdown));
+                                return Ok(());
+                            }
+                            return Err(
+                                "--interface requires --abi or --abi-contract so the contract spec can be rendered"
+                                    .into(),
+                            );
+                        }
                         println!("Contract Inspection");
                         println!("Contract ID: {}", inspection.contract_id);
                         println!("WASM Hash: {}", inspection.wasm_hash);
@@ -2597,11 +3554,15 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
             net,
         } => {
             let fmt = parse_format_str(&format);
-            let client = resolve_rpc_client(
-                net.rpc_url.clone(),
-                net.network_passphrase.clone(),
-                net.network_profile.clone(),
-            );
+            let target = match resolve_target_network(network.as_deref(), &net) {
+                Ok(t) => t,
+                Err(e) => {
+                    eprintln!("Error: {}", e);
+                    process::exit(1);
+                }
+            };
+            let client = target.client;
+            let network = target.network_name;
 
             // On-chain upgrade-safety verification: compare the live deployed
             // contract's interface against a local candidate WASM.
@@ -2706,11 +3667,15 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
             net,
         } => {
             let fmt = parse_format_str(&format);
-            let client = resolve_rpc_client(
-                net.rpc_url.clone(),
-                net.network_passphrase.clone(),
-                net.network_profile.clone(),
-            );
+            let target = match resolve_target_network(network.as_deref(), &net) {
+                Ok(t) => t,
+                Err(e) => {
+                    eprintln!("Error: {}", e);
+                    process::exit(1);
+                }
+            };
+            let client = target.client;
+            let network = target.network_name;
 
             // Read + hash the local WASM fully offline (no RPC).
             let local_bytes = match wasm.as_ref() {
@@ -2854,10 +3819,12 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
             }
             TxAction::Validate { envelope, format } => {
                 let fmt = parse_format_str(&format);
-                let env_data = if fs::metadata(&envelope).is_ok() {
-                    fs::read_to_string(&envelope)?
-                } else {
-                    envelope.clone()
+                let env_data = match resolve_tx_input(&envelope) {
+                    Ok(s) => s,
+                    Err(e) => {
+                        eprintln!("Error: {}", e);
+                        process::exit(1);
+                    }
                 };
 
                 use sdkt_core::validation::validate_base64;
@@ -2905,17 +3872,18 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
                 }
 
                 let fmt = parse_format_str(&format);
+                let env_data = match resolve_tx_input(&envelope) {
+                    Ok(s) => s,
+                    Err(e) => {
+                        eprintln!("Error: {}", e);
+                        process::exit(1);
+                    }
+                };
                 let client = resolve_rpc_client(
                     net.rpc_url.clone(),
                     net.network_passphrase.clone(),
                     net.network_profile.clone(),
                 );
-
-                let env_data = if fs::metadata(&envelope).is_ok() {
-                    fs::read_to_string(&envelope)?
-                } else {
-                    envelope.clone()
-                };
 
                 match simulate_transaction(&client, env_data.trim()).await {
                     Ok(sim) => {
@@ -3087,6 +4055,13 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
                 format,
             } => {
                 let fmt = parse_format_str(&format);
+                let env_data = match resolve_tx_input(&envelope) {
+                    Ok(s) => s,
+                    Err(e) => {
+                        eprintln!("Error: {}", e);
+                        process::exit(1);
+                    }
+                };
                 let client = resolve_rpc_client_mutating(
                     net.rpc_url.clone(),
                     net.network_passphrase.clone(),
@@ -3095,12 +4070,6 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
 
                 use sdkt_rpc::{submit_and_wait, PollConfig};
                 use std::time::Duration;
-
-                let env_data = if fs::metadata(&envelope).is_ok() {
-                    fs::read_to_string(&envelope)?
-                } else {
-                    envelope.clone()
-                };
 
                 let poll_cfg = PollConfig {
                     timeout: Duration::from_secs(timeout),
@@ -3120,6 +4089,12 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
                             }
                             if let Some(xdr) = &res.result_xdr {
                                 println!("  Result XDR: {}", xdr);
+                            }
+                            if !res.events.is_empty() {
+                                println!("  Events:");
+                                for event in &res.events {
+                                    println!("    {}", event);
+                                }
                             }
                         }
                     }
@@ -3788,11 +4763,93 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
         Commands::Audit {
             path,
             format,
+            list_rules,
             disable,
             rules,
             no_plugins,
         } => {
-            let fmt = parse_format_str(&format);
+            // Audit supports three output formats: pretty, json, sarif.
+            // We parse the format here rather than through the shared
+            // `parse_format_str` helper so we can extend it without changing
+            // the shared OutputFormat enum used by other commands.
+            #[derive(PartialEq)]
+            enum AuditFormat {
+                Pretty,
+                Json,
+                Sarif,
+            }
+            let audit_fmt = match format.to_lowercase().as_str() {
+                "pretty" => AuditFormat::Pretty,
+                "json" => AuditFormat::Json,
+                "sarif" => AuditFormat::Sarif,
+                other => {
+                    eprintln!(
+                        "Invalid format '{}'. Use 'pretty', 'json', or 'sarif'.",
+                        other
+                    );
+                    process::exit(1);
+                }
+            };
+            // Keep `fmt` as OutputFormat for the list_rules branch which uses
+            // the same pretty/JSON distinction.
+            let fmt = match &audit_fmt {
+                AuditFormat::Json => OutputFormat::Json,
+                _ => OutputFormat::Pretty,
+            };
+
+            if list_rules {
+                // SARIF is not meaningful for listing rules — reject early so
+                // automation never receives unexpected plain text on stdout.
+                if audit_fmt == AuditFormat::Sarif {
+                    eprintln!(
+                        "Error: --format sarif is not supported with --list-rules. \
+                         Use --format json or --format pretty."
+                    );
+                    process::exit(1);
+                }
+                let all = sdkt_audit::all_rules();
+                if fmt == OutputFormat::Json {
+                    let items: Vec<sdkt_audit::RuleInfo> = all
+                        .iter()
+                        .map(|r| sdkt_audit::RuleInfo {
+                            id: r.id().to_string(),
+                            severity: r.severity(),
+                            description: r.description().to_string(),
+                        })
+                        .collect();
+                    println!("{}", serde_json::to_string(&items)?);
+                } else {
+                    println!("Available audit rules ({}):", all.len());
+                    let id_width = all.iter().map(|r| r.id().len()).max().unwrap_or(8).max(8);
+                    let sev_width = all
+                        .iter()
+                        .map(|r| r.severity().to_string().len())
+                        .max()
+                        .unwrap_or(8)
+                        .max(8);
+                    for r in &all {
+                        println!(
+                            "  {:<id_width$}  {:<sev_width$}  {}",
+                            r.id(),
+                            r.severity(),
+                            r.description()
+                        );
+                    }
+                }
+                return Ok(());
+            }
+
+            let path = match path {
+                Some(p) => p,
+                None => {
+                    let mut cmd = Cli::command();
+                    cmd.error(
+                        clap::error::ErrorKind::MissingRequiredArgument,
+                        "the following required arguments were not provided:\n  <PATH>",
+                    )
+                    .exit();
+                }
+            };
 
             if !rules.is_empty() {
                 // Validate/resolve each --rules entry before reading source.
@@ -4001,9 +5058,31 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
             sdkt_audit_example_rule::register();
 
             let disabled_refs: Vec<&str> = disable.iter().map(String::as_str).collect();
-            match sdkt_audit::audit_source_with(&src, &disabled_refs) {
+            let audit_result = sdkt_audit::audit_source_with(&src, &disabled_refs);
+            match audit_result {
                 Ok(report) => {
-                    if fmt == OutputFormat::Json {
+                    if audit_fmt == AuditFormat::Sarif {
+                        // Collect rule metadata for the SARIF rules section.
+                        let rules_info: Vec<sdkt_audit::RuleInfo> = sdkt_audit::all_rules()
+                            .iter()
+                            .map(|r| sdkt_audit::RuleInfo {
+                                id: r.id().to_string(),
+                                severity: r.severity(),
+                                description: r.description().to_string(),
+                            })
+                            .collect();
+                        // Path-to-URI normalisation (backslash→slash, drive
+                        // strip, percent-encoding) is handled entirely inside
+                        // sdkt_audit::sarif so the raw CLI path is passed
+                        // through unchanged.
+                        let sarif_str = sdkt_audit::report_to_sarif_string(
+                            &report,
+                            &path,
+                            sdkt_version_string(),
+                            &rules_info,
+                        )?;
+                        println!("{}", sarif_str);
+                    } else if audit_fmt == AuditFormat::Json {
                         println!("{}", serde_json::to_string(&report)?);
                     } else {
                         println!("Static Analysis Report: {}", path);
@@ -4112,13 +5191,23 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
                 network,
                 refresh,
                 format,
+                net: sub_net,
             } => {
                 let fmt = parse_format_str(&format);
-                let client = resolve_rpc_client(
-                    net.rpc_url.clone(),
-                    net.network_passphrase.clone(),
-                    net.network_profile.clone(),
-                );
+                let net = NetworkArgs {
+                    network_profile: sub_net.network_profile.or(net.network_profile),
+                    rpc_url: sub_net.rpc_url.or(net.rpc_url),
+                    network_passphrase: sub_net.network_passphrase.or(net.network_passphrase),
+                };
+                let target = match resolve_target_network(network.as_deref(), &net) {
+                    Ok(t) => t,
+                    Err(e) => {
+                        eprintln!("Error: {}", e);
+                        process::exit(1);
+                    }
+                };
+                let client = target.client;
+                let network = target.network_name;
 
                 // Initialize cache
                 let cache = match WasmCache::new() {
@@ -4474,6 +5563,62 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
                         println!("Network profile '{}' removed.", name);
                     }
                 }
+                NetworkAction::Check { name, format } => {
+                    let fmt = parse_format_str(&format);
+
+                    // Resolve through the same precedence path every other
+                    // network-aware command uses. `Check` is strictly
+                    // read-only: the stored profile is never written back.
+                    let cfg = match resolve_network_config(None, None, Some(name.clone())) {
+                        Ok(cfg) => cfg,
+                        Err(e) => {
+                            eprintln!("Error: {}", e);
+                            process::exit(1);
+                        }
+                    };
+
+                    let outcome = probe_network_profile(&name, &cfg).await;
+
+                    if fmt == OutputFormat::Json {
+                        println!("{}", serde_json::to_string(&outcome)?);
+                    } else if outcome.is_healthy() {
+                        println!("Network profile '{}' is reachable.", outcome.profile);
+                        println!("  RPC URL:          {}", outcome.rpc_url);
+                        println!(
+                            "  Status:           {}",
+                            outcome.status.as_deref().unwrap_or("unknown")
+                        );
+                        if let Some(seq) = outcome.latest_ledger {
+                            println!("  Latest ledger:    {}", seq);
+                        }
+                        if let Some(protocol) = outcome.protocol_version {
+                            println!("  Protocol version: {}", protocol);
+                        }
+                    } else {
+                        if outcome.reachable {
+                            println!(
+                                "Network profile '{}' is reachable but not healthy.",
+                                outcome.profile
+                            );
+                        } else {
+                            println!("Network profile '{}' is NOT reachable.", outcome.profile);
+                        }
+                        println!("  RPC URL:          {}", outcome.rpc_url);
+                        if let Some(seq) = outcome.latest_ledger {
+                            println!("  Latest ledger:    {}", seq);
+                        }
+                        if let Some(protocol) = outcome.protocol_version {
+                            println!("  Protocol version: {}", protocol);
+                        }
+                        if let Some(err) = &outcome.error {
+                            println!("  Error:            {}", err);
+                        }
+                    }
+
+                    if !outcome.is_healthy() {
+                        process::exit(1);
+                    }
+                }
             }
         }
         Commands::Init {
@@ -4535,29 +5680,6 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
             net,
         } => {
             let fmt = parse_format_str(&format);
-
-            // Local helper: parse 40-char hex into 20-byte salt; validate strictly
-            fn parse_salt_hex(s: &str) -> Result<[u8; 20], String> {
-                let sh = s.trim();
-                if sh.len() != 40 {
-                    return Err(format!(
-                        "Invalid --salt: must be 20-byte hex (40 hex chars), got length {}",
-                        sh.len()
-                    ));
-                }
-                if let Some(pos) = sh.chars().position(|c| !c.is_ascii_hexdigit()) {
-                    return Err(format!(
-                        "Invalid --salt: character at index {} is not a hex digit",
-                        pos
-                    ));
-                }
-                let mut out = [0u8; 20];
-                for i in 0..20 {
-                    out[i] = u8::from_str_radix(&sh[i * 2..i * 2 + 2], 16)
-                        .map_err(|e| format!("Invalid --salt hex at byte {}: {}", i, e))?;
-                }
-                Ok(out)
-            }
 
             // Resolve network config FIRST for safety guard
             let network_config = resolve_network_config(
@@ -4755,6 +5877,7 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
             contract_id,
             function,
             args,
+            args_json,
             format,
             abi,
             abi_contract,
@@ -4780,7 +5903,10 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
             )?;
 
             // Parse typed args into base64-encoded ScVal (reuse existing parser)
-            let parsed_args = parse_typed_args(&args, true)?;
+            let mut parsed_args = parse_typed_args(&args, true)?;
+            for json in &args_json {
+                parsed_args.extend(sdkt_xdr::json_args_to_base64(json).map_err(|e| e.to_string())?);
+            }
 
             // Read-only: use a zero-fake sequence + arbitrary fee + identity placeholder
             // This tx will NOT be signed or submitted — only simulated.
@@ -4915,9 +6041,11 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
             contract_id,
             function,
             args,
+            args_json,
             identity,
             format,
             no_wait,
+            build_only,
             net,
         } => {
             let fmt = parse_format_str(&format);
@@ -4954,7 +6082,10 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
 
             // 3. Parse typed args (shared parser; strict — typos must not be
             //    silently treated as pre-encoded ScVal on a state-changing path).
-            let parsed_args = parse_typed_args(&args, true)?;
+            let mut parsed_args = parse_typed_args(&args, true)?;
+            for json in &args_json {
+                parsed_args.extend(sdkt_xdr::json_args_to_base64(json).map_err(|e| e.to_string())?);
+            }
 
             let params = InvokeTransactionParams {
                 source_account: identity_obj.public_key.clone(),
@@ -4968,25 +6099,62 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
             let client = SorobanRpcClient::from_config(&network_config);
             let poll = sdkt_rpc::PollConfig::default();
 
+            // `--build-only`: stop after the envelope is built and signed. Nothing
+            // is submitted, so the prepared envelope can be inspected (or handed to
+            // `sdkt tx validate` / `sdkt tx submit`) without a signed transaction
+            // ever reaching the network from this path.
+            if build_only {
+                match sdkt_rpc::build_invoke_envelope(&client, &params, &signer, network).await {
+                    Ok(res) => {
+                        if fmt == OutputFormat::Json {
+                            println!(
+                                "{}",
+                                serde_json::json!({
+                                    "envelopeXdr": res.envelope_xdr,
+                                    "fee": res.fee,
+                                    "sequence": res.sequence,
+                                    "contractId": res.contract_id,
+                                    "function": res.function,
+                                    "submitted": false,
+                                })
+                            );
+                        } else {
+                            println!("Transaction Envelope (NOT submitted):");
+                            println!("  Contract: {}", res.contract_id);
+                            println!("  Function: {}", res.function);
+                            println!("  Fee:      {} stroops", res.fee);
+                            println!("  Sequence: {}", res.sequence);
+                            println!("{}", res.envelope_xdr);
+                        }
+                        return Ok(());
+                    }
+                    Err(e) => {
+                        eprintln!("Error building invoke transaction: {}", e);
+                        process::exit(1);
+                    }
+                }
+            }
+
             match sdkt_rpc::invoke_contract(&client, &params, &signer, network, &poll, !no_wait)
                 .await
             {
                 Ok(res) => {
                     if fmt == OutputFormat::Json {
-                        println!(
-                            "{}",
-                            serde_json::json!({
-                                "hash": res.hash,
-                                "status": res.status,
-                                "contractId": res.contract_id,
-                                "function": res.function,
-                                "fee": res.fee,
-                                "resultXdr": res.result_xdr,
-                                "errorCode": res.error_code,
-                                "errorResultXdr": res.error_result_xdr,
-                                "diagnosticEvents": res.diagnostic_events,
-                            })
-                        );
+                        let mut json = serde_json::json!({
+                            "hash": res.hash,
+                            "status": res.status,
+                            "contractId": res.contract_id,
+                            "function": res.function,
+                            "fee": res.fee,
+                            "resultXdr": res.result_xdr,
+                            "errorCode": res.error_code,
+                            "errorResultXdr": res.error_result_xdr,
+                            "diagnosticEvents": res.diagnostic_events,
+                        });
+                        if !res.events.is_empty() {
+                            json["events"] = serde_json::json!(res.events);
+                        }
+                        println!("{}", json);
                     } else {
                         println!("Invocation Result:");
                         println!("  Contract: {}", res.contract_id);
@@ -4996,6 +6164,12 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
                         println!("  Fee:      {} stroops", res.fee);
                         if let Some(ledger) = &res.result_xdr {
                             println!("  Result XDR: {}", ledger);
+                        }
+                        if !res.events.is_empty() {
+                            println!("  Events:");
+                            for event in &res.events {
+                                println!("    {}", event);
+                            }
                         }
                         if let Some(code) = &res.error_code {
                             println!("  Error:    {}", code);
@@ -5499,8 +6673,14 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
             }
         },
         Commands::Project { action, net } => match action {
-            ProjectCommand::Deploy { salt: _, format } => {
+            ProjectCommand::Deploy {
+                salt,
+                skip_deployed,
+                format,
+            } => {
                 let fmt = parse_format_str(&format);
+                // Validate the salt before any network or identity work (fail fast).
+                let salt_bytes = salt.as_deref().map(parse_salt_hex).transpose()?;
                 let config = load_config();
 
                 // 4.1 — advisory lock check. If an `sdkt.lock` exists, warn
@@ -5518,18 +6698,135 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
                     net.network_profile.clone(),
                 );
 
+                // Resolve the effective network once so the record-file scope
+                // and the signed network match the same passphrase.
+                let network_config = resolve_network_config(
+                    net.rpc_url.clone(),
+                    net.network_passphrase.clone(),
+                    net.network_profile.clone(),
+                )?;
+
+                // Determine network from passphrase
+                let network = match network_config.passphrase.as_str() {
+                    "Test SDF Network ; September 2015" => sdkt_xdr::sign::Network::Testnet,
+                    "Public Global Stellar Network ; September 2015" => {
+                        sdkt_xdr::sign::Network::Mainnet
+                    }
+                    "Test SDF Future Network ; October 2022" => sdkt_xdr::sign::Network::Futurenet,
+                    other => sdkt_xdr::sign::Network::Custom(other.to_string()),
+                };
+
+                // Per-network scope for the deployment record. When
+                // --network-passphrase is explicitly set it overrides whatever
+                // profile was resolved, so the record key must be derived from
+                // the resolved passphrase rather than the profile name.
+                // Otherwise use the profile name (if any) for a stable,
+                // human-readable key.
+                let network_key = sdkt_core::deployment::network_key(
+                    if net.network_passphrase.is_some() {
+                        None
+                    } else {
+                        net.network_profile.as_deref()
+                    },
+                    &network_config.passphrase,
+                );
+                let record_path = Path::new(sdkt_core::deployment::DEPLOYMENT_RECORD_FILE);
+                let mut record_file =
+                    match sdkt_core::deployment::DeploymentRecordFile::read(record_path) {
+                        Ok(file) => file,
+                        Err(e) => {
+                            eprintln!("Error: {}", e);
+                            process::exit(1);
+                        }
+                    };
+
+                // Write the record file and return whether it succeeded.
+                // On failure, print the contract_id so the operator can
+                // recover without repeating the deployment.
+                let persist_records =
+                    |record_file: &sdkt_core::deployment::DeploymentRecordFile,
+                     contract_id: Option<&str>|
+                     -> bool {
+                        match record_file.write(record_path) {
+                            Ok(()) => true,
+                            Err(e) => {
+                                if let Some(id) = contract_id {
+                                    eprintln!(
+                                    "✗ Failed to write deployment record: {e}\n  \
+                                     Contract ID: {id} — save this value to recover without re-deploying."
+                                );
+                                } else {
+                                    eprintln!("✗ Failed to write deployment record: {e}");
+                                }
+                                false
+                            }
+                        }
+                    };
+
                 match sdkt_core::project::resolve_project(&config) {
                     Ok(resolved) => {
+                        // Contracts skipped via --skip-deployed (existing on-chain
+                        // record) count toward the resolved total for reporting.
+                        let total_planned = resolved.len();
+
                         if fmt != OutputFormat::Json {
                             println!(
                                 "✓ Project dependency graph resolved. Deploying {} contract(s).",
-                                resolved.len()
+                                total_planned
                             );
                         }
 
                         let mut results = std::collections::HashMap::new();
+                        let mut failure: Option<String> = None;
 
                         for contract in resolved {
+                            // --skip-deployed: honor the record only when the
+                            // recorded contract still exists on-chain. A record
+                            // file entry alone does not skip — the ledger is the
+                            // source of truth.
+                            if skip_deployed {
+                                if let Some(record) =
+                                    record_file.record_for(&network_key, &contract.alias)
+                                {
+                                    match sdkt_rpc::storage::contract_exists(
+                                        &client,
+                                        &record.contract_id,
+                                    )
+                                    .await
+                                    {
+                                        Ok(true) => {
+                                            if fmt != OutputFormat::Json {
+                                                println!(
+                                                    "  ✓ '{}' already deployed at {} (--skip-deployed)",
+                                                    contract.alias, record.contract_id
+                                                );
+                                            }
+                                            results.insert(
+                                                contract.alias.clone(),
+                                                record.contract_id.clone(),
+                                            );
+                                            continue;
+                                        }
+                                        Ok(false) => {
+                                            if fmt != OutputFormat::Json {
+                                                eprintln!(
+                                                    "    ⚠ Recorded contract for '{}' is no longer on-chain; re-deploying.",
+                                                    contract.alias
+                                                );
+                                            }
+                                        }
+                                        Err(e) => {
+                                            failure = Some(format!(
+                                                "Failed to verify recorded contract for '{}': {}",
+                                                contract.alias, e
+                                            ));
+                                            eprintln!("    ✗ {}", failure.as_ref().unwrap());
+                                            break;
+                                        }
+                                    }
+                                }
+                            }
+
                             if fmt != OutputFormat::Json {
                                 println!(
                                     "  Deploying alias '{}' from '{}'...",
@@ -5538,45 +6835,29 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
                                 );
                             }
 
-                            let wasm_bytes =
-                                fs::read(&contract.wasm_artifact).unwrap_or_else(|e| {
-                                    eprintln!(
+                            let wasm_bytes = match fs::read(&contract.wasm_artifact) {
+                                Ok(bytes) => bytes,
+                                Err(e) => {
+                                    failure = Some(format!(
                                         "Failed to read WASM for '{}': {}",
                                         contract.alias, e
-                                    );
-                                    std::process::exit(1);
-                                });
-
-                            // Resolve network config
-                            let network_config = resolve_network_config(
-                                net.rpc_url.clone(),
-                                net.network_passphrase.clone(),
-                                net.network_profile.clone(),
-                            )?;
-
-                            // Determine network from passphrase
-                            let network = match network_config.passphrase.as_str() {
-                                "Test SDF Network ; September 2015" => {
-                                    sdkt_xdr::sign::Network::Testnet
+                                    ));
+                                    eprintln!("    ✗ {}", failure.as_ref().unwrap());
+                                    break;
                                 }
-                                "Public Global Stellar Network ; September 2015" => {
-                                    sdkt_xdr::sign::Network::Mainnet
-                                }
-                                "Test SDF Future Network ; October 2022" => {
-                                    sdkt_xdr::sign::Network::Futurenet
-                                }
-                                other => sdkt_xdr::sign::Network::Custom(other.to_string()),
                             };
 
                             // Load identity for signing
                             let identity_store = sdkt_storage::IdentityStore::new()
                                 .map_err(|e| format!("Failed to access identity store: {}", e))?;
                             let identity_obj = identity_store
-                                .get("default")
+                                .get_default()
                                 .map_err(|e| format!("Default identity not found: {}", e))?;
-                            let signing_key = identity_store
-                                .load_signing_key("default")
-                                .map_err(|e| format!("Failed to load signing key: {}", e))?;
+                            let signing_key =
+                                identity_store
+                                    .load_signing_key(&identity_obj.name)
+                                    .map_err(|e| format!("Failed to load signing key: {}", e))?;
+
                             let signer =
                                 sdkt_xdr::sign::Ed25519Signer::from_seed(&signing_key.to_bytes());
                             let source_account = identity_obj.public_key.clone();
@@ -5586,34 +6867,70 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
                                 &wasm_bytes,
                                 &source_account,
                                 &signer,
-                                network,
-                                None,
+                                network.clone(),
+                                salt_bytes,
                             )
                             .await
                             {
-                                Ok(outcome) => {
-                                    match &outcome {
-                                        sdkt_rpc::DeployOutcome::Success(res) => {
-                                            if fmt != OutputFormat::Json {
-                                                println!("    ✓ Contract ID: {}", res.contract_id);
-                                            }
-                                            results.insert(contract.alias, res.contract_id.clone());
-                                        }
-                                        sdkt_rpc::DeployOutcome::Partial(p) => {
-                                            eprintln!("    ⚠ Partial: upload succeeded, create failed: {}", p.error);
-                                            std::process::exit(1);
-                                        }
-                                        sdkt_rpc::DeployOutcome::Failure(e) => {
-                                            eprintln!("    ✗ Failed: {}", e);
-                                            std::process::exit(1);
-                                        }
+                                Ok(sdkt_rpc::DeployOutcome::Success(res)) => {
+                                    if fmt != OutputFormat::Json {
+                                        println!("    ✓ Contract ID: {}", res.contract_id);
                                     }
+                                    let timestamp = std::time::SystemTime::now()
+                                        .duration_since(std::time::UNIX_EPOCH)
+                                        .map(|d| d.as_secs())
+                                        .unwrap_or(0);
+                                    // Persist the record immediately so a crash,
+                                    // SIGINT, or early ? return after this point
+                                    // cannot lose this contract's ID. Exit
+                                    // nonzero if the write fails — the contract
+                                    // is on-chain but the record is not durable.
+                                    record_file.set_record(
+                                        &network_key,
+                                        &contract.alias,
+                                        sdkt_core::deployment::DeploymentRecord {
+                                            contract_id: res.contract_id.clone(),
+                                            wasm_hash: res.wasm_hash.clone(),
+                                            network: network_key.clone(),
+                                            timestamp,
+                                            salt: Some(res.salt.clone()),
+                                        },
+                                    );
+                                    if !persist_records(&record_file, Some(&res.contract_id)) {
+                                        process::exit(1);
+                                    }
+                                    results.insert(contract.alias, res.contract_id);
+                                }
+                                Ok(sdkt_rpc::DeployOutcome::Partial(p)) => {
+                                    failure = Some(p.error.clone());
+                                    eprintln!(
+                                        "    ⚠ Partial: upload succeeded, create failed: {}",
+                                        p.error
+                                    );
+                                    break;
+                                }
+                                Ok(sdkt_rpc::DeployOutcome::Failure(e)) => {
+                                    failure = Some(e.clone());
+                                    eprintln!("    ✗ Failed: {}", e);
+                                    break;
                                 }
                                 Err(e) => {
+                                    failure = Some(e.to_string());
                                     eprintln!("Deployment failed for '{}': {}", contract.alias, e);
-                                    std::process::exit(1);
+                                    break;
                                 }
                             }
+                        }
+
+                        if let Some(err) = failure {
+                            eprintln!(
+                                "⚠ Deployment record written to {} ({} of {} deployed)",
+                                sdkt_core::deployment::DEPLOYMENT_RECORD_FILE,
+                                results.len(),
+                                total_planned
+                            );
+                            eprintln!("Deployment failed: {}", err);
+                            process::exit(1);
                         }
 
                         if fmt == OutputFormat::Json {
@@ -5628,7 +6945,7 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
                     }
                     Err(e) => {
                         eprintln!("Error resolving project: {}", e);
-                        std::process::exit(1);
+                        process::exit(1);
                     }
                 }
             }
@@ -5722,25 +7039,55 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
                 source,
                 id,
                 force,
+                public_key,
                 format,
             } => {
                 let fmt = parse_format_str(&format);
                 let opts = sdkt_audit::plugin_store::InstallOpts { id, force };
-                match sdkt_audit::plugin_store::install(std::path::Path::new(&source), &opts) {
-                    Ok(meta) => {
+                let path = std::path::Path::new(&source);
+                let is_bundle = path
+                    .extension()
+                    .and_then(|e| e.to_str())
+                    .is_some_and(|e| e.eq_ignore_ascii_case("sdktplugin"));
+                if public_key.is_some() && !is_bundle {
+                    eprintln!("Error: --public-key only applies to .sdktplugin bundles");
+                    process::exit(1);
+                }
+                // `signed` is only known (and reported) for bundle installs.
+                let result = if is_bundle {
+                    let pubkey = public_key.as_deref().map(read_public_key_or_exit);
+                    sdkt_audit::plugin_store::install_bundle_with_key(path, &opts, pubkey.as_ref())
+                        .map(|v| (v.metadata, Some(v.signed)))
+                } else {
+                    sdkt_audit::plugin_store::install(path, &opts).map(|meta| (meta, None))
+                };
+                match result {
+                    Ok((meta, signed)) => {
                         if meta.kind == "native" {
                             eprintln!(
                                     "Warning: native plugins run UNSANDBOXED. Only install from trusted sources."
                                 );
                         }
                         if fmt == OutputFormat::Json {
-                            let json = serde_json::json!({ "status": "installed", "plugin": meta });
+                            let mut json =
+                                serde_json::json!({ "status": "installed", "plugin": meta });
+                            if let Some(signed) = signed {
+                                json["signed"] = serde_json::Value::Bool(signed);
+                            }
                             println!("{}", serde_json::to_string_pretty(&json)?);
                         } else {
                             println!(
                                 "Installed plugin '{}' ({} v{})",
                                 meta.id, meta.kind, meta.version
                             );
+                            match signed {
+                                Some(true) => println!("  signature: VERIFIED"),
+                                Some(false) => println!("  signature: UNSIGNED"),
+                                None => {}
+                            }
+                        }
+                        if signed == Some(false) {
+                            eprintln!("Note: bundle was NOT signed");
                         }
                     }
                     Err(e) => {
@@ -5877,31 +7224,7 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
                 format,
             } => {
                 let fmt = parse_format_str(&format);
-                let pubkey = if let Some(key_path) = public_key {
-                    let bytes = std::fs::read(key_path)
-                        .map_err(|e| {
-                            eprintln!("Error reading public key: {}", e);
-                            process::exit(1);
-                        })
-                        .unwrap();
-                    let arr: [u8; 32] = bytes
-                        .try_into()
-                        .map_err(|_| {
-                            eprintln!("Error: public key must be exactly 32 bytes");
-                            process::exit(1);
-                        })
-                        .unwrap();
-                    Some(
-                        sdkt_audit::plugin_store::ed25519_dalek::VerifyingKey::from_bytes(&arr)
-                            .map_err(|_| {
-                                eprintln!("Error: invalid Ed25519 public key");
-                                process::exit(1);
-                            })
-                            .unwrap(),
-                    )
-                } else {
-                    None
-                };
+                let pubkey = public_key.as_deref().map(read_public_key_or_exit);
                 let staging =
                     std::env::temp_dir().join(format!("sdkt-verify-bundle-{}", std::process::id()));
                 match sdkt_audit::plugin_store::verify_bundle(
@@ -5935,6 +7258,98 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
                 }
                 let _ = std::fs::remove_dir_all(&staging);
             }
+            PluginAction::Doctor {
+                target,
+                all,
+                format,
+            } => {
+                let fmt = parse_format_str(&format);
+                if all {
+                    let plugins = sdkt_audit::plugin_store::list();
+                    if plugins.is_empty() {
+                        if fmt == OutputFormat::Json {
+                            println!("{}", serde_json::json!({ "healthy": true, "reports": [] }));
+                        } else {
+                            println!("No plugins installed.");
+                        }
+                        process::exit(0);
+                    }
+                    let mut all_healthy = true;
+                    let mut reports = Vec::new();
+                    for p in &plugins {
+                        let report = sdkt_audit::plugin_doctor::doctor_installed(&p.id);
+                        if !report.healthy {
+                            all_healthy = false;
+                        }
+                        reports.push(report);
+                    }
+                    if fmt == OutputFormat::Json {
+                        let json =
+                            serde_json::json!({ "healthy": all_healthy, "reports": reports });
+                        println!("{}", serde_json::to_string_pretty(&json)?);
+                    } else {
+                        for (idx, report) in reports.iter().enumerate() {
+                            if idx > 0 {
+                                println!();
+                            }
+                            println!("=== Doctor: {} ===", report.target);
+                            for (s_idx, stage) in report.stages.iter().enumerate() {
+                                let tag = match stage.status {
+                                    sdkt_audit::plugin_doctor::DoctorStageStatus::Passed => {
+                                        "[PASS]"
+                                    }
+                                    sdkt_audit::plugin_doctor::DoctorStageStatus::Failed => {
+                                        "[FAIL]"
+                                    }
+                                };
+                                println!(
+                                    "{} Stage {} ({}): {}",
+                                    tag,
+                                    s_idx + 1,
+                                    stage.name,
+                                    stage.detail
+                                );
+                            }
+                            if report.healthy {
+                                println!("Plugin '{}' is healthy.", report.target);
+                            } else if let Some(failed) = report.failed_stage() {
+                                eprintln!("Error: plugin doctor failed at stage '{}'", failed.name);
+                            }
+                        }
+                    }
+                    if !all_healthy {
+                        process::exit(1);
+                    }
+                } else {
+                    let target = target.expect("target is required when --all is not specified");
+                    let report = sdkt_audit::plugin_doctor::doctor(&target);
+                    if fmt == OutputFormat::Json {
+                        println!("{}", serde_json::to_string_pretty(&report)?);
+                    } else {
+                        for (s_idx, stage) in report.stages.iter().enumerate() {
+                            let tag = match stage.status {
+                                sdkt_audit::plugin_doctor::DoctorStageStatus::Passed => "[PASS]",
+                                sdkt_audit::plugin_doctor::DoctorStageStatus::Failed => "[FAIL]",
+                            };
+                            println!(
+                                "{} Stage {} ({}): {}",
+                                tag,
+                                s_idx + 1,
+                                stage.name,
+                                stage.detail
+                            );
+                        }
+                        if report.healthy {
+                            println!("Plugin '{}' is healthy.", report.target);
+                        } else if let Some(failed) = report.failed_stage() {
+                            eprintln!("Error: plugin doctor failed at stage '{}'", failed.name);
+                        }
+                    }
+                    if !report.healthy {
+                        process::exit(report.exit_code());
+                    }
+                }
+            }
         },
         Commands::Completions { shell } => {
             let mut cmd = Cli::command();
@@ -5953,8 +7368,12 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
             run_doctor(fmt);
         }
         Commands::Generate(action) => match action {
-            GenerateAction::Client { wasm, output } => {
-                if let Err(e) = run_generate_client(&wasm, output.as_deref()) {
+            GenerateAction::Client {
+                wasm,
+                output,
+                skip_unsupported,
+            } => {
+                if let Err(e) = run_generate_client(&wasm, output.as_deref(), skip_unsupported) {
                     eprintln!("Error: {e}");
                     process::exit(1);
                 }
@@ -5967,10 +7386,16 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
 
 /// Execute `sdkt generate client`: parse the ContractSpec from a local WASM
 /// and emit a deterministic typed Rust client (offline, no network).
-fn run_generate_client(wasm_path: &str, output: Option<&str>) -> Result<(), String> {
+fn run_generate_client(
+    wasm_path: &str,
+    output: Option<&str>,
+    skip_unsupported: bool,
+) -> Result<(), String> {
     let bytes = fs::read(wasm_path).map_err(|e| format!("cannot read WASM '{wasm_path}': {e}"))?;
     let spec = parse_contract_spec(&bytes).map_err(|e| format!("{wasm_path}: {e}"))?;
-    let code = sdkt_wasm::generate_client(&spec).map_err(|e| e.to_string())?;
+    let options = sdkt_wasm::GenerateOptions { skip_unsupported };
+    let code =
+        sdkt_wasm::generate_client_with_options(&spec, &options).map_err(|e| e.to_string())?;
     match output {
         Some(path) => {
             fs::write(path, &code).map_err(|e| format!("cannot write '{path}': {e}"))?;
@@ -6430,5 +7855,151 @@ mod storage_read_key_tests {
         let err = resolve_storage_read_key(CONTRACT, None, Some("bal"), &[], false, "forever")
             .unwrap_err();
         assert!(err.contains("invalid durability"));
+    }
+}
+
+#[cfg(test)]
+mod storage_analyze_key_resolution_tests {
+    use super::*;
+
+    const CONTRACT: &str = "CAE3U7JKESRWZHPEQ72DVNGOQ6WPA7HSPQZL5YV46NPCE4TMUPAGYMEC";
+
+    fn args(vals: &[&str]) -> Vec<String> {
+        vals.iter().map(|s| s.to_string()).collect()
+    }
+
+    #[test]
+    fn analyze_keys_empty_when_no_flags() {
+        let keys = resolve_storage_analyze_keys(CONTRACT, &[], None, &[], "persistent").unwrap();
+        assert!(keys.is_empty());
+    }
+
+    #[test]
+    fn analyze_keys_rejects_key_arg_without_map_key() {
+        let err =
+            resolve_storage_analyze_keys(CONTRACT, &[], None, &args(&["u32:1"]), "persistent")
+                .unwrap_err();
+        assert!(err.contains("--key-arg requires --map-key"));
+    }
+
+    #[test]
+    fn analyze_keys_rejects_empty_key_xdr() {
+        let err = resolve_storage_analyze_keys(CONTRACT, &args(&["   "]), None, &[], "persistent")
+            .unwrap_err();
+        assert!(err.contains("--key-xdr must not be empty"));
+    }
+
+    #[test]
+    fn analyze_keys_rejects_invalid_key_xdr() {
+        let err = resolve_storage_analyze_keys(
+            CONTRACT,
+            &args(&["not-a-valid-base64-or-hex"]),
+            None,
+            &[],
+            "persistent",
+        )
+        .unwrap_err();
+        assert!(err.contains("invalid LedgerKey"));
+    }
+
+    #[test]
+    fn analyze_keys_accepts_valid_raw_keys() {
+        let raw = "AAAABQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=";
+        let keys =
+            resolve_storage_analyze_keys(CONTRACT, &args(&[raw]), None, &[], "persistent").unwrap();
+        assert_eq!(keys, vec![raw]);
+    }
+
+    #[test]
+    fn analyze_keys_accepts_typed_key() {
+        let keys = resolve_storage_analyze_keys(
+            CONTRACT,
+            &[],
+            Some("balances"),
+            &args(&["u32:100"]),
+            "temporary",
+        )
+        .unwrap();
+        assert_eq!(keys.len(), 1);
+        let decoded = sdkt_xdr::decode_ledger_key(&keys[0]).unwrap();
+        match decoded {
+            stellar_xdr::LedgerKey::ContractData(d) => {
+                assert_eq!(d.durability, stellar_xdr::ContractDataDurability::Temporary);
+            }
+            other => panic!("expected ContractData, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn analyze_keys_merges_raw_and_typed_keys() {
+        let raw = "AAAABQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=";
+        let keys = resolve_storage_analyze_keys(
+            CONTRACT,
+            &args(&[raw]),
+            Some("balances"),
+            &args(&["u32:100"]),
+            "persistent",
+        )
+        .unwrap();
+        assert_eq!(keys.len(), 2);
+        assert_eq!(keys[0], raw);
+    }
+
+    #[test]
+    fn analyze_keys_rejects_invalid_durability() {
+        let err = resolve_storage_analyze_keys(CONTRACT, &[], Some("balances"), &[], "forever")
+            .unwrap_err();
+        assert!(err.contains("invalid durability"));
+    }
+
+    #[test]
+    fn analyze_keys_rejects_invalid_durability_without_map_key() {
+        let err = resolve_storage_analyze_keys(CONTRACT, &[], None, &[], "forever").unwrap_err();
+        assert!(err.contains("invalid durability"));
+    }
+}
+
+#[cfg(test)]
+mod project_deploy_salt_tests {
+    use super::*;
+
+    const SALT: &str = "00112233445566778899aabbccddeeff00112233";
+
+    fn parse_project_deploy_salt(args: &[&str]) -> Option<String> {
+        let cli = Cli::try_parse_from(args).expect("args should parse");
+        match cli.command {
+            Commands::Project {
+                action: ProjectCommand::Deploy { salt, .. },
+                ..
+            } => salt,
+            _ => panic!("expected `project deploy`"),
+        }
+    }
+
+    #[test]
+    fn explicit_salt_is_captured_and_parsed() {
+        let salt = parse_project_deploy_salt(&["sdkt", "project", "deploy", "--salt", SALT]);
+        assert_eq!(salt.as_deref(), Some(SALT));
+
+        let bytes = parse_salt_hex(salt.as_deref().unwrap()).unwrap();
+        assert_eq!(hex::encode(bytes), SALT);
+    }
+
+    #[test]
+    fn omitted_salt_means_auto_generate() {
+        assert_eq!(
+            parse_project_deploy_salt(&["sdkt", "project", "deploy"]),
+            None
+        );
+    }
+
+    #[test]
+    fn invalid_salt_is_rejected() {
+        assert!(parse_salt_hex("deploy")
+            .unwrap_err()
+            .contains("Invalid --salt"));
+        assert!(parse_salt_hex(&"z".repeat(40))
+            .unwrap_err()
+            .contains("not a hex digit"));
     }
 }
