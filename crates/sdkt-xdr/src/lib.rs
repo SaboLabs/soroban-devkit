@@ -424,22 +424,33 @@ fn decode_single<T: ReadXdr + serde::Serialize>(
 ) -> Result<Value, DecodeError> {
     let mut cursor = std::io::Cursor::new(raw);
     let mut l = Limited::new(&mut cursor, Limits::none());
+    T::read_xdr(&mut l)
+        .map_err(|e| DecodeError::XdrParse(name.to_string(), e))
+        .and_then(|v| serde_json::to_value(&v).map_err(DecodeError::Json))
+}
+
+fn decode_single_strict<T: ReadXdr + serde::Serialize>(
+    raw: &[u8],
+    name: &str,
+) -> Result<Value, DecodeError> {
+    let mut cursor = std::io::Cursor::new(raw);
+    let mut l = Limited::new(&mut cursor, Limits::none());
     T::read_xdr_to_end(&mut l)
         .map_err(|e| DecodeError::XdrParse(name.to_string(), e))
         .and_then(|v| serde_json::to_value(&v).map_err(DecodeError::Json))
 }
 
 fn auto_detect(raw: &[u8]) -> Result<Value, DecodeError> {
-    if let Ok(v) = decode_single::<ScVal>(raw, "ScVal") {
+    if let Ok(v) = decode_single_strict::<ScVal>(raw, "ScVal") {
         return Ok(v);
     }
-    if let Ok(v) = decode_single::<TransactionEnvelope>(raw, "TransactionEnvelope") {
+    if let Ok(v) = decode_single_strict::<TransactionEnvelope>(raw, "TransactionEnvelope") {
         return Ok(v);
     }
-    if let Ok(v) = decode_single::<ContractEvent>(raw, "ContractEvent") {
+    if let Ok(v) = decode_single_strict::<ContractEvent>(raw, "ContractEvent") {
         return Ok(v);
     }
-    if let Ok(v) = decode_single::<TransactionResult>(raw, "TransactionResult") {
+    if let Ok(v) = decode_single_strict::<TransactionResult>(raw, "TransactionResult") {
         return Ok(v);
     }
     Err(DecodeError::TypeUnknown(
