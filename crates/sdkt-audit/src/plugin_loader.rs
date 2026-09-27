@@ -252,6 +252,7 @@ impl AuditRule for PluginRule {
                 Some(unsafe { cstr_to_string(f.location) })
             };
             report.add(Finding {
+                file: None,
                 rule_id,
                 severity: match f.severity {
                     SEVERITY_CRITICAL => Severity::Critical,
