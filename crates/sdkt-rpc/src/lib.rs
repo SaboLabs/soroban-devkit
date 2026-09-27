@@ -42,13 +42,14 @@ pub use simulate::{
 };
 pub use storage::{
     calculate_extension_cost, collect_extend_keys, contract_exists, extend_footprint, get_ttl_info,
-    read_contract_state, read_ledger_entry, restore_footprint, restore_params_from_simulation,
-    ExtendResult, RestoreResult, StateReadResult, TtlEntry, TtlInfo,
+    get_ttl_info_for_keys, read_contract_state, read_ledger_entry, restore_footprint,
+    restore_params_from_simulation, ExtendResult, RestoreResult, StateReadResult, TtlEntry,
+    TtlInfo,
 };
 pub use submission::{
-    get_transaction_status, poll_transaction, send_transaction, submit_and_wait, PollConfig,
-    SendTransactionRequest, SendTransactionResponse, SubmissionResult, TransactionStatus,
-    TransactionStatusResponse,
+    extract_contract_events, get_transaction_status, poll_transaction, send_transaction,
+    submit_and_wait, PollConfig, SendTransactionRequest, SendTransactionResponse, SubmissionResult,
+    TransactionStatus, TransactionStatusResponse,
 };
 pub use transaction::{inspect_transaction, TransactionInspection};
 pub use wasm::get_wasm_metadata;
