@@ -2,8 +2,19 @@ name: Playground WASM freshness
 
 on:
   push:
+    branches: [ "main" ]
+    paths:
+      - ".github/workflows/playground-wasm.yml"
+      - "crates/sdkt-playground/**"
+      - "website/playground/**"
+      - "Cargo.lock"
   pull_request:
     branches: [ "main" ]
+    paths:
+      - ".github/workflows/playground-wasm.yml"
+      - "crates/sdkt-playground/**"
+      - "website/playground/**"
+      - "Cargo.lock"
 
 jobs:
   playground-wasm:
@@ -20,7 +31,7 @@ jobs:
         targets: wasm32-unknown-unknown
 
     - name: Install wasm-bindgen CLI
-      run: cargo install wasm-bindgen-cli --version 0.2.127 --locked
+      run: cargo +1.88.0 install wasm-bindgen-cli --version 0.2.127 --locked
 
     - name: Install wasm-tools
       run: cargo install wasm-tools --version 1.259.0 --locked
@@ -33,7 +44,7 @@ jobs:
         wasm-bindgen --version
 
     - name: Check sdkt-playground
-      run: cargo check --locked --manifest-path crates/sdkt-playground/Cargo.toml --target wasm32-unknown-unknown
+      run: cargo +1.88.0 check --locked --manifest-path crates/sdkt-playground/Cargo.toml --target wasm32-unknown-unknown
 
     - name: Generate playground artifacts
       run: |
