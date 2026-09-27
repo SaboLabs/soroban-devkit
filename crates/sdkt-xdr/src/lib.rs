@@ -424,7 +424,7 @@ fn decode_single<T: ReadXdr + serde::Serialize>(
 ) -> Result<Value, DecodeError> {
     let mut cursor = std::io::Cursor::new(raw);
     let mut l = Limited::new(&mut cursor, Limits::none());
-    T::read_xdr(&mut l)
+    T::read_xdr_to_end(&mut l)
         .map_err(|e| DecodeError::XdrParse(name.to_string(), e))
         .and_then(|v| serde_json::to_value(&v).map_err(DecodeError::Json))
 }
@@ -575,6 +575,24 @@ mod tests {
 
         assert_eq!(v["fee_charged"], fee_charged.to_string());
         assert!(v["result"]["tx_success"].is_array());
+    }
+
+    #[test]
+    fn test_auto_decode_small_transaction_result_not_scval() {
+        let fee_charged = 100_i64;
+        let result = TransactionResult {
+            fee_charged,
+            result: TransactionResultResult::TxSuccess(vec![].try_into().unwrap()),
+            ext: TransactionResultExt::V0,
+        };
+        let bytes = result.to_xdr(Limits::none()).unwrap();
+        let payload = STANDARD.encode(bytes);
+        let json = decode(&payload, None, OutputFormat::Json).unwrap();
+        let v: Value = serde_json::from_str(&json).unwrap();
+
+        assert_eq!(v["fee_charged"], fee_charged.to_string());
+        assert!(v["result"]["tx_success"].is_array());
+        assert!(v.get("i32").is_none());
     }
 
     #[test]
