@@ -1898,6 +1898,29 @@ fn parse_format_str(s: &str) -> OutputFormat {
 /// `InvokeTransactionParams::args`. Values without a recognized `TYPE:` prefix
 /// are passed through as-is (assumed pre-encoded base64 ScVal), matching the
 /// historical `tx build` behavior.
+/// Decode a `bytes:` hex value, shared by `parse_typed_args` and `run_encode`
+/// so both report the same error for the same input. Non-ASCII input is
+/// rejected up front: slicing at byte offsets would otherwise land inside a
+/// multi-byte character and panic.
+fn parse_hex_bytes(raw: &str) -> Result<Vec<u8>, String> {
+    let hex = raw.trim();
+    if !hex.is_ascii() {
+        return Err(format!("invalid bytes value: {raw} (expected ASCII hex)"));
+    }
+    if !hex.len().is_multiple_of(2) {
+        return Err(format!(
+            "invalid bytes value: {raw} (hex must have an even number of digits)"
+        ));
+    }
+    (0..hex.len())
+        .step_by(2)
+        .map(|i| {
+            u8::from_str_radix(&hex[i..i + 2], 16)
+                .map_err(|_| format!("invalid bytes value: {raw} (invalid hex byte)"))
+        })
+        .collect()
+}
+
 fn parse_typed_args(args: &[String], strict: bool) -> Result<Vec<String>, String> {
     use sdkt_xdr::{scval_to_base64, Address, IntoScVal};
     let mut parsed = Vec::new();
@@ -1942,19 +1965,7 @@ fn parse_typed_args(args: &[String], strict: bool) -> Result<Vec<String>, String
                 "string" => scval_to_base64(&v.into_scval().map_err(|e| e.to_string())?)
                     .map_err(|e| e.to_string())?,
                 "bytes" => {
-                    let mut b = Vec::new();
-                    let s = v.trim();
-                    if !s.is_ascii() {
-                        return Err(format!("invalid hex byte in: {v}"));
-                    }
-                    if s.len() % 2 != 0 {
-                        return Err(format!("invalid hex byte in: {v}"));
-                    }
-                    for i in (0..s.len()).step_by(2) {
-                        let byte = u8::from_str_radix(&s[i..i + 2], 16)
-                            .map_err(|_| format!("invalid hex byte in: {v}"))?;
-                        b.push(byte);
-                    }
+                    let b = parse_hex_bytes(v)?;
                     scval_to_base64(&b.into_scval().map_err(|e| e.to_string())?)
                         .map_err(|e| e.to_string())?
                 }
@@ -2264,26 +2275,9 @@ fn run_encode(values: &[String]) -> Result<String, String> {
             .into_scval()
             .map_err(|e| e.to_string())?,
         "string" => raw.to_string().into_scval().map_err(|e| e.to_string())?,
-        "bytes" => {
-            let hex = raw.trim();
-            // Match parse_typed_args' trimming and per-pair radix semantics,
-            // but reject non-ASCII before slicing at byte offsets.
-            if !hex.is_ascii() {
-                return Err(format!("invalid bytes value: {raw} (expected ASCII hex)"));
-            }
-            if hex.len() % 2 != 0 {
-                return Err(format!(
-                    "invalid bytes value: {raw} (hex must have an even number of digits)"
-                ));
-            }
-            let mut bytes = Vec::with_capacity(hex.len() / 2);
-            for i in (0..hex.len()).step_by(2) {
-                let byte = u8::from_str_radix(&hex[i..i + 2], 16)
-                    .map_err(|_| format!("invalid bytes value: {raw} (invalid hex byte)"))?;
-                bytes.push(byte);
-            }
-            bytes.into_scval().map_err(|e| e.to_string())?
-        }
+        "bytes" => parse_hex_bytes(raw)?
+            .into_scval()
+            .map_err(|e| e.to_string())?,
         "symbol" => {
             if raw.len() > 32 {
                 return Err(format!("symbol exceeds 32 bytes (got {} bytes)", raw.len()));
@@ -2350,11 +2344,28 @@ mod encode_tests {
 
     #[test]
     fn parse_typed_args_rejects_non_ascii_bytes_without_panic() {
-        let input = ["bytes:💥".to_string()];
-        let err = parse_typed_args(&input, true).unwrap_err();
-        assert!(err.contains("invalid hex byte"));
-        let err_non_strict = parse_typed_args(&input, false).unwrap_err();
-        assert!(err_non_strict.contains("invalid hex byte"));
+        // "a€" has an even byte length (1 + 3), so only the ASCII guard stops
+        // the pair slicing from cutting into the '€'.
+        for value in ["💥", "a€"] {
+            let input = [format!("bytes:{value}")];
+            let expected = format!("invalid bytes value: {value} (expected ASCII hex)");
+            for strict in [false, true] {
+                let err = parse_typed_args(&input, strict).unwrap_err();
+                assert_eq!(err, expected, "strict={strict}");
+            }
+            assert_eq!(run_encode(&input).unwrap_err(), expected);
+        }
+    }
+
+    #[test]
+    fn parse_typed_args_bytes_errors_match_encode() {
+        for input in ["bytes:abc", "bytes:zz", "bytes: 0g "] {
+            let args = [input.to_string()];
+            let encode_err = run_encode(&args).unwrap_err();
+            for strict in [false, true] {
+                assert_eq!(parse_typed_args(&args, strict).unwrap_err(), encode_err);
+            }
+        }
     }
 }
 
