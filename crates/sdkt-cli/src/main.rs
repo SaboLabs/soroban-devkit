@@ -825,7 +825,8 @@ enum PluginAction {
         /// Overwrite an existing install of the same id
         #[arg(long)]
         force: bool,
-        /// Expected Ed25519 public key file for a signed bundle (32 bytes, raw)
+        /// Require the bundle to be signed by this Ed25519 public key file (32 bytes, raw);
+        /// unsigned bundles are refused
         #[arg(long)]
         public_key: Option<String>,
         /// Output format (pretty or json)
@@ -6524,7 +6525,10 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
                 let fmt = parse_format_str(&format);
                 let opts = sdkt_audit::plugin_store::InstallOpts { id, force };
                 let path = std::path::Path::new(&source);
-                let is_bundle = path.extension().and_then(|e| e.to_str()) == Some("sdktplugin");
+                let is_bundle = path
+                    .extension()
+                    .and_then(|e| e.to_str())
+                    .is_some_and(|e| e.eq_ignore_ascii_case("sdktplugin"));
                 if public_key.is_some() && !is_bundle {
                     eprintln!("Error: --public-key only applies to .sdktplugin bundles");
                     process::exit(1);

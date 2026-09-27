@@ -360,8 +360,9 @@ pub fn install_bundle(bundle: &Path, opts: &InstallOpts) -> Result<BundleVerific
     install_bundle_with_key(bundle, opts, None)
 }
 
-/// Like [`install_bundle`], but when `verifying_key` is given a signed bundle
-/// whose embedded key differs is rejected before anything is installed.
+/// Like [`install_bundle`], but when `verifying_key` is given the bundle must be
+/// signed by that key: an unsigned bundle, or a signed bundle whose embedded key
+/// differs, is rejected before anything is installed.
 pub fn install_bundle_with_key(
     bundle: &Path,
     opts: &InstallOpts,
@@ -377,6 +378,12 @@ pub fn install_bundle_with_key(
     ));
     let result = (|| {
         let mut verified = verify_bundle(bundle, &staging, verifying_key)?;
+        // A stripped signature must not bypass a key the caller asked for.
+        if verifying_key.is_some() && !verified.signed {
+            return Err(StoreError::InvalidBundle(
+                "bundle is not signed but a public key was provided; refusing to install".into(),
+            ));
+        }
         let source = staging.join(&verified.metadata.artifact);
         verified.metadata = install(&source, opts)?;
         Ok(verified)
@@ -789,5 +796,19 @@ mod bundle_tests {
             ),
             Err(StoreError::InvalidSignature)
         ));
+    }
+
+    #[test]
+    fn install_bundle_with_key_rejects_unsigned_bundle() {
+        let dir = tempfile::tempdir().unwrap();
+        let artifact = dir.path().join("rule.wasm");
+        fs::write(&artifact, b"wasm").unwrap();
+        let bundle = dir.path().join("plugin.sdktplugin");
+        pack_bundle(&bundle, &meta(), &artifact, None).unwrap();
+        let key = SigningKey::from_bytes(&[7u8; 32]);
+        let err =
+            install_bundle_with_key(&bundle, &InstallOpts::default(), Some(&key.verifying_key()))
+                .unwrap_err();
+        assert!(err.to_string().contains("bundle is not signed"), "{err}");
     }
 }

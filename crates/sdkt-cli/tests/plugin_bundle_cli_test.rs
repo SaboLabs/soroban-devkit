@@ -486,6 +486,79 @@ fn install_public_key_requires_bundle_source() {
 }
 
 #[test]
+fn bundle_install_rejects_unsigned_bundle_when_public_key_given() {
+    let root = TempDir::new().unwrap();
+    let store = TempDir::new().unwrap();
+    let src_dir = make_plugin_dir(&root, "wasm", "wasm");
+    let key = root.path().join("public.key");
+    fs::write(&key, [0xcd; 32]).unwrap();
+    let bundle = root.path().join("unsigned.sdktplugin");
+    pack(&src_dir, &bundle, None);
+
+    sdkt_in(store.path())
+        .args([
+            "plugin",
+            "install",
+            bundle.to_str().unwrap(),
+            "--public-key",
+            key.to_str().unwrap(),
+        ])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains(
+            "bundle is not signed but a public key was provided; refusing to install",
+        ))
+        .stdout(predicate::str::is_empty());
+    assert!(installed_ids(store.path()).is_empty());
+}
+
+#[test]
+fn bundle_install_honors_force_and_id() {
+    let root = TempDir::new().unwrap();
+    let store = TempDir::new().unwrap();
+    let src_dir = make_plugin_dir(&root, "wasm", "wasm");
+    let bundle = root.path().join("opts.sdktplugin");
+    pack(&src_dir, &bundle, None);
+    let install = |extra: &[&str]| {
+        let mut cmd = sdkt_in(store.path());
+        cmd.args(["plugin", "install", bundle.to_str().unwrap()])
+            .args(extra);
+        cmd.assert()
+    };
+
+    install(&[]).success();
+    // Same id again without --force is refused, exactly as for artifacts.
+    install(&[])
+        .failure()
+        .stderr(predicate::str::contains("already installed"));
+    install(&["--force"]).success();
+
+    // --id overrides the bundle's metadata id.
+    install(&["--id", "renamed"])
+        .success()
+        .stdout(predicate::str::contains("Installed plugin 'renamed'"));
+    let mut ids = installed_ids(store.path());
+    ids.sort();
+    assert_eq!(ids, vec!["myrule".to_string(), "renamed".to_string()]);
+}
+
+#[test]
+fn bundle_install_extension_is_case_insensitive() {
+    let root = TempDir::new().unwrap();
+    let store = TempDir::new().unwrap();
+    let src_dir = make_plugin_dir(&root, "wasm", "wasm");
+    let bundle = root.path().join("UPPER.SDKTPLUGIN");
+    pack(&src_dir, &bundle, None);
+
+    sdkt_in(store.path())
+        .args(["plugin", "install", bundle.to_str().unwrap()])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("signature: UNSIGNED"));
+    assert_eq!(installed_ids(store.path()), vec!["myrule".to_string()]);
+}
+
+#[test]
 fn m40_deliverable_files_present() {
     // Confirms the deliverables exist: plugin_store.rs, plugin_loader.rs,
     // plugin_cli_test.rs, and plugin_loading.rs.
