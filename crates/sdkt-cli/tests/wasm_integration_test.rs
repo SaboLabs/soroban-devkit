@@ -157,7 +157,6 @@ fn test_cli_wasm_inspect_us_new_pretty_kind_strings() {
     assert!(!stdout.contains("[Memory]"));
     assert!(stdout.contains("[func]") || stdout.contains("[memory]"));
 }
-}
 #[test]
 fn test_cli_wasm_metadata_missing_contract() {
     let mut cmd = Command::cargo_bin("sdkt").unwrap();
