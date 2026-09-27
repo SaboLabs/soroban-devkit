@@ -865,6 +865,7 @@ mod bundle_tests {
     fn bundle_update_happy_path() {
         let dir = tempfile::tempdir().unwrap();
         let store = dir.path().join("store");
+        std::env::set_var("SDKT_PLUGIN_DIR", &store);
         std::fs::create_dir_all(&store).unwrap();
         let artifact = dir.path().join("rule.wasm");
         fs::write(&artifact, b"wasm-v1").unwrap();
@@ -887,23 +888,21 @@ abi_minor = 0
 "#,
         )
         .unwrap();
-        std::fs::write(
-            plugin_dir(&root, "example-rule").join("rule.wasm"),
-            b"wasm-v1",
-        )
-        .unwrap();
+        std::fs::write(plugin_dir(&root, "example-rule").join("rule.wasm"), b"wasm-v1").unwrap();
 
         let result = update("example-rule", &bundle).unwrap();
         assert_eq!(result.version, "1.0.0");
         let listed = list_in(&root);
         assert_eq!(listed.len(), 1);
         assert_eq!(listed[0].version, "1.0.0");
+        std::env::remove_var("SDKT_PLUGIN_DIR");
     }
 
     #[test]
     fn bundle_update_signature_required_path() {
         let dir = tempfile::tempdir().unwrap();
         let store = dir.path().join("store");
+        std::env::set_var("SDKT_PLUGIN_DIR", &store);
         std::fs::create_dir_all(&store).unwrap();
         let artifact = dir.path().join("rule.wasm");
         fs::write(&artifact, b"wasm").unwrap();
@@ -950,12 +949,14 @@ abi_minor = 0
             Some(&key.verifying_key()),
         );
         assert!(result.is_ok());
+        std::env::remove_var("SDKT_PLUGIN_DIR");
     }
 
     #[test]
     fn bundle_update_corrupt_bundle_no_op() {
         let dir = tempfile::tempdir().unwrap();
         let store = dir.path().join("store");
+        std::env::set_var("SDKT_PLUGIN_DIR", &store);
         std::fs::create_dir_all(&store).unwrap();
         let artifact = dir.path().join("rule.wasm");
         fs::write(&artifact, b"wasm").unwrap();
@@ -992,12 +993,14 @@ abi_minor = 0
         let listed = list_in(&root);
         assert_eq!(listed.len(), 1);
         assert_eq!(listed[0].version, "1.0.0");
+        std::env::remove_var("SDKT_PLUGIN_DIR");
     }
 
     #[test]
     fn bundle_update_rename_cleanup() {
         let dir = tempfile::tempdir().unwrap();
         let store = dir.path().join("store");
+        std::env::set_var("SDKT_PLUGIN_DIR", &store);
         std::fs::create_dir_all(&store).unwrap();
         let old_artifact = dir.path().join("old_rule.wasm");
         fs::write(&old_artifact, b"old-wasm").unwrap();
@@ -1024,11 +1027,7 @@ abi_minor = 0
 "#,
         )
         .unwrap();
-        std::fs::write(
-            plugin_dir(&root, "example-rule").join("old_rule.wasm"),
-            b"old-wasm",
-        )
-        .unwrap();
+        std::fs::write(plugin_dir(&root, "example-rule").join("old_rule.wasm"), b"old-wasm").unwrap();
 
         let mut new_meta = meta();
         new_meta.artifact = "new_rule.wasm".into();
@@ -1043,5 +1042,6 @@ abi_minor = 0
         assert!(plugin_dir(&root, "example-rule")
             .join("new_rule.wasm")
             .exists());
+        std::env::remove_var("SDKT_PLUGIN_DIR");
     }
 }
