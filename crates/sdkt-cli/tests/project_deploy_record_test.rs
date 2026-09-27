@@ -453,7 +453,8 @@ fn successful_deploy_json_output_is_unchanged() {
 
 /// `--identity <name>` selects a non-default identity for the deployment.
 /// Generates an identity named "deployer" (not "default") and passes it via
-/// `--identity`. Deployment must succeed using that identity.
+/// `--identity`. Asserts that the mock RPC receives the deployer's account key
+/// in `getLedgerEntries`, proving the correct signing account was used.
 #[test]
 fn project_deploy_uses_explicit_identity() {
     let project = TempDir::new().unwrap();
@@ -466,18 +467,133 @@ fn project_deploy_uses_explicit_identity() {
         .assert()
         .success();
 
-    let mock = MockServer::start(false, None);
+    // Capture the deployer's public key (G-address) via `identity show`.
+    let show_out = sdkt(project_dir)
+        .args(["identity", "show", "deployer"])
+        .output()
+        .expect("identity show succeeds");
+    let show_str = String::from_utf8_lossy(&show_out.stdout);
+    let deployer_pubkey = show_str
+        .lines()
+        .find_map(|l| {
+            let l = l.trim();
+            if l.starts_with('G') && l.len() >= 56 {
+                // Take the first G-address-looking token on any line
+                Some(l.split_whitespace().find(|t| t.starts_with('G'))?.to_string())
+            } else {
+                // Also try extracting from a "key: GXXX" line
+                let after_colon = l.split_once(':')?.1.trim();
+                if after_colon.starts_with('G') && after_colon.len() >= 56 {
+                    Some(after_colon.to_string())
+                } else {
+                    None
+                }
+            }
+        })
+        .expect("identity show must print the G-address");
+
+    // Start a mock that records every account key queried via getLedgerEntries.
+    let queried_accounts: Arc<std::sync::Mutex<Vec<String>>> =
+        Arc::new(std::sync::Mutex::new(Vec::new()));
+    let queried_accounts_srv = queried_accounts.clone();
+
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let addr = listener.local_addr().unwrap();
+    let mock_url = format!("http://{addr}");
+
+    thread::spawn(move || {
+        for conn in listener.incoming() {
+            let mut sock = match conn {
+                Ok(s) => s,
+                Err(_) => break,
+            };
+            use std::io::{Read, Write};
+            let mut buf = [0u8; 16384];
+            let n = sock.read(&mut buf).unwrap_or(0);
+            if n == 0 {
+                continue;
+            }
+            let req = String::from_utf8_lossy(&buf[..n]).to_string();
+            let method = extract_jsonrpc_method(&req);
+
+            if method.as_deref() == Some("getLedgerEntries") {
+                let keys = parse_get_ledger_keys(&req);
+                let mut acc = queried_accounts_srv.lock().unwrap();
+                for k in keys {
+                    if is_account_key(&k) {
+                        acc.push(k);
+                    }
+                }
+            }
+
+            let body = match method.as_deref() {
+                Some("getLedgerEntries") => {
+                    format!(
+                        r#"{{"jsonrpc":"2.0","id":1,"result":{{"entries":[{{"key":"AAAAAA==","xdr":"{ACCOUNT_ENTRY_XDR}","lastModifiedLedgerSeq":1}}],"latestLedger":100}}}}"#
+                    )
+                }
+                Some("simulateTransaction") => format!(
+                    r#"{{"jsonrpc":"2.0","id":1,"result":{{"transactionData":"{SOROBAN_DATA_XDR}","minResourceFee":"150","results":[{{"xdr":"AAAAAQ==","auth":[]}}],"latestLedger":"100","events":[]}}}}"#
+                ),
+                Some("sendTransaction") => {
+                    r#"{"jsonrpc":"2.0","id":1,"result":{"hash":"deadbeefcafe","status":"PENDING","latestLedger":"100"}}"#
+                        .to_string()
+                }
+                Some("getTransaction") => {
+                    r#"{"jsonrpc":"2.0","id":1,"result":{"status":"SUCCESS","latestLedger":"101","resultXdr":"AAAAAg=="}}"#
+                        .to_string()
+                }
+                _ => r#"{"jsonrpc":"2.0","id":1,"error":{"code":-32601,"message":"method not found"}}"#.to_string(),
+            };
+
+            let resp = format!(
+                "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+                body.len(),
+                body
+            );
+            let _ = sock.write_all(resp.as_bytes());
+        }
+    });
+
     sdkt(project_dir)
         .current_dir(project_dir)
-        .args({
-            let mut args = deploy_base_args(&mock);
-            args.push("--identity".into());
-            args.push("deployer".into());
-            args
-        })
+        .args(vec![
+            "project".to_string(),
+            "--rpc-url".to_string(),
+            mock_url.clone(),
+            "--network-passphrase".to_string(),
+            "Test SDF Network ; September 2015".to_string(),
+            "deploy".to_string(),
+            "--identity".to_string(),
+            "deployer".to_string(),
+        ])
         .assert()
         .success()
         .stdout(predicate::str::contains("Deploying alias 'token'"));
+
+    // Decode each queried account key and assert the deployer's pubkey is among them.
+    let keys_seen = queried_accounts.lock().unwrap().clone();
+    assert!(
+        !keys_seen.is_empty(),
+        "expected at least one account key lookup"
+    );
+    let deployer_seen = keys_seen.iter().any(|k| {
+        if let Ok(stellar_xdr::LedgerKey::Account(acct)) = sdkt_xdr::decode_ledger_key(k) {
+            let stellar_xdr::PublicKey::PublicKeyTypeEd25519(bytes) = acct.account_id.0;
+            let g = stellar_strkey::Strkey::PublicKeyEd25519(
+                stellar_strkey::ed25519::PublicKey(bytes.0),
+            )
+            .to_string()
+            .as_str()
+            .to_string();
+            return g == deployer_pubkey;
+        }
+        false
+    });
+    assert!(
+        deployer_seen,
+        "expected the deployer's account key ({deployer_pubkey}) in getLedgerEntries, got: {keys_seen:?}"
+    );
 }
 
 /// Passing a nonexistent identity name must fail immediately with the supplied
