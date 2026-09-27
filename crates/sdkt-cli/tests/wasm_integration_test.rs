@@ -123,6 +123,41 @@ fn test_cli_wasm_inspect_contract_metadata() {
         .stdout(predicates::str::contains("Contract Meta ("))
         .stdout(predicates::str::contains("cliver: 27.1.0"));
 }
+
+#[test]
+fn test_cli_wasm_inspect_us_new_json_kind_strings() {
+    let wasm_path = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/us_new.wasm");
+    let mut cmd = Command::cargo_bin("sdkt").unwrap();
+    let assert = cmd
+        .arg("wasm")
+        .arg("inspect")
+        .arg(wasm_path)
+        .arg("--format")
+        .arg("json")
+        .assert();
+
+    let output = assert.success().get_output().stdout.clone();
+    let stdout = String::from_utf8_lossy(&output);
+    assert!(!stdout.contains("Func("));
+    assert!(!stdout.contains("\"Func\""));
+    assert!(!stdout.contains("\"Memory\""));
+    assert!(stdout.contains("\"kind\": \"func\""));
+    assert!(stdout.contains("\"kind\": \"memory\""));
+}
+
+#[test]
+fn test_cli_wasm_inspect_us_new_pretty_kind_strings() {
+    let wasm_path = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/us_new.wasm");
+    let mut cmd = Command::cargo_bin("sdkt").unwrap();
+    let assert = cmd.arg("wasm").arg("inspect").arg(wasm_path).assert();
+
+    let output = assert.success().get_output().stdout.clone();
+    let stdout = String::from_utf8_lossy(&output);
+    assert!(!stdout.contains("[Func]"));
+    assert!(!stdout.contains("[Memory]"));
+    assert!(stdout.contains("[func]") || stdout.contains("[memory]"));
+}
+}
 #[test]
 fn test_cli_wasm_metadata_missing_contract() {
     let mut cmd = Command::cargo_bin("sdkt").unwrap();
