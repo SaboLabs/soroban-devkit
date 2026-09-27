@@ -479,7 +479,11 @@ fn project_deploy_uses_explicit_identity() {
             let l = l.trim();
             if l.starts_with('G') && l.len() >= 56 {
                 // Take the first G-address-looking token on any line
-                Some(l.split_whitespace().find(|t| t.starts_with('G'))?.to_string())
+                Some(
+                    l.split_whitespace()
+                        .find(|t| t.starts_with('G'))?
+                        .to_string(),
+                )
             } else {
                 // Also try extracting from a "key: GXXX" line
                 let after_colon = l.split_once(':')?.1.trim();
@@ -580,9 +584,9 @@ fn project_deploy_uses_explicit_identity() {
     let deployer_seen = keys_seen.iter().any(|k| {
         if let Ok(stellar_xdr::LedgerKey::Account(acct)) = sdkt_xdr::decode_ledger_key(k) {
             let stellar_xdr::PublicKey::PublicKeyTypeEd25519(bytes) = acct.account_id.0;
-            let g = stellar_strkey::Strkey::PublicKeyEd25519(
-                stellar_strkey::ed25519::PublicKey(bytes.0),
-            )
+            let g = stellar_strkey::Strkey::PublicKeyEd25519(stellar_strkey::ed25519::PublicKey(
+                bytes.0,
+            ))
             .to_string()
             .as_str()
             .to_string();
