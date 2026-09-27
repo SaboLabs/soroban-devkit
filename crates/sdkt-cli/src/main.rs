@@ -4508,8 +4508,7 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
                         let items: Vec<serde_json::Value> = list
                             .iter()
                             .map(|id| {
-                                let is_def =
-                                    default_id.as_ref().is_some_and(|d| d.name == id.name);
+                                let is_def = default_id.as_ref().is_some_and(|d| d.name == id.name);
                                 serde_json::json!({
                                     "name": id.name,
                                     "public_key": id.public_key,
