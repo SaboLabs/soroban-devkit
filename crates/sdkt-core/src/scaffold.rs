@@ -114,11 +114,14 @@ impl Contract {
     write_template(root, "src/lib.rs", lib_rs, &mut created)?;
 
     let sdkt_toml = r#"[network]
-default = "testnet"
 rpc_url = "https://soroban-testnet.stellar.org"
+passphrase = "Test SDF Network ; September 2015"
 
 [build]
 target = "wasm32-unknown-unknown"
+
+[contracts.main]
+path = "."
 "#;
     write_template(root, ".sdkt.toml", sdkt_toml, &mut created)?;
 
@@ -924,6 +927,7 @@ fn write_template(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::config::DevKitConfig;
     use std::path::PathBuf;
 
     fn tmp_dir(name: &str) -> PathBuf {
@@ -951,6 +955,19 @@ mod tests {
         assert!(p.join(".gitignore").exists());
         assert!(p.join("tests/basic.rs").exists());
         assert_eq!(res.files_created.len(), 6);
+        let config = DevKitConfig::from_file(p.join(".sdkt.toml")).unwrap();
+        assert_eq!(
+            config.network.rpc_url,
+            "https://soroban-testnet.stellar.org"
+        );
+        assert_eq!(
+            config.network.passphrase,
+            "Test SDF Network ; September 2015"
+        );
+        assert_eq!(
+            config.contracts.get("main").map(|c| c.path.as_str()),
+            Some(".")
+        );
         let _ = fs::remove_dir_all(&p);
     }
 
