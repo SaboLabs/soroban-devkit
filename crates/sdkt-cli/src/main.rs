@@ -1370,6 +1370,9 @@ enum ProjectCommand {
         /// without re-deploying (and re-paying for) what already succeeded.
         #[arg(long)]
         skip_deployed: bool,
+        /// Identity name to sign and pay for each contract deployment. Defaults to "default".
+        #[arg(short = 'I', long, default_value = "default")]
+        identity: String,
         #[arg(short, long, default_value = "pretty")]
         format: String,
     },
@@ -6695,6 +6698,7 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
             ProjectCommand::Deploy {
                 salt,
                 skip_deployed,
+                identity,
                 format,
             } => {
                 let fmt = parse_format_str(&format);
@@ -6869,9 +6873,15 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
                             // Load identity for signing
                             let identity_store = sdkt_storage::IdentityStore::new()
                                 .map_err(|e| format!("Failed to access identity store: {}", e))?;
-                            let identity_obj = identity_store
-                                .get_default()
-                                .map_err(|e| format!("Default identity not found: {}", e))?;
+                            let identity_obj = if identity == "default" {
+                                identity_store
+                                    .get_default()
+                                    .map_err(|e| format!("Default identity not found: {}", e))?
+                            } else {
+                                identity_store
+                                    .get(&identity)
+                                    .map_err(|e| format!("Identity '{}' not found: {}", identity, e))?
+                            };
                             let signing_key =
                                 identity_store
                                     .load_signing_key(&identity_obj.name)

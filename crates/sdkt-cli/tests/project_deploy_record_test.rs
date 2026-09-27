@@ -450,3 +450,67 @@ fn successful_deploy_json_output_is_unchanged() {
         cid
     );
 }
+
+/// `--identity <name>` selects a non-default identity for the deployment.
+/// Generates an identity named "deployer" (not "default") and passes it via
+/// `--identity`. Deployment must succeed using that identity.
+#[test]
+fn project_deploy_uses_explicit_identity() {
+    let project = TempDir::new().unwrap();
+    let project_dir = project.path();
+    setup_single_contract_project(project_dir);
+
+    // Generate a named identity — do NOT set it as default.
+    sdkt(project_dir)
+        .args(["identity", "generate", "deployer"])
+        .assert()
+        .success();
+
+    let mock = MockServer::start(false, None);
+    sdkt(project_dir)
+        .current_dir(project_dir)
+        .args({
+            let mut args = deploy_base_args(&mock);
+            args.push("--identity".into());
+            args.push("deployer".into());
+            args
+        })
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("Deploying alias 'token'"));
+}
+
+/// Passing a nonexistent identity name must fail immediately with the supplied
+/// name present in the error message (not a hardcoded "Default identity").
+#[test]
+fn project_deploy_nonexistent_identity_error_contains_name() {
+    let project = TempDir::new().unwrap();
+    let project_dir = project.path();
+    setup_single_contract_project(project_dir);
+
+    // No identity is generated at all; the name "no_such_identity" does not exist.
+    let mock = MockServer::start(false, None);
+    sdkt(project_dir)
+        .current_dir(project_dir)
+        .args({
+            let mut args = deploy_base_args(&mock);
+            args.push("--identity".into());
+            args.push("no_such_identity".into());
+            args
+        })
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("no_such_identity"));
+}
+
+/// `--help` for `project deploy` must document the `--identity` / `-I` option.
+#[test]
+fn project_deploy_help_shows_identity_option() {
+    let project = TempDir::new().unwrap();
+    sdkt(project.path())
+        .args(["project", "deploy", "--help"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("--identity"))
+        .stdout(predicate::str::contains("-I"));
+}
