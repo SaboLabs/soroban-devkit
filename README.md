@@ -397,6 +397,7 @@ resolution:
 ```toml
 [contracts.token]
 path = "contracts/token"
+ctor_args = ["address:GBBD47IF6LWK7P7MDEVSCWR7DPUWV3NY3DTQEVFL4NAT4AQH3ZLLFLA5", "u32:1000000"]
 
 [contracts.router]
 path = "contracts/router"

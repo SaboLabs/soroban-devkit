@@ -5580,6 +5580,11 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
                         let mut results = std::collections::HashMap::new();
 
                         for contract in resolved {
+                            // Parse and validate constructor arguments (fail fast on bad input before upload)
+                            let parsed_args = parse_typed_args(&contract.ctor_args, false)?;
+                            sdkt_xdr::parse_scval_args(&parsed_args)
+                                .map_err(|e| format!("Invalid constructor argument: {}", e))?;
+
                             if fmt != OutputFormat::Json {
                                 println!(
                                     "  Deploying alias '{}' from '{}'...",
@@ -5621,23 +5626,33 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
                             // Load identity for signing
                             let identity_store = sdkt_storage::IdentityStore::new()
                                 .map_err(|e| format!("Failed to access identity store: {}", e))?;
-                            let identity_obj = identity_store
-                                .get("default")
-                                .map_err(|e| format!("Default identity not found: {}", e))?;
-                            let signing_key = identity_store
-                                .load_signing_key("default")
-                                .map_err(|e| format!("Failed to load signing key: {}", e))?;
+                            let (identity_obj, signing_key) = if let Ok(id) = identity_store.get("default") {
+                                let key = identity_store
+                                    .load_signing_key("default")
+                                    .map_err(|e| format!("Failed to load signing key: {}", e))?;
+                                (id, key)
+                            } else {
+                                let id = identity_store.get_default().map_err(|_| {
+                                    "Default identity not found: no 'default' identity configured".to_string()
+                                })?;
+                                let key = identity_store
+                                    .load_signing_key(&id.name)
+                                    .map_err(|e| format!("Failed to load signing key for '{}': {}", id.name, e))?;
+                                (id, key)
+                            };
                             let signer =
                                 sdkt_xdr::sign::Ed25519Signer::from_seed(&signing_key.to_bytes());
                             let source_account = identity_obj.public_key.clone();
 
-                            match sdkt_rpc::deploy_contract(
+                            use sdkt_rpc::deploy_contract_with_args;
+                            match deploy_contract_with_args(
                                 &client,
                                 &wasm_bytes,
                                 &source_account,
                                 &signer,
                                 network,
                                 None,
+                                parsed_args,
                             )
                             .await
                             {

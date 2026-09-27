@@ -59,6 +59,7 @@ pub struct ResolvedContract {
     pub alias: String,
     pub path: String,
     pub wasm_artifact: PathBuf,
+    pub ctor_args: Vec<String>,
 }
 
 /// Resolves the deployment order based on the merged `deploy_after` +
@@ -164,6 +165,7 @@ pub fn resolve_project(config: &DevKitConfig) -> Result<Vec<ResolvedContract>, P
             alias,
             path: cfg.path.clone(),
             wasm_artifact,
+            ctor_args: cfg.ctor_args.clone(),
         });
     }
 
@@ -185,6 +187,7 @@ mod tests {
                     path: format!("contracts/{}", alias),
                     deploy_after,
                     depends_on,
+                    ctor_args: vec![],
                 },
             );
         }

@@ -110,7 +110,7 @@ target = "wasm32-unknown-unknown"
 
     if !config.minimal {
         let readme = format!(
-            "# {name}\n\nA Soroban smart contract project.\n\n## Build\n\n```\nsdkt build\n```\n\n## Test\n\n```\ncargo test\n```\n",
+            "# {name}\n\nA Soroban smart contract project.\n\n## Build\n\n```\nsdkt build\n```\n\n## Test\n\n```\ncargo test\n```\n\n## Project Configuration\n\nConfigure contracts in `.sdkt.toml` with optional dependencies and constructor arguments:\n\n```toml\n[contracts.{name}]\npath = \".\"\nctor_args = [\"address:G...\", \"u32:100\"]\n```\n",
             name = package_name,
         );
         write_template(root, "README.md", &readme, &mut created)?;

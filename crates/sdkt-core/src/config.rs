@@ -48,6 +48,9 @@ pub struct ContractConfig {
     /// `deploy_after`; listed here for explicit package-dependency graphs.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub depends_on: Vec<String>,
+    /// Optional constructor arguments in `TYPE:VALUE` format, matching `sdkt deploy --arg`.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub ctor_args: Vec<String>,
 }
 
 /// Package manifest metadata ().
@@ -302,6 +305,32 @@ mod tests {
             .get("router")
             .unwrap()
             .deploy_after
+            .is_empty());
+    }
+
+    #[test]
+    fn test_ctor_args_field_parses() {
+        let toml_data = r#"
+            [contracts.token]
+            path = "contracts/token"
+            ctor_args = ["address:GBBD47IF6LWK7P7MDEVSCWR7DPUWV3NY3DTQEVFL4NAT4AQH3ZLLFLA5", "u32:100"]
+
+            [contracts.router]
+            path = "contracts/router"
+        "#;
+        let parsed = DevKitConfig::from_toml(toml_data).unwrap();
+        assert_eq!(
+            parsed.contracts.get("token").unwrap().ctor_args,
+            vec![
+                "address:GBBD47IF6LWK7P7MDEVSCWR7DPUWV3NY3DTQEVFL4NAT4AQH3ZLLFLA5".to_string(),
+                "u32:100".to_string()
+            ]
+        );
+        assert!(parsed
+            .contracts
+            .get("router")
+            .unwrap()
+            .ctor_args
             .is_empty());
     }
 }

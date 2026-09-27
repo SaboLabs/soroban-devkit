@@ -246,6 +246,9 @@ or git logic is duplicated; the same `compute_dependency_integrity` /
 │   Contracts declare dependencies via `depends_on` (canonical) or the
 │   legacy `deploy_after` field in `[contracts.<alias>]`; both are merged. Build,
 │   deploy, and `sdkt lock generate` share one resolver, so order is deterministic.
+│   Contracts may declare optional constructor arguments via `ctor_args`
+│   (e.g. `ctor_args = ["address:G...", "u32:100"]`), routed through
+│   `deploy_contract_with_args` and validated fail-fast before WASM upload.
 │   Invalid graphs (unknown/self/duplicate dependency, cycle, duplicate name)
 │   fail fast with a clear error.
 │

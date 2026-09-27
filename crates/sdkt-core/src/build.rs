@@ -167,6 +167,7 @@ mod tests {
                 path: "does_not_exist_xyz".to_string(),
                 deploy_after: vec![],
                 depends_on: vec![],
+                ctor_args: vec![],
             },
         );
         config.contracts = contracts;
