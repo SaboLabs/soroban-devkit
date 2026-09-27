@@ -23,22 +23,31 @@ use stellar_xdr::{
 /// Final result of a state-changing contract invocation.
 #[derive(Debug, Clone, PartialEq)]
 pub struct InvokeResult {
-    /// Transaction hash on the network.
     pub hash: String,
-    /// "SUCCESS" | "FAILED" | "PENDING"
     pub status: String,
     pub contract_id: String,
     pub function: String,
-    /// Total fee (inclusion + resource) actually submitted, in stroops.
     pub fee: u32,
-    /// Base64 `TransactionResult` XDR from the settled transaction, if any.
     pub result_xdr: Option<String>,
-    /// Error code from the network when status == FAILED.
     pub error_code: Option<String>,
-    /// Base64 `TransactionResult` XDR of the error when status == FAILED.
     pub error_result_xdr: Option<String>,
-    /// Diagnostic events (base64 XDR) when status == FAILED.
     pub diagnostic_events: Vec<String>,
+}
+
+/// Result of preparing, but not submitting, an invocation envelope.
+#[derive(Debug, Clone, PartialEq)]
+pub struct InvokeBuildResult {
+    pub envelope_xdr: String,
+    pub fee: u32,
+    pub sequence: i64,
+    pub contract_id: String,
+    pub function: String,
+}
+
+struct PreparedInvoke {
+    signed_envelope: String,
+    fee: u32,
+    sequence: i64,
 }
 
 fn parse_min_resource_fee(raw: &str) -> Result<u32, RpcError> {
@@ -51,49 +60,24 @@ fn parse_min_resource_fee(raw: &str) -> Result<u32, RpcError> {
         .map_err(|_| RpcError::Rpc(format!("simulation min_resource_fee overflowed u32: {raw}")))
 }
 
-/// Base inclusion fee added on top of the resource fee reported by simulation.
-///
-/// The resource fee dominates for Soroban transactions; this is only the
-/// per-operation inclusion component.
 pub const INCLUSION_FEE: u32 = 100;
 
-/// What a simulation pass tells us about an invocation.
-///
-/// Produced by [`simulate_invoke`] and consumed both by [`invoke_contract`],
-/// which goes on to sign and submit, and by `sdkt tx build`, which stops at the
-/// unsigned envelope.
 #[derive(Debug, Clone, PartialEq)]
 pub struct SimulatedInvoke {
-    /// Authoritative footprint and resources returned by the network.
     pub soroban_data: SorobanTransactionData,
-    /// Authorization entries returned by simulation, if any.
     pub auth_entries: Vec<SorobanAuthorizationEntry>,
-    /// Resource fee reported by simulation, in stroops.
     pub min_resource_fee: u32,
-    /// [`INCLUSION_FEE`] + [`Self::min_resource_fee`], saturating.
     pub total_fee: u32,
 }
 
-/// Simulate an invocation and adopt what the network reports: footprint, auth
-/// entries and resource fee.
-///
-/// `params.sequence` is used as given — callers that need the account's current
-/// sequence should fetch it first (see [`get_next_sequence`]).
-///
-/// # Errors
-///
-/// Returns [`RpcError::Rpc`] if the envelope cannot be built, the simulation
-/// call fails, the network reports a simulation error, or the response carries
-/// no `SorobanTransactionData`.
+/// Simulate an invocation and adopt the footprint, auth entries and fee returned by RPC.
 pub async fn simulate_invoke(
     client: &SorobanRpcClient,
     params: &InvokeTransactionParams,
 ) -> Result<SimulatedInvoke, RpcError> {
-    // Simulate with an empty V1 SorobanData (network requires ext V1).
     let sim_envelope =
         sdkt_xdr::build_invoke_transaction_with_data(params, empty_soroban_data(), Vec::new())
             .map_err(|e| RpcError::Rpc(format!("Failed to build invoke transaction: {e}")))?;
-
     let simulation = simulate_transaction(client, &sim_envelope)
         .await
         .map_err(|e| RpcError::Rpc(format!("Invoke simulation failed: {e}")))?;
@@ -109,10 +93,7 @@ pub async fn simulate_invoke(
 
     let soroban_data = sdkt_xdr::parse_soroban_transaction_data(&simulation.transaction_data)
         .map_err(|e| RpcError::Rpc(format!("Failed to parse SorobanTransactionData: {e}")))?;
-
     let min_resource_fee = parse_min_resource_fee(&simulation.min_resource_fee)?;
-
-    // Auth entries returned by simulation (e.g. for contract-authorized calls).
     let auth_entries = if simulation.results.is_empty() {
         Vec::new()
     } else {
@@ -128,7 +109,6 @@ pub async fn simulate_invoke(
     })
 }
 
-/// Build an empty `SorobanTransactionData` (ext V0) for the simulation pass.
 fn empty_soroban_data() -> SorobanTransactionData {
     SorobanTransactionData {
         ext: SorobanTransactionDataExt::V0,
@@ -145,35 +125,20 @@ fn empty_soroban_data() -> SorobanTransactionData {
     }
 }
 
-/// Invoke a contract function end-to-end: fetch sequence, simulate for the
-/// authoritative footprint/auth/fees, build the final envelope, sign, submit,
-/// and optionally poll until the transaction settles.
-///
-/// `params.args` are base64-encoded `ScVal` strings (the format produced by
-/// the CLI typed-argument parser).
-pub async fn invoke_contract(
+async fn prepare_invoke_envelope(
     client: &SorobanRpcClient,
     params: &InvokeTransactionParams,
     signer: &Ed25519Signer,
     network: Network,
-    poll: &PollConfig,
-    wait: bool,
-) -> Result<InvokeResult, RpcError> {
-    // 1. Current sequence for the source account.
+) -> Result<PreparedInvoke, RpcError> {
     let sequence = get_next_sequence(client, &params.source_account).await?;
     let sim_params = InvokeTransactionParams {
         sequence,
         ..params.clone()
     };
-
-    // 2-4. Simulate, then adopt the authoritative footprint, auth entries and
-    // resource fee the network reports.
     let simulated = simulate_invoke(client, &sim_params).await?;
-    let total_fee = simulated.total_fee;
-
-    // 5. Final envelope with real fees, then sign.
     let final_params = InvokeTransactionParams {
-        fee: total_fee,
+        fee: simulated.total_fee,
         ..sim_params
     };
     let final_envelope = sdkt_xdr::build_invoke_transaction_with_data(
@@ -182,14 +147,45 @@ pub async fn invoke_contract(
         simulated.auth_entries,
     )
     .map_err(|e| RpcError::Rpc(format!("Failed to build final invoke transaction: {e}")))?;
-
     let signing_opts = SigningOptions::with(network);
     let signed_envelope = sign_transaction(&final_envelope, signer, &signing_opts)
         .map_err(|e| RpcError::Rpc(format!("Failed to sign invoke transaction: {e}")))?;
 
-    // 6. Submit and optionally poll until settled.
-    let submission = submit_and_wait(client, &signed_envelope, wait, poll).await?;
+    Ok(PreparedInvoke {
+        signed_envelope,
+        fee: final_params.fee,
+        sequence,
+    })
+}
 
+/// Build and sign an invocation without submitting it.
+pub async fn build_invoke_envelope(
+    client: &SorobanRpcClient,
+    params: &InvokeTransactionParams,
+    signer: &Ed25519Signer,
+    network: Network,
+) -> Result<InvokeBuildResult, RpcError> {
+    let prepared = prepare_invoke_envelope(client, params, signer, network).await?;
+    Ok(InvokeBuildResult {
+        envelope_xdr: prepared.signed_envelope,
+        fee: prepared.fee,
+        sequence: prepared.sequence,
+        contract_id: params.contract_id.clone(),
+        function: params.function.clone(),
+    })
+}
+
+/// Invoke a contract function, submitting and optionally polling for settlement.
+pub async fn invoke_contract(
+    client: &SorobanRpcClient,
+    params: &InvokeTransactionParams,
+    signer: &Ed25519Signer,
+    network: Network,
+    poll: &PollConfig,
+    wait: bool,
+) -> Result<InvokeResult, RpcError> {
+    let prepared = prepare_invoke_envelope(client, params, signer, network).await?;
+    let submission = submit_and_wait(client, &prepared.signed_envelope, wait, poll).await?;
     let status = match submission.status {
         TransactionStatus::Success => "SUCCESS",
         TransactionStatus::Failed => "FAILED",
@@ -201,7 +197,7 @@ pub async fn invoke_contract(
         status: status.to_string(),
         contract_id: params.contract_id.clone(),
         function: params.function.clone(),
-        fee: total_fee,
+        fee: prepared.fee,
         result_xdr: submission.result_xdr,
         error_code: submission.error_code,
         error_result_xdr: submission.error_result_xdr,
@@ -238,5 +234,20 @@ mod tests {
         };
         assert_eq!(r.status, "SUCCESS");
         assert_eq!(r.fee, 250);
+    }
+
+    #[test]
+    fn invoke_build_result_fields_roundtrip() {
+        let r = InvokeBuildResult {
+            envelope_xdr: "AAAAAgAAA...".into(),
+            fee: 250,
+            sequence: 42,
+            contract_id: "C...".into(),
+            function: "increment".into(),
+        };
+        assert_eq!(r.fee, 250);
+        assert_eq!(r.sequence, 42);
+        assert_eq!(r.function, "increment");
+        assert!(r.envelope_xdr.starts_with("AAAA"));
     }
 }
