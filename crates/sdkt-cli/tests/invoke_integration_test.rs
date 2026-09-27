@@ -7,10 +7,14 @@
 //! NOT TESTED here: live Testnet submission (documented in docs/cli.md).
 
 use assert_cmd::Command;
+use base64::Engine as _;
 use predicates::prelude::*;
 use std::io::{Read, Write};
 use std::net::TcpListener;
 use std::thread;
+use stellar_xdr::{
+    ContractEvent, Limits, SorobanTransactionMeta, TransactionMeta, TransactionMetaV3, WriteXdr,
+};
 use tempfile::tempdir;
 
 fn sdkt_isolated(dir: &std::path::Path) -> Command {
@@ -30,6 +34,18 @@ const ACCOUNT_ENTRY_XDR: &str =
 /// SorobanTransactionData XDR: empty footprint, 1000 instructions, 150 stroops
 /// resource fee (so total fee = 100 inclusion + 150 = 250).
 const SOROBAN_DATA_XDR: &str = "AAAAAAAAAAAAAAAAAAAD6AAAAAoAAAAKAAAAAAAAAJY=";
+
+fn result_meta_xdr_with_event() -> String {
+    let event = ContractEvent::default();
+    let meta = TransactionMeta::V3(TransactionMetaV3 {
+        soroban_meta: Some(SorobanTransactionMeta {
+            events: vec![event].try_into().unwrap(),
+            ..Default::default()
+        }),
+        ..Default::default()
+    });
+    base64::engine::general_purpose::STANDARD.encode(meta.to_xdr(Limits::none()).unwrap())
+}
 
 /// Mock JSON-RPC server that routes by method name.
 ///
@@ -89,7 +105,7 @@ fn mock_rpc_server_with_send_error(
                     if failed {
                         r#"{"jsonrpc":"2.0","id":1,"result":{"status":"FAILED","latestLedger":"101","resultXdr":"AAAAf////g=="}}"#.to_string()
                     } else {
-                        r#"{"jsonrpc":"2.0","id":1,"result":{"status":"SUCCESS","latestLedger":"101","resultXdr":"AAAAAg=="}}"#.to_string()
+                        format!(r#"{{"jsonrpc":"2.0","id":1,"result":{{"status":"SUCCESS","latestLedger":"101","resultXdr":"AAAAAg==","resultMetaXdr":"{}"}}}}"#, result_meta_xdr_with_event())
                     }
                 }
                 _ => r#"{"jsonrpc":"2.0","id":1,"error":{"code":-32601,"message":"method not found"}}"#.to_string(),
@@ -342,6 +358,7 @@ fn invoke_success_pretty_output() {
     assert!(stdout.contains("Status:   SUCCESS"), "stdout={stdout}");
     assert!(stdout.contains("Hash:     deadbeefcafe"), "stdout={stdout}");
     assert!(stdout.contains("Fee:      250 stroops"), "stdout={stdout}");
+    assert!(stdout.contains("Events:"), "stdout={stdout}");
 
     // Full lifecycle: sequence → simulate → send → poll.
     let methods = seen.lock().unwrap().join(",");
@@ -388,6 +405,7 @@ fn invoke_success_json_output() {
     assert_eq!(parsed["hash"], "deadbeefcafe");
     assert_eq!(parsed["fee"], 250);
     assert_eq!(parsed["function"], "increment");
+    assert_eq!(parsed["events"].as_array().unwrap().len(), 1);
     assert!(parsed.get("errorResultXdr").unwrap().is_null());
 }
 
