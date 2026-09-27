@@ -100,6 +100,13 @@ jobs:
           if (value && typeof value === 'object') {
             const out = {};
             for (const [key, child] of Object.entries(value)) {
+              if (key === 'data_format') {
+                if (child === undefined || child === null || child === 'single_value') {
+                  continue;
+                }
+                out[key] = normalize_value(child);
+                continue;
+              }
               if (key === 'kind' && typeof child === 'string') {
                 out[key] = normalize_kind(child);
               } else {
