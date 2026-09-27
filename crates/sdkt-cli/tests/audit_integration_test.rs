@@ -252,6 +252,38 @@ fn audit_directory_json_contains_per_file_reports_and_summary() {
 }
 
 #[test]
+fn audit_multiple_explicit_files_json_contains_both_files_and_summary() {
+    let dir = TempDir::new().unwrap();
+    let a = write_fixture(&dir, "a.rs", "pub fn mint_token(to: Address) { }\n");
+    let b = write_fixture(
+        &dir,
+        "b.rs",
+        "pub fn transfer(from: Address, to: Address, amount: i128) { }\n",
+    );
+
+    let out = sdkt()
+        .args([
+            "audit",
+            a.to_str().unwrap(),
+            b.to_str().unwrap(),
+            "--format",
+            "json",
+        ])
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+
+    let stdout = String::from_utf8_lossy(&out);
+    assert!(stdout.contains("\"files\""));
+    assert!(stdout.contains("\"summary\""));
+    assert!(stdout.contains("a.rs"));
+    assert!(stdout.contains("b.rs"));
+    assert!(stdout.contains("\"total\""));
+}
+
+#[test]
 fn audit_directory_continues_after_unparseable_file() {
     let dir = TempDir::new().unwrap();
 

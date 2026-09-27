@@ -205,6 +205,57 @@ fn sarif_artifact_uri_contains_source_file_path() {
     }
 }
 
+#[test]
+fn sarif_multiple_files_preserve_individual_artifact_uris() {
+    let dir = TempDir::new().unwrap();
+    let a = write_fixture(&dir, "a.rs", "pub fn mint_token(to: Address) { }\n");
+    let b = write_fixture(
+        &dir,
+        "b.rs",
+        "pub fn transfer(from: Address, to: Address, amount: i128) { }\n",
+    );
+
+    let out = sdkt()
+        .args([
+            "audit",
+            a.to_str().unwrap(),
+            b.to_str().unwrap(),
+            "--format",
+            "sarif",
+        ])
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+
+    let v: serde_json::Value = serde_json::from_slice(&out).unwrap();
+    let results = v["runs"][0]["results"].as_array().unwrap();
+    assert!(
+        !results.is_empty(),
+        "multi-file sarif must include findings"
+    );
+
+    let uris: Vec<String> = results
+        .iter()
+        .map(|result| {
+            result["locations"][0]["physicalLocation"]["artifactLocation"]["uri"]
+                .as_str()
+                .unwrap()
+                .to_string()
+        })
+        .collect();
+
+    assert!(
+        uris.iter().any(|uri| uri.contains("a.rs")),
+        "a.rs should be present"
+    );
+    assert!(
+        uris.iter().any(|uri| uri.contains("b.rs")),
+        "b.rs should be present"
+    );
+}
+
 // ── Rules section ─────────────────────────────────────────────────────────────
 
 #[test]

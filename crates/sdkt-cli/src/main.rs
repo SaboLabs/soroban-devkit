@@ -4823,9 +4823,8 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
                     )?;
                     println!("{}", sarif_str);
                 } else {
-                    let sarif_str = sdkt_audit::report_to_sarif_string(
+                    let sarif_str = sdkt_audit::report_to_sarif_string_multi_file(
                         &aggregate,
-                        &source_paths[0].display().to_string(),
                         sdkt_version_string(),
                         &rules_info,
                     )?;
