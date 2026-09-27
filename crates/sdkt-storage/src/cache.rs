@@ -7,7 +7,7 @@ use crate::error::StorageError;
 use directories::ProjectDirs;
 use sdkt_wasm::WasmMetadata;
 use std::fs;
-use std::path::{Path, PathBuf};
+use std::path::{Component, Path, PathBuf};
 
 /// Info about the current state of the WASM cache for a specific network.
 #[derive(Debug, Clone, PartialEq)]
@@ -201,6 +201,11 @@ fn validate_network_name(network: &str) -> Result<(), StorageError> {
         || network == ".."
         || network.contains('/')
         || network.contains('\\')
+        || !matches!(
+            Path::new(network).components().next(),
+            Some(Component::Normal(_))
+        )
+        || Path::new(network).components().nth(1).is_some()
     {
         return Err(StorageError::ConfigError(format!(
             "invalid network name '{}': must be a non-empty path component",
@@ -338,6 +343,17 @@ mod tests {
         ));
         assert!(matches!(
             cache.cache_info(""),
+            Err(StorageError::ConfigError(_))
+        ));
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn rejects_drive_relative_network_name() {
+        let (cache, _dir) = get_temp_cache();
+
+        assert!(matches!(
+            cache.clear("C:outside"),
             Err(StorageError::ConfigError(_))
         ));
     }

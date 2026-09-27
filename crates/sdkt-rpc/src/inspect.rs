@@ -163,6 +163,8 @@ mod tests {
                 kind: "Struct".into(),
                 doc: String::new(),
                 members: vec![],
+                type_args: vec![],
+                bytes_n: None,
             }],
             events: vec![sdkt_wasm::ContractEvent {
                 name: "transfer".into(),

@@ -110,6 +110,8 @@ fn deployed_spec_feeds_storage_abi_fields() {
             kind: "struct".to_string(),
             doc: "A circle".to_string(),
             members: vec![],
+            type_args: vec![],
+            bytes_n: None,
         }],
         events: vec![ContractEvent {
             name: "Mint".to_string(),

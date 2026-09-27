@@ -75,6 +75,13 @@ pub struct ContractType {
     pub doc: String,
     /// Members (fields for structs, variants for enums/unions).
     pub members: Vec<TypeMember>,
+    /// Type arguments for compound types such as `Vec<T>`, `Map<K, V>`, and
+    /// `Result<T, E>`.
+    #[serde(default)]
+    pub type_args: Vec<ContractType>,
+    /// Length for the fixed-size `BytesN` type.
+    #[serde(default)]
+    pub bytes_n: Option<u32>,
 }
 
 /// A member of a user-defined type.
@@ -259,45 +266,71 @@ fn decode_env_meta_section(data: &[u8]) -> Result<EnvMetaSpec, WasmError> {
 }
 
 fn map_type_def(t: &ScSpecTypeDef) -> ContractType {
-    // For simple type definitions there is no doc/members; we encode the
-    // variant name into `name` and `kind` for introspection.
-    let mut udt_name: Option<String> = None;
-    let (name, kind, members) = match t {
-        ScSpecTypeDef::Val => ("val", "primitive", vec![]),
-        ScSpecTypeDef::Bool => ("bool", "primitive", vec![]),
-        ScSpecTypeDef::Void => ("void", "primitive", vec![]),
-        ScSpecTypeDef::Error => ("error", "primitive", vec![]),
-        ScSpecTypeDef::U32 => ("u32", "primitive", vec![]),
-        ScSpecTypeDef::I32 => ("i32", "primitive", vec![]),
-        ScSpecTypeDef::U64 => ("u64", "primitive", vec![]),
-        ScSpecTypeDef::I64 => ("i64", "primitive", vec![]),
-        ScSpecTypeDef::Timepoint => ("timepoint", "primitive", vec![]),
-        ScSpecTypeDef::Duration => ("duration", "primitive", vec![]),
-        ScSpecTypeDef::U128 => ("u128", "primitive", vec![]),
-        ScSpecTypeDef::I128 => ("i128", "primitive", vec![]),
-        ScSpecTypeDef::U256 => ("u256", "primitive", vec![]),
-        ScSpecTypeDef::I256 => ("i256", "primitive", vec![]),
-        ScSpecTypeDef::Bytes => ("bytes", "primitive", vec![]),
-        ScSpecTypeDef::String => ("string", "primitive", vec![]),
-        ScSpecTypeDef::Symbol => ("symbol", "primitive", vec![]),
-        ScSpecTypeDef::Address => ("address", "primitive", vec![]),
-        ScSpecTypeDef::MuxedAddress => ("muxed_address", "primitive", vec![]),
-        ScSpecTypeDef::Option(_) => ("option", "compound", vec![]),
-        ScSpecTypeDef::Result(_) => ("result", "compound", vec![]),
-        ScSpecTypeDef::Vec(_) => ("vec", "compound", vec![]),
-        ScSpecTypeDef::Map(_) => ("map", "compound", vec![]),
-        ScSpecTypeDef::Tuple(_) => ("tuple", "compound", vec![]),
-        ScSpecTypeDef::BytesN(_) => ("bytesn", "compound", vec![]),
-        ScSpecTypeDef::Udt(u) => {
-            udt_name = Some(u.name.to_utf8_string_lossy());
-            ("udt", "udt", vec![])
-        }
-    };
-    ContractType {
-        name: udt_name.unwrap_or_else(|| name.to_string()),
-        kind: kind.to_string(),
+    let simple = |name: &str| ContractType {
+        name: name.to_string(),
+        kind: "primitive".to_string(),
         doc: String::new(),
-        members,
+        members: vec![],
+        type_args: vec![],
+        bytes_n: None,
+    };
+    let compound = |name: &str, type_args| ContractType {
+        name: name.to_string(),
+        kind: "compound".to_string(),
+        doc: String::new(),
+        members: vec![],
+        type_args,
+        bytes_n: None,
+    };
+    match t {
+        ScSpecTypeDef::Val => simple("val"),
+        ScSpecTypeDef::Bool => simple("bool"),
+        ScSpecTypeDef::Void => simple("void"),
+        ScSpecTypeDef::Error => simple("error"),
+        ScSpecTypeDef::U32 => simple("u32"),
+        ScSpecTypeDef::I32 => simple("i32"),
+        ScSpecTypeDef::U64 => simple("u64"),
+        ScSpecTypeDef::I64 => simple("i64"),
+        ScSpecTypeDef::Timepoint => simple("timepoint"),
+        ScSpecTypeDef::Duration => simple("duration"),
+        ScSpecTypeDef::U128 => simple("u128"),
+        ScSpecTypeDef::I128 => simple("i128"),
+        ScSpecTypeDef::U256 => simple("u256"),
+        ScSpecTypeDef::I256 => simple("i256"),
+        ScSpecTypeDef::Bytes => simple("bytes"),
+        ScSpecTypeDef::String => simple("string"),
+        ScSpecTypeDef::Symbol => simple("symbol"),
+        ScSpecTypeDef::Address => simple("address"),
+        ScSpecTypeDef::MuxedAddress => simple("muxed_address"),
+        ScSpecTypeDef::Option(v) => compound("option", vec![map_type_def(&v.value_type)]),
+        ScSpecTypeDef::Result(v) => compound(
+            "result",
+            vec![map_type_def(&v.ok_type), map_type_def(&v.error_type)],
+        ),
+        ScSpecTypeDef::Vec(v) => compound("vec", vec![map_type_def(&v.element_type)]),
+        ScSpecTypeDef::Map(v) => compound(
+            "map",
+            vec![map_type_def(&v.key_type), map_type_def(&v.value_type)],
+        ),
+        ScSpecTypeDef::Tuple(v) => {
+            compound("tuple", v.value_types.iter().map(map_type_def).collect())
+        }
+        ScSpecTypeDef::BytesN(v) => ContractType {
+            name: "bytesn".to_string(),
+            kind: "compound".to_string(),
+            doc: String::new(),
+            members: vec![],
+            type_args: vec![],
+            bytes_n: Some(v.n),
+        },
+        ScSpecTypeDef::Udt(u) => ContractType {
+            name: u.name.to_utf8_string_lossy(),
+            kind: "udt".to_string(),
+            doc: String::new(),
+            members: vec![],
+            type_args: vec![],
+            bytes_n: None,
+        },
     }
 }
 
@@ -315,6 +348,8 @@ fn map_udt_struct(s: stellar_xdr::ScSpecUdtStructV0) -> ContractType {
                 types: vec![map_type_def(&f.type_)],
             })
             .collect(),
+        type_args: vec![],
+        bytes_n: None,
     }
 }
 
@@ -339,6 +374,8 @@ fn map_udt_union(u: stellar_xdr::ScSpecUdtUnionV0) -> ContractType {
                 },
             })
             .collect(),
+        type_args: vec![],
+        bytes_n: None,
     }
 }
 
@@ -356,6 +393,8 @@ fn map_udt_enum(e: stellar_xdr::ScSpecUdtEnumV0) -> ContractType {
                 types: vec![],
             })
             .collect(),
+        type_args: vec![],
+        bytes_n: None,
     }
 }
 
@@ -373,6 +412,8 @@ fn map_udt_error_enum(e: stellar_xdr::ScSpecUdtErrorEnumV0) -> ContractType {
                 types: vec![],
             })
             .collect(),
+        type_args: vec![],
+        bytes_n: None,
     }
 }
 
@@ -588,5 +629,32 @@ pub(crate) mod tests {
         assert_eq!(spec.events[0].params[0].type_.name, "u128");
         assert_eq!(spec.events[0].params[0].location, "data");
         assert_eq!(spec.events[0].data_format, "single_value");
+    }
+
+    #[test]
+    fn preserves_compound_type_arguments_and_bytesn_length() {
+        use stellar_xdr::{ScSpecTypeBytesN, ScSpecTypeDef, ScSpecTypeMap, ScSpecTypeVec};
+
+        let vector = map_type_def(&ScSpecTypeDef::Vec(Box::new(ScSpecTypeVec {
+            element_type: Box::new(ScSpecTypeDef::U32),
+        })));
+        assert_eq!(vector.name, "vec");
+        assert_eq!(vector.type_args.len(), 1);
+        assert_eq!(vector.type_args[0].name, "u32");
+
+        let map = map_type_def(&ScSpecTypeDef::Map(Box::new(ScSpecTypeMap {
+            key_type: Box::new(ScSpecTypeDef::String),
+            value_type: Box::new(ScSpecTypeDef::Address),
+        })));
+        assert_eq!(
+            map.type_args
+                .iter()
+                .map(|t| t.name.as_str())
+                .collect::<Vec<_>>(),
+            ["string", "address"]
+        );
+
+        let bytes = map_type_def(&ScSpecTypeDef::BytesN(ScSpecTypeBytesN { n: 32 }));
+        assert_eq!(bytes.bytes_n, Some(32));
     }
 }
