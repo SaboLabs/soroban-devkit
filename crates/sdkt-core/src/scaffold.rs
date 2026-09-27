@@ -119,6 +119,9 @@ passphrase = "Test SDF Network ; September 2015"
 
 [build]
 target = "wasm32-unknown-unknown"
+
+[contracts.main]
+path = "."
 "#;
     write_template(root, ".sdkt.toml", sdkt_toml, &mut created)?;
 
@@ -960,6 +963,10 @@ mod tests {
         assert_eq!(
             config.network.passphrase,
             "Test SDF Network ; September 2015"
+        );
+        assert_eq!(
+            config.contracts.get("main").map(|c| c.path.as_str()),
+            Some(".")
         );
         let _ = fs::remove_dir_all(&p);
     }
