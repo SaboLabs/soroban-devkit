@@ -40,6 +40,28 @@ pub struct WasmMetadata {
     pub exports: Vec<WasmExport>,
     pub imports: Vec<WasmImport>,
     pub custom_sections: Vec<String>,
+    /// Number of functions declared in the module's function section.
+    #[serde(default)]
+    pub function_count: u32,
+    /// The first module memory, when one is declared.
+    #[serde(default)]
+    pub memory: Option<WasmMemory>,
+    /// Number of tables declared in the module.
+    #[serde(default)]
+    pub table_count: u32,
+    /// Number of globals declared in the module.
+    #[serde(default)]
+    pub global_count: u32,
+    /// Number of data segments declared in the module.
+    #[serde(default)]
+    pub data_segment_count: u32,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct WasmMemory {
+    pub initial_pages: u64,
+    #[serde(default)]
+    pub maximum_pages: Option<u64>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -82,6 +104,11 @@ pub fn parse_metadata(wasm_bytes: &[u8]) -> Result<WasmMetadata, WasmError> {
         exports: Vec::new(),
         imports: Vec::new(),
         custom_sections: Vec::new(),
+        function_count: 0,
+        memory: None,
+        table_count: 0,
+        global_count: 0,
+        data_segment_count: 0,
     };
 
     let parser = Parser::new(0);
@@ -114,6 +141,26 @@ pub fn parse_metadata(wasm_bytes: &[u8]) -> Result<WasmMetadata, WasmError> {
             }
             Payload::CustomSection(reader) => {
                 meta.custom_sections.push(reader.name().to_string());
+            }
+            Payload::FunctionSection(reader) => {
+                meta.function_count = reader.count();
+            }
+            Payload::MemorySection(reader) => {
+                if let Some(Ok(memory)) = reader.into_iter().next() {
+                    meta.memory = Some(WasmMemory {
+                        initial_pages: memory.initial,
+                        maximum_pages: memory.maximum,
+                    });
+                }
+            }
+            Payload::TableSection(reader) => {
+                meta.table_count = reader.count();
+            }
+            Payload::GlobalSection(reader) => {
+                meta.global_count = reader.count();
+            }
+            Payload::DataSection(reader) => {
+                meta.data_segment_count = reader.count();
             }
             _ => {}
         }
