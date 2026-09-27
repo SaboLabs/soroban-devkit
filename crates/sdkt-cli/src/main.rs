@@ -7151,7 +7151,12 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
                     println!("Removed plugin '{}' (if it was installed).", id);
                 }
             }
-            PluginAction::Update { id, source, public_key, format } => {
+            PluginAction::Update {
+                id,
+                source,
+                public_key,
+                format,
+            } => {
                 let fmt = parse_format_str(&format);
                 let path = std::path::Path::new(&source);
                 let is_bundle = is_bundle_path(source);

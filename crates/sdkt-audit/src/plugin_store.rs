@@ -657,8 +657,7 @@ pub fn update(id: &str, local_source: &Path) -> Result<PluginMeta, StoreError> {
             id: Some(id.to_string()),
             force: true,
         };
-        update_bundle_with_key(local_source, &opts, None)
-            .map(|v| v.metadata)
+        update_bundle_with_key(local_source, &opts, None).map(|v| v.metadata)
     } else {
         let opts = InstallOpts {
             id: Some(id.to_string()),
@@ -695,7 +694,7 @@ pub fn update_bundle_with_key(
             ));
         }
         let source = staging.join(&verified.metadata.artifact);
-        verified.metadata = update(&source, opts)?;
+        verified.metadata = update(opts.id.as_deref().unwrap_or(&verified.metadata.id), &source)?;
         Ok(verified)
     })();
     let _ = std::fs::remove_dir_all(&staging);
@@ -888,7 +887,11 @@ abi_minor = 0
 "#,
         )
         .unwrap();
-        std::fs::write(plugin_dir(&root, "example-rule").join("rule.wasm"), b"wasm-v1").unwrap();
+        std::fs::write(
+            plugin_dir(&root, "example-rule").join("rule.wasm"),
+            b"wasm-v1",
+        )
+        .unwrap();
 
         let result = update("example-rule", &bundle).unwrap();
         assert_eq!(result.version, "1.0.0");
@@ -924,7 +927,11 @@ abi_minor = 0
 "#,
         )
         .unwrap();
-        std::fs::write(plugin_dir(&root, "example-rule").join("rule.wasm"), b"wasm").unwrap();
+        std::fs::write(
+            plugin_dir(&root, "example-rule").join("rule.wasm"),
+            b"wasm",
+        )
+        .unwrap();
 
         let wrong = SigningKey::from_bytes(&[8u8; 32]);
         assert!(matches!(
@@ -983,7 +990,11 @@ abi_minor = 0
 "#,
         )
         .unwrap();
-        std::fs::write(plugin_dir(&root, "example-rule").join("rule.wasm"), b"wasm").unwrap();
+        std::fs::write(
+            plugin_dir(&root, "example-rule").join("rule.wasm"),
+            b"wasm",
+        )
+        .unwrap();
 
         assert!(update("example-rule", &bundle).is_err());
         let listed = list_in(&root);
@@ -1021,7 +1032,11 @@ abi_minor = 0
 "#,
         )
         .unwrap();
-        std::fs::write(plugin_dir(&root, "example-rule").join("old_rule.wasm"), b"old-wasm").unwrap();
+        std::fs::write(
+            plugin_dir(&root, "example-rule").join("old_rule.wasm"),
+            b"old-wasm",
+        )
+        .unwrap();
 
         let mut new_meta = meta();
         new_meta.artifact = "new_rule.wasm".into();
@@ -1030,7 +1045,11 @@ abi_minor = 0
 
         let result = update("example-rule", &new_bundle).unwrap();
         assert_eq!(result.artifact, "new_rule.wasm");
-        assert!(!plugin_dir(&root, "example-rule").join("old_rule.wasm").exists());
-        assert!(plugin_dir(&root, "example-rule").join("new_rule.wasm").exists());
+        assert!(!plugin_dir(&root, "example-rule")
+            .join("old_rule.wasm")
+            .exists());
+        assert!(plugin_dir(&root, "example-rule")
+            .join("new_rule.wasm")
+            .exists());
     }
 }
