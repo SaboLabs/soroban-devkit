@@ -1023,27 +1023,12 @@ abi_minor = 0
         let bundle = dir.path().join("plugin.sdktplugin");
         pack_bundle(&bundle, &old_meta, &old_artifact, None).unwrap();
 
-        let root = store.clone();
-        std::fs::create_dir_all(plugin_dir(&root, "example-rule")).unwrap();
-        std::fs::write(
-            plugin_dir(&root, "example-rule").join("plugin.toml"),
-            r#"id = "example-rule"
-name = "Example Rule"
-version = "1.0.0"
-author = "SaboLabs"
-description = "test"
-kind = "wasm"
-artifact = "old_rule.wasm"
-abi_major = 1
-abi_minor = 0
-"#,
-        )
-        .unwrap();
-        std::fs::write(
-            plugin_dir(&root, "example-rule").join("old_rule.wasm"),
-            b"old-wasm",
-        )
-        .unwrap();
+        // Install the old bundle using install_bundle_with_key to properly set up the store
+        let opts = InstallOpts {
+            id: Some("example-rule".into()),
+            force: true,
+        };
+        install_bundle_with_key(&bundle, &opts, None).unwrap();
 
         let mut new_meta = meta();
         new_meta.artifact = "new_rule.wasm".into();
@@ -1052,12 +1037,8 @@ abi_minor = 0
 
         let result = update("example-rule", &new_bundle).unwrap();
         assert_eq!(result.artifact, "new_rule.wasm");
-        assert!(!plugin_dir(&root, "example-rule")
-            .join("old_rule.wasm")
-            .exists());
-        assert!(plugin_dir(&root, "example-rule")
-            .join("new_rule.wasm")
-            .exists());
+        assert!(!plugin_dir(&store, "example-rule").join("old_rule.wasm").exists());
+        assert!(plugin_dir(&store, "example-rule").join("new_rule.wasm").exists());
         std::env::remove_var("SDKT_PLUGIN_DIR");
     }
 }
