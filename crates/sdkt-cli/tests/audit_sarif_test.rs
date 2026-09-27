@@ -147,8 +147,7 @@ fn sarif_critical_severity_maps_to_error_level() {
 
 #[test]
 fn sarif_warning_severity_maps_to_warning_level() {
-    // MOVE-001 is the only Warning-severity built-in rule.
-    // It fires when a local is passed as a call argument ≥2 times.
+    // MOVE-001 fires when a local is passed as a call argument ≥2 times.
     let dir = TempDir::new().unwrap();
     let path = write_fixture(
         &dir,
@@ -172,6 +171,35 @@ fn sarif_warning_severity_maps_to_warning_level() {
         result["level"], "warning",
         "Warning severity maps to SARIF warning"
     );
+}
+
+#[test]
+fn sarif_includes_division_before_multiplication_finding() {
+    let dir = TempDir::new().unwrap();
+    let path = write_fixture(
+        &dir,
+        "arithmetic.rs",
+        "pub fn quote(amount: i128, bps: i128) -> i128 { amount / 10_000 * bps }\n",
+    );
+    let out = sdkt()
+        .args(["audit", path.to_str().unwrap(), "--format", "sarif"])
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+    let doc: serde_json::Value = serde_json::from_slice(&out).unwrap();
+    assert_valid_sarif(&doc);
+    let results = doc["runs"][0]["results"].as_array().unwrap();
+    let finding = results
+        .iter()
+        .find(|finding| finding["ruleId"] == "MATH-001")
+        .expect("MATH-001 should be rendered in SARIF");
+    assert_eq!(finding["level"], "warning");
+    assert!(finding["message"]["text"]
+        .as_str()
+        .unwrap()
+        .contains("divides before multiplying"));
 }
 
 // ── Artifact location (file path) ─────────────────────────────────────────────
