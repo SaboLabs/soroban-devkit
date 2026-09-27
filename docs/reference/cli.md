@@ -499,6 +499,8 @@ sdkt plugin list --format json                     # JSON output; every plugin s
 sdkt plugin init ./path/to/my-rule                 # scaffold a new audit rule project
 sdkt plugin show <id>                              # show a plugin's metadata
 sdkt plugin install ./path/to/artifact.wasm        # install from a local file
+sdkt plugin install ./bundle.sdktplugin            # verify, then install a bundle (reports signed: true/false)
+sdkt plugin install ./bundle.sdktplugin --public-key ./pubkey.key               # require a signature from this author key (unsigned is refused)
 sdkt plugin remove <id>                            # remove (idempotent)
 sdkt plugin update <id> ./path/to/artifact.wasm    # local-only update
 sdkt plugin pack ./path/to/plugin-dir --output ./myrule.sdktplugin              # pack into .sdktplugin bundle
