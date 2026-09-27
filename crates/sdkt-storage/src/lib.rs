@@ -7,6 +7,7 @@ pub mod network;
 pub mod types;
 
 pub use analyzer::StorageAnalyzer;
+pub use analyzer::EXPIRING_SOON_LEDGERS;
 pub use cache::{CacheInfo, WasmCache};
 pub use error::StorageError;
 pub use estimate::{

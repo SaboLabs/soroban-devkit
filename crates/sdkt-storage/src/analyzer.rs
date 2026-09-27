@@ -5,8 +5,8 @@ use sdkt_rpc::SorobanRpcClient;
 use stellar_xdr::{ContractDataDurability, LedgerKey, ReadXdr, ScVal};
 
 /// Threshold (in ledgers) below which an entry is considered "expiring soon".
-/// ~1 day at 5s/ledger (17280 ledgers).
-const EXPIRING_SOON_LEDGERS: u32 = 17280;
+/// ~1 day at 5s/ledger (17280 ledgers × 5 s = 86 400 s = 24 h).
+pub const EXPIRING_SOON_LEDGERS: u32 = 17280;
 
 /// Classify a storage entry from its base64 XDR `LedgerKey`.
 ///

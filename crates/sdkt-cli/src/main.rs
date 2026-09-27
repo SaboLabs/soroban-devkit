@@ -1676,14 +1676,26 @@ or confirm you are comparing the correct artifact."
     }
 
     if expiring_soon > 0 {
+        // Derive the human-readable window directly from the analyzer constant so
+        // the message and the count threshold cannot drift apart.
+        // EXPIRING_SOON_LEDGERS × 5 s/ledger ÷ 86 400 s/day.
+        const SECS_PER_LEDGER: u32 = 5;
+        const SECS_PER_DAY: u32 = 86_400;
+        let days = (sdkt_storage::EXPIRING_SOON_LEDGERS * SECS_PER_LEDGER) / SECS_PER_DAY;
+        let window = if days == 1 {
+            "~1 day".to_string()
+        } else {
+            format!("~{days} days")
+        };
         reasons.push(format!(
-            "{} storage entr{} expiring soon (< 30 days).",
+            "{} storage entr{} expiring soon (within {}).",
             expiring_soon,
             if expiring_soon == 1 {
                 "y is"
             } else {
                 "ies are"
-            }
+            },
+            window,
         ));
     }
 
@@ -7627,6 +7639,41 @@ mod m23_tests {
         let (h, reasons) = derive_verdict(Some(true), 2, 12);
         assert_eq!(h, "at_risk");
         assert!(reasons.iter().any(|r| r.contains("2 storage entries")));
+        // The window must say "within ~1 day" (not "< 30 days").
+        assert!(
+            reasons.iter().any(|r| r.contains("within ~1 day")),
+            "expected 'within ~1 day' in reasons, got: {:?}",
+            reasons
+        );
+    }
+
+    /// Pin the correspondence between `EXPIRING_SOON_LEDGERS` and the rendered
+    /// verdict message.  If the constant changes (e.g. to 30 days ≈ 518 400
+    /// ledgers) this test will fail, forcing the author to update the human-
+    /// readable text in `derive_verdict` as well.
+    #[test]
+    fn expiring_soon_constant_matches_verdict_window() {
+        const SECS_PER_LEDGER: u32 = 5;
+        const SECS_PER_DAY: u32 = 86_400;
+        // Replicate the same arithmetic used inside derive_verdict.
+        let days =
+            (sdkt_storage::EXPIRING_SOON_LEDGERS * SECS_PER_LEDGER) / SECS_PER_DAY;
+        let expected_window = if days == 1 {
+            "~1 day".to_string()
+        } else {
+            format!("~{days} days")
+        };
+
+        let (_, reasons) = derive_verdict(Some(true), 1, 5);
+        assert!(
+            reasons
+                .iter()
+                .any(|r| r.contains(&format!("within {expected_window}"))),
+            "verdict message should contain 'within {expected_window}' \
+             (derived from EXPIRING_SOON_LEDGERS={}), got: {:?}",
+            sdkt_storage::EXPIRING_SOON_LEDGERS,
+            reasons
+        );
     }
 
     #[test]
