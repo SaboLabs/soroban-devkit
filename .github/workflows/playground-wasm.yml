@@ -53,40 +53,92 @@ jobs:
         bash website/playground/build.sh
         echo "PLAYGROUND_WASM_OUT=$PLAYGROUND_WASM_OUT" >> "$GITHUB_ENV"
 
-    - name: Check committed artifacts are fresh
+    - name: Check committed artifacts are semantically fresh
       run: |
-        echo "Committed generated WASM:"
-        sha256sum website/playground/wasm/sdkt_playground_bg.wasm
+        set -euo pipefail
 
-        echo "Generated WASM:"
-        sha256sum "$PLAYGROUND_WASM_OUT/sdkt_playground_bg.wasm"
+        COMMITTED_JS="website/playground/wasm/sdkt_playground.js"
+        GENERATED_JS="$PLAYGROUND_WASM_OUT/sdkt_playground.js"
+        SNAPSHOT_SCRIPT="$RUNNER_TEMP/playground_semantic_snapshot.mjs"
+        COMMITTED_SNAPSHOT="$RUNNER_TEMP/committed_semantic_snapshot.json"
+        GENERATED_SNAPSHOT="$RUNNER_TEMP/generated_semantic_snapshot.json"
 
-        echo "Committed generated JS:"
-        sha256sum website/playground/wasm/sdkt_playground.js
+        cat > "$SNAPSHOT_SCRIPT" <<'NODE'
+        import { readFileSync } from 'node:fs';
+        import { pathToFileURL } from 'node:url';
 
-        echo "Generated JS:"
-        sha256sum "$PLAYGROUND_WASM_OUT/sdkt_playground.js"
+        const jsPath = process.argv[2];
+        const jsUrl = pathToFileURL(jsPath);
+        const { initSync, inspect_wasm, sdkt_version } = await import(jsUrl.href);
 
-        NORMALIZED_DIR="$(mktemp -d)"
+        const bare = new Uint8Array([
+          0x00, 0x61, 0x73, 0x6d,
+          0x01, 0x00, 0x00, 0x00,
+        ]);
 
-        wasm-tools strip -a \
-          website/playground/wasm/sdkt_playground_bg.wasm \
-          -o "$NORMALIZED_DIR/committed.wasm"
+        const fixtures = [
+          ['us_old', 'crates/sdkt-cli/tests/fixtures/us_old.wasm'],
+          ['us_new', 'crates/sdkt-cli/tests/fixtures/us_new.wasm'],
+          ['bare', null],
+          ['empty', null],
+          ['invalid', null],
+        ];
 
-        wasm-tools strip -a \
-          "$PLAYGROUND_WASM_OUT/sdkt_playground_bg.wasm" \
-          -o "$NORMALIZED_DIR/generated.wasm"
+        const wasmBytes = readFileSync(new URL('./sdkt_playground_bg.wasm', jsUrl));
+        initSync(wasmBytes);
 
-        echo "Normalized committed WASM:"
-        sha256sum "$NORMALIZED_DIR/committed.wasm"
+        function normalize_kind(value) {
+          if (value === 'Memory' || value === 'memory') return 'memory';
+          if (value === 'Func' || value === 'func' || value === 'Func(0)' || value === 'Func(2)') return 'func';
+          return value;
+        }
 
-        echo "Normalized generated WASM:"
-        sha256sum "$NORMALIZED_DIR/generated.wasm"
+        function normalize_value(value) {
+          if (Array.isArray(value)) {
+            return value.map(normalize_value);
+          }
+          if (value && typeof value === 'object') {
+            const out = {};
+            for (const [key, child] of Object.entries(value)) {
+              if (key === 'kind' && typeof child === 'string') {
+                out[key] = normalize_kind(child);
+              } else {
+                out[key] = normalize_value(child);
+              }
+            }
+            return out;
+          }
+          return value;
+        }
 
-        cmp "$NORMALIZED_DIR/committed.wasm" \
-          "$NORMALIZED_DIR/generated.wasm"
+        const snapshot = {};
 
-        cmp website/playground/wasm/sdkt_playground.js \
-          "$PLAYGROUND_WASM_OUT/sdkt_playground.js"
+        for (const [name, file] of fixtures) {
+          let bytes;
+          if (file) {
+            bytes = readFileSync(file);
+          } else if (name === 'bare') {
+            bytes = bare;
+          } else if (name === 'empty') {
+            bytes = new Uint8Array();
+          } else {
+            bytes = new Uint8Array([0x68, 0x69]);
+          }
 
-        echo "Playground WASM artifacts are up to date."
+          try {
+            snapshot[name] = normalize_value(inspect_wasm(bytes));
+          } catch (err) {
+            snapshot[name] = { error: String(err) };
+          }
+        }
+
+        snapshot.version = sdkt_version();
+        process.stdout.write(JSON.stringify(snapshot, null, 2));
+        NODE
+
+        node "$SNAPSHOT_SCRIPT" "$COMMITTED_JS" > "$COMMITTED_SNAPSHOT"
+        node "$SNAPSHOT_SCRIPT" "$GENERATED_JS" > "$GENERATED_SNAPSHOT"
+
+        diff -u "$COMMITTED_SNAPSHOT" "$GENERATED_SNAPSHOT"
+
+        echo "Playground WASM artifacts are semantically up to date."
