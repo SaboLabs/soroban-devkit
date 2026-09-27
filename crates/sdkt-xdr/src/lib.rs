@@ -439,6 +439,9 @@ fn auto_detect(raw: &[u8]) -> Result<Value, DecodeError> {
     if let Ok(v) = decode_single::<ContractEvent>(raw, "ContractEvent") {
         return Ok(v);
     }
+    if let Ok(v) = decode_single::<TransactionResult>(raw, "TransactionResult") {
+        return Ok(v);
+    }
     Err(DecodeError::TypeUnknown(
         "auto-detection failed for all known types".to_string(),
     ))
@@ -523,7 +526,7 @@ mod tests {
     use stellar_xdr::{
         ContractDataDurability, ContractDataEntry, ContractExecutable, ExtensionPoint, Hash,
         LedgerEntry, LedgerEntryData, LedgerEntryExt, LedgerKey, ScAddress, ScContractInstance,
-        ScVal, WriteXdr,
+        ScVal, TransactionResult, TransactionResultExt, TransactionResultResult, WriteXdr,
     };
 
     #[test]
@@ -555,6 +558,30 @@ mod tests {
         let v: Value = serde_json::from_str(&json).unwrap();
         assert!(v.is_object());
         assert_eq!(v["i32"], 1);
+    }
+
+    #[test]
+    fn test_auto_decode_transaction_result() {
+        let fee_charged = 9_000_000_000_000_i64;
+        let result = TransactionResult {
+            fee_charged,
+            result: TransactionResultResult::TxSuccess(vec![].try_into().unwrap()),
+            ext: TransactionResultExt::V0,
+        };
+        let bytes = result.to_xdr(Limits::none()).unwrap();
+        let payload = STANDARD.encode(bytes);
+        let json = decode(&payload, None, OutputFormat::Json).unwrap();
+        let v: Value = serde_json::from_str(&json).unwrap();
+
+        assert_eq!(v["fee_charged"], fee_charged.to_string());
+        assert!(v["result"]["tx_success"].is_array());
+    }
+
+    #[test]
+    fn test_auto_decode_unknown_payload_still_returns_type_unknown() {
+        let payload = "aGVsbG8gd29ybGQ=";
+        let result = decode(payload, None, OutputFormat::default());
+        assert!(matches!(result, Err(DecodeError::TypeUnknown(_))));
     }
 
     #[test]
