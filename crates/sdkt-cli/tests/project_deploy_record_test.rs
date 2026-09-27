@@ -19,15 +19,15 @@ use base64::Engine;
 use predicates::prelude::*;
 use sdkt_core::deployment::{DeploymentRecord, DeploymentRecordFile, DEPLOYMENT_RECORD_FILE};
 use std::io::{Read, Write};
-use std::net::TcpListener;
+use std::net::{TcpListener, TcpStream};
 use std::path::Path;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 use std::thread;
 use stellar_xdr::{
     ContractDataDurability, ContractDataEntry, ContractExecutable, ContractId, ExtensionPoint,
-    Hash, LedgerEntry, LedgerEntryData, LedgerEntryExt, Limited, Limits, ScAddress,
-    ScContractInstance, ScVal, WriteXdr,
+    Hash, LedgerEntry, LedgerEntryData, LedgerEntryExt, Limited, Limits, ReadXdr, ScAddress,
+    ScContractInstance, ScVal, TransactionEnvelope, WriteXdr,
 };
 use tempfile::TempDir;
 
@@ -134,6 +134,34 @@ fn contract_instance_entry_xdr() -> String {
     let mut l = Limited::new(&mut buf, Limits::none());
     entry.write_xdr(&mut l).unwrap();
     STANDARD.encode(&buf)
+}
+
+/// Read one complete HTTP request from `sock`: all headers plus the number of
+/// body bytes declared in `Content-Length`. Handles requests whose body arrives
+/// in multiple `read()` calls (e.g. large WASM upload envelopes).
+fn read_full_request(sock: &mut TcpStream) -> String {
+    let mut data = Vec::new();
+    let mut buf = [0u8; 4096];
+    loop {
+        let n = sock.read(&mut buf).unwrap_or(0);
+        if n == 0 {
+            break;
+        }
+        data.extend_from_slice(&buf[..n]);
+        let text = String::from_utf8_lossy(&data).to_string();
+        if let Some(header_end) = text.find("\r\n\r\n") {
+            let content_length = text[..header_end]
+                .lines()
+                .filter_map(|l| l.split_once(':'))
+                .find(|(k, _)| k.trim().eq_ignore_ascii_case("content-length"))
+                .and_then(|(_, v)| v.trim().parse::<usize>().ok())
+                .unwrap_or(0);
+            if data.len() >= header_end + 4 + content_length {
+                break;
+            }
+        }
+    }
+    String::from_utf8_lossy(&data).to_string()
 }
 
 fn extract_jsonrpc_method(req: &str) -> Option<String> {
@@ -496,10 +524,16 @@ fn project_deploy_uses_explicit_identity() {
         })
         .expect("identity show must print the G-address");
 
-    // Start a mock that records every account key queried via getLedgerEntries.
+    // Start a mock that records every account key queried via getLedgerEntries
+    // AND captures each sendTransaction envelope for post-deploy signature
+    // verification.
     let queried_accounts: Arc<std::sync::Mutex<Vec<String>>> =
         Arc::new(std::sync::Mutex::new(Vec::new()));
     let queried_accounts_srv = queried_accounts.clone();
+
+    let submitted_envelopes: Arc<std::sync::Mutex<Vec<String>>> =
+        Arc::new(std::sync::Mutex::new(Vec::new()));
+    let submitted_envelopes_srv = submitted_envelopes.clone();
 
     let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
     let addr = listener.local_addr().unwrap();
@@ -511,13 +545,7 @@ fn project_deploy_uses_explicit_identity() {
                 Ok(s) => s,
                 Err(_) => break,
             };
-            use std::io::{Read, Write};
-            let mut buf = [0u8; 16384];
-            let n = sock.read(&mut buf).unwrap_or(0);
-            if n == 0 {
-                continue;
-            }
-            let req = String::from_utf8_lossy(&buf[..n]).to_string();
+            let req = read_full_request(&mut sock);
             let method = extract_jsonrpc_method(&req);
 
             if method.as_deref() == Some("getLedgerEntries") {
@@ -526,6 +554,21 @@ fn project_deploy_uses_explicit_identity() {
                 for k in keys {
                     if is_account_key(&k) {
                         acc.push(k);
+                    }
+                }
+            }
+
+            if method.as_deref() == Some("sendTransaction") {
+                // Extract the body (everything after the blank line separating headers)
+                if let Some(body_start) = req.find("\r\n\r\n") {
+                    let body = &req[body_start + 4..];
+                    if let Ok(parsed) = serde_json::from_str::<serde_json::Value>(body) {
+                        if let Some(xdr_b64) = parsed["params"]["transaction"].as_str() {
+                            submitted_envelopes_srv
+                                .lock()
+                                .unwrap()
+                                .push(xdr_b64.to_string());
+                        }
                     }
                 }
             }
@@ -575,7 +618,7 @@ fn project_deploy_uses_explicit_identity() {
         .success()
         .stdout(predicate::str::contains("Deploying alias 'token'"));
 
-    // Decode each queried account key and assert the deployer's pubkey is among them.
+    // --- Assertion 1: the deployer's account key appeared in getLedgerEntries ---
     let keys_seen = queried_accounts.lock().unwrap().clone();
     assert!(
         !keys_seen.is_empty(),
@@ -598,6 +641,52 @@ fn project_deploy_uses_explicit_identity() {
         deployer_seen,
         "expected the deployer's account key ({deployer_pubkey}) in getLedgerEntries, got: {keys_seen:?}"
     );
+
+    // --- Assertion 2: every submitted envelope was signed by the deployer's key ---
+    //
+    // Read the deployer's secret key directly from its identity file, construct
+    // an Ed25519Signer, and use sdkt_xdr::verify_signature to confirm that the
+    // deployer's key produced at least one DecoratedSignature in each submitted
+    // envelope.  This proves *which* key signed, not just which account was
+    // looked up.
+    let identity_file = project_dir.join("identity").join("deployer.toml");
+    let identity_toml = std::fs::read_to_string(&identity_file).expect("deployer.toml must exist");
+    let secret_key_str = identity_toml
+        .lines()
+        .find_map(|l| {
+            let l = l.trim();
+            if l.starts_with("secret_key") {
+                let parts: Vec<&str> = l.splitn(2, '=').collect();
+                if parts.len() == 2 {
+                    return Some(parts[1].trim().trim_matches('"').to_string());
+                }
+            }
+            None
+        })
+        .expect("secret_key field in deployer.toml");
+
+    let deployer_signer = sdkt_xdr::Ed25519Signer::from_secret_str(&secret_key_str)
+        .expect("deployer secret key must be valid");
+    let signing_opts = sdkt_xdr::SigningOptions::with(sdkt_xdr::Network::Testnet);
+
+    let envelopes = submitted_envelopes.lock().unwrap().clone();
+    assert!(
+        !envelopes.is_empty(),
+        "expected at least one sendTransaction call"
+    );
+    for (i, xdr_b64) in envelopes.iter().enumerate() {
+        let raw = STANDARD
+            .decode(xdr_b64)
+            .unwrap_or_else(|e| panic!("envelope {i} is not valid base64: {e}"));
+        let mut cursor = std::io::Cursor::new(&raw);
+        let mut limited = stellar_xdr::Limited::new(&mut cursor, stellar_xdr::Limits::none());
+        let envelope = TransactionEnvelope::read_xdr(&mut limited)
+            .unwrap_or_else(|e| panic!("envelope {i} XDR parse failed: {e}"));
+        assert!(
+            sdkt_xdr::verify_signature(&envelope, &deployer_signer, &signing_opts),
+            "envelope {i} was not signed by the deployer's key ({deployer_pubkey})"
+        );
+    }
 }
 
 /// Passing a nonexistent identity name must fail immediately with the supplied
