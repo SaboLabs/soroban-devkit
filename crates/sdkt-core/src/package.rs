@@ -700,7 +700,7 @@ pub fn pack(base: &Path, out: &Path, format: &str) -> Result<PackageBundle, Pack
         .map(|d| d.as_secs())
         .unwrap_or(0);
     let mut bundle = PackageBundle {
-        schema: "sdkt.package.bundle/v1".to_string(),
+        schema: BUNDLE_SCHEMA.to_string(),
         name,
         version,
         format: format.to_string(),
@@ -814,48 +814,229 @@ pub fn publish_plan(base: &Path, config: &DevKitConfig) -> Result<PublishReadine
     Ok(PublishReadiness { ready, checks })
 }
 
+/// Schema marker written by [`pack`] into every `package.json` descriptor.
+pub const BUNDLE_SCHEMA: &str = "sdkt.package.bundle/v1";
+
+/// Outcome of verifying one bundled dependency (see [`verify_bundle`]).
+#[derive(Debug, Clone, Copy, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "kebab-case")]
+pub enum BundleDepStatus {
+    /// The checkout's tree hash matches the descriptor and its tracked files
+    /// are unmodified.
+    Ok,
+    /// Not a bundled git checkout (e.g. a local `path` dependency); nothing to
+    /// verify inside the artifact.
+    Skipped,
+    /// The descriptor names a git checkout that is absent from the bundle.
+    CacheMissing,
+    /// The checkout's `HEAD^{tree}` differs from the recorded integrity.
+    IntegrityMismatch,
+    /// `HEAD^{tree}` matches, but tracked files in the working tree were
+    /// modified or deleted after packing.
+    WorktreeModified,
+    /// `git` could not read the checkout (corrupt repository or git missing).
+    Unreadable,
+}
+
+impl BundleDepStatus {
+    /// Whether this status counts as a pass.
+    pub fn is_ok(self) -> bool {
+        matches!(self, BundleDepStatus::Ok | BundleDepStatus::Skipped)
+    }
+}
+
+/// Per-dependency row of a [`BundleVerification`].
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+pub struct BundleDepCheck {
+    /// Dependency name.
+    pub name: String,
+    /// Source kind recorded in the descriptor (`git` / `local`).
+    pub source: String,
+    /// Cache key of the bundled checkout (empty when not bundled).
+    pub cache_key: String,
+    /// Integrity recorded at pack time.
+    pub expected_integrity: String,
+    /// Integrity recomputed from the unpacked checkout (empty if unreadable).
+    pub actual_integrity: String,
+    /// Verification outcome.
+    pub status: BundleDepStatus,
+}
+
+/// Detailed result of verifying an unpacked bundle against its descriptor.
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+pub struct BundleVerification {
+    /// True only when the lock and every dependency check pass.
+    pub verified: bool,
+    /// `sdkt.lock` sha256 recorded in the descriptor.
+    pub expected_lock_sha256: String,
+    /// sha256 of the unpacked `sdkt.lock`.
+    pub actual_lock_sha256: String,
+    /// Whether the unpacked lock matches the descriptor.
+    pub lock_matches: bool,
+    /// sha256 of a caller-supplied original `sdkt.lock`, if one was given.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub original_lock_sha256: Option<String>,
+    /// Whether the original lock matches the descriptor, if one was given.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub original_lock_matches: Option<bool>,
+    /// Per-dependency results, in descriptor order.
+    pub dependencies: Vec<BundleDepCheck>,
+}
+
+/// Read and validate the `package.json` descriptor at the root of an unpacked
+/// bundle.
+pub fn read_descriptor(unpacked_base: &Path) -> Result<PackageBundle, PackageError> {
+    let path = unpacked_base.join("package.json");
+    let text = match std::fs::read_to_string(&path) {
+        Ok(t) => t,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+            return Err(PackageError::Other(format!(
+                "bundle descriptor {} not found; is this an `sdkt package pack` bundle?",
+                path.display()
+            )))
+        }
+        Err(e) => {
+            return Err(PackageError::Other(format!(
+                "read {}: {}",
+                path.display(),
+                e
+            )))
+        }
+    };
+    let bundle: PackageBundle = serde_json::from_str(&text).map_err(|e| {
+        PackageError::Other(format!(
+            "invalid bundle descriptor {}: {}",
+            path.display(),
+            e
+        ))
+    })?;
+    if bundle.schema != BUNDLE_SCHEMA {
+        return Err(PackageError::Other(format!(
+            "unsupported bundle schema '{}' in {} (expected '{}')",
+            bundle.schema,
+            path.display(),
+            BUNDLE_SCHEMA
+        )));
+    }
+    Ok(bundle)
+}
+
+/// Run `git <args>` inside `dir`, returning trimmed stdout on success.
+fn git_output(dir: &Path, args: &[&str]) -> Option<String> {
+    let o = std::process::Command::new(crate::fetch::git_bin())
+        .current_dir(dir)
+        .args(args)
+        .output()
+        .ok()?;
+    o.status
+        .success()
+        .then(|| String::from_utf8_lossy(&o.stdout).trim().to_string())
+}
+
+/// Verify a reconstructed (unpacked) bundle against its descriptor and return
+/// a per-check report ( round-trip).
+///
+/// Checks that the unpacked `sdkt.lock` reproduces `bundle.lock_sha256` and
+/// that every bundled git checkout reproduces its recorded integrity (the same
+/// `HEAD^{tree}` hash [`crate::lock::compute_dependency_integrity`] records)
+/// with no tracked file modified or deleted in its working tree. When
+/// `original_lock` is given, that file must also hash to `bundle.lock_sha256`,
+/// which ties the bundle to a lock the caller already trusts rather than only
+/// to its own descriptor. Entirely offline; a checkout missing from the bundle
+/// is a failure, never a fetch.
+pub fn verify_bundle(
+    unpacked_base: &Path,
+    bundle: &PackageBundle,
+    original_lock: Option<&Path>,
+) -> Result<BundleVerification, PackageError> {
+    let lock_path = unpacked_base.join("sdkt.lock");
+    let lock_bytes = std::fs::read(&lock_path)
+        .map_err(|e| PackageError::Other(format!("read {}: {}", lock_path.display(), e)))?;
+    let actual_lock_sha256 = sha256_hex(&lock_bytes);
+    let lock_matches = actual_lock_sha256 == bundle.lock_sha256;
+
+    let (original_lock_sha256, original_lock_matches) = match original_lock {
+        Some(p) => {
+            let bytes = std::fs::read(p)
+                .map_err(|e| PackageError::Other(format!("read {}: {}", p.display(), e)))?;
+            let sha = sha256_hex(&bytes);
+            let matches = sha == bundle.lock_sha256;
+            (Some(sha), Some(matches))
+        }
+        None => (None, None),
+    };
+
+    let mut dependencies = Vec::with_capacity(bundle.entries.len());
+    for entry in &bundle.entries {
+        let mut check = BundleDepCheck {
+            name: entry.name.clone(),
+            source: entry.source.clone(),
+            cache_key: entry.cache_key.clone(),
+            expected_integrity: entry.integrity.clone(),
+            actual_integrity: String::new(),
+            status: BundleDepStatus::Skipped,
+        };
+        if entry.source == "git" && !entry.cache_key.is_empty() {
+            let checkout = unpacked_base
+                .join(".sdkt-cache")
+                .join("git")
+                .join(&entry.cache_key);
+            check.status = if !checkout.join(".git").exists() {
+                BundleDepStatus::CacheMissing
+            } else {
+                match git_output(&checkout, &["rev-parse", "HEAD^{tree}"]) {
+                    Some(tree) if !tree.is_empty() => {
+                        check.actual_integrity = format!("sha256:{}", tree);
+                        if check.actual_integrity != entry.integrity {
+                            BundleDepStatus::IntegrityMismatch
+                        } else {
+                            // The tree hash only covers the commit; confirm the
+                            // tracked files on disk still match it.
+                            match git_output(
+                                &checkout,
+                                &[
+                                    "--no-optional-locks",
+                                    "status",
+                                    "--porcelain",
+                                    "--untracked-files=no",
+                                ],
+                            ) {
+                                Some(s) if s.is_empty() => BundleDepStatus::Ok,
+                                Some(_) => BundleDepStatus::WorktreeModified,
+                                None => BundleDepStatus::Unreadable,
+                            }
+                        }
+                    }
+                    _ => BundleDepStatus::Unreadable,
+                }
+            };
+        }
+        dependencies.push(check);
+    }
+
+    let verified = lock_matches
+        && original_lock_matches.unwrap_or(true)
+        && dependencies.iter().all(|d| d.status.is_ok());
+    Ok(BundleVerification {
+        verified,
+        expected_lock_sha256: bundle.lock_sha256.clone(),
+        actual_lock_sha256,
+        lock_matches,
+        original_lock_sha256,
+        original_lock_matches,
+        dependencies,
+    })
+}
+
 /// Verify a reconstructed (unpacked) bundle reproduces the original
 /// `sdkt.lock` sha256 and per-git-dependency integrity exactly ( round-trip).
 ///
-/// Reuses [`crate::fetch::git_bin`] to read each checkout's tree hash the same
-/// way [`crate::lock::compute_dependency_integrity`] does, so no hash logic is
-/// duplicated.
+/// Boolean form of [`verify_bundle`] (without an external original lock).
 pub fn verify_bundle_equivalence(
     unpacked_base: &Path,
     bundle: &PackageBundle,
 ) -> Result<bool, PackageError> {
-    let lock_path = unpacked_base.join("sdkt.lock");
-    let lock_bytes = std::fs::read(&lock_path)
-        .map_err(|e| PackageError::Other(format!("read sdkt.lock: {}", e)))?;
-    if sha256_hex(&lock_bytes) != bundle.lock_sha256 {
-        return Ok(false);
-    }
-    for entry in &bundle.entries {
-        if entry.source != "git" || entry.cache_key.is_empty() {
-            continue;
-        }
-        let checkout = unpacked_base
-            .join(".sdkt-cache")
-            .join("git")
-            .join(&entry.cache_key);
-        if !checkout.join(".git").exists() {
-            return Ok(false);
-        }
-        let out = std::process::Command::new(crate::fetch::git_bin())
-            .current_dir(&checkout)
-            .args(["rev-parse", "HEAD^{tree}"])
-            .output();
-        match out {
-            Ok(o) if o.status.success() => {
-                let tree = String::from_utf8_lossy(&o.stdout).trim().to_string();
-                if format!("sha256:{}", tree) != entry.integrity {
-                    return Ok(false);
-                }
-            }
-            _ => return Ok(false),
-        }
-    }
-    Ok(true)
+    Ok(verify_bundle(unpacked_base, bundle, None)?.verified)
 }
 
 /// Reconstruct a project from a bundle artifact ( round-trip).
@@ -1525,5 +1706,170 @@ mod tests {
 
         let _ = std::fs::remove_dir_all(&src);
         let _ = std::fs::remove_dir_all(&base);
+    }
+
+    /// Pack `base` as a `dir` bundle and return (bundle, bundle dir, checkout).
+    fn packed_dir_bundle(label: &str) -> (PathBuf, PathBuf, PackageBundle, PathBuf) {
+        let src = temp_dir(&format!("{label}-src"));
+        git_repo_with_tag(&src, "v1.0.0");
+        let url = src.to_string_lossy().replace('\\', "/");
+        let base = temp_dir(&format!("{label}-base"));
+        setup_packed_project(&base, &url);
+        let out = temp_dir(&format!("{label}-out"));
+        let bundle = pack(&base, &out, "dir").expect("pack dir");
+        let _ = std::fs::remove_dir_all(&src);
+        let _ = std::fs::remove_dir_all(&base);
+        let root = out.join("m38-app-0.3.0");
+        let checkout = root
+            .join(".sdkt-cache")
+            .join("git")
+            .join(&bundle.entries[0].cache_key);
+        (out, root, bundle, checkout)
+    }
+
+    #[test]
+    fn verify_bundle_reports_each_check_on_success() {
+        let (out, root, bundle, _) = packed_dir_bundle("vb-ok");
+        let desc = read_descriptor(&root).expect("descriptor");
+        assert_eq!(
+            desc,
+            PackageBundle {
+                out_path: String::new(),
+                ..bundle.clone()
+            }
+        );
+
+        let original = root.join("sdkt.lock");
+        let report = verify_bundle(&root, &desc, Some(&original)).unwrap();
+        assert!(report.verified, "{report:?}");
+        assert!(report.lock_matches);
+        assert_eq!(report.actual_lock_sha256, bundle.lock_sha256);
+        assert_eq!(report.original_lock_matches, Some(true));
+        assert_eq!(report.dependencies.len(), 1);
+        let dep = &report.dependencies[0];
+        assert_eq!(dep.name, "math");
+        assert_eq!(dep.status, BundleDepStatus::Ok);
+        assert_eq!(dep.actual_integrity, dep.expected_integrity);
+
+        let _ = std::fs::remove_dir_all(&out);
+    }
+
+    #[test]
+    fn verify_bundle_detects_modified_worktree() {
+        let (out, root, bundle, checkout) = packed_dir_bundle("vb-worktree");
+        std::fs::write(checkout.join("lib.rs"), b"pub fn answer() -> u32 { 41 }\n").unwrap();
+
+        let report = verify_bundle(&root, &bundle, None).unwrap();
+        assert!(!report.verified);
+        assert!(report.lock_matches, "lock is untouched");
+        assert_eq!(
+            report.dependencies[0].status,
+            BundleDepStatus::WorktreeModified
+        );
+        // The commit tree itself is unchanged, so integrity still matches.
+        assert_eq!(
+            report.dependencies[0].actual_integrity,
+            report.dependencies[0].expected_integrity
+        );
+        assert!(!verify_bundle_equivalence(&root, &bundle).unwrap());
+
+        let _ = std::fs::remove_dir_all(&out);
+    }
+
+    #[test]
+    fn verify_bundle_detects_integrity_mismatch() {
+        let (out, root, bundle, checkout) = packed_dir_bundle("vb-integrity");
+        std::fs::write(checkout.join("extra.rs"), b"// new\n").unwrap();
+        for args in [
+            &["add", "extra.rs"][..],
+            &[
+                "-c",
+                "user.email=t@sdkt.local",
+                "-c",
+                "user.name=sdkt test",
+                "commit",
+                "-q",
+                "-m",
+                "tamper",
+            ][..],
+        ] {
+            let o = std::process::Command::new(crate::fetch::git_bin())
+                .current_dir(&checkout)
+                .args(args)
+                .output()
+                .unwrap();
+            assert!(o.status.success(), "{}", String::from_utf8_lossy(&o.stderr));
+        }
+
+        let report = verify_bundle(&root, &bundle, None).unwrap();
+        assert!(!report.verified);
+        let dep = &report.dependencies[0];
+        assert_eq!(dep.status, BundleDepStatus::IntegrityMismatch);
+        assert_ne!(dep.actual_integrity, dep.expected_integrity);
+
+        let _ = std::fs::remove_dir_all(&out);
+    }
+
+    #[test]
+    fn verify_bundle_detects_missing_cache_and_lock_drift() {
+        let (out, root, bundle, checkout) = packed_dir_bundle("vb-missing");
+        std::fs::remove_dir_all(&checkout).unwrap();
+        let mut lock = std::fs::read(root.join("sdkt.lock")).unwrap();
+        lock.extend_from_slice(b"\n# edited\n");
+        std::fs::write(root.join("sdkt.lock"), lock).unwrap();
+
+        let report = verify_bundle(&root, &bundle, None).unwrap();
+        assert!(!report.verified);
+        assert!(!report.lock_matches);
+        assert_ne!(report.actual_lock_sha256, report.expected_lock_sha256);
+        assert_eq!(report.dependencies[0].status, BundleDepStatus::CacheMissing);
+        assert!(report.dependencies[0].actual_integrity.is_empty());
+
+        let _ = std::fs::remove_dir_all(&out);
+    }
+
+    #[test]
+    fn verify_bundle_rejects_foreign_original_lock() {
+        let (out, root, bundle, _) = packed_dir_bundle("vb-original");
+        let other = out.join("other.lock");
+        std::fs::write(&other, b"version = 1\n").unwrap();
+
+        let report = verify_bundle(&root, &bundle, Some(&other)).unwrap();
+        assert!(report.lock_matches, "bundled lock itself is intact");
+        assert_eq!(report.original_lock_matches, Some(false));
+        assert!(!report.verified, "a foreign original lock must fail");
+
+        let err = verify_bundle(&root, &bundle, Some(&out.join("absent.lock"))).unwrap_err();
+        assert!(err.to_string().contains("absent.lock"), "{err}");
+
+        let _ = std::fs::remove_dir_all(&out);
+    }
+
+    #[test]
+    fn read_descriptor_errors_are_actionable() {
+        let dir = temp_dir("vb-desc");
+        std::fs::create_dir_all(&dir).unwrap();
+        let err = read_descriptor(&dir).unwrap_err().to_string();
+        assert!(
+            err.contains("not found") && err.contains("package.json"),
+            "{err}"
+        );
+
+        std::fs::write(dir.join("package.json"), b"{not json").unwrap();
+        let err = read_descriptor(&dir).unwrap_err().to_string();
+        assert!(err.contains("invalid bundle descriptor"), "{err}");
+
+        let foreign = PackageBundle {
+            schema: "other/v9".to_string(),
+            ..Default::default()
+        };
+        foreign.write_descriptor(&dir).unwrap();
+        let err = read_descriptor(&dir).unwrap_err().to_string();
+        assert!(
+            err.contains("unsupported bundle schema 'other/v9'"),
+            "{err}"
+        );
+
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }

@@ -110,7 +110,7 @@ Capabilities are grouped by theme below.
 - Lock & reproducibility — `sdkt.lock` records resolved commit/integrity; `sdkt lock verify` covers deps
 - Package update — `sdkt package update` with `--check`/`--dry-run`/`--format`; closes the validate → fetch → update → verify loop
 - Version resolution — Semver constraints on deps; `VersionResolver` picks best satisfying tag/commit
-- Packaging — `sdkt package pack` produces an offline bundle of manifest + lock + cache; `sdkt package publish --dry-run` readiness check
+- Packaging — `sdkt package pack` produces an offline bundle of manifest + lock + cache, reconstructed and verified with `sdkt package unpack`; `sdkt package publish --dry-run` readiness check
 - Release polish — `Dockerfile` distribution, mainnet-safety guards, opt-in `--version` provenance
 
 ### RPC & Simulation

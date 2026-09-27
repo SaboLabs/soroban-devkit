@@ -1639,57 +1639,333 @@ fn package_pack_format_handling() {
     let _ = std::fs::remove_dir_all(&src);
 }
 
-#[test]
-fn package_pack_roundtrip_preserves_lock_and_integrity() {
-    // pack (tar.zst) → unpack → reconstructed tree reproduces lock + integrity.
+/// Fixture for the unpack tests: a fetched project packed as a `.tar.zst`.
+/// Returns (remote repo, project dir, tarball path relative to the project).
+fn packed_project(label: &str) -> (std::path::PathBuf, std::path::PathBuf, String) {
     let (src, url) = make_pack_repo();
-    let tmp = std::env::temp_dir().join(format!(
-        "sdkt-it-m38-rt-{}-{}",
-        std::process::id(),
-        std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
-            .as_nanos()
-    ));
+    let tmp = std::env::temp_dir().join(format!("sdkt-it-{}-{}", label, unique_suffix()));
     let _ = std::fs::remove_dir_all(&tmp);
     write_pack_manifest(&tmp, &url);
     Command::cargo_bin("sdkt")
         .expect("sdkt binary built")
         .current_dir(&tmp)
-        .arg("package")
-        .arg("fetch")
+        .args(["package", "fetch"])
         .assert()
         .success();
-
-    let out_dir = tmp.join("dist");
     Command::cargo_bin("sdkt")
         .expect("sdkt binary built")
         .current_dir(&tmp)
-        .args(["package", "pack", "--out", "dist"])
+        .args(["package", "pack"])
+        .assert()
+        .success();
+    let tarball = "dist/m38-app-0.3.0.tar.zst".to_string();
+    assert!(tmp.join(&tarball).is_file(), "tarball produced");
+    (src, tmp, tarball)
+}
+
+fn sdkt_in(dir: &std::path::Path, args: &[&str]) -> std::process::Output {
+    Command::cargo_bin("sdkt")
+        .expect("sdkt binary built")
+        .current_dir(dir)
+        .args(args)
+        .output()
+        .unwrap()
+}
+
+#[test]
+fn package_pack_unpack_verify_roundtrip_via_cli() {
+    // pack (tar.zst) → `package unpack` → reconstructed tree verified, then a
+    // mutated cached checkout makes `package verify-bundle` fail non-zero.
+    let (src, tmp, tarball) = packed_project("m38-rt");
+
+    let out = sdkt_in(
+        &tmp,
+        &[
+            "package",
+            "unpack",
+            &tarball,
+            "--dest",
+            "out",
+            "--lock",
+            "sdkt.lock",
+        ],
+    );
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(
+        out.status.success(),
+        "unpack must succeed: {}{}",
+        stdout,
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert!(stdout.contains("Unpacked m38-app v0.3.0"), "{}", stdout);
+    assert!(stdout.contains("✓ sdkt.lock sha256 sha256:"), "{}", stdout);
+    assert!(stdout.contains("✓ original lock sha256"), "{}", stdout);
+    assert!(stdout.contains("✓ math — integrity sha256:"), "{}", stdout);
+    assert!(stdout.contains("Bundle verified"), "{}", stdout);
+
+    // The reconstructed tree holds manifest, lock, descriptor, and checkout.
+    let root = tmp.join("out");
+    for f in [".sdkt.toml", "sdkt.lock", "package.json"] {
+        assert!(root.join(f).is_file(), "{} missing from unpacked tree", f);
+    }
+    let git_cache = root.join(".sdkt-cache").join("git");
+    let checkout = std::fs::read_dir(&git_cache)
+        .expect("cached checkouts unpacked")
+        .next()
+        .expect("one cached checkout")
+        .unwrap()
+        .path();
+    assert!(checkout.join(".git").exists(), "checkout keeps its .git");
+    assert!(checkout.join("lib.rs").is_file(), "checkout keeps lib.rs");
+    assert_eq!(
+        std::fs::read(root.join("sdkt.lock")).unwrap(),
+        std::fs::read(tmp.join("sdkt.lock")).unwrap(),
+        "unpacked lock is byte-identical to the original"
+    );
+
+    // The unmodified tree re-verifies on its own.
+    let ok = sdkt_in(&tmp, &["package", "verify-bundle", "out"]);
+    assert!(
+        ok.status.success(),
+        "{}",
+        String::from_utf8_lossy(&ok.stderr)
+    );
+
+    // Mutating one cached file must fail verification with a clear message.
+    std::fs::write(checkout.join("lib.rs"), "pub fn answer() -> u32 { 41 }\n").unwrap();
+    let bad = sdkt_in(&tmp, &["package", "verify-bundle", "out"]);
+    assert!(!bad.status.success(), "mutated tree must fail verification");
+    let stdout = String::from_utf8_lossy(&bad.stdout);
+    let stderr = String::from_utf8_lossy(&bad.stderr);
+    assert!(
+        stdout.contains("✗ math") && stdout.contains("modified or deleted"),
+        "{}",
+        stdout
+    );
+    assert!(stderr.contains("Bundle verification FAILED"), "{}", stderr);
+
+    let _ = std::fs::remove_dir_all(&tmp);
+    let _ = std::fs::remove_dir_all(&src);
+}
+
+#[test]
+fn package_unpack_json_reports_descriptor_and_verification() {
+    let (src, tmp, tarball) = packed_project("m38-json");
+
+    let out = sdkt_in(
+        &tmp,
+        &[
+            "package", "unpack", &tarball, "--dest", "out", "--format", "json",
+        ],
+    );
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let v: serde_json::Value = serde_json::from_slice(&out.stdout).expect("stdout is JSON");
+    assert_eq!(v["status"], "verified");
+    assert_eq!(v["artifact"], tarball.as_str());
+    assert_eq!(v["dir"], "out");
+    assert_eq!(v["bundle"]["schema"], "sdkt.package.bundle/v1");
+    assert_eq!(v["bundle"]["name"], "m38-app");
+    assert_eq!(v["bundle"]["version"], "0.3.0");
+    assert_eq!(v["bundle"]["format"], "tar.zst");
+    assert_eq!(v["bundle"]["dependencies"], 1);
+    let ver = &v["verification"];
+    assert_eq!(ver["verified"], true);
+    assert_eq!(ver["lock_matches"], true);
+    assert_eq!(ver["expected_lock_sha256"], ver["actual_lock_sha256"]);
+    assert_eq!(ver["expected_lock_sha256"], v["bundle"]["lock_sha256"]);
+    let dep = &ver["dependencies"][0];
+    assert_eq!(dep["name"], "math");
+    assert_eq!(dep["source"], "git");
+    assert_eq!(dep["status"], "ok");
+    assert_eq!(dep["expected_integrity"], dep["actual_integrity"]);
+
+    // Drifted lock → machine-readable mismatch on stdout, non-zero exit.
+    let mut lock = std::fs::read(tmp.join("out").join("sdkt.lock")).unwrap();
+    lock.extend_from_slice(b"\n# edited\n");
+    std::fs::write(tmp.join("out").join("sdkt.lock"), lock).unwrap();
+    let bad = sdkt_in(
+        &tmp,
+        &["package", "verify-bundle", "out", "--format", "json"],
+    );
+    assert!(!bad.status.success(), "lock drift must fail");
+    let v: serde_json::Value = serde_json::from_slice(&bad.stdout).expect("stdout is JSON");
+    assert_eq!(v["status"], "mismatch");
+    assert_eq!(v["verification"]["verified"], false);
+    assert_eq!(v["verification"]["lock_matches"], false);
+
+    // --no-verify reconstructs only.
+    let nv = sdkt_in(
+        &tmp,
+        &[
+            "package",
+            "unpack",
+            &tarball,
+            "--dest",
+            "nv",
+            "--no-verify",
+            "--format",
+            "json",
+        ],
+    );
+    assert!(
+        nv.status.success(),
+        "{}",
+        String::from_utf8_lossy(&nv.stderr)
+    );
+    let v: serde_json::Value = serde_json::from_slice(&nv.stdout).expect("stdout is JSON");
+    assert_eq!(v["status"], "unverified");
+    assert!(v["verification"].is_null());
+
+    let _ = std::fs::remove_dir_all(&tmp);
+    let _ = std::fs::remove_dir_all(&src);
+}
+
+#[test]
+fn package_unpack_dir_bundle_and_original_lock_check() {
+    let (src, tmp, _) = packed_project("m38-dir");
+    Command::cargo_bin("sdkt")
+        .expect("sdkt binary built")
+        .current_dir(&tmp)
+        .args(["package", "pack", "--out", "d", "--format", "dir"])
         .assert()
         .success();
 
-    // Locate the produced tarball.
-    let tarball = {
-        let mut tb = None;
-        for entry in std::fs::read_dir(&out_dir).unwrap() {
-            let p = entry.unwrap().path();
-            if p.to_string_lossy().ends_with(".tar.zst") {
-                tb = Some(p);
-            }
-        }
-        tb.expect("tarball produced")
+    let out = sdkt_in(
+        &tmp,
+        &["package", "unpack", "d/m38-app-0.3.0", "--dest", "fromdir"],
+    );
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert!(String::from_utf8_lossy(&out.stdout).contains("Bundle verified"));
+
+    // A lock that is not the one the bundle was packed from must be rejected.
+    std::fs::write(tmp.join("other.lock"), "version = 1\n").unwrap();
+    let bad = sdkt_in(
+        &tmp,
+        &[
+            "package",
+            "verify-bundle",
+            "fromdir",
+            "--lock",
+            "other.lock",
+        ],
+    );
+    assert!(!bad.status.success(), "foreign --lock must fail");
+    assert!(
+        String::from_utf8_lossy(&bad.stdout).contains("✗ original lock sha256"),
+        "{}",
+        String::from_utf8_lossy(&bad.stdout)
+    );
+
+    // Unpacking a directory bundle into itself is refused.
+    let nested = sdkt_in(
+        &tmp,
+        &[
+            "package",
+            "unpack",
+            "d/m38-app-0.3.0",
+            "--dest",
+            "d/m38-app-0.3.0/x",
+        ],
+    );
+    assert!(!nested.status.success());
+    assert!(
+        String::from_utf8_lossy(&nested.stderr).contains("must not be the bundle directory"),
+        "{}",
+        String::from_utf8_lossy(&nested.stderr)
+    );
+
+    let _ = std::fs::remove_dir_all(&tmp);
+    let _ = std::fs::remove_dir_all(&src);
+}
+
+#[test]
+fn package_unpack_rejects_bad_inputs_with_clear_errors() {
+    let (src, tmp, tarball) = packed_project("m38-errs");
+    let expect_err = |args: &[&str], needle: &str| {
+        let out = sdkt_in(&tmp, args);
+        assert!(!out.status.success(), "{:?} must fail", args);
+        let stderr = String::from_utf8_lossy(&out.stderr);
+        assert!(stderr.contains(needle), "{:?}: {}", args, stderr);
     };
 
-    // Reconstruct + verify using the public library API (no double-pack).
-    use sdkt_core::package::{unpack, verify_bundle_equivalence, PackageBundle};
-    let reconstruct = tmp.join("reconstruct");
-    unpack(&tarball, &reconstruct).expect("unpack ok");
-    let desc = std::fs::read_to_string(reconstruct.join("package.json")).unwrap();
-    let bundle: PackageBundle = serde_json::from_str(&desc).unwrap();
+    expect_err(
+        &["package", "unpack", "dist/missing.tar.zst"],
+        "artifact dist/missing.tar.zst not found",
+    );
+
+    std::fs::write(tmp.join("bundle.zip"), "zip").unwrap();
+    expect_err(
+        &["package", "unpack", "bundle.zip"],
+        "unsupported artifact bundle.zip",
+    );
+
+    // A truncated stream fails cleanly and leaves no partial tree behind.
+    let bytes = std::fs::read(tmp.join(&tarball)).unwrap();
+    std::fs::write(tmp.join("dist/trunc.tar.zst"), &bytes[..bytes.len() / 3]).unwrap();
+    expect_err(
+        &[
+            "package",
+            "unpack",
+            "dist/trunc.tar.zst",
+            "--dest",
+            "partial",
+        ],
+        "may be corrupt or truncated",
+    );
     assert!(
-        verify_bundle_equivalence(&reconstruct, &bundle).unwrap(),
-        "round-trip must preserve lock + integrity"
+        !tmp.join("partial").exists(),
+        "partial extraction cleaned up"
+    );
+
+    // A non-empty --dest needs --force.
+    std::fs::create_dir_all(tmp.join("busy")).unwrap();
+    std::fs::write(tmp.join("busy").join("keep.txt"), "x").unwrap();
+    expect_err(
+        &["package", "unpack", &tarball, "--dest", "busy"],
+        "--dest busy is not empty",
+    );
+    let forced = sdkt_in(
+        &tmp,
+        &["package", "unpack", &tarball, "--dest", "busy", "--force"],
+    );
+    assert!(
+        forced.status.success(),
+        "{}",
+        String::from_utf8_lossy(&forced.stderr)
+    );
+    assert!(
+        tmp.join("busy").join("keep.txt").exists(),
+        "--force never deletes"
+    );
+
+    expect_err(
+        &[
+            "package",
+            "unpack",
+            &tarball,
+            "--dest",
+            "l",
+            "--lock",
+            "nope.lock",
+        ],
+        "--lock nope.lock not found",
+    );
+    expect_err(
+        &["package", "verify-bundle", "no-such-dir"],
+        "bundle directory no-such-dir not found",
+    );
+    std::fs::create_dir_all(tmp.join("empty")).unwrap();
+    expect_err(
+        &["package", "verify-bundle", "empty"],
+        "is this an `sdkt package pack` bundle?",
     );
 
     let _ = std::fs::remove_dir_all(&tmp);

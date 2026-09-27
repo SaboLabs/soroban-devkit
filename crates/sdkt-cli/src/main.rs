@@ -1430,13 +1430,53 @@ enum PackageCommand {
     },
     /// Bundle the resolved project into a portable offline artifact: the
     /// manifest, the lockfile, and the cached git dependency checkouts. The
-    /// artifact can be unpacked on another machine and rebuilt without network.
+    /// artifact can be reconstructed on another machine with `sdkt package
+    /// unpack` and rebuilt without network.
     Pack {
         /// Output directory for the artifact (default: `./dist`).
         #[arg(short, long, default_value = "dist")]
         out: String,
         /// Artifact format: `tar.zst` (compressed tarball) or `dir` (directory tree).
         #[arg(long, default_value = "tar.zst")]
+        format: String,
+    },
+    /// Reconstruct a bundle produced by `sdkt package pack` (a `.tar.zst`
+    /// tarball or a `--format dir` directory) into `--dest`, then verify the
+    /// reconstructed tree offline against the bundle's `package.json`
+    /// descriptor: the `sdkt.lock` sha256 and every cached git checkout's
+    /// integrity. Never touches the network; a checkout missing from the
+    /// bundle is a verification failure. Exits non-zero on any mismatch.
+    Unpack {
+        /// Bundle to reconstruct: `<name>-<version>.tar.zst` or a bundle directory.
+        artifact: String,
+        /// Directory to reconstruct into (created if missing; must be empty unless `--force`).
+        #[arg(short, long, default_value = "unpacked")]
+        dest: String,
+        /// Extract into a non-empty `--dest`, overwriting files with the same name.
+        #[arg(long)]
+        force: bool,
+        /// Also require this original `sdkt.lock` to match the bundle's lock hash.
+        #[arg(long, value_name = "ORIGINAL_LOCK")]
+        lock: Option<String>,
+        /// Reconstruct only; skip the equivalence verification.
+        #[arg(long, conflicts_with = "lock")]
+        no_verify: bool,
+        /// Output format: `pretty` or `json`.
+        #[arg(short, long, default_value = "pretty")]
+        format: String,
+    },
+    /// Verify an already-unpacked bundle directory against its `package.json`
+    /// descriptor (lock sha256 + per-dependency integrity and clean checkouts).
+    /// Offline and read-only. Exits non-zero on any mismatch.
+    VerifyBundle {
+        /// Root of the unpacked bundle (the `--dest` given to `package unpack`).
+        #[arg(default_value = "unpacked")]
+        dir: String,
+        /// Also require this original `sdkt.lock` to match the bundle's lock hash.
+        #[arg(long, value_name = "ORIGINAL_LOCK")]
+        lock: Option<String>,
+        /// Output format: `pretty` or `json`.
+        #[arg(short, long, default_value = "pretty")]
         format: String,
     },
     /// Validate publish readiness (read-only): manifest valid, lock consistent,
@@ -1878,6 +1918,201 @@ fn parse_salt_hex(s: &str) -> Result<[u8; 20], String> {
             .map_err(|e| format!("Invalid --salt hex at byte {}: {}", i, e))?;
     }
     Ok(out)
+}
+
+/// Pre-flight checks for `sdkt package unpack`, run before anything is written
+/// so a bad invocation never leaves a partial tree behind.
+fn check_unpack_paths(artifact: &Path, dest: &Path, force: bool) -> Result<(), String> {
+    let meta = std::fs::metadata(artifact)
+        .map_err(|_| format!("artifact {} not found", artifact.display()))?;
+    if meta.is_file() {
+        let name = artifact
+            .file_name()
+            .map(|n| n.to_string_lossy().to_string())
+            .unwrap_or_default();
+        if !name.ends_with(".tar.zst") {
+            return Err(format!(
+                "unsupported artifact {}: expected a `.tar.zst` tarball or a bundle directory \
+                 produced by `sdkt package pack`",
+                artifact.display()
+            ));
+        }
+    } else if !artifact.join("package.json").is_file() {
+        return Err(format!(
+            "{} is not a bundle directory (no package.json descriptor)",
+            artifact.display()
+        ));
+    } else if let (Ok(src), Ok(cwd)) = (artifact.canonicalize(), std::env::current_dir()) {
+        // Copying a directory bundle into itself would recurse forever.
+        let dst = if dest.is_absolute() {
+            dest.to_path_buf()
+        } else {
+            cwd.join(dest)
+        };
+        let dst = dst.canonicalize().unwrap_or(dst);
+        if dst.starts_with(&src) {
+            return Err(format!(
+                "--dest {} must not be the bundle directory or inside it",
+                dest.display()
+            ));
+        }
+    }
+
+    if dest.exists() {
+        if !dest.is_dir() {
+            return Err(format!(
+                "--dest {} exists and is not a directory",
+                dest.display()
+            ));
+        }
+        let non_empty = std::fs::read_dir(dest)
+            .map_err(|e| format!("read --dest {}: {}", dest.display(), e))?
+            .next()
+            .is_some();
+        if non_empty && !force {
+            return Err(format!(
+                "--dest {} is not empty; choose an empty directory or pass --force to extract over it",
+                dest.display()
+            ));
+        }
+    }
+    Ok(())
+}
+
+/// Run the bundle equivalence check, exiting on hard I/O errors (a missing
+/// `sdkt.lock` in the bundle or an unreadable `--lock` file).
+fn run_bundle_verification(
+    dir: &Path,
+    bundle: &sdkt_core::package::PackageBundle,
+    original_lock: Option<&str>,
+) -> sdkt_core::package::BundleVerification {
+    if let Some(lock) = original_lock {
+        if !Path::new(lock).is_file() {
+            eprintln!("Error: --lock {} not found", lock);
+            std::process::exit(1);
+        }
+    }
+    sdkt_core::package::verify_bundle(dir, bundle, original_lock.map(Path::new)).unwrap_or_else(
+        |e| {
+            eprintln!("Error: bundle verification failed: {}", e);
+            std::process::exit(1);
+        },
+    )
+}
+
+/// Print the result of `package unpack` / `package verify-bundle` and exit
+/// non-zero when verification ran and failed.
+fn report_bundle(
+    fmt: OutputFormat,
+    artifact: Option<&Path>,
+    dir: &Path,
+    bundle: &sdkt_core::package::PackageBundle,
+    verification: Option<&sdkt_core::package::BundleVerification>,
+) {
+    use sdkt_core::package::BundleDepStatus;
+    let failed = verification.is_some_and(|v| !v.verified);
+
+    if fmt == OutputFormat::Json {
+        let mut doc = serde_json::json!({
+            "status": match verification {
+                None => "unverified",
+                Some(v) if v.verified => "verified",
+                Some(_) => "mismatch",
+            },
+            "dir": dir.display().to_string(),
+            "bundle": {
+                "schema": bundle.schema,
+                "name": bundle.name,
+                "version": bundle.version,
+                "format": bundle.format,
+                "lock_sha256": bundle.lock_sha256,
+                "created_at": bundle.created_at,
+                "dependencies": bundle.entries.len(),
+            },
+            "verification": verification,
+        });
+        if let Some(a) = artifact {
+            doc["artifact"] = serde_json::json!(a.display().to_string());
+        }
+        println!("{}", serde_json::to_string_pretty(&doc).unwrap());
+        if failed {
+            std::process::exit(1);
+        }
+        return;
+    }
+
+    if let Some(a) = artifact {
+        println!(
+            "Unpacked {} v{} ({})",
+            bundle.name, bundle.version, bundle.format
+        );
+        println!("  artifact: {}", a.display());
+        println!("  dest:     {}", dir.display());
+    } else {
+        println!("Bundle {} v{}", bundle.name, bundle.version);
+        println!("  dir: {}", dir.display());
+    }
+    println!("  dependencies bundled: {}", bundle.entries.len());
+
+    let Some(v) = verification else {
+        println!("Verification skipped (--no-verify).");
+        return;
+    };
+    let mark = |ok: bool| if ok { "✓" } else { "✗" };
+    println!("Verification:");
+    if v.lock_matches {
+        println!("  ✓ sdkt.lock sha256 {}", v.actual_lock_sha256);
+    } else {
+        println!(
+            "  ✗ sdkt.lock sha256 {} (bundle expects {})",
+            v.actual_lock_sha256, v.expected_lock_sha256
+        );
+    }
+    if let (Some(sha), Some(ok)) = (&v.original_lock_sha256, v.original_lock_matches) {
+        if ok {
+            println!("  ✓ original lock sha256 {}", sha);
+        } else {
+            println!(
+                "  ✗ original lock sha256 {} (bundle expects {})",
+                sha, v.expected_lock_sha256
+            );
+        }
+    }
+    for d in &v.dependencies {
+        let detail = match d.status {
+            BundleDepStatus::Ok => format!("integrity {}", d.actual_integrity),
+            BundleDepStatus::Skipped => format!("{} dependency, not bundled", d.source),
+            BundleDepStatus::CacheMissing => format!(
+                "cached checkout .sdkt-cache/git/{} missing from bundle",
+                d.cache_key
+            ),
+            BundleDepStatus::IntegrityMismatch => format!(
+                "integrity {} (bundle expects {})",
+                d.actual_integrity, d.expected_integrity
+            ),
+            BundleDepStatus::WorktreeModified => format!(
+                "tracked files in .sdkt-cache/git/{} were modified or deleted",
+                d.cache_key
+            ),
+            BundleDepStatus::Unreadable => {
+                format!("git could not read .sdkt-cache/git/{}", d.cache_key)
+            }
+        };
+        let m = if d.status == BundleDepStatus::Skipped {
+            "-"
+        } else {
+            mark(d.status.is_ok())
+        };
+        println!("  {} {} — {}", m, d.name, detail);
+    }
+    if failed {
+        eprintln!(
+            "Bundle verification FAILED: {} does not reproduce the packed lock and dependency integrity.",
+            dir.display()
+        );
+        std::process::exit(1);
+    }
+    println!("Bundle verified: lock and dependency integrity match the packed bundle.");
 }
 
 fn parse_format_str(s: &str) -> OutputFormat {
@@ -6638,6 +6873,62 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
                         std::process::exit(1);
                     }
                 }
+            }
+            PackageCommand::Unpack {
+                artifact,
+                dest,
+                force,
+                lock,
+                no_verify,
+                format,
+            } => {
+                let fmt = parse_format_str(&format);
+                let artifact = Path::new(&artifact);
+                let dest = Path::new(&dest);
+                if let Err(e) = check_unpack_paths(artifact, dest, force) {
+                    eprintln!("Error: {}", e);
+                    std::process::exit(1);
+                }
+                let dest_existed = dest.exists();
+                if let Err(e) = sdkt_core::package::unpack(artifact, dest) {
+                    // Don't leave a half-extracted tree behind in a dir we created.
+                    if !dest_existed {
+                        let _ = std::fs::remove_dir_all(dest);
+                    }
+                    eprintln!(
+                        "Error unpacking {}: {} (the artifact may be corrupt or truncated)",
+                        artifact.display(),
+                        e
+                    );
+                    std::process::exit(1);
+                }
+                let bundle = sdkt_core::package::read_descriptor(dest).unwrap_or_else(|e| {
+                    eprintln!("Error: {}", e);
+                    std::process::exit(1);
+                });
+                let verification = if no_verify {
+                    None
+                } else {
+                    Some(run_bundle_verification(dest, &bundle, lock.as_deref()))
+                };
+                report_bundle(fmt, Some(artifact), dest, &bundle, verification.as_ref());
+            }
+            PackageCommand::VerifyBundle { dir, lock, format } => {
+                let fmt = parse_format_str(&format);
+                let dir = Path::new(&dir);
+                if !dir.is_dir() {
+                    eprintln!(
+                        "Error: bundle directory {} not found (run `sdkt package unpack` first)",
+                        dir.display()
+                    );
+                    std::process::exit(1);
+                }
+                let bundle = sdkt_core::package::read_descriptor(dir).unwrap_or_else(|e| {
+                    eprintln!("Error: {}", e);
+                    std::process::exit(1);
+                });
+                let verification = run_bundle_verification(dir, &bundle, lock.as_deref());
+                report_bundle(fmt, None, dir, &bundle, Some(&verification));
             }
             PackageCommand::Publish { dry_run, broadcast } => {
                 let base = Path::new(".");

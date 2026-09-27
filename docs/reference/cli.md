@@ -165,6 +165,11 @@ sdkt
 │   │                         update on drift. `--check` reports; `--dry-run` previews.
 │   ├── pack                  Bundle the resolved project into a portable offline artifact
 │   │                         manifest + lock + cached git checkouts. `--out`, `--format`.
+│   ├── unpack <artifact>     Reconstruct a `.tar.zst` / dir bundle into `--dest` (default
+│   │                         `./unpacked`) and verify it offline against its descriptor.
+│   │                         `--lock <orig>`, `--no-verify`, `--force`, `--format json|pretty`.
+│   ├── verify-bundle [dir]   Re-verify an unpacked bundle (lock sha256 + per-dep integrity,
+│   │                         clean checkouts). `--lock <orig>`, `--format json|pretty`.
 │   └── publish               Validate publish readiness (`--dry-run` only, read-only);
 │                             detects missing cache, lock drift, integrity mismatch.
 
@@ -244,11 +249,64 @@ package state — all read-only, no network, nothing is published. `--broadcast`
 explicitly opt-in and is rejected because no registry source is defined; the
 workflow remains fully offline.
 
-Round-trip: a bundle can be reconstructed (`sdkt_core::package::unpack`) and the
-reconstructed tree verified to reproduce the original `sdkt.lock` sha256 and
-per-git-dependency integrity exactly (`verify_bundle_equivalence`) — no hashing
-or git logic is duplicated; the same `compute_dependency_integrity` /
-`git_cache_key` primitives are reused.
+#### Reconstructing a bundle
+
+`sdkt package unpack <artifact>` completes the round-trip on the receiving
+machine. It reconstructs the bundle into `--dest` and then verifies the
+reconstructed tree offline against the bundle's `package.json` descriptor:
+
+```sh
+# on the build host
+sdkt package fetch
+sdkt package pack                          # → dist/<name>-<version>.tar.zst
+
+# on the offline host
+sdkt package unpack dist/<name>-<version>.tar.zst --dest out/ --lock sdkt.lock
+sdkt package verify-bundle out/            # re-check the tree at any time
+```
+
+Verification passes only when:
+
+- the unpacked `sdkt.lock` hashes to the descriptor's `lock_sha256`;
+- every bundled git checkout (`.sdkt-cache/git/<cache_key>`) is present, its
+  `HEAD^{tree}` reproduces the recorded `integrity`, and none of its tracked
+  files were modified or deleted;
+- with `--lock <ORIGINAL_LOCK>`, that file also hashes to `lock_sha256`. The
+  descriptor ships inside the bundle, so this is what ties the bundle to a lock
+  you already trust.
+
+Local `path` dependencies are not bundled and are reported as skipped. Nothing
+is ever fetched: a checkout missing from the bundle is a verification failure.
+Any mismatch exits non-zero.
+
+Flags (`unpack`):
+
+- `--dest <DIR>` — reconstruction directory (default `./unpacked`), created if
+  missing. It must be empty unless `--force` is given, which extracts over the
+  existing contents without deleting anything. A directory bundle can't be
+  unpacked into itself.
+- `--lock <ORIGINAL_LOCK>` — also compare against this original `sdkt.lock`.
+- `--no-verify` — reconstruct only (cannot be combined with `--lock`).
+- `--format pretty|json` — `json` prints `{"status","artifact","dir","bundle",
+  "verification"}` on stdout. `status` is `verified`, `mismatch`, or
+  `unverified`. `bundle` summarizes the descriptor (`schema`, `name`,
+  `version`, `format`, `lock_sha256`, `created_at`, `dependencies`).
+  `verification` holds `verified`, `expected_lock_sha256`, `actual_lock_sha256`,
+  `lock_matches`, the optional `original_lock_sha256` / `original_lock_matches`,
+  and one `dependencies[]` row per entry (`name`, `source`, `cache_key`,
+  `expected_integrity`, `actual_integrity`, `status`: `ok`, `skipped`,
+  `cache-missing`, `integrity-mismatch`, `worktree-modified`, or `unreadable`).
+
+`sdkt package verify-bundle [DIR]` (default `./unpacked`) runs the same checks
+on an already-unpacked tree and takes the same `--lock` and `--format` flags.
+
+Errors are reported before anything is written for a missing artifact, an
+unsupported extension (only `.tar.zst` files or bundle directories), a
+non-empty `--dest`, or a missing `--lock` file. A corrupt or truncated
+`tar`/`zstd` stream fails with `Error unpacking <artifact>: … (the artifact may
+be corrupt or truncated)`, and a `--dest` that `unpack` created is removed so no
+partial tree is left behind. Library callers can use the same logic through
+`sdkt_core::package::{unpack, read_descriptor, verify_bundle}`.
 
 ├── project
 │   └── deploy                Deploy all contracts defined in the workspace (.sdkt.toml),
