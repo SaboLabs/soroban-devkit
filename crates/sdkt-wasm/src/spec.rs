@@ -358,8 +358,7 @@ fn map_type_def(t: &ScSpecTypeDef) -> ContractType {
             }
         }
         ScSpecTypeDef::Tuple(inner) => {
-            let elem_cts: Vec<ContractType> =
-                inner.value_types.iter().map(map_type_def).collect();
+            let elem_cts: Vec<ContractType> = inner.value_types.iter().map(map_type_def).collect();
             let name = format!(
                 "tuple<{}>",
                 elem_cts

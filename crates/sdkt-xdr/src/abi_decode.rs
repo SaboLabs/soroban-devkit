@@ -309,10 +309,14 @@ mod tests {
                     TypeMember {
                         name: "x".into(),
                         doc: String::new(),
+                        types: vec![],
+                        value: None,
                     },
                     TypeMember {
                         name: "y".into(),
                         doc: String::new(),
+                        types: vec![],
+                        value: None,
                     },
                 ],
             },
@@ -324,10 +328,14 @@ mod tests {
                     TypeMember {
                         name: "width".into(),
                         doc: String::new(),
+                        types: vec![],
+                        value: None,
                     },
                     TypeMember {
                         name: "height".into(),
                         doc: String::new(),
+                        types: vec![],
+                        value: None,
                     },
                 ],
             },
@@ -361,10 +369,14 @@ mod tests {
                 TypeMember {
                     name: "x".into(),
                     doc: String::new(),
+                    types: vec![],
+                    value: None,
                 },
                 TypeMember {
                     name: "y".into(),
                     doc: String::new(),
+                    types: vec![],
+                    value: None,
                 },
             ],
         });
@@ -391,10 +403,14 @@ mod tests {
             TypeMember {
                 name: "x".into(),
                 doc: String::new(),
+                types: vec![],
+                value: None,
             },
             TypeMember {
                 name: "y".into(),
                 doc: String::new(),
+                types: vec![],
+                value: None,
             },
         ];
         spec.custom_types = vec![
@@ -437,6 +453,8 @@ mod tests {
             members: vec![TypeMember {
                 name: "x".into(),
                 doc: String::new(),
+                types: vec![],
+                value: None,
             }],
         });
         let val = ScVal::Map(Some(ScMap(

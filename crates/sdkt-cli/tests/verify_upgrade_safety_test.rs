@@ -486,7 +486,7 @@ fn bytesn_size_change_is_breaking() {
     // BytesN<32> -> BytesN<64>: the fixed-width byte array size is part of the
     // ABI (it determines how many bytes the decoder expects).  Previously both
     // collapsed to name="bytesn", so the diff reported compatible=true.
-    use stellar_xdr::{ScSpecTypeDef, ScSpecTypeBytesN};
+    use stellar_xdr::{ScSpecTypeBytesN, ScSpecTypeDef};
     let old = temp_wasm(
         "bytesn-old",
         &wasm_with_spec(&point_spec(vec![(
