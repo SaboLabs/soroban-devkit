@@ -645,18 +645,68 @@ pub fn remove(id: &str) -> Result<(), StoreError> {
 }
 
 /// Update an installed plugin from a new local artifact (local-only).
+/// Detects `.sdktplugin` bundles and routes to bundle update path.
 pub fn update(id: &str, local_source: &Path) -> Result<PluginMeta, StoreError> {
     if local_source.to_string_lossy().starts_with("http://")
         || local_source.to_string_lossy().starts_with("https://")
     {
         return Err(StoreError::RemoteUnsupported);
     }
-    // Reuse install with force semantics.
-    let opts = InstallOpts {
-        id: Some(id.to_string()),
-        force: true,
-    };
-    install(local_source, &opts)
+    if is_bundle_path(local_source) {
+        let opts = InstallOpts {
+            id: Some(id.to_string()),
+            force: true,
+        };
+        update_bundle_with_key(local_source, &opts, None)
+            .map(|v| v.metadata)
+    } else {
+        let opts = InstallOpts {
+            id: Some(id.to_string()),
+            force: true,
+        };
+        install(local_source, &opts)
+    }
+}
+
+/// Like [`install_bundle_with_key`] but for updates: verifies the bundle
+/// (signature/integrity, same rules as bundle install) and updates the
+/// installed plugin from it, including the stale-artifact rename cleanup.
+/// A bundle signed with key X updates successfully with `--public-key X`
+/// and is rejected without it; an unsigned bundle is rejected when a key
+/// is provided.
+pub fn update_bundle_with_key(
+    bundle: &Path,
+    opts: &InstallOpts,
+    verifying_key: Option<&VerifyingKey>,
+) -> Result<BundleVerification, StoreError> {
+    let staging = std::env::temp_dir().join(format!(
+        "sdkt-plugin-update-{}-{}",
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_nanos()
+    ));
+    let result = (|| {
+        let mut verified = verify_bundle(bundle, &staging, verifying_key)?;
+        if verifying_key.is_some() && !verified.signed {
+            return Err(StoreError::InvalidBundle(
+                "bundle is not signed but a public key was provided; refusing to update".into(),
+            ));
+        }
+        let source = staging.join(&verified.metadata.artifact);
+        verified.metadata = update(&source, opts)?;
+        Ok(verified)
+    })();
+    let _ = std::fs::remove_dir_all(&staging);
+    result
+}
+
+/// Returns true when `path` ends with `.sdktplugin` (case-insensitive).
+pub(crate) fn is_bundle_path(path: &Path) -> bool {
+    path.extension()
+        .and_then(|e| e.to_str())
+        .is_some_and(|e| e.eq_ignore_ascii_case("sdktplugin"))
 }
 
 #[cfg(test)]
@@ -810,5 +860,177 @@ mod bundle_tests {
             install_bundle_with_key(&bundle, &InstallOpts::default(), Some(&key.verifying_key()))
                 .unwrap_err();
         assert!(err.to_string().contains("bundle is not signed"), "{err}");
+    }
+
+    #[test]
+    fn bundle_update_happy_path() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = dir.path().join("store");
+        std::fs::create_dir_all(&store).unwrap();
+        let artifact = dir.path().join("rule.wasm");
+        fs::write(&artifact, b"wasm-v1").unwrap();
+        let bundle = dir.path().join("plugin.sdktplugin");
+        pack_bundle(&bundle, &meta(), &artifact, None).unwrap();
+
+        let root = store.clone();
+        std::fs::create_dir_all(plugin_dir(&root, "example-rule")).unwrap();
+        std::fs::write(
+            plugin_dir(&root, "example-rule").join("plugin.toml"),
+            r#"id = "example-rule"
+name = "Example Rule"
+version = "1.0.0"
+author = "SaboLabs"
+description = "test"
+kind = "wasm"
+artifact = "rule.wasm"
+abi_major = 1
+abi_minor = 0
+"#,
+        )
+        .unwrap();
+        std::fs::write(plugin_dir(&root, "example-rule").join("rule.wasm"), b"wasm-v1").unwrap();
+
+        let result = update("example-rule", &bundle).unwrap();
+        assert_eq!(result.version, "1.0.0");
+        let listed = list_in(&root);
+        assert_eq!(listed.len(), 1);
+        assert_eq!(listed[0].version, "1.0.0");
+    }
+
+    #[test]
+    fn bundle_update_signature_required_path() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = dir.path().join("store");
+        std::fs::create_dir_all(&store).unwrap();
+        let artifact = dir.path().join("rule.wasm");
+        fs::write(&artifact, b"wasm").unwrap();
+        let key = SigningKey::from_bytes(&[7u8; 32]);
+        let bundle = dir.path().join("plugin.sdktplugin");
+        pack_bundle(&bundle, &meta(), &artifact, Some(&key)).unwrap();
+
+        let root = store.clone();
+        std::fs::create_dir_all(plugin_dir(&root, "example-rule")).unwrap();
+        std::fs::write(
+            plugin_dir(&root, "example-rule").join("plugin.toml"),
+            r#"id = "example-rule"
+name = "Example Rule"
+version = "1.0.0"
+author = "SaboLabs"
+description = "test"
+kind = "wasm"
+artifact = "rule.wasm"
+abi_major = 1
+abi_minor = 0
+"#,
+        )
+        .unwrap();
+        std::fs::write(plugin_dir(&root, "example-rule").join("rule.wasm"), b"wasm").unwrap();
+
+        let wrong = SigningKey::from_bytes(&[8u8; 32]);
+        assert!(matches!(
+            update_bundle_with_key(
+                &bundle,
+                &InstallOpts {
+                    id: Some("example-rule".into()),
+                    force: true,
+                },
+                Some(&wrong.verifying_key())
+            ),
+            Err(StoreError::InvalidSignature)
+        ));
+        let result = update_bundle_with_key(
+            &bundle,
+            &InstallOpts {
+                id: Some("example-rule".into()),
+                force: true,
+            },
+            Some(&key.verifying_key()),
+        );
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn bundle_update_corrupt_bundle_no_op() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = dir.path().join("store");
+        std::fs::create_dir_all(&store).unwrap();
+        let artifact = dir.path().join("rule.wasm");
+        fs::write(&artifact, b"wasm").unwrap();
+        let bundle = dir.path().join("plugin.sdktplugin");
+        pack_bundle(&bundle, &meta(), &artifact, None).unwrap();
+        let mut bytes = fs::read(&bundle).unwrap();
+        let digest = digest_hex(b"wasm").into_bytes();
+        let offset = bytes
+            .windows(digest.len())
+            .position(|window| window == digest)
+            .unwrap();
+        bytes[offset] = if bytes[offset] == b'0' { b'1' } else { b'0' };
+        fs::write(&bundle, bytes).unwrap();
+
+        let root = store.clone();
+        std::fs::create_dir_all(plugin_dir(&root, "example-rule")).unwrap();
+        std::fs::write(
+            plugin_dir(&root, "example-rule").join("plugin.toml"),
+            r#"id = "example-rule"
+name = "Example Rule"
+version = "1.0.0"
+author = "SaboLabs"
+description = "test"
+kind = "wasm"
+artifact = "rule.wasm"
+abi_major = 1
+abi_minor = 0
+"#,
+        )
+        .unwrap();
+        std::fs::write(plugin_dir(&root, "example-rule").join("rule.wasm"), b"wasm").unwrap();
+
+        assert!(update("example-rule", &bundle).is_err());
+        let listed = list_in(&root);
+        assert_eq!(listed.len(), 1);
+        assert_eq!(listed[0].version, "1.0.0");
+    }
+
+    #[test]
+    fn bundle_update_rename_cleanup() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = dir.path().join("store");
+        std::fs::create_dir_all(&store).unwrap();
+        let old_artifact = dir.path().join("old_rule.wasm");
+        fs::write(&old_artifact, b"old-wasm").unwrap();
+        let new_artifact = dir.path().join("new_rule.wasm");
+        fs::write(&new_artifact, b"new-wasm").unwrap();
+        let mut meta = meta();
+        meta.artifact = "old_rule.wasm".into();
+        let bundle = dir.path().join("plugin.sdktplugin");
+        pack_bundle(&bundle, &meta, &old_artifact, None).unwrap();
+
+        let root = store.clone();
+        std::fs::create_dir_all(plugin_dir(&root, "example-rule")).unwrap();
+        std::fs::write(
+            plugin_dir(&root, "example-rule").join("plugin.toml"),
+            r#"id = "example-rule"
+name = "Example Rule"
+version = "1.0.0"
+author = "SaboLabs"
+description = "test"
+kind = "wasm"
+artifact = "old_rule.wasm"
+abi_major = 1
+abi_minor = 0
+"#,
+        )
+        .unwrap();
+        std::fs::write(plugin_dir(&root, "example-rule").join("old_rule.wasm"), b"old-wasm").unwrap();
+
+        let mut new_meta = meta();
+        new_meta.artifact = "new_rule.wasm".into();
+        let new_bundle = dir.path().join("plugin2.sdktplugin");
+        pack_bundle(&new_bundle, &new_meta, &new_artifact, None).unwrap();
+
+        let result = update("example-rule", &new_bundle).unwrap();
+        assert_eq!(result.artifact, "new_rule.wasm");
+        assert!(!plugin_dir(&root, "example-rule").join("old_rule.wasm").exists());
+        assert!(plugin_dir(&root, "example-rule").join("new_rule.wasm").exists());
     }
 }

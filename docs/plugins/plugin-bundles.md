@@ -25,7 +25,11 @@ No hosted registry or central trust root is required. A caller that has an
 expected author key can pass it to `verify_bundle`; signed bundles whose
 embedded key differs are rejected.
 
-## CLI
+## Lifecycle
+
+The full bundle lifecycle is: **pack → verify-bundle → install → update**.
+Every flow works with bundles, including updating an already-installed plugin
+from a new bundle version:
 
 ```bash
 # Pack a plugin directory into a bundle
@@ -43,6 +47,15 @@ sdkt plugin verify-bundle my-plugin.sdktplugin --public-key ./public.key
 sdkt plugin install my-plugin.sdktplugin
 sdkt plugin install my-plugin.sdktplugin --public-key ./public.key
 
+# Update an installed plugin from a new bundle version
+sdkt plugin update myrule my-plugin-v2.sdktplugin
+sdkt plugin update myrule my-plugin-v2.sdktplugin --public-key ./public.key
+
 # Run full diagnostics and self-check on a bundle
 sdkt plugin doctor my-plugin.sdktplugin
 ```
+
+Updating from a bundle mirrors install semantics: signature verification,
+staging extraction, and atomic replace with stale-artifact cleanup all run
+before anything is committed. A failed verification leaves the previously
+installed plugin intact.

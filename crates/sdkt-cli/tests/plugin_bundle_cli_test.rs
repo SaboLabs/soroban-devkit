@@ -559,6 +559,108 @@ fn bundle_install_extension_is_case_insensitive() {
 }
 
 #[test]
+fn bundle_update_from_bundle() {
+    let root = TempDir::new().unwrap();
+    let store = TempDir::new().unwrap();
+    let src_dir = make_plugin_dir(&root, "wasm", "wasm");
+    let bundle_v1 = root.path().join("v1.sdktplugin");
+    pack(&src_dir, &bundle_v1, None);
+
+    sdkt_in(store.path())
+        .args(["plugin", "install", bundle_v1.to_str().unwrap()])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("Installed plugin 'myrule'"));
+    assert_eq!(installed_ids(store.path()), vec!["myrule".to_string()]);
+
+    let bundle_v2 = root.path().join("v2.sdktplugin");
+    pack(&src_dir, &bundle_v2, None);
+
+    sdkt_in(store.path())
+        .args(["plugin", "update", "myrule", bundle_v2.to_str().unwrap()])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("Updated plugin 'myrule'"));
+    assert_eq!(installed_ids(store.path()), vec!["myrule".to_string()]);
+}
+
+#[test]
+fn bundle_update_rejects_unsigned_when_public_key_given() {
+    let root = TempDir::new().unwrap();
+    let store = TempDir::new().unwrap();
+    let src_dir = make_plugin_dir(&root, "wasm", "wasm");
+    let key = root.path().join("public.key");
+    fs::write(&key, [0xcd; 32]).unwrap();
+    let bundle = root.path().join("unsigned.sdktplugin");
+    pack(&src_dir, &bundle, None);
+
+    sdkt_in(store.path())
+        .args([
+            "plugin",
+            "update",
+            "myrule",
+            bundle.to_str().unwrap(),
+            "--public-key",
+            key.to_str().unwrap(),
+        ])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains(
+            "bundle is not signed but a public key was provided; refusing to update",
+        ));
+}
+
+#[test]
+fn bundle_update_rejects_wrong_public_key() {
+    let root = TempDir::new().unwrap();
+    let store = TempDir::new().unwrap();
+    let src_dir = make_plugin_dir(&root, "wasm", "wasm");
+    let secret_path = root.path().join("secret.key");
+    fs::write(&secret_path, [0xab; 32]).unwrap();
+    let wrong_pub = root.path().join("wrong_pub.key");
+    fs::write(&wrong_pub, [0xcd; 32]).unwrap();
+    let bundle = root.path().join("signed.sdktplugin");
+    pack(&src_dir, &bundle, Some(&secret_path));
+
+    sdkt_in(store.path())
+        .args([
+            "plugin",
+            "update",
+            "myrule",
+            bundle.to_str().unwrap(),
+            "--public-key",
+            wrong_pub.to_str().unwrap(),
+        ])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("signature verification failed"));
+}
+
+#[test]
+fn bundle_update_rejects_public_key_on_non_bundle() {
+    let root = TempDir::new().unwrap();
+    let store = TempDir::new().unwrap();
+    let src_dir = make_plugin_dir(&root, "wasm", "wasm");
+    let key = root.path().join("public.key");
+    fs::write(&key, [0xcd; 32]).unwrap();
+
+    sdkt_in(store.path())
+        .args([
+            "plugin",
+            "update",
+            "myrule",
+            src_dir.join("rule.wasm").to_str().unwrap(),
+            "--public-key",
+            key.to_str().unwrap(),
+        ])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains(
+            "only applies to .sdktplugin bundles",
+        ));
+}
+
+#[test]
 fn m40_deliverable_files_present() {
     // Confirms the deliverables exist: plugin_store.rs, plugin_loader.rs,
     // plugin_cli_test.rs, and plugin_loading.rs.
