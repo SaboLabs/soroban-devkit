@@ -43,26 +43,23 @@ pub(crate) fn instance_ledger_key(contract_id: &str) -> Result<String, RpcError>
         .map_err(|e| RpcError::Rpc(format!("Failed to encode instance ledger key: {e}")))
 }
 
-/// Fetches TTL info from the RPC node and transforms it into a `TtlInfo` representation.
-pub async fn get_ttl_info(
+/// Fetches TTL info from the RPC node for a contract's instance entry plus any
+/// explicit extra keys, and transforms it into a `TtlInfo` representation.
+///
+/// Validates `contract_id` and all `extra_keys` before any RPC call via
+/// [`collect_extend_keys`].
+pub async fn get_ttl_info_for_keys(
     client: &SorobanRpcClient,
     contract_id: &str,
+    extra_keys: &[String],
 ) -> Result<TtlInfo, RpcError> {
+    // Validate contract ID and all keys before contacting RPC.
+    let keys = collect_extend_keys(contract_id, extra_keys)?;
+
     let ledger_info = client.get_ledger().await?;
     let current_ledger = ledger_info.sequence;
 
-    // Soroban RPC `getLedgerEntries` requires explicit keys — it cannot enumerate all
-    // storage for a contract. The one key that is ALWAYS present for a deployed
-    // contract is its instance singleton (see [`instance_ledger_key`]). Querying it
-    // returns the contract's instance entry (real, decodable) and avoids the
-    // "no keys specified in request" error that an empty key set causes. Further
-    // storage data entries (persistent/temporary) would require explicit keys the
-    // caller must supply; the instance entry is the guaranteed baseline.
-    let instance_key = instance_ledger_key(contract_id)?;
-
-    let storage_resp = client
-        .get_contract_storage(contract_id, &[instance_key])
-        .await?;
+    let storage_resp = client.get_contract_storage(contract_id, &keys).await?;
 
     let mut entries = Vec::new();
     for entry in storage_resp.entries {
@@ -89,6 +86,14 @@ pub async fn get_ttl_info(
         contract_id: contract_id.to_string(),
         entries,
     })
+}
+
+/// Fetches TTL info from the RPC node and transforms it into a `TtlInfo` representation.
+pub async fn get_ttl_info(
+    client: &SorobanRpcClient,
+    contract_id: &str,
+) -> Result<TtlInfo, RpcError> {
+    get_ttl_info_for_keys(client, contract_id, &[]).await
 }
 
 /// Result of a successful `ExtendFootprintTtl` submission.
@@ -639,6 +644,22 @@ mod tests {
     #[test]
     fn test_collect_extend_keys_rejects_bad_contract() {
         assert!(collect_extend_keys("not-a-contract", &[]).is_err());
+    }
+
+    #[tokio::test]
+    async fn test_get_ttl_info_for_keys_rejects_invalid_key_before_rpc() {
+        // Point to an invalid/unreachable address. If validation happens before RPC,
+        // it fails immediately with invalid LedgerKey error, not a connection error.
+        let client = SorobanRpcClient::new("http://127.0.0.1:1");
+        let result = get_ttl_info_for_keys(
+            &client,
+            "CAE3U7JKESRWZHPEQ72DVNGOQ6WPA7HSPQZL5YV46NPCE4TMUPAGYMEC",
+            &["not-a-valid-key".to_string()],
+        )
+        .await;
+        assert!(result.is_err());
+        let err_msg = result.unwrap_err().to_string();
+        assert!(err_msg.contains("invalid LedgerKey"));
     }
 
     #[tokio::test]
