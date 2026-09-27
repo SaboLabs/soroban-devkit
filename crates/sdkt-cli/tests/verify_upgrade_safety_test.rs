@@ -408,6 +408,41 @@ fn changed_event_params_blocks_deny_breaking_deploy() {
 }
 
 #[test]
+fn changed_type_definition_blocks_deny_breaking_deploy() {
+    // A custom-type (struct) field change must prevent deployment when
+    // --deny-breaking is set.  This exercises the type-to-deployment guard,
+    // not just the diff verdict (covered by changed_type_definition_is_breaking).
+    use stellar_xdr::ScSpecTypeDef;
+    let old = temp_wasm(
+        "ty-deny-old",
+        &wasm_with_spec(&point_spec(vec![("x", ScSpecTypeDef::I32)])),
+    );
+    let new = temp_wasm(
+        "ty-deny-new",
+        &wasm_with_spec(&point_spec(vec![
+            ("x", ScSpecTypeDef::I64),
+            ("y", ScSpecTypeDef::I32),
+        ])),
+    );
+    sdkt()
+        .args([
+            "deploy",
+            "--wasm",
+            new.to_str().unwrap(),
+            "--old-wasm",
+            old.to_str().unwrap(),
+            "--deny-breaking",
+            "--salt",
+            "0000000000000000000000000000000000000003",
+        ])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("NOT backwards-compatible"))
+        .stdout(predicate::str::contains("Compatible: NO"))
+        .stdout(predicate::str::contains("Changed type definition: Point"));
+}
+
+#[test]
 fn changed_type_definition_is_breaking() {
     use stellar_xdr::ScSpecTypeDef;
     let old = temp_wasm(
