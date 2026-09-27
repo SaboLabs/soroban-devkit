@@ -814,9 +814,10 @@ enum PluginAction {
         #[arg(short, long, default_value = "pretty")]
         format: String,
     },
-    /// Install a plugin from a local artifact + sibling plugin.toml
+    /// Install a plugin from a local artifact + sibling plugin.toml, or from a
+    /// `.sdktplugin` bundle (verified before anything is installed)
     Install {
-        /// Path to the local plugin artifact (.so/.dylib/.dll/.wasm)
+        /// Path to the local plugin artifact (.so/.dylib/.dll/.wasm) or `.sdktplugin` bundle
         source: String,
         /// Override the plugin id from metadata (rarely needed)
         #[arg(long)]
@@ -824,6 +825,9 @@ enum PluginAction {
         /// Overwrite an existing install of the same id
         #[arg(long)]
         force: bool,
+        /// Expected Ed25519 public key file for a signed bundle (32 bytes, raw)
+        #[arg(long)]
+        public_key: Option<String>,
         /// Output format (pretty or json)
         #[arg(short, long, default_value = "pretty")]
         format: String,
@@ -2305,6 +2309,24 @@ fn path_contains_command(path_var: &std::ffi::OsStr, program: &str) -> bool {
 /// Look for a runnable program on PATH (name only; no output capture).
 fn command_on_path(program: &str) -> bool {
     path_contains_command(&std::env::var_os("PATH").unwrap_or_default(), program)
+}
+
+/// Read a raw 32-byte Ed25519 public key file, exiting with a clear error on failure.
+fn read_public_key_or_exit(
+    key_path: &str,
+) -> sdkt_audit::plugin_store::ed25519_dalek::VerifyingKey {
+    let bytes = std::fs::read(key_path).unwrap_or_else(|e| {
+        eprintln!("Error reading public key: {}", e);
+        process::exit(1);
+    });
+    let arr: [u8; 32] = bytes.try_into().unwrap_or_else(|_| {
+        eprintln!("Error: public key must be exactly 32 bytes");
+        process::exit(1);
+    });
+    sdkt_audit::plugin_store::ed25519_dalek::VerifyingKey::from_bytes(&arr).unwrap_or_else(|_| {
+        eprintln!("Error: invalid Ed25519 public key");
+        process::exit(1);
+    })
 }
 
 /// True when `installed` (the line-separated output of
@@ -6496,25 +6518,52 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
                 source,
                 id,
                 force,
+                public_key,
                 format,
             } => {
                 let fmt = parse_format_str(&format);
                 let opts = sdkt_audit::plugin_store::InstallOpts { id, force };
-                match sdkt_audit::plugin_store::install(std::path::Path::new(&source), &opts) {
-                    Ok(meta) => {
+                let path = std::path::Path::new(&source);
+                let is_bundle = path.extension().and_then(|e| e.to_str()) == Some("sdktplugin");
+                if public_key.is_some() && !is_bundle {
+                    eprintln!("Error: --public-key only applies to .sdktplugin bundles");
+                    process::exit(1);
+                }
+                // `signed` is only known (and reported) for bundle installs.
+                let result = if is_bundle {
+                    let pubkey = public_key.as_deref().map(read_public_key_or_exit);
+                    sdkt_audit::plugin_store::install_bundle_with_key(path, &opts, pubkey.as_ref())
+                        .map(|v| (v.metadata, Some(v.signed)))
+                } else {
+                    sdkt_audit::plugin_store::install(path, &opts).map(|meta| (meta, None))
+                };
+                match result {
+                    Ok((meta, signed)) => {
                         if meta.kind == "native" {
                             eprintln!(
                                     "Warning: native plugins run UNSANDBOXED. Only install from trusted sources."
                                 );
                         }
                         if fmt == OutputFormat::Json {
-                            let json = serde_json::json!({ "status": "installed", "plugin": meta });
+                            let mut json =
+                                serde_json::json!({ "status": "installed", "plugin": meta });
+                            if let Some(signed) = signed {
+                                json["signed"] = serde_json::Value::Bool(signed);
+                            }
                             println!("{}", serde_json::to_string_pretty(&json)?);
                         } else {
                             println!(
                                 "Installed plugin '{}' ({} v{})",
                                 meta.id, meta.kind, meta.version
                             );
+                            match signed {
+                                Some(true) => println!("  signature: VERIFIED"),
+                                Some(false) => println!("  signature: UNSIGNED"),
+                                None => {}
+                            }
+                        }
+                        if signed == Some(false) {
+                            eprintln!("Note: bundle was NOT signed");
                         }
                     }
                     Err(e) => {
@@ -6651,31 +6700,7 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
                 format,
             } => {
                 let fmt = parse_format_str(&format);
-                let pubkey = if let Some(key_path) = public_key {
-                    let bytes = std::fs::read(key_path)
-                        .map_err(|e| {
-                            eprintln!("Error reading public key: {}", e);
-                            process::exit(1);
-                        })
-                        .unwrap();
-                    let arr: [u8; 32] = bytes
-                        .try_into()
-                        .map_err(|_| {
-                            eprintln!("Error: public key must be exactly 32 bytes");
-                            process::exit(1);
-                        })
-                        .unwrap();
-                    Some(
-                        sdkt_audit::plugin_store::ed25519_dalek::VerifyingKey::from_bytes(&arr)
-                            .map_err(|_| {
-                                eprintln!("Error: invalid Ed25519 public key");
-                                process::exit(1);
-                            })
-                            .unwrap(),
-                    )
-                } else {
-                    None
-                };
+                let pubkey = public_key.as_deref().map(read_public_key_or_exit);
                 let staging =
                     std::env::temp_dir().join(format!("sdkt-verify-bundle-{}", std::process::id()));
                 match sdkt_audit::plugin_store::verify_bundle(

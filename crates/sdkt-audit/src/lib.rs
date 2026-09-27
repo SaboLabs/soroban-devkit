@@ -37,8 +37,8 @@ pub use plugin_doctor::{
     DoctorStage, DoctorStageStatus, DOCTOR_SAMPLE_CONTRACT,
 };
 pub use plugin_store::{
-    install_bundle, pack_bundle, verify_bundle, BundleVerification, InstallOpts, PluginMeta,
-    StoreError,
+    install_bundle, install_bundle_with_key, pack_bundle, verify_bundle, BundleVerification,
+    InstallOpts, PluginMeta, StoreError,
 };
 pub use registry::{
     register_builtin_rules, register_rule, run_registered, BoxedRule, RuleRegistry,

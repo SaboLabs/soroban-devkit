@@ -357,6 +357,16 @@ pub fn verify_bundle(
 /// store. Unsigned bundles are accepted for local use, but the returned
 /// metadata lets callers report that the bundle was unsigned.
 pub fn install_bundle(bundle: &Path, opts: &InstallOpts) -> Result<BundleVerification, StoreError> {
+    install_bundle_with_key(bundle, opts, None)
+}
+
+/// Like [`install_bundle`], but when `verifying_key` is given a signed bundle
+/// whose embedded key differs is rejected before anything is installed.
+pub fn install_bundle_with_key(
+    bundle: &Path,
+    opts: &InstallOpts,
+    verifying_key: Option<&VerifyingKey>,
+) -> Result<BundleVerification, StoreError> {
     let staging = std::env::temp_dir().join(format!(
         "sdkt-plugin-{}-{}",
         std::process::id(),
@@ -366,7 +376,7 @@ pub fn install_bundle(bundle: &Path, opts: &InstallOpts) -> Result<BundleVerific
             .as_nanos()
     ));
     let result = (|| {
-        let mut verified = verify_bundle(bundle, &staging, None)?;
+        let mut verified = verify_bundle(bundle, &staging, verifying_key)?;
         let source = staging.join(&verified.metadata.artifact);
         verified.metadata = install(&source, opts)?;
         Ok(verified)
@@ -756,6 +766,25 @@ mod bundle_tests {
             verify_bundle(
                 &bundle,
                 &dir.path().join("wrong"),
+                Some(&wrong.verifying_key())
+            ),
+            Err(StoreError::InvalidSignature)
+        ));
+    }
+
+    #[test]
+    fn install_bundle_with_wrong_key_fails_before_install() {
+        let dir = tempfile::tempdir().unwrap();
+        let artifact = dir.path().join("rule.wasm");
+        fs::write(&artifact, b"wasm").unwrap();
+        let key = SigningKey::from_bytes(&[7u8; 32]);
+        let bundle = dir.path().join("plugin.sdktplugin");
+        pack_bundle(&bundle, &meta(), &artifact, Some(&key)).unwrap();
+        let wrong = SigningKey::from_bytes(&[8u8; 32]);
+        assert!(matches!(
+            install_bundle_with_key(
+                &bundle,
+                &InstallOpts::default(),
                 Some(&wrong.verifying_key())
             ),
             Err(StoreError::InvalidSignature)
