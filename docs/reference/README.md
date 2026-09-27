@@ -18,7 +18,7 @@ sdkt
 ├── storage
 │   ├── check <contract-id>   [--abi <wasm>] [--abi-contract <id>] [--format]
 │   ├── analyze <contract-id> [--abi <wasm>] [--abi-contract <id>] [--format]
-│   ├── estimate <wasm-path>  [--format] (NOT YET IMPLEMENTED — placeholder only)
+│   ├── estimate <wasm-path>  [--ledgers <N>] [--format <pretty|json>]
 │   ├── read --contract <contract-id> --key-xdr <BASE64_XDR> [--abi <wasm>] [--format]
 │   └── extend --contract <contract-id> --ledgers <N> [--key <xdr>]... [--identity <name>] [--format]
 │
@@ -311,6 +311,8 @@ sdkt plugin list                                   # list installed plugins
 sdkt plugin list --format json                     # JSON output; every plugin subcommand accepts --format json
 sdkt plugin show <id>                              # show a plugin's metadata
 sdkt plugin install ./path/to/artifact.wasm        # install from a local file
+sdkt plugin install ./bundle.sdktplugin            # verify, then install a bundle (reports signed: true/false)
+sdkt plugin install ./bundle.sdktplugin --public-key ./pubkey.key               # require a signature from this author key (unsigned is refused)
 sdkt plugin remove <id>                            # remove (idempotent)
 sdkt plugin update <id> ./path/to/artifact.wasm    # local-only update
 sdkt plugin pack ./path/to/plugin-dir --output ./myrule.sdktplugin              # pack into .sdktplugin bundle
