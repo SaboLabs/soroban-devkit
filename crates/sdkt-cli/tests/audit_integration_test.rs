@@ -275,12 +275,54 @@ fn audit_multiple_explicit_files_json_contains_both_files_and_summary() {
         .stdout
         .clone();
 
-    let stdout = String::from_utf8_lossy(&out);
-    assert!(stdout.contains("\"files\""));
-    assert!(stdout.contains("\"summary\""));
-    assert!(stdout.contains("a.rs"));
-    assert!(stdout.contains("b.rs"));
-    assert!(stdout.contains("\"total\""));
+    let v: serde_json::Value = serde_json::from_slice(&out).expect("valid JSON output");
+    let files = v["files"].as_array().expect("files array");
+    let summary = &v["summary"];
+
+    let a_file = files
+        .iter()
+        .find(|entry| {
+            entry["file"]
+                .as_str()
+                .is_some_and(|path| path.ends_with("/a.rs"))
+        })
+        .expect("a.rs entry in JSON output");
+    let b_file = files
+        .iter()
+        .find(|entry| {
+            entry["file"]
+                .as_str()
+                .is_some_and(|path| path.ends_with("/b.rs"))
+        })
+        .expect("b.rs entry in JSON output");
+
+    assert!(
+        a_file["report"]["findings"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|finding| finding["rule_id"] == "AUTH-001"),
+        "a.rs should contain AUTH-001"
+    );
+    assert!(
+        b_file["report"]["findings"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|finding| finding["rule_id"] == "AUTH-004"),
+        "b.rs should contain AUTH-004"
+    );
+
+    let per_file_total: usize = files
+        .iter()
+        .map(|entry| entry["report"]["summary"]["total"].as_u64().unwrap() as usize)
+        .sum();
+    let aggregate_total = summary["total"].as_u64().unwrap() as usize;
+
+    assert_eq!(
+        per_file_total, aggregate_total,
+        "summary totals should reconcile"
+    );
 }
 
 #[test]

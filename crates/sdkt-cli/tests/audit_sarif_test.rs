@@ -236,23 +236,29 @@ fn sarif_multiple_files_preserve_individual_artifact_uris() {
         "multi-file sarif must include findings"
     );
 
-    let uris: Vec<String> = results
+    let auth001 = results
         .iter()
-        .map(|result| {
-            result["locations"][0]["physicalLocation"]["artifactLocation"]["uri"]
-                .as_str()
-                .unwrap()
-                .to_string()
-        })
-        .collect();
+        .find(|result| result["ruleId"] == "AUTH-001")
+        .expect("AUTH-001 result should be present");
+    let auth004 = results
+        .iter()
+        .find(|result| result["ruleId"] == "AUTH-004")
+        .expect("AUTH-004 result should be present");
+
+    let auth001_uri = auth001["locations"][0]["physicalLocation"]["artifactLocation"]["uri"]
+        .as_str()
+        .unwrap();
+    let auth004_uri = auth004["locations"][0]["physicalLocation"]["artifactLocation"]["uri"]
+        .as_str()
+        .unwrap();
 
     assert!(
-        uris.iter().any(|uri| uri.contains("a.rs")),
-        "a.rs should be present"
+        auth001_uri.contains("a.rs"),
+        "AUTH-001 should be attributed to a.rs; got: {auth001_uri}"
     );
     assert!(
-        uris.iter().any(|uri| uri.contains("b.rs")),
-        "b.rs should be present"
+        auth004_uri.contains("b.rs"),
+        "AUTH-004 should be attributed to b.rs; got: {auth004_uri}"
     );
 }
 
