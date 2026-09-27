@@ -259,6 +259,7 @@ See [`docs/plugin-authoring.md`](docs/plugins/plugin-authoring.md) for how to bu
 | `sdkt storage estimate <wasm-path>` | Estimate storage cost for a WASM. |
 | `sdkt storage read <contract-id> --key-xdr <BASE64_XDR>` | Read a contract storage entry by its complete LedgerKey. ABI optional for ScVal formatting. |
 | `sdkt storage extend <contract-id> --ledgers <N>` | Extend TTL of known footprint keys (`ExtendFootprintTtl`). Instance key is always included; extra keys via `--key`. Does not restore archived entries. |
+| `sdkt storage restore --contract <id> --envelope <xdr>` | Restore archived entries (`RestoreFootprint`) using the `restorePreamble` from simulating the failed invocation. `--dry-run` shows the keys and fee without submitting. |
 | `sdkt tx inspect <hash>` | Transaction status / ledger inclusion. |
 | `sdkt tx validate --envelope <xdr>` | Offline pre-flight validation of an envelope (parses + structural checks). |
 | `sdkt tx simulate <xdr>` | Offline pre-flight via `simulateTransaction` (RPC). `--abi <wasm>` decodes the invoke result via the contract spec. |

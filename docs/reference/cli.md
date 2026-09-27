@@ -18,9 +18,15 @@ sdkt
 ├── storage
 │   ├── check <contract-id>   [--abi <wasm>] [--abi-contract <id>] [--format]
 │   ├── analyze <contract-id> [--abi <wasm>] [--abi-contract <id>] [--format]
-│   ├── estimate <wasm-path>  [--format] (NOT YET IMPLEMENTED — placeholder only)
+│   ├── estimate <wasm-path>  [--ledgers <N>] [--format <pretty|json>]
 │   ├── read --contract <contract-id> --key-xdr <BASE64_XDR> [--abi <wasm>] [--format]
-│   └── extend --contract <contract-id> --ledgers <N> [--key <xdr>]... [--identity <name>] [--format]
+│   ├── extend --contract <contract-id> --ledgers <N> [--key <xdr>]... [--identity <name>] [--format]
+│   └── restore --contract <contract-id> --envelope <xdr> [--dry-run] [--identity <name>] [--format]
+│
+│   `estimate` performs an offline calculation of storage rent over a specified
+│   ledger horizon (default 17,280 ledgers, ~1 day) using the contract spec ABI.
+│   It computes a breakdown across Instance, Persistent, and Temporary classes
+│   and a total in stroops and XLM.
 │
 │   `read` fetches a single ledger entry by its complete `LedgerKey` (base64 XDR).
 │   The instance key is NOT included automatically — supply the full key via --key-xdr.
@@ -30,6 +36,13 @@ sdkt
 │   key is always included in the read-only footprint. Additional `--key` values
 │   (base64 XDR or hex XDR) are merged and de-duplicated. This does NOT discover
 │   all contract storage and does NOT restore archived entries.
+│
+│   `restore` simulates `--envelope` (the invocation that failed on archived
+│   state), adopts the `restorePreamble` footprint and minimum resource fee, and
+│   submits a `RestoreFootprint` transaction. It fails without submitting when
+│   the simulation has no preamble (state is live) or the preamble footprint is
+│   empty or malformed. `--dry-run` prints the keys and fee without signing or
+│   submitting. It restores only; re-run the invocation afterwards.
 │
 │   `--abi <wasm>` supplies the ABI from a local WASM; `--abi-contract <id>` fetches
 │   the deployed contract's on-chain WASM and uses it as the ABI source
@@ -247,6 +260,41 @@ or git logic is duplicated; the same `compute_dependency_integrity` /
 │   Invalid graphs (unknown/self/duplicate dependency, cycle, duplicate name)
 │   fail fast with a clear error.
 │
+│   Deployment records: every successfully deployed contract is written to
+│   `.sdkt-deployments.json` in the project directory, keyed by network scope
+│   and then alias:
+│
+│     {
+│       "profiles": {
+│         "testnet": {
+│           "token": {
+│             "contract_id": "C…",
+│             "wasm_hash": "60cddae6…",
+│             "network": "testnet",
+│             "timestamp": 1700000000,
+│             "salt": "deploy"
+│           }
+│         }
+│       }
+│     }
+│
+│   The scope key is the explicit `--network-profile <NAME>` when given, else the
+│   network derived from the passphrase (`testnet`/`mainnet`/`futurenet`) or a
+│   `custom-<hash>` for unknown passphrases — so testnet and mainnet deploys never
+│   collide. Records are persisted after every contract, so if a deploy fails
+│   mid-graph the contracts that already landed are never lost; the alias →
+│   contract ID mapping is retained for the retry. On success the record is written
+│   too (additive; the stdout JSON/pretty output is unchanged).
+│
+│   `--skip-deployed` resumes an interrupted deploy: aliases whose recorded
+│   contract ID is verified to still exist on-chain (via `getLedgerEntries`) are
+│   skipped without re-deploying (and re-paying for) them, printed as
+│   `✓ '<alias>' already deployed at <contract_id>`. A record whose contract no
+│   longer exists on-chain is NOT trusted — sdkt warns
+│   `⚠ Recorded contract for '<alias>' is no longer on-chain; re-deploying.` and
+│   deploys it fresh, replacing the stale record. The default identity (see
+│   `sdkt identity`) is used to sign all deployments.
+│
 ├── call
 │   ├── <CONTRACT_ID>
 │   ├── <FUNCTION>
@@ -451,6 +499,8 @@ sdkt plugin list --format json                     # JSON output; every plugin s
 sdkt plugin init ./path/to/my-rule                 # scaffold a new audit rule project
 sdkt plugin show <id>                              # show a plugin's metadata
 sdkt plugin install ./path/to/artifact.wasm        # install from a local file
+sdkt plugin install ./bundle.sdktplugin            # verify, then install a bundle (reports signed: true/false)
+sdkt plugin install ./bundle.sdktplugin --public-key ./pubkey.key               # require a signature from this author key (unsigned is refused)
 sdkt plugin remove <id>                            # remove (idempotent)
 sdkt plugin update <id> ./path/to/artifact.wasm    # local-only update
 sdkt plugin pack ./path/to/plugin-dir --output ./myrule.sdktplugin              # pack into .sdktplugin bundle
