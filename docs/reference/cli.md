@@ -22,7 +22,11 @@ sdkt
 │   ├── read --contract <contract-id> --key-xdr <BASE64_XDR> [--abi <wasm>] [--format]
 │   ├── extend --contract <contract-id> --ledgers <N> [--key <xdr>]... [--identity <name>] [--format]
 │   └── restore --contract <contract-id> --envelope <xdr> [--dry-run] [--identity <name>] [--format]
-
+│
+│   `estimate` performs an offline calculation of storage rent over a specified
+│   ledger horizon (default 17,280 ledgers, ~1 day) using the contract spec ABI.
+│   It computes a breakdown across Instance, Persistent, and Temporary classes
+│   and a total in stroops and XLM.
 │
 │   `read` fetches a single ledger entry by its complete `LedgerKey` (base64 XDR).
 │   The instance key is NOT included automatically — supply the full key via --key-xdr.

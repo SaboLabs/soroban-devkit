@@ -1469,7 +1469,7 @@ fn write_pack_manifest(tmp: &std::path::Path, url: &str) {
             url
         ),
     );
-} 
+}
 
 #[test]
 fn package_pack_produces_artifact() {
