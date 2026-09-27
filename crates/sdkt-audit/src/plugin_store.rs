@@ -927,11 +927,7 @@ abi_minor = 0
 "#,
         )
         .unwrap();
-        std::fs::write(
-            plugin_dir(&root, "example-rule").join("rule.wasm"),
-            b"wasm",
-        )
-        .unwrap();
+        std::fs::write(plugin_dir(&root, "example-rule").join("rule.wasm"), b"wasm").unwrap();
 
         let wrong = SigningKey::from_bytes(&[8u8; 32]);
         assert!(matches!(
@@ -990,11 +986,7 @@ abi_minor = 0
 "#,
         )
         .unwrap();
-        std::fs::write(
-            plugin_dir(&root, "example-rule").join("rule.wasm"),
-            b"wasm",
-        )
-        .unwrap();
+        std::fs::write(plugin_dir(&root, "example-rule").join("rule.wasm"), b"wasm").unwrap();
 
         assert!(update("example-rule", &bundle).is_err());
         let listed = list_in(&root);
@@ -1011,10 +1003,10 @@ abi_minor = 0
         fs::write(&old_artifact, b"old-wasm").unwrap();
         let new_artifact = dir.path().join("new_rule.wasm");
         fs::write(&new_artifact, b"new-wasm").unwrap();
-        let mut meta = meta();
-        meta.artifact = "old_rule.wasm".into();
+        let mut old_meta = meta();
+        old_meta.artifact = "old_rule.wasm".into();
         let bundle = dir.path().join("plugin.sdktplugin");
-        pack_bundle(&bundle, &meta, &old_artifact, None).unwrap();
+        pack_bundle(&bundle, &old_meta, &old_artifact, None).unwrap();
 
         let root = store.clone();
         std::fs::create_dir_all(plugin_dir(&root, "example-rule")).unwrap();

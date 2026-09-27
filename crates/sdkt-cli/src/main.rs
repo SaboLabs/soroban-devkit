@@ -7159,7 +7159,7 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
             } => {
                 let fmt = parse_format_str(&format);
                 let path = std::path::Path::new(&source);
-                let is_bundle = is_bundle_path(source);
+                let is_bundle = is_bundle_path(&source);
                 if public_key.is_some() && !is_bundle {
                     eprintln!("Error: --public-key only applies to .sdktplugin bundles");
                     process::exit(1);
