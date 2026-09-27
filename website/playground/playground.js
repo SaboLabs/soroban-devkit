@@ -340,6 +340,17 @@
     if (data.duration_ms !== undefined) {
       metaRows.push(['Inspection time', data.duration_ms + ' ms']);
     }
+    const structureFields = ['function_count', 'table_count', 'global_count', 'data_segment_count'];
+    if (structureFields.some((key) => meta[key] !== undefined) || meta.memory !== undefined) {
+      metaRows.push(['Functions', meta.function_count !== undefined ? String(meta.function_count) : '—']);
+      metaRows.push(['Tables', meta.table_count !== undefined ? String(meta.table_count) : '—']);
+      metaRows.push(['Globals', meta.global_count !== undefined ? String(meta.global_count) : '—']);
+      metaRows.push(['Data segments', meta.data_segment_count !== undefined ? String(meta.data_segment_count) : '—']);
+      if (meta.memory) {
+        metaRows.push(['Memory', String(meta.memory.initial_pages) + ' initial pages' +
+          (meta.memory.maximum_pages == null ? '' : ' · ' + meta.memory.maximum_pages + ' maximum')]);
+      }
+    }
     const metaTable = kvTable(metaRows);
     // Copy button for the hash (the one value developers actually copy).
     if (meta.hash) {
