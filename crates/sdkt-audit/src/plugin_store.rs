@@ -872,31 +872,15 @@ mod bundle_tests {
         let bundle = dir.path().join("plugin.sdktplugin");
         pack_bundle(&bundle, &meta(), &artifact, None).unwrap();
 
-        let root = store.clone();
-        std::fs::create_dir_all(plugin_dir(&root, "example-rule")).unwrap();
-        std::fs::write(
-            plugin_dir(&root, "example-rule").join("plugin.toml"),
-            r#"id = "example-rule"
-name = "Example Rule"
-version = "1.0.0"
-author = "SaboLabs"
-description = "test"
-kind = "wasm"
-artifact = "rule.wasm"
-abi_major = 1
-abi_minor = 0
-"#,
-        )
-        .unwrap();
-        std::fs::write(
-            plugin_dir(&root, "example-rule").join("rule.wasm"),
-            b"wasm-v1",
-        )
-        .unwrap();
+        let opts = InstallOpts {
+            id: Some("example-rule".into()),
+            force: true,
+        };
+        install_bundle_with_key(&bundle, &opts, None).unwrap();
 
         let result = update("example-rule", &bundle).unwrap();
         assert_eq!(result.version, "1.0.0");
-        let listed = list_in(&root);
+        let listed = list_in(&store);
         assert_eq!(listed.len(), 1);
         assert_eq!(listed[0].version, "1.0.0");
         std::env::remove_var("SDKT_PLUGIN_DIR");
@@ -914,27 +898,11 @@ abi_minor = 0
         let bundle = dir.path().join("plugin.sdktplugin");
         pack_bundle(&bundle, &meta(), &artifact, Some(&key)).unwrap();
 
-        let root = store.clone();
-        std::fs::create_dir_all(plugin_dir(&root, "example-rule")).unwrap();
-        std::fs::write(
-            plugin_dir(&root, "example-rule").join("plugin.toml"),
-            r#"id = "example-rule"
-name = "Example Rule"
-version = "1.0.0"
-author = "SaboLabs"
-description = "test"
-kind = "wasm"
-artifact = "rule.wasm"
-abi_major = 1
-abi_minor = 0
-"#,
-        )
-        .unwrap();
-        std::fs::write(
-            plugin_dir(&root, "example-rule").join("rule.wasm"),
-            b"wasm",
-        )
-        .unwrap();
+        let opts = InstallOpts {
+            id: Some("example-rule".into()),
+            force: true,
+        };
+        install_bundle_with_key(&bundle, &opts, None).unwrap();
 
         let wrong = SigningKey::from_bytes(&[8u8; 32]);
         assert!(matches!(
@@ -970,6 +938,13 @@ abi_minor = 0
         fs::write(&artifact, b"wasm").unwrap();
         let bundle = dir.path().join("plugin.sdktplugin");
         pack_bundle(&bundle, &meta(), &artifact, None).unwrap();
+
+        let opts = InstallOpts {
+            id: Some("example-rule".into()),
+            force: true,
+        };
+        install_bundle_with_key(&bundle, &opts, None).unwrap();
+
         let mut bytes = fs::read(&bundle).unwrap();
         let digest = digest_hex(b"wasm").into_bytes();
         let offset = bytes
@@ -979,30 +954,8 @@ abi_minor = 0
         bytes[offset] = if bytes[offset] == b'0' { b'1' } else { b'0' };
         fs::write(&bundle, bytes).unwrap();
 
-        let root = store.clone();
-        std::fs::create_dir_all(plugin_dir(&root, "example-rule")).unwrap();
-        std::fs::write(
-            plugin_dir(&root, "example-rule").join("plugin.toml"),
-            r#"id = "example-rule"
-name = "Example Rule"
-version = "1.0.0"
-author = "SaboLabs"
-description = "test"
-kind = "wasm"
-artifact = "rule.wasm"
-abi_major = 1
-abi_minor = 0
-"#,
-        )
-        .unwrap();
-        std::fs::write(
-            plugin_dir(&root, "example-rule").join("rule.wasm"),
-            b"wasm",
-        )
-        .unwrap();
-
         assert!(update("example-rule", &bundle).is_err());
-        let listed = list_in(&root);
+        let listed = list_in(&store);
         assert_eq!(listed.len(), 1);
         assert_eq!(listed[0].version, "1.0.0");
         std::env::remove_var("SDKT_PLUGIN_DIR");
