@@ -107,6 +107,44 @@ fn mock_rpc_server_with_send_error(
     (url, seen)
 }
 
+/// Mock JSON-RPC server whose `simulateTransaction` reports a simulation
+/// error, used to prove `--build-only` surfaces the same failure as the
+/// submit path.
+fn mock_rpc_server_with_simulate_error() -> String {
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let addr = listener.local_addr().unwrap();
+    let url = format!("http://{}", addr);
+
+    thread::spawn(move || {
+        for conn in listener.incoming() {
+            let mut sock = match conn {
+                Ok(s) => s,
+                Err(_) => break,
+            };
+            let mut buf = [0u8; 16384];
+            let n = sock.read(&mut buf).unwrap_or(0);
+            let req = String::from_utf8_lossy(&buf[..n]).to_string();
+
+            let body = match serde_extract_method(&req).as_deref() {
+                Some("getLedgerEntries") => format!(
+                    r#"{{"jsonrpc":"2.0","id":1,"result":{{"entries":[{{"key":"AAAAAA==","xdr":"{ACCOUNT_ENTRY_XDR}","lastModifiedLedgerSeq":1}}],"latestLedger":100}}}}"#
+                ),
+                Some("simulateTransaction") => r#"{"jsonrpc":"2.0","id":1,"result":{"error":"HostError: Error(WasmVm, InvalidAction)","latestLedger":"100"}}"#.to_string(),
+                _ => r#"{"jsonrpc":"2.0","id":1,"error":{"code":-32601,"message":"method not found"}}"#.to_string(),
+            };
+
+            let resp = format!(
+                "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+                body.len(),
+                body
+            );
+            let _ = sock.write_all(resp.as_bytes());
+        }
+    });
+
+    url
+}
+
 /// Pull `"method":"..."` out of a raw JSON-RPC request without a full parser.
 fn serde_extract_method(req: &str) -> Option<String> {
     let idx = req.find("\"method\"")?;
@@ -456,6 +494,200 @@ fn invoke_transaction_failure_nonzero_exit_and_diagnostics() {
         "must exit non-zero. stdout={stdout}"
     );
     assert!(stdout.contains("FAILED"), "stdout={stdout}");
+}
+
+// ---------- --build-only (no submission) ----------
+
+#[test]
+fn invoke_build_only_prints_envelope_and_never_submits() {
+    let dir = tempdir().unwrap();
+    generate_identity(dir.path(), "alice");
+    let (url, seen) = mock_rpc_server(false);
+    add_mock_profile(dir.path(), &url);
+
+    let output = sdkt_isolated(dir.path())
+        .args([
+            "invoke",
+            VALID_CONTRACT,
+            "increment",
+            "--identity",
+            "alice",
+            "--network-profile",
+            "mocknet",
+            "--args",
+            "u32:42",
+            "--build-only",
+        ])
+        .output()
+        .unwrap();
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        output.status.success(),
+        "Expected success. stdout={stdout} stderr={stderr}"
+    );
+    assert!(
+        stdout.contains("Transaction Envelope (NOT submitted):"),
+        "stdout={stdout}"
+    );
+    assert!(stdout.contains("Fee:      250 stroops"), "stdout={stdout}");
+    assert!(stdout.contains("Sequence: 42"), "stdout={stdout}");
+
+    // The preparation stages ran; submission and polling did not.
+    let methods = seen.lock().unwrap().join(",");
+    assert!(methods.contains("getLedgerEntries"), "methods={methods}");
+    assert!(methods.contains("simulateTransaction"), "methods={methods}");
+    assert!(
+        !methods.contains("sendTransaction"),
+        "must not submit. methods={methods}"
+    );
+    assert!(
+        !methods.contains("getTransaction"),
+        "must not poll. methods={methods}"
+    );
+}
+
+#[test]
+fn invoke_build_only_json_includes_envelope_fee_and_sequence() {
+    let dir = tempdir().unwrap();
+    generate_identity(dir.path(), "alice");
+    let (url, seen) = mock_rpc_server(false);
+    add_mock_profile(dir.path(), &url);
+
+    let output = sdkt_isolated(dir.path())
+        .args([
+            "invoke",
+            VALID_CONTRACT,
+            "increment",
+            "--identity",
+            "alice",
+            "--network-profile",
+            "mocknet",
+            "--build-only",
+            "--format",
+            "json",
+        ])
+        .output()
+        .unwrap();
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        output.status.success(),
+        "stdout={stdout} stderr={}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let parsed: serde_json::Value =
+        serde_json::from_str(&stdout).unwrap_or_else(|e| panic!("Invalid JSON: {e}\n{stdout}"));
+    assert_eq!(parsed["fee"], 250);
+    assert_eq!(parsed["sequence"], 42);
+    assert_eq!(parsed["function"], "increment");
+    assert_eq!(parsed["submitted"], false);
+    let envelope = parsed["envelopeXdr"]
+        .as_str()
+        .expect("envelopeXdr must be a string");
+    assert!(!envelope.is_empty(), "envelopeXdr must not be empty");
+
+    let methods = seen.lock().unwrap().join(",");
+    assert!(!methods.contains("sendTransaction"), "methods={methods}");
+    assert!(!methods.contains("getTransaction"), "methods={methods}");
+}
+
+/// The emitted envelope must be byte-for-byte usable with the offline
+/// counterpart command (`sdkt tx validate`), which is what
+/// `sdkt tx submit --envelope <xdr>` consumes.
+#[test]
+fn invoke_build_only_envelope_passes_tx_validate() {
+    let dir = tempdir().unwrap();
+    generate_identity(dir.path(), "alice");
+    let (url, _seen) = mock_rpc_server(false);
+    add_mock_profile(dir.path(), &url);
+
+    let output = sdkt_isolated(dir.path())
+        .args([
+            "invoke",
+            VALID_CONTRACT,
+            "increment",
+            "--identity",
+            "alice",
+            "--network-profile",
+            "mocknet",
+            "--build-only",
+            "--format",
+            "json",
+        ])
+        .output()
+        .unwrap();
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(output.status.success(), "stdout={stdout}");
+    let parsed: serde_json::Value = serde_json::from_str(&stdout).unwrap();
+    let envelope = parsed["envelopeXdr"].as_str().unwrap().to_string();
+
+    sdkt_isolated(dir.path())
+        .args(["tx", "validate", "--envelope", &envelope])
+        .assert()
+        .success()
+        .stdout(predicates::str::contains("Status: VALID"));
+}
+
+#[test]
+fn invoke_build_only_simulation_error_exits_nonzero() {
+    let dir = tempdir().unwrap();
+    generate_identity(dir.path(), "alice");
+    let url = mock_rpc_server_with_simulate_error();
+    add_mock_profile(dir.path(), &url);
+
+    let output = sdkt_isolated(dir.path())
+        .args([
+            "invoke",
+            VALID_CONTRACT,
+            "increment",
+            "--identity",
+            "alice",
+            "--network-profile",
+            "mocknet",
+            "--build-only",
+        ])
+        .output()
+        .unwrap();
+
+    assert!(!output.status.success(), "must fail on simulation error");
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("Error building invoke transaction"),
+        "stderr={stderr}"
+    );
+    assert!(stderr.contains("InvalidAction"), "stderr={stderr}");
+}
+
+#[test]
+fn invoke_build_only_still_enforces_mainnet_guard() {
+    // The guard runs before any RPC work: pointing at mainnet while leaving the
+    // default testnet passphrase must be refused on the `--build-only` path too
+    // (it would otherwise build an envelope for the wrong network).
+    let dir = tempdir().unwrap();
+    generate_identity(dir.path(), "alice");
+
+    let output = sdkt_isolated(dir.path())
+        .args([
+            "invoke",
+            VALID_CONTRACT,
+            "increment",
+            "--identity",
+            "alice",
+            "--rpc-url",
+            "https://soroban-rpc.stellar.org",
+            "--build-only",
+        ])
+        .output()
+        .unwrap();
+
+    assert!(!output.status.success(), "mainnet guard must refuse");
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("not the mainnet passphrase"),
+        "stderr={stderr}"
+    );
 }
 
 // ---------- Submission failure path ----------

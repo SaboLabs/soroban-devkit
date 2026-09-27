@@ -206,17 +206,14 @@ fn audit_example_plugin_rule_fires_with_plugins_feature() {
     );
 }
 
+
 #[test]
 fn audit_directory_walks_nested_rust_files() {
     let dir = TempDir::new().unwrap();
     let nested = dir.path().join("nested");
     std::fs::create_dir(&nested).unwrap();
 
-    write_fixture(
-        &dir,
-        "bad.rs",
-        "pub fn mint_token(to: Address) { }\n",
-    );
+    write_fixture(&dir, "bad.rs", "pub fn mint_token(to: Address) { }\n");
 
     std::fs::write(
         nested.join("transfer.rs"),
@@ -237,11 +234,7 @@ fn audit_directory_walks_nested_rust_files() {
 fn audit_directory_json_contains_per_file_reports_and_summary() {
     let dir = TempDir::new().unwrap();
 
-    write_fixture(
-        &dir,
-        "a.rs",
-        "pub fn mint_token(to: Address) { }\n",
-    );
+    write_fixture(&dir, "a.rs", "pub fn mint_token(to: Address) { }\n");
     write_fixture(
         &dir,
         "b.rs",
@@ -249,12 +242,7 @@ fn audit_directory_json_contains_per_file_reports_and_summary() {
     );
 
     sdkt()
-        .args([
-            "audit",
-            dir.path().to_str().unwrap(),
-            "--format",
-            "json",
-        ])
+        .args(["audit", dir.path().to_str().unwrap(), "--format", "json"])
         .assert()
         .success()
         .stdout(predicates::str::contains("\"files\""))
@@ -268,16 +256,8 @@ fn audit_directory_json_contains_per_file_reports_and_summary() {
 fn audit_directory_continues_after_unparseable_file() {
     let dir = TempDir::new().unwrap();
 
-    write_fixture(
-        &dir,
-        "bad_syntax.rs",
-        "fn { not rust code ",
-    );
-    write_fixture(
-        &dir,
-        "valid.rs",
-        "pub fn mint_token(to: Address) { }\n",
-    );
+    write_fixture(&dir, "bad_syntax.rs", "fn { not rust code ");
+    write_fixture(&dir, "valid.rs", "pub fn mint_token(to: Address) { }\n");
 
     sdkt()
         .args([
@@ -291,4 +271,139 @@ fn audit_directory_continues_after_unparseable_file() {
         .stdout(predicates::str::contains("bad_syntax.rs"))
         .stdout(predicates::str::contains("valid.rs"))
         .stdout(predicates::str::contains("AUDIT-PARSE"));
+}
+
+#[test]
+fn audit_list_rules_pretty_matches_registry() {
+    let all = sdkt_audit::all_rules();
+    let expected_header = format!("Available audit rules ({}):", all.len());
+    let mut assert = sdkt().args(["audit", "--list-rules"]).assert().success();
+    assert = assert.stdout(predicates::str::contains(&expected_header));
+    for rule in &all {
+        assert = assert.stdout(predicates::str::contains(rule.id()));
+        assert = assert.stdout(predicates::str::contains(rule.severity().to_string()));
+        assert = assert.stdout(predicates::str::contains(rule.description()));
+    }
+}
+
+#[test]
+fn audit_list_rules_json_shape_and_content() {
+    let all = sdkt_audit::all_rules();
+    let out = sdkt()
+        .args(["audit", "--list-rules", "--format", "json"])
+        .output()
+        .expect("run sdkt audit --list-rules --format json");
+    assert!(out.status.success());
+    let stdout = String::from_utf8(out.stdout).expect("utf8 stdout");
+
+    let v: serde_json::Value = serde_json::from_str(&stdout).expect("valid JSON");
+    let arr = v.as_array().expect("JSON array");
+    assert_eq!(arr.len(), all.len());
+
+    for (elem, rule) in arr.iter().zip(all.iter()) {
+        let obj = elem.as_object().expect("element is an object");
+        assert_eq!(obj.len(), 3);
+        assert_eq!(obj["id"].as_str().unwrap(), rule.id());
+        assert_eq!(
+            obj["severity"].as_str().unwrap(),
+            rule.severity().to_string()
+        );
+        assert_eq!(obj["description"].as_str().unwrap(), rule.description());
+    }
+
+    let rule_infos: Vec<sdkt_audit::RuleInfo> =
+        serde_json::from_str(&stdout).expect("deserializable into RuleInfo");
+    assert_eq!(rule_infos.len(), all.len());
+    for (info, rule) in rule_infos.iter().zip(all.iter()) {
+        assert_eq!(info.id, rule.id());
+        assert_eq!(info.severity, rule.severity());
+        assert_eq!(info.description, rule.description());
+    }
+}
+
+#[test]
+fn audit_list_rules_deterministic_across_runs() {
+    let out1 = sdkt()
+        .args(["audit", "--list-rules"])
+        .output()
+        .expect("run 1");
+    let out2 = sdkt()
+        .args(["audit", "--list-rules"])
+        .output()
+        .expect("run 2");
+    let out3 = sdkt()
+        .args(["audit", "--list-rules"])
+        .output()
+        .expect("run 3");
+    assert_eq!(out1.stdout, out2.stdout);
+    assert_eq!(out2.stdout, out3.stdout);
+
+    let json1 = sdkt()
+        .args(["audit", "--list-rules", "--format", "json"])
+        .output()
+        .expect("json run 1");
+    let json2 = sdkt()
+        .args(["audit", "--list-rules", "--format", "json"])
+        .output()
+        .expect("json run 2");
+    assert_eq!(json1.stdout, json2.stdout);
+}
+
+#[test]
+fn audit_list_rules_disable_flag_unaffected() {
+    let base_out = sdkt()
+        .args(["audit", "--list-rules"])
+        .output()
+        .expect("run base");
+    let disable_out = sdkt()
+        .args(["audit", "--list-rules", "--disable", "AUTH-001"])
+        .output()
+        .expect("run with disable");
+    assert_eq!(base_out.stdout, disable_out.stdout);
+
+    let base_json = sdkt()
+        .args(["audit", "--list-rules", "--format", "json"])
+        .output()
+        .expect("run base json");
+    let disable_json = sdkt()
+        .args([
+            "audit",
+            "--list-rules",
+            "--disable",
+            "AUTH-001",
+            "--format",
+            "json",
+        ])
+        .output()
+        .expect("run disable json");
+    assert_eq!(base_json.stdout, disable_json.stdout);
+}
+
+#[test]
+fn audit_list_rules_without_path_succeeds() {
+    sdkt()
+        .args(["audit", "--list-rules"])
+        .assert()
+        .success()
+        .stdout(predicates::str::contains("AUTH-001"));
+}
+
+#[test]
+fn audit_list_rules_ignores_dummy_path() {
+    sdkt()
+        .args(["audit", "--list-rules", "/path/that/does/not/exist.rs"])
+        .assert()
+        .success()
+        .stdout(predicates::str::contains("AUTH-001"));
+}
+
+#[test]
+fn audit_missing_path_fails_when_list_rules_not_specified() {
+    sdkt()
+        .args(["audit"])
+        .assert()
+        .failure()
+        .code(2)
+        .stderr(predicates::str::contains("PATH"));
+}
 }
