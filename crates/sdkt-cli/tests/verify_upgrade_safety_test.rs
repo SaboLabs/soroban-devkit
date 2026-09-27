@@ -437,6 +437,117 @@ fn changed_type_definition_is_breaking() {
 }
 
 #[test]
+fn vec_inner_type_change_is_breaking() {
+    // Vec<u32> -> Vec<i128>: compound types with the same outer constructor
+    // but different inner types must be detected as different.
+    // Regression for the map_type_def collapse bug where both parsed to
+    // name="vec", making the diff engine report compatible=true.
+    use stellar_xdr::{ScSpecTypeDef, ScSpecTypeVec};
+    let old = temp_wasm(
+        "vec-inner-old",
+        &wasm_with_spec(&transfer_event_spec(vec![(
+            "amount",
+            ScSpecTypeDef::Vec(Box::new(ScSpecTypeVec {
+                element_type: Box::new(ScSpecTypeDef::U32),
+            })),
+        )])),
+    );
+    let new = temp_wasm(
+        "vec-inner-new",
+        &wasm_with_spec(&transfer_event_spec(vec![(
+            "amount",
+            ScSpecTypeDef::Vec(Box::new(ScSpecTypeVec {
+                element_type: Box::new(ScSpecTypeDef::I128),
+            })),
+        )])),
+    );
+    sdkt()
+        .args([
+            "diff",
+            "--old-wasm",
+            old.to_str().unwrap(),
+            "--new-wasm",
+            new.to_str().unwrap(),
+            "--upgrade-safety",
+        ])
+        .assert()
+        .success()
+        // Must detect the event param type as changed and flip the verdict.
+        .stdout(predicate::str::contains("Compatible: NO"))
+        .stdout(predicate::str::contains("Changed event: Transfer"))
+        // Both shapes must be visible in the detail so the reviewer can see
+        // what changed (acceptance criterion #4).
+        .stdout(predicate::str::contains("vec<u32>"))
+        .stdout(predicate::str::contains("vec<i128>"));
+}
+
+#[test]
+fn bytesn_size_change_is_breaking() {
+    // BytesN<32> -> BytesN<64>: the fixed-width byte array size is part of the
+    // ABI (it determines how many bytes the decoder expects).  Previously both
+    // collapsed to name="bytesn", so the diff reported compatible=true.
+    use stellar_xdr::{ScSpecTypeDef, ScSpecTypeBytesN};
+    let old = temp_wasm(
+        "bytesn-old",
+        &wasm_with_spec(&point_spec(vec![(
+            "hash",
+            ScSpecTypeDef::BytesN(ScSpecTypeBytesN { n: 32 }),
+        )])),
+    );
+    let new = temp_wasm(
+        "bytesn-new",
+        &wasm_with_spec(&point_spec(vec![(
+            "hash",
+            ScSpecTypeDef::BytesN(ScSpecTypeBytesN { n: 64 }),
+        )])),
+    );
+    sdkt()
+        .args([
+            "diff",
+            "--old-wasm",
+            old.to_str().unwrap(),
+            "--new-wasm",
+            new.to_str().unwrap(),
+            "--upgrade-safety",
+        ])
+        .assert()
+        .success()
+        // Must detect the struct field type as changed and flip the verdict.
+        .stdout(predicate::str::contains("Compatible: NO"))
+        .stdout(predicate::str::contains("Changed type definition: Point"))
+        // Both sizes must be visible so the reviewer knows the wire layout changed.
+        .stdout(predicate::str::contains("bytesn<32>"))
+        .stdout(predicate::str::contains("bytesn<64>"));
+}
+
+#[test]
+fn vec_same_inner_type_is_compatible() {
+    // Vec<u32> -> Vec<u32>: identical compound types must remain compatible.
+    use stellar_xdr::{ScSpecTypeDef, ScSpecTypeVec};
+    let spec = transfer_event_spec(vec![(
+        "amount",
+        ScSpecTypeDef::Vec(Box::new(ScSpecTypeVec {
+            element_type: Box::new(ScSpecTypeDef::U32),
+        })),
+    )]);
+    let old = temp_wasm("vec-same-old", &wasm_with_spec(&spec));
+    let new = temp_wasm("vec-same-new", &wasm_with_spec(&spec));
+    sdkt()
+        .args([
+            "diff",
+            "--old-wasm",
+            old.to_str().unwrap(),
+            "--new-wasm",
+            new.to_str().unwrap(),
+            "--upgrade-safety",
+        ])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("Compatible: YES"))
+        .stdout(predicate::str::contains("Changed event").not());
+}
+
+#[test]
 fn unchanged_event_and_type_are_compatible() {
     use stellar_xdr::ScSpecTypeDef;
     let spec = transfer_event_spec(vec![("amount", ScSpecTypeDef::I128)]);

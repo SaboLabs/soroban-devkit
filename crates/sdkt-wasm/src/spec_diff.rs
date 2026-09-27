@@ -241,11 +241,29 @@ where
     items.iter().map(|i| (name_of(i), i)).collect()
 }
 
-/// Compare two [`ContractType`] references by identity (name + kind), ignoring
-/// docs. Used wherever a type is referenced from a signature; the referenced
-/// type's own definition is compared separately.
+/// Compare two [`ContractType`] references by identity, ignoring docs.
+///
+/// For compound types (`option<T>`, `vec<T>`, `map<K,V>`, `result<O,E>`,
+/// `tuple<...>`, `bytesn<N>`) the recursive inner structure is encoded into
+/// `name` (e.g. `"vec<u32>"` vs `"vec<i128>"`), so a name + kind comparison
+/// is sufficient to distinguish e.g. `Vec<u32>` from `Vec<i128>`. The members
+/// field is compared as well for defence-in-depth.
 fn type_ref_eq(a: &ContractType, b: &ContractType) -> bool {
-    a.name == b.name && a.kind == b.kind
+    if a.name != b.name || a.kind != b.kind {
+        return false;
+    }
+    // For compound types the `members` field carries the inner ContractTypes
+    // that were recursively mapped.  Comparing them here ensures that nested
+    // compound structures (e.g. Option<Vec<u32>>) are compared deeply even
+    // if, hypothetically, the name encoding were ever changed.
+    if a.kind == "compound" {
+        return a.members.len() == b.members.len()
+            && a.members
+                .iter()
+                .zip(b.members.iter())
+                .all(|(x, y)| x.name == y.name && member_types_eq(&x.types, &y.types));
+    }
+    true
 }
 
 /// Compare two member type lists by identity (name + kind), ignoring docs.
