@@ -206,7 +206,6 @@ fn audit_example_plugin_rule_fires_with_plugins_feature() {
     );
 }
 
-
 #[test]
 fn audit_directory_walks_nested_rust_files() {
     let dir = TempDir::new().unwrap();
@@ -260,12 +259,7 @@ fn audit_directory_continues_after_unparseable_file() {
     write_fixture(&dir, "valid.rs", "pub fn mint_token(to: Address) { }\n");
 
     sdkt()
-        .args([
-            "audit",
-            dir.path().to_str().unwrap(),
-            "--format",
-            "json",
-        ])
+        .args(["audit", dir.path().to_str().unwrap(), "--format", "json"])
         .assert()
         .failure()
         .stdout(predicates::str::contains("bad_syntax.rs"))
@@ -405,5 +399,4 @@ fn audit_missing_path_fails_when_list_rules_not_specified() {
         .failure()
         .code(2)
         .stderr(predicates::str::contains("PATH"));
-}
 }
