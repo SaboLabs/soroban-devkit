@@ -36,4 +36,13 @@ sdkt plugin pack ./path/to/plugin-dir --secret-key ./secret.key
 
 # Verify a bundle
 sdkt plugin verify-bundle my-plugin.sdktplugin --public-key ./public.key
+
+# Verify and install a bundle into the local store. Integrity (and the
+# signature, if present) is checked before anything is installed; the output
+# reports whether the bundle was signed (`"signed": true|false` in JSON).
+sdkt plugin install my-plugin.sdktplugin
+sdkt plugin install my-plugin.sdktplugin --public-key ./public.key
+
+# Run full diagnostics and self-check on a bundle
+sdkt plugin doctor my-plugin.sdktplugin
 ```

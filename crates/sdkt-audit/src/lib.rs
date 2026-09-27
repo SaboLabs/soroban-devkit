@@ -13,9 +13,11 @@
 pub mod audit;
 pub mod error;
 pub mod plugin_abi;
+pub mod plugin_doctor;
 pub mod plugin_store;
 pub mod registry;
 pub mod rules;
+pub mod sarif;
 pub mod types;
 
 #[cfg(feature = "plugins")]
@@ -31,15 +33,20 @@ pub use audit::{
     scan_all_functions_str, AuditContext, AuditRule, FnScan,
 };
 pub use error::AuditError;
+pub use plugin_doctor::{
+    doctor, doctor_installed, doctor_installed_with_root, doctor_with_root, DoctorReport,
+    DoctorStage, DoctorStageStatus, DOCTOR_SAMPLE_CONTRACT,
+};
 pub use plugin_store::{
-    install_bundle, pack_bundle, verify_bundle, BundleVerification, InstallOpts, PluginMeta,
-    StoreError,
+    install_bundle, install_bundle_with_key, pack_bundle, verify_bundle, BundleVerification,
+    InstallOpts, PluginMeta, StoreError,
 };
 pub use registry::{
     register_builtin_rules, register_rule, run_registered, BoxedRule, RuleRegistry,
 };
 pub use rules::{Auth001, Auth002, Auth003, Auth004, Move001};
-pub use types::{AuditReport, AuditSummary, Finding, Severity};
+pub use sarif::{report_to_sarif_string, to_sarif, SarifLog};
+pub use types::{AuditReport, AuditSummary, Finding, RuleInfo, Severity};
 
 #[cfg(feature = "plugins")]
 pub use plugin_loader::{load_and_register, PluginLoadError, PluginRule};

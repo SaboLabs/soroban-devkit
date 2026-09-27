@@ -18,7 +18,7 @@ sdkt
 ├── storage
 │   ├── check <contract-id>   [--abi <wasm>] [--abi-contract <id>] [--format]
 │   ├── analyze <contract-id> [--abi <wasm>] [--abi-contract <id>] [--format]
-│   ├── estimate <wasm-path>  [--format] (NOT YET IMPLEMENTED — placeholder only)
+│   ├── estimate <wasm-path>  [--ledgers <N>] [--format <pretty|json>]
 │   ├── read --contract <contract-id> --key-xdr <BASE64_XDR> [--abi <wasm>] [--format]
 │   └── extend --contract <contract-id> --ledgers <N> [--key <xdr>]... [--identity <name>] [--format]
 │
@@ -39,6 +39,7 @@ sdkt
 │   ├── --args <TYPE:VALUE>...    (same typed-args as `call` / `tx build`;
 │   │                            strict: unknown types are rejected)
 │   ├── --identity <name>        (signs and pays; default: "default")
+│   ├── --build-only             (stop before submission; print the envelope)
 │   ├── --format <json|pretty>
 │   └── --network-profile <NAME> / --rpc-url <URL> / --network-passphrase <P>
 │
@@ -46,6 +47,13 @@ sdkt
 │     fetch account sequence → simulate → build final envelope (authoritative
 │     footprint + fees + auth entries from simulation) → sign with the local
 │     identity → submit → poll until settled. Exit code 0 only on SUCCESS.
+│   `--build-only` runs the same preparation stages and stops before
+│     `sendTransaction`: no submission, no polling, no state change. It prints
+│     the signed base64 envelope plus the computed fee and sequence (pretty:
+│     `Transaction Envelope (NOT submitted):`; JSON: `envelopeXdr`, `fee`,
+│     `sequence`, `submitted: false`) and exits 0. The envelope is
+│     byte-for-byte what `invoke` would submit, so it round-trips through
+│     `tx validate` / `tx sign` / `tx submit`.
 │   Result decoding is limited to the transaction-level `TransactionResult`
 │   XDR (no ABI-aware result decode yet). Inherits the mainnet safety guard
 │   (see below). Live Testnet smoke test is documented but NOT exercised in CI.
@@ -97,10 +105,12 @@ sdkt
 │   ├── --format <json|pretty>
 │   └── --upgrade-safety      (emit UpgradeVerdict)
 │
-├── audit <path.rs>
+├── audit [path.rs]
+│   ├── --list-rules          (list available audit rules and exit)
 │   ├── --format <json|pretty>
 │   ├── --disable <RULE_ID>   (repeatable)
-│   └── --rules <PATH>        (repeatable; external rule paths)
+│   ├── --rules <PATH>        (repeatable; external rule paths)
+│   └── --no-plugins          (skip loading installed plugins)
 ├── identity
 │   ├── generate <name>
 │   ├── import <name> <secret>
@@ -301,6 +311,8 @@ sdkt plugin list                                   # list installed plugins
 sdkt plugin list --format json                     # JSON output; every plugin subcommand accepts --format json
 sdkt plugin show <id>                              # show a plugin's metadata
 sdkt plugin install ./path/to/artifact.wasm        # install from a local file
+sdkt plugin install ./bundle.sdktplugin            # verify, then install a bundle (reports signed: true/false)
+sdkt plugin install ./bundle.sdktplugin --public-key ./pubkey.key               # require a signature from this author key (unsigned is refused)
 sdkt plugin remove <id>                            # remove (idempotent)
 sdkt plugin update <id> ./path/to/artifact.wasm    # local-only update
 sdkt plugin pack ./path/to/plugin-dir --output ./myrule.sdktplugin              # pack into .sdktplugin bundle
@@ -322,6 +334,7 @@ Store root precedence (lowest → highest): `<cwd>/.sdkt/plugins`,
 - `--format json` is supported on all read-style commands, every `plugin` subcommand, and on `diff`, `audit`, `deploy`, `init` for scripting / CI.
 - `diff --upgrade-safety` and `deploy --deny-breaking` implement the Upgrade Safety Guard (see `ROADMAP.md`).
 - `audit` implements the static-analysis rules (AUTH-001/002/003/004, MOVE-001).
+- `audit --list-rules` discovers all registered built-in rules (with id, severity, and description). Supports `--format json` and does not require a source path argument.
 - **Mainnet safety.** Mutating commands (`tx submit`, `invoke`, `deploy`, `project deploy`) refuse to target mainnet unless you explicitly select the network — via `--network-profile`, `--rpc-url`, or `--network-passphrase`. A testnet-default passphrase pointed at a mainnet endpoint is rejected before any request is sent, protecting against signing for the wrong network.
 
 ## Error Handling

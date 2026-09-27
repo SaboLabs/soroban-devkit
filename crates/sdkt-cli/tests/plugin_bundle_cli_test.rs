@@ -1,7 +1,7 @@
 //! — Plugin bundle pack / verify-bundle CLI integration tests.
 //!
 //! Exercises the end-to-end CLI lifecycle for `.sdktplugin` bundles:
-//! `sdkt plugin pack` → `sdkt plugin verify-bundle` → install → audit --rules <id>.
+//! `sdkt plugin pack` → `sdkt plugin verify-bundle` → `sdkt plugin install <bundle>` → list.
 //!
 //! Tests run hermetically via `SDKT_PLUGIN_DIR` (temp store) and never touch the
 //! developer's real profile. The dummy artifact is not a real loadable plugin;
@@ -300,36 +300,262 @@ fn bundle_pack_missing_toml_errors() {
         .stderr(predicate::str::contains("plugin.toml not found"));
 }
 
+/// `sdkt` bound to an explicit plugin store so state persists across commands.
+fn sdkt_in(store: &std::path::Path) -> Command {
+    let mut cmd = Command::cargo_bin("sdkt").expect("sdkt binary built");
+    cmd.env("SDKT_PLUGIN_DIR", store);
+    cmd.env("SDKT_NETWORK_DIR", store);
+    cmd
+}
+
+fn pack(src_dir: &std::path::Path, bundle: &std::path::Path, secret: Option<&std::path::Path>) {
+    let mut args = vec![
+        "plugin".to_string(),
+        "pack".into(),
+        src_dir.to_str().unwrap().into(),
+        "--output".into(),
+        bundle.to_str().unwrap().into(),
+    ];
+    if let Some(secret) = secret {
+        args.push("--secret-key".into());
+        args.push(secret.to_str().unwrap().into());
+    }
+    sdkt().args(&args).assert().success();
+}
+
+fn installed_ids(store: &std::path::Path) -> Vec<String> {
+    let listed = stdout_json(
+        &sdkt_in(store)
+            .args(["plugin", "list", "--format", "json"])
+            .assert()
+            .success(),
+    );
+    listed
+        .as_array()
+        .expect("plugin list JSON is an array")
+        .iter()
+        .filter_map(|p| p["id"].as_str().map(String::from))
+        .collect()
+}
+
 #[test]
 fn bundle_install_after_pack_roundtrip() {
     let root = TempDir::new().unwrap();
+    let store = TempDir::new().unwrap();
     let src_dir = make_plugin_dir(&root, "wasm", "wasm");
     let bundle = root.path().join("pack-install.sdktplugin");
+    pack(&src_dir, &bundle, None);
 
-    // pack
-    sdkt()
-        .args([
-            "plugin",
-            "pack",
-            src_dir.to_str().unwrap(),
-            "--output",
-            bundle.to_str().unwrap(),
-        ])
-        .assert()
-        .success();
-
-    // verify
     sdkt()
         .args(["plugin", "verify-bundle", bundle.to_str().unwrap()])
         .assert()
         .success();
 
-    // The bundle is unsigned; install_bundle accepts unsigned for local use.
-    // But `sdkt plugin install <bundle>` expects an artifact path, not a bundle.
-    // To round-trip fully we verify then install the *extracted* artifact. Instead,
-    // test that verify-bundle extracted nothing we can install directly — skip
-    // install here and rely on plugin_cli_test.rs for install lifecycle.
+    sdkt_in(store.path())
+        .args(["plugin", "install", bundle.to_str().unwrap()])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("Installed plugin 'myrule'"))
+        .stdout(predicate::str::contains("signature: UNSIGNED"))
+        .stderr(predicate::str::contains("NOT signed"));
+
+    assert_eq!(installed_ids(store.path()), vec!["myrule".to_string()]);
     let _ = abi_version(); // touch to confirm constant usage
+}
+
+#[test]
+fn bundle_install_json_reports_signed_field() {
+    let root = TempDir::new().unwrap();
+    let src_dir = make_plugin_dir(&root, "wasm", "wasm");
+    let secret_path = root.path().join("secret.key");
+    fs::write(&secret_path, [0xab; 32]).unwrap();
+
+    let unsigned = root.path().join("unsigned.sdktplugin");
+    pack(&src_dir, &unsigned, None);
+    let store = TempDir::new().unwrap();
+    let out = stdout_json(
+        &sdkt_in(store.path())
+            .args([
+                "plugin",
+                "install",
+                unsigned.to_str().unwrap(),
+                "--format",
+                "json",
+            ])
+            .assert()
+            .success(),
+    );
+    assert_eq!(out["status"], "installed");
+    assert_eq!(out["signed"], false);
+    assert_eq!(out["plugin"]["id"], "myrule");
+
+    let signed = root.path().join("signed.sdktplugin");
+    pack(&src_dir, &signed, Some(&secret_path));
+    let store = TempDir::new().unwrap();
+    let out = stdout_json(
+        &sdkt_in(store.path())
+            .args([
+                "plugin",
+                "install",
+                signed.to_str().unwrap(),
+                "--format",
+                "json",
+            ])
+            .assert()
+            .success(),
+    );
+    assert_eq!(out["status"], "installed");
+    assert_eq!(out["signed"], true);
+    assert_eq!(installed_ids(store.path()), vec!["myrule".to_string()]);
+}
+
+#[test]
+fn bundle_install_rejects_tampered_bundle() {
+    let root = TempDir::new().unwrap();
+    let store = TempDir::new().unwrap();
+    let src_dir = make_plugin_dir(&root, "wasm", "wasm");
+    let bundle = root.path().join("tampered.sdktplugin");
+    pack(&src_dir, &bundle, None);
+
+    // Flip one byte of the artifact payload inside the (uncompressed) tar.
+    let mut bytes = fs::read(&bundle).unwrap();
+    let needle = b"placeholder-artifact-content";
+    let pos = bytes
+        .windows(needle.len())
+        .position(|w| w == needle)
+        .expect("artifact payload present in bundle");
+    bytes[pos] ^= 0xff;
+    fs::write(&bundle, bytes).unwrap();
+
+    sdkt_in(store.path())
+        .args(["plugin", "install", bundle.to_str().unwrap()])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("digest mismatch"))
+        .stdout(predicate::str::is_empty());
+    assert!(installed_ids(store.path()).is_empty());
+}
+
+#[test]
+fn bundle_install_rejects_mismatched_public_key() {
+    let root = TempDir::new().unwrap();
+    let store = TempDir::new().unwrap();
+    let src_dir = make_plugin_dir(&root, "wasm", "wasm");
+    let secret_path = root.path().join("secret.key");
+    fs::write(&secret_path, [0xab; 32]).unwrap();
+    let wrong_pub = root.path().join("public.key");
+    fs::write(&wrong_pub, [0xcd; 32]).unwrap();
+    let bundle = root.path().join("signed.sdktplugin");
+    pack(&src_dir, &bundle, Some(&secret_path));
+
+    sdkt_in(store.path())
+        .args([
+            "plugin",
+            "install",
+            bundle.to_str().unwrap(),
+            "--public-key",
+            wrong_pub.to_str().unwrap(),
+        ])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("signature verification failed"));
+    assert!(installed_ids(store.path()).is_empty());
+}
+
+#[test]
+fn install_public_key_requires_bundle_source() {
+    let root = TempDir::new().unwrap();
+    let store = TempDir::new().unwrap();
+    let src_dir = make_plugin_dir(&root, "wasm", "wasm");
+    let key = root.path().join("public.key");
+    fs::write(&key, [0xcd; 32]).unwrap();
+
+    sdkt_in(store.path())
+        .args([
+            "plugin",
+            "install",
+            src_dir.join("rule.wasm").to_str().unwrap(),
+            "--public-key",
+            key.to_str().unwrap(),
+        ])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains(
+            "only applies to .sdktplugin bundles",
+        ));
+}
+
+#[test]
+fn bundle_install_rejects_unsigned_bundle_when_public_key_given() {
+    let root = TempDir::new().unwrap();
+    let store = TempDir::new().unwrap();
+    let src_dir = make_plugin_dir(&root, "wasm", "wasm");
+    let key = root.path().join("public.key");
+    fs::write(&key, [0xcd; 32]).unwrap();
+    let bundle = root.path().join("unsigned.sdktplugin");
+    pack(&src_dir, &bundle, None);
+
+    sdkt_in(store.path())
+        .args([
+            "plugin",
+            "install",
+            bundle.to_str().unwrap(),
+            "--public-key",
+            key.to_str().unwrap(),
+        ])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains(
+            "bundle is not signed but a public key was provided; refusing to install",
+        ))
+        .stdout(predicate::str::is_empty());
+    assert!(installed_ids(store.path()).is_empty());
+}
+
+#[test]
+fn bundle_install_honors_force_and_id() {
+    let root = TempDir::new().unwrap();
+    let store = TempDir::new().unwrap();
+    let src_dir = make_plugin_dir(&root, "wasm", "wasm");
+    let bundle = root.path().join("opts.sdktplugin");
+    pack(&src_dir, &bundle, None);
+    let install = |extra: &[&str]| {
+        let mut cmd = sdkt_in(store.path());
+        cmd.args(["plugin", "install", bundle.to_str().unwrap()])
+            .args(extra);
+        cmd.assert()
+    };
+
+    install(&[]).success();
+    // Same id again without --force is refused, exactly as for artifacts.
+    install(&[])
+        .failure()
+        .stderr(predicate::str::contains("already installed"));
+    install(&["--force"]).success();
+
+    // --id overrides the bundle's metadata id.
+    install(&["--id", "renamed"])
+        .success()
+        .stdout(predicate::str::contains("Installed plugin 'renamed'"));
+    let mut ids = installed_ids(store.path());
+    ids.sort();
+    assert_eq!(ids, vec!["myrule".to_string(), "renamed".to_string()]);
+}
+
+#[test]
+fn bundle_install_extension_is_case_insensitive() {
+    let root = TempDir::new().unwrap();
+    let store = TempDir::new().unwrap();
+    let src_dir = make_plugin_dir(&root, "wasm", "wasm");
+    let bundle = root.path().join("UPPER.SDKTPLUGIN");
+    pack(&src_dir, &bundle, None);
+
+    sdkt_in(store.path())
+        .args(["plugin", "install", bundle.to_str().unwrap()])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("signature: UNSIGNED"));
+    assert_eq!(installed_ids(store.path()), vec!["myrule".to_string()]);
 }
 
 #[test]

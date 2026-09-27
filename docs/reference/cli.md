@@ -18,9 +18,15 @@ sdkt
 ├── storage
 │   ├── check <contract-id>   [--abi <wasm>] [--abi-contract <id>] [--format]
 │   ├── analyze <contract-id> [--abi <wasm>] [--abi-contract <id>] [--format]
-│   ├── estimate <wasm-path>  [--format] (NOT YET IMPLEMENTED — placeholder only)
+│   ├── estimate <wasm-path>  [--ledgers <N>] [--format <pretty|json>]
 │   ├── read --contract <contract-id> --key-xdr <BASE64_XDR> [--abi <wasm>] [--format]
-│   └── extend --contract <contract-id> --ledgers <N> [--key <xdr>]... [--identity <name>] [--format]
+│   ├── extend --contract <contract-id> --ledgers <N> [--key <xdr>]... [--identity <name>] [--format]
+│   └── restore --contract <contract-id> --envelope <xdr> [--dry-run] [--identity <name>] [--format]
+│
+│   `estimate` performs an offline calculation of storage rent over a specified
+│   ledger horizon (default 17,280 ledgers, ~1 day) using the contract spec ABI.
+│   It computes a breakdown across Instance, Persistent, and Temporary classes
+│   and a total in stroops and XLM.
 │
 │   `read` fetches a single ledger entry by its complete `LedgerKey` (base64 XDR).
 │   The instance key is NOT included automatically — supply the full key via --key-xdr.
@@ -31,6 +37,13 @@ sdkt
 │   (base64 XDR or hex XDR) are merged and de-duplicated. This does NOT discover
 │   all contract storage and does NOT restore archived entries.
 │
+│   `restore` simulates `--envelope` (the invocation that failed on archived
+│   state), adopts the `restorePreamble` footprint and minimum resource fee, and
+│   submits a `RestoreFootprint` transaction. It fails without submitting when
+│   the simulation has no preamble (state is live) or the preamble footprint is
+│   empty or malformed. `--dry-run` prints the keys and fee without signing or
+│   submitting. It restores only; re-run the invocation afterwards.
+│
 │   `--abi <wasm>` supplies the ABI from a local WASM; `--abi-contract <id>` fetches
 │   the deployed contract's on-chain WASM and uses it as the ABI source
 │   for storage decoding. The two flags are mutually exclusive.
@@ -39,16 +52,14 @@ sdkt
 │   ├── --args <TYPE:VALUE>...    (same typed-args as `call` / `tx build`;
 │   │                            strict: unknown types are rejected)
 │   ├── --identity <name>        (signs and pays; default: "default")
-│   ├── --no-wait                (return after submission with status PENDING)
+ main
 │   ├── --format <json|pretty>
 │   └── --network-profile <NAME> / --rpc-url <URL> / --network-passphrase <P>
 │
 │   State-changing end-to-end flow in one command:
 │     fetch account sequence → simulate → build final envelope (authoritative
 │     footprint + fees + auth entries from simulation) → sign with the local
-│     identity → submit → poll until settled. With --no-wait, return after
-│     submission with the hash and PENDING status. Exit code 0 only on SUCCESS
-│     unless --no-wait was supplied.
+ main
 │   Result decoding is limited to the transaction-level `TransactionResult`
 │   XDR (no ABI-aware result decode yet). Inherits the mainnet safety guard
 │   (see below). Live Testnet smoke test is documented but NOT exercised in CI.
@@ -111,10 +122,12 @@ sdkt
 │   ├── --format <json|pretty>
 │   └── --upgrade-safety      (emit UpgradeVerdict)
 │
-├── audit <path.rs>
+├── audit [path.rs]
+│   ├── --list-rules          (list available audit rules and exit)
 │   ├── --format <json|pretty>
 │   ├── --disable <RULE_ID>   (repeatable)
-│   └── --rules <PATH>        (repeatable; external rule paths)
+│   ├── --rules <PATH>        (repeatable; external rule paths)
+│   └── --no-plugins          (skip loading installed plugins)
 ├── identity
 │   ├── generate <name>
 │   ├── import <name> <secret>
@@ -247,6 +260,41 @@ or git logic is duplicated; the same `compute_dependency_integrity` /
 │   Invalid graphs (unknown/self/duplicate dependency, cycle, duplicate name)
 │   fail fast with a clear error.
 │
+│   Deployment records: every successfully deployed contract is written to
+│   `.sdkt-deployments.json` in the project directory, keyed by network scope
+│   and then alias:
+│
+│     {
+│       "profiles": {
+│         "testnet": {
+│           "token": {
+│             "contract_id": "C…",
+│             "wasm_hash": "60cddae6…",
+│             "network": "testnet",
+│             "timestamp": 1700000000,
+│             "salt": "deploy"
+│           }
+│         }
+│       }
+│     }
+│
+│   The scope key is the explicit `--network-profile <NAME>` when given, else the
+│   network derived from the passphrase (`testnet`/`mainnet`/`futurenet`) or a
+│   `custom-<hash>` for unknown passphrases — so testnet and mainnet deploys never
+│   collide. Records are persisted after every contract, so if a deploy fails
+│   mid-graph the contracts that already landed are never lost; the alias →
+│   contract ID mapping is retained for the retry. On success the record is written
+│   too (additive; the stdout JSON/pretty output is unchanged).
+│
+│   `--skip-deployed` resumes an interrupted deploy: aliases whose recorded
+│   contract ID is verified to still exist on-chain (via `getLedgerEntries`) are
+│   skipped without re-deploying (and re-paying for) them, printed as
+│   `✓ '<alias>' already deployed at <contract_id>`. A record whose contract no
+│   longer exists on-chain is NOT trusted — sdkt warns
+│   `⚠ Recorded contract for '<alias>' is no longer on-chain; re-deploying.` and
+│   deploys it fresh, replacing the stale record. The default identity (see
+│   `sdkt identity`) is used to sign all deployments.
+│
 ├── call
 │   ├── <CONTRACT_ID>
 │   ├── <FUNCTION>
@@ -350,22 +398,39 @@ sdkt encode string:hello | xargs sdkt decode --type ScVal
 
 sdkt encode symbol:USD | xargs sdkt decode --type ScVal
 # {"symbol": "USD"}
+
+sdkt encode u128:340282366920938463463374607431768211455 | xargs sdkt decode --type ScVal
+# {"u128": "340282366920938463463374607431768211455"}
+
+sdkt encode i128:-1000 | xargs sdkt decode --type ScVal
+# {"i128": "-1000"}
+
+sdkt encode bytes:000aFF | xargs sdkt decode --type ScVal
+# {"bytes": "000aff"}
 ```
 
 ### Supported types (core subset)
 
-`u32`, `i32`, `u64`, `i64`, `bool`, `string`, `symbol` (up to 32 bytes),
-`address` (Stellar `G...` strkey).
+`u32`, `i32`, `u64`, `i64`, `u128`, `i128`, `bool`, `string`,
+`symbol` (up to 32 bytes), `bytes`, `address` (Stellar `G...` strkey).
 
 Exactly one value is encoded per invocation; the `TYPE:VALUE` syntax matches
 the typed-argument convention used by `sdkt call` and `sdkt invoke`.
 
+`u128` and `i128` accept decimal integers within their full 128-bit ranges.
+Their decoded JSON values are decimal strings, preserving all digits.
+`bytes` accepts hexadecimal pairs without a `0x` prefix, with either hex
+letter case. Surrounding whitespace is trimmed; empty input (`bytes:`)
+encodes empty bytes. Leading zero bytes are preserved, and decoded JSON
+uses lowercase hex. Pair parsing matches the runtime typed-argument parser,
+including its acceptance of a leading `+` in a pair (`bytes:+f` encodes `0f`).
+
 ### Unsupported (clear failure)
 
-Other types — `u128`, `i128`, `bytes`, `Vec`, `Map`, `Option`, `Result`,
-UDTs — are rejected with an error listing the supported types. Malformed
-values (bad numbers, invalid bools, invalid strkeys) fail with a message
-naming the offending value.
+Other types — `Vec`, `Map`, `Option`, `Result`, UDTs — are rejected with an
+error listing the supported types. Malformed values (bad or out-of-range
+numbers, invalid bools, invalid strkeys, odd-length or invalid hex) fail
+with a message naming the offending value.
 
 ## Generate client
 
@@ -379,6 +444,9 @@ sdkt generate client target/wasm32-unknown-unknown/release/my_contract.wasm
 
 # Write it to a file
 sdkt generate client contract.wasm --output src/client.rs
+
+# Generate a partial client, skipping unsupported functions
+sdkt generate client contract.wasm --skip-unsupported --output src/client.rs
 ```
 
 ### Output
@@ -401,11 +469,23 @@ Parameters and single return values of these primitive types are supported:
 
 ### Unsupported (clear failure)
 
-Any other type — UDTs, `Option`, `Result`, `Vec`, `Map`, `Tuple`, `BytesN`,
-`Val`, multiple return values — aborts generation with an error naming the
-function, the type, and the position (parameter or return). Nothing partial
+By default, any other type — UDTs, `Option`, `Result`, `Vec`, `Map`, `Tuple`,
+`BytesN`, `Val`, multiple return values — aborts generation with an error naming
+the function, the type, and the position (parameter or return). Nothing partial
 is emitted. A WASM without a `contractspecv0` section is rejected as
 "not a Soroban contract".
+
+### Partial generation (`--skip-unsupported`)
+
+Pass `--skip-unsupported` to generate call builders for the supported subset of
+functions instead of aborting the entire command:
+- Supported functions are generated in original spec order.
+- Skipped functions and their specific reasons are listed deterministically in
+  the generated file header comment.
+- If all functions in the contract are supported, output is identical to the
+  default (no-flag) output.
+- If all functions in the contract are unsupported, valid non-crashing output is
+  produced with an empty `contract_functions()` and an explanatory header.
 
 ## Plugin management
 
@@ -419,6 +499,8 @@ sdkt plugin list --format json                     # JSON output; every plugin s
 sdkt plugin init ./path/to/my-rule                 # scaffold a new audit rule project
 sdkt plugin show <id>                              # show a plugin's metadata
 sdkt plugin install ./path/to/artifact.wasm        # install from a local file
+sdkt plugin install ./bundle.sdktplugin            # verify, then install a bundle (reports signed: true/false)
+sdkt plugin install ./bundle.sdktplugin --public-key ./pubkey.key               # require a signature from this author key (unsigned is refused)
 sdkt plugin remove <id>                            # remove (idempotent)
 sdkt plugin update <id> ./path/to/artifact.wasm    # local-only update
 sdkt plugin pack ./path/to/plugin-dir --output ./myrule.sdktplugin              # pack into .sdktplugin bundle
@@ -440,6 +522,7 @@ Store root precedence (lowest → highest): `<cwd>/.sdkt/plugins`,
 - `--format json` is supported on all read-style commands, every `plugin` subcommand, and on `diff`, `audit`, `deploy`, `init` for scripting / CI.
 - `diff --upgrade-safety` and `deploy --deny-breaking` implement the Upgrade Safety Guard (see `ROADMAP.md`).
 - `audit` implements the static-analysis rules (AUTH-001/002/003/004, MOVE-001).
+- `audit --list-rules` discovers all registered built-in rules (with id, severity, and description). Supports `--format json` and does not require a source path argument.
 - **Mainnet safety.** Mutating commands (`tx submit`, `invoke`, `deploy`, `project deploy`) refuse to target mainnet unless you explicitly select the network — via `--network-profile`, `--rpc-url`, or `--network-passphrase`. A testnet-default passphrase pointed at a mainnet endpoint is rejected before any request is sent, protecting against signing for the wrong network.
 
 ## Error Handling

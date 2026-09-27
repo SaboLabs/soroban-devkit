@@ -32,6 +32,7 @@ const DOCUMENTED_FILES: &[&str] = &[
     "plugin/plugin.toml",
     "plugin-wasm/plugin.toml",
     "README.md",
+    "tests/rule_test.rs",
     ".gitignore",
 ];
 
@@ -208,8 +209,8 @@ fn plugin_init_scaffold_builds_and_rule_produces_finding() {
         "cdylib artifact was not produced by the build"
     );
 
-    // The scaffolded crate ships a unit test asserting the placeholder rule
-    // fires (exactly one finding with the derived rule id) on a trivially
+    // The scaffolded crate ships `tests/rule_test.rs` asserting the placeholder
+    // rule fires (exactly one finding with the derived rule id) on a trivially
     // matching function name and stays silent otherwise. Running `cargo test`
     // therefore proves the rule is wired end-to-end, not just compiling. Same
     // project, same target dir, so the dependency graph is compiled once.
