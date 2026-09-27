@@ -12,9 +12,9 @@ use stellar_xdr::{Limits, ReadXdr, TransactionMeta, WriteXdr};
 
 /// Extract contract-event XDR entries from a settled `resultMetaXdr` value.
 ///
-/// Soroban events live in the V3 transaction-level meta. Newer V4 metadata
-/// stores them on each operation instead. Returning raw `ContractEvent` XDR
-/// keeps events available even when no ABI is supplied for decoding.
+/// Soroban events live in the V3 transaction-level meta. V4 keeps operation
+/// events alongside transaction-level events, whose stages place them before
+/// all operations, after this transaction, or after all transactions.
 pub fn extract_contract_events(result_meta_xdr: Option<&str>) -> Vec<String> {
     let Some(encoded) = result_meta_xdr else {
         return Vec::new();
@@ -37,11 +37,34 @@ pub fn extract_contract_events(result_meta_xdr: Option<&str>) -> Vec<String> {
             .soroban_meta
             .map(|soroban| soroban.events.into_iter().collect())
             .unwrap_or_default(),
-        TransactionMeta::V4(meta) => meta
-            .operations
-            .into_iter()
-            .flat_map(|operation| operation.events.into_iter())
-            .collect(),
+        TransactionMeta::V4(meta) => {
+            let mut events = Vec::new();
+            let mut after_tx = Vec::new();
+            let mut after_all_txs = Vec::new();
+
+            for transaction_event in meta.events {
+                match transaction_event.stage {
+                    stellar_xdr::TransactionEventStage::BeforeAllTxs => {
+                        events.push(transaction_event.event)
+                    }
+                    stellar_xdr::TransactionEventStage::AfterTx => {
+                        after_tx.push(transaction_event.event)
+                    }
+                    stellar_xdr::TransactionEventStage::AfterAllTxs => {
+                        after_all_txs.push(transaction_event.event)
+                    }
+                }
+            }
+
+            events.extend(
+                meta.operations
+                    .into_iter()
+                    .flat_map(|operation| operation.events.into_iter()),
+            );
+            events.extend(after_tx);
+            events.extend(after_all_txs);
+            events
+        }
         TransactionMeta::V0(_) | TransactionMeta::V1(_) | TransactionMeta::V2(_) => Vec::new(),
     };
 
@@ -414,6 +437,59 @@ mod tests {
             base64::engine::general_purpose::STANDARD.encode(event.to_xdr(Limits::none()).unwrap());
 
         assert_eq!(extract_contract_events(Some(&encoded)), vec![expected]);
+    }
+
+    #[test]
+    fn extracts_v4_transaction_and_operation_events_in_stage_order() {
+        use stellar_xdr::{
+            ContractEvent, ContractEventType, Limits, OperationMetaV2, TransactionEvent,
+            TransactionEventStage, TransactionMetaV4,
+        };
+
+        let before = ContractEvent {
+            type_: ContractEventType::System,
+            ..Default::default()
+        };
+        let operation = ContractEvent {
+            type_: ContractEventType::Contract,
+            ..Default::default()
+        };
+        let after = ContractEvent {
+            type_: ContractEventType::Diagnostic,
+            ..Default::default()
+        };
+        let meta = TransactionMeta::V4(TransactionMetaV4 {
+            operations: vec![OperationMetaV2 {
+                events: vec![operation.clone()].try_into().unwrap(),
+                ..Default::default()
+            }]
+            .try_into()
+            .unwrap(),
+            events: vec![
+                TransactionEvent {
+                    stage: TransactionEventStage::BeforeAllTxs,
+                    event: before.clone(),
+                },
+                TransactionEvent {
+                    stage: TransactionEventStage::AfterTx,
+                    event: after.clone(),
+                },
+            ]
+            .try_into()
+            .unwrap(),
+            ..Default::default()
+        });
+        let encoded =
+            base64::engine::general_purpose::STANDARD.encode(meta.to_xdr(Limits::none()).unwrap());
+        let expected = [before, operation, after]
+            .into_iter()
+            .map(|event| {
+                base64::engine::general_purpose::STANDARD
+                    .encode(event.to_xdr(Limits::none()).unwrap())
+            })
+            .collect::<Vec<_>>();
+
+        assert_eq!(extract_contract_events(Some(&encoded)), expected);
     }
 
     #[test]

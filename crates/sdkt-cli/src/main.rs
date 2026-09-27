@@ -5206,21 +5206,21 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
             {
                 Ok(res) => {
                     if fmt == OutputFormat::Json {
-                        println!(
-                            "{}",
-                            serde_json::json!({
-                                "hash": res.hash,
-                                "status": res.status,
-                                "contractId": res.contract_id,
-                                "function": res.function,
-                                "fee": res.fee,
-                                "resultXdr": res.result_xdr,
-                                "events": res.events,
-                                "errorCode": res.error_code,
-                                "errorResultXdr": res.error_result_xdr,
-                                "diagnosticEvents": res.diagnostic_events,
-                            })
-                        );
+                        let mut json = serde_json::json!({
+                            "hash": res.hash,
+                            "status": res.status,
+                            "contractId": res.contract_id,
+                            "function": res.function,
+                            "fee": res.fee,
+                            "resultXdr": res.result_xdr,
+                            "errorCode": res.error_code,
+                            "errorResultXdr": res.error_result_xdr,
+                            "diagnosticEvents": res.diagnostic_events,
+                        });
+                        if !res.events.is_empty() {
+                            json["events"] = serde_json::json!(res.events);
+                        }
+                        println!("{}", json);
                     } else {
                         println!("Invocation Result:");
                         println!("  Contract: {}", res.contract_id);
