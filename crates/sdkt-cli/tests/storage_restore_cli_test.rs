@@ -92,6 +92,7 @@ fn invocation_envelope() -> String {
         contract_id: VALID_CONTRACT.into(),
         function: "get".into(),
         args: vec![],
+        memo: None,
     })
     .unwrap()
 }

@@ -1341,6 +1341,14 @@ enum TxAction {
         /// Optional file path to write the output envelope XDR
         #[arg(short, long)]
         output: Option<String>,
+        /// Attach a text memo (up to 28 bytes) to the built transaction.
+        /// Mutually exclusive with `--memo-id`.
+        #[arg(long, value_name = "TEXT")]
+        memo_text: Option<String>,
+        /// Attach a numeric ID memo to the built transaction.
+        /// Mutually exclusive with `--memo-text`.
+        #[arg(long, value_name = "ID")]
+        memo_id: Option<u64>,
     },
     /// Sign a transaction envelope using a local identity ( / PR2)
     Sign {
@@ -4126,8 +4134,29 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
                 arg,
                 format,
                 output,
+                memo_text,
+                memo_id,
             } => {
                 let fmt = parse_format_str(&format);
+
+                // `--memo-text` and `--memo-id` are mutually exclusive. Fail
+                // deterministically before any network I/O (same pre-check style
+                // as the `--abi` / `--abi-contract` flags elsewhere in this file).
+                if memo_text.is_some() && memo_id.is_some() {
+                    eprintln!("Error: specify only one of --memo-text or --memo-id");
+                    process::exit(1);
+                }
+                let memo = match (memo_text.as_deref(), memo_id) {
+                    (Some(text), _) => match sdkt_xdr::memo_text(text) {
+                        Ok(memo) => Some(memo),
+                        Err(e) => {
+                            eprintln!("Error: {e}");
+                            process::exit(1);
+                        }
+                    },
+                    (None, Some(id)) => Some(sdkt_xdr::memo_id(id)),
+                    (None, None) => None,
+                };
 
                 // If source doesn't start with 'G' and isn't 56 chars, try to load it as an identity
                 let mut source_account = source.clone();
@@ -4187,6 +4216,7 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
                     contract_id: contract.clone(),
                     function: function.clone(),
                     args: parsed_args,
+                    memo,
                 };
 
                 // Fee precedence:
@@ -6025,6 +6055,7 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
                 contract_id: contract_id.clone(),
                 function: function.clone(),
                 args: parsed_args,
+                memo: None,
             };
 
             let envelope = sdkt_xdr::builder::build_invoke_transaction(&params)?;
@@ -6202,6 +6233,7 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
                 contract_id: contract_id.clone(),
                 function: function.clone(),
                 args: parsed_args,
+                memo: None,
             };
 
             let client = SorobanRpcClient::from_config(&network_config);

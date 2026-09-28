@@ -73,7 +73,7 @@ sdkt
 │   ├── simulate <xdr>        [--format] [--abi <wasm>] [--abi-contract <id>] (RPC; surfaces restore preambles, costs, state changes; ABI-aware result decoding. `--abi-contract` fetches the deployed contract's on-chain WASM for decoding)
 │   ├── sign                  [--input <xdr|file>] [--output <file>] [--identity <name>] [--network <testnet|mainnet|futurenet|custom:<p>>] [--format] (offline ED25519 signing)
 │   ├── submit <xdr>          [--wait] [--timeout <s>] [--interval <s>] [--format] (RPC)
-│   └── build                 [--source --sequence --contract --function --fee* --arg* --output]
+│   └── build                 [--source --sequence --contract --function --fee* --arg* --output --memo-text <text> --memo-id <id>]
 │                             Offline by default: the envelope carries only the
 │                             base inclusion fee (100 stroops) and prints a
 │                             warning, because a Soroban submission also needs
@@ -86,6 +86,11 @@ sdkt
 │                             without re-simulating.
 │                             `--fee <STROOPS>` overrides both and costs no
 │                             network round trip.
+│                             `--memo-text <TEXT>` (at most 28 bytes) or
+│                             `--memo-id <ID>` attaches a Stellar memo to the
+│                             built envelope; the two flags are mutually
+│                             exclusive. Omit both for no memo (unchanged
+│                             default).
 │
 ├── events <contract-id>
 │   ├── --format <json|pretty>

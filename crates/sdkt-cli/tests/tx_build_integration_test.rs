@@ -200,7 +200,7 @@ use std::net::TcpListener;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 use std::thread;
-use stellar_xdr::{Limits, ReadXdr, TransactionEnvelope, TransactionExt};
+use stellar_xdr::{Limits, Memo, ReadXdr, TransactionEnvelope, TransactionExt};
 
 const SOROBAN_DATA_XDR: &str = "AAAAAAAAAAAAAAAAAAAD6AAAAAoAAAAKAAAAAAAAAJY=";
 
@@ -254,6 +254,14 @@ fn mock_rpc(min_resource_fee: &'static str) -> (String, Arc<AtomicUsize>) {
 fn envelope_fee(b64: &str) -> u32 {
     match TransactionEnvelope::from_xdr_base64(b64.trim(), Limits::none()).unwrap() {
         TransactionEnvelope::Tx(env) => env.tx.fee,
+        _ => panic!("expected a V1 transaction envelope"),
+    }
+}
+
+/// Memo carried by a base64 envelope.
+fn envelope_memo(b64: &str) -> Memo {
+    match TransactionEnvelope::from_xdr_base64(b64.trim(), Limits::none()).unwrap() {
+        TransactionEnvelope::Tx(env) => env.tx.memo,
         _ => panic!("expected a V1 transaction envelope"),
     }
 }
@@ -478,4 +486,153 @@ fn unreachable_network_falls_back_to_offline_fee_with_warning() {
         None,
         "a failed simulation must not leave a half-adopted footprint"
     );
+}
+
+// ── Memo support (issue #183) ────────────────────────────────────────────────
+
+#[test]
+fn tx_build_memo_text_sets_memo_text() {
+    let mut cmd = Command::cargo_bin("sdkt").unwrap();
+    let out = cmd
+        .args([
+            "tx",
+            "build",
+            "--source",
+            TEST_SOURCE,
+            "--sequence",
+            "1",
+            "--contract",
+            TEST_CONTRACT,
+            "--function",
+            "transfer",
+            "--memo-text",
+            "deposit-123",
+            "--format",
+            "json",
+        ])
+        .output()
+        .unwrap();
+
+    assert!(
+        out.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let env = envelope_from_json(&String::from_utf8_lossy(&out.stdout));
+    assert_eq!(
+        envelope_memo(&env),
+        Memo::Text("deposit-123".try_into().unwrap())
+    );
+}
+
+#[test]
+fn tx_build_memo_id_sets_memo_id() {
+    let mut cmd = Command::cargo_bin("sdkt").unwrap();
+    let out = cmd
+        .args([
+            "tx",
+            "build",
+            "--source",
+            TEST_SOURCE,
+            "--sequence",
+            "1",
+            "--contract",
+            TEST_CONTRACT,
+            "--function",
+            "transfer",
+            "--memo-id",
+            "42",
+            "--format",
+            "json",
+        ])
+        .output()
+        .unwrap();
+
+    assert!(
+        out.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let env = envelope_from_json(&String::from_utf8_lossy(&out.stdout));
+    assert_eq!(envelope_memo(&env), Memo::Id(42));
+}
+
+#[test]
+fn tx_build_without_memo_has_no_memo() {
+    // Regression: omitting both flags must keep the envelope memo-free.
+    let mut cmd = Command::cargo_bin("sdkt").unwrap();
+    let out = cmd
+        .args([
+            "tx",
+            "build",
+            "--source",
+            TEST_SOURCE,
+            "--sequence",
+            "1",
+            "--contract",
+            TEST_CONTRACT,
+            "--function",
+            "transfer",
+            "--format",
+            "json",
+        ])
+        .output()
+        .unwrap();
+
+    assert!(out.status.success());
+    let env = envelope_from_json(&String::from_utf8_lossy(&out.stdout));
+    assert_eq!(envelope_memo(&env), Memo::None);
+}
+
+#[test]
+fn tx_build_rejects_both_memo_flags() {
+    let mut cmd = Command::cargo_bin("sdkt").unwrap();
+    let assert = cmd
+        .args([
+            "tx",
+            "build",
+            "--source",
+            TEST_SOURCE,
+            "--sequence",
+            "1",
+            "--contract",
+            TEST_CONTRACT,
+            "--function",
+            "transfer",
+            "--memo-text",
+            "x",
+            "--memo-id",
+            "1",
+        ])
+        .assert();
+
+    assert.failure().stderr(predicates::str::contains(
+        "specify only one of --memo-text or --memo-id",
+    ));
+}
+
+#[test]
+fn tx_build_rejects_over_long_memo_text() {
+    let too_long = "x".repeat(29);
+    let mut cmd = Command::cargo_bin("sdkt").unwrap();
+    let assert = cmd
+        .args([
+            "tx",
+            "build",
+            "--source",
+            TEST_SOURCE,
+            "--sequence",
+            "1",
+            "--contract",
+            TEST_CONTRACT,
+            "--function",
+            "transfer",
+            "--memo-text",
+            &too_long,
+        ])
+        .assert();
+
+    assert
+        .failure()
+        .stderr(predicates::str::contains("28 bytes"));
 }
