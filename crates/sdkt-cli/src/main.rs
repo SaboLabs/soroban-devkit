@@ -2274,6 +2274,20 @@ fn resolve_storage_analyze_keys(
     Ok(keys)
 }
 
+/// Canonicalize a contract ID into its lowercase 32-byte hexadecimal representation.
+/// Accepts either a 64-character hex string or a Soroban `C...` StrKey.
+fn canonical_contract_id(id: &str) -> Result<String, String> {
+    let trimmed = id.trim();
+    if let Ok(bytes) = hex::decode(trimmed) {
+        if bytes.len() == 32 {
+            return Ok(hex::encode(bytes).to_lowercase());
+        }
+    }
+
+    let hash = sdkt_xdr::decode_contract_id(trimmed).map_err(|e| e.to_string())?;
+    Ok(hex::encode(hash.0).to_lowercase())
+}
+
 /// Render a storage diff for human consumption.
 ///
 /// Kept pure (no I/O) so both the CLI output and its tests exercise the same
@@ -3125,6 +3139,21 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
                         process::exit(1);
                     }
                 };
+
+                let same_contract = match (
+                    canonical_contract_id(&base.contract_id),
+                    canonical_contract_id(&other.contract_id),
+                ) {
+                    (Ok(base_id), Ok(other_id)) => base_id == other_id,
+                    _ => false,
+                };
+                if !same_contract {
+                    eprintln!(
+                        "Error: snapshots must reference the same contract ('{}' vs '{}')",
+                        base.contract_id, other.contract_id
+                    );
+                    process::exit(1);
+                }
 
                 let diff = diff_snapshots(&base, &other);
                 if fmt == OutputFormat::Json {
@@ -8352,5 +8381,20 @@ mod project_deploy_salt_tests {
         assert!(parse_salt_hex(&"z".repeat(40))
             .unwrap_err()
             .contains("not a hex digit"));
+    }
+
+    #[test]
+    fn test_canonical_contract_id() {
+        const STRKEY: &str = "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAD2KM";
+        let hex_id = canonical_contract_id(STRKEY).expect("decodes strkey");
+        assert_eq!(hex_id.len(), 64);
+        let from_hex = canonical_contract_id(&hex_id).expect("decodes hex");
+        assert_eq!(hex_id, from_hex);
+
+        let upper_hex = canonical_contract_id(&hex_id.to_uppercase()).expect("decodes upper hex");
+        assert_eq!(hex_id, upper_hex);
+
+        assert!(canonical_contract_id("invalid-contract").is_err());
+        assert!(canonical_contract_id("").is_err());
     }
 }

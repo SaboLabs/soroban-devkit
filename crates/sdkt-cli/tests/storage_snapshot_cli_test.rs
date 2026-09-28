@@ -418,3 +418,63 @@ fn storage_diff_against_rejects_abi_contract_option() {
             "Error: --abi and --abi-contract options do not apply to 'storage diff'",
         ));
 }
+
+#[test]
+fn storage_diff_against_rejects_different_contract_ids() {
+    const OTHER_CONTRACT: &str = "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAD2KM";
+
+    let dir = tempdir().unwrap();
+    let base_file = dir.path().join("base.json");
+    let against_file = dir.path().join("against.json");
+
+    let base = snapshot(TEST_CONTRACT, vec![entry("k1", Some("valA"), 100, 10)]);
+    let against = snapshot(OTHER_CONTRACT, vec![entry("k1", Some("valA"), 100, 10)]);
+
+    std::fs::write(&base_file, serde_json::to_string(&base).unwrap()).unwrap();
+    std::fs::write(&against_file, serde_json::to_string(&against).unwrap()).unwrap();
+
+    sdkt()
+        .args([
+            "storage",
+            "diff",
+            base_file.to_str().unwrap(),
+            "--against",
+            against_file.to_str().unwrap(),
+        ])
+        .assert()
+        .failure()
+        .code(1)
+        .stderr(predicate::str::contains(
+            "Error: snapshots must reference the same contract",
+        ))
+        .stderr(predicate::str::contains(TEST_CONTRACT))
+        .stderr(predicate::str::contains(OTHER_CONTRACT));
+}
+
+#[test]
+fn storage_diff_against_accepts_equivalent_hex_and_strkey_contract_ids() {
+    let dir = tempdir().unwrap();
+    let base_file = dir.path().join("base.json");
+    let against_file = dir.path().join("against.json");
+
+    let hex_contract = hex::encode(sdkt_xdr::decode_contract_id(TEST_CONTRACT).unwrap().0);
+
+    let base = snapshot(TEST_CONTRACT, vec![entry("k1", Some("valA"), 100, 10)]);
+    let against = snapshot(&hex_contract, vec![entry("k1", Some("valA"), 100, 10)]);
+
+    std::fs::write(&base_file, serde_json::to_string(&base).unwrap()).unwrap();
+    std::fs::write(&against_file, serde_json::to_string(&against).unwrap()).unwrap();
+
+    sdkt()
+        .args([
+            "storage",
+            "diff",
+            base_file.to_str().unwrap(),
+            "--against",
+            against_file.to_str().unwrap(),
+            "--format",
+            "json",
+        ])
+        .assert()
+        .success();
+}
