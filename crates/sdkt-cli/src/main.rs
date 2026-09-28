@@ -4573,7 +4573,14 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
                             println!("  (none)");
                         } else {
                             for b in account.balances {
-                                println!("  Asset: {}", b.asset_type);
+                                if let (Some(code), Some(issuer)) = (&b.asset_code, &b.asset_issuer)
+                                {
+                                    println!("  Asset: {}:{} ({})", code, issuer, b.asset_type);
+                                } else if let Some(code) = &b.asset_code {
+                                    println!("  Asset: {} ({})", code, b.asset_type);
+                                } else {
+                                    println!("  Asset: {}", b.asset_type);
+                                }
                                 println!("  Balance: {}", b.balance);
                             }
                         }
@@ -4582,7 +4589,8 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
                             println!("  (none)");
                         } else {
                             for s in account.signers {
-                                println!("  Public Key: {}", s.public_key);
+                                println!("  Type: {}", s.key_type);
+                                println!("  Key: {}", s.key);
                                 println!(
                                     "  Weight: {}",
                                     s.weight.map_or("Unknown".to_string(), |w| w.to_string())
