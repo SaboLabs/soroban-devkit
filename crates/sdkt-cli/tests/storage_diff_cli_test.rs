@@ -131,7 +131,11 @@ fn storage_diff_cli_rejects_empty_entries_when_total_entries_positive() {
         "temporary_entries": 0,
         "other_entries": 0,
     });
-    fs::write(&legacy_old_path, serde_json::to_string(&legacy_json).unwrap()).unwrap();
+    fs::write(
+        &legacy_old_path,
+        serde_json::to_string(&legacy_json).unwrap(),
+    )
+    .unwrap();
 
     create_snapshot_file(&new_path, CONTRACT, &[("keyA==", 10_000)]);
 
@@ -147,7 +151,10 @@ fn storage_diff_cli_rejects_empty_entries_when_total_entries_positive() {
     let assert = cmd.assert().failure();
     let stderr = String::from_utf8(assert.get_output().stderr.clone()).unwrap();
 
-    assert!(stderr.contains(&format!("Failed to load --old snapshot '{}'", legacy_old_path.display())));
+    assert!(stderr.contains(&format!(
+        "Failed to load --old snapshot '{}'",
+        legacy_old_path.display()
+    )));
     assert!(stderr.contains("total_entries (3) > 0"));
     assert!(stderr.contains("entries array is empty"));
 }

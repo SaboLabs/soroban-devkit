@@ -3134,14 +3134,17 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
                             println!("  Ready-to-run:");
                             let mut net_args = String::new();
                             if let Some(ref p) = net.network_profile {
-                                net_args.push_str(&format!(" --network-profile {}", shell_quote(p)));
+                                net_args
+                                    .push_str(&format!(" --network-profile {}", shell_quote(p)));
                             }
                             if let Some(ref u) = net.rpc_url {
                                 net_args.push_str(&format!(" --rpc-url {}", shell_quote(u)));
                             }
                             if let Some(ref pass) = net.network_passphrase {
-                                net_args
-                                    .push_str(&format!(" --network-passphrase {}", shell_quote(pass)));
+                                net_args.push_str(&format!(
+                                    " --network-passphrase {}",
+                                    shell_quote(pass)
+                                ));
                             }
 
                             let key_args: String = plan
