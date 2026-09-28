@@ -42,7 +42,7 @@ fn audit_invalid_rust_source_errors() {
         .args(["audit", path.to_str().unwrap()])
         .assert()
         .failure()
-        .stderr(predicates::str::contains("source parse error"));
+        .stderr(predicates::str::contains("Failed to parse Rust source"));
 }
 
 #[test]
