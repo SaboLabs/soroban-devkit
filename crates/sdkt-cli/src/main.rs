@@ -4948,6 +4948,7 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
             let multi_file = !single_file;
 
             let multi_file_plugin_paths: Vec<(std::path::PathBuf, String)> = {
+                #[allow(unused_mut)]
                 let mut paths_out = Vec::new();
                 if rules.is_empty() {
                     if !no_plugins {
