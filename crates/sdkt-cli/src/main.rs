@@ -5243,6 +5243,30 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
                     }
                 }
             }
+            if audit_fmt == AuditFormat::Sarif {
+                let version = env!("CARGO_PKG_VERSION");
+                if multi_file {
+                    let sarif_str = sdkt_audit::sarif::report_to_sarif_string_multi_file(
+                        &aggregate,
+                        version,
+                        &[],
+                    )
+                    .map_err(|e| e.to_string())?;
+                    println!("{}", sarif_str);
+                } else {
+                    let source_file = paths[0].as_str();
+                    let sarif_str = sdkt_audit::sarif::report_to_sarif_string(
+                        &aggregate,
+                        source_file,
+                        version,
+                        &[],
+                    )
+                    .map_err(|e| e.to_string())?;
+                    println!("{}", sarif_str);
+                }
+                return Ok(());
+            }
+
             if fmt == OutputFormat::Json {
                 if multi_file {
                     #[derive(serde::Serialize)]
