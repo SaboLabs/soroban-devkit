@@ -238,7 +238,6 @@ impl AuditRule for WasmPluginRule {
                     severity: Severity::Warning,
                     message: format!("internal: failed to serialise check input: {e}"),
                     location: None,
-                    file: None,
                 });
                 return;
             }
@@ -255,7 +254,6 @@ impl AuditRule for WasmPluginRule {
                         severity: Severity::Warning,
                         message: "internal: wasm plugin mutex poisoned".into(),
                         location: None,
-                        file: None,
                     });
                     return;
                 }
@@ -269,7 +267,6 @@ impl AuditRule for WasmPluginRule {
                         severity: Severity::Warning,
                         message: format!("wasm plugin trap during check: {e}"),
                         location: None,
-                        file: None,
                     });
                     return;
                 }
@@ -286,7 +283,6 @@ impl AuditRule for WasmPluginRule {
                     severity: Severity::Warning,
                     message: format!("wasm plugin returned malformed JSON: {e}"),
                     location: None,
-                    file: None,
                 });
                 return;
             }
@@ -302,7 +298,6 @@ impl AuditRule for WasmPluginRule {
                 severity: wf.severity_enum(),
                 message: wf.message.clone(),
                 location: wf.location.clone(),
-                file: None,
             });
         }
     }
@@ -352,7 +347,6 @@ mod tests {
             severity: SEVERITY_CRITICAL,
             message: "m".into(),
             location: None,
-            file: None,
         };
         assert_eq!(f.severity_enum(), Severity::Critical);
 
