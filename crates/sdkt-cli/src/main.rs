@@ -712,6 +712,10 @@ enum Commands {
         /// (fetched on-chain) against the local `--wasm` candidate. Requires `--wasm`.
         #[arg(long, default_value_t = false)]
         upgrade_safety: bool,
+        /// Exit non-zero when the upgrade-safety verdict is not backwards-compatible.
+        /// Only meaningful with `--upgrade-safety`. Mirrors `sdkt deploy --deny-breaking`.
+        #[arg(long, default_value_t = false)]
+        deny_breaking: bool,
         #[command(flatten)]
         net: NetworkArgs,
     },
@@ -736,6 +740,12 @@ enum Commands {
         /// Output format
         #[arg(short, long, default_value = "pretty")]
         format: String,
+        /// Exit non-zero when the computed verdict matches the given level.
+        /// Accepted values: `critical` (exit 2 on critical only),
+        /// `at_risk` (exit 2 on critical or at_risk).
+        /// Without this flag the exit code is always 0 on a successful run.
+        #[arg(long, value_name = "LEVEL")]
+        fail_on: Option<String>,
         #[command(flatten)]
         net: NetworkArgs,
     },
@@ -802,6 +812,10 @@ enum Commands {
         /// Emit an upgrade-safety verdict (breaking vs non-breaking changes)
         #[arg(long, default_value_t = false)]
         upgrade_safety: bool,
+        /// Exit non-zero when the upgrade-safety verdict is not backwards-compatible.
+        /// Only meaningful with `--upgrade-safety`. Mirrors `sdkt deploy --deny-breaking`.
+        #[arg(long, default_value_t = false)]
+        deny_breaking: bool,
     },
     /// Static security analysis of a Soroban contract source file (Gap C)
     Audit {
@@ -2772,7 +2786,7 @@ async fn run_upgrade_safety(
     candidate_bytes: &[u8],
     network: &str,
     fmt: OutputFormat,
-) -> Result<(), String> {
+) -> Result<sdkt_wasm::UpgradeVerdict, String> {
     // Candidate WASM is parsed offline first (fail-fast on malformed input).
     let _candidate_meta = sdkt_wasm::parse_metadata(candidate_bytes)
         .map_err(|e| format!("{} is not valid WASM: {}", "<candidate>", e))?;
@@ -2814,7 +2828,7 @@ async fn run_upgrade_safety(
             contract_id, network, wasm_hash
         );
     }
-    Ok(())
+    Ok(verdict)
 }
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -3957,6 +3971,7 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
             network,
             format,
             upgrade_safety,
+            deny_breaking,
             net,
         } => {
             let fmt = parse_format_str(&format);
@@ -3992,7 +4007,14 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
                         )
                         .await
                         {
-                            Ok(()) => return Ok(()),
+                            Ok(verdict) => {
+                                // --deny-breaking: opt-in non-zero exit when the
+                                // verdict is not backwards-compatible.
+                                if deny_breaking && !verdict.compatible {
+                                    process::exit(2);
+                                }
+                                return Ok(());
+                            }
                             Err(e) => {
                                 eprintln!("Error verifying upgrade safety: {}", e);
                                 process::exit(1);
@@ -4070,9 +4092,25 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
             wasm,
             network,
             format,
+            fail_on,
             net,
         } => {
             let fmt = parse_format_str(&format);
+
+            // Validate --fail-on value early so bad input fails before RPC.
+            let fail_on_level: Option<&str> = match fail_on.as_deref() {
+                None => None,
+                Some("critical") => Some("critical"),
+                Some("at_risk") => Some("at_risk"),
+                Some(other) => {
+                    eprintln!(
+                        "Error: --fail-on must be 'critical' or 'at_risk', got '{}'",
+                        other
+                    );
+                    process::exit(1);
+                }
+            };
+
             let target = match resolve_target_network(network.as_deref(), &net) {
                 Ok(t) => t,
                 Err(e) => {
@@ -4156,6 +4194,21 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
                                 "Verdict: Contract posture is healthy. {}no entries expiring soon.",
                                 verified_note
                             );
+                        }
+                    }
+
+                    // --fail-on: opt-in non-zero exit based on the computed
+                    // verdict. Emit the full report first (above) then exit.
+                    // Exit code 2 distinguishes a gated verdict failure from an
+                    // operational error (code 1).
+                    if let Some(level) = fail_on_level {
+                        let should_fail = match level {
+                            "critical" => report.health == "critical",
+                            "at_risk" => report.health == "critical" || report.health == "at_risk",
+                            _ => false,
+                        };
+                        if should_fail {
+                            process::exit(2);
                         }
                     }
                 }
@@ -5125,6 +5178,7 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
             new_wasm,
             format,
             upgrade_safety,
+            deny_breaking,
         } => {
             let fmt = parse_format_str(&format);
             let old_bytes = fs::read(&old_wasm)
@@ -5141,6 +5195,11 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
                             println!("{}", serde_json::to_string(&verdict)?);
                         } else {
                             print_upgrade_verdict(&verdict);
+                        }
+                        // --deny-breaking: opt-in non-zero exit when the
+                        // verdict is not backwards-compatible.
+                        if deny_breaking && !verdict.compatible {
+                            process::exit(2);
                         }
                         return Ok(());
                     }
