@@ -187,7 +187,7 @@ use base64::engine::general_purpose::STANDARD;
 use base64::Engine;
 use sdkt_xdr::{encode_ledger_key, LedgerKeyParams};
 use std::io::{Read, Write};
-use std::net::TcpListener;
+use std::net::{TcpListener, TcpStream};
 use std::thread;
 use stellar_xdr::{
     ContractCodeEntry, ContractCodeEntryExt, ContractDataDurability, ContractDataEntry,
@@ -199,6 +199,32 @@ static VERIFY_OLD_WASM: &[u8] = include_bytes!("fixtures/us_old.wasm");
 const VERIFY_CONTRACT_ID: &str = "CAE3U7JKESRWZHPEQ72DVNGOQ6WPA7HSPQZL5YV46NPCE4TMUPAGYMEC";
 const VERIFY_OLD_HASH_HEX: &str =
     "05befa136e7f0829a5051d97b032f355a5e65976397df90b224d141942dce46c";
+
+/// Read one HTTP request in full (headers + body according to Content-Length).
+fn read_request(sock: &mut TcpStream) -> String {
+    let mut data = Vec::new();
+    let mut buf = [0u8; 4096];
+    loop {
+        let n = sock.read(&mut buf).unwrap_or(0);
+        if n == 0 {
+            break;
+        }
+        data.extend_from_slice(&buf[..n]);
+        let text = String::from_utf8_lossy(&data).to_string();
+        if let Some(end) = text.find("\r\n\r\n") {
+            let len = text[..end]
+                .lines()
+                .filter_map(|l| l.split_once(':'))
+                .find(|(k, _)| k.trim().eq_ignore_ascii_case("content-length"))
+                .and_then(|(_, v)| v.trim().parse::<usize>().ok())
+                .unwrap_or(0);
+            if data.len() >= end + 4 + len {
+                break;
+            }
+        }
+    }
+    String::from_utf8_lossy(&data).to_string()
+}
 
 fn spawn_mock_verify_rpc() -> String {
     let listener = TcpListener::bind("127.0.0.1:0").unwrap();
@@ -254,9 +280,7 @@ fn spawn_mock_verify_rpc() -> String {
                 Ok(s) => s,
                 Err(_) => break,
             };
-            let mut buf = [0u8; 16384];
-            let n = sock.read(&mut buf).unwrap_or(0);
-            let req = String::from_utf8_lossy(&buf[..n]).to_string();
+            let req = read_request(&mut sock);
 
             let body = if req.contains("\"getLatestLedger\"") {
                 r#"{"jsonrpc":"2.0","id":1,"result":{"id":"test","sequence":100,"protocolVersion":20}}"#.to_string()
