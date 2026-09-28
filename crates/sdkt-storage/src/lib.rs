@@ -4,6 +4,7 @@ pub mod error;
 pub mod estimate;
 pub mod identity;
 pub mod network;
+pub mod snapshot;
 pub mod types;
 
 pub use analyzer::StorageAnalyzer;
@@ -16,4 +17,8 @@ pub use estimate::{
 };
 pub use identity::{Identity, IdentityStore};
 pub use network::{NetworkProfile, NetworkStore};
+pub use snapshot::{
+    derive_extend_plan, diff_snapshots, DiffEntry, DiffStatus, ExtendPlan, SnapshotDiff,
+    SnapshotEntry, StorageSnapshot, DEFAULT_SUGGESTED_LEDGERS, EXPIRING_SOON_LEDGERS,
+};
 pub use types::{StorageClass, StorageEntry, StorageReport, TtlInfoSummary};
