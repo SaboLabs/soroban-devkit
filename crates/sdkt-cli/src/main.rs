@@ -8,9 +8,10 @@ use sdkt_core::{
 use sdkt_rpc::inspect::StorageSummary;
 use sdkt_rpc::wasm::get_wasm_bytecode;
 use sdkt_rpc::{
-    estimate_dynamic_fee, extend_footprint, get_contract_events, get_next_sequence, get_ttl_info,
-    get_wasm_metadata, inspect_account, inspect_contract, inspect_transaction, read_contract_state,
-    restore_footprint, simulate_transaction, SorobanRpcClient, StorageKeyInfo, TtlInfoSummary,
+    estimate_dynamic_fee, extend_footprint, first_topic_filter, get_contract_events_filtered,
+    get_next_sequence, get_ttl_info, get_wasm_metadata, inspect_account, inspect_contract,
+    inspect_transaction, read_contract_state, restore_footprint, simulate_transaction,
+    SorobanRpcClient, StorageKeyInfo, TtlInfoSummary,
 };
 use sdkt_storage::WasmCache;
 use sdkt_storage::{NetworkProfile, NetworkStore, StorageAnalyzer};
@@ -764,6 +765,10 @@ enum Commands {
         /// decoding. Mutually exclusive with `--abi`.
         #[arg(long, value_name = "CONTRACT_ID")]
         abi_contract: Option<String>,
+        /// Only return events whose first topic (the event name) is this
+        /// symbol. Case-sensitive; filtered server-side by the RPC.
+        #[arg(long, value_name = "SYMBOL")]
+        topic: Option<String>,
         #[command(flatten)]
         net: NetworkArgs,
     },
@@ -1945,6 +1950,37 @@ fn parse_salt_hex(s: &str) -> Result<[u8; 20], String> {
 
 fn shell_quote(s: &str) -> String {
     format!("'{}'", s.replace('\'', "'\\''"))
+}
+
+/// Warning for `sdkt events --topic` when `symbol` is not a topic the contract
+/// spec declares. Topic 0 of a `#[contractevent]` is its first prefix topic
+/// (the snake_case event name by default), so both that and the declared
+/// event name are accepted. Returns `None` when the symbol is known.
+fn unknown_event_topic_warning(spec: &sdkt_wasm::ContractSpec, symbol: &str) -> Option<String> {
+    let mut known: Vec<&str> = Vec::new();
+    for ev in &spec.events {
+        for name in ev.prefix_topics.first().into_iter().chain([&ev.name]) {
+            if !known.contains(&name.as_str()) {
+                known.push(name);
+            }
+        }
+    }
+    if known.contains(&symbol) {
+        return None;
+    }
+    let mut msg = format!("Warning: event topic '{symbol}' is not declared in the contract ABI");
+    if known.is_empty() {
+        msg.push_str(" (the ABI declares no events)");
+    } else {
+        if let Some(close) = known.iter().find(|k| k.eq_ignore_ascii_case(symbol)) {
+            msg.push_str(&format!(
+                "; did you mean '{close}'? (topics are case-sensitive)"
+            ));
+        }
+        msg.push_str(&format!("; declared: {}", known.join(", ")));
+    }
+    msg.push_str(". Querying anyway.");
+    Some(msg)
 }
 
 fn parse_format_str(s: &str) -> OutputFormat {
@@ -4819,6 +4855,7 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
             end_ledger,
             abi,
             abi_contract,
+            topic,
             net,
         } => {
             let fmt = parse_format_str(&format);
@@ -4837,6 +4874,18 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
                     process::exit(1);
                 }
             }
+
+            // Encode `--topic` before any RPC call so an invalid symbol fails fast.
+            let topic_filters = match topic.as_deref() {
+                Some(symbol) => match sdkt_xdr::symbol_topic_base64(symbol) {
+                    Ok(b64) => Some(vec![first_topic_filter(b64)]),
+                    Err(e) => {
+                        eprintln!("Error: --topic: {e}");
+                        process::exit(1);
+                    }
+                },
+                None => None,
+            };
 
             // Resolve the ABI ContractSpec from one of two sources (mutually
             // exclusive): a local WASM file (`--abi`) or a deployed contract's
@@ -4874,7 +4923,21 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
                     None
                 };
 
-            match get_contract_events(&client, &contract_id, start_ledger, end_ledger).await {
+            if let (Some(spec), Some(symbol)) = (contract_spec.as_ref(), topic.as_deref()) {
+                if let Some(warning) = unknown_event_topic_warning(spec, symbol) {
+                    eprintln!("{warning}");
+                }
+            }
+
+            match get_contract_events_filtered(
+                &client,
+                &contract_id,
+                start_ledger,
+                end_ledger,
+                topic_filters,
+            )
+            .await
+            {
                 Ok(events) => {
                     if let Some(spec) = contract_spec {
                         // ABI-aware decoding: topics[0] is the event symbol,
@@ -7958,6 +8021,61 @@ fn run_generate_client(
         None => print!("{}", code),
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod events_topic_unit_tests {
+    use super::*;
+    use sdkt_wasm::ContractSpec;
+
+    fn spec_with_events(events: &[(&str, &[&str])]) -> ContractSpec {
+        ContractSpec {
+            env_meta: None,
+            functions: vec![],
+            custom_types: vec![],
+            events: events
+                .iter()
+                .map(|(name, prefix)| sdkt_wasm::spec::ContractEvent {
+                    name: name.to_string(),
+                    doc: String::new(),
+                    prefix_topics: prefix.iter().map(|p| p.to_string()).collect(),
+                    params: vec![],
+                    data_format: "single_value".to_string(),
+                })
+                .collect(),
+        }
+    }
+
+    #[test]
+    fn known_prefix_topic_or_name_produces_no_warning() {
+        let spec = spec_with_events(&[("Transfer", &["transfer"]), ("Approval", &[])]);
+        assert_eq!(unknown_event_topic_warning(&spec, "transfer"), None);
+        assert_eq!(unknown_event_topic_warning(&spec, "Transfer"), None);
+        assert_eq!(unknown_event_topic_warning(&spec, "Approval"), None);
+    }
+
+    #[test]
+    fn unknown_symbol_warns_and_lists_declared_topics() {
+        let spec = spec_with_events(&[("Transfer", &["transfer"]), ("Approval", &[])]);
+        let w = unknown_event_topic_warning(&spec, "Mint").expect("warning");
+        assert!(w.contains("'Mint' is not declared"), "{w}");
+        assert!(w.contains("declared: transfer, Transfer, Approval"), "{w}");
+        assert!(!w.contains("did you mean"), "{w}");
+    }
+
+    #[test]
+    fn case_mismatch_suggests_exact_symbol() {
+        let spec = spec_with_events(&[("Approval", &["approval"])]);
+        let w = unknown_event_topic_warning(&spec, "APPROVAL").expect("warning");
+        assert!(w.contains("did you mean 'approval'?"), "{w}");
+    }
+
+    #[test]
+    fn spec_without_events_warns() {
+        let spec = spec_with_events(&[]);
+        let w = unknown_event_topic_warning(&spec, "Transfer").expect("warning");
+        assert!(w.contains("the ABI declares no events"), "{w}");
+    }
 }
 
 #[cfg(test)]

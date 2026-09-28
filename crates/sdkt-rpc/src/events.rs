@@ -11,12 +11,32 @@ pub struct ContractEvent {
     pub value: Option<String>,
 }
 
+/// One RPC topic filter: a list of per-position segment matchers, where each
+/// segment is a base64 XDR `ScVal`, [`TOPIC_WILDCARD_ONE`] or (last position
+/// only) [`TOPIC_WILDCARD_REST`].
+pub type TopicFilter = Vec<String>;
+
+/// Segment matcher that matches exactly one topic of any value.
+pub const TOPIC_WILDCARD_ONE: &str = "*";
+/// Trailing segment matcher that matches zero or more remaining topics.
+pub const TOPIC_WILDCARD_REST: &str = "**";
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct EventFilter {
     #[serde(rename = "type")]
     pub filter_type: String,
     pub contract_ids: Vec<String>,
+    /// Topic matchers; an event matches if any one filter matches. Omitted from
+    /// the request when `None`, so unfiltered queries are unchanged on the wire.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub topics: Option<Vec<TopicFilter>>,
+}
+
+/// Topic filter matching events whose first topic (the event name symbol) is
+/// `first_topic_b64`, regardless of how many topics follow it.
+pub fn first_topic_filter(first_topic_b64: impl Into<String>) -> TopicFilter {
+    vec![first_topic_b64.into(), TOPIC_WILDCARD_REST.to_string()]
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -88,6 +108,18 @@ pub async fn get_contract_events(
     start_ledger: Option<u32>,
     end_ledger: Option<u32>,
 ) -> Result<Vec<ContractEvent>, RpcError> {
+    get_contract_events_filtered(client, contract_id, start_ledger, end_ledger, None).await
+}
+
+/// Like [`get_contract_events`], but sends `topics` as the server-side topic
+/// matcher of the contract filter so only matching events are returned.
+pub async fn get_contract_events_filtered(
+    client: &SorobanRpcClient,
+    contract_id: &str,
+    start_ledger: Option<u32>,
+    end_ledger: Option<u32>,
+    topics: Option<Vec<TopicFilter>>,
+) -> Result<Vec<ContractEvent>, RpcError> {
     // Fast rejection if both start and end are provided and inverted, prior to any RPC call.
     if let (Some(start), Some(end)) = (start_ledger, end_ledger) {
         if start > end {
@@ -131,6 +163,7 @@ pub async fn get_contract_events(
         filters: vec![EventFilter {
             filter_type: "contract".to_string(),
             contract_ids: vec![contract_id.to_string()],
+            topics,
         }],
     };
 
@@ -233,6 +266,7 @@ mod tests {
                 contract_ids: vec![
                     "CA3D5KRYM6CB7OWQ6TWYRR3Z4T7GNZLKERYNZGGA5CWVMOMG2P3T2YYW".to_string()
                 ],
+                topics: None,
             }],
         };
 
@@ -258,6 +292,7 @@ mod tests {
                 contract_ids: vec![
                     "CA3D5KRYM6CB7OWQ6TWYRR3Z4T7GNZLKERYNZGGA5CWVMOMG2P3T2YYW".to_string()
                 ],
+                topics: None,
             }],
         };
 
@@ -268,6 +303,54 @@ mod tests {
         let value: serde_json::Value = serde_json::from_str(&json).unwrap();
         assert_eq!(value["startLedger"], 1000);
         assert!(value.get("endLedger").is_none());
+    }
+
+    #[test]
+    fn test_event_filter_omits_topics_when_absent() {
+        let filter = EventFilter {
+            filter_type: "contract".to_string(),
+            contract_ids: vec![
+                "CA3D5KRYM6CB7OWQ6TWYRR3Z4T7GNZLKERYNZGGA5CWVMOMG2P3T2YYW".to_string()
+            ],
+            topics: None,
+        };
+        // Byte-identical to the pre-`topics` wire format.
+        assert_eq!(
+            serde_json::to_string(&filter).unwrap(),
+            r#"{"type":"contract","contractIds":["CA3D5KRYM6CB7OWQ6TWYRR3Z4T7GNZLKERYNZGGA5CWVMOMG2P3T2YYW"]}"#
+        );
+    }
+
+    #[test]
+    fn test_event_filter_serializes_topics_when_present() {
+        let filter = EventFilter {
+            filter_type: "contract".to_string(),
+            contract_ids: vec![
+                "CA3D5KRYM6CB7OWQ6TWYRR3Z4T7GNZLKERYNZGGA5CWVMOMG2P3T2YYW".to_string()
+            ],
+            topics: Some(vec![first_topic_filter("AAAADwAAAAhUcmFuc2Zlcg==")]),
+        };
+        let value = serde_json::to_value(&filter).unwrap();
+        assert_eq!(
+            value["topics"],
+            serde_json::json!([["AAAADwAAAAhUcmFuc2Zlcg==", "**"]])
+        );
+        assert_eq!(value["type"], "contract");
+
+        // Round-trips, and a filter without `topics` deserializes to `None`.
+        let back: EventFilter = serde_json::from_value(value).unwrap();
+        assert_eq!(back, filter);
+        let legacy: EventFilter =
+            serde_json::from_str(r#"{"type":"contract","contractIds":[]}"#).unwrap();
+        assert_eq!(legacy.topics, None);
+    }
+
+    #[test]
+    fn test_first_topic_filter_matches_any_trailing_topics() {
+        assert_eq!(
+            first_topic_filter("AAAA"),
+            vec!["AAAA".to_string(), TOPIC_WILDCARD_REST.to_string()]
+        );
     }
 
     #[tokio::test]

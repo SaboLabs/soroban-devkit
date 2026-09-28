@@ -267,7 +267,7 @@ See [`docs/plugin-authoring.md`](docs/plugins/plugin-authoring.md) for how to bu
 | `sdkt tx sign --input <xdr> --identity <name>` | Sign an envelope with a local ED25519 identity — fully offline. |
 | `sdkt tx submit <xdr>` | Submit a transaction (with optional poll; RPC). |
 | `sdkt tx build` | Typed envelope builder. |
-| `sdkt events <contract-id>` | Emitted-contract event explorer (`--abi <wasm>`). |
+| `sdkt events <contract-id>` | Emitted-contract event explorer (`--abi <wasm>`; `--topic <SYMBOL>` filters by event name server-side). |
 | `sdkt account <address>` | Account balances (native + trustlines) and complete typed signers (Horizon-enriched with RPC fallback). |
 | `sdkt call <contract> <function> [--args TYPE:VALUE...]` | Read-only contract invocation. No signing, no submission. Returns result + events. `--abi <wasm>` decodes the result via the contract spec; `--abi-contract <id>` fetches the deployed contract's on-chain WASM instead. |
 | `sdkt diff` | Offline comparison of WASM binaries and API surfaces. |
