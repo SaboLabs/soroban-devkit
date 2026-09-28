@@ -71,13 +71,13 @@ fn sdkt_version_string() -> &'static str {
 struct NetworkArgs {
     /// Use a saved network profile (see `sdkt network add`) for the RPC URL and
     /// network passphrase. Overrides .sdkt.toml defaults.
-    #[arg(long, value_name = "NAME")]
+    #[arg(long, value_name = "NAME", global = true)]
     network_profile: Option<String>,
     /// Explicit RPC endpoint URL. Overrides any profile and .sdkt.toml value.
-    #[arg(long, value_name = "URL")]
+    #[arg(long, value_name = "URL", global = true)]
     rpc_url: Option<String>,
     /// Explicit network passphrase. Overrides any profile and .sdkt.toml value.
-    #[arg(long, value_name = "PASSPHRASE")]
+    #[arg(long, value_name = "PASSPHRASE", global = true)]
     network_passphrase: Option<String>,
 }
 /// Apply resolution precedence onto a base [`NetworkConfig`].
@@ -1600,6 +1600,7 @@ enum StorageAction {
     /// submitted.
     ///
     /// Exit codes: 0 in all non-error cases (including an empty plan).
+    #[command(name = "storage-diff", alias = "diff")]
     StorageDiff {
         /// Path to the OLD (baseline) storage snapshot JSON file.
         #[arg(long, value_name = "FILE")]
@@ -1909,6 +1910,10 @@ fn parse_salt_hex(s: &str) -> Result<[u8; 20], String> {
             .map_err(|e| format!("Invalid --salt hex at byte {}: {}", i, e))?;
     }
     Ok(out)
+}
+
+fn shell_quote(s: &str) -> String {
+    format!("'{}'", s.replace('\'', "'\\''"))
 }
 
 fn parse_format_str(s: &str) -> OutputFormat {
@@ -3079,8 +3084,20 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
                         }
                     };
 
-                let old_snap = sdkt_storage::StorageSnapshot::from_report(&old_report);
-                let new_snap = sdkt_storage::StorageSnapshot::from_report(&new_report);
+                let old_snap = match sdkt_storage::StorageSnapshot::from_report(&old_report) {
+                    Ok(s) => s,
+                    Err(e) => {
+                        eprintln!("Failed to load --old snapshot '{old}': {e}");
+                        process::exit(1);
+                    }
+                };
+                let new_snap = match sdkt_storage::StorageSnapshot::from_report(&new_report) {
+                    Ok(s) => s,
+                    Err(e) => {
+                        eprintln!("Failed to load --new snapshot '{new}': {e}");
+                        process::exit(1);
+                    }
+                };
                 let diff = match sdkt_storage::diff_snapshots(&old_snap, &new_snap) {
                     Ok(d) => d,
                     Err(e) => {
@@ -3115,15 +3132,30 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
                         if !plan.keys.is_empty() {
                             println!();
                             println!("  Ready-to-run:");
+                            let mut net_args = String::new();
+                            if let Some(ref p) = net.network_profile {
+                                net_args.push_str(&format!(" --network-profile {}", shell_quote(p)));
+                            }
+                            if let Some(ref u) = net.rpc_url {
+                                net_args.push_str(&format!(" --rpc-url {}", shell_quote(u)));
+                            }
+                            if let Some(ref pass) = net.network_passphrase {
+                                net_args
+                                    .push_str(&format!(" --network-passphrase {}", shell_quote(pass)));
+                            }
+
                             let key_args: String = plan
                                 .keys
                                 .iter()
-                                .map(|k| format!(" --key {k}"))
+                                .map(|k| format!(" --key {}", shell_quote(k)))
                                 .collect::<Vec<_>>()
                                 .join("");
                             println!(
-                                "    sdkt storage extend --contract {} --ledgers {}{}",
-                                plan.contract_id, plan.suggested_ledgers, key_args
+                                "    sdkt storage extend --contract {} --ledgers {}{}{}",
+                                shell_quote(&plan.contract_id),
+                                plan.suggested_ledgers,
+                                net_args,
+                                key_args
                             );
                         }
                     }

@@ -65,8 +65,17 @@ pub struct SnapshotEntry {
 
 impl StorageSnapshot {
     /// Construct a snapshot from a [`StorageReport`] produced by the analyzer.
-    pub fn from_report(report: &StorageReport) -> Self {
-        Self {
+    ///
+    /// Returns an error if `report.total_entries > 0` but `report.entries` is empty,
+    /// indicating a legacy or summary-only report without per-entry detail.
+    pub fn from_report(report: &StorageReport) -> Result<Self, StorageError> {
+        if report.total_entries > 0 && report.entries.is_empty() {
+            return Err(StorageError::Parse(format!(
+                "Snapshot report for contract '{}' has total_entries ({}) > 0 but entries array is empty (legacy or summary-only report without per-entry detail)",
+                report.contract_id, report.total_entries
+            )));
+        }
+        Ok(Self {
             contract_id: report.contract_id.clone(),
             entries: report
                 .entries
@@ -76,7 +85,7 @@ impl StorageSnapshot {
                     current_ttl: e.current_ttl,
                 })
                 .collect(),
-        }
+        })
     }
 
     /// Build a snapshot from raw `(key, ttl)` pairs (useful in tests and CLIs
@@ -639,10 +648,22 @@ mod tests {
                 },
             ],
         };
-        let snap = StorageSnapshot::from_report(&report);
+        let snap = StorageSnapshot::from_report(&report).unwrap();
         assert_eq!(snap.contract_id, CONTRACT);
         assert_eq!(snap.entries.len(), 2);
         assert_eq!(snap.entries[0].key, "key1");
         assert_eq!(snap.entries[0].current_ttl, 10_000);
+    }
+
+    #[test]
+    fn snapshot_from_report_rejects_empty_entries_when_total_entries_positive() {
+        use crate::types::StorageReport;
+        let report = StorageReport {
+            contract_id: CONTRACT.to_string(),
+            total_entries: 3,
+            ..Default::default()
+        };
+        let err = StorageSnapshot::from_report(&report).unwrap_err();
+        assert!(matches!(err, StorageError::Parse(msg) if msg.contains("total_entries (3) > 0")));
     }
 }
