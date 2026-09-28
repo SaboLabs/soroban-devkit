@@ -23,7 +23,8 @@ pub enum ClientGenError {
     /// The interface references a type outside the supported subset.
     #[error(
         "unsupported type '{type_name}' ({where_}) in function `{function}` — \
-         the generator core supports u32|i32|u64|i64|bool|address|string|symbol|void only"
+         the generator core supports \
+         u32|i32|u64|i64|u128|i128|bool|address|string|symbol|bytes|void only"
     )]
     UnsupportedType {
         function: String,
@@ -43,8 +44,10 @@ fn map_scalar(t: &ContractType) -> Option<&'static str> {
         "i32" => Some("i32"),
         "u64" => Some("u64"),
         "i64" => Some("i64"),
+        "u128" => Some("u128"),
+        "i128" => Some("i128"),
         "bool" => Some("bool"),
-        "address" | "string" | "symbol" => Some("String"),
+        "address" | "string" | "symbol" | "bytes" => Some("String"),
         "void" => Some("()"),
         _ => None,
     }
@@ -57,10 +60,13 @@ fn scalar_type_tag(t: &ContractType) -> Option<&'static str> {
         "i32" => Some("i32"),
         "u64" => Some("u64"),
         "i64" => Some("i64"),
+        "u128" => Some("u128"),
+        "i128" => Some("i128"),
         "bool" => Some("bool"),
         "address" => Some("address"),
         "string" => Some("string"),
         "symbol" => Some("symbol"),
+        "bytes" => Some("bytes"),
         _ => None,
     }
 }
@@ -218,10 +224,20 @@ pub fn generate_client_with_options(
         } else {
             let _ = writeln!(out, "/// Typed call builder for `{}`.", f.name);
         }
+
         let _ = writeln!(out, "pub struct {} {{", struct_name);
+
         for p in &f.parameters {
             let rust_ty = map_scalar(&p.type_).expect("validated above");
             let field = rust_ident(&p.name);
+
+            if p.type_.name == "bytes" {
+                let _ = writeln!(
+                    out,
+                    "    /// Hex-encoded bytes string, e.g. `0a0bff`."
+                );
+            }
+
             if !p.doc.trim().is_empty() {
                 let _ = writeln!(
                     out,
@@ -230,8 +246,10 @@ pub fn generate_client_with_options(
                     p.doc.trim().replace('\n', " ")
                 );
             }
+
             let _ = writeln!(out, "    pub {}: {},", field, rust_ty);
         }
+
         let _ = writeln!(out, "}}");
 
         let _ = writeln!(out, "#[allow(dead_code)]");
@@ -249,19 +267,24 @@ pub fn generate_client_with_options(
         );
         let _ = writeln!(out, "    pub fn args(&self) -> Vec<String> {{");
         let _ = writeln!(out, "        vec![");
+
         for p in &f.parameters {
             let tag = scalar_type_tag(&p.type_).expect("validated above");
             let field = rust_ident(&p.name);
+
             let expr = if p.type_.name == "bool" || p.type_.name.starts_with(['u', 'i']) {
                 format!("self.{}.to_string()", field)
             } else {
                 format!("self.{}.clone()", field)
             };
+
             let _ = writeln!(out, "            format!(\"{}:{{}}\", {}),", tag, expr);
         }
+
         let _ = writeln!(out, "        ]");
         let _ = writeln!(out, "    }}");
         let _ = writeln!(out, "}}");
+
         // Return type alias at module level (stable Rust — an associated type
         // inside an inherent impl would require nightly).
         let _ = writeln!(
@@ -351,6 +374,31 @@ mod tests {
         assert!(code.contains("format!(\"u64:{}\", self.amount.to_string())"));
         assert!(code.contains("format!(\"bool:{}\", self.flag.to_string())"));
         assert!(code.contains("pub type TransferOutput = ();"));
+    }
+
+    #[test]
+    fn generates_u128_i128_and_bytes() {
+        let spec = spec_of(vec![func(
+            "transfer",
+            vec![
+                param("amount", "u128", "primitive"),
+                param("delta", "i128", "primitive"),
+                param("data", "bytes", "primitive"),
+            ],
+            vec![],
+        )]);
+
+        let code = generate_client(&spec).unwrap();
+
+        assert!(code.contains("pub amount: u128,"));
+        assert!(code.contains("pub delta: i128,"));
+        assert!(code.contains("pub data: String,"));
+
+        assert!(code.contains("format!(\"u128:{}\", self.amount.to_string())"));
+        assert!(code.contains("format!(\"i128:{}\", self.delta.to_string())"));
+        assert!(code.contains("format!(\"bytes:{}\", self.data.clone())"));
+
+        assert!(code.contains("/// Hex-encoded bytes string, e.g. `0a0bff`."));
     }
 
     #[test]
@@ -495,10 +543,14 @@ mod tests {
 
         // Header documents the skipped function and its detail
         assert!(code.contains("// Skipped unsupported functions:"));
-        assert!(code.contains("// - batch: unsupported type 'compound:Map' (parameter `transfers`) in function `batch`"));
+        assert!(code.contains(
+            "// - batch: unsupported type 'compound:Map' (parameter `transfers`) in function `batch`"
+        ));
 
         // contract_functions lists only supported functions in spec order
-        assert!(code.contains("pub fn contract_functions() -> &'static [&'static str] {\n    &[\"hello\", \"increment\"]\n}"));
+        assert!(code.contains(
+            "pub fn contract_functions() -> &'static [&'static str] {\n    &[\"hello\", \"increment\"]\n}"
+        ));
     }
 
     #[test]
@@ -566,10 +618,26 @@ mod tests {
     fn skip_unsupported_preserves_spec_order() {
         let spec = spec_of(vec![
             func("first", vec![param("a", "u32", "primitive")], vec![]),
-            func("skip1", vec![param("b", "Vec", "compound")], vec![]),
-            func("second", vec![param("c", "u64", "primitive")], vec![]),
-            func("skip2", vec![param("d", "Map", "compound")], vec![]),
-            func("third", vec![param("e", "bool", "primitive")], vec![]),
+            func(
+                "skip1",
+                vec![param("b", "Vec", "compound")],
+                vec![],
+            ),
+            func(
+                "second",
+                vec![param("c", "u64", "primitive")],
+                vec![],
+            ),
+            func(
+                "skip2",
+                vec![param("d", "Map", "compound")],
+                vec![],
+            ),
+            func(
+                "third",
+                vec![param("e", "bool", "primitive")],
+                vec![],
+            ),
         ]);
 
         let opts = GenerateOptions {
