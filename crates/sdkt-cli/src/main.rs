@@ -4909,193 +4909,17 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
                 return Err("No Rust source files (.rs) found in the supplied paths".into());
             }
 
-            #[allow(unused_mut)]
-            let mut loaded_plugins = 0usize;
-
-            if rules.is_empty() {
-                if !no_plugins {
-                    let installed = sdkt_audit::plugin_store::list();
-                    for meta in installed {
-                        if meta.abi_major != sdkt_audit::plugin_abi::SDKT_AUDIT_ABI_MAJOR {
-                            eprintln!(
-                                "Warning: skipping plugin '{}': ABI mismatch (plugin v{}.x, host v{}.x)",
-                                meta.id, meta.abi_major, sdkt_audit::plugin_abi::SDKT_AUDIT_ABI_MAJOR
-                            );
-                            continue;
-                        }
-
-                        let Some(artifact_path) = sdkt_audit::plugin_store::resolve(&meta.id)
-                        else {
-                            eprintln!("Warning: skipping plugin '{}': artifact not found", meta.id);
-                            continue;
-                        };
-
-                        let ext = artifact_path
-                            .extension()
-                            .and_then(|e| e.to_str())
-                            .map(|e| e.to_ascii_lowercase())
-                            .unwrap_or_default();
-
-                        match ext.as_str() {
-                            "so" | "dylib" | "dll" => {
-                                #[cfg(feature = "plugins")]
-                                {
-                                    match sdkt_audit::load_and_register(&artifact_path, &src) {
-                                        Ok(_) => loaded_plugins += 1,
-                                        Err(e) => eprintln!(
-                                            "Warning: skipping native plugin '{}': {}",
-                                            meta.id, e
-                                        ),
-                                    }
-                                }
-                                #[cfg(not(feature = "plugins"))]
-                                {
-                                    eprintln!(
-                                        "Warning: skipping native plugin '{}': build compiled without `plugins` feature",
-                                        meta.id
-                                    );
-                                }
-                            }
-                            "wasm" => {
-                                #[cfg(feature = "wasm-plugins")]
-                                {
-                                    match sdkt_audit::load_and_register_wasm(&artifact_path, &src) {
-                                        Ok(_) => loaded_plugins += 1,
-                                        Err(e) => eprintln!(
-                                            "Warning: skipping WASM plugin '{}': {}",
-                                            meta.id, e
-                                        ),
-                                    }
-                                }
-                                #[cfg(not(feature = "wasm-plugins"))]
-                                {
-                                    eprintln!(
-                                        "Warning: skipping WASM plugin '{}': build compiled without `wasm-plugins` feature",
-                                        meta.id
-                                    );
-                                }
-                            }
-                            _ => {
-                                eprintln!(
-                                    "Warning: skipping plugin '{}': unsupported artifact format",
-                                    meta.id
-                                );
-                            }
-                        }
-                    }
-                }
-            } else {
-                for r in &rules {
-                    if let Some(meta) = sdkt_audit::plugin_store::show(r) {
-                        if meta.abi_major != sdkt_audit::plugin_abi::SDKT_AUDIT_ABI_MAJOR {
-                            continue;
-                        }
-                    }
-
-                    let resolved = sdkt_audit::plugin_store::resolve(r)
-                        .unwrap_or_else(|| std::path::PathBuf::from(r));
-                    let path_r = resolved.as_path();
-
-                    // Directories pass through as no-ops (validated for existence above).
-                    if path_r.is_dir() {
-                        continue;
-                    }
-
-                    let ext = path_r
-                        .extension()
-                        .and_then(|e| e.to_str())
-                        .map(|e| e.to_ascii_lowercase())
-                        .unwrap_or_default();
-
-                    match ext.as_str() {
-                        "so" | "dylib" | "dll" => {
-                            #[cfg(feature = "plugins")]
-                            {
-                                match sdkt_audit::load_and_register(path_r, &src) {
-                                    Ok(_) => loaded_plugins += 1,
-                                    Err(e) => {
-                                        if matches!(
-                                            e,
-                                            sdkt_audit::PluginLoadError::AbiMismatch { .. }
-                                        ) {
-                                            eprintln!(
-                                                "Warning: skipping native plugin '{}': {}",
-                                                r, e
-                                            );
-                                            continue;
-                                        }
-                                        eprintln!("Error loading native plugin '{}': {}", r, e);
-                                        process::exit(1);
-                                    }
-                                }
-                            }
-                            #[cfg(not(feature = "plugins"))]
-                            {
-                                eprintln!(
-                                    "Error: '{}' is a native plugin artifact but this build was compiled \
-                                     without the `plugins` feature. Rebuild with --features plugins.",
-                                    r
-                                );
-                                process::exit(1);
-                            }
-                        }
-                        "wasm" => {
-                            #[cfg(feature = "wasm-plugins")]
-                            {
-                                match sdkt_audit::load_and_register_wasm(path_r, &src) {
-                                    Ok(_) => loaded_plugins += 1,
-                                    Err(e) => {
-                                        if matches!(
-                                            e,
-                                            sdkt_audit::WasmPluginLoadError::AbiMismatch { .. }
-                                        ) {
-                                            eprintln!(
-                                                "Warning: skipping WASM plugin '{}': {}",
-                                                r, e
-                                            );
-                                            continue;
-                                        }
-                                        eprintln!("Error loading WASM plugin '{}': {}", r, e);
-                                        process::exit(1);
-                                    }
-                                }
-                            }
-                            #[cfg(not(feature = "wasm-plugins"))]
-                            {
-                                eprintln!(
-                                    "Error: '{}' is a WASM plugin artifact but this build was compiled \
-                                     without the `wasm-plugins` feature. Rebuild with --features wasm-plugins.",
-                                    r
-                                );
-                                process::exit(1);
-                            }
-                        }
-                        _ => {
-                            eprintln!(
-                                "Warning: skipping plugin '{}': unsupported artifact format",
-                                r
-                            );
-                        }
-                    }
-                }
-            }
-
-            // When the `plugins` feature is enabled, link the reference example
-            // rule into the registry. Off by default → identical behavior.
-            #[cfg(feature = "plugins")]
-            sdkt_audit_example_rule::register();
-
-            let disabled_refs: Vec<&str> = disable.iter().map(String::as_str).collect();
             let single_file = paths.len() == 1
                 && source_paths.len() == 1
                 && std::path::Path::new(&paths[0]).is_file();
             let multi_file = !single_file;
 
-            let multi_file_plugin_paths = if multi_file {
+            let multi_file_plugin_paths: Vec<(std::path::PathBuf, String)> = {
                 let mut paths_out = Vec::new();
                 if rules.is_empty() {
                     if !no_plugins {
-                        for meta in sdkt_audit::plugin_store::list() {
+                        let installed = sdkt_audit::plugin_store::list();
+                        for meta in installed {
                             if meta.abi_major != sdkt_audit::plugin_abi::SDKT_AUDIT_ABI_MAJOR {
                                 eprintln!(
                                     "Warning: skipping plugin '{}': ABI mismatch (plugin v{}.x, host v{}.x)",
@@ -5112,7 +4936,47 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
                                 );
                                 continue;
                             };
-                            paths_out.push(artifact_path);
+
+                            let ext = artifact_path
+                                .extension()
+                                .and_then(|e| e.to_str())
+                                .map(|e| e.to_ascii_lowercase())
+                                .unwrap_or_default();
+
+                            match ext.as_str() {
+                                "so" | "dylib" | "dll" => {
+                                    #[cfg(feature = "plugins")]
+                                    {
+                                        paths_out.push((artifact_path, meta.id.clone()));
+                                    }
+                                    #[cfg(not(feature = "plugins"))]
+                                    {
+                                        eprintln!(
+                                            "Warning: skipping native plugin '{}': build compiled without `plugins` feature",
+                                            meta.id
+                                        );
+                                    }
+                                }
+                                "wasm" => {
+                                    #[cfg(feature = "wasm-plugins")]
+                                    {
+                                        paths_out.push((artifact_path, meta.id.clone()));
+                                    }
+                                    #[cfg(not(feature = "wasm-plugins"))]
+                                    {
+                                        eprintln!(
+                                            "Warning: skipping WASM plugin '{}': build compiled without `wasm-plugins` feature",
+                                            meta.id
+                                        );
+                                    }
+                                }
+                                _ => {
+                                    eprintln!(
+                                        "Warning: skipping plugin '{}': unsupported artifact format",
+                                        meta.id
+                                    );
+                                }
+                            }
                         }
                     }
                 } else {
@@ -5125,16 +4989,67 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
 
                         let resolved = sdkt_audit::plugin_store::resolve(r)
                             .unwrap_or_else(|| std::path::PathBuf::from(r));
-                        if resolved.is_dir() {
+                        let path_r = resolved.as_path();
+
+                        if path_r.is_dir() {
                             continue;
                         }
-                        paths_out.push(resolved);
+
+                        let ext = path_r
+                            .extension()
+                            .and_then(|e| e.to_str())
+                            .map(|e| e.to_ascii_lowercase())
+                            .unwrap_or_default();
+
+                        match ext.as_str() {
+                            "so" | "dylib" | "dll" => {
+                                #[cfg(feature = "plugins")]
+                                {
+                                    paths_out.push((path_r.to_path_buf(), r.clone()));
+                                }
+                                #[cfg(not(feature = "plugins"))]
+                                {
+                                    eprintln!(
+                                        "Error: '{}' is a native plugin artifact but this build was compiled \
+                                         without the `plugins` feature. Rebuild with --features plugins.",
+                                        r
+                                    );
+                                    process::exit(1);
+                                }
+                            }
+                            "wasm" => {
+                                #[cfg(feature = "wasm-plugins")]
+                                {
+                                    paths_out.push((path_r.to_path_buf(), r.clone()));
+                                }
+                                #[cfg(not(feature = "wasm-plugins"))]
+                                {
+                                    eprintln!(
+                                        "Error: '{}' is a WASM plugin artifact but this build was compiled \
+                                         without the `wasm-plugins` feature. Rebuild with --features wasm-plugins.",
+                                        r
+                                    );
+                                    process::exit(1);
+                                }
+                            }
+                            _ => {
+                                eprintln!(
+                                    "Warning: skipping plugin '{}': unsupported artifact format",
+                                    r
+                                );
+                            }
+                        }
                     }
                 }
                 paths_out
-            } else {
-                Vec::new()
             };
+
+            // When the `plugins` feature is enabled, link the reference example
+            // rule into the registry. Off by default → identical behavior.
+            #[cfg(feature = "plugins")]
+            sdkt_audit_example_rule::register();
+
+            let disabled_refs: Vec<&str> = disable.iter().map(String::as_str).collect();
 
             let mut aggregate = sdkt_audit::AuditReport::default();
             let mut per_file = Vec::new();
@@ -5163,150 +5078,138 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
                     }
                 };
 
-                if multi_file {
-                    let mut local_reg = sdkt_audit::RuleRegistry::new();
-                    local_reg.register_builtin_rules();
+                let mut local_reg = sdkt_audit::RuleRegistry::new();
+                local_reg.register_builtin_rules();
 
-                    for artifact_path in &multi_file_plugin_paths {
-                        let ext = artifact_path
-                            .extension()
-                            .and_then(|e| e.to_str())
-                            .map(|e| e.to_ascii_lowercase())
-                            .unwrap_or_default();
+                for (plugin_path, plugin_id) in &multi_file_plugin_paths {
+                    let ext = plugin_path
+                        .extension()
+                        .and_then(|e| e.to_str())
+                        .map(|e| e.to_ascii_lowercase())
+                        .unwrap_or_default();
 
-                        match ext.as_str() {
-                            "so" | "dylib" | "dll" => {
-                                #[cfg(feature = "plugins")]
-                                {
-                                    match sdkt_audit::PluginRule::load(artifact_path, &source) {
-                                        Ok(rule) => local_reg.register_rule(Box::new(rule)),
-                                        Err(e) => {
-                                            if matches!(
-                                                e,
-                                                sdkt_audit::PluginLoadError::AbiMismatch { .. }
-                                            ) {
-                                                eprintln!(
-                                                    "Warning: skipping native plugin '{}': {}",
-                                                    artifact_path.display(),
-                                                    e
-                                                );
-                                                continue;
-                                            }
+                    match ext.as_str() {
+                        "so" | "dylib" | "dll" => {
+                            #[cfg(feature = "plugins")]
+                            {
+                                match sdkt_audit::PluginRule::load(plugin_path, &source) {
+                                    Ok(rule) => local_reg.register_rule(Box::new(rule)),
+                                    Err(e) => {
+                                        if matches!(
+                                            e,
+                                            sdkt_audit::PluginLoadError::AbiMismatch { .. }
+                                        ) {
                                             eprintln!(
-                                                "Error loading native plugin '{}': {}",
-                                                artifact_path.display(),
-                                                e
+                                                "Warning: skipping native plugin '{}': {}",
+                                                plugin_id, e
                                             );
-                                            process::exit(1);
+                                            continue;
                                         }
+                                        eprintln!(
+                                            "Error loading native plugin '{}': {}",
+                                            plugin_id, e
+                                        );
+                                        process::exit(1);
                                     }
                                 }
-                                #[cfg(not(feature = "plugins"))]
-                                {
-                                    eprintln!(
-                                        "Error: '{}' is a native plugin artifact but this build was compiled \
-                                         without the `plugins` feature. Rebuild with --features plugins.",
-                                        artifact_path.display()
-                                    );
-                                    process::exit(1);
-                                }
                             }
-                            "wasm" => {
-                                #[cfg(feature = "wasm-plugins")]
-                                {
-                                    match sdkt_audit::WasmPluginRule::load(artifact_path, &source) {
-                                        Ok(rule) => local_reg.register_rule(Box::new(rule)),
-                                        Err(e) => {
-                                            if matches!(
-                                                e,
-                                                sdkt_audit::WasmPluginLoadError::AbiMismatch { .. }
-                                            ) {
-                                                eprintln!(
-                                                    "Warning: skipping WASM plugin '{}': {}",
-                                                    artifact_path.display(),
-                                                    e
-                                                );
-                                                continue;
-                                            }
+                            #[cfg(not(feature = "plugins"))]
+                            {
+                                eprintln!(
+                                    "Error: '{}' is a native plugin artifact but this build was compiled \
+                                     without the `plugins` feature. Rebuild with --features plugins.",
+                                    plugin_id
+                                );
+                                process::exit(1);
+                            }
+                        }
+                        "wasm" => {
+                            #[cfg(feature = "wasm-plugins")]
+                            {
+                                match sdkt_audit::WasmPluginRule::load(plugin_path, &source) {
+                                    Ok(rule) => local_reg.register_rule(Box::new(rule)),
+                                    Err(e) => {
+                                        if matches!(
+                                            e,
+                                            sdkt_audit::WasmPluginLoadError::AbiMismatch { .. }
+                                        ) {
                                             eprintln!(
-                                                "Error loading WASM plugin '{}': {}",
-                                                artifact_path.display(),
-                                                e
+                                                "Warning: skipping WASM plugin '{}': {}",
+                                                plugin_id, e
                                             );
-                                            process::exit(1);
+                                            continue;
                                         }
+                                        eprintln!(
+                                            "Error loading WASM plugin '{}': {}",
+                                            plugin_id, e
+                                        );
+                                        process::exit(1);
                                     }
                                 }
-                                #[cfg(not(feature = "wasm-plugins"))]
-                                {
-                                    eprintln!(
-                                        "Error: '{}' is a WASM plugin artifact but this build was compiled \
-                                         without the `wasm-plugins` feature. Rebuild with --features wasm-plugins.",
-                                        artifact_path.display()
-                                    );
-                                    process::exit(1);
-                                }
                             }
-                            _ => {}
+                            #[cfg(not(feature = "wasm-plugins"))]
+                            {
+                                eprintln!(
+                                    "Error: '{}' is a WASM plugin artifact but this build was compiled \
+                                     without the `wasm-plugins` feature. Rebuild with --features wasm-plugins.",
+                                    plugin_id
+                                );
+                                process::exit(1);
+                            }
                         }
-                    }
-
-                    match sdkt_audit::audit_source_with_registry(
-                        &source,
-                        &local_reg,
-                        &disabled_refs,
-                    ) {
-                        Ok(mut report) => {
-                            for finding in &mut report.findings {
-                                finding.file = Some(source_path.display().to_string());
-                            }
-
-                            for finding in &report.findings {
-                                aggregate.add(finding.clone());
-                            }
-
-                            per_file.push((source_path.clone(), report));
-                        }
-                        Err(e) => {
-                            had_file_errors = true;
-
-                            let finding = sdkt_audit::Finding {
-                                rule_id: "AUDIT-PARSE".to_string(),
-                                severity: sdkt_audit::Severity::Critical,
-                                message: format!("Failed to audit source: {}", e),
-                                location: None,
-                                file: Some(source_path.display().to_string()),
-                            };
-
-                            let mut report = sdkt_audit::AuditReport::default();
-                            report.add(finding.clone());
-
-                            aggregate.add(finding);
-                            per_file.push((source_path.clone(), report));
-                        }
-                    }
-                } else {
-                    match sdkt_audit::audit_source_with(&source, &disabled_refs) {
-                        Ok(mut report) => {
-                            for finding in &mut report.findings {
-                                finding.file = Some(source_path.display().to_string());
-                            }
-
-                            for finding in &report.findings {
-                                aggregate.add(finding.clone());
-                            }
-
-                            per_file.push((source_path.clone(), report));
-                        }
-                        Err(e) => {
-                            eprintln!("Error auditing source: {}", e);
-                            process::exit(1);
+                        _ => {
+                            eprintln!(
+                                "Warning: skipping plugin '{}': unsupported artifact format",
+                                plugin_id
+                            );
                         }
                     }
                 }
-            }
 
-            if audit_fmt == AuditFormat::Json {
+                match sdkt_audit::scan_all_functions_str(&source) {
+                    Some(scans) => {
+                        let ctx = sdkt_audit::AuditContext { spec: None };
+                        let mut report = sdkt_audit::AuditReport::default();
+                        local_reg.run_all(&scans, &ctx, &disabled_refs, &mut report);
+
+                        if multi_file {
+                            for finding in &mut report.findings {
+                                finding.file = Some(source_path.display().to_string());
+                            }
+                        }
+
+                        for finding in &report.findings {
+                            aggregate.add(finding.clone());
+                        }
+
+                        per_file.push((source_path.clone(), report));
+                    }
+                    None => {
+                        let e = "Failed to parse Rust source";
+                        if single_file {
+                            eprintln!("Error auditing source: {}", e);
+                            process::exit(1);
+                        }
+
+                        had_file_errors = true;
+
+                        let finding = sdkt_audit::Finding {
+                            rule_id: "AUDIT-PARSE".to_string(),
+                            severity: sdkt_audit::Severity::Critical,
+                            message: format!("Failed to audit source: {}", e),
+                            location: None,
+                            file: Some(source_path.display().to_string()),
+                        };
+
+                        let mut report = sdkt_audit::AuditReport::default();
+                        report.add(finding.clone());
+
+                        aggregate.add(finding);
+                        per_file.push((source_path.clone(), report));
+                    }
+                }
+            }
+            if fmt == OutputFormat::Json {
                 if multi_file {
                     #[derive(serde::Serialize)]
                     struct MultiFileAuditReport {
@@ -5334,43 +5237,9 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
                 } else {
                     println!("{}", serde_json::to_string(&aggregate)?);
                 }
-            } else if audit_fmt == AuditFormat::Sarif {
-                let rules_info: Vec<sdkt_audit::RuleInfo> = sdkt_audit::all_rules()
-                    .iter()
-                    .map(|r| sdkt_audit::RuleInfo {
-                        id: r.id().to_string(),
-                        severity: r.severity(),
-                        description: r.description().to_string(),
-                    })
-                    .collect();
-
-                if single_file {
-                    let sarif_str = sdkt_audit::report_to_sarif_string(
-                        &aggregate,
-                        &source_paths[0].display().to_string(),
-                        sdkt_version_string(),
-                        &rules_info,
-                    )?;
-                    println!("{}", sarif_str);
-                } else {
-                    let sarif_str = sdkt_audit::report_to_sarif_string_multi_file(
-                        &aggregate,
-                        sdkt_version_string(),
-                        &rules_info,
-                    )?;
-                    println!("{}", sarif_str);
-                }
             } else {
                 for (path, report) in &per_file {
                     println!("Static Analysis Report: {}", path.display());
-
-                    if loaded_plugins > 0 {
-                        println!(
-                            "Rules loaded: 5 built-in, {} plugin{}",
-                            loaded_plugins,
-                            if loaded_plugins == 1 { "" } else { "s" }
-                        );
-                    }
 
                     println!(
                         "Severity: {} critical, {} warning, {} info ({} total)",
@@ -5384,14 +5253,12 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
                         println!("No issues found.");
                     } else {
                         println!();
-
                         for f in &report.findings {
                             let loc = f
                                 .location
                                 .as_ref()
                                 .map(|l| format!(" [{}]", l))
                                 .unwrap_or_default();
-
                             println!("  [{}] {} {}: {}", f.severity, f.rule_id, loc, f.message);
                         }
                     }
@@ -5409,7 +5276,6 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
                     );
                 }
             }
-
             if had_file_errors {
                 process::exit(1);
             }
