@@ -7,7 +7,7 @@ use crate::error::StorageError;
 use directories::ProjectDirs;
 use sdkt_wasm::WasmMetadata;
 use std::fs;
-use std::path::{Path, PathBuf};
+use std::path::{Component, Path, PathBuf};
 
 /// Info about the current state of the WASM cache for a specific network.
 #[derive(Debug, Clone, PartialEq)]
@@ -68,6 +68,7 @@ impl WasmCache {
     /// Returns the directory for a specific network (e.g., `testnet`).
     /// Creates the directory if it doesn't exist.
     fn network_dir(&self, network: &str) -> Result<PathBuf, StorageError> {
+        validate_network_name(network)?;
         let net_dir = self.base_dir.join("wasm").join(network);
         if !net_dir.exists() {
             fs::create_dir_all(&net_dir).map_err(StorageError::Io)?;
@@ -169,6 +170,7 @@ impl WasmCache {
     /// working on fresh CI runners (Linux/macOS/Windows) where the cache path
     /// does not yet exist.
     pub fn cache_info(&self, network: &str) -> Result<CacheInfo, StorageError> {
+        validate_network_name(network)?;
         let net_dir = self.base_dir.join("wasm").join(network);
 
         let mut entry_count = 0;
@@ -209,6 +211,26 @@ impl WasmCache {
     }
 }
 
+fn validate_network_name(network: &str) -> Result<(), StorageError> {
+    if network.is_empty()
+        || network == "."
+        || network == ".."
+        || network.contains('/')
+        || network.contains('\\')
+        || !matches!(
+            Path::new(network).components().next(),
+            Some(Component::Normal(_))
+        )
+        || Path::new(network).components().nth(1).is_some()
+    {
+        return Err(StorageError::ConfigError(format!(
+            "invalid network name '{}': must be a non-empty path component",
+            network
+        )));
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -228,6 +250,11 @@ mod tests {
             exports: vec![],
             imports: vec![],
             custom_sections: vec![],
+            function_count: 0,
+            memory: None,
+            table_count: 0,
+            global_count: 0,
+            data_segment_count: 0,
         }
     }
 
@@ -318,6 +345,38 @@ mod tests {
         let (cache, _dir) = get_temp_cache();
         let info = cache.cache_info("nonexistent-network").unwrap();
         assert_eq!(info.entry_count, 0);
+    }
+
+    #[test]
+    fn rejects_path_traversal_before_filesystem_access() {
+        let (cache, dir) = get_temp_cache();
+        let outside = dir.path().join("outside");
+        fs::create_dir_all(&outside).unwrap();
+
+        assert!(matches!(
+            cache.clear("../outside"),
+            Err(StorageError::ConfigError(_))
+        ));
+        assert!(outside.exists());
+        assert!(matches!(
+            cache.remove("nested/name", "hash"),
+            Err(StorageError::ConfigError(_))
+        ));
+        assert!(matches!(
+            cache.cache_info(""),
+            Err(StorageError::ConfigError(_))
+        ));
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn rejects_drive_relative_network_name() {
+        let (cache, _dir) = get_temp_cache();
+
+        assert!(matches!(
+            cache.clear("C:outside"),
+            Err(StorageError::ConfigError(_))
+        ));
     }
 
     // ---------------------------------------------------------------------------

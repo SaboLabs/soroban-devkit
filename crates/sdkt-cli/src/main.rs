@@ -71,13 +71,13 @@ fn sdkt_version_string() -> &'static str {
 struct NetworkArgs {
     /// Use a saved network profile (see `sdkt network add`) for the RPC URL and
     /// network passphrase. Overrides .sdkt.toml defaults.
-    #[arg(long, value_name = "NAME")]
+    #[arg(long, value_name = "NAME", global = true)]
     network_profile: Option<String>,
     /// Explicit RPC endpoint URL. Overrides any profile and .sdkt.toml value.
-    #[arg(long, value_name = "URL")]
+    #[arg(long, value_name = "URL", global = true)]
     rpc_url: Option<String>,
     /// Explicit network passphrase. Overrides any profile and .sdkt.toml value.
-    #[arg(long, value_name = "PASSPHRASE")]
+    #[arg(long, value_name = "PASSPHRASE", global = true)]
     network_passphrase: Option<String>,
 }
 /// Apply resolution precedence onto a base [`NetworkConfig`].
@@ -648,6 +648,11 @@ enum Commands {
     Encode {
         /// One typed value: u32, i32, u64, i64, u128, i128, bool, string, symbol, bytes, or address.
         /// Examples: u128:1000000 i128:-1000 bytes:deadbeef
+        ///
+        /// Or json:<JSON> to encode ONE composite value (json:[1,2,3] is a single Vec):
+        /// array -> Vec, object -> Map with String keys, null -> Void, bool -> Bool,
+        /// string -> String, integer -> smallest of u32/u64 (or i32/i64 if negative).
+        /// Floats are rejected. Example: json:'[{"alice":"100"},{"bob":"250"}]'
         #[arg(value_name = "TYPE:VALUE", num_args = 1..)]
         values: Vec<String>,
     },
@@ -846,8 +851,15 @@ enum Commands {
     },
     /// Deploy a contract (Upload WASM + Instantiate)
     Deploy {
+        /// Path to the WASM binary to upload and deploy. Mutually exclusive with
+        /// `--wasm-hash`.
         #[arg(short, long)]
-        wasm: String,
+        wasm: Option<String>,
+        /// Create-only: deploy from already-uploaded code identified by its
+        /// 64-char hex WASM hash, skipping the upload step (resume a deploy whose
+        /// upload succeeded but create failed). Mutually exclusive with `--wasm`.
+        #[arg(long, value_name = "HASH")]
+        wasm_hash: Option<String>,
         /// Deployment salt (40 hex chars = 20 bytes). Auto-generated if omitted.
         #[arg(short, long)]
         salt: Option<String>,
@@ -1270,6 +1282,17 @@ enum TxAction {
         #[arg(short, long, default_value = "pretty")]
         format: String,
     },
+    /// Show a transaction envelope in human-readable form (offline)
+    ///
+    /// Renders source, sequence, fee, memo, each operation (contract calls
+    /// with decoded arguments), the Soroban footprint and attached signatures,
+    /// so an envelope can be reviewed before `tx sign` or `tx submit`.
+    Decode {
+        /// Base64 XDR transaction envelope or path to a file containing it
+        envelope: String,
+        #[arg(short, long, default_value = "pretty")]
+        format: String,
+    },
     /// Simulate a transaction envelope without submitting it
     Simulate {
         /// Base64 XDR transaction envelope or path to a file containing it
@@ -1334,6 +1357,14 @@ enum TxAction {
         /// Optional file path to write the output envelope XDR
         #[arg(short, long)]
         output: Option<String>,
+        /// Attach a text memo (up to 28 bytes) to the built transaction.
+        /// Mutually exclusive with `--memo-id`.
+        #[arg(long, value_name = "TEXT")]
+        memo_text: Option<String>,
+        /// Attach a numeric ID memo to the built transaction.
+        /// Mutually exclusive with `--memo-text`.
+        #[arg(long, value_name = "ID")]
+        memo_id: Option<u64>,
     },
     /// Sign a transaction envelope using a local identity ( / PR2)
     Sign {
@@ -1370,6 +1401,9 @@ enum ProjectCommand {
         /// without re-deploying (and re-paying for) what already succeeded.
         #[arg(long)]
         skip_deployed: bool,
+        /// Identity name to sign and pay for each contract deployment. Defaults to "default".
+        #[arg(short = 'I', long, default_value = "default")]
+        identity: String,
         #[arg(short, long, default_value = "pretty")]
         format: String,
     },
@@ -1621,6 +1655,35 @@ enum StorageAction {
             default_value = "persistent"
         )]
         durability: String,
+        #[arg(short, long, default_value = "pretty")]
+        format: String,
+    },
+    /// Diff two storage snapshots and, optionally, derive a TTL extension plan.
+    ///
+    /// `--old` and `--new` each point to a JSON file that is the output of
+    /// `sdkt storage analyze --format json` (a serialised `StorageReport`).
+    ///
+    /// Without `--extend-plan` the command prints the diff entries only.
+    ///
+    /// With `--extend-plan` the command additionally prints the remediation
+    /// plan: the contract ID, the ledger keys covering the removed/expiring
+    /// entries, and a suggested `--ledgers` value.  Nothing is signed or
+    /// submitted.
+    ///
+    /// Exit codes: 0 in all non-error cases (including an empty plan).
+    #[command(name = "storage-diff", alias = "diff")]
+    StorageDiff {
+        /// Path to the OLD (baseline) storage snapshot JSON file.
+        #[arg(long, value_name = "FILE")]
+        old: String,
+        /// Path to the NEW (current) storage snapshot JSON file.
+        #[arg(long, value_name = "FILE")]
+        new: String,
+        /// Derive and print a TTL extension plan from the diff.
+        /// Prints the contract, ledger keys, and suggested --ledgers value.
+        /// No transaction is built, signed, or submitted.
+        #[arg(long, default_value_t = false)]
+        extend_plan: bool,
         #[arg(short, long, default_value = "pretty")]
         format: String,
     },
@@ -2113,6 +2176,8 @@ fn report_bundle(
         std::process::exit(1);
     }
     println!("Bundle verified: lock and dependency integrity match the packed bundle.");
+fn shell_quote(s: &str) -> String {
+    format!("'{}'", s.replace('\'', "'\\''"))
 }
 
 fn parse_format_str(s: &str) -> OutputFormat {
@@ -2123,6 +2188,119 @@ fn parse_format_str(s: &str) -> OutputFormat {
             eprintln!("Invalid format '{}'. Use 'json' or 'pretty'.", other);
             process::exit(1);
         }
+    }
+}
+
+/// Pretty-print a decoded transaction envelope for `tx decode`.
+fn print_envelope_pretty(view: &sdkt_xdr::EnvelopeView) {
+    println!("Transaction Envelope ({}):", view.envelope_type);
+    println!("  Source:     {}", view.source);
+    println!("  Sequence:   {}", view.sequence);
+    println!("  Fee:        {} stroops", view.fee);
+    if let Some(memo) = &view.memo {
+        println!("  Memo:       {}", memo);
+    }
+    println!("  Operations ({}):", view.operations.len());
+    for (i, op) in view.operations.iter().enumerate() {
+        println!("    [{}] {}", i, op.kind);
+        if let Some(source) = &op.source {
+            println!("        Source:    {}", source);
+        }
+        if let Some(contract) = &op.contract {
+            println!("        Contract:  {}", contract);
+        }
+        if let Some(function) = &op.function {
+            println!("        Function:  {}", function);
+        }
+        if !op.args.is_empty() {
+            println!("        Args:      {}", op.args.join(", "));
+        }
+        if op.auth_entries > 0 {
+            println!("        Auth:      {} entries", op.auth_entries);
+        }
+    }
+    if let Some(soroban) = &view.soroban {
+        println!("  Soroban Data:");
+        println!(
+            "    Footprint:    {} read-only, {} read-write",
+            soroban.read_only, soroban.read_write
+        );
+        println!("    Instructions: {}", soroban.instructions);
+        println!("    Disk reads:   {} bytes", soroban.disk_read_bytes);
+        println!("    Writes:       {} bytes", soroban.write_bytes);
+        println!("    Resource fee: {} stroops", soroban.resource_fee);
+    }
+    print_signatures("  ", &view.signatures);
+    if let Some(bump) = &view.fee_bump {
+        println!("  Fee Bump:");
+        println!("    Fee source: {}", bump.fee_source);
+        println!("    Fee:        {} stroops", bump.fee);
+        print_signatures("    ", &bump.signatures);
+    }
+}
+
+fn print_signatures(indent: &str, signatures: &[sdkt_xdr::envelope::SignatureView]) {
+    println!("{}Signatures: {}", indent, signatures.len());
+    for sig in signatures {
+        match &sig.signer {
+            Some(signer) => println!("{}  - ed25519, {}", indent, signer),
+            None => println!("{}  - hint {} (signer not in envelope)", indent, sig.hint),
+        }
+    }
+}
+
+/// Pretty-print a [`sdkt_storage::SnapshotDiff`] to stdout.
+fn print_diff_pretty(diff: &sdkt_storage::SnapshotDiff) {
+    use sdkt_storage::DiffStatus;
+
+    println!("Storage Diff for Contract: {}", diff.contract_id);
+    println!("Total entries: {}", diff.entries.len());
+
+    let removed: Vec<_> = diff
+        .entries
+        .iter()
+        .filter(|e| e.status == DiffStatus::Removed)
+        .collect();
+    let expiring: Vec<_> = diff
+        .entries
+        .iter()
+        .filter(|e| e.status == DiffStatus::ExpiringSoon)
+        .collect();
+    let unchanged: Vec<_> = diff
+        .entries
+        .iter()
+        .filter(|e| e.status == DiffStatus::Unchanged)
+        .collect();
+
+    println!(
+        "  Removed:       {} | Expiring Soon: {} | Unchanged: {}",
+        removed.len(),
+        expiring.len(),
+        unchanged.len()
+    );
+
+    if !removed.is_empty() {
+        println!("\nRemoved entries ({}):", removed.len());
+        for e in &removed {
+            println!(
+                "  [removed] key={} (old_ttl={})",
+                e.key,
+                e.old_ttl.map_or("?".to_string(), |t| t.to_string())
+            );
+        }
+    }
+    if !expiring.is_empty() {
+        println!("\nExpiring soon ({}):", expiring.len());
+        for e in &expiring {
+            println!(
+                "  [expiring] key={} (ttl={})",
+                e.key,
+                e.new_ttl.map_or("?".to_string(), |t| t.to_string())
+            );
+        }
+    }
+    if unchanged.is_empty() && removed.is_empty() && expiring.is_empty() {
+        println!("  (no entries)");
     }
 }
 
@@ -2453,8 +2631,9 @@ fn resolve_storage_analyze_keys(
 /// This is the write-direction counterpart to `sdkt decode`. Supported types
 /// are the primitives this CLI already encodes elsewhere (`parse_typed_args`):
 /// `u32`, `i32`, `u64`, `i64`, `u128`, `i128`, `bool`, `address`, `string`,
-/// `symbol`, `bytes`. Exactly one value is encoded per invocation; passing
-/// more than one is rejected to keep the output unambiguous.
+/// `symbol`, `bytes`. `json:<JSON>` encodes one composite value through
+/// `sdkt_xdr::json_to_scval`. Exactly one value is encoded per invocation;
+/// passing more than one is rejected to keep the output unambiguous.
 fn run_encode(values: &[String]) -> Result<String, String> {
     if values.is_empty() {
         return Err("no input provided: pass a value like u32:100".to_string());
@@ -2526,6 +2705,11 @@ fn run_encode(values: &[String]) -> Result<String, String> {
             .map_err(|_| format!("invalid Stellar address: {raw}"))?
             .into_scval()
             .map_err(|e| e.to_string())?,
+        "json" => {
+            let value: serde_json::Value = serde_json::from_str(raw)
+                .map_err(|e| format!("invalid JSON in '{arg}': {e}"))?;
+            sdkt_xdr::json_to_scval(&value).map_err(|e| format!("cannot encode '{arg}': {e}"))?
+        }
         other => {
             return Err(format!(
                 "unknown type '{other}'. Use u32|i32|u64|i64|u128|i128|bool|string|symbol|bytes|address"
@@ -2601,6 +2785,84 @@ mod encode_tests {
                 assert_eq!(parse_typed_args(&args, strict).unwrap_err(), encode_err);
             }
         }
+    }
+
+    /// Encode a `json:` input and decode the result back to an `ScVal`.
+    fn encode_json(json: &str) -> stellar_xdr::ScVal {
+        let b64 = run_encode(&[format!("json:{json}")]).unwrap_or_else(|e| panic!("{json}: {e}"));
+        sdkt_xdr::scval_from_base64(&b64).expect("valid ScVal XDR")
+    }
+
+    fn string(s: &str) -> stellar_xdr::ScVal {
+        use sdkt_xdr::IntoScVal;
+        s.to_string().into_scval().expect("short string")
+    }
+
+    #[test]
+    fn json_scalars_follow_converter_mapping() {
+        use stellar_xdr::ScVal;
+        assert_eq!(encode_json("null"), ScVal::Void);
+        assert_eq!(encode_json("true"), ScVal::Bool(true));
+        assert_eq!(encode_json("false"), ScVal::Bool(false));
+        assert_eq!(encode_json("1"), ScVal::U32(1));
+        assert_eq!(encode_json("-5"), ScVal::I32(-5));
+        assert_eq!(encode_json("4294967296"), ScVal::U64(4_294_967_296));
+        assert_eq!(encode_json("18446744073709551615"), ScVal::U64(u64::MAX));
+        assert_eq!(encode_json("-2147483649"), ScVal::I64(-2_147_483_649));
+        // An integer-valued JSON number matches the explicit scalar form byte for byte.
+        assert_eq!(
+            run_encode(&["json:-5".to_string()]),
+            run_encode(&["i32:-5".to_string()])
+        );
+    }
+
+    #[test]
+    fn json_containers_encode_as_one_value() {
+        use stellar_xdr::ScVal;
+        let ScVal::Vec(Some(items)) = encode_json("[1,2,3]") else {
+            panic!("expected a Vec");
+        };
+        assert_eq!(
+            items.0.to_vec(),
+            vec![ScVal::U32(1), ScVal::U32(2), ScVal::U32(3)]
+        );
+        assert!(matches!(encode_json("[]"), ScVal::Vec(Some(v)) if v.0.is_empty()));
+        assert!(matches!(encode_json("{}"), ScVal::Map(Some(m)) if m.0.is_empty()));
+
+        let ScVal::Map(Some(map)) = encode_json(r#"{"bob":"250","alice":"100"}"#) else {
+            panic!("expected a Map");
+        };
+        // Keys are Strings, emitted in sorted order as Soroban maps require.
+        let keys: Vec<_> = map.0.iter().map(|e| e.key.clone()).collect();
+        assert_eq!(keys, vec![string("alice"), string("bob")]);
+        assert_eq!(map.0[0].val, string("100"));
+    }
+
+    #[test]
+    fn json_nesting_is_preserved() {
+        use stellar_xdr::ScVal;
+        let ScVal::Vec(Some(outer)) = encode_json(r#"[{"alice":"100"},[null,true]]"#) else {
+            panic!("expected a Vec");
+        };
+        assert!(matches!(&outer.0[0], ScVal::Map(Some(m)) if m.0.len() == 1));
+        let ScVal::Vec(Some(inner)) = &outer.0[1] else {
+            panic!("expected a nested Vec");
+        };
+        assert_eq!(inner.0.to_vec(), vec![ScVal::Void, ScVal::Bool(true)]);
+    }
+
+    #[test]
+    fn json_errors_name_the_input_without_panicking() {
+        for input in ["json:[1,2", "json:{alice:1}", "json:", "json:[1] trailing"] {
+            let err = run_encode(&[input.to_string()]).unwrap_err();
+            assert!(
+                err.starts_with(&format!("invalid JSON in '{input}': ")),
+                "{input}: {err}"
+            );
+        }
+        // Valid JSON the converter cannot represent (floats) is also reported per input.
+        let err = run_encode(&["json:1.5".to_string()]).unwrap_err();
+        assert_eq!(err, "cannot encode 'json:1.5': invalid JSON argument: 1.5");
     }
 }
 
@@ -2707,20 +2969,23 @@ fn print_upgrade_verdict(v: &sdkt_wasm::UpgradeVerdict) {
     println!("Compatible: {}", if v.compatible { "YES" } else { "NO" });
     println!();
     println!("Breaking:");
-    if v.breaking_changes.is_empty() {
-        println!("  (none)");
-    } else {
-        for c in &v.breaking_changes {
-            println!("  - {}", c.label());
-        }
-    }
+    print_verdict_changes(&v.breaking_changes);
     println!();
     println!("Non-breaking:");
-    if v.non_breaking_changes.is_empty() {
+    print_verdict_changes(&v.non_breaking_changes);
+}
+
+/// Print one verdict change per line, indented with its old/new shape when the
+/// engine recorded a detail (a signature, event, or type-definition change).
+fn print_verdict_changes(changes: &[sdkt_wasm::VerdictChange]) {
+    if changes.is_empty() {
         println!("  (none)");
-    } else {
-        for c in &v.non_breaking_changes {
-            println!("  - {}", c.label());
+        return;
+    }
+    for c in changes {
+        println!("  - {}", c.label());
+        for line in c.detail.lines() {
+            println!("    {}", line.trim_start());
         }
     }
 }
@@ -3169,6 +3434,144 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
                     _ => {
                         print!("{}", estimate);
                     }
+                }
+                return Ok(());
+            }
+
+            // Storage storage-diff is completely offline and self-contained; dispatch
+            // before shared storage RPC client setup or on-chain ABI resolution.
+            if let StorageAction::StorageDiff {
+                old,
+                new,
+                extend_plan,
+                format,
+            } = &action
+            {
+                if abi.is_some() || abi_contract.is_some() {
+                    eprintln!(
+                        "Error: --abi and --abi-contract options do not apply to 'storage storage-diff'"
+                    );
+                    process::exit(1);
+                }
+
+                let fmt = parse_format_str(format);
+
+                // Load old snapshot JSON (output of `sdkt storage analyze --format json`).
+                let old_bytes = match fs::read(old) {
+                    Ok(b) => b,
+                    Err(e) => {
+                        eprintln!("Failed to read --old snapshot '{old}': {e}");
+                        process::exit(1);
+                    }
+                };
+                let old_report: sdkt_storage::StorageReport =
+                    match serde_json::from_slice(&old_bytes) {
+                        Ok(r) => r,
+                        Err(e) => {
+                            eprintln!("Failed to parse --old snapshot '{old}': {e}");
+                            process::exit(1);
+                        }
+                    };
+
+                // Load new snapshot JSON.
+                let new_bytes = match fs::read(new) {
+                    Ok(b) => b,
+                    Err(e) => {
+                        eprintln!("Failed to read --new snapshot '{new}': {e}");
+                        process::exit(1);
+                    }
+                };
+                let new_report: sdkt_storage::StorageReport =
+                    match serde_json::from_slice(&new_bytes) {
+                        Ok(r) => r,
+                        Err(e) => {
+                            eprintln!("Failed to parse --new snapshot '{new}': {e}");
+                            process::exit(1);
+                        }
+                    };
+
+                let old_snap = match sdkt_storage::StorageSnapshot::from_report(&old_report) {
+                    Ok(s) => s,
+                    Err(e) => {
+                        eprintln!("Failed to load --old snapshot '{old}': {e}");
+                        process::exit(1);
+                    }
+                };
+                let new_snap = match sdkt_storage::StorageSnapshot::from_report(&new_report) {
+                    Ok(s) => s,
+                    Err(e) => {
+                        eprintln!("Failed to load --new snapshot '{new}': {e}");
+                        process::exit(1);
+                    }
+                };
+                let diff = match sdkt_storage::diff_snapshots(&old_snap, &new_snap) {
+                    Ok(d) => d,
+                    Err(e) => {
+                        eprintln!("Error: {e}");
+                        process::exit(1);
+                    }
+                };
+
+                if *extend_plan {
+                    let plan = sdkt_storage::derive_extend_plan(&diff);
+                    if fmt == OutputFormat::Json {
+                        let out = serde_json::json!({
+                            "diff": &diff,
+                            "extend_plan": &plan,
+                        });
+                        println!("{}", serde_json::to_string(&out)?);
+                    } else {
+                        print_diff_pretty(&diff);
+                        println!();
+                        println!("Extension Plan");
+                        println!("  Contract:            {}", plan.contract_id);
+                        if plan.keys.is_empty() {
+                            println!("  Keys:                (none — nothing to remediate)");
+                        } else {
+                            println!("  Keys ({}):", plan.keys.len());
+                            for (i, k) in plan.keys.iter().enumerate() {
+                                println!("    #{} {}", i + 1, k);
+                            }
+                        }
+                        println!("  Suggested --ledgers: {}", plan.suggested_ledgers);
+                        println!("  Reason:              {}", plan.suggested_ledgers_reason);
+                        if !plan.keys.is_empty() {
+                            println!();
+                            println!("  Ready-to-run:");
+                            let mut net_args = String::new();
+                            if let Some(ref p) = net.network_profile {
+                                net_args
+                                    .push_str(&format!(" --network-profile {}", shell_quote(p)));
+                            }
+                            if let Some(ref u) = net.rpc_url {
+                                net_args.push_str(&format!(" --rpc-url {}", shell_quote(u)));
+                            }
+                            if let Some(ref pass) = net.network_passphrase {
+                                net_args.push_str(&format!(
+                                    " --network-passphrase {}",
+                                    shell_quote(pass)
+                                ));
+                            }
+
+                            let key_args: String = plan
+                                .keys
+                                .iter()
+                                .map(|k| format!(" --key {}", shell_quote(k)))
+                                .collect::<Vec<_>>()
+                                .join("");
+                            println!(
+                                "    sdkt storage extend --contract {} --ledgers {}{}{}",
+                                shell_quote(&plan.contract_id),
+                                plan.suggested_ledgers,
+                                net_args,
+                                key_args
+                            );
+                        }
+                    }
+                } else if fmt == OutputFormat::Json {
+                    println!("{}", serde_json::to_string(&diff)?);
+                } else {
+                    print_diff_pretty(&diff);
                 }
                 return Ok(());
             }
@@ -3677,6 +4080,7 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
                         }
                     }
                 }
+                StorageAction::StorageDiff { .. } => unreachable!(),
             }
         }
         Commands::Inspect {
@@ -4093,6 +4497,28 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
                     process::exit(1);
                 }
             }
+            TxAction::Decode { envelope, format } => {
+                let fmt = parse_format_str(&format);
+                let env_data = match resolve_tx_input(&envelope) {
+                    Ok(s) => s,
+                    Err(e) => {
+                        eprintln!("Error: {}", e);
+                        process::exit(1);
+                    }
+                };
+                let view = match sdkt_xdr::decode_envelope(&env_data) {
+                    Ok(view) => view,
+                    Err(e) => {
+                        eprintln!("Error: invalid transaction envelope: {}", e);
+                        process::exit(1);
+                    }
+                };
+                if fmt == OutputFormat::Json {
+                    println!("{}", serde_json::to_string_pretty(&view)?);
+                } else {
+                    print_envelope_pretty(&view);
+                }
+            }
             TxAction::Simulate {
                 envelope,
                 format,
@@ -4348,8 +4774,29 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
                 arg,
                 format,
                 output,
+                memo_text,
+                memo_id,
             } => {
                 let fmt = parse_format_str(&format);
+
+                // `--memo-text` and `--memo-id` are mutually exclusive. Fail
+                // deterministically before any network I/O (same pre-check style
+                // as the `--abi` / `--abi-contract` flags elsewhere in this file).
+                if memo_text.is_some() && memo_id.is_some() {
+                    eprintln!("Error: specify only one of --memo-text or --memo-id");
+                    process::exit(1);
+                }
+                let memo = match (memo_text.as_deref(), memo_id) {
+                    (Some(text), _) => match sdkt_xdr::memo_text(text) {
+                        Ok(memo) => Some(memo),
+                        Err(e) => {
+                            eprintln!("Error: {e}");
+                            process::exit(1);
+                        }
+                    },
+                    (None, Some(id)) => Some(sdkt_xdr::memo_id(id)),
+                    (None, None) => None,
+                };
 
                 // If source doesn't start with 'G' and isn't 56 chars, try to load it as an identity
                 let mut source_account = source.clone();
@@ -4409,6 +4856,7 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
                     contract_id: contract.clone(),
                     function: function.clone(),
                     args: parsed_args,
+                    memo,
                 };
 
                 // Fee precedence:
@@ -4795,7 +5243,14 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
                             println!("  (none)");
                         } else {
                             for b in account.balances {
-                                println!("  Asset: {}", b.asset_type);
+                                if let (Some(code), Some(issuer)) = (&b.asset_code, &b.asset_issuer)
+                                {
+                                    println!("  Asset: {}:{} ({})", code, issuer, b.asset_type);
+                                } else if let Some(code) = &b.asset_code {
+                                    println!("  Asset: {} ({})", code, b.asset_type);
+                                } else {
+                                    println!("  Asset: {}", b.asset_type);
+                                }
                                 println!("  Balance: {}", b.balance);
                             }
                         }
@@ -4804,7 +5259,8 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
                             println!("  (none)");
                         } else {
                             for s in account.signers {
-                                println!("  Public Key: {}", s.public_key);
+                                println!("  Type: {}", s.key_type);
+                                println!("  Key: {}", s.key);
                                 println!(
                                     "  Weight: {}",
                                     s.weight.map_or("Unknown".to_string(), |w| w.to_string())
@@ -4972,6 +5428,14 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
                                     println!("  - {}", e);
                                 }
                             }
+                            if !report.changed_events.is_empty() {
+                                println!("Changed events ({}):", report.changed_events.len());
+                                for c in &report.changed_events {
+                                    println!("  ~ {} :", c.name);
+                                    println!("      old: {}", sdkt_wasm::event_sig(&c.old));
+                                    println!("      new: {}", sdkt_wasm::event_sig(&c.new));
+                                }
+                            }
                             if !report.added_types.is_empty() {
                                 println!("Added types ({}):", report.added_types.len());
                                 for t in &report.added_types {
@@ -4982,6 +5446,14 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
                                 println!("Removed types ({}):", report.removed_types.len());
                                 for t in &report.removed_types {
                                     println!("  - {}", t);
+                                }
+                            }
+                            if !report.changed_types.is_empty() {
+                                println!("Changed types ({}):", report.changed_types.len());
+                                for c in &report.changed_types {
+                                    println!("  ~ {} :", c.name);
+                                    println!("      old: {}", sdkt_wasm::type_sig(&c.old));
+                                    println!("      new: {}", sdkt_wasm::type_sig(&c.new));
                                 }
                             }
                         }
@@ -5904,6 +6376,7 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
         }
         Commands::Deploy {
             wasm,
+            wasm_hash,
             salt,
             show_address,
             dry_run,
@@ -5915,6 +6388,52 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
             net,
         } => {
             let fmt = parse_format_str(&format);
+
+            // Exactly one code source: --wasm (upload + create) or --wasm-hash
+            // (create-only from already-uploaded code). Validate before any I/O.
+            match (wasm.is_some(), wasm_hash.is_some()) {
+                (true, true) => return Err("specify only one of --wasm or --wasm-hash".into()),
+                (false, false) => {
+                    return Err("provide either --wasm <FILE> or --wasm-hash <HASH>".into())
+                }
+                _ => {}
+            }
+            // --deny-breaking diffs two WASM binaries, so it needs the new WASM
+            // file; it is meaningless on the create-only --wasm-hash path.
+            if deny_breaking && wasm_hash.is_some() {
+                return Err(
+                    "--deny-breaking compares WASM binaries and cannot be used with --wasm-hash"
+                        .into(),
+                );
+            }
+            if wasm_hash.is_some() && (dry_run || show_address) {
+                return Err(
+                    "--dry-run and --show-address are not supported with --wasm-hash".into(),
+                );
+            }
+
+            // Local helper: parse 40-character hex into a 20-byte salt; validate strictly
+            fn parse_salt_hex(s: &str) -> Result<[u8; 20], String> {
+                let sh = s.trim();
+                if sh.len() != 40 {
+                    return Err(format!(
+                        "Invalid --salt: must be 20-byte hex (40 hex chars), got length {}",
+                        sh.len()
+                    ));
+                }
+                if let Some(pos) = sh.chars().position(|c| !c.is_ascii_hexdigit()) {
+                    return Err(format!(
+                        "Invalid --salt: character at index {} is not a hex digit",
+                        pos
+                    ));
+                }
+                let mut out = [0u8; 20];
+                for i in 0..20 {
+                    out[i] = u8::from_str_radix(&sh[i * 2..i * 2 + 2], 16)
+                        .map_err(|e| format!("Invalid --salt hex at byte {}: {}", i, e))?;
+                }
+                Ok(out)
+            }
 
             // Resolve network config FIRST for safety guard
             let network_config = resolve_network_config(
@@ -5951,16 +6470,29 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
             sdkt_xdr::parse_scval_args(&parsed_args)
                 .map_err(|e| format!("Invalid constructor argument: {}", e))?;
 
-            // Optional deploy guard: abort on a backwards-incompatible upgrade.
+            // Read the new WASM before looking up the identity. This preserves
+            // the fail-fast behavior for a missing or unreadable file on the
+            // full-deploy path; create-only recovery does not need a file.
+            let preloaded_wasm = wasm
+                .as_ref()
+                .map(|path| {
+                    fs::read(path).map_err(|e| format!("Error reading WASM file {}: {}", path, e))
+                })
+                .transpose()?;
+
+            // The upgrade-safety check only needs the two local WASM files and
+            // must run before identity lookup so incompatible upgrades fail
+            // deterministically even without a configured identity.
             if deny_breaking {
-                let baseline = old_wasm.ok_or_else(|| {
+                let baseline = old_wasm.as_ref().ok_or_else(|| {
                     "The --deny-breaking flag requires --old-wasm <deployed.wasm> (the currently deployed contract)".to_string()
                 })?;
-                let old_bytes = fs::read(&baseline)
+                let old_bytes = fs::read(baseline)
                     .map_err(|e| format!("Failed to read OLD WASM '{}': {}", baseline, e))?;
-                let new_bytes = fs::read(&wasm)
-                    .map_err(|e| format!("Failed to read NEW WASM '{}': {}", wasm, e))?;
-                match sdkt_wasm::upgrade_safety_wasm(&old_bytes, &new_bytes) {
+                let new_bytes = preloaded_wasm
+                    .as_ref()
+                    .expect("full-deploy path preloads the new WASM");
+                match sdkt_wasm::upgrade_safety_wasm(&old_bytes, new_bytes) {
                     Ok(verdict) => {
                         if !verdict.compatible {
                             eprintln!("Deployment aborted: upgrade is NOT backwards-compatible.");
@@ -5978,88 +6510,99 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
                 }
             }
 
-            // Read WASM file
-            let wasm_bytes =
-                fs::read(&wasm).map_err(|e| format!("Error reading WASM file {}: {}", wasm, e))?;
-
-            // Load identity for signing
+            // Load identity for signing (shared by both code sources).
             let identity_store = sdkt_storage::IdentityStore::new()
                 .map_err(|e| format!("Failed to access identity store: {}", e))?;
             let identity_obj = identity_store
                 .get(&identity)
                 .map_err(|e| format!("Identity '{}' not found: {}", identity, e))?;
-
-            // Load signing key from storage
             let signing_key = identity_store
                 .load_signing_key(&identity)
                 .map_err(|e| format!("Failed to load signing key for '{}': {}", identity, e))?;
             let signer = sdkt_xdr::sign::Ed25519Signer::from_seed(&signing_key.to_bytes());
 
             let client = SorobanRpcClient::from_config(&network_config);
-
             // Source account is the identity's public key
             let source_account = identity_obj.public_key.clone();
 
-            // Contract IDs are deterministic. Calculate the prediction from
-            // local inputs before making any RPC call, so --dry-run remains
-            // entirely offline.
-            let prediction_salt = if show_address || dry_run {
-                Some(salt_bytes.unwrap_or_else(sdkt_rpc::deploy::generate_salt))
-            } else {
-                salt_bytes
-            };
-            let predicted = if let Some(prediction_salt) = prediction_salt {
-                let wasm_hash: [u8; 32] = Sha256::digest(&wasm_bytes).into();
-                let contract_id = sdkt_xdr::derive_contract_id(
-                    &network.network_id(),
+            let outcome_result = if let Some(hash) = wasm_hash.as_ref() {
+                // Create-only: deploy from already-uploaded code; no upload step.
+                sdkt_rpc::deploy_contract_from_hash(
+                    &client,
+                    hash,
                     &source_account,
-                    &prediction_salt,
-                    &wasm_hash,
+                    &signer,
+                    network,
+                    salt_bytes,
+                    parsed_args,
                 )
-                .map_err(|e| format!("Failed to derive predicted contract ID: {}", e))?;
-                Some((contract_id, hex::encode(wasm_hash), prediction_salt))
+                .await
             } else {
-                None
+                // Full deploy from a WASM file (present per the mutual-exclusion
+                // check above).
+                let wasm_bytes = preloaded_wasm
+                    .as_ref()
+                    .expect("full-deploy path preloads the WASM");
+
+                // Contract IDs are deterministic. Calculate the prediction
+                // only for the full-WASM path; hash-only recovery already
+                // delegates its address handling to the RPC helper.
+                let prediction_salt = if show_address || dry_run {
+                    Some(salt_bytes.unwrap_or_else(sdkt_rpc::deploy::generate_salt))
+                } else {
+                    salt_bytes
+                };
+                let predicted = if let Some(prediction_salt) = prediction_salt {
+                    let wasm_digest: [u8; 32] = Sha256::digest(wasm_bytes).into();
+                    let contract_id = sdkt_xdr::derive_contract_id(
+                        &network.network_id(),
+                        &source_account,
+                        &prediction_salt,
+                        &wasm_digest,
+                    )
+                    .map_err(|e| format!("Failed to derive predicted contract ID: {}", e))?;
+                    Some((contract_id, hex::encode(wasm_digest), prediction_salt))
+                } else {
+                    None
+                };
+                if let Some((contract_id, wasm_hash, prediction_salt)) = &predicted {
+                    if dry_run {
+                        if fmt == OutputFormat::Json {
+                            println!(
+                                "{}",
+                                serde_json::json!({
+                                    "status": "dry_run",
+                                    "contractId": contract_id,
+                                    "wasmHash": wasm_hash,
+                                    "salt": hex::encode(prediction_salt),
+                                    "submitted": false,
+                                })
+                            );
+                        } else {
+                            println!("Predicted Contract ID: {}", contract_id);
+                            println!("WASM Hash: {}", wasm_hash);
+                            println!("Salt: {}", hex::encode(prediction_salt));
+                            println!("No transactions submitted.");
+                        }
+                        return Ok(());
+                    }
+                    eprintln!("Predicted Contract ID: {}", contract_id);
+                    eprintln!("WASM Hash: {}", wasm_hash);
+                    eprintln!("Salt: {}", hex::encode(prediction_salt));
+                }
+                sdkt_rpc::deploy_contract_with_args(
+                    &client,
+                    wasm_bytes,
+                    &source_account,
+                    &signer,
+                    network,
+                    prediction_salt,
+                    parsed_args,
+                )
+                .await
             };
 
-            if let Some((contract_id, wasm_hash, prediction_salt)) = &predicted {
-                if dry_run {
-                    if fmt == OutputFormat::Json {
-                        println!(
-                            "{}",
-                            serde_json::json!({
-                                "status": "dry_run",
-                                "contractId": contract_id,
-                                "wasmHash": wasm_hash,
-                                "salt": hex::encode(prediction_salt),
-                                "submitted": false,
-                            })
-                        );
-                    } else {
-                        println!("Predicted Contract ID: {}", contract_id);
-                        println!("WASM Hash: {}", wasm_hash);
-                        println!("Salt: {}", hex::encode(prediction_salt));
-                        println!("No transactions submitted.");
-                    }
-                    return Ok(());
-                }
-                eprintln!("Predicted Contract ID: {}", contract_id);
-                eprintln!("WASM Hash: {}", wasm_hash);
-                eprintln!("Salt: {}", hex::encode(prediction_salt));
-            }
-
-            use sdkt_rpc::deploy_contract_with_args;
-            match deploy_contract_with_args(
-                &client,
-                &wasm_bytes,
-                &source_account,
-                &signer,
-                network,
-                prediction_salt,
-                parsed_args,
-            )
-            .await
-            {
+            match outcome_result {
                 Ok(outcome) => match &outcome {
                     sdkt_rpc::DeployOutcome::Success(res) => {
                         if fmt == OutputFormat::Json {
@@ -6152,6 +6695,7 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
                 contract_id: contract_id.clone(),
                 function: function.clone(),
                 args: parsed_args,
+                memo: None,
             };
 
             let envelope = sdkt_xdr::builder::build_invoke_transaction(&params)?;
@@ -6329,6 +6873,7 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
                 contract_id: contract_id.clone(),
                 function: function.clone(),
                 args: parsed_args,
+                memo: None,
             };
 
             let client = SorobanRpcClient::from_config(&network_config);
@@ -6967,6 +7512,7 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
             ProjectCommand::Deploy {
                 salt,
                 skip_deployed,
+                identity,
                 format,
             } => {
                 let fmt = parse_format_str(&format);
@@ -7030,6 +7576,27 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
                             process::exit(1);
                         }
                     };
+
+                // Resolve and validate the selected identity before entering
+                // the deployment loop. This ensures an unknown --identity fails
+                // immediately — even when --skip-deployed would skip every
+                // contract — and avoids a redundant store lookup per iteration.
+                let identity_store = sdkt_storage::IdentityStore::new()
+                    .map_err(|e| format!("Failed to access identity store: {}", e))?;
+                let identity_obj = if identity == "default" {
+                    identity_store
+                        .get_default()
+                        .map_err(|e| format!("Default identity not found: {}", e))?
+                } else {
+                    identity_store
+                        .get(&identity)
+                        .map_err(|e| format!("Identity '{}' not found: {}", identity, e))?
+                };
+                let signing_key = identity_store
+                    .load_signing_key(&identity_obj.name)
+                    .map_err(|e| format!("Failed to load signing key: {}", e))?;
+                let signer = sdkt_xdr::sign::Ed25519Signer::from_seed(&signing_key.to_bytes());
+                let source_account = identity_obj.public_key.clone();
 
                 // Write the record file and return whether it succeeded.
                 // On failure, print the contract_id so the operator can
@@ -7137,21 +7704,6 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
                                     break;
                                 }
                             };
-
-                            // Load identity for signing
-                            let identity_store = sdkt_storage::IdentityStore::new()
-                                .map_err(|e| format!("Failed to access identity store: {}", e))?;
-                            let identity_obj = identity_store
-                                .get_default()
-                                .map_err(|e| format!("Default identity not found: {}", e))?;
-                            let signing_key =
-                                identity_store
-                                    .load_signing_key(&identity_obj.name)
-                                    .map_err(|e| format!("Failed to load signing key: {}", e))?;
-
-                            let signer =
-                                sdkt_xdr::sign::Ed25519Signer::from_seed(&signing_key.to_bytes());
-                            let source_account = identity_obj.public_key.clone();
 
                             match sdkt_rpc::deploy_contract(
                                 &client,

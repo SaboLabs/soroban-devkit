@@ -66,6 +66,11 @@ impl SorobanRpcClient {
         &self.endpoint
     }
 
+    /// Return a reference to the internal HTTP client.
+    pub fn http_client(&self) -> &reqwest::Client {
+        &self.http_client
+    }
+
     /// Helper for making JSON-RPC calls with basic timeout retry logic.
     pub async fn request<T: serde::de::DeserializeOwned>(
         &self,
