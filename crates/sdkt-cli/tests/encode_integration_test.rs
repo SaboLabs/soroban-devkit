@@ -2,7 +2,8 @@
 //! `sdkt decode`.
 //!
 //! Everything here is offline and deterministic: `encode` converts typed
-//! `TYPE:VALUE` arguments into a base64 XDR `ScVal` string. Round-trip tests
+//! `TYPE:VALUE` arguments (or one `json:<JSON>` composite value) into a base64
+//! XDR `ScVal` string. Round-trip tests
 //! feed the output back through `sdkt decode` to prove the encoding is correct
 //! rather than merely well-formed base64.
 
@@ -443,4 +444,155 @@ fn encode_help_text() {
         .stdout(predicate::str::contains("u128"))
         .stdout(predicate::str::contains("i128"))
         .stdout(predicate::str::contains("bytes"));
+}
+
+// ── json: composite values ──
+
+#[test]
+fn json_round_trips_each_shape() {
+    for (value, expected) in [
+        (
+            "json:[1,2,3]",
+            json!({ "vec": [{ "u32": 1 }, { "u32": 2 }, { "u32": 3 }] }),
+        ),
+        (
+            r#"json:{"alice":"100"}"#,
+            json!({ "map": [{ "key": { "string": "alice" }, "val": { "string": "100" } }] }),
+        ),
+        (
+            r#"json:[{"alice":"100"},{"bob":"250"}]"#,
+            json!({ "vec": [
+                { "map": [{ "key": { "string": "alice" }, "val": { "string": "100" } }] },
+                { "map": [{ "key": { "string": "bob" }, "val": { "string": "250" } }] },
+            ] }),
+        ),
+        ("json:[]", json!({ "vec": [] })),
+        ("json:{}", json!({ "map": [] })),
+        ("json:null", json!("void")),
+        ("json:true", json!({ "bool": true })),
+        ("json:-5", json!({ "i32": -5 })),
+        ("json:4294967296", json!({ "u64": "4294967296" })),
+        ("json:-2147483649", json!({ "i64": "-2147483649" })),
+        (
+            "json:[null,[false]]",
+            json!({ "vec": ["void", { "vec": [{ "bool": false }] }] }),
+        ),
+    ] {
+        assert_round_trip(value, expected);
+    }
+}
+
+#[test]
+fn json_array_is_a_single_value() {
+    // `json:[1,2,3]` is ONE ScVal::Vec, not three positional values.
+    assert_eq!(
+        encode("json:[1,2,3]"),
+        "AAAAEAAAAAEAAAADAAAAAwAAAAEAAAADAAAAAgAAAAMAAAAD"
+    );
+}
+
+#[test]
+fn rejects_malformed_json_naming_the_input() {
+    for value in ["json:[1,2", "json:{alice:1}", "json:", "json:[1] trailing"] {
+        sdkt()
+            .args(["encode", value])
+            .assert()
+            .failure()
+            .code(1)
+            .stdout(predicate::str::is_empty())
+            .stderr(predicate::str::contains(format!(
+                "invalid JSON in '{value}'"
+            )))
+            .stderr(predicate::str::contains("panicked at").not());
+    }
+}
+
+#[test]
+fn rejects_unrepresentable_json_number() {
+    sdkt()
+        .args(["encode", "json:1.5"])
+        .assert()
+        .failure()
+        .code(1)
+        .stdout(predicate::str::is_empty())
+        .stderr(predicate::str::contains("cannot encode 'json:1.5'"));
+}
+
+#[test]
+fn encode_help_documents_json_form() {
+    sdkt()
+        .args(["encode", "--help"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("json:<JSON>"))
+        .stdout(predicate::str::contains("array -> Vec"))
+        .stdout(predicate::str::contains("object -> Map"))
+        .stdout(predicate::str::contains("null -> Void"));
+}
+
+// ── Regression: the eleven TYPE:VALUE forms are unchanged ──
+
+#[test]
+fn scalar_forms_output_is_unchanged() {
+    // Captured from the binary before `json:` was added.
+    for (value, expected) in [
+        ("u32:100", "AAAAAwAAAGQ="),
+        ("i32:-5", "AAAABP////s="),
+        ("u64:1000", "AAAABQAAAAAAAAPo"),
+        ("i64:-1000", "AAAABv////////wY"),
+        (
+            "u128:340282366920938463463374607431768211455",
+            "AAAACf////////////////////8=",
+        ),
+        ("i128:-1000", "AAAACv///////////////////Bg="),
+        ("bool:true", "AAAAAAAAAAE="),
+        ("string:hello", "AAAADgAAAAVoZWxsbwAAAA=="),
+        ("symbol:USD", "AAAADwAAAANVU0QA"),
+        ("bytes:000aff", "AAAADQAAAAMACv8A"),
+        (
+            "address:GCJK2BPWLQDHCSOCAHU7Y2HDZ6YNCPYMTHWGG4IEUZLZTJ4E656GOYGM",
+            "AAAAEgAAAAAAAAAAkq0F9lwGcUnCAen8aOPPsNE/DJnsY3EEpleZp4T3fGc=",
+        ),
+    ] {
+        assert_eq!(encode(value), expected, "{value}");
+    }
+}
+
+#[test]
+fn scalar_form_errors_are_unchanged() {
+    // Exact stderr captured from the binary before `json:` was added.
+    for (value, expected) in [
+        ("u32:abc", "invalid u32 value: abc"),
+        ("i32:2147483648", "invalid i32 value: 2147483648"),
+        ("u64:-1", "invalid u64 value: -1"),
+        ("i64:x", "invalid i64 value: x"),
+        ("u128:-1", "invalid u128 value: -1"),
+        ("i128:1.5", "invalid i128 value: 1.5"),
+        ("bool:yes", "invalid bool value: yes"),
+        (
+            "symbol:bad-name",
+            "invalid symbol value: use only ASCII letters, digits, and _",
+        ),
+        ("bytes:zz", "invalid bytes value: zz (invalid hex byte)"),
+        (
+            "address:NOTAVALIDKEY",
+            "invalid Stellar address: NOTAVALIDKEY",
+        ),
+        (
+            "foo:bar",
+            "unknown type 'foo'. Use u32|i32|u64|i64|u128|i128|bool|string|symbol|bytes|address",
+        ),
+        (
+            "justtext",
+            "invalid arg format 'justtext'. Use TYPE:VALUE (e.g. u32:100, address:G...)",
+        ),
+    ] {
+        sdkt()
+            .args(["encode", value])
+            .assert()
+            .failure()
+            .code(1)
+            .stdout(predicate::str::is_empty())
+            .stderr(format!("Error: {expected}\n"));
+    }
 }
