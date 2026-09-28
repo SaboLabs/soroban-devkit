@@ -33,9 +33,9 @@ pub use builder::{
     build_extend_footprint_tx, build_extend_footprint_tx_with_data, build_invoke_transaction,
     build_invoke_transaction_with_data, build_restore_footprint_tx, build_upload_wasm_tx,
     build_upload_wasm_tx_with_data, decode_account_id, decode_contract_id, decode_ledger_key,
-    derive_contract_id, merge_footprint_keys, parse_scval_args, parse_soroban_transaction_data,
-    CreateContractParams, CreateContractV2Params, ExtendFootprintParams, InvokeTransactionParams,
-    RestoreFootprintParams, UploadWasmParams,
+    derive_contract_id, memo_id, memo_text, merge_footprint_keys, parse_scval_args,
+    parse_soroban_transaction_data, CreateContractParams, CreateContractV2Params,
+    ExtendFootprintParams, InvokeTransactionParams, RestoreFootprintParams, UploadWasmParams,
 };
 pub use sign::{
     sign_envelope_with, sign_transaction, verify_signature, Ed25519Signer, Network, Signer,
