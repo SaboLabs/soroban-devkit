@@ -317,11 +317,25 @@ or git logic is duplicated; the same `compute_dependency_integrity` /
 │   ├── --format <json|pretty>
 │   └── --network-profile <NAME>
 └── deploy
-    ├── --wasm <file>
-    ├── --salt <salt>          (optional; auto-generated if omitted)
+    ├── --wasm <file>          (upload WASM, then create the contract)
+    ├── --wasm-hash <hash>     (create-only from an already-uploaded 64-char
+    │                            hex WASM hash; mutually exclusive with --wasm)
+    ├── --salt <salt>          (optional; 40 hex chars, auto-generated if omitted)
+    ├── --show-address         (print the predicted address before submission;
+    │                            requires --wasm)
+    ├── --dry-run              (predict without submitting; requires --wasm)
     ├── --format <json|pretty>
-    ├── --deny-breaking        (abort if not backwards-compatible)
-    └── --old-wasm <deployed>  (baseline, required by --deny-breaking)
+    ├── --deny-breaking        (abort if not backwards-compatible; requires --wasm)
+    ├── --old-wasm <deployed>  (baseline, required by --deny-breaking)
+    ├── --identity <name>      (signing identity; defaults to `default`)
+    ├── --arg <TYPE:VALUE>...  (constructor arguments)
+    └── --network-profile <NAME> / --rpc-url <URL> / --network-passphrase <P>
+
+`--wasm-hash` skips the upload transaction and submits only contract creation,
+which is useful to resume after an upload succeeded but creation failed.
+Prediction-only options (`--dry-run`, `--show-address`) and
+`--deny-breaking` are rejected with `--wasm-hash`, because these operations
+require the local WASM bytes.
 ```
 
 ## Network Profiles

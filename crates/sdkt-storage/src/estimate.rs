@@ -283,6 +283,8 @@ mod tests {
                         kind: "primitive".to_string(),
                         doc: String::new(),
                         members: vec![],
+                        type_args: vec![],
+                        bytes_n: None,
                     },
                 }],
                 outputs: vec![],
@@ -301,6 +303,8 @@ mod tests {
                     types: vec![],
                     value: None,
                 }],
+                type_args: vec![],
+                bytes_n: None,
             })
             .collect();
 
@@ -309,8 +313,8 @@ mod tests {
             .map(|name| sdkt_wasm::ContractEvent {
                 name: (*name).to_string(),
                 doc: String::new(),
-                prefix_topics: vec![],
                 params: vec![],
+                prefix_topics: vec![],
                 data_format: "single_value".to_string(),
             })
             .collect();
