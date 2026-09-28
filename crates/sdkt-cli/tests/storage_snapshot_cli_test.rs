@@ -326,3 +326,95 @@ fn storage_diff_against_legacy_snapshots_without_values_diffs_ttl_only() {
     assert!(diff.added.is_empty());
     assert!(diff.removed.is_empty());
 }
+
+#[test]
+fn storage_diff_against_succeeds_even_with_nonexistent_network_profile() {
+    let dir = tempdir().unwrap();
+    let base_file = dir.path().join("base.json");
+    let against_file = dir.path().join("against.json");
+
+    let base = snapshot(TEST_CONTRACT, vec![entry("k1", Some("valA"), 100, 10)]);
+    let against = snapshot(TEST_CONTRACT, vec![entry("k1", Some("valA"), 100, 10)]);
+
+    std::fs::write(&base_file, serde_json::to_string(&base).unwrap()).unwrap();
+    std::fs::write(&against_file, serde_json::to_string(&against).unwrap()).unwrap();
+
+    // Specifying a non-existent network profile must not cause an error or profile lookup
+    // since offline diff avoids shared RPC/profile resolution entirely.
+    sdkt()
+        .args([
+            "storage",
+            "--network-profile",
+            "nonexistent-network-profile-12345",
+            "diff",
+            base_file.to_str().unwrap(),
+            "--against",
+            against_file.to_str().unwrap(),
+            "--format",
+            "json",
+        ])
+        .assert()
+        .success();
+}
+
+#[test]
+fn storage_diff_against_rejects_abi_option() {
+    let dir = tempdir().unwrap();
+    let base_file = dir.path().join("base.json");
+    let against_file = dir.path().join("against.json");
+    let fake_wasm = dir.path().join("contract.wasm");
+
+    let base = snapshot(TEST_CONTRACT, vec![entry("k1", Some("valA"), 100, 10)]);
+    let against = snapshot(TEST_CONTRACT, vec![entry("k1", Some("valA"), 100, 10)]);
+
+    std::fs::write(&base_file, serde_json::to_string(&base).unwrap()).unwrap();
+    std::fs::write(&against_file, serde_json::to_string(&against).unwrap()).unwrap();
+    std::fs::write(&fake_wasm, b"\0asm...").unwrap();
+
+    sdkt()
+        .args([
+            "storage",
+            "--abi",
+            fake_wasm.to_str().unwrap(),
+            "diff",
+            base_file.to_str().unwrap(),
+            "--against",
+            against_file.to_str().unwrap(),
+        ])
+        .assert()
+        .failure()
+        .code(1)
+        .stderr(predicate::str::contains(
+            "Error: --abi and --abi-contract options do not apply to 'storage diff'",
+        ));
+}
+
+#[test]
+fn storage_diff_against_rejects_abi_contract_option() {
+    let dir = tempdir().unwrap();
+    let base_file = dir.path().join("base.json");
+    let against_file = dir.path().join("against.json");
+
+    let base = snapshot(TEST_CONTRACT, vec![entry("k1", Some("valA"), 100, 10)]);
+    let against = snapshot(TEST_CONTRACT, vec![entry("k1", Some("valA"), 100, 10)]);
+
+    std::fs::write(&base_file, serde_json::to_string(&base).unwrap()).unwrap();
+    std::fs::write(&against_file, serde_json::to_string(&against).unwrap()).unwrap();
+
+    sdkt()
+        .args([
+            "storage",
+            "--abi-contract",
+            TEST_CONTRACT,
+            "diff",
+            base_file.to_str().unwrap(),
+            "--against",
+            against_file.to_str().unwrap(),
+        ])
+        .assert()
+        .failure()
+        .code(1)
+        .stderr(predicate::str::contains(
+            "Error: --abi and --abi-contract options do not apply to 'storage diff'",
+        ));
+}

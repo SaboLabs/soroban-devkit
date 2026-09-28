@@ -3076,6 +3076,65 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
                 return Ok(());
             }
 
+            // Storage diff against another recorded snapshot is completely offline;
+            // dispatch before shared storage RPC client setup or on-chain ABI resolution.
+            if let StorageAction::Diff {
+                snapshot,
+                against: Some(against_path),
+                format,
+                ..
+            } = &action
+            {
+                if abi.is_some() || abi_contract.is_some() {
+                    eprintln!(
+                        "Error: --abi and --abi-contract options do not apply to 'storage diff'"
+                    );
+                    process::exit(1);
+                }
+
+                let fmt = parse_format_str(format);
+
+                let base = match read_snapshot(snapshot) {
+                    Ok(s) => s,
+                    Err(StorageError::Io(e)) => {
+                        eprintln!("Error: cannot read snapshot '{}': {}", snapshot, e);
+                        process::exit(1);
+                    }
+                    Err(StorageError::Parse(e)) => {
+                        eprintln!("Error: invalid snapshot document '{}': {}", snapshot, e);
+                        process::exit(1);
+                    }
+                    Err(e) => {
+                        eprintln!("Error reading snapshot '{}': {}", snapshot, e);
+                        process::exit(1);
+                    }
+                };
+
+                let other = match read_snapshot(against_path) {
+                    Ok(s) => s,
+                    Err(StorageError::Io(e)) => {
+                        eprintln!("Error: cannot read snapshot '{}': {}", against_path, e);
+                        process::exit(1);
+                    }
+                    Err(StorageError::Parse(e)) => {
+                        eprintln!("Error: invalid snapshot document '{}': {}", against_path, e);
+                        process::exit(1);
+                    }
+                    Err(e) => {
+                        eprintln!("Error reading snapshot '{}': {}", against_path, e);
+                        process::exit(1);
+                    }
+                };
+
+                let diff = diff_snapshots(&base, &other);
+                if fmt == OutputFormat::Json {
+                    println!("{}", serde_json::to_string(&diff)?);
+                } else {
+                    print!("{}", render_storage_diff_pretty(&diff));
+                }
+                return Ok(());
+            }
+
             if abi.is_some() && abi_contract.is_some() {
                 eprintln!("Error: specify only one of --abi or --abi-contract");
                 process::exit(1);
@@ -3353,7 +3412,7 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
                 }
                 StorageAction::Diff {
                     snapshot,
-                    against,
+                    against: _,
                     contract,
                     format,
                     rpc_url,
@@ -3376,66 +3435,38 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
                         }
                     };
 
-                    if let Some(ref against_path) = against {
-                        let other = match read_snapshot(against_path) {
-                            Ok(s) => s,
-                            Err(StorageError::Io(e)) => {
-                                eprintln!("Error: cannot read snapshot '{}': {}", against_path, e);
-                                process::exit(1);
-                            }
-                            Err(StorageError::Parse(e)) => {
-                                eprintln!(
-                                    "Error: invalid snapshot document '{}': {}",
-                                    against_path, e
-                                );
-                                process::exit(1);
-                            }
-                            Err(e) => {
-                                eprintln!("Error reading snapshot '{}': {}", against_path, e);
-                                process::exit(1);
-                            }
-                        };
-
-                        let diff = diff_snapshots(&base, &other);
-                        if fmt == OutputFormat::Json {
-                            println!("{}", serde_json::to_string(&diff)?);
-                        } else {
-                            print!("{}", render_storage_diff_pretty(&diff));
-                        }
-                    } else {
-                        let contract_id = match contract {
-                            Some(id) if !id.trim().is_empty() => id,
-                            _ => base.contract_id.clone(),
-                        };
-                        if contract_id.trim().is_empty() {
-                            eprintln!(
-                                "Error: snapshot records no contract id; pass --contract <CONTRACT_ID>"
-                            );
-                            process::exit(1);
-                        }
-
-                        let extra_keys: Vec<String> =
-                            base.entries.iter().map(|e| e.key.clone()).collect();
-
-                        let client = resolve_rpc_client(
-                            rpc_url.or(net.rpc_url.clone()),
-                            net.network_passphrase.clone(),
-                            net.network_profile.clone(),
+                    let contract_id = match contract {
+                        Some(id) if !id.trim().is_empty() => id,
+                        _ => base.contract_id.clone(),
+                    };
+                    if contract_id.trim().is_empty() {
+                        eprintln!(
+                            "Error: snapshot records no contract id; pass --contract <CONTRACT_ID>"
                         );
+                        process::exit(1);
+                    }
 
-                        match capture_snapshot(&client, &contract_id, &extra_keys).await {
-                            Ok(live) => {
-                                let diff = diff_snapshots(&base, &live);
-                                if fmt == OutputFormat::Json {
-                                    println!("{}", serde_json::to_string(&diff)?);
-                                } else {
-                                    print!("{}", render_storage_diff_pretty(&diff));
-                                }
+                    let extra_keys: Vec<String> =
+                        base.entries.iter().map(|e| e.key.clone()).collect();
+
+                    let client = resolve_rpc_client(
+                        rpc_url.or(net.rpc_url.clone()),
+                        net.network_passphrase.clone(),
+                        net.network_profile.clone(),
+                    );
+
+                    match capture_snapshot(&client, &contract_id, &extra_keys).await {
+                        Ok(live) => {
+                            let diff = diff_snapshots(&base, &live);
+                            if fmt == OutputFormat::Json {
+                                println!("{}", serde_json::to_string(&diff)?);
+                            } else {
+                                print!("{}", render_storage_diff_pretty(&diff));
                             }
-                            Err(e) => {
-                                eprintln!("Error reading live storage for diff: {}", e);
-                                process::exit(1);
-                            }
+                        }
+                        Err(e) => {
+                            eprintln!("Error reading live storage for diff: {}", e);
+                            process::exit(1);
                         }
                     }
                 }
