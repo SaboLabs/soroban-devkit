@@ -7,7 +7,7 @@ The `sdkt-cli` crate uses `clap` (derive API) for command routing. Every command
 ```text
 sdkt
 ├── decode <xdr>
-│   ├── --type <ScVal|TransactionEnvelope|ContractEvent>
+│   ├── --type <ScVal|TransactionEnvelope|TransactionResult|ContractEvent>
 │   ├── --format <json|pretty>
 │   └── --file <path>
 │
@@ -61,7 +61,10 @@ sdkt
 │     footprint + fees + auth entries from simulation) → sign with the local
  main
 │   Result decoding is limited to the transaction-level `TransactionResult`
-│   XDR (no ABI-aware result decode yet). Inherits the mainnet safety guard
+│   XDR (auto-detection also recognizes `ScVal`, `TransactionEnvelope`,
+│   `TransactionResult`, and `ContractEvent`; there is no XDR
+│   `TransactionStatus` type in the pinned `stellar-xdr` 28.0.0 API).
+│   Inherits the mainnet safety guard
 │   (see below). Live Testnet smoke test is documented but NOT exercised in CI.
 │
 ├── tx

@@ -340,6 +340,17 @@
     if (data.duration_ms !== undefined) {
       metaRows.push(['Inspection time', data.duration_ms + ' ms']);
     }
+    const structureFields = ['function_count', 'table_count', 'global_count', 'data_segment_count'];
+    if (structureFields.some((key) => meta[key] !== undefined) || meta.memory !== undefined) {
+      metaRows.push(['Functions', meta.function_count !== undefined ? String(meta.function_count) : '—']);
+      metaRows.push(['Tables', meta.table_count !== undefined ? String(meta.table_count) : '—']);
+      metaRows.push(['Globals', meta.global_count !== undefined ? String(meta.global_count) : '—']);
+      metaRows.push(['Data segments', meta.data_segment_count !== undefined ? String(meta.data_segment_count) : '—']);
+      if (meta.memory) {
+        metaRows.push(['Memory', String(meta.memory.initial_pages) + ' initial pages' +
+          (meta.memory.maximum_pages == null ? '' : ' · ' + meta.memory.maximum_pages + ' maximum')]);
+      }
+    }
     const metaTable = kvTable(metaRows);
     // Copy button for the hash (the one value developers actually copy).
     if (meta.hash) {
@@ -379,7 +390,24 @@
     }
     results.appendChild(csSec);
 
-    // 5. Contract specification (optional)
+    // 5. Structural metrics (present in newer metadata payloads).
+    const metricsSec = section('Structural Metrics', 'WASM structure');
+    const memory = meta.memory || null;
+    const memoryValue = memory
+      ? String(memory.initial_pages ?? 0) + ' pages (max: ' +
+        (memory.maximum_pages === null || memory.maximum_pages === undefined
+          ? 'unbounded' : String(memory.maximum_pages) + ' pages') + ')'
+      : 'none';
+    metricsSec.appendChild(kvTable([
+      ['Functions (declared)', String(meta.function_count ?? 0)],
+      ['Memory', memoryValue],
+      ['Tables', String(meta.table_count ?? 0)],
+      ['Globals', String(meta.global_count ?? 0)],
+      ['Data Segments', String(meta.data_segment_count ?? 0)],
+    ]));
+    results.appendChild(metricsSec);
+
+    // 6. Contract specification (optional)
     const specSec = section('Contract Specification', spec ? 'available' : 'not present');
     if (spec) {
       specSec.appendChild(renderFunctions(spec.functions || []));

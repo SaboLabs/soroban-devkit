@@ -228,6 +228,11 @@ mod tests {
             exports: vec![],
             imports: vec![],
             custom_sections: vec![],
+            function_count: 0,
+            memory: None,
+            table_count: 0,
+            global_count: 0,
+            data_segment_count: 0,
         }
     }
 
