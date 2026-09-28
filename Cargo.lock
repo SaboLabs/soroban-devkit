@@ -3157,6 +3157,7 @@ dependencies = [
  "rand_core 0.10.1",
  "sdkt-rpc",
  "sdkt-wasm",
+ "sdkt-xdr",
  "serde",
  "serde_json",
  "stellar-strkey 0.0.18",
