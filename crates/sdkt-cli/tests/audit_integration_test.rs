@@ -284,7 +284,9 @@ fn audit_multiple_explicit_files_json_contains_both_files_and_summary() {
         .find(|entry| {
             entry["file"]
                 .as_str()
-                .is_some_and(|path| path.ends_with("/a.rs"))
+                .and_then(|path| std::path::Path::new(path).file_name())
+                .and_then(|name| name.to_str())
+                == Some("a.rs")
         })
         .expect("a.rs entry in JSON output");
     let b_file = files
@@ -292,7 +294,9 @@ fn audit_multiple_explicit_files_json_contains_both_files_and_summary() {
         .find(|entry| {
             entry["file"]
                 .as_str()
-                .is_some_and(|path| path.ends_with("/b.rs"))
+                .and_then(|path| std::path::Path::new(path).file_name())
+                .and_then(|name| name.to_str())
+                == Some("b.rs")
         })
         .expect("b.rs entry in JSON output");
 

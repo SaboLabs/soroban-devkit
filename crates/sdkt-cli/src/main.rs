@@ -2558,11 +2558,10 @@ async fn run_upgrade_safety(
 
 fn collect_rust_sources(path: &std::path::Path) -> Result<Vec<std::path::PathBuf>, std::io::Error> {
     if path.is_file() {
-        return if path.extension().is_some_and(|ext| ext == "rs") {
-            Ok(vec![path.to_path_buf()])
-        } else {
-            Ok(Vec::new())
-        };
+        // Preserve the single-file audit behavior for explicitly supplied source
+        // files, including temporary files without a `.rs` extension. Directory
+        // discovery below remains restricted to Rust source files.
+        return Ok(vec![path.to_path_buf()]);
     }
 
     if !path.is_dir() {
