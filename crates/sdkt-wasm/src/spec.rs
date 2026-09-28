@@ -75,6 +75,13 @@ pub struct ContractType {
     pub doc: String,
     /// Members (fields for structs, variants for enums/unions).
     pub members: Vec<TypeMember>,
+    /// Type arguments for compound types such as `Vec<T>`, `Map<K, V>`, and
+    /// `Result<T, E>`.
+    #[serde(default)]
+    pub type_args: Vec<ContractType>,
+    /// Length for the fixed-size `BytesN` type.
+    #[serde(default)]
+    pub bytes_n: Option<u32>,
 }
 
 /// A member of a user-defined type.
@@ -95,6 +102,9 @@ pub struct TypeMember {
     pub value: Option<u32>,
 }
 
+/// A parameter declared by a Soroban event.
+pub type ContractEventParameter = EventParam;
+
 /// A declared Soroban event.
 ///
 /// The full XDR signature (`prefix_topics`, `params`, `data_format`) is
@@ -108,7 +118,7 @@ pub struct ContractEvent {
     pub doc: String,
     /// Topic symbols emitted before the declared params.
     pub prefix_topics: Vec<String>,
-    /// Ordered event parameters, each carrying its own topic-vs-data location.
+    /// Ordered event parameters, each carrying its topic-list-vs-data location.
     pub params: Vec<EventParam>,
     /// XDR data format (`single_value` / `vec` / `map`).
     pub data_format: String,
@@ -123,7 +133,7 @@ pub struct EventParam {
     pub doc: String,
     /// Type, expressed as a [`ContractType`].
     pub type_: ContractType,
-    /// Where the value is carried: `topic` or `data`.
+    /// Where the value is carried: `data` or `topic_list`.
     pub location: String,
 }
 
@@ -247,154 +257,126 @@ fn decode_env_meta_section(data: &[u8]) -> Result<EnvMetaSpec, WasmError> {
 }
 
 fn map_type_def(t: &ScSpecTypeDef) -> ContractType {
-    // Helper: construct a primitive ContractType.
-    let prim = |name: &'static str| ContractType {
-        name: name.into(),
-        kind: "primitive".into(),
-        doc: String::new(),
-        members: vec![],
-    };
+    fn primitive(name: &str) -> ContractType {
+        ContractType {
+            name: name.to_string(),
+            kind: "primitive".to_string(),
+            doc: String::new(),
+            members: vec![],
+            type_args: vec![],
+            bytes_n: None,
+        }
+    }
+
+    fn compound(name: String, type_args: Vec<ContractType>, labels: &[&str]) -> ContractType {
+        let members = type_args
+            .iter()
+            .zip(labels)
+            .map(|(ty, label)| TypeMember {
+                name: (*label).to_string(),
+                doc: String::new(),
+                types: vec![ty.clone()],
+                value: None,
+            })
+            .collect();
+        ContractType {
+            name,
+            kind: "compound".to_string(),
+            doc: String::new(),
+            members,
+            type_args,
+            bytes_n: None,
+        }
+    }
 
     match t {
-        // Primitives: name encodes the full type identity.
-        ScSpecTypeDef::Val => prim("val"),
-        ScSpecTypeDef::Bool => prim("bool"),
-        ScSpecTypeDef::Void => prim("void"),
-        ScSpecTypeDef::Error => prim("error"),
-        ScSpecTypeDef::U32 => prim("u32"),
-        ScSpecTypeDef::I32 => prim("i32"),
-        ScSpecTypeDef::U64 => prim("u64"),
-        ScSpecTypeDef::I64 => prim("i64"),
-        ScSpecTypeDef::Timepoint => prim("timepoint"),
-        ScSpecTypeDef::Duration => prim("duration"),
-        ScSpecTypeDef::U128 => prim("u128"),
-        ScSpecTypeDef::I128 => prim("i128"),
-        ScSpecTypeDef::U256 => prim("u256"),
-        ScSpecTypeDef::I256 => prim("i256"),
-        ScSpecTypeDef::Bytes => prim("bytes"),
-        ScSpecTypeDef::String => prim("string"),
-        ScSpecTypeDef::Symbol => prim("symbol"),
-        ScSpecTypeDef::Address => prim("address"),
-        ScSpecTypeDef::MuxedAddress => prim("muxed_address"),
-
-        // Compound types: recursively encode inner structure into `name` so
-        // that two compound types with the same outer constructor but different
-        // inner types compare as distinct.  E.g. Vec<u32> → "vec<u32>" and
-        // Vec<i128> → "vec<i128>", BytesN<32> → "bytesn<32>".
+        ScSpecTypeDef::Val => primitive("val"),
+        ScSpecTypeDef::Bool => primitive("bool"),
+        ScSpecTypeDef::Void => primitive("void"),
+        ScSpecTypeDef::Error => primitive("error"),
+        ScSpecTypeDef::U32 => primitive("u32"),
+        ScSpecTypeDef::I32 => primitive("i32"),
+        ScSpecTypeDef::U64 => primitive("u64"),
+        ScSpecTypeDef::I64 => primitive("i64"),
+        ScSpecTypeDef::Timepoint => primitive("timepoint"),
+        ScSpecTypeDef::Duration => primitive("duration"),
+        ScSpecTypeDef::U128 => primitive("u128"),
+        ScSpecTypeDef::I128 => primitive("i128"),
+        ScSpecTypeDef::U256 => primitive("u256"),
+        ScSpecTypeDef::I256 => primitive("i256"),
+        ScSpecTypeDef::Bytes => primitive("bytes"),
+        ScSpecTypeDef::String => primitive("string"),
+        ScSpecTypeDef::Symbol => primitive("symbol"),
+        ScSpecTypeDef::Address => primitive("address"),
+        ScSpecTypeDef::MuxedAddress => primitive("muxed_address"),
         ScSpecTypeDef::Option(inner) => {
-            let inner_ct = map_type_def(&inner.value_type);
-            ContractType {
-                name: format!("option<{}>", inner_ct.name),
-                kind: "compound".into(),
-                doc: String::new(),
-                members: vec![TypeMember {
-                    name: "value_type".into(),
-                    doc: String::new(),
-                    types: vec![inner_ct],
-                    value: None,
-                }],
-            }
-        }
-        ScSpecTypeDef::Vec(inner) => {
-            let elem_ct = map_type_def(&inner.element_type);
-            ContractType {
-                name: format!("vec<{}>", elem_ct.name),
-                kind: "compound".into(),
-                doc: String::new(),
-                members: vec![TypeMember {
-                    name: "element_type".into(),
-                    doc: String::new(),
-                    types: vec![elem_ct],
-                    value: None,
-                }],
-            }
-        }
-        ScSpecTypeDef::Map(inner) => {
-            let key_ct = map_type_def(&inner.key_type);
-            let val_ct = map_type_def(&inner.value_type);
-            let name = format!("map<{}, {}>", key_ct.name, val_ct.name);
-            ContractType {
-                name,
-                kind: "compound".into(),
-                doc: String::new(),
-                members: vec![
-                    TypeMember {
-                        name: "key_type".into(),
-                        doc: String::new(),
-                        types: vec![key_ct],
-                        value: None,
-                    },
-                    TypeMember {
-                        name: "value_type".into(),
-                        doc: String::new(),
-                        types: vec![val_ct],
-                        value: None,
-                    },
-                ],
-            }
+            let args = vec![map_type_def(&inner.value_type)];
+            compound(format!("option<{}>", args[0].name), args, &["value_type"])
         }
         ScSpecTypeDef::Result(inner) => {
-            let ok_ct = map_type_def(&inner.ok_type);
-            let err_ct = map_type_def(&inner.error_type);
-            let name = format!("result<{}, {}>", ok_ct.name, err_ct.name);
-            ContractType {
-                name,
-                kind: "compound".into(),
-                doc: String::new(),
-                members: vec![
-                    TypeMember {
-                        name: "ok_type".into(),
-                        doc: String::new(),
-                        types: vec![ok_ct],
-                        value: None,
-                    },
-                    TypeMember {
-                        name: "error_type".into(),
-                        doc: String::new(),
-                        types: vec![err_ct],
-                        value: None,
-                    },
-                ],
-            }
+            let args = vec![
+                map_type_def(&inner.ok_type),
+                map_type_def(&inner.error_type),
+            ];
+            let name = format!("result<{}, {}>", args[0].name, args[1].name);
+            compound(name, args, &["ok_type", "error_type"])
+        }
+        ScSpecTypeDef::Vec(inner) => {
+            let args = vec![map_type_def(&inner.element_type)];
+            compound(format!("vec<{}>", args[0].name), args, &["element_type"])
+        }
+        ScSpecTypeDef::Map(inner) => {
+            let args = vec![
+                map_type_def(&inner.key_type),
+                map_type_def(&inner.value_type),
+            ];
+            let name = format!("map<{}, {}>", args[0].name, args[1].name);
+            compound(name, args, &["key_type", "value_type"])
         }
         ScSpecTypeDef::Tuple(inner) => {
-            let elem_cts: Vec<ContractType> = inner.value_types.iter().map(map_type_def).collect();
+            let args: Vec<_> = inner.value_types.iter().map(map_type_def).collect();
             let name = format!(
                 "tuple<{}>",
-                elem_cts
-                    .iter()
-                    .map(|c| c.name.as_str())
+                args.iter()
+                    .map(|ty| ty.name.as_str())
                     .collect::<Vec<_>>()
                     .join(", ")
             );
-            let members = elem_cts
-                .into_iter()
-                .enumerate()
-                .map(|(i, ct)| TypeMember {
-                    name: i.to_string(),
+            let labels: Vec<_> = (0..args.len()).map(|i| i.to_string()).collect();
+            let members = args
+                .iter()
+                .zip(labels.iter())
+                .map(|(ty, label)| TypeMember {
+                    name: label.clone(),
                     doc: String::new(),
-                    types: vec![ct],
+                    types: vec![ty.clone()],
                     value: None,
                 })
                 .collect();
             ContractType {
                 name,
-                kind: "compound".into(),
+                kind: "compound".to_string(),
                 doc: String::new(),
                 members,
+                type_args: args,
+                bytes_n: None,
             }
         }
         ScSpecTypeDef::BytesN(inner) => ContractType {
             name: format!("bytesn<{}>", inner.n),
-            kind: "compound".into(),
+            kind: "compound".to_string(),
             doc: String::new(),
             members: vec![],
+            type_args: vec![],
+            bytes_n: Some(inner.n),
         },
-        ScSpecTypeDef::Udt(u) => ContractType {
-            name: u.name.to_utf8_string_lossy(),
-            kind: "udt".into(),
+        ScSpecTypeDef::Udt(user_type) => ContractType {
+            name: user_type.name.to_utf8_string_lossy(),
+            kind: "udt".to_string(),
             doc: String::new(),
             members: vec![],
+            type_args: vec![],
+            bytes_n: None,
         },
     }
 }
@@ -414,6 +396,8 @@ fn map_udt_struct(s: stellar_xdr::ScSpecUdtStructV0) -> ContractType {
                 value: None,
             })
             .collect(),
+        type_args: vec![],
+        bytes_n: None,
     }
 }
 
@@ -440,6 +424,8 @@ fn map_udt_union(u: stellar_xdr::ScSpecUdtUnionV0) -> ContractType {
                 },
             })
             .collect(),
+        type_args: vec![],
+        bytes_n: None,
     }
 }
 
@@ -458,6 +444,8 @@ fn map_udt_enum(e: stellar_xdr::ScSpecUdtEnumV0) -> ContractType {
                 value: Some(c.value),
             })
             .collect(),
+        type_args: vec![],
+        bytes_n: None,
     }
 }
 
@@ -476,6 +464,8 @@ fn map_udt_error_enum(e: stellar_xdr::ScSpecUdtErrorEnumV0) -> ContractType {
                 value: Some(c.value),
             })
             .collect(),
+        type_args: vec![],
+        bytes_n: None,
     }
 }
 
@@ -499,7 +489,7 @@ fn map_event(e: stellar_xdr::ScSpecEventV0) -> ContractEvent {
                 type_: map_type_def(&p.type_),
                 location: match p.location {
                     stellar_xdr::ScSpecEventParamLocationV0::Data => "data".to_string(),
-                    stellar_xdr::ScSpecEventParamLocationV0::TopicList => "topic".to_string(),
+                    stellar_xdr::ScSpecEventParamLocationV0::TopicList => "topic_list".to_string(),
                 },
             })
             .collect(),
@@ -699,6 +689,91 @@ pub(crate) mod tests {
         assert_eq!(spec.custom_types[0].name, "Point");
         assert_eq!(spec.custom_types[0].kind, "struct");
         assert_eq!(spec.custom_types[0].doc, "a point");
+    }
+
+    #[test]
+    fn preserves_struct_union_and_event_metadata() {
+        use stellar_xdr::{
+            ScSpecEventDataFormat, ScSpecEventParamLocationV0, ScSpecEventParamV0, ScSpecEventV0,
+            ScSpecUdtStructFieldV0, ScSpecUdtStructV0, ScSpecUdtUnionCaseTupleV0,
+            ScSpecUdtUnionCaseV0, ScSpecUdtUnionV0,
+        };
+
+        let point = ScSpecEntry::UdtStructV0(ScSpecUdtStructV0 {
+            doc: "point".try_into().unwrap(),
+            lib: "test".try_into().unwrap(),
+            name: "Point".try_into().unwrap(),
+            fields: vec![ScSpecUdtStructFieldV0 {
+                doc: "x coordinate".try_into().unwrap(),
+                name: "x".try_into().unwrap(),
+                type_: ScSpecTypeDef::U64,
+            }]
+            .try_into()
+            .unwrap(),
+        });
+        let choice = ScSpecEntry::UdtUnionV0(ScSpecUdtUnionV0 {
+            doc: "choice".try_into().unwrap(),
+            lib: "test".try_into().unwrap(),
+            name: "Choice".try_into().unwrap(),
+            cases: vec![ScSpecUdtUnionCaseV0::TupleV0(ScSpecUdtUnionCaseTupleV0 {
+                doc: "some value".try_into().unwrap(),
+                name: "Some".try_into().unwrap(),
+                type_: vec![ScSpecTypeDef::String].try_into().unwrap(),
+            })]
+            .try_into()
+            .unwrap(),
+        });
+        let event = ScSpecEntry::EventV0(ScSpecEventV0 {
+            doc: "transfer event".try_into().unwrap(),
+            lib: "test".try_into().unwrap(),
+            name: symbol_e("Transfer"),
+            prefix_topics: vec![symbol_e("TOKEN")].try_into().unwrap(),
+            params: vec![ScSpecEventParamV0 {
+                doc: "amount".try_into().unwrap(),
+                name: "amount".try_into().unwrap(),
+                type_: ScSpecTypeDef::U128,
+                location: ScSpecEventParamLocationV0::Data,
+            }]
+            .try_into()
+            .unwrap(),
+            data_format: ScSpecEventDataFormat::SingleValue,
+        });
+
+        let spec = parse_contract_spec(&spec_section(&[point, choice, event])).unwrap();
+        assert_eq!(spec.custom_types[0].members[0].types[0].name, "u64");
+        assert_eq!(spec.custom_types[1].members[0].types[0].name, "string");
+        assert_eq!(spec.events[0].prefix_topics, vec!["TOKEN"]);
+        assert_eq!(spec.events[0].params[0].type_.name, "u128");
+        assert_eq!(spec.events[0].params[0].location, "data");
+        assert_eq!(spec.events[0].data_format, "single_value");
+    }
+
+    #[test]
+    fn preserves_compound_type_arguments_and_bytesn_length() {
+        use stellar_xdr::{ScSpecTypeBytesN, ScSpecTypeDef, ScSpecTypeMap, ScSpecTypeVec};
+
+        let vector = map_type_def(&ScSpecTypeDef::Vec(Box::new(ScSpecTypeVec {
+            element_type: Box::new(ScSpecTypeDef::U32),
+        })));
+        assert_eq!(vector.name, "vec<u32>");
+        assert_eq!(vector.type_args.len(), 1);
+        assert_eq!(vector.type_args[0].name, "u32");
+
+        let map = map_type_def(&ScSpecTypeDef::Map(Box::new(ScSpecTypeMap {
+            key_type: Box::new(ScSpecTypeDef::String),
+            value_type: Box::new(ScSpecTypeDef::Address),
+        })));
+        assert_eq!(
+            map.type_args
+                .iter()
+                .map(|t| t.name.as_str())
+                .collect::<Vec<_>>(),
+            ["string", "address"]
+        );
+
+        let bytes = map_type_def(&ScSpecTypeDef::BytesN(ScSpecTypeBytesN { n: 32 }));
+        assert_eq!(bytes.name, "bytesn<32>");
+        assert_eq!(bytes.bytes_n, Some(32));
     }
 
     #[test]

@@ -288,6 +288,8 @@ mod tests {
                 kind: kind.into(),
                 doc: String::new(),
                 members: vec![],
+                type_args: vec![],
+                bytes_n: None,
             },
         }
     }
@@ -298,6 +300,8 @@ mod tests {
             kind: kind.into(),
             doc: String::new(),
             members: vec![],
+            type_args: vec![],
+            bytes_n: None,
         }
     }
 

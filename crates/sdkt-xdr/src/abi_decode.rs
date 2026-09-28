@@ -241,8 +241,8 @@ mod tests {
             events: vec![ContractEvent {
                 name: "transfer".to_string(),
                 doc: "Transfer event".to_string(),
-                prefix_topics: vec![],
                 params: vec![],
+                prefix_topics: vec![],
                 data_format: "single_value".to_string(),
             }],
         }
@@ -319,6 +319,8 @@ mod tests {
                         value: None,
                     },
                 ],
+                type_args: vec![],
+                bytes_n: None,
             },
             ContractType {
                 name: "Rect".into(),
@@ -338,6 +340,8 @@ mod tests {
                         value: None,
                     },
                 ],
+                type_args: vec![],
+                bytes_n: None,
             },
         ];
         let val = ScVal::Map(Some(ScMap(
@@ -379,6 +383,8 @@ mod tests {
                     value: None,
                 },
             ],
+            type_args: vec![],
+            bytes_n: None,
         });
         let val = ScVal::Map(Some(ScMap(
             VecM::try_from(vec![
@@ -419,12 +425,16 @@ mod tests {
                 kind: "struct".into(),
                 doc: String::new(),
                 members: members.clone(),
+                type_args: vec![],
+                bytes_n: None,
             },
             ContractType {
                 name: "Second".into(),
                 kind: "struct".into(),
                 doc: String::new(),
                 members,
+                type_args: vec![],
+                bytes_n: None,
             },
         ];
         let val = ScVal::Map(Some(ScMap(
@@ -456,6 +466,8 @@ mod tests {
                 types: vec![],
                 value: None,
             }],
+            type_args: vec![],
+            bytes_n: None,
         });
         let val = ScVal::Map(Some(ScMap(
             VecM::try_from(vec![ScMapEntry {
