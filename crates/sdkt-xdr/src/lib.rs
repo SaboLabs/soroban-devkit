@@ -24,6 +24,7 @@
 //! ```
 
 pub mod builder;
+pub mod envelope;
 pub mod sign;
 pub mod typed;
 pub use builder::{
@@ -37,6 +38,7 @@ pub use builder::{
     parse_soroban_transaction_data, CreateContractParams, CreateContractV2Params,
     ExtendFootprintParams, InvokeTransactionParams, RestoreFootprintParams, UploadWasmParams,
 };
+pub use envelope::{decode_envelope, render_scval, view_envelope, EnvelopeView};
 pub use sign::{
     sign_envelope_with, sign_transaction, verify_signature, Ed25519Signer, Network, Signer,
     SigningError, SigningOptions,
