@@ -164,6 +164,12 @@ fn durability_label(class: StorageClass) -> Option<String> {
     }
 }
 
+/// Read and deserialize a [`StorageSnapshot`] from a JSON document on disk.
+pub fn read_snapshot(path: impl AsRef<std::path::Path>) -> Result<StorageSnapshot, StorageError> {
+    let content = std::fs::read_to_string(path.as_ref())?;
+    serde_json::from_str(&content).map_err(|e| StorageError::Parse(e.to_string()))
+}
+
 /// Compare a base snapshot against a live snapshot.
 ///
 /// Value and TTL are compared independently: a value-only change produces a
@@ -666,5 +672,37 @@ mod tests {
             diff.value_changed[0].after.as_deref(),
             Some(scval_base64(&ScVal::U32(0)).as_str())
         );
+    }
+
+    #[test]
+    fn read_snapshot_valid_document() {
+        let snap = snapshot(vec![entry("k1", Some("AAAA"), 20000, 2_000_000)]);
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("snap.json");
+        std::fs::write(&path, serde_json::to_string(&snap).unwrap()).unwrap();
+
+        let loaded = read_snapshot(&path).expect("valid snapshot loads");
+        assert_eq!(loaded, snap);
+    }
+
+    #[test]
+    fn read_snapshot_missing_file_errors() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("missing.json");
+        match read_snapshot(&path) {
+            Err(StorageError::Io(_)) => {}
+            other => panic!("expected StorageError::Io, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn read_snapshot_malformed_json_errors() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("bad.json");
+        std::fs::write(&path, "not valid json").unwrap();
+        match read_snapshot(&path) {
+            Err(StorageError::Parse(_)) => {}
+            other => panic!("expected StorageError::Parse, got {other:?}"),
+        }
     }
 }

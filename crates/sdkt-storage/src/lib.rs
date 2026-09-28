@@ -18,7 +18,7 @@ pub use estimate::{
 pub use identity::{Identity, IdentityStore};
 pub use network::{NetworkProfile, NetworkStore};
 pub use snapshot::{
-    capture_snapshot, diff_snapshots, SnapshotDiff, SnapshotEntry, StorageSnapshot, TtlDelta,
-    ValueDelta,
+    capture_snapshot, diff_snapshots, read_snapshot, SnapshotDiff, SnapshotEntry, StorageSnapshot,
+    TtlDelta, ValueDelta,
 };
 pub use types::{StorageClass, StorageEntry, StorageReport, TtlInfoSummary};
