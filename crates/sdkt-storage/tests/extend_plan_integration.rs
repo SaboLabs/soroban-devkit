@@ -41,13 +41,24 @@ fn snap(entries: Vec<(&str, u32)>) -> StorageSnapshot {
 
 #[test]
 fn empty_diff_yields_empty_plan_and_exits_zero() {
-    let diff = diff_snapshots(&snap(vec![]), &snap(vec![]));
+    let diff = diff_snapshots(&snap(vec![]), &snap(vec![])).unwrap();
     let plan = derive_extend_plan(&diff);
 
     assert!(plan.keys.is_empty(), "no keys to extend for an empty diff");
     assert_eq!(plan.suggested_ledgers, DEFAULT_SUGGESTED_LEDGERS);
     assert!(plan.suggested_ledgers_reason.contains("nothing to extend"));
     // Function returns normally (caller exits 0).
+}
+
+#[test]
+fn diff_mismatched_contract_ids_fails() {
+    let old = StorageSnapshot::from_entries("CCONTRACTA", vec![]);
+    let new = StorageSnapshot::from_entries("CCONTRACTB", vec![]);
+
+    let err = diff_snapshots(&old, &new).unwrap_err();
+    assert!(
+        matches!(err, sdkt_storage::StorageError::ContractIdMismatch { old, new } if old == "CCONTRACTA" && new == "CCONTRACTB")
+    );
 }
 
 // ---------------------------------------------------------------------------
@@ -60,7 +71,7 @@ fn one_expiring_entry_produces_single_key_and_scaled_horizon() {
     let old = snap(vec![("keyA", 50_000)]);
     let new = snap(vec![("keyA", remaining)]);
 
-    let diff = diff_snapshots(&old, &new);
+    let diff = diff_snapshots(&old, &new).unwrap();
     let plan = derive_extend_plan(&diff);
 
     assert_eq!(plan.keys.len(), 1);
@@ -77,7 +88,7 @@ fn one_removed_entry_produces_single_key_and_default_horizon() {
     let old = snap(vec![("keyB", 50_000)]);
     let new = snap(vec![]);
 
-    let diff = diff_snapshots(&old, &new);
+    let diff = diff_snapshots(&old, &new).unwrap();
 
     let removed: Vec<_> = diff
         .entries
@@ -112,7 +123,7 @@ fn n_entries_plan_includes_only_removed_and_expiring() {
                                   // k_removed absent
     ]);
 
-    let diff = diff_snapshots(&old, &new);
+    let diff = diff_snapshots(&old, &new).unwrap();
     let plan = derive_extend_plan(&diff);
 
     // Only k_expiring and k_removed in plan.
@@ -139,7 +150,7 @@ fn n_entries_suggested_ledgers_uses_minimum_remaining_ttl() {
     let old = snap(vec![("k1", 500_000), ("k2", 500_000)]);
     let new = snap(vec![("k1", ttl_high), ("k2", ttl_low)]);
 
-    let diff = diff_snapshots(&old, &new);
+    let diff = diff_snapshots(&old, &new).unwrap();
     let plan = derive_extend_plan(&diff);
 
     assert_eq!(plan.suggested_ledgers, ttl_low + DEFAULT_SUGGESTED_LEDGERS);
@@ -191,7 +202,7 @@ async fn derive_extend_plan_never_contacts_rpc() {
     // derive_extend_plan is 100% pure — no client creation, no network I/O.
     let old = snap(vec![("k1", 50_000)]);
     let new = snap(vec![("k1", EXPIRING_SOON_LEDGERS - 100)]);
-    let diff = diff_snapshots(&old, &new);
+    let diff = diff_snapshots(&old, &new).unwrap();
     let plan = derive_extend_plan(&diff);
 
     // Wait briefly to let the thread process any accidental connections.

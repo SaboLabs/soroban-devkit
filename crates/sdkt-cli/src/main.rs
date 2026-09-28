@@ -3027,6 +3027,114 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
                 return Ok(());
             }
 
+            // Storage storage-diff is completely offline and self-contained; dispatch
+            // before shared storage RPC client setup or on-chain ABI resolution.
+            if let StorageAction::StorageDiff {
+                old,
+                new,
+                extend_plan,
+                format,
+            } = &action
+            {
+                if abi.is_some() || abi_contract.is_some() {
+                    eprintln!(
+                        "Error: --abi and --abi-contract options do not apply to 'storage storage-diff'"
+                    );
+                    process::exit(1);
+                }
+
+                let fmt = parse_format_str(format);
+
+                // Load old snapshot JSON (output of `sdkt storage analyze --format json`).
+                let old_bytes = match fs::read(old) {
+                    Ok(b) => b,
+                    Err(e) => {
+                        eprintln!("Failed to read --old snapshot '{old}': {e}");
+                        process::exit(1);
+                    }
+                };
+                let old_report: sdkt_storage::StorageReport =
+                    match serde_json::from_slice(&old_bytes) {
+                        Ok(r) => r,
+                        Err(e) => {
+                            eprintln!("Failed to parse --old snapshot '{old}': {e}");
+                            process::exit(1);
+                        }
+                    };
+
+                // Load new snapshot JSON.
+                let new_bytes = match fs::read(new) {
+                    Ok(b) => b,
+                    Err(e) => {
+                        eprintln!("Failed to read --new snapshot '{new}': {e}");
+                        process::exit(1);
+                    }
+                };
+                let new_report: sdkt_storage::StorageReport =
+                    match serde_json::from_slice(&new_bytes) {
+                        Ok(r) => r,
+                        Err(e) => {
+                            eprintln!("Failed to parse --new snapshot '{new}': {e}");
+                            process::exit(1);
+                        }
+                    };
+
+                let old_snap = sdkt_storage::StorageSnapshot::from_report(&old_report);
+                let new_snap = sdkt_storage::StorageSnapshot::from_report(&new_report);
+                let diff = match sdkt_storage::diff_snapshots(&old_snap, &new_snap) {
+                    Ok(d) => d,
+                    Err(e) => {
+                        eprintln!("Error: {e}");
+                        process::exit(1);
+                    }
+                };
+
+                if *extend_plan {
+                    let plan = sdkt_storage::derive_extend_plan(&diff);
+                    if fmt == OutputFormat::Json {
+                        let out = serde_json::json!({
+                            "diff": &diff,
+                            "extend_plan": &plan,
+                        });
+                        println!("{}", serde_json::to_string(&out)?);
+                    } else {
+                        print_diff_pretty(&diff);
+                        println!();
+                        println!("Extension Plan");
+                        println!("  Contract:            {}", plan.contract_id);
+                        if plan.keys.is_empty() {
+                            println!("  Keys:                (none — nothing to remediate)");
+                        } else {
+                            println!("  Keys ({}):", plan.keys.len());
+                            for (i, k) in plan.keys.iter().enumerate() {
+                                println!("    #{} {}", i + 1, k);
+                            }
+                        }
+                        println!("  Suggested --ledgers: {}", plan.suggested_ledgers);
+                        println!("  Reason:              {}", plan.suggested_ledgers_reason);
+                        if !plan.keys.is_empty() {
+                            println!();
+                            println!("  Ready-to-run:");
+                            let key_args: String = plan
+                                .keys
+                                .iter()
+                                .map(|k| format!(" --key {k}"))
+                                .collect::<Vec<_>>()
+                                .join("");
+                            println!(
+                                "    sdkt storage extend --contract {} --ledgers {}{}",
+                                plan.contract_id, plan.suggested_ledgers, key_args
+                            );
+                        }
+                    }
+                } else if fmt == OutputFormat::Json {
+                    println!("{}", serde_json::to_string(&diff)?);
+                } else {
+                    print_diff_pretty(&diff);
+                }
+                return Ok(());
+            }
+
             if abi.is_some() && abi_contract.is_some() {
                 eprintln!("Error: specify only one of --abi or --abi-contract");
                 process::exit(1);
@@ -3531,76 +3639,7 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
                         }
                     }
                 }
-                StorageAction::StorageDiff {
-                    old,
-                    new,
-                    extend_plan,
-                    format,
-                } => {
-                    let fmt = parse_format_str(&format);
-
-                    // Load old snapshot JSON (output of `sdkt storage analyze --format json`).
-                    let old_bytes = fs::read(&old)
-                        .map_err(|e| format!("Failed to read --old snapshot '{old}': {e}"))?;
-                    let old_report: sdkt_storage::StorageReport =
-                        serde_json::from_slice(&old_bytes)
-                            .map_err(|e| format!("Failed to parse --old snapshot '{old}': {e}"))?;
-
-                    // Load new snapshot JSON.
-                    let new_bytes = fs::read(&new)
-                        .map_err(|e| format!("Failed to read --new snapshot '{new}': {e}"))?;
-                    let new_report: sdkt_storage::StorageReport =
-                        serde_json::from_slice(&new_bytes)
-                            .map_err(|e| format!("Failed to parse --new snapshot '{new}': {e}"))?;
-
-                    let old_snap = sdkt_storage::StorageSnapshot::from_report(&old_report);
-                    let new_snap = sdkt_storage::StorageSnapshot::from_report(&new_report);
-                    let diff = sdkt_storage::diff_snapshots(&old_snap, &new_snap);
-
-                    if extend_plan {
-                        let plan = sdkt_storage::derive_extend_plan(&diff);
-                        if fmt == OutputFormat::Json {
-                            let out = serde_json::json!({
-                                "diff": &diff,
-                                "extend_plan": &plan,
-                            });
-                            println!("{}", serde_json::to_string(&out)?);
-                        } else {
-                            print_diff_pretty(&diff);
-                            println!();
-                            println!("Extension Plan");
-                            println!("  Contract:            {}", plan.contract_id);
-                            if plan.keys.is_empty() {
-                                println!("  Keys:                (none — nothing to remediate)");
-                            } else {
-                                println!("  Keys ({}):", plan.keys.len());
-                                for (i, k) in plan.keys.iter().enumerate() {
-                                    println!("    #{} {}", i + 1, k);
-                                }
-                            }
-                            println!("  Suggested --ledgers: {}", plan.suggested_ledgers);
-                            println!("  Reason:              {}", plan.suggested_ledgers_reason);
-                            if !plan.keys.is_empty() {
-                                println!();
-                                println!("  Ready-to-run:");
-                                let key_args: String = plan
-                                    .keys
-                                    .iter()
-                                    .map(|k| format!(" --key {k}"))
-                                    .collect::<Vec<_>>()
-                                    .join("");
-                                println!(
-                                    "    sdkt storage extend --contract {} --ledgers {}{}",
-                                    plan.contract_id, plan.suggested_ledgers, key_args
-                                );
-                            }
-                        }
-                    } else if fmt == OutputFormat::Json {
-                        println!("{}", serde_json::to_string(&diff)?);
-                    } else {
-                        print_diff_pretty(&diff);
-                    }
-                }
+                StorageAction::StorageDiff { .. } => unreachable!(),
             }
         }
         Commands::Inspect {

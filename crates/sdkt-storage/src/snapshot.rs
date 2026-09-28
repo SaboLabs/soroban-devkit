@@ -24,6 +24,7 @@
 //! - An empty diff (no removed or expiring entries) produces an [`ExtendPlan`]
 //!   with an empty key list and exits cleanly.
 
+use crate::error::StorageError;
 use crate::types::StorageReport;
 use serde::{Deserialize, Serialize};
 
@@ -157,7 +158,17 @@ impl SnapshotDiff {
 /// [`DiffStatus::Unchanged`] (or `ExpiringSoon` if their TTL is low).  There is
 /// intentionally no `Added` status because the diff is used exclusively to drive
 /// remediation of *at-risk* entries.
-pub fn diff_snapshots(old: &StorageSnapshot, new: &StorageSnapshot) -> SnapshotDiff {
+pub fn diff_snapshots(
+    old: &StorageSnapshot,
+    new: &StorageSnapshot,
+) -> Result<SnapshotDiff, StorageError> {
+    if old.contract_id != new.contract_id {
+        return Err(StorageError::ContractIdMismatch {
+            old: old.contract_id.clone(),
+            new: new.contract_id.clone(),
+        });
+    }
+
     use std::collections::HashMap;
 
     let old_map: HashMap<&str, u32> = old
@@ -218,10 +229,10 @@ pub fn diff_snapshots(old: &StorageSnapshot, new: &StorageSnapshot) -> SnapshotD
     // Stable sort so output is deterministic (by key, then by status).
     entries.sort_by(|a, b| a.key.cmp(&b.key));
 
-    SnapshotDiff {
+    Ok(SnapshotDiff {
         contract_id: old.contract_id.clone(),
         entries,
-    }
+    })
 }
 
 // ---------------------------------------------------------------------------
@@ -360,10 +371,28 @@ mod tests {
     // -----------------------------------------------------------------------
 
     #[test]
+    fn diff_mismatched_contract_ids_returns_error() {
+        let old = StorageSnapshot {
+            contract_id: "CCONTRACTA".to_string(),
+            entries: vec![],
+        };
+        let new = StorageSnapshot {
+            contract_id: "CCONTRACTB".to_string(),
+            entries: vec![],
+        };
+        let err = diff_snapshots(&old, &new).unwrap_err();
+        assert!(matches!(
+            err,
+            StorageError::ContractIdMismatch { old, new }
+                if old == "CCONTRACTA" && new == "CCONTRACTB"
+        ));
+    }
+
+    #[test]
     fn diff_empty_old_and_new_is_empty() {
         let old = snap(vec![]);
         let new = snap(vec![]);
-        let diff = diff_snapshots(&old, &new);
+        let diff = diff_snapshots(&old, &new).unwrap();
         assert!(diff.entries.is_empty());
     }
 
@@ -372,7 +401,7 @@ mod tests {
         let ttl = EXPIRING_SOON_LEDGERS + 1;
         let old = snap(vec![("keyA", ttl), ("keyB", ttl)]);
         let new = snap(vec![("keyA", ttl), ("keyB", ttl)]);
-        let diff = diff_snapshots(&old, &new);
+        let diff = diff_snapshots(&old, &new).unwrap();
         assert_eq!(diff.entries.len(), 2);
         assert!(diff
             .entries
@@ -385,7 +414,7 @@ mod tests {
     fn diff_removed_entry_is_flagged() {
         let old = snap(vec![("keyA", 50_000), ("keyB", 50_000)]);
         let new = snap(vec![("keyA", 49_000)]);
-        let diff = diff_snapshots(&old, &new);
+        let diff = diff_snapshots(&old, &new).unwrap();
 
         let removed: Vec<_> = diff
             .entries
@@ -402,7 +431,7 @@ mod tests {
     fn diff_expiring_soon_entry_is_flagged() {
         let old = snap(vec![("keyA", 50_000)]);
         let new = snap(vec![("keyA", EXPIRING_SOON_LEDGERS - 1)]);
-        let diff = diff_snapshots(&old, &new);
+        let diff = diff_snapshots(&old, &new).unwrap();
 
         assert_eq!(diff.entries.len(), 1);
         assert_eq!(diff.entries[0].status, DiffStatus::ExpiringSoon);
@@ -415,7 +444,7 @@ mod tests {
         // Unchanged.  The test documents the boundary precisely.
         let old = snap(vec![("keyA", 50_000)]);
         let new = snap(vec![("keyA", EXPIRING_SOON_LEDGERS)]);
-        let diff = diff_snapshots(&old, &new);
+        let diff = diff_snapshots(&old, &new).unwrap();
         // Exactly at threshold → Unchanged (strict less-than in the check).
         assert_eq!(diff.entries[0].status, DiffStatus::Unchanged);
     }
@@ -428,7 +457,7 @@ mod tests {
             ("k2", EXPIRING_SOON_LEDGERS - 100), // expiring soon
                              // k3 removed
         ]);
-        let diff = diff_snapshots(&old, &new);
+        let diff = diff_snapshots(&old, &new).unwrap();
         assert_eq!(diff.entries.len(), 3);
 
         let by_key: std::collections::HashMap<_, _> = diff
@@ -445,8 +474,8 @@ mod tests {
     fn diff_output_is_deterministic() {
         let old = snap(vec![("zz", 50_000), ("aa", 50_000)]);
         let new = snap(vec![("zz", 50_000), ("aa", 50_000)]);
-        let d1 = diff_snapshots(&old, &new);
-        let d2 = diff_snapshots(&old, &new);
+        let d1 = diff_snapshots(&old, &new).unwrap();
+        let d2 = diff_snapshots(&old, &new).unwrap();
         assert_eq!(d1, d2);
         // Keys should be sorted.
         assert_eq!(d1.entries[0].key, "aa");
