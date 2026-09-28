@@ -301,6 +301,7 @@ mod tests {
                     name: "field".to_string(),
                     doc: String::new(),
                     types: vec![],
+                    value: None,
                 }],
                 type_args: vec![],
                 bytes_n: None,
