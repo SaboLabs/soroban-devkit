@@ -1282,6 +1282,17 @@ enum TxAction {
         #[arg(short, long, default_value = "pretty")]
         format: String,
     },
+    /// Show a transaction envelope in human-readable form (offline)
+    ///
+    /// Renders source, sequence, fee, memo, each operation (contract calls
+    /// with decoded arguments), the Soroban footprint and attached signatures,
+    /// so an envelope can be reviewed before `tx sign` or `tx submit`.
+    Decode {
+        /// Base64 XDR transaction envelope or path to a file containing it
+        envelope: String,
+        #[arg(short, long, default_value = "pretty")]
+        format: String,
+    },
     /// Simulate a transaction envelope without submitting it
     Simulate {
         /// Base64 XDR transaction envelope or path to a file containing it
@@ -1943,6 +1954,64 @@ fn parse_format_str(s: &str) -> OutputFormat {
         other => {
             eprintln!("Invalid format '{}'. Use 'json' or 'pretty'.", other);
             process::exit(1);
+        }
+    }
+}
+
+/// Pretty-print a decoded transaction envelope for `tx decode`.
+fn print_envelope_pretty(view: &sdkt_xdr::EnvelopeView) {
+    println!("Transaction Envelope ({}):", view.envelope_type);
+    println!("  Source:     {}", view.source);
+    println!("  Sequence:   {}", view.sequence);
+    println!("  Fee:        {} stroops", view.fee);
+    if let Some(memo) = &view.memo {
+        println!("  Memo:       {}", memo);
+    }
+    println!("  Operations ({}):", view.operations.len());
+    for (i, op) in view.operations.iter().enumerate() {
+        println!("    [{}] {}", i, op.kind);
+        if let Some(source) = &op.source {
+            println!("        Source:    {}", source);
+        }
+        if let Some(contract) = &op.contract {
+            println!("        Contract:  {}", contract);
+        }
+        if let Some(function) = &op.function {
+            println!("        Function:  {}", function);
+        }
+        if !op.args.is_empty() {
+            println!("        Args:      {}", op.args.join(", "));
+        }
+        if op.auth_entries > 0 {
+            println!("        Auth:      {} entries", op.auth_entries);
+        }
+    }
+    if let Some(soroban) = &view.soroban {
+        println!("  Soroban Data:");
+        println!(
+            "    Footprint:    {} read-only, {} read-write",
+            soroban.read_only, soroban.read_write
+        );
+        println!("    Instructions: {}", soroban.instructions);
+        println!("    Disk reads:   {} bytes", soroban.disk_read_bytes);
+        println!("    Writes:       {} bytes", soroban.write_bytes);
+        println!("    Resource fee: {} stroops", soroban.resource_fee);
+    }
+    print_signatures("  ", &view.signatures);
+    if let Some(bump) = &view.fee_bump {
+        println!("  Fee Bump:");
+        println!("    Fee source: {}", bump.fee_source);
+        println!("    Fee:        {} stroops", bump.fee);
+        print_signatures("    ", &bump.signatures);
+    }
+}
+
+fn print_signatures(indent: &str, signatures: &[sdkt_xdr::envelope::SignatureView]) {
+    println!("{}Signatures: {}", indent, signatures.len());
+    for sig in signatures {
+        match &sig.signer {
+            Some(signer) => println!("{}  - ed25519, {}", indent, signer),
+            None => println!("{}  - hint {} (signer not in envelope)", indent, sig.hint),
         }
     }
 }
@@ -4193,6 +4262,28 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
 
                 if !report.valid {
                     process::exit(1);
+                }
+            }
+            TxAction::Decode { envelope, format } => {
+                let fmt = parse_format_str(&format);
+                let env_data = match resolve_tx_input(&envelope) {
+                    Ok(s) => s,
+                    Err(e) => {
+                        eprintln!("Error: {}", e);
+                        process::exit(1);
+                    }
+                };
+                let view = match sdkt_xdr::decode_envelope(&env_data) {
+                    Ok(view) => view,
+                    Err(e) => {
+                        eprintln!("Error: invalid transaction envelope: {}", e);
+                        process::exit(1);
+                    }
+                };
+                if fmt == OutputFormat::Json {
+                    println!("{}", serde_json::to_string_pretty(&view)?);
+                } else {
+                    print_envelope_pretty(&view);
                 }
             }
             TxAction::Simulate {

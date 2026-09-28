@@ -208,8 +208,9 @@ sdkt tx build \
   --function hello \
   --output unsigned.xdr
 
-# Validate it offline
+# Validate it offline, then review what you are about to sign
 sdkt tx validate --envelope unsigned.xdr
+sdkt tx decode unsigned.xdr
 
 # Sign with the local identity (offline; --network selects the signature hash)
 sdkt tx sign --input unsigned.xdr --output signed.xdr --identity alice --network testnet
