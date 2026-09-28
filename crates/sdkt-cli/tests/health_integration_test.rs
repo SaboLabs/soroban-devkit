@@ -121,14 +121,10 @@ fn health_fail_on_invalid_value_rejects_early() {
         .stderr(predicates::str::contains("--fail-on must be"));
 }
 
-/// Without `--fail-on` a successful health run (even if it would fail offline)
-/// exits 1 due to the RPC error — the flag must never alter the flagless code
-/// path.  We verify the flag is absent from the invocation rather than
-/// checking exit 0 (which would need a live RPC).
+/// Without `--fail-on` an operational error (e.g. invalid contract ID)
+/// exits 1, not 2.
 #[test]
 fn health_flagless_run_does_not_use_fail_on() {
-    // This test asserts the flagless codepath still reaches the RPC layer
-    // (exits 1 due to invalid contract, never exit 2 which is the gate code).
     let tmp = tempfile::NamedTempFile::new().unwrap();
     std::fs::write(tmp.path(), MINIMAL_WASM).unwrap();
 
@@ -142,11 +138,11 @@ fn health_flagless_run_does_not_use_fail_on() {
         .output()
         .unwrap();
 
-    // The exit code must be 1 (RPC / operational error), NOT 2 (gate).
-    assert_ne!(
+    // The exit code must be 1 (operational error), NOT 2 (gate).
+    assert_eq!(
         output.status.code(),
-        Some(2),
-        "flagless health must not exit 2"
+        Some(1),
+        "flagless health must exit 1 for an operational error"
     );
 }
 
@@ -158,4 +154,201 @@ fn health_help_documents_fail_on_flag() {
         .assert()
         .success()
         .stdout(predicates::str::contains("fail-on"));
+}
+
+// ── Mock RPC integration tests for --fail-on gating ─────────────────────────
+
+use base64::engine::general_purpose::STANDARD;
+use base64::Engine;
+use sdkt_xdr::{encode_ledger_key, LedgerKeyParams};
+use std::io::{Read, Write};
+use std::net::TcpListener;
+use std::thread;
+use stellar_xdr::{
+    ContractCodeEntry, ContractCodeEntryExt, ContractDataDurability, ContractDataEntry,
+    ContractExecutable, ContractId, ExtensionPoint, Hash, LedgerEntry, LedgerEntryData,
+    LedgerEntryExt, Limited, Limits, ScAddress, ScContractInstance, ScVal, WriteXdr,
+};
+
+static HEALTH_WASM_FIXTURE: &[u8] = include_bytes!("fixtures/us_old.wasm");
+const HEALTH_CONTRACT_ID: &str = "CAE3U7JKESRWZHPEQ72DVNGOQ6WPA7HSPQZL5YV46NPCE4TMUPAGYMEC";
+const HEALTH_WASM_HASH_HEX: &str =
+    "05befa136e7f0829a5051d97b032f355a5e65976397df90b224d141942dce46c";
+
+fn spawn_mock_health_rpc() -> String {
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let addr = listener.local_addr().unwrap();
+    let url = format!("http://{}", addr);
+
+    let contract_id_hex = "09ba7d2a24a36c9de487f43ab4ce87acf07cf27c32bee2bcf35e22726ca3c06c";
+    let contract_data_key =
+        encode_ledger_key(&LedgerKeyParams::ContractData(contract_id_hex.to_string())).unwrap();
+    let contract_code_key = encode_ledger_key(&LedgerKeyParams::ContractCode(
+        HEALTH_WASM_HASH_HEX.to_string(),
+    ))
+    .unwrap();
+
+    let mut wasm_hash = [0u8; 32];
+    hex::decode_to_slice(HEALTH_WASM_HASH_HEX, &mut wasm_hash).unwrap();
+
+    let encode_entry = |entry: &LedgerEntry| -> String {
+        let mut buf = Vec::new();
+        let mut l = Limited::new(&mut buf, Limits::none());
+        entry.write_xdr(&mut l).unwrap();
+        STANDARD.encode(&buf)
+    };
+
+    let inspect_xdr = encode_entry(&LedgerEntry {
+        last_modified_ledger_seq: 1,
+        data: LedgerEntryData::ContractData(ContractDataEntry {
+            ext: ExtensionPoint::V0,
+            contract: ScAddress::Contract(ContractId(Hash([0; 32]))),
+            key: ScVal::LedgerKeyContractInstance,
+            durability: ContractDataDurability::Persistent,
+            val: ScVal::ContractInstance(ScContractInstance {
+                executable: ContractExecutable::Wasm(Hash(wasm_hash)),
+                storage: None,
+            }),
+        }),
+        ext: LedgerEntryExt::V0,
+    });
+
+    let code_xdr = encode_entry(&LedgerEntry {
+        last_modified_ledger_seq: 1,
+        data: LedgerEntryData::ContractCode(ContractCodeEntry {
+            ext: ContractCodeEntryExt::V0,
+            hash: Hash(wasm_hash),
+            code: HEALTH_WASM_FIXTURE.to_vec().try_into().unwrap(),
+        }),
+        ext: LedgerEntryExt::V0,
+    });
+
+    thread::spawn(move || {
+        for conn in listener.incoming() {
+            let mut sock = match conn {
+                Ok(s) => s,
+                Err(_) => break,
+            };
+            let mut buf = [0u8; 16384];
+            let n = sock.read(&mut buf).unwrap_or(0);
+            let req = String::from_utf8_lossy(&buf[..n]).to_string();
+
+            let body = if req.contains("\"getLatestLedger\"") {
+                r#"{"jsonrpc":"2.0","id":1,"result":{"id":"test","sequence":100,"protocolVersion":20}}"#.to_string()
+            } else if req.contains("\"getLedgerEntries\"") {
+                if req.contains(&contract_data_key) {
+                    format!(
+                        r#"{{"jsonrpc":"2.0","id":1,"result":{{"entries":[{{"key":"{contract_data_key}","xdr":"{inspect_xdr}","lastModifiedLedgerSeq":1}}],"latestLedger":100}}}}"#
+                    )
+                } else if req.contains(&contract_code_key) {
+                    format!(
+                        r#"{{"jsonrpc":"2.0","id":1,"result":{{"entries":[{{"key":"{contract_code_key}","xdr":"{code_xdr}","lastModifiedLedgerSeq":1}}],"latestLedger":100}}}}"#
+                    )
+                } else {
+                    r#"{"jsonrpc":"2.0","id":1,"result":{"entries":[],"latestLedger":100}}"#
+                        .to_string()
+                }
+            } else {
+                r#"{"jsonrpc":"2.0","id":1,"error":{"code":-32601,"message":"method not found"}}"#
+                    .to_string()
+            };
+
+            let resp = format!(
+                "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+                body.len(),
+                body
+            );
+            let _ = sock.write_all(resp.as_bytes());
+            let _ = sock.flush();
+        }
+    });
+
+    url
+}
+
+/// Flagless health run against a reachable RPC exits 0 even when the verdict is AT_RISK.
+#[test]
+fn health_flagless_success_exits_zero() {
+    let rpc_url = spawn_mock_health_rpc();
+    let mut cmd = Command::cargo_bin("sdkt").unwrap();
+    cmd.args([
+        "health",
+        "--contract",
+        HEALTH_CONTRACT_ID,
+        "--rpc-url",
+        &rpc_url,
+    ])
+    .assert()
+    .success()
+    .stdout(predicates::str::contains("Contract Health Report"))
+    .stdout(predicates::str::contains("Health      : AT_RISK"));
+}
+
+/// `health --fail-on at_risk` exits code 2 when the verdict is AT_RISK,
+/// and the full report is printed before exit.
+#[test]
+fn health_fail_on_at_risk_gates_with_code_2() {
+    let rpc_url = spawn_mock_health_rpc();
+    let mut cmd = Command::cargo_bin("sdkt").unwrap();
+    cmd.args([
+        "health",
+        "--contract",
+        HEALTH_CONTRACT_ID,
+        "--fail-on",
+        "at_risk",
+        "--rpc-url",
+        &rpc_url,
+    ])
+    .assert()
+    .code(2)
+    .stdout(predicates::str::contains("Contract Health Report"))
+    .stdout(predicates::str::contains("Health      : AT_RISK"));
+}
+
+/// `health --fail-on critical` exits 0 when the verdict is only AT_RISK
+/// (threshold is not met).
+#[test]
+fn health_fail_on_critical_does_not_gate_at_risk() {
+    let rpc_url = spawn_mock_health_rpc();
+    let mut cmd = Command::cargo_bin("sdkt").unwrap();
+    cmd.args([
+        "health",
+        "--contract",
+        HEALTH_CONTRACT_ID,
+        "--fail-on",
+        "critical",
+        "--rpc-url",
+        &rpc_url,
+    ])
+    .assert()
+    .success()
+    .stdout(predicates::str::contains("Contract Health Report"))
+    .stdout(predicates::str::contains("Health      : AT_RISK"));
+}
+
+/// `health --fail-on critical` exits code 2 when local WASM mismatches on-chain WASM
+/// (which derives CRITICAL health), and the full report is printed before exit.
+#[test]
+fn health_fail_on_critical_gates_with_code_2() {
+    let rpc_url = spawn_mock_health_rpc();
+    let tmp = tempfile::NamedTempFile::new().unwrap();
+    std::fs::write(tmp.path(), MINIMAL_WASM).unwrap();
+
+    let mut cmd = Command::cargo_bin("sdkt").unwrap();
+    cmd.args([
+        "health",
+        "--contract",
+        HEALTH_CONTRACT_ID,
+        "--wasm",
+        tmp.path().to_str().unwrap(),
+        "--fail-on",
+        "critical",
+        "--rpc-url",
+        &rpc_url,
+    ])
+    .assert()
+    .code(2)
+    .stdout(predicates::str::contains("Contract Health Report"))
+    .stdout(predicates::str::contains("Health      : CRITICAL"))
+    .stdout(predicates::str::contains("On-chain WASM does NOT match"));
 }
