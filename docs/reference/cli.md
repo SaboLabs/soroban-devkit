@@ -435,6 +435,9 @@ sdkt encode i128:-1000 | xargs sdkt decode --type ScVal
 
 sdkt encode bytes:000aFF | xargs sdkt decode --type ScVal
 # {"bytes": "000aff"}
+
+sdkt encode json:'[1,2,3]' | xargs sdkt decode --type ScVal
+# {"vec": [{"u32": 1}, {"u32": 2}, {"u32": 3}]}
 ```
 
 ### Supported types (core subset)
@@ -453,10 +456,21 @@ encodes empty bytes. Leading zero bytes are preserved, and decoded JSON
 uses lowercase hex. Pair parsing matches the runtime typed-argument parser,
 including its acceptance of a leading `+` in a pair (`bytes:+f` encodes `0f`).
 
+### Composite values (`json:`)
+
+`json:<JSON>` encodes one JSON value, including nested arrays and objects, as a
+single `ScVal`: `json:[1,2,3]` is one `Vec`, not three values. The mapping is:
+array to `Vec`, object to `Map` with `String` keys (sorted), `null` to `Void`,
+`true`/`false` to `Bool`, string to `String`, and an integer to the smallest
+fitting `u32`/`u64` (`i32`/`i64` when negative). Floats and integers beyond
+the 64-bit range are rejected. Invalid JSON fails with
+`invalid JSON in 'json:<input>': <reason>`.
+
 ### Unsupported (clear failure)
 
-Other types — `Vec`, `Map`, `Option`, `Result`, UDTs — are rejected with an
-error listing the supported types. Malformed values (bad or out-of-range
+Other types, such as `vec:`, `map:`, `Option`, `Result`, and UDTs, are
+rejected with an error listing the supported types (use `json:` for `Vec`
+and `Map`). Malformed values (bad or out-of-range
 numbers, invalid bools, invalid strkeys, odd-length or invalid hex) fail
 with a message naming the offending value.
 

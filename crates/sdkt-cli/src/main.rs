@@ -648,6 +648,11 @@ enum Commands {
     Encode {
         /// One typed value: u32, i32, u64, i64, u128, i128, bool, string, symbol, bytes, or address.
         /// Examples: u128:1000000 i128:-1000 bytes:deadbeef
+        ///
+        /// Or json:<JSON> to encode ONE composite value (json:[1,2,3] is a single Vec):
+        /// array -> Vec, object -> Map with String keys, null -> Void, bool -> Bool,
+        /// string -> String, integer -> smallest of u32/u64 (or i32/i64 if negative).
+        /// Floats are rejected. Example: json:'[{"alice":"100"},{"bob":"250"}]'
         #[arg(value_name = "TYPE:VALUE", num_args = 1..)]
         values: Vec<String>,
     },
@@ -2324,8 +2329,9 @@ fn resolve_storage_analyze_keys(
 /// This is the write-direction counterpart to `sdkt decode`. Supported types
 /// are the primitives this CLI already encodes elsewhere (`parse_typed_args`):
 /// `u32`, `i32`, `u64`, `i64`, `u128`, `i128`, `bool`, `address`, `string`,
-/// `symbol`, `bytes`. Exactly one value is encoded per invocation; passing
-/// more than one is rejected to keep the output unambiguous.
+/// `symbol`, `bytes`. `json:<JSON>` encodes one composite value through
+/// `sdkt_xdr::json_to_scval`. Exactly one value is encoded per invocation;
+/// passing more than one is rejected to keep the output unambiguous.
 fn run_encode(values: &[String]) -> Result<String, String> {
     if values.is_empty() {
         return Err("no input provided: pass a value like u32:100".to_string());
@@ -2397,6 +2403,11 @@ fn run_encode(values: &[String]) -> Result<String, String> {
             .map_err(|_| format!("invalid Stellar address: {raw}"))?
             .into_scval()
             .map_err(|e| e.to_string())?,
+        "json" => {
+            let value: serde_json::Value = serde_json::from_str(raw)
+                .map_err(|e| format!("invalid JSON in '{arg}': {e}"))?;
+            sdkt_xdr::json_to_scval(&value).map_err(|e| format!("cannot encode '{arg}': {e}"))?
+        }
         other => {
             return Err(format!(
                 "unknown type '{other}'. Use u32|i32|u64|i64|u128|i128|bool|string|symbol|bytes|address"
@@ -2472,6 +2483,84 @@ mod encode_tests {
                 assert_eq!(parse_typed_args(&args, strict).unwrap_err(), encode_err);
             }
         }
+    }
+
+    /// Encode a `json:` input and decode the result back to an `ScVal`.
+    fn encode_json(json: &str) -> stellar_xdr::ScVal {
+        let b64 = run_encode(&[format!("json:{json}")]).unwrap_or_else(|e| panic!("{json}: {e}"));
+        sdkt_xdr::scval_from_base64(&b64).expect("valid ScVal XDR")
+    }
+
+    fn string(s: &str) -> stellar_xdr::ScVal {
+        use sdkt_xdr::IntoScVal;
+        s.to_string().into_scval().expect("short string")
+    }
+
+    #[test]
+    fn json_scalars_follow_converter_mapping() {
+        use stellar_xdr::ScVal;
+        assert_eq!(encode_json("null"), ScVal::Void);
+        assert_eq!(encode_json("true"), ScVal::Bool(true));
+        assert_eq!(encode_json("false"), ScVal::Bool(false));
+        assert_eq!(encode_json("1"), ScVal::U32(1));
+        assert_eq!(encode_json("-5"), ScVal::I32(-5));
+        assert_eq!(encode_json("4294967296"), ScVal::U64(4_294_967_296));
+        assert_eq!(encode_json("18446744073709551615"), ScVal::U64(u64::MAX));
+        assert_eq!(encode_json("-2147483649"), ScVal::I64(-2_147_483_649));
+        // An integer-valued JSON number matches the explicit scalar form byte for byte.
+        assert_eq!(
+            run_encode(&["json:-5".to_string()]),
+            run_encode(&["i32:-5".to_string()])
+        );
+    }
+
+    #[test]
+    fn json_containers_encode_as_one_value() {
+        use stellar_xdr::ScVal;
+        let ScVal::Vec(Some(items)) = encode_json("[1,2,3]") else {
+            panic!("expected a Vec");
+        };
+        assert_eq!(
+            items.0.to_vec(),
+            vec![ScVal::U32(1), ScVal::U32(2), ScVal::U32(3)]
+        );
+        assert!(matches!(encode_json("[]"), ScVal::Vec(Some(v)) if v.0.is_empty()));
+        assert!(matches!(encode_json("{}"), ScVal::Map(Some(m)) if m.0.is_empty()));
+
+        let ScVal::Map(Some(map)) = encode_json(r#"{"bob":"250","alice":"100"}"#) else {
+            panic!("expected a Map");
+        };
+        // Keys are Strings, emitted in sorted order as Soroban maps require.
+        let keys: Vec<_> = map.0.iter().map(|e| e.key.clone()).collect();
+        assert_eq!(keys, vec![string("alice"), string("bob")]);
+        assert_eq!(map.0[0].val, string("100"));
+    }
+
+    #[test]
+    fn json_nesting_is_preserved() {
+        use stellar_xdr::ScVal;
+        let ScVal::Vec(Some(outer)) = encode_json(r#"[{"alice":"100"},[null,true]]"#) else {
+            panic!("expected a Vec");
+        };
+        assert!(matches!(&outer.0[0], ScVal::Map(Some(m)) if m.0.len() == 1));
+        let ScVal::Vec(Some(inner)) = &outer.0[1] else {
+            panic!("expected a nested Vec");
+        };
+        assert_eq!(inner.0.to_vec(), vec![ScVal::Void, ScVal::Bool(true)]);
+    }
+
+    #[test]
+    fn json_errors_name_the_input_without_panicking() {
+        for input in ["json:[1,2", "json:{alice:1}", "json:", "json:[1] trailing"] {
+            let err = run_encode(&[input.to_string()]).unwrap_err();
+            assert!(
+                err.starts_with(&format!("invalid JSON in '{input}': ")),
+                "{input}: {err}"
+            );
+        }
+        // Valid JSON the converter cannot represent (floats) is also reported per input.
+        let err = run_encode(&["json:1.5".to_string()]).unwrap_err();
+        assert_eq!(err, "cannot encode 'json:1.5': invalid JSON argument: 1.5");
     }
 }
 
