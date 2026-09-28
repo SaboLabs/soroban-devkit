@@ -261,7 +261,6 @@ impl AuditRule for PluginRule {
                 },
                 message,
                 location,
-                file: None,
             });
         }
     }
