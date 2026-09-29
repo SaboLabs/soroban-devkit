@@ -291,6 +291,15 @@ fn read_http_request(stream: &mut std::net::TcpStream) -> String {
 /// child process. The server thread is detached and lives for the test
 /// process; it never touches the public internet.
 fn spawn_mock_rpc(sequence: u32, protocol_version: u32) -> String {
+    spawn_mock_rpc_with_network(sequence, protocol_version, "Mock Network", false)
+}
+
+fn spawn_mock_rpc_with_network(
+    sequence: u32,
+    protocol_version: u32,
+    passphrase: &'static str,
+    network_error: bool,
+) -> String {
     use std::io::Write;
     use std::net::TcpListener;
 
@@ -306,6 +315,14 @@ fn spawn_mock_rpc(sequence: u32, protocol_version: u32) -> String {
         let request = read_http_request(&mut stream);
         let body = if request.contains("getHealth") {
             r#"{"jsonrpc":"2.0","id":1,"result":{"status":"healthy"}}"#.to_string()
+        } else if request.contains("getNetwork") && network_error {
+            r#"{"jsonrpc":"2.0","id":1,"error":{"code":-32601,"message":"Method not found"}}"#
+                .to_string()
+        } else if request.contains("getNetwork") {
+            format!(
+                r#"{{"jsonrpc":"2.0","id":1,"result":{{"friendbotUrl":"https://friendbot.example","passphrase":"{}","protocolVersion":{},"latestLedger":{}}}}}"#,
+                passphrase, protocol_version, sequence
+            )
         } else {
             format!(
                 r#"{{"jsonrpc":"2.0","id":1,"result":{{"id":"ledger","protocolVersion":{},"sequence":{}}}}}"#,
@@ -446,6 +463,106 @@ fn network_check_healthy_mock_rpc_json_shape() {
         .stdout(predicate::str::contains("\"status\":\"healthy\""))
         .stdout(predicate::str::contains("\"latest_ledger\":99"))
         .stdout(predicate::str::contains("\"protocol_version\":20"))
+        .stdout(predicate::str::contains(
+            "\"endpoint_passphrase\":\"Mock Network\"",
+        ))
+        .stdout(predicate::str::contains(
+            "\"configured_passphrase\":\"Mock Network\"",
+        ))
+        .stdout(predicate::str::contains(
+            "\"friendbot_url\":\"https://friendbot.example\"",
+        ))
+        .stdout(predicate::str::contains("\"error\":null"));
+}
+
+#[test]
+fn network_check_matching_passphrase_reports_endpoint_identity() {
+    let dir = tempdir().unwrap();
+    let url = spawn_mock_rpc_with_network(99, 20, "Mock Network", false);
+
+    sdkt(dir.path())
+        .args([
+            "network",
+            "add",
+            "mock",
+            "--rpc-url",
+            &url,
+            "--passphrase",
+            "Mock Network",
+        ])
+        .assert()
+        .success();
+
+    sdkt(dir.path())
+        .args(["network", "check", "mock"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("Profile passphrase: Mock Network"))
+        .stdout(predicate::str::contains(
+            "Endpoint passphrase: Mock Network",
+        ))
+        .stdout(predicate::str::contains(
+            "Friendbot URL:      https://friendbot.example",
+        ))
+        .stdout(predicate::str::contains("does not match").not());
+}
+
+#[test]
+fn network_check_mismatched_passphrase_warns_but_remains_healthy() {
+    let dir = tempdir().unwrap();
+    let url = spawn_mock_rpc_with_network(99, 20, "Endpoint Network", false);
+
+    sdkt(dir.path())
+        .args([
+            "network",
+            "add",
+            "mock",
+            "--rpc-url",
+            &url,
+            "--passphrase",
+            "Profile Network",
+        ])
+        .assert()
+        .success();
+
+    sdkt(dir.path())
+        .args(["network", "check", "mock"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("is reachable"))
+        .stdout(predicate::str::contains(
+            "Warning: endpoint passphrase does not match the profile.",
+        ));
+}
+
+#[test]
+fn network_check_get_network_error_does_not_hide_reachability() {
+    let dir = tempdir().unwrap();
+    let url = spawn_mock_rpc_with_network(99, 20, "unused", true);
+
+    sdkt(dir.path())
+        .args([
+            "network",
+            "add",
+            "mock",
+            "--rpc-url",
+            &url,
+            "--passphrase",
+            "Mock Network",
+        ])
+        .assert()
+        .success();
+
+    sdkt(dir.path())
+        .args(["network", "check", "mock", "--format", "json"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("\"reachable\":true"))
+        .stdout(predicate::str::contains("\"latest_ledger\":99"))
+        .stdout(predicate::str::contains("\"protocol_version\":20"))
+        .stdout(predicate::str::contains("\"endpoint_passphrase\":null"))
+        .stdout(predicate::str::contains("\"friendbot_url\":null"))
+        .stdout(predicate::str::contains("\"network_info_error\":"))
         .stdout(predicate::str::contains("\"error\":null"));
 }
 
