@@ -74,6 +74,7 @@ mod tests {
             invoke_contract: 0,
             bound: Default::default(),
             usage: Default::default(),
+            division_before_multiplication: false,
         }];
         let ctx = AuditContext { spec: None };
         let mut report = AuditReport::default();
@@ -90,6 +91,7 @@ mod tests {
             invoke_contract: 0,
             bound: Default::default(),
             usage: Default::default(),
+            division_before_multiplication: false,
         }];
         let ctx = AuditContext { spec: None };
         let mut report = AuditReport::default();

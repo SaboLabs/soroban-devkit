@@ -40,6 +40,9 @@ pub struct FnScan {
     pub bound: HashSet<String>,
     /// Argument-usage count per bound local (move heuristic signal).
     pub usage: HashMap<String, usize>,
+    /// True when a division result is subsequently multiplied in this function.
+    #[serde(default)]
+    pub division_before_multiplication: bool,
 }
 
 impl FnScan {
@@ -50,6 +53,7 @@ impl FnScan {
             invoke_contract: 0,
             bound: HashSet::new(),
             usage: HashMap::new(),
+            division_before_multiplication: false,
         }
     }
 }
@@ -105,14 +109,37 @@ pub(crate) fn unqualified(name: &str) -> &str {
 /// argument usages of local bindings.
 struct FnVisitor<'a> {
     scan: &'a mut FnScan,
+    divided_bindings: HashSet<String>,
 }
 
 impl<'ast, 'a> Visit<'ast> for FnVisitor<'a> {
     fn visit_local(&mut self, node: &'ast Local) {
         if let Pat::Ident(pat) = &node.pat {
-            self.scan.bound.insert(pat.ident.to_string());
+            let name = pat.ident.to_string();
+            self.scan.bound.insert(name.clone());
+            if let Some(init) = &node.init {
+                if expr_contains_division(&init.expr)
+                    || expr_uses_any(&init.expr, &self.divided_bindings)
+                {
+                    self.divided_bindings.insert(name);
+                } else {
+                    self.divided_bindings.remove(&name);
+                }
+            }
         }
         visit::visit_local(self, node);
+    }
+
+    fn visit_expr_binary(&mut self, node: &'ast syn::ExprBinary) {
+        if matches!(node.op, syn::BinOp::Mul(_))
+            && (expr_contains_division(&node.left)
+                || expr_contains_division(&node.right)
+                || expr_uses_any(&node.left, &self.divided_bindings)
+                || expr_uses_any(&node.right, &self.divided_bindings))
+        {
+            self.scan.division_before_multiplication = true;
+        }
+        visit::visit_expr_binary(self, node);
     }
 
     fn visit_expr_call(&mut self, node: &'ast ExprCall) {
@@ -147,6 +174,55 @@ impl<'ast, 'a> Visit<'ast> for FnVisitor<'a> {
         }
         visit::visit_expr_method_call(self, node);
     }
+}
+
+fn expr_contains_division(expr: &Expr) -> bool {
+    struct Finder(bool);
+    impl<'ast> Visit<'ast> for Finder {
+        fn visit_expr_binary(&mut self, node: &'ast syn::ExprBinary) {
+            if matches!(node.op, syn::BinOp::Div(_))
+                && !(is_constant_expr(&node.left) && is_constant_expr(&node.right))
+            {
+                self.0 = true;
+            }
+            visit::visit_expr_binary(self, node);
+        }
+    }
+    let mut finder = Finder(false);
+    finder.visit_expr(expr);
+    finder.0
+}
+
+fn is_constant_expr(expr: &Expr) -> bool {
+    match expr {
+        Expr::Lit(literal) => matches!(literal.lit, syn::Lit::Int(_)),
+        Expr::Paren(paren) => is_constant_expr(&paren.expr),
+        Expr::Group(group) => is_constant_expr(&group.expr),
+        Expr::Unary(unary) => is_constant_expr(&unary.expr),
+        Expr::Binary(binary) => is_constant_expr(&binary.left) && is_constant_expr(&binary.right),
+        _ => false,
+    }
+}
+
+fn expr_uses_any(expr: &Expr, names: &HashSet<String>) -> bool {
+    struct Finder<'a> {
+        names: &'a HashSet<String>,
+        found: bool,
+    }
+    impl<'ast> Visit<'ast> for Finder<'_> {
+        fn visit_expr_path(&mut self, node: &'ast syn::ExprPath) {
+            if let Some(name) = node.path.get_ident() {
+                self.found |= self.names.contains(&name.to_string());
+            }
+            visit::visit_expr_path(self, node);
+        }
+    }
+    let mut finder = Finder {
+        names,
+        found: false,
+    };
+    finder.visit_expr(expr);
+    finder.found
 }
 
 impl<'a> FnVisitor<'a> {
@@ -214,7 +290,10 @@ fn fn_scan(sig: &syn::Signature, block: &syn::Block) -> FnScan {
             }
         }
     }
-    let mut visitor = FnVisitor { scan: &mut scan };
+    let mut visitor = FnVisitor {
+        scan: &mut scan,
+        divided_bindings: HashSet::new(),
+    };
     visitor.visit_block(block);
     scan
 }
@@ -235,6 +314,7 @@ pub fn all_rules() -> Vec<Box<dyn AuditRule>> {
         Box::new(crate::rules::Auth003),
         Box::new(crate::rules::Auth004),
         Box::new(crate::rules::Move001),
+        Box::new(crate::rules::Math001),
     ]
 }
 
@@ -420,6 +500,51 @@ mod tests {
         let src = "pub fn foo(a: Address) { bar(a); }";
         let rep = report_for(src);
         assert!(!has(&rep, "MOVE-001"));
+    }
+
+    #[test]
+    fn math001_detects_direct_and_intermediate_division_before_multiplication() {
+        for src in [
+            "pub fn quote(amount: i128, bps: i128) -> i128 { amount / 10_000 * bps }",
+            "pub fn quote(amount: i128, bps: i128) -> i128 { (amount / 10_000) * (bps + 1) }",
+            "pub fn quote(amount: i128, bps: i128) -> i128 { let divided = amount / 10_000; divided * bps }",
+        ] {
+            let report = report_for(src);
+            let finding = report
+                .findings
+                .iter()
+                .find(|finding| finding.rule_id == "MATH-001")
+                .expect("division before multiplication should be reported");
+            assert_eq!(finding.severity, Severity::Warning);
+            assert_eq!(finding.location.as_deref(), Some("quote"));
+            assert!(finding.message.contains("divides before multiplying"));
+        }
+    }
+
+    #[test]
+    fn math001_ignores_unrelated_or_non_multiplicative_arithmetic() {
+        for src in [
+            "pub fn quote(amount: i128, bps: i128) -> i128 { amount * bps }",
+            "pub fn quote(bps: i128) -> i128 { 5 / 2 * bps }",
+            "pub fn quote(amount: i128) -> i128 { amount / 10_000 }",
+            "pub fn quote(amount: i128, bps: i128) -> i128 { amount / 10_000 + bps }",
+            "pub fn quote(amount: i128, other: i128, bps: i128) -> i128 { amount / 10_000 + other * bps }",
+            "pub fn quote(amount: i128, other: i128, bps: i128) -> i128 { let divided = amount / 10_000; other * bps + divided }",
+        ] {
+            assert!(
+                !has(&report_for(src), "MATH-001"),
+                "unexpected math finding for {src}"
+            );
+        }
+    }
+
+    #[test]
+    fn math001_can_be_disabled() {
+        let src = "pub fn quote(amount: i128, bps: i128) -> i128 { amount / 10_000 * bps }";
+        assert!(!has(
+            &audit_source_with(src, &["MATH-001"]).unwrap(),
+            "MATH-001"
+        ));
     }
 
     #[test]

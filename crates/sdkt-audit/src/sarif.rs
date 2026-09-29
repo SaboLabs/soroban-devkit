@@ -498,6 +498,11 @@ mod tests {
                 "Unguarded initialize function",
             ),
             rule_info("MOVE-001", Severity::Info, "Suspicious move-after-use"),
+            rule_info(
+                "MATH-001",
+                Severity::Warning,
+                "Division before multiplication may truncate numeric precision",
+            ),
         ]
     }
 

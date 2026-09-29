@@ -100,6 +100,36 @@ fn audit_json_output_is_valid_report() {
 }
 
 #[test]
+fn audit_division_before_multiplication_reports_json_and_can_be_disabled() {
+    let dir = TempDir::new().unwrap();
+    let path = write_fixture(
+        &dir,
+        "arithmetic.rs",
+        "pub fn quote(amount: i128, bps: i128) -> i128 { amount / 10_000 * bps }\n",
+    );
+    let output = sdkt()
+        .args(["audit", path.to_str().unwrap(), "--format", "json"])
+        .output()
+        .expect("run audit JSON");
+    assert!(output.status.success());
+    let report: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    let finding = report["findings"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|finding| finding["rule_id"] == "MATH-001")
+        .expect("MATH-001 finding should be emitted");
+    assert_eq!(finding["severity"], "warning");
+    assert_eq!(finding["location"], "quote");
+
+    sdkt()
+        .args(["audit", path.to_str().unwrap(), "--disable", "MATH-001"])
+        .assert()
+        .success()
+        .stdout(predicates::str::contains("No issues found."));
+}
+
+#[test]
 fn audit_rules_flag_accepted_and_default_unchanged() {
     // `--rules` is additive: providing a valid (existing) path must not change
     // the built-in audit output. temp_dir() always exists on the runner.
