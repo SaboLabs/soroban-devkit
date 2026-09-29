@@ -26,6 +26,7 @@ impl AuditRule for Probe {
     }
     fn check(&self, _s: &[FnScan], _c: &AuditContext, r: &mut AuditReport) {
         r.add(Finding {
+            file: None,
             rule_id: self.id.to_string(),
             severity: Severity::Info,
             message: "probe fired".into(),

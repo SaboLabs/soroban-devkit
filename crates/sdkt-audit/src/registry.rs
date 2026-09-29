@@ -130,6 +130,7 @@ mod tests {
         }
         fn check(&self, _s: &[FnScan], _c: &AuditContext, r: &mut AuditReport) {
             r.add(crate::types::Finding {
+                file: None,
                 rule_id: self.id.to_string(),
                 severity: Severity::Info,
                 message: "stub fired".into(),

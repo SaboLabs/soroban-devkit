@@ -42,7 +42,7 @@ fn audit_invalid_rust_source_errors() {
         .args(["audit", path.to_str().unwrap()])
         .assert()
         .failure()
-        .stderr(predicates::str::contains("source parse error"));
+        .stderr(predicates::str::contains("Failed to parse Rust source"));
 }
 
 #[test]
@@ -207,6 +207,145 @@ fn audit_example_plugin_rule_fires_with_plugins_feature() {
 }
 
 #[test]
+fn audit_directory_walks_nested_rust_files() {
+    let dir = TempDir::new().unwrap();
+    let nested = dir.path().join("nested");
+    std::fs::create_dir(&nested).unwrap();
+
+    write_fixture(&dir, "bad.rs", "pub fn mint_token(to: Address) { }\n");
+
+    std::fs::write(
+        nested.join("transfer.rs"),
+        "pub fn transfer(from: Address, to: Address, amount: i128) { }\n",
+    )
+    .unwrap();
+
+    sdkt()
+        .args(["audit", dir.path().to_str().unwrap()])
+        .assert()
+        .success()
+        .stdout(predicates::str::contains("bad.rs"))
+        .stdout(predicates::str::contains("transfer.rs"))
+        .stdout(predicates::str::contains("Aggregate Severity"));
+}
+
+#[test]
+fn audit_directory_json_contains_per_file_reports_and_summary() {
+    let dir = TempDir::new().unwrap();
+
+    write_fixture(&dir, "a.rs", "pub fn mint_token(to: Address) { }\n");
+    write_fixture(
+        &dir,
+        "b.rs",
+        "pub fn transfer(from: Address, to: Address, amount: i128) { }\n",
+    );
+
+    sdkt()
+        .args(["audit", dir.path().to_str().unwrap(), "--format", "json"])
+        .assert()
+        .success()
+        .stdout(predicates::str::contains("\"files\""))
+        .stdout(predicates::str::contains("\"summary\""))
+        .stdout(predicates::str::contains("\"file\""))
+        .stdout(predicates::str::contains("a.rs"))
+        .stdout(predicates::str::contains("b.rs"));
+}
+
+#[test]
+fn audit_multiple_explicit_files_json_contains_both_files_and_summary() {
+    let dir = TempDir::new().unwrap();
+    let a = write_fixture(&dir, "a.rs", "pub fn mint_token(to: Address) { }\n");
+    let b = write_fixture(
+        &dir,
+        "b.rs",
+        "pub fn transfer(from: Address, to: Address, amount: i128) { }\n",
+    );
+
+    let out = sdkt()
+        .args([
+            "audit",
+            a.to_str().unwrap(),
+            b.to_str().unwrap(),
+            "--format",
+            "json",
+        ])
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+
+    let v: serde_json::Value = serde_json::from_slice(&out).expect("valid JSON output");
+    let files = v["files"].as_array().expect("files array");
+    let summary = &v["summary"];
+
+    let a_file = files
+        .iter()
+        .find(|entry| {
+            entry["file"]
+                .as_str()
+                .and_then(|path| std::path::Path::new(path).file_name())
+                .and_then(|name| name.to_str())
+                == Some("a.rs")
+        })
+        .expect("a.rs entry in JSON output");
+    let b_file = files
+        .iter()
+        .find(|entry| {
+            entry["file"]
+                .as_str()
+                .and_then(|path| std::path::Path::new(path).file_name())
+                .and_then(|name| name.to_str())
+                == Some("b.rs")
+        })
+        .expect("b.rs entry in JSON output");
+
+    assert!(
+        a_file["report"]["findings"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|finding| finding["rule_id"] == "AUTH-001"),
+        "a.rs should contain AUTH-001"
+    );
+    assert!(
+        b_file["report"]["findings"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|finding| finding["rule_id"] == "AUTH-004"),
+        "b.rs should contain AUTH-004"
+    );
+
+    let per_file_total: usize = files
+        .iter()
+        .map(|entry| entry["report"]["summary"]["total"].as_u64().unwrap() as usize)
+        .sum();
+    let aggregate_total = summary["total"].as_u64().unwrap() as usize;
+
+    assert_eq!(
+        per_file_total, aggregate_total,
+        "summary totals should reconcile"
+    );
+}
+
+#[test]
+fn audit_directory_continues_after_unparseable_file() {
+    let dir = TempDir::new().unwrap();
+
+    write_fixture(&dir, "bad_syntax.rs", "fn { not rust code ");
+    write_fixture(&dir, "valid.rs", "pub fn mint_token(to: Address) { }\n");
+
+    sdkt()
+        .args(["audit", dir.path().to_str().unwrap(), "--format", "json"])
+        .assert()
+        .failure()
+        .stdout(predicates::str::contains("bad_syntax.rs"))
+        .stdout(predicates::str::contains("valid.rs"))
+        .stdout(predicates::str::contains("AUDIT-PARSE"));
+}
+
+#[test]
 fn audit_list_rules_pretty_matches_registry() {
     let all = sdkt_audit::all_rules();
     let expected_header = format!("Available audit rules ({}):", all.len());
@@ -229,14 +368,12 @@ fn audit_list_rules_json_shape_and_content() {
     assert!(out.status.success());
     let stdout = String::from_utf8(out.stdout).expect("utf8 stdout");
 
-    // Assert JSON shape as Value
     let v: serde_json::Value = serde_json::from_str(&stdout).expect("valid JSON");
     let arr = v.as_array().expect("JSON array");
     assert_eq!(arr.len(), all.len());
 
     for (elem, rule) in arr.iter().zip(all.iter()) {
         let obj = elem.as_object().expect("element is an object");
-        // Ensure strictly { id, severity, description } fields are present
         assert_eq!(obj.len(), 3);
         assert_eq!(obj["id"].as_str().unwrap(), rule.id());
         assert_eq!(
@@ -246,7 +383,6 @@ fn audit_list_rules_json_shape_and_content() {
         assert_eq!(obj["description"].as_str().unwrap(), rule.description());
     }
 
-    // Also assert deserialization into RuleInfo
     let rule_infos: Vec<sdkt_audit::RuleInfo> =
         serde_json::from_str(&stdout).expect("deserializable into RuleInfo");
     assert_eq!(rule_infos.len(), all.len());

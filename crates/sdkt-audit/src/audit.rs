@@ -263,6 +263,19 @@ pub fn audit_source_with(src: &str, disabled: &[&str]) -> Result<AuditReport, Au
     run_rules(&ast, &ctx, disabled)
 }
 
+pub fn audit_source_with_registry(
+    src: &str,
+    reg: &crate::registry::RuleRegistry,
+    disabled: &[&str],
+) -> Result<AuditReport, AuditError> {
+    let ast = syn::parse_file(src).map_err(AuditError::Parse)?;
+    let ctx = AuditContext { spec: None };
+    let scans = scan_all_functions(&ast);
+    let mut report = AuditReport::default();
+    reg.run_all(&scans, &ctx, disabled, &mut report);
+    Ok(report)
+}
+
 /// Audit Rust source with an accompanying `ContractSpec` for cross-checking.
 pub fn audit_source_with_spec(
     src: &str,
@@ -286,6 +299,39 @@ mod tests {
 
     fn has(rep: &AuditReport, id: &str) -> bool {
         rep.findings.iter().any(|f| f.rule_id == id)
+    }
+
+    #[test]
+    fn audit_source_with_registry_uses_supplied_registry() {
+        struct Stub {
+            id: &'static str,
+        }
+        impl AuditRule for Stub {
+            fn id(&self) -> &'static str {
+                self.id
+            }
+            fn severity(&self) -> Severity {
+                Severity::Info
+            }
+            fn description(&self) -> &'static str {
+                "stub"
+            }
+            fn check(&self, _scans: &[FnScan], _ctx: &AuditContext, report: &mut AuditReport) {
+                report.add(crate::types::Finding {
+                    file: None,
+                    rule_id: self.id.to_string(),
+                    severity: Severity::Info,
+                    message: "stub fired".into(),
+                    location: None,
+                });
+            }
+        }
+
+        let mut reg = crate::registry::RuleRegistry::new();
+        reg.register_builtin_rules();
+        reg.register_rule(Box::new(Stub { id: "REG-TEST" }) as crate::registry::BoxedRule);
+        let rep = audit_source_with_registry("pub fn mint() { }", &reg, &["AUTH-001"]).unwrap();
+        assert!(rep.findings.iter().any(|f| f.rule_id == "REG-TEST"));
     }
 
     #[test]

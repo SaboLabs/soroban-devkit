@@ -20,6 +20,7 @@ impl AuditRule for Auth001 {
         for s in scans {
             if crate::audit::is_privileged(&s.fn_name) && s.require_auth == 0 {
                 report.add(Finding {
+                    file: None,
                     rule_id: self.id().to_string(),
                     severity: self.severity(),
                     message: format!(
@@ -50,6 +51,7 @@ impl AuditRule for Auth002 {
         for s in scans {
             if s.invoke_contract > 0 && s.require_auth == 0 {
                 report.add(Finding {
+                    file: None,
                     rule_id: self.id().to_string(),
                     severity: self.severity(),
                     message: format!(
@@ -94,6 +96,7 @@ impl AuditRule for Auth003 {
             };
             if exported {
                 report.add(Finding {
+                    file: None,
                     rule_id: self.id().to_string(),
                     severity: self.severity(),
                     message: format!(
@@ -129,6 +132,7 @@ impl AuditRule for Auth004 {
             );
             if is_transfer && s.require_auth == 0 {
                 report.add(Finding {
+                    file: None,
                     rule_id: self.id().to_string(),
                     severity: self.severity(),
                     message: format!(
@@ -160,6 +164,7 @@ impl AuditRule for Move001 {
             for (name, count) in &s.usage {
                 if *count >= 2 {
                     report.add(Finding {
+                        file: None,
                         rule_id: self.id().to_string(),
                         severity: self.severity(),
                         message: format!(

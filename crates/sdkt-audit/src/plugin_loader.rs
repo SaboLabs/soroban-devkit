@@ -122,6 +122,11 @@ impl Drop for PluginRule {
         unsafe {
             (self.free)();
         }
+
+        // Rust cdylibs may retain runtime or static state whose teardown is
+        // not safe when the library is unloaded. Keep the mapping alive until
+        // process exit, after the plugin has released its per-rule resources.
+        let _resident = Arc::into_raw(Arc::clone(&self._lib));
     }
 }
 
@@ -252,6 +257,7 @@ impl AuditRule for PluginRule {
                 Some(unsafe { cstr_to_string(f.location) })
             };
             report.add(Finding {
+                file: None,
                 rule_id,
                 severity: match f.severity {
                     SEVERITY_CRITICAL => Severity::Critical,

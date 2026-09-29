@@ -285,36 +285,7 @@ pub fn to_sarif(
     sdkt_version: &str,
     rules_info: &[RuleInfo],
 ) -> SarifLog {
-    // Collect unique rule ids from findings, preserving first-seen order.
-    let mut seen_ids: Vec<String> = Vec::new();
-    for f in &report.findings {
-        if !seen_ids.contains(&f.rule_id) {
-            seen_ids.push(f.rule_id.clone());
-        }
-    }
-
-    // Build the rules section: use provided RuleInfo where available, fall back
-    // to a synthetic entry otherwise.
-    let rules: Vec<SarifRule> = seen_ids
-        .iter()
-        .map(|id| {
-            let info = rules_info.iter().find(|r| &r.id == id);
-            let (description, severity) = match info {
-                Some(ri) => (ri.description.clone(), ri.severity),
-                None => (id.clone(), Severity::Warning),
-            };
-            SarifRule {
-                id: id.clone(),
-                name: id.clone(),
-                short_description: SarifMessage { text: description },
-                default_configuration: SarifConfiguration {
-                    level: severity_to_level(severity).to_string(),
-                },
-            }
-        })
-        .collect();
-
-    // Build results.
+    let rules = sarif_rules(report, rules_info);
     let results: Vec<SarifResult> = report
         .findings
         .iter()
@@ -338,9 +309,69 @@ pub fn to_sarif(
     }
 }
 
+/// Convert a multi-file report into a single SARIF log, attaching each result to
+/// the file recorded in `Finding.file` rather than a single shared source path.
+pub fn to_sarif_multi_file(
+    report: &AuditReport,
+    sdkt_version: &str,
+    rules_info: &[RuleInfo],
+) -> SarifLog {
+    let rules = sarif_rules(report, rules_info);
+    let results: Vec<SarifResult> = report
+        .findings
+        .iter()
+        .map(finding_to_result_for_file)
+        .collect();
+
+    SarifLog {
+        schema: SARIF_SCHEMA.to_string(),
+        version: SARIF_VERSION.to_string(),
+        runs: vec![SarifRun {
+            tool: SarifTool {
+                driver: SarifDriver {
+                    name: TOOL_NAME.to_string(),
+                    version: sdkt_version.to_string(),
+                    information_uri: TOOL_URI.to_string(),
+                    rules,
+                },
+            },
+            results,
+        }],
+    }
+}
+
+fn sarif_rules(report: &AuditReport, rules_info: &[RuleInfo]) -> Vec<SarifRule> {
+    let mut seen_ids: Vec<String> = Vec::new();
+    for f in &report.findings {
+        if !seen_ids.contains(&f.rule_id) {
+            seen_ids.push(f.rule_id.clone());
+        }
+    }
+
+    seen_ids
+        .iter()
+        .map(|id| {
+            let info = rules_info.iter().find(|r| &r.id == id);
+            let (description, severity) = match info {
+                Some(ri) => (ri.description.clone(), ri.severity),
+                None => (id.clone(), Severity::Warning),
+            };
+            SarifRule {
+                id: id.clone(),
+                name: id.clone(),
+                short_description: SarifMessage { text: description },
+                default_configuration: SarifConfiguration {
+                    level: severity_to_level(severity).to_string(),
+                },
+            }
+        })
+        .collect()
+}
+
 /// Serialize an [`AuditReport`] to a SARIF 2.1.0 JSON string.
 ///
-/// This is the entry point used by the CLI `--format sarif` path.
+/// This is the entry point used by the CLI `--format sarif` path for
+/// single-file audits. Single-file behavior must remain unchanged.
 pub fn report_to_sarif_string(
     report: &AuditReport,
     source_file: &str,
@@ -351,9 +382,18 @@ pub fn report_to_sarif_string(
     serde_json::to_string(&log)
 }
 
+/// Serialize a multi-file audit report to a single SARIF document while keeping
+/// each finding attached to its originating file via `Finding.file`.
+pub fn report_to_sarif_string_multi_file(
+    report: &AuditReport,
+    sdkt_version: &str,
+    rules_info: &[RuleInfo],
+) -> Result<String, serde_json::Error> {
+    let log = to_sarif_multi_file(report, sdkt_version, rules_info);
+    serde_json::to_string(&log)
+}
+
 fn finding_to_result(f: &Finding, source_file: &str) -> SarifResult {
-    // Compose message text: include the optional location as a parenthetical
-    // so it is still visible in tools that only show the message.
     let message_text = match &f.location {
         Some(loc) => format!("{} ({})", f.message, loc),
         None => f.message.clone(),
@@ -361,11 +401,41 @@ fn finding_to_result(f: &Finding, source_file: &str) -> SarifResult {
 
     let is_absolute = is_absolute_source_path(source_file);
     let (uri, uri_base_id) = if is_absolute {
-        // Absolute paths become self-contained `file:` URIs; no base ID needed.
         (file_uri_from_path(source_file), None)
     } else {
-        // Relative paths are encoded as URI-references and anchored to the
-        // repository root via %SRCROOT% so GitHub Code Scanning resolves them.
+        (
+            relative_uri_from_path(source_file),
+            Some("%SRCROOT%".to_string()),
+        )
+    };
+
+    SarifResult {
+        rule_id: f.rule_id.clone(),
+        level: severity_to_level(f.severity).to_string(),
+        message: SarifMessage { text: message_text },
+        locations: vec![SarifLocation {
+            physical_location: SarifPhysicalLocation {
+                artifact_location: SarifArtifactLocation { uri, uri_base_id },
+            },
+        }],
+    }
+}
+
+fn finding_to_result_for_file(f: &Finding) -> SarifResult {
+    let source_file = f
+        .file
+        .as_deref()
+        .filter(|s| !s.is_empty())
+        .unwrap_or("unknown.rs");
+    let message_text = match &f.location {
+        Some(loc) => format!("{} ({})", f.message, loc),
+        None => f.message.clone(),
+    };
+
+    let is_absolute = is_absolute_source_path(source_file);
+    let (uri, uri_base_id) = if is_absolute {
+        (file_uri_from_path(source_file), None)
+    } else {
         (
             relative_uri_from_path(source_file),
             Some("%SRCROOT%".to_string()),
@@ -410,6 +480,7 @@ mod tests {
             rule_id: rule_id.to_string(),
             severity: sev,
             message: msg.to_string(),
+            file: None,
             location: loc.map(str::to_string),
         }
     }
@@ -578,6 +649,41 @@ mod tests {
             loc.physical_location.artifact_location.uri_base_id,
             Some("%SRCROOT%".to_string())
         );
+    }
+
+    #[test]
+    fn multi_file_result_artifact_uris_follow_each_finding_file() {
+        let mut report = AuditReport::default();
+        report.add(Finding {
+            rule_id: "AUTH-001".to_string(),
+            severity: Severity::Critical,
+            message: "msg a".to_string(),
+            file: Some("a.rs".to_string()),
+            location: None,
+        });
+        report.add(Finding {
+            rule_id: "AUTH-003".to_string(),
+            severity: Severity::Warning,
+            message: "msg b".to_string(),
+            file: Some("b.rs".to_string()),
+            location: None,
+        });
+
+        let log = to_sarif_multi_file(&report, "2.5.0", &make_rules());
+        let uris: Vec<&str> = log.runs[0]
+            .results
+            .iter()
+            .map(|r| {
+                r.locations[0]
+                    .physical_location
+                    .artifact_location
+                    .uri
+                    .as_str()
+            })
+            .collect();
+
+        assert!(uris.iter().any(|uri| uri.contains("a.rs")));
+        assert!(uris.iter().any(|uri| uri.contains("b.rs")));
     }
 
     #[test]

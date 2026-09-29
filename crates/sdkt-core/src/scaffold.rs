@@ -410,6 +410,7 @@ impl AuditRule for {struct_name} {{
         for s in scans {{
             if s.fn_name.contains("{trigger}") {{
                 report.add(Finding {{
+                    file: None,
                     rule_id: self.id().to_string(),
                     severity: self.severity(),
                     message: format!("{{}} matched trigger function `{{}}`", "{rule_id}", s.fn_name),
