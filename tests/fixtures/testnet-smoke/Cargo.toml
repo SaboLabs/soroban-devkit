@@ -1,0 +1,32 @@
+# Standalone: this tiny crate is a CI fixture, not a workspace member. An
+# empty [workspace] table detaches it from the repository workspace so
+# `cargo build` inside this directory works without touching the root
+# Cargo.toml (and so `cargo test --workspace` never pulls in soroban-sdk).
+[workspace]
+
+[package]
+name = "testnet_smoke_counter"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+[dependencies]
+soroban-sdk = { version = "=27.0.6", features = [] }
+
+[lib]
+crate-type = ["lib", "cdylib"]
+path = "counter.rs"
+
+[profile.release]
+opt-level = "z"
+overflow-checks = true
+debug = 0
+strip = "symbols"
+debug-assertions = false
+panic = "abort"
+codegen-units = 1
+lto = true
+
+[package.metadata.sdkt]
+# Marker so sdkt tooling recognizes this as a fixture, not a publishable crate.
+fixture = true

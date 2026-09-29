@@ -1042,6 +1042,8 @@ enum IdentityAction {
     },
     Import {
         name: String,
+        /// Secret key, or `-` to read it from stdin (keeps the secret out of
+        /// the process argv / `ps` output — the path CI smoke jobs need).
         secret: String,
     },
     List,
@@ -6246,6 +6248,19 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
                     println!("Public Key: {}", identity.public_key);
                 }
                 IdentityAction::Import { name, secret } => {
+                    // `-` means: read the secret from stdin. A secret passed on
+                    // argv is visible to any process listing on the machine;
+                    // piping it in is the CI-safe path.
+                    let secret = if secret == "-" {
+                        use std::io::Read;
+                        let mut buf = String::new();
+                        std::io::stdin()
+                            .read_to_string(&mut buf)
+                            .map_err(|e| format!("Failed to read secret from stdin: {e}"))?;
+                        buf.trim().to_string()
+                    } else {
+                        secret
+                    };
                     let identity = store.import(&name, &secret)?;
                     println!("Identity '{}' imported successfully.", identity.name);
                     println!("Public Key: {}", identity.public_key);
