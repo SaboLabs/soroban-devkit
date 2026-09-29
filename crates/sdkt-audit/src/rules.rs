@@ -196,6 +196,7 @@ impl AuditRule for Math001 {
         for scan in scans {
             if scan.division_before_multiplication {
                 report.add(Finding {
+                    file: None,
                     rule_id: self.id().to_string(),
                     severity: self.severity(),
                     message: format!(
