@@ -48,10 +48,6 @@ pub fn generate_client_with_options(
 
     write_contract_functions(&mut output, &supported);
 
-    for function in &supported {
-        write_function(&mut output, function);
-    }
-
     Ok(output)
 }
 
@@ -168,12 +164,7 @@ fn write_contract_functions(
     output.push_str("impl Client {\n");
 
     for function in functions {
-        writeln!(
-            output,
-            "    /// Client method for `{}`.",
-            function.name
-        )
-        .expect("writing to String cannot fail");
+        write_function(output, function);
     }
 
     output.push_str("}\n");
@@ -181,12 +172,20 @@ fn write_contract_functions(
 
 /// Write an individual contract function.
 fn write_function(output: &mut String, function: &ContractFunction) {
-    output.push('\n');
-
     writeln!(
         output,
-        "// Contract function: {}",
+        "    /// Client method for `{}`.",
         function.name
     )
     .expect("writing to String cannot fail");
+
+    writeln!(
+        output,
+        "    pub fn {}(&self) {{",
+        function.name
+    )
+    .expect("writing to String cannot fail");
+
+    output.push_str("        // TODO: invoke the Soroban contract function.\n");
+    output.push_str("    }\n\n");
 }
