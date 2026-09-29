@@ -112,9 +112,16 @@ sdkt
 │   └── estimate              (manual value entry, type-prefixed)
 │
 ├── wasm
-│   ├── inspect <file.wasm>  Offline inspection of a local WASM file (sections, exports, spec)
+│   ├── inspect <file.wasm>  Offline inspection of a local WASM file (sections, exports, spec,
+│   │                          decoded `contractmetav0` key/value metadata)
 │   ├── metadata --contract <contract>  [--network testnet] [--refresh] [--format]
 │   └── cache                 (info | remove | clear)
+│
+│   `inspect` and `metadata` surface author-declared `contractmetav0` entries
+│   (`rsver`, `rssdkver`, `cliver`, ...) as a "Contract Meta" block; with
+│   `--format json` they appear under `metadata.contract_meta` (inspect) / a
+│   top-level `contract_meta` array (metadata). WASMs without the section are
+│   unchanged.
 │
 ├── verify --contract <contract-id>
 │   ├── --wasm <file.wasm>    (local artifact to compare; offline hashed)

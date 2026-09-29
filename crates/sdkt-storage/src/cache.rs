@@ -255,6 +255,7 @@ mod tests {
             table_count: 0,
             global_count: 0,
             data_segment_count: 0,
+            contract_meta: vec![],
         }
     }
 

@@ -144,6 +144,68 @@ fn test_cli_wasm_inspect_us_new_pretty_kind_strings() {
     assert!(!stdout.contains("[Memory]"));
     assert!(stdout.contains("[func]") || stdout.contains("[memory]"));
 }
+
+#[test]
+fn test_cli_wasm_inspect_us_new_contract_meta_pretty() {
+    let wasm_path = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/us_new.wasm");
+    let mut cmd = Command::cargo_bin("sdkt").unwrap();
+    let assert = cmd.arg("wasm").arg("inspect").arg(wasm_path).assert();
+
+    let output = assert.success().get_output().stdout.clone();
+    let stdout = String::from_utf8_lossy(&output);
+    assert!(stdout.contains("Contract Meta (3):"), "stdout:\n{stdout}");
+    assert!(stdout.contains("rsver: 1.97.1"), "stdout:\n{stdout}");
+    assert!(
+        stdout.contains("rssdkver: 22.0.11#34f7f53ae31e0fd02aab436a9872e79fa671ca02"),
+        "stdout:\n{stdout}"
+    );
+    assert!(
+        stdout.contains("cliver: 27.1.0#8e402ea28202950b272fbabc34caad4d2f64fe87"),
+        "stdout:\n{stdout}"
+    );
+}
+
+#[test]
+fn test_cli_wasm_inspect_us_new_contract_meta_json() {
+    let wasm_path = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/us_new.wasm");
+    let mut cmd = Command::cargo_bin("sdkt").unwrap();
+    let assert = cmd
+        .arg("wasm")
+        .arg("inspect")
+        .arg(wasm_path)
+        .arg("--format")
+        .arg("json")
+        .assert();
+
+    let output = assert.success().get_output().stdout.clone();
+    let v: serde_json::Value = serde_json::from_slice(&output).unwrap();
+    let entries = v["metadata"]["contract_meta"]
+        .as_array()
+        .expect("metadata.contract_meta should be an array");
+    assert_eq!(entries.len(), 3, "payload: {v}");
+    assert_eq!(entries[0]["key"], "rsver");
+    assert_eq!(entries[0]["value"], "1.97.1");
+    assert_eq!(entries[1]["key"], "rssdkver");
+    assert_eq!(
+        entries[1]["value"],
+        "22.0.11#34f7f53ae31e0fd02aab436a9872e79fa671ca02"
+    );
+    assert_eq!(entries[2]["key"], "cliver");
+}
+
+#[test]
+fn test_cli_wasm_inspect_us_old_stays_without_contract_meta() {
+    // A WASM lacking `contractmetav0` must parse and display as before: the new
+    // pretty block is omitted entirely.
+    let wasm_path = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/us_old.wasm");
+    let mut cmd = Command::cargo_bin("sdkt").unwrap();
+    let assert = cmd.arg("wasm").arg("inspect").arg(wasm_path).assert();
+
+    let output = assert.success().get_output().stdout.clone();
+    let stdout = String::from_utf8_lossy(&output);
+    assert!(!stdout.contains("Contract Meta"), "stdout:\n{stdout}");
+    assert!(stdout.contains("Custom Sections"), "stdout:\n{stdout}");
+}
 #[test]
 fn test_cli_wasm_metadata_missing_contract() {
     let mut cmd = Command::cargo_bin("sdkt").unwrap();
@@ -423,6 +485,68 @@ fn test_cli_wasm_metadata_mock_rpc_cache_namespace() {
         .success()
         .stdout(predicates::str::contains("Cache Status: Hit"))
         .stdout(predicates::str::contains("Network: profile_alpha"));
+}
+
+#[test]
+fn test_cli_wasm_metadata_mock_rpc_reports_contract_meta() {
+    let cache_dir = tempdir().unwrap();
+    let network_dir = tempdir().unwrap();
+    let mock_url = spawn_mock_rpc_server(WASM_FIXTURE);
+
+    sdkt_isolated(cache_dir.path(), network_dir.path())
+        .args([
+            "network",
+            "add",
+            "meta_profile",
+            "--rpc-url",
+            &mock_url,
+            "--passphrase",
+            "Test SDF Network ; September 2015",
+        ])
+        .assert()
+        .success();
+
+    // Pretty: metadata parsed from the fetched local bytes is surfaced.
+    sdkt_isolated(cache_dir.path(), network_dir.path())
+        .args([
+            "wasm",
+            "metadata",
+            "--contract",
+            CONTRACT_ID,
+            "--network-profile",
+            "meta_profile",
+        ])
+        .assert()
+        .success()
+        .stdout(predicates::str::contains("Contract Meta (3):"))
+        .stdout(predicates::str::contains("rsver: 1.97.1"))
+        .stdout(predicates::str::contains(
+            "rssdkver: 22.0.11#34f7f53ae31e0fd02aab436a9872e79fa671ca02",
+        ));
+
+    // JSON: additive top-level `contract_meta` field.
+    let assert_json = sdkt_isolated(cache_dir.path(), network_dir.path())
+        .args([
+            "wasm",
+            "metadata",
+            "--contract",
+            CONTRACT_ID,
+            "--network-profile",
+            "meta_profile",
+            "--format",
+            "json",
+        ])
+        .assert()
+        .success();
+    let v: serde_json::Value =
+        serde_json::from_slice(&assert_json.get_output().stdout).expect("valid JSON");
+    let entries = v["contract_meta"]
+        .as_array()
+        .expect("contract_meta should be an array");
+    assert_eq!(entries.len(), 3, "payload: {v}");
+    assert_eq!(entries[0]["key"], "rsver");
+    assert_eq!(entries[0]["value"], "1.97.1");
+    assert_eq!(entries[2]["key"], "cliver");
 }
 
 #[test]

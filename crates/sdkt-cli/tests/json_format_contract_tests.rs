@@ -15,6 +15,7 @@
 //! - `file`: string (basename only, not absolute path)
 //! - `metadata.hash`: hex string
 //! - `metadata.size_bytes`: u64
+//! - `metadata.contract_meta`: array of `{key, value}` strings, additive (#171)
 //! - `spec`: object with functions/events/custom_types arrays
 //!
 //! ### `sdkt diff --upgrade-safety --format json`
@@ -195,6 +196,78 @@ mod wasm_inspect {
                 "import kind must not leak debug format like Func(0): {kind}"
             );
         }
+    }
+
+    /// Issue #171: `contractmetav0` entries are surfaced additively under
+    /// `metadata.contract_meta` without renaming/removing existing keys.
+    #[test]
+    fn json_metadata_contract_meta_is_additive_key_value_array() {
+        let out = sdkt()
+            .args(["wasm", "inspect", WASM_NEW, "--format", "json"])
+            .assert()
+            .success()
+            .get_output()
+            .stdout
+            .clone();
+        let v = assert_valid_json(&String::from_utf8_lossy(&out));
+        let meta = v.get("metadata").expect("metadata field");
+
+        let entries = meta
+            .get("contract_meta")
+            .and_then(|c| c.as_array())
+            .expect("metadata.contract_meta array");
+
+        // Deterministic XDR ground truth for us_new.wasm.
+        let pairs: Vec<(String, String)> = entries
+            .iter()
+            .map(|e| {
+                (
+                    e.get("key")
+                        .and_then(|k| k.as_str())
+                        .expect("contract_meta[].key")
+                        .to_string(),
+                    e.get("value")
+                        .and_then(|k| k.as_str())
+                        .expect("contract_meta[].value")
+                        .to_string(),
+                )
+            })
+            .collect();
+        assert_eq!(
+            pairs,
+            vec![
+                ("rsver".to_string(), "1.97.1".to_string()),
+                (
+                    "rssdkver".to_string(),
+                    "22.0.11#34f7f53ae31e0fd02aab436a9872e79fa671ca02".to_string()
+                ),
+                (
+                    "cliver".to_string(),
+                    "27.1.0#8e402ea28202950b272fbabc34caad4d2f64fe87".to_string()
+                ),
+            ]
+        );
+
+        // Existing keys are untouched by the additive field.
+        assert!(meta.get("hash").is_some());
+        assert!(meta.get("size_bytes").is_some());
+        assert!(meta.get("custom_sections").is_some());
+    }
+
+    #[test]
+    fn json_metadata_contract_meta_absent_section_stays_empty() {
+        let out = sdkt()
+            .args(["wasm", "inspect", WASM_OLD, "--format", "json"])
+            .assert()
+            .success()
+            .get_output()
+            .stdout
+            .clone();
+        let v = assert_valid_json(&String::from_utf8_lossy(&out));
+        let entries = v["metadata"]["contract_meta"]
+            .as_array()
+            .expect("metadata.contract_meta array");
+        assert!(entries.is_empty(), "us_old.wasm has no contractmetav0");
     }
 
     #[test]

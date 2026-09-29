@@ -203,6 +203,7 @@ impl AuditRule for Math001 {
                         scan.fn_name
                     ),
                     location: Some(scan.fn_name.clone()),
+                    file: None,
                 });
             }
         }

@@ -5,12 +5,14 @@ use wasmparser::{Parser, Payload};
 
 pub mod abi_decode;
 pub mod client_gen;
+pub mod contract_meta;
 pub mod spec;
 pub mod spec_diff;
 pub use abi_decode::{find_event_abi, find_type_abi, format_scval_abi, DecodedValue};
 pub use client_gen::{
     generate_client, generate_client_with_options, ClientGenError, GenerateOptions,
 };
+pub use contract_meta::{parse_contract_meta, ContractMetaEntry};
 pub use spec::{
     parse_contract_spec, ContractEvent, ContractFunction, ContractParameter, ContractSpec,
     ContractType, EventParam, TypeMember,
@@ -31,6 +33,8 @@ pub enum WasmError {
     NoContractSpec,
     #[error("XDR decode error in contract spec: {0}")]
     SpecXdr(stellar_xdr::Error),
+    #[error("XDR decode error in contract metadata: {0}")]
+    MetaXdr(stellar_xdr::Error),
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -56,6 +60,10 @@ pub struct WasmMetadata {
     /// Number of data segments declared in the module.
     #[serde(default)]
     pub data_segment_count: u32,
+    /// Author-declared key/value entries decoded from `contractmetav0`
+    /// (SDK/rustc/workspace provenance). Empty when the section is absent.
+    #[serde(default)]
+    pub contract_meta: Vec<ContractMetaEntry>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -110,6 +118,7 @@ pub fn parse_metadata(wasm_bytes: &[u8]) -> Result<WasmMetadata, WasmError> {
         table_count: 0,
         global_count: 0,
         data_segment_count: 0,
+        contract_meta: Vec::new(),
     };
 
     let parser = Parser::new(0);
@@ -142,6 +151,10 @@ pub fn parse_metadata(wasm_bytes: &[u8]) -> Result<WasmMetadata, WasmError> {
             }
             Payload::CustomSection(reader) => {
                 meta.custom_sections.push(reader.name().to_string());
+                if reader.name() == contract_meta::CONTRACT_META_V0 {
+                    meta.contract_meta
+                        .extend(contract_meta::decode_contract_meta_section(reader.data())?);
+                }
             }
             Payload::FunctionSection(reader) => {
                 meta.function_count = reader.count();
