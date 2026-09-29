@@ -17,7 +17,7 @@ cd "$(dirname "$0")/../.."   # repo root (website/playground -> website -> repo)
 
 RUST_TOOLCHAIN="1.88.0"
 WASM_BINDGEN_VERSION="0.2.127"
-OUT_DIR="website/playground/wasm"
+OUT_DIR="${PLAYGROUND_WASM_OUT:-website/playground/wasm}"
 
 echo "==> Building sdkt-playground for wasm32-unknown-unknown (release)"
 cargo +"${RUST_TOOLCHAIN}" build -p sdkt-playground --locked --release \
