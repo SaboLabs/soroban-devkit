@@ -117,9 +117,6 @@ impl Contract {
 rpc_url = "https://soroban-testnet.stellar.org"
 passphrase = "Test SDF Network ; September 2015"
 
-[build]
-target = "wasm32-unknown-unknown"
-
 [contracts.main]
 path = "."
 "#;

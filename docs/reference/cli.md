@@ -502,7 +502,7 @@ offline — it reads a local `.wasm` artifact and emits Rust source.
 
 ```bash
 # Print the generated client to stdout
-sdkt generate client target/wasm32-unknown-unknown/release/my_contract.wasm
+sdkt generate client target/wasm32v1-none/release/my_contract.wasm
 
 # Write it to a file
 sdkt generate client contract.wasm --output src/client.rs

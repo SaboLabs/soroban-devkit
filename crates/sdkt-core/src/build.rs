@@ -3,6 +3,9 @@ use std::fmt;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
+/// Default Soroban contract target supported by current soroban-sdk releases.
+pub const WASM_BUILD_TARGET: &str = "wasm32v1-none";
+
 #[derive(Debug)]
 pub enum BuildError {
     MissingConfig,
@@ -43,7 +46,7 @@ pub struct BuildResult {
 /// Builds all contracts defined in the DevKitConfig.
 ///
 /// For each contract, it navigates to the configured `path` and runs:
-/// `cargo build --target wasm32-unknown-unknown --release`
+/// `cargo build --target wasm32v1-none --release`
 ///
 /// The build proceeds in the dependency-resolved deploy order produced by
 /// [`crate::project::resolve_deploy_order`], so a malformed graph
@@ -76,7 +79,7 @@ pub fn build_workspace(config: &DevKitConfig) -> Result<Vec<BuildResult>, BuildE
         let output = Command::new("cargo")
             .arg("build")
             .arg("--target")
-            .arg("wasm32-unknown-unknown")
+            .arg(WASM_BUILD_TARGET)
             .arg("--release")
             .current_dir(path)
             .output()
@@ -88,19 +91,19 @@ pub fn build_workspace(config: &DevKitConfig) -> Result<Vec<BuildResult>, BuildE
         if !output.status.success() {
             return Err(BuildError::CargoFailed {
                 path: contract_cfg.path.clone(),
-                stderr: String::from_utf8_lossy(&output.stderr).to_string(),
+                stderr: format!(
+                    "Build for target {WASM_BUILD_TARGET} failed. If this target is not installed, run `rustup target add {WASM_BUILD_TARGET}`.\n{}",
+                    String::from_utf8_lossy(&output.stderr)
+                ),
             });
         }
 
         // We assume a standard Soroban project structure where Cargo.toml has a package name.
         // For sdkt build, we will attempt to extract the expected artifact name from Cargo.toml,
-        // or just glob the target/wasm32-unknown-unknown/release/*.wasm dir.
+        // or just glob the target/<target>/release/*.wasm dir.
         // For stability without adding `cargo-metadata` dependency, we will look for any .wasm file
         // generated in the release directory.
-        let target_dir = path
-            .join("target")
-            .join("wasm32-unknown-unknown")
-            .join("release");
+        let target_dir = path.join("target").join(WASM_BUILD_TARGET).join("release");
 
         let mut found_wasm = None;
         if target_dir.exists() {

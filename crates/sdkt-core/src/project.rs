@@ -141,7 +141,7 @@ pub fn resolve_project(config: &DevKitConfig) -> Result<Vec<ResolvedContract>, P
         // Attempt to locate the WASM artifact in the standard target directory
         let target_dir = path
             .join("target")
-            .join("wasm32-unknown-unknown")
+            .join(crate::build::WASM_BUILD_TARGET)
             .join("release");
 
         let mut found_wasm = None;

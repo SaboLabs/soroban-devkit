@@ -263,7 +263,7 @@ fn completions_broken_pipe_exits_successfully() {
 // ---------------------------------------------------------------------------
 
 /// Build a temp project: `.sdkt.toml` + two contract dirs each with a fake
-/// `target/wasm32-unknown-unknown/release/<name>.wasm`. Returns the temp root.
+/// `target/wasm32v1-none/release/<name>.wasm`. Returns the temp root.
 fn make_lock_fixture(root: &std::path::Path, token_bytes: &[u8], router_bytes: &[u8]) {
     std::fs::create_dir_all(root).unwrap();
     std::fs::write(
@@ -285,7 +285,7 @@ deploy_after = ["token"]
             .join("contracts")
             .join(name)
             .join("target")
-            .join("wasm32-unknown-unknown")
+            .join(sdkt_core::build::WASM_BUILD_TARGET)
             .join("release");
         std::fs::create_dir_all(&wasm_dir).unwrap();
         std::fs::write(wasm_dir.join(format!("{}.wasm", name)), bytes).unwrap();
@@ -359,7 +359,9 @@ fn lock_verify_detects_drift() {
     // Now tamper with the token artifact.
     let token_wasm = tmp
         .join("contracts/token")
-        .join("target/wasm32-unknown-unknown/release/token.wasm");
+        .join("target")
+        .join(sdkt_core::build::WASM_BUILD_TARGET)
+        .join("release/token.wasm");
     std::fs::write(&token_wasm, b"tampered-token-bytes").unwrap();
 
     let mut verify = Command::cargo_bin("sdkt").expect("sdkt binary built");

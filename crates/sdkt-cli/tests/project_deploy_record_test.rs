@@ -75,7 +75,7 @@ depends_on = ["vault"]
             .join("contracts")
             .join(alias)
             .join("target")
-            .join("wasm32-unknown-unknown")
+            .join(sdkt_core::build::WASM_BUILD_TARGET)
             .join("release");
         std::fs::create_dir_all(&target).unwrap();
         std::fs::write(target.join(format!("{alias}.wasm")), CONTRACT_WASM).unwrap();
@@ -93,7 +93,7 @@ path = "contracts/token"
         .join("contracts")
         .join("token")
         .join("target")
-        .join("wasm32-unknown-unknown")
+        .join(sdkt_core::build::WASM_BUILD_TARGET)
         .join("release");
     std::fs::create_dir_all(&target).unwrap();
     std::fs::write(target.join("token.wasm"), CONTRACT_WASM).unwrap();
