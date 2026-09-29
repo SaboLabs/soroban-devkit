@@ -483,23 +483,53 @@ fn test_events_topic_case_mismatch_suggests_declared_symbol() {
 
 #[test]
 fn test_events_topic_known_to_abi_does_not_warn() {
+    // `transfer` is the prefix topic, i.e. what `topic[0]` carries on the wire.
     let dir = tempfile::tempdir().unwrap();
     let wasm = wasm_with_transfer_event(dir.path());
-    for topic in ["transfer", "Transfer"] {
-        let (rpc_url, _seen) = mock_events_rpc(2500);
-        let mut cmd = Command::cargo_bin("sdkt").unwrap();
-        cmd.arg("events")
-            .arg(CONTRACT_ID)
-            .arg("--rpc-url")
-            .arg(&rpc_url)
-            .arg("--abi")
-            .arg(&wasm)
-            .arg("--topic")
-            .arg(topic);
-        cmd.assert()
-            .success()
-            .stderr(predicate::str::contains("Warning").not());
-    }
+    let (rpc_url, _seen) = mock_events_rpc(2500);
+    let mut cmd = Command::cargo_bin("sdkt").unwrap();
+    cmd.arg("events")
+        .arg(CONTRACT_ID)
+        .arg("--rpc-url")
+        .arg(&rpc_url)
+        .arg("--abi")
+        .arg(&wasm)
+        .arg("--topic")
+        .arg("transfer");
+    cmd.assert()
+        .success()
+        .stderr(predicate::str::contains("Warning").not());
+}
+
+#[test]
+fn test_events_topic_abi_name_warns_with_prefix_topic_hint() {
+    // `Transfer` is the ABI event name, but the wire topic is the prefix
+    // `transfer`: querying by the name matches nothing, so the user must be told.
+    let dir = tempfile::tempdir().unwrap();
+    let wasm = wasm_with_transfer_event(dir.path());
+    let (rpc_url, seen) = mock_events_rpc(2500);
+    let mut cmd = Command::cargo_bin("sdkt").unwrap();
+    cmd.arg("events")
+        .arg(CONTRACT_ID)
+        .arg("--rpc-url")
+        .arg(&rpc_url)
+        .arg("--abi")
+        .arg(&wasm)
+        .arg("--topic")
+        .arg("Transfer")
+        .arg("--format")
+        .arg("json");
+
+    let assert = cmd.assert().success().stderr(predicate::str::contains(
+        "did you mean 'transfer'? (the wire topic is the prefix topic)",
+    ));
+    let stdout = assert.get_output().stdout.clone();
+    serde_json::from_slice::<serde_json::Value>(&stdout).unwrap();
+    // Non-fatal: the query still runs with the symbol the user gave.
+    assert_eq!(
+        events_request(&seen)["params"]["filters"][0]["topics"],
+        serde_json::json!([[TRANSFER_TOPIC_B64, "**"]])
+    );
 }
 
 #[test]

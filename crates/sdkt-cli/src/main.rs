@@ -1952,32 +1952,50 @@ fn shell_quote(s: &str) -> String {
     format!("'{}'", s.replace('\'', "'\\''"))
 }
 
-/// Warning for `sdkt events --topic` when `symbol` is not a topic the contract
-/// spec declares. Topic 0 of a `#[contractevent]` is its first prefix topic
-/// (the snake_case event name by default), so both that and the declared
-/// event name are accepted. Returns `None` when the symbol is known.
+/// Warning for `sdkt events --topic` when `symbol` will not match the event's
+/// `topic[0]` on the wire. For a `#[contractevent]` that is its first prefix
+/// topic (the snake_case event name by default), not the declared event name,
+/// so querying by the name (`Transfer`) silently matches nothing when the
+/// prefix differs (`transfer`). Events without prefix topics fall back to their
+/// name. Returns `None` when the symbol is a wire topic of some declared event.
 fn unknown_event_topic_warning(spec: &sdkt_wasm::ContractSpec, symbol: &str) -> Option<String> {
-    let mut known: Vec<&str> = Vec::new();
-    for ev in &spec.events {
-        for name in ev.prefix_topics.first().into_iter().chain([&ev.name]) {
-            if !known.contains(&name.as_str()) {
-                known.push(name);
-            }
-        }
-    }
-    if known.contains(&symbol) {
+    // (declared name, topic[0] on the wire) per event.
+    let events: Vec<(&str, &str)> = spec
+        .events
+        .iter()
+        .map(|ev| {
+            let wire = ev.prefix_topics.first().unwrap_or(&ev.name);
+            (ev.name.as_str(), wire.as_str())
+        })
+        .collect();
+    if events.iter().any(|(_, wire)| *wire == symbol) {
         return None;
     }
+    if let Some((_, wire)) = events.iter().find(|(name, _)| *name == symbol) {
+        return Some(format!(
+            "Warning: '{symbol}' is the ABI name of an event, not its wire topic; \
+             did you mean '{wire}'? (the wire topic is the prefix topic). Querying anyway."
+        ));
+    }
     let mut msg = format!("Warning: event topic '{symbol}' is not declared in the contract ABI");
-    if known.is_empty() {
+    if events.is_empty() {
         msg.push_str(" (the ABI declares no events)");
     } else {
-        if let Some(close) = known.iter().find(|k| k.eq_ignore_ascii_case(symbol)) {
+        let close = events.iter().find(|(name, wire)| {
+            name.eq_ignore_ascii_case(symbol) || wire.eq_ignore_ascii_case(symbol)
+        });
+        if let Some((_, wire)) = close {
             msg.push_str(&format!(
-                "; did you mean '{close}'? (topics are case-sensitive)"
+                "; did you mean '{wire}'? (topics are case-sensitive)"
             ));
         }
-        msg.push_str(&format!("; declared: {}", known.join(", ")));
+        let mut declared: Vec<&str> = Vec::new();
+        for (_, wire) in &events {
+            if !declared.contains(wire) {
+                declared.push(wire);
+            }
+        }
+        msg.push_str(&format!("; declared: {}", declared.join(", ")));
     }
     msg.push_str(". Querying anyway.");
     Some(msg)
@@ -8047,19 +8065,37 @@ mod events_topic_unit_tests {
     }
 
     #[test]
-    fn known_prefix_topic_or_name_produces_no_warning() {
+    fn wire_topic_produces_no_warning() {
+        // Prefix topic is the wire topic; an event without prefix falls back to its name.
         let spec = spec_with_events(&[("Transfer", &["transfer"]), ("Approval", &[])]);
         assert_eq!(unknown_event_topic_warning(&spec, "transfer"), None);
-        assert_eq!(unknown_event_topic_warning(&spec, "Transfer"), None);
         assert_eq!(unknown_event_topic_warning(&spec, "Approval"), None);
     }
 
     #[test]
-    fn unknown_symbol_warns_and_lists_declared_topics() {
+    fn abi_name_differing_from_prefix_suggests_prefix() {
+        let spec = spec_with_events(&[("Transfer", &["transfer"])]);
+        let w = unknown_event_topic_warning(&spec, "Transfer").expect("warning");
+        assert!(w.contains("'Transfer' is the ABI name of an event"), "{w}");
+        assert!(
+            w.contains("did you mean 'transfer'? (the wire topic is the prefix topic)"),
+            "{w}"
+        );
+        assert!(w.ends_with("Querying anyway."), "{w}");
+    }
+
+    #[test]
+    fn abi_name_equal_to_prefix_produces_no_warning() {
+        let spec = spec_with_events(&[("transfer", &["transfer"])]);
+        assert_eq!(unknown_event_topic_warning(&spec, "transfer"), None);
+    }
+
+    #[test]
+    fn unknown_symbol_warns_and_lists_wire_topics() {
         let spec = spec_with_events(&[("Transfer", &["transfer"]), ("Approval", &[])]);
         let w = unknown_event_topic_warning(&spec, "Mint").expect("warning");
         assert!(w.contains("'Mint' is not declared"), "{w}");
-        assert!(w.contains("declared: transfer, Transfer, Approval"), "{w}");
+        assert!(w.contains("declared: transfer, Approval."), "{w}");
         assert!(!w.contains("did you mean"), "{w}");
     }
 

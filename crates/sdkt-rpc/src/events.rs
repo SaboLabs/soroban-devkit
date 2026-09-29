@@ -21,8 +21,12 @@ pub const TOPIC_WILDCARD_ONE: &str = "*";
 /// Trailing segment matcher that matches zero or more remaining topics.
 pub const TOPIC_WILDCARD_REST: &str = "**";
 
+/// A `getEvents` filter. Build it with [`EventFilter::contract`] (and
+/// [`EventFilter::with_topics`]); it is `#[non_exhaustive]` so new RPC filter
+/// fields can be added without breaking downstream struct literals.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
+#[non_exhaustive]
 pub struct EventFilter {
     #[serde(rename = "type")]
     pub filter_type: String,
@@ -31,6 +35,28 @@ pub struct EventFilter {
     /// the request when `None`, so unfiltered queries are unchanged on the wire.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub topics: Option<Vec<TopicFilter>>,
+}
+
+impl EventFilter {
+    /// Filter on contract events emitted by any of `contract_ids`, with no
+    /// topic matcher.
+    pub fn contract<I, S>(contract_ids: I) -> Self
+    where
+        I: IntoIterator<Item = S>,
+        S: Into<String>,
+    {
+        Self {
+            filter_type: "contract".to_string(),
+            contract_ids: contract_ids.into_iter().map(Into::into).collect(),
+            topics: None,
+        }
+    }
+
+    /// Restrict the filter to events matching any of `topics`.
+    pub fn with_topics(mut self, topics: Vec<TopicFilter>) -> Self {
+        self.topics = Some(topics);
+        self
+    }
 }
 
 /// Topic filter matching events whose first topic (the event name symbol) is
@@ -161,9 +187,8 @@ pub async fn get_contract_events_filtered(
         start_ledger,
         end_ledger: request_end_ledger,
         filters: vec![EventFilter {
-            filter_type: "contract".to_string(),
-            contract_ids: vec![contract_id.to_string()],
             topics,
+            ..EventFilter::contract([contract_id])
         }],
     };
 
@@ -343,6 +368,21 @@ mod tests {
         let legacy: EventFilter =
             serde_json::from_str(r#"{"type":"contract","contractIds":[]}"#).unwrap();
         assert_eq!(legacy.topics, None);
+    }
+
+    #[test]
+    fn test_event_filter_constructors() {
+        let id = "CA3D5KRYM6CB7OWQ6TWYRR3Z4T7GNZLKERYNZGGA5CWVMOMG2P3T2YYW";
+        let plain = EventFilter::contract([id]);
+        assert_eq!(plain.filter_type, "contract");
+        assert_eq!(plain.contract_ids, vec![id.to_string()]);
+        assert_eq!(plain.topics, None);
+
+        let filtered = EventFilter::contract([id]).with_topics(vec![first_topic_filter("AAAA")]);
+        assert_eq!(
+            filtered.topics,
+            Some(vec![vec!["AAAA".to_string(), "**".to_string()]])
+        );
     }
 
     #[test]
