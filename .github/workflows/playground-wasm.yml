@@ -55,6 +55,12 @@ jobs:
         bash website/playground/build.sh
         echo "PLAYGROUND_WASM_OUT=$PLAYGROUND_WASM_OUT" >> "$GITHUB_ENV"
 
+    - name: Upload generated playground artifacts
+      uses: actions/upload-artifact@v4
+      with:
+        name: playground-wasm-generated
+        path: ${{ env.PLAYGROUND_WASM_OUT }}
+
     - name: Check committed artifacts are semantically fresh
       run: |
         set -euo pipefail
