@@ -5138,11 +5138,20 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
                                         }
                                     }
                                     Err(e) => {
-                                        if matches!(e, sdkt_audit::PluginLoadError::AbiMismatch { .. }) {
-                                            eprintln!("Warning: skipping native plugin '{}': {}", plugin_id, e);
+                                        if matches!(
+                                            e,
+                                            sdkt_audit::PluginLoadError::AbiMismatch { .. }
+                                        ) {
+                                            eprintln!(
+                                                "Warning: skipping native plugin '{}': {}",
+                                                plugin_id, e
+                                            );
                                             continue;
                                         }
-                                        eprintln!("Error loading native plugin '{}': {}", plugin_id, e);
+                                        eprintln!(
+                                            "Error loading native plugin '{}': {}",
+                                            plugin_id, e
+                                        );
                                         process::exit(1);
                                     }
                                 }
@@ -5161,7 +5170,8 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
                             #[cfg(feature = "wasm-plugins")]
                             {
                                 let result = if single_file {
-                                    sdkt_audit::load_and_register_wasm(plugin_path, &source).map(|_| ())
+                                    sdkt_audit::load_and_register_wasm(plugin_path, &source)
+                                        .map(|_| ())
                                 } else {
                                     sdkt_audit::WasmPluginRule::load(plugin_path, &source)
                                         .map(|rule| local_reg.register_rule(Box::new(rule)))
@@ -5174,11 +5184,20 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
                                         }
                                     }
                                     Err(e) => {
-                                        if matches!(e, sdkt_audit::WasmPluginLoadError::AbiMismatch { .. }) {
-                                            eprintln!("Warning: skipping WASM plugin '{}': {}", plugin_id, e);
+                                        if matches!(
+                                            e,
+                                            sdkt_audit::WasmPluginLoadError::AbiMismatch { .. }
+                                        ) {
+                                            eprintln!(
+                                                "Warning: skipping WASM plugin '{}': {}",
+                                                plugin_id, e
+                                            );
                                             continue;
                                         }
-                                        eprintln!("Error loading WASM plugin '{}': {}", plugin_id, e);
+                                        eprintln!(
+                                            "Error loading WASM plugin '{}': {}",
+                                            plugin_id, e
+                                        );
                                         process::exit(1);
                                     }
                                 }
