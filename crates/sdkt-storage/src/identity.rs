@@ -14,6 +14,14 @@ use std::os::unix::fs::OpenOptionsExt;
 use std::path::{Path, PathBuf};
 use stellar_strkey::Strkey;
 
+/// Reserved identity name that selects the keystore's configured default.
+///
+/// Every signing command's `--identity` flag defaults to this literal string,
+/// but it can never name a key on disk — the keystore rejects it as an invalid
+/// identity name. It is a sentinel, resolved through
+/// [`IdentityStore::resolve_signing_identity`].
+pub const DEFAULT_IDENTITY_NAME: &str = "default";
+
 /// A local Soroban identity containing a named keypair.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Identity {
@@ -108,6 +116,28 @@ impl IdentityStore {
             .as_str()
             .to_string(),
         })
+    }
+
+    /// Resolve the signing identity named by a CLI `--identity` value.
+    ///
+    /// The signing commands default `--identity` to the reserved literal
+    /// [`DEFAULT_IDENTITY_NAME`] (`"default"`), which can never be a real key.
+    /// When `name` is that sentinel this returns the identity selected by
+    /// [`IdentityStore::set_default`]; for any other `name` it is exactly
+    /// [`IdentityStore::get`], so an explicit `--identity <name>` is unchanged.
+    ///
+    /// # Errors
+    /// Returns [`StorageError::NoDefaultIdentity`] when the sentinel is used and
+    /// no default has been configured, and the [`IdentityStore::get`] error for
+    /// any other unresolvable name.
+    pub fn resolve_signing_identity(&self, name: &str) -> Result<Identity, StorageError> {
+        if name == DEFAULT_IDENTITY_NAME {
+            return self
+                .get_default()
+                .map_err(|_| StorageError::NoDefaultIdentity);
+        }
+
+        self.get(name)
     }
 
     /// Delete an identity.
@@ -403,6 +433,53 @@ mod tests {
 
         assert_eq!(def.name, "alice");
         assert_eq!(def.public_key, alice.public_key);
+    }
+
+    #[test]
+    fn test_resolve_signing_identity_honors_default_sentinel() {
+        let dir = tempdir().unwrap();
+        let store = IdentityStore::with_dir(dir.path()).unwrap();
+        let alice = store.generate("alice").unwrap();
+
+        // Sentinel with no default configured: an actionable, specific error
+        // (not the opaque "Identity 'default' not found" the literal name gave).
+        match store.resolve_signing_identity(DEFAULT_IDENTITY_NAME) {
+            Err(StorageError::NoDefaultIdentity) => {}
+            other => panic!("expected NoDefaultIdentity, got {other:?}"),
+        }
+
+        store.set_default("alice").unwrap();
+        let resolved = store
+            .resolve_signing_identity(DEFAULT_IDENTITY_NAME)
+            .expect("sentinel resolves once a default is set");
+
+        assert_eq!(resolved.name, "alice");
+        assert_eq!(resolved.public_key, alice.public_key);
+    }
+
+    #[test]
+    fn test_resolve_signing_identity_explicit_names_unchanged() {
+        let dir = tempdir().unwrap();
+        let store = IdentityStore::with_dir(dir.path()).unwrap();
+        let alice = store.generate("alice").unwrap();
+        store.generate("bob").unwrap();
+
+        // An explicit name is looked up verbatim, even when a *different*
+        // identity is the default, and even before any default exists.
+        let resolved = store.resolve_signing_identity("alice").unwrap();
+        assert_eq!(resolved.name, "alice");
+        assert_eq!(resolved.public_key, alice.public_key);
+
+        store.set_default("bob").unwrap();
+        let still_alice = store.resolve_signing_identity("alice").unwrap();
+        assert_eq!(still_alice.name, "alice");
+
+        // A missing explicit name keeps the plain `get` error, name included.
+        let err = store.resolve_signing_identity("ghost").unwrap_err();
+        assert!(
+            err.to_string().contains("Identity 'ghost' not found"),
+            "unexpected error: {err}"
+        );
     }
 
     // ---------------------------------------------------------------------------

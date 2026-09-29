@@ -291,6 +291,65 @@ fn storage_analyze_rejects_invalid_key_xdr_before_abi_contract_rpc() {
 // ---------------- Mock RPC integration tests ----------------
 
 #[test]
+fn snapshot_abi_adds_label_without_changing_plain_json() {
+    let dir = tempdir().unwrap();
+    let instance_key = contract_data_key(
+        VALID_CONTRACT,
+        stellar_xdr::ScVal::LedgerKeyContractInstance,
+        stellar_xdr::ContractDataDurability::Persistent,
+    );
+    let entries = serde_json::json!([{
+        "key": instance_key,
+        "xdr": "AAAAAQAAAABpc25nAAAA",
+        "lastModifiedLedgerSeq": 100,
+        "liveUntilLedgerSeq": 200
+    }]);
+    let (url, _) = mock_analyze_rpc(100, entries);
+    setup_mock_network(dir.path(), &url);
+    let abi = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/us_new.wasm");
+    let run = |with_abi: bool| {
+        let mut cmd = sdkt_isolated(dir.path());
+        cmd.args([
+            "storage",
+            "--network-profile",
+            "mocknet",
+            "snapshot",
+            VALID_CONTRACT,
+            "--format",
+            "json",
+        ]);
+        if with_abi {
+            cmd.args(["--abi", abi]);
+        }
+        let output = cmd.assert().success().get_output().stdout.clone();
+        serde_json::from_slice::<serde_json::Value>(&output).unwrap()
+    };
+    let plain = run(false);
+    let labeled = run(true);
+    assert_eq!(plain["entries"][0]["key"], labeled["entries"][0]["key"]);
+    assert!(plain["entries"][0].get("label").is_none());
+    assert_eq!(labeled["entries"][0]["label"], "instance");
+    let output = sdkt_isolated(dir.path())
+        .args([
+            "storage",
+            "--network-profile",
+            "mocknet",
+            "snapshot",
+            VALID_CONTRACT,
+            "--abi",
+            abi,
+        ])
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+    assert!(String::from_utf8(output)
+        .unwrap()
+        .contains("label=instance"));
+}
+
+#[test]
 fn storage_analyze_reports_persistent_and_temporary_keys_with_ttl_rows() {
     let dir = tempdir().unwrap();
 

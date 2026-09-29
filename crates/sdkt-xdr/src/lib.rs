@@ -118,17 +118,12 @@ fn parse_contract_id_bytes(contract: &str) -> Result<[u8; 32], DecodeError> {
     Ok(id)
 }
 
-/// Build a Soroban "enum/map"-style storage key `ScVal`: an `ScVec` whose first
-/// element is `symbol` and whose remaining elements are the decoded typed key
-/// arguments (each supplied as a Base64 `ScVal`).
+/// Build a validated `ScVal::Symbol`.
 ///
-/// This mirrors how the Soroban SDK encodes `DataKey`-style enum keys, e.g.
-/// `DataKey::Balance(addr)` → `ScVec[symbol("Balance"), address]`, so it also
-/// covers the single-symbol case (`ScVec[symbol("...")]`) when no args are given.
-pub fn build_map_key(symbol: &str, arg_scvals_b64: &[String]) -> Result<ScVal, DecodeError> {
-    // Soroban `Symbol`s are restricted to <=32 chars of [a-zA-Z0-9_]. `ScSymbol`
-    // itself only enforces the length bound, so validate the charset here — an
-    // out-of-charset symbol would silently build a key no contract ever writes.
+/// Soroban `Symbol`s are restricted to <=32 chars of [a-zA-Z0-9_]. `ScSymbol`
+/// itself only enforces the length bound, so validate the charset here — an
+/// out-of-charset symbol would silently build a value no contract ever emits.
+pub fn symbol_scval(symbol: &str) -> Result<ScVal, DecodeError> {
     if symbol.is_empty()
         || symbol.len() > 32
         || !symbol
@@ -144,8 +139,26 @@ pub fn build_map_key(symbol: &str, arg_scvals_b64: &[String]) -> Result<ScVal, D
             "invalid symbol {symbol:?}: must be <=32 chars of [a-zA-Z0-9_]"
         ))
     })?;
+    Ok(ScVal::Symbol(sym))
+}
+
+/// Encode an event-name symbol as the base64 XDR `ScVal` the RPC `getEvents`
+/// topic matcher compares against (e.g. `topic[0]` of a contract event).
+pub fn symbol_topic_base64(symbol: &str) -> Result<String, DecodeError> {
+    scval_to_base64(&symbol_scval(symbol)?)
+        .map_err(|e| DecodeError::Extraction(format!("failed to encode symbol {symbol:?}: {e}")))
+}
+
+/// Build a Soroban "enum/map"-style storage key `ScVal`: an `ScVec` whose first
+/// element is `symbol` and whose remaining elements are the decoded typed key
+/// arguments (each supplied as a Base64 `ScVal`).
+///
+/// This mirrors how the Soroban SDK encodes `DataKey`-style enum keys, e.g.
+/// `DataKey::Balance(addr)` → `ScVec[symbol("Balance"), address]`, so it also
+/// covers the single-symbol case (`ScVec[symbol("...")]`) when no args are given.
+pub fn build_map_key(symbol: &str, arg_scvals_b64: &[String]) -> Result<ScVal, DecodeError> {
     let mut elems: Vec<ScVal> = Vec::with_capacity(1 + arg_scvals_b64.len());
-    elems.push(ScVal::Symbol(sym));
+    elems.push(symbol_scval(symbol)?);
     for b64 in arg_scvals_b64 {
         let scval = scval_from_base64(b64).ok_or_else(|| {
             DecodeError::Extraction(format!("invalid Base64 ScVal key argument: {b64}"))
@@ -649,6 +662,34 @@ mod tests {
             }
             other => panic!("expected ScVec, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn test_symbol_topic_base64_encodes_scval_symbol() {
+        // SCV_SYMBOL (15) + length 8 + "Transfer" (already 4-byte aligned).
+        let b64 = symbol_topic_base64("Transfer").unwrap();
+        assert_eq!(b64, "AAAADwAAAAhUcmFuc2Zlcg==");
+        assert_eq!(
+            scval_from_base64(&b64),
+            Some(ScVal::Symbol("Transfer".try_into().unwrap()))
+        );
+        // Symbols are case-sensitive on the wire.
+        assert_eq!(
+            symbol_topic_base64("transfer").unwrap(),
+            "AAAADwAAAAh0cmFuc2Zlcg=="
+        );
+    }
+
+    #[test]
+    fn test_symbol_topic_base64_rejects_invalid_symbols() {
+        for bad in ["", "has space", "dash-ed", "é", &"a".repeat(33)] {
+            let err = symbol_topic_base64(bad).unwrap_err();
+            assert!(
+                err.to_string().contains("invalid symbol"),
+                "unexpected error for {bad:?}: {err}"
+            );
+        }
+        assert!(symbol_topic_base64(&"a".repeat(32)).is_ok());
     }
 
     #[test]

@@ -1,0 +1,152 @@
+name: Playground WASM freshness
+
+on:
+  push:
+    branches: [ "main" ]
+    paths:
+      - ".github/workflows/playground-wasm.yml"
+      - "crates/sdkt-playground/**"
+      - "crates/sdkt-wasm/**"
+      - "website/playground/**"
+      - "Cargo.lock"
+  pull_request:
+    branches: [ "main" ]
+    paths:
+      - ".github/workflows/playground-wasm.yml"
+      - "crates/sdkt-playground/**"
+      - "crates/sdkt-wasm/**"
+      - "website/playground/**"
+      - "Cargo.lock"
+
+jobs:
+  playground-wasm:
+    name: playground WASM freshness
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v7
+      with:
+        persist-credentials: false
+
+    - name: Set up Rust
+      uses: dtolnay/rust-toolchain@1.88.0
+      with:
+        targets: wasm32-unknown-unknown
+
+    - name: Install wasm-bindgen CLI
+      run: cargo +1.88.0 install wasm-bindgen-cli --version 0.2.127 --locked
+
+    - name: Install wasm-tools
+      run: cargo install wasm-tools --version 1.259.0 --locked
+
+    - name: Show toolchain versions
+      run: |
+        git rev-parse HEAD
+        rustc -Vv
+        cargo -V
+        wasm-bindgen --version
+
+    - name: Check sdkt-playground
+      run: cargo +1.88.0 check --locked --manifest-path crates/sdkt-playground/Cargo.toml --target wasm32-unknown-unknown
+
+    - name: Generate playground artifacts
+      run: |
+        PLAYGROUND_WASM_OUT="$(mktemp -d)"
+        export PLAYGROUND_WASM_OUT
+        bash website/playground/build.sh
+        echo "PLAYGROUND_WASM_OUT=$PLAYGROUND_WASM_OUT" >> "$GITHUB_ENV"
+
+    - name: Upload generated playground artifacts
+      uses: actions/upload-artifact@v4
+      with:
+        name: playground-wasm-generated
+        path: ${{ env.PLAYGROUND_WASM_OUT }}
+
+    - name: Check committed artifacts are semantically fresh
+      run: |
+        set -euo pipefail
+
+        COMMITTED_JS="website/playground/wasm/sdkt_playground.js"
+        GENERATED_JS="$PLAYGROUND_WASM_OUT/sdkt_playground.js"
+        SNAPSHOT_SCRIPT="$RUNNER_TEMP/playground_semantic_snapshot.mjs"
+        COMMITTED_SNAPSHOT="$RUNNER_TEMP/committed_semantic_snapshot.json"
+        GENERATED_SNAPSHOT="$RUNNER_TEMP/generated_semantic_snapshot.json"
+
+        cat > "$SNAPSHOT_SCRIPT" <<'NODE'
+        import { readFileSync } from 'node:fs';
+        import { pathToFileURL } from 'node:url';
+
+        const jsPath = process.argv[2];
+        const jsUrl = pathToFileURL(jsPath);
+        const { initSync, inspect_wasm, sdkt_version } = await import(jsUrl.href);
+
+        const bare = new Uint8Array([
+          0x00, 0x61, 0x73, 0x6d,
+          0x01, 0x00, 0x00, 0x00,
+        ]);
+
+        const fixtures = [
+          ['us_old', 'crates/sdkt-cli/tests/fixtures/us_old.wasm'],
+          ['us_new', 'crates/sdkt-cli/tests/fixtures/us_new.wasm'],
+          ['bare', null],
+          ['empty', null],
+          ['invalid', null],
+        ];
+
+        const wasmBytes = readFileSync(new URL('./sdkt_playground_bg.wasm', jsUrl));
+        initSync(wasmBytes);
+
+        function normalize_kind(value) {
+          if (value === 'Memory' || value === 'memory') return 'memory';
+          if (value === 'Func' || value === 'func') return 'func';
+          return value;
+        }
+
+        function normalize_value(value) {
+          if (Array.isArray(value)) {
+            return value.map(normalize_value);
+          }
+          if (value && typeof value === 'object') {
+            const out = {};
+            for (const [key, child] of Object.entries(value)) {
+              if (key === 'kind' && typeof child === 'string') {
+                out[key] = normalize_kind(child);
+              } else {
+                out[key] = normalize_value(child);
+              }
+            }
+            return out;
+          }
+          return value;
+        }
+
+        const snapshot = {};
+
+        for (const [name, file] of fixtures) {
+          let bytes;
+          if (file) {
+            bytes = readFileSync(file);
+          } else if (name === 'bare') {
+            bytes = bare;
+          } else if (name === 'empty') {
+            bytes = new Uint8Array();
+          } else {
+            bytes = new Uint8Array([0x68, 0x69]);
+          }
+
+          try {
+            snapshot[name] = normalize_value(inspect_wasm(bytes));
+          } catch (err) {
+            snapshot[name] = { error: String(err) };
+          }
+        }
+
+        snapshot.version = sdkt_version();
+        process.stdout.write(JSON.stringify(snapshot, null, 2));
+        NODE
+
+        node "$SNAPSHOT_SCRIPT" "$COMMITTED_JS" > "$COMMITTED_SNAPSHOT"
+        node "$SNAPSHOT_SCRIPT" "$GENERATED_JS" > "$GENERATED_SNAPSHOT"
+
+        diff -u "$COMMITTED_SNAPSHOT" "$GENERATED_SNAPSHOT"
+
+        echo "Playground WASM artifacts are semantically up to date."

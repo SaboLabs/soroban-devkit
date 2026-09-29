@@ -15,7 +15,7 @@ pub use estimate::{
     StorageClassesEstimate, StorageCostEstimate, TotalEstimate, DEFAULT_ESTIMATE_LEDGERS,
     STROOPS_PER_XLM,
 };
-pub use identity::{Identity, IdentityStore};
+pub use identity::{Identity, IdentityStore, DEFAULT_IDENTITY_NAME};
 pub use network::{NetworkProfile, NetworkStore};
 pub use snapshot::{
     derive_extend_plan, diff_snapshots, DiffEntry, DiffStatus, ExtendPlan, SnapshotDiff,

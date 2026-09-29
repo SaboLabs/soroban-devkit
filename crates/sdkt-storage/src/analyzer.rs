@@ -118,6 +118,7 @@ impl StorageAnalyzer {
 
             detailed.push(StorageEntry {
                 key: entry.key.clone(),
+                label: None,
                 class,
                 current_ttl: entry.current_ttl,
                 days_remaining: entry.days_remaining,

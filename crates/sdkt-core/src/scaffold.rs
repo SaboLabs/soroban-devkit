@@ -117,9 +117,6 @@ impl Contract {
 rpc_url = "https://soroban-testnet.stellar.org"
 passphrase = "Test SDF Network ; September 2015"
 
-[build]
-target = "wasm32-unknown-unknown"
-
 [contracts.main]
 path = "."
 "#;
@@ -410,6 +407,7 @@ impl AuditRule for {struct_name} {{
         for s in scans {{
             if s.fn_name.contains("{trigger}") {{
                 report.add(Finding {{
+                    file: None,
                     rule_id: self.id().to_string(),
                     severity: self.severity(),
                     message: format!("{{}} matched trigger function `{{}}`", "{rule_id}", s.fn_name),
@@ -872,6 +870,7 @@ fn rule_fires_on_trigger_function() {{
         invoke_contract: 0,
         bound: Default::default(),
         usage: Default::default(),
+        division_before_multiplication: false,
     }}];
     let ctx = AuditContext {{ spec: None }};
     let mut report = AuditReport::default();
@@ -893,6 +892,7 @@ fn rule_silent_on_normal_function() {{
         invoke_contract: 0,
         bound: Default::default(),
         usage: Default::default(),
+        division_before_multiplication: false,
     }}];
     let ctx = AuditContext {{ spec: None }};
     let mut report = AuditReport::default();

@@ -8,9 +8,10 @@ use sdkt_core::{
 use sdkt_rpc::inspect::StorageSummary;
 use sdkt_rpc::wasm::get_wasm_bytecode;
 use sdkt_rpc::{
-    estimate_dynamic_fee, extend_footprint, get_contract_events, get_next_sequence, get_ttl_info,
-    get_wasm_metadata, inspect_account, inspect_contract, inspect_transaction, read_contract_state,
-    restore_footprint, simulate_transaction, SorobanRpcClient, StorageKeyInfo, TtlInfoSummary,
+    estimate_dynamic_fee, extend_footprint, first_topic_filter, get_contract_events_filtered,
+    get_next_sequence, get_ttl_info, get_wasm_metadata, inspect_account, inspect_contract,
+    inspect_transaction, read_contract_state, restore_footprint, simulate_transaction, NetworkInfo,
+    SorobanRpcClient, StorageKeyInfo, TtlInfoSummary,
 };
 use sdkt_storage::WasmCache;
 use sdkt_storage::{NetworkProfile, NetworkStore, StorageAnalyzer};
@@ -59,6 +60,42 @@ fn sdkt_version_string() -> &'static str {
     #[cfg(not(feature = "provenance"))]
     {
         base
+    }
+}
+
+#[cfg(test)]
+mod storage_label_tests {
+    use super::*;
+
+    #[test]
+    fn projects_matching_union_key_and_falls_back_for_unknown_key() {
+        let spec: sdkt_wasm::ContractSpec = serde_json::from_value(serde_json::json!({
+            "env_meta": null, "functions": [], "events": [],
+            "custom_types": [{
+                "name": "DataKey", "kind": "union", "doc": "", "type_args": [],
+                "bytes_n": null,
+                "members": [{"name": "Balance", "doc": "", "types": [{
+                    "name": "u32", "kind": "primitive", "doc": "", "members": [],
+                    "type_args": [], "bytes_n": null
+                }], "value": null}]
+            }]
+        }))
+        .unwrap();
+        let contract = "CAE3U7JKESRWZHPEQ72DVNGOQ6WPA7HSPQZL5YV46NPCE4TMUPAGYMEC";
+        let key = resolve_storage_read_key(
+            contract,
+            None,
+            Some("Balance"),
+            &["u32:7".to_string()],
+            false,
+            "persistent",
+        )
+        .unwrap();
+        assert_eq!(storage_key_label(&key, &spec), "DataKey::Balance(u32)");
+        let unknown =
+            resolve_storage_read_key(contract, None, Some("Unknown"), &[], false, "persistent")
+                .unwrap();
+        assert_eq!(storage_key_label(&unknown, &spec), unknown);
     }
 }
 
@@ -334,8 +371,9 @@ fn resolve_rpc_client_mutating(
 ///
 /// Serializes to the structured JSON schema used by `--format json`:
 /// `profile`, `rpc_url`, `reachable`, `status`, `latest_ledger`,
-/// `protocol_version`, `error`. `error` is `None` (serialized as `null`) only
-/// when the endpoint is reachable *and* healthy.
+/// `protocol_version`, `configured_passphrase`, `endpoint_passphrase`,
+/// `friendbot_url`, `network_info_error`, `error`. `error` describes
+/// reachability/health only; unsupported `getNetwork` is reported separately.
 #[derive(Debug, serde::Serialize)]
 struct NetworkCheckOutcome {
     profile: String,
@@ -344,6 +382,10 @@ struct NetworkCheckOutcome {
     status: Option<String>,
     latest_ledger: Option<u32>,
     protocol_version: Option<u32>,
+    configured_passphrase: String,
+    endpoint_passphrase: Option<String>,
+    friendbot_url: Option<String>,
+    network_info_error: Option<String>,
     error: Option<String>,
 }
 
@@ -375,6 +417,10 @@ async fn probe_network_profile(profile: &str, cfg: &NetworkConfig) -> NetworkChe
         status: None,
         latest_ledger: None,
         protocol_version: None,
+        configured_passphrase: cfg.passphrase.clone(),
+        endpoint_passphrase: None,
+        friendbot_url: None,
+        network_info_error: None,
         error: None,
     };
 
@@ -401,6 +447,15 @@ async fn probe_network_profile(profile: &str, cfg: &NetworkConfig) -> NetworkChe
                     ));
                 }
             }
+
+            match client.get_network().await {
+                Ok(network) => {
+                    apply_network_info(&mut outcome, network);
+                }
+                Err(e) => {
+                    outcome.network_info_error = Some(e.to_string());
+                }
+            }
         }
         Err(e) => {
             outcome.error = Some(format!("RPC endpoint '{}' is unreachable: {}", rpc_url, e));
@@ -408,6 +463,13 @@ async fn probe_network_profile(profile: &str, cfg: &NetworkConfig) -> NetworkChe
     }
 
     outcome
+}
+
+fn apply_network_info(outcome: &mut NetworkCheckOutcome, network: NetworkInfo) {
+    outcome.latest_ledger = Some(network.latest_ledger);
+    outcome.protocol_version = Some(network.protocol_version);
+    outcome.endpoint_passphrase = Some(network.passphrase);
+    outcome.friendbot_url = network.friendbot_url;
 }
 
 /// Adapter that makes a closed consumer (EPIPE / `BrokenPipe`) look like a
@@ -774,6 +836,10 @@ enum Commands {
         /// decoding. Mutually exclusive with `--abi`.
         #[arg(long, value_name = "CONTRACT_ID")]
         abi_contract: Option<String>,
+        /// Only return events whose first topic (the event name) is this
+        /// symbol. Case-sensitive; filtered server-side by the RPC.
+        #[arg(long, value_name = "SYMBOL")]
+        topic: Option<String>,
         #[command(flatten)]
         net: NetworkArgs,
     },
@@ -819,9 +885,9 @@ enum Commands {
     },
     /// Static security analysis of a Soroban contract source file (Gap C)
     Audit {
-        /// Path to the Rust source file (.rs) to analyze
-        #[arg(required_unless_present = "list_rules")]
-        path: Option<String>,
+        /// Rust source file(s) or directory path(s) to analyze
+        #[arg(required_unless_present = "list_rules", num_args = 1..)]
+        paths: Vec<String>,
         #[arg(short, long, default_value = "pretty")]
         format: String,
         /// List available audit rules and exit
@@ -1026,6 +1092,8 @@ enum IdentityAction {
     },
     Import {
         name: String,
+        /// Secret key, or `-` to read it from stdin (keeps the secret out of
+        /// the process argv / `ps` output — the path CI smoke jobs need).
         secret: String,
     },
     List,
@@ -1530,6 +1598,7 @@ enum StorageAction {
     },
     /// Analyze a contract's storage layout (Instance/Persistent/Temporary
     /// categorization, TTL summary, and per-entry detail).
+    #[command(alias = "snapshot")]
     Analyze {
         contract_id: String,
         /// Repeatable: extra ledger keys (base64 XDR or hex XDR) to include in
@@ -1961,6 +2030,55 @@ fn shell_quote(s: &str) -> String {
     format!("'{}'", s.replace('\'', "'\\''"))
 }
 
+/// Warning for `sdkt events --topic` when `symbol` will not match the event's
+/// `topic[0]` on the wire. For a `#[contractevent]` that is its first prefix
+/// topic (the snake_case event name by default), not the declared event name,
+/// so querying by the name (`Transfer`) silently matches nothing when the
+/// prefix differs (`transfer`). Events without prefix topics fall back to their
+/// name. Returns `None` when the symbol is a wire topic of some declared event.
+fn unknown_event_topic_warning(spec: &sdkt_wasm::ContractSpec, symbol: &str) -> Option<String> {
+    // (declared name, topic[0] on the wire) per event.
+    let events: Vec<(&str, &str)> = spec
+        .events
+        .iter()
+        .map(|ev| {
+            let wire = ev.prefix_topics.first().unwrap_or(&ev.name);
+            (ev.name.as_str(), wire.as_str())
+        })
+        .collect();
+    if events.iter().any(|(_, wire)| *wire == symbol) {
+        return None;
+    }
+    if let Some((_, wire)) = events.iter().find(|(name, _)| *name == symbol) {
+        return Some(format!(
+            "Warning: '{symbol}' is the ABI name of an event, not its wire topic; \
+             did you mean '{wire}'? (the wire topic is the prefix topic). Querying anyway."
+        ));
+    }
+    let mut msg = format!("Warning: event topic '{symbol}' is not declared in the contract ABI");
+    if events.is_empty() {
+        msg.push_str(" (the ABI declares no events)");
+    } else {
+        let close = events.iter().find(|(name, wire)| {
+            name.eq_ignore_ascii_case(symbol) || wire.eq_ignore_ascii_case(symbol)
+        });
+        if let Some((_, wire)) = close {
+            msg.push_str(&format!(
+                "; did you mean '{wire}'? (topics are case-sensitive)"
+            ));
+        }
+        let mut declared: Vec<&str> = Vec::new();
+        for (_, wire) in &events {
+            if !declared.contains(wire) {
+                declared.push(wire);
+            }
+        }
+        msg.push_str(&format!("; declared: {}", declared.join(", ")));
+    }
+    msg.push_str(". Querying anyway.");
+    Some(msg)
+}
+
 fn parse_format_str(s: &str) -> OutputFormat {
     match s.to_lowercase().as_str() {
         "json" => OutputFormat::Json,
@@ -2064,8 +2182,11 @@ fn print_diff_pretty(diff: &sdkt_storage::SnapshotDiff) {
         println!("\nRemoved entries ({}):", removed.len());
         for e in &removed {
             println!(
-                "  [removed] key={} (old_ttl={})",
+                "  [removed] key={}{} (old_ttl={})",
                 e.key,
+                e.label
+                    .as_ref()
+                    .map_or(String::new(), |l| format!(" label={l}")),
                 e.old_ttl.map_or("?".to_string(), |t| t.to_string())
             );
         }
@@ -2074,14 +2195,95 @@ fn print_diff_pretty(diff: &sdkt_storage::SnapshotDiff) {
         println!("\nExpiring soon ({}):", expiring.len());
         for e in &expiring {
             println!(
-                "  [expiring] key={} (ttl={})",
+                "  [expiring] key={}{} (ttl={})",
                 e.key,
+                e.label
+                    .as_ref()
+                    .map_or(String::new(), |l| format!(" label={l}")),
+                e.new_ttl.map_or("?".to_string(), |t| t.to_string())
+            );
+        }
+    }
+    if unchanged.iter().any(|e| e.label.is_some()) {
+        println!("\nUnchanged entries ({}):", unchanged.len());
+        for e in &unchanged {
+            println!(
+                "  [unchanged] key={}{} (ttl={})",
+                e.key,
+                e.label
+                    .as_ref()
+                    .map_or(String::new(), |l| format!(" label={l}")),
                 e.new_ttl.map_or("?".to_string(), |t| t.to_string())
             );
         }
     }
     if unchanged.is_empty() && removed.is_empty() && expiring.is_empty() {
         println!("  (no entries)");
+    }
+}
+
+/// Project an ABI key name without changing the raw LedgerKey used for identity.
+fn storage_key_label(raw: &str, spec: &sdkt_wasm::ContractSpec) -> String {
+    use stellar_xdr::ScVal;
+
+    let Ok(stellar_xdr::LedgerKey::ContractData(data)) = sdkt_xdr::decode_ledger_key(raw) else {
+        return raw.to_string();
+    };
+    if matches!(data.key, ScVal::LedgerKeyContractInstance) {
+        return "instance".to_string();
+    }
+    let (name, args): (String, &[ScVal]) = match &data.key {
+        ScVal::Symbol(name) => (name.to_utf8_string_lossy(), &[]),
+        ScVal::Vec(Some(items)) => match items.first() {
+            Some(ScVal::Symbol(name)) => (name.to_utf8_string_lossy(), &items[1..]),
+            _ => return raw.to_string(),
+        },
+        _ => return raw.to_string(),
+    };
+    let name = name.as_str();
+    let mut matches =
+        spec.custom_types
+            .iter()
+            .filter(|ty| ty.kind == "union")
+            .flat_map(|ty| {
+                ty.members.iter().filter_map(move |member| {
+                    (member.name == name
+                        && member.types.len() == args.len()
+                        && member.types.iter().zip(args).all(|(ty, value)| {
+                            match ty.name.as_str() {
+                                "bool" => matches!(value, ScVal::Bool(_)),
+                                "u32" => matches!(value, ScVal::U32(_)),
+                                "i32" => matches!(value, ScVal::I32(_)),
+                                "u64" => matches!(value, ScVal::U64(_)),
+                                "i64" => matches!(value, ScVal::I64(_)),
+                                "u128" => matches!(value, ScVal::U128(_)),
+                                "i128" => matches!(value, ScVal::I128(_)),
+                                "string" => matches!(value, ScVal::String(_)),
+                                "symbol" => matches!(value, ScVal::Symbol(_)),
+                                "address" => matches!(value, ScVal::Address(_)),
+                                "bytes" => matches!(value, ScVal::Bytes(_)),
+                                _ => true,
+                            }
+                        }))
+                    .then_some((ty.name.as_str(), member))
+                })
+            });
+    let Some((type_name, member)) = matches.next() else {
+        return raw.to_string();
+    };
+    if matches.next().is_some() {
+        return raw.to_string();
+    }
+    if member.types.is_empty() {
+        format!("{type_name}::{}", member.name)
+    } else {
+        let args = member
+            .types
+            .iter()
+            .map(|ty| ty.name.as_str())
+            .collect::<Vec<_>>()
+            .join(", ");
+        format!("{type_name}::{}({args})", member.name)
     }
 }
 
@@ -2831,6 +3033,42 @@ async fn run_upgrade_safety(
     Ok(verdict)
 }
 
+fn collect_rust_sources(path: &std::path::Path) -> Result<Vec<std::path::PathBuf>, std::io::Error> {
+    if path.is_file() {
+        // Preserve the single-file audit behavior for explicitly supplied source
+        // files, including temporary files without a `.rs` extension. Directory
+        // discovery below remains restricted to Rust source files.
+        return Ok(vec![path.to_path_buf()]);
+    }
+
+    if !path.is_dir() {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::NotFound,
+            format!("path does not exist: {}", path.display()),
+        ));
+    }
+
+    let mut files = Vec::new();
+    let mut stack = vec![path.to_path_buf()];
+
+    while let Some(dir) = stack.pop() {
+        for entry in std::fs::read_dir(&dir)? {
+            let entry = entry?;
+            let entry_path = entry.path();
+            let file_type = entry.file_type()?;
+
+            if file_type.is_dir() {
+                stack.push(entry_path);
+            } else if file_type.is_file() && entry_path.extension().is_some_and(|ext| ext == "rs") {
+                files.push(entry_path);
+            }
+        }
+    }
+
+    files.sort();
+    Ok(files)
+}
+
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Windows debug builds overflow the default 1 MB main-thread stack
     // (introduced by the invoke command's deeper async call chain). Unix
@@ -3228,14 +3466,27 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
                 format,
             } = &action
             {
-                if abi.is_some() || abi_contract.is_some() {
-                    eprintln!(
-                        "Error: --abi and --abi-contract options do not apply to 'storage storage-diff'"
-                    );
+                if abi.is_some() && abi_contract.is_some() {
+                    eprintln!("Error: specify only one of --abi or --abi-contract");
                     process::exit(1);
                 }
 
                 let fmt = parse_format_str(format);
+                let contract_spec = if let Some(wasm_path) = abi.as_ref() {
+                    let bytes = fs::read(wasm_path)?;
+                    Some(parse_contract_spec(&bytes)?)
+                } else if let Some(id) = abi_contract.as_ref() {
+                    let client = resolve_rpc_client(
+                        net.rpc_url.clone(),
+                        net.network_passphrase.clone(),
+                        net.network_profile.clone(),
+                    );
+                    let inspection = inspect_contract(&client, id).await?;
+                    let bytes = get_wasm_bytecode(&client, &inspection.wasm_hash).await?;
+                    Some(parse_contract_spec(&bytes)?)
+                } else {
+                    None
+                };
 
                 // Load old snapshot JSON (output of `sdkt storage analyze --format json`).
                 let old_bytes = match fs::read(old) {
@@ -3271,20 +3522,29 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
                         }
                     };
 
-                let old_snap = match sdkt_storage::StorageSnapshot::from_report(&old_report) {
+                let mut old_snap = match sdkt_storage::StorageSnapshot::from_report(&old_report) {
                     Ok(s) => s,
                     Err(e) => {
                         eprintln!("Failed to load --old snapshot '{old}': {e}");
                         process::exit(1);
                     }
                 };
-                let new_snap = match sdkt_storage::StorageSnapshot::from_report(&new_report) {
+                let mut new_snap = match sdkt_storage::StorageSnapshot::from_report(&new_report) {
                     Ok(s) => s,
                     Err(e) => {
                         eprintln!("Failed to load --new snapshot '{new}': {e}");
                         process::exit(1);
                     }
                 };
+                if let Some(spec) = contract_spec.as_ref() {
+                    for entry in old_snap
+                        .entries
+                        .iter_mut()
+                        .chain(new_snap.entries.iter_mut())
+                    {
+                        entry.label = Some(storage_key_label(&entry.key, spec));
+                    }
+                }
                 let diff = match sdkt_storage::diff_snapshots(&old_snap, &new_snap) {
                     Ok(d) => d,
                     Err(e) => {
@@ -3515,7 +3775,12 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
                         .inspect_contract_storage_keys(&contract_id, &extra_keys)
                         .await
                     {
-                        Ok(report) => {
+                        Ok(mut report) => {
+                            if let Some(spec) = contract_spec.as_ref() {
+                                for entry in &mut report.entries {
+                                    entry.label = Some(storage_key_label(&entry.key, spec));
+                                }
+                            }
                             if fmt == OutputFormat::Json {
                                 println!("{}", serde_json::to_string(&report)?);
                             } else {
@@ -3551,6 +3816,9 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
                                             entry.days_remaining,
                                             entry.extension_cost_stroops
                                         );
+                                        if let Some(label) = &entry.label {
+                                            println!("        key={} label={}", entry.key, label);
+                                        }
                                     }
                                 }
                             }
@@ -3610,12 +3878,19 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
 
                     let identity_store = sdkt_storage::IdentityStore::new()
                         .map_err(|e| format!("Failed to access identity store: {}", e))?;
+                    // `--identity` defaults to the reserved "default" sentinel;
+                    // resolve it to the configured default identity, if any.
                     let identity_obj = identity_store
-                        .get(&identity)
-                        .map_err(|e| format!("Identity '{}' not found: {}", identity, e))?;
-                    let signing_key = identity_store.load_signing_key(&identity).map_err(|e| {
-                        format!("Failed to load signing key for '{}': {}", identity, e)
-                    })?;
+                        .resolve_signing_identity(&identity)
+                        .map_err(|e| format!("Failed to resolve signing identity: {}", e))?;
+                    let signing_key = identity_store
+                        .load_signing_key(&identity_obj.name)
+                        .map_err(|e| {
+                            format!(
+                                "Failed to load signing key for '{}': {}",
+                                identity_obj.name, e
+                            )
+                        })?;
                     let signer = sdkt_xdr::sign::Ed25519Signer::from_seed(&signing_key.to_bytes());
                     let source_account = identity_obj.public_key.clone();
                     let client = SorobanRpcClient::from_config(&network_config);
@@ -3711,12 +3986,19 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
 
                     let identity_store = sdkt_storage::IdentityStore::new()
                         .map_err(|e| format!("Failed to access identity store: {}", e))?;
+                    // `--identity` defaults to the reserved "default" sentinel;
+                    // resolve it to the configured default identity, if any.
                     let identity_obj = identity_store
-                        .get(&identity)
-                        .map_err(|e| format!("Identity '{}' not found: {}", identity, e))?;
-                    let signing_key = identity_store.load_signing_key(&identity).map_err(|e| {
-                        format!("Failed to load signing key for '{}': {}", identity, e)
-                    })?;
+                        .resolve_signing_identity(&identity)
+                        .map_err(|e| format!("Failed to resolve signing identity: {}", e))?;
+                    let signing_key = identity_store
+                        .load_signing_key(&identity_obj.name)
+                        .map_err(|e| {
+                            format!(
+                                "Failed to load signing key for '{}': {}",
+                                identity_obj.name, e
+                            )
+                        })?;
                     let signer = sdkt_xdr::sign::Ed25519Signer::from_seed(&signing_key.to_bytes());
                     let source_account = identity_obj.public_key.clone();
                     let client = SorobanRpcClient::from_config(&network_config);
@@ -4824,10 +5106,24 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
                         process::exit(1);
                     }
                 };
-                let signing_key = match store.load_signing_key(&identity) {
+                // The flag defaults to the reserved "default" sentinel, which
+                // resolves to the configured default identity; an explicit name
+                // is looked up verbatim.
+                let identity_obj = match store.resolve_signing_identity(&identity) {
+                    Ok(obj) => obj,
+                    Err(e) => {
+                        if identity == sdkt_storage::DEFAULT_IDENTITY_NAME {
+                            eprintln!("Error: {}", e);
+                        } else {
+                            eprintln!("Error: unknown identity '{}'", identity);
+                        }
+                        process::exit(1);
+                    }
+                };
+                let signing_key = match store.load_signing_key(&identity_obj.name) {
                     Ok(k) => k,
-                    Err(_) => {
-                        eprintln!("Error: unknown identity '{}'", identity);
+                    Err(e) => {
+                        eprintln!("Error: cannot load identity '{}': {}", identity_obj.name, e);
                         process::exit(1);
                     }
                 };
@@ -4879,6 +5175,7 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
             end_ledger,
             abi,
             abi_contract,
+            topic,
             net,
         } => {
             let fmt = parse_format_str(&format);
@@ -4897,6 +5194,18 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
                     process::exit(1);
                 }
             }
+
+            // Encode `--topic` before any RPC call so an invalid symbol fails fast.
+            let topic_filters = match topic.as_deref() {
+                Some(symbol) => match sdkt_xdr::symbol_topic_base64(symbol) {
+                    Ok(b64) => Some(vec![first_topic_filter(b64)]),
+                    Err(e) => {
+                        eprintln!("Error: --topic: {e}");
+                        process::exit(1);
+                    }
+                },
+                None => None,
+            };
 
             // Resolve the ABI ContractSpec from one of two sources (mutually
             // exclusive): a local WASM file (`--abi`) or a deployed contract's
@@ -4934,7 +5243,21 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
                     None
                 };
 
-            match get_contract_events(&client, &contract_id, start_ledger, end_ledger).await {
+            if let (Some(spec), Some(symbol)) = (contract_spec.as_ref(), topic.as_deref()) {
+                if let Some(warning) = unknown_event_topic_warning(spec, symbol) {
+                    eprintln!("{warning}");
+                }
+            }
+
+            match get_contract_events_filtered(
+                &client,
+                &contract_id,
+                start_ledger,
+                end_ledger,
+                topic_filters,
+            )
+            .await
+            {
                 Ok(events) => {
                     if let Some(spec) = contract_spec {
                         // ABI-aware decoding: topics[0] is the event symbol,
@@ -5308,7 +5631,7 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
             }
         }
         Commands::Audit {
-            path,
+            paths,
             format,
             list_rules,
             disable,
@@ -5386,18 +5709,6 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
                 return Ok(());
             }
 
-            let path = match path {
-                Some(p) => p,
-                None => {
-                    let mut cmd = Cli::command();
-                    cmd.error(
-                        clap::error::ErrorKind::MissingRequiredArgument,
-                        "the following required arguments were not provided:\n  <PATH>",
-                    )
-                    .exit();
-                }
-            };
-
             if !rules.is_empty() {
                 // Validate/resolve each --rules entry before reading source.
                 for r in &rules {
@@ -5420,31 +5731,116 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
                 }
             }
 
-            let src = fs::read_to_string(&path)
-                .map_err(|e| format!("Failed to read source '{}': {}", path, e))?;
+            let mut source_paths = Vec::new();
 
-            #[allow(unused_mut)]
-            let mut loaded_plugins = 0usize;
+            for input in &paths {
+                let input_path = std::path::Path::new(input);
+                let discovered = collect_rust_sources(input_path).map_err(|e| {
+                    if paths.len() == 1 && input_path.extension().is_some_and(|ext| ext == "rs") {
+                        format!("Failed to read source '{}': {}", input, e)
+                    } else {
+                        format!("Failed to discover Rust sources '{}': {}", input, e)
+                    }
+                })?;
 
-            if rules.is_empty() {
-                if !no_plugins {
-                    let installed = sdkt_audit::plugin_store::list();
-                    for meta in installed {
-                        if meta.abi_major != sdkt_audit::plugin_abi::SDKT_AUDIT_ABI_MAJOR {
-                            eprintln!(
-                                "Warning: skipping plugin '{}': ABI mismatch (plugin v{}.x, host v{}.x)",
-                                meta.id, meta.abi_major, sdkt_audit::plugin_abi::SDKT_AUDIT_ABI_MAJOR
-                            );
+                source_paths.extend(discovered);
+            }
+
+            source_paths.sort();
+            source_paths.dedup();
+
+            if source_paths.is_empty() {
+                return Err("No Rust source files (.rs) found in the supplied paths".into());
+            }
+
+            let single_file = paths.len() == 1
+                && source_paths.len() == 1
+                && std::path::Path::new(&paths[0]).is_file();
+            let multi_file = !single_file;
+
+            let multi_file_plugin_paths: Vec<(std::path::PathBuf, String)> = {
+                #[allow(unused_mut)]
+                let mut paths_out = Vec::new();
+                if rules.is_empty() {
+                    if !no_plugins {
+                        let installed = sdkt_audit::plugin_store::list();
+                        for meta in installed {
+                            if meta.abi_major != sdkt_audit::plugin_abi::SDKT_AUDIT_ABI_MAJOR {
+                                eprintln!(
+                                    "Warning: skipping plugin '{}': ABI mismatch (plugin v{}.x, host v{}.x)",
+                                    meta.id, meta.abi_major, sdkt_audit::plugin_abi::SDKT_AUDIT_ABI_MAJOR
+                                );
+                                continue;
+                            }
+
+                            let Some(artifact_path) = sdkt_audit::plugin_store::resolve(&meta.id)
+                            else {
+                                eprintln!(
+                                    "Warning: skipping plugin '{}': artifact not found",
+                                    meta.id
+                                );
+                                continue;
+                            };
+
+                            let ext = artifact_path
+                                .extension()
+                                .and_then(|e| e.to_str())
+                                .map(|e| e.to_ascii_lowercase())
+                                .unwrap_or_default();
+
+                            match ext.as_str() {
+                                "so" | "dylib" | "dll" => {
+                                    #[cfg(feature = "plugins")]
+                                    {
+                                        paths_out.push((artifact_path, meta.id.clone()));
+                                    }
+                                    #[cfg(not(feature = "plugins"))]
+                                    {
+                                        eprintln!(
+                                            "Warning: skipping native plugin '{}': build compiled without `plugins` feature",
+                                            meta.id
+                                        );
+                                    }
+                                }
+                                "wasm" => {
+                                    #[cfg(feature = "wasm-plugins")]
+                                    {
+                                        paths_out.push((artifact_path, meta.id.clone()));
+                                    }
+                                    #[cfg(not(feature = "wasm-plugins"))]
+                                    {
+                                        eprintln!(
+                                            "Warning: skipping WASM plugin '{}': build compiled without `wasm-plugins` feature",
+                                            meta.id
+                                        );
+                                    }
+                                }
+                                _ => {
+                                    eprintln!(
+                                        "Warning: skipping plugin '{}': unsupported artifact format",
+                                        meta.id
+                                    );
+                                }
+                            }
+                        }
+                    }
+                } else {
+                    for r in &rules {
+                        if let Some(meta) = sdkt_audit::plugin_store::show(r) {
+                            if meta.abi_major != sdkt_audit::plugin_abi::SDKT_AUDIT_ABI_MAJOR {
+                                continue;
+                            }
+                        }
+
+                        let resolved = sdkt_audit::plugin_store::resolve(r)
+                            .unwrap_or_else(|| std::path::PathBuf::from(r));
+                        let path_r = resolved.as_path();
+
+                        if path_r.is_dir() {
                             continue;
                         }
 
-                        let Some(artifact_path) = sdkt_audit::plugin_store::resolve(&meta.id)
-                        else {
-                            eprintln!("Warning: skipping plugin '{}': artifact not found", meta.id);
-                            continue;
-                        };
-
-                        let ext = artifact_path
+                        let ext = path_r
                             .extension()
                             .and_then(|e| e.to_str())
                             .map(|e| e.to_ascii_lowercase())
@@ -5454,68 +5850,83 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
                             "so" | "dylib" | "dll" => {
                                 #[cfg(feature = "plugins")]
                                 {
-                                    match sdkt_audit::load_and_register(&artifact_path, &src) {
-                                        Ok(_) => loaded_plugins += 1,
-                                        Err(e) => eprintln!(
-                                            "Warning: skipping native plugin '{}': {}",
-                                            meta.id, e
-                                        ),
-                                    }
+                                    paths_out.push((path_r.to_path_buf(), r.clone()));
                                 }
                                 #[cfg(not(feature = "plugins"))]
                                 {
                                     eprintln!(
-                                        "Warning: skipping native plugin '{}': build compiled without `plugins` feature",
-                                        meta.id
+                                        "Error: '{}' is a native plugin artifact but this build was compiled \
+                                         without the `plugins` feature. Rebuild with --features plugins.",
+                                        r
                                     );
+                                    process::exit(1);
                                 }
                             }
                             "wasm" => {
                                 #[cfg(feature = "wasm-plugins")]
                                 {
-                                    match sdkt_audit::load_and_register_wasm(&artifact_path, &src) {
-                                        Ok(_) => loaded_plugins += 1,
-                                        Err(e) => eprintln!(
-                                            "Warning: skipping WASM plugin '{}': {}",
-                                            meta.id, e
-                                        ),
-                                    }
+                                    paths_out.push((path_r.to_path_buf(), r.clone()));
                                 }
                                 #[cfg(not(feature = "wasm-plugins"))]
                                 {
                                     eprintln!(
-                                        "Warning: skipping WASM plugin '{}': build compiled without `wasm-plugins` feature",
-                                        meta.id
+                                        "Error: '{}' is a WASM plugin artifact but this build was compiled \
+                                         without the `wasm-plugins` feature. Rebuild with --features wasm-plugins.",
+                                        r
                                     );
+                                    process::exit(1);
                                 }
                             }
                             _ => {
                                 eprintln!(
                                     "Warning: skipping plugin '{}': unsupported artifact format",
-                                    meta.id
+                                    r
                                 );
                             }
                         }
                     }
                 }
-            } else {
-                for r in &rules {
-                    if let Some(meta) = sdkt_audit::plugin_store::show(r) {
-                        if meta.abi_major != sdkt_audit::plugin_abi::SDKT_AUDIT_ABI_MAJOR {
-                            continue;
-                        }
-                    }
+                paths_out
+            };
 
-                    let resolved = sdkt_audit::plugin_store::resolve(r)
-                        .unwrap_or_else(|| std::path::PathBuf::from(r));
-                    let path_r = resolved.as_path();
+            let disabled_refs: Vec<&str> = disable.iter().map(String::as_str).collect();
 
-                    // Directories pass through as no-ops (validated for existence above).
-                    if path_r.is_dir() {
+            let mut aggregate = sdkt_audit::AuditReport::default();
+            let mut per_file = Vec::new();
+            let mut had_file_errors = false;
+            #[allow(unused_mut)]
+            let mut loaded_plugins = 0usize;
+
+            for source_path in &source_paths {
+                let source = match fs::read_to_string(source_path) {
+                    Ok(source) => source,
+                    Err(e) => {
+                        had_file_errors = true;
+
+                        let finding = sdkt_audit::Finding {
+                            rule_id: "AUDIT-IO".to_string(),
+                            severity: sdkt_audit::Severity::Critical,
+                            message: format!("Failed to read source: {}", e),
+                            location: None,
+                            file: Some(source_path.display().to_string()),
+                        };
+
+                        let mut report = sdkt_audit::AuditReport::default();
+                        report.add(finding.clone());
+
+                        aggregate.add(finding);
+                        per_file.push((source_path.clone(), report));
                         continue;
                     }
+                };
 
-                    let ext = path_r
+                let mut local_reg = sdkt_audit::RuleRegistry::new();
+                if multi_file {
+                    local_reg.register_builtin_rules();
+                }
+
+                for (plugin_path, plugin_id) in &multi_file_plugin_paths {
+                    let ext = plugin_path
                         .extension()
                         .and_then(|e| e.to_str())
                         .map(|e| e.to_ascii_lowercase())
@@ -5525,8 +5936,19 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
                         "so" | "dylib" | "dll" => {
                             #[cfg(feature = "plugins")]
                             {
-                                match sdkt_audit::load_and_register(path_r, &src) {
-                                    Ok(_) => loaded_plugins += 1,
+                                let result = if single_file {
+                                    sdkt_audit::load_and_register(plugin_path, &source).map(|_| ())
+                                } else {
+                                    sdkt_audit::PluginRule::load(plugin_path, &source)
+                                        .map(|rule| local_reg.register_rule(Box::new(rule)))
+                                };
+
+                                match result {
+                                    Ok(()) => {
+                                        if single_file {
+                                            loaded_plugins += 1;
+                                        }
+                                    }
                                     Err(e) => {
                                         if matches!(
                                             e,
@@ -5534,11 +5956,14 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
                                         ) {
                                             eprintln!(
                                                 "Warning: skipping native plugin '{}': {}",
-                                                r, e
+                                                plugin_id, e
                                             );
                                             continue;
                                         }
-                                        eprintln!("Error loading native plugin '{}': {}", r, e);
+                                        eprintln!(
+                                            "Error loading native plugin '{}': {}",
+                                            plugin_id, e
+                                        );
                                         process::exit(1);
                                     }
                                 }
@@ -5548,7 +5973,7 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
                                 eprintln!(
                                     "Error: '{}' is a native plugin artifact but this build was compiled \
                                      without the `plugins` feature. Rebuild with --features plugins.",
-                                    r
+                                    plugin_id
                                 );
                                 process::exit(1);
                             }
@@ -5556,8 +5981,20 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
                         "wasm" => {
                             #[cfg(feature = "wasm-plugins")]
                             {
-                                match sdkt_audit::load_and_register_wasm(path_r, &src) {
-                                    Ok(_) => loaded_plugins += 1,
+                                let result = if single_file {
+                                    sdkt_audit::load_and_register_wasm(plugin_path, &source)
+                                        .map(|_| ())
+                                } else {
+                                    sdkt_audit::WasmPluginRule::load(plugin_path, &source)
+                                        .map(|rule| local_reg.register_rule(Box::new(rule)))
+                                };
+
+                                match result {
+                                    Ok(()) => {
+                                        if single_file {
+                                            loaded_plugins += 1;
+                                        }
+                                    }
                                     Err(e) => {
                                         if matches!(
                                             e,
@@ -5565,11 +6002,14 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
                                         ) {
                                             eprintln!(
                                                 "Warning: skipping WASM plugin '{}': {}",
-                                                r, e
+                                                plugin_id, e
                                             );
                                             continue;
                                         }
-                                        eprintln!("Error loading WASM plugin '{}': {}", r, e);
+                                        eprintln!(
+                                            "Error loading WASM plugin '{}': {}",
+                                            plugin_id, e
+                                        );
                                         process::exit(1);
                                     }
                                 }
@@ -5579,93 +6019,192 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
                                 eprintln!(
                                     "Error: '{}' is a WASM plugin artifact but this build was compiled \
                                      without the `wasm-plugins` feature. Rebuild with --features wasm-plugins.",
-                                    r
+                                    plugin_id
                                 );
                                 process::exit(1);
                             }
                         }
-                        "rs" => {
-                            // semantic: source files passed in --rules are existence-validated
-                            // above but not loaded at runtime (built-in rules register themselves).
-                        }
                         _ => {
                             eprintln!(
-                                "Error: Unsupported plugin format: {}\n\nSupported plugin formats:\n  .so\n  .dll\n  .dylib\n  .wasm",
-                                r
+                                "Warning: skipping plugin '{}': unsupported artifact format",
+                                plugin_id
                             );
+                        }
+                    }
+                }
+
+                if single_file {
+                    // Load dynamic rules first so registry ID deduplication
+                    // preserves the original single-file behavior.
+                    #[cfg(feature = "plugins")]
+                    sdkt_audit_example_rule::register();
+
+                    match sdkt_audit::audit_source_with(&source, &disabled_refs) {
+                        Ok(report) => {
+                            for finding in &report.findings {
+                                aggregate.add(finding.clone());
+                            }
+                            per_file.push((source_path.clone(), report));
+                        }
+                        Err(_) => {
+                            eprintln!("Error auditing source: Failed to parse Rust source");
                             process::exit(1);
                         }
                     }
+                    continue;
                 }
-            }
 
-            // When the `plugins` feature is enabled, link the reference example
-            // rule into the registry. Off by default → identical behavior.
-            #[cfg(feature = "plugins")]
-            sdkt_audit_example_rule::register();
+                match sdkt_audit::scan_all_functions_str(&source) {
+                    Some(scans) => {
+                        let ctx = sdkt_audit::AuditContext { spec: None };
+                        let mut report = sdkt_audit::AuditReport::default();
+                        local_reg.run_all(&scans, &ctx, &disabled_refs, &mut report);
 
-            let disabled_refs: Vec<&str> = disable.iter().map(String::as_str).collect();
-            let audit_result = sdkt_audit::audit_source_with(&src, &disabled_refs);
-            match audit_result {
-                Ok(report) => {
-                    if audit_fmt == AuditFormat::Sarif {
-                        // Collect rule metadata for the SARIF rules section.
-                        let rules_info: Vec<sdkt_audit::RuleInfo> = sdkt_audit::all_rules()
-                            .iter()
-                            .map(|r| sdkt_audit::RuleInfo {
-                                id: r.id().to_string(),
-                                severity: r.severity(),
-                                description: r.description().to_string(),
-                            })
-                            .collect();
-                        // Path-to-URI normalisation (backslash→slash, drive
-                        // strip, percent-encoding) is handled entirely inside
-                        // sdkt_audit::sarif so the raw CLI path is passed
-                        // through unchanged.
-                        let sarif_str = sdkt_audit::report_to_sarif_string(
-                            &report,
-                            &path,
-                            sdkt_version_string(),
-                            &rules_info,
-                        )?;
-                        println!("{}", sarif_str);
-                    } else if audit_fmt == AuditFormat::Json {
-                        println!("{}", serde_json::to_string(&report)?);
-                    } else {
-                        println!("Static Analysis Report: {}", path);
-                        if loaded_plugins > 0 {
-                            println!(
-                                "Rules loaded: 5 built-in, {} plugin{}",
-                                loaded_plugins,
-                                if loaded_plugins == 1 { "" } else { "s" }
-                            );
-                        }
-                        println!(
-                            "Severity: {} critical, {} warning, {} info ({} total)",
-                            report.summary.critical,
-                            report.summary.warning,
-                            report.summary.info,
-                            report.summary.total
-                        );
-                        if report.is_clean() {
-                            println!("No issues found.");
-                        } else {
-                            println!();
-                            for f in &report.findings {
-                                let loc = f
-                                    .location
-                                    .as_ref()
-                                    .map(|l| format!(" [{}]", l))
-                                    .unwrap_or_default();
-                                println!("  [{}] {} {}: {}", f.severity, f.rule_id, loc, f.message);
+                        if multi_file {
+                            for finding in &mut report.findings {
+                                finding.file = Some(source_path.display().to_string());
                             }
                         }
+
+                        for finding in &report.findings {
+                            aggregate.add(finding.clone());
+                        }
+
+                        per_file.push((source_path.clone(), report));
+                    }
+                    None => {
+                        let e = "Failed to parse Rust source";
+                        if single_file {
+                            eprintln!("Error auditing source: {}", e);
+                            process::exit(1);
+                        }
+
+                        had_file_errors = true;
+
+                        let finding = sdkt_audit::Finding {
+                            rule_id: "AUDIT-PARSE".to_string(),
+                            severity: sdkt_audit::Severity::Critical,
+                            message: format!("Failed to audit source: {}", e),
+                            location: None,
+                            file: Some(source_path.display().to_string()),
+                        };
+
+                        let mut report = sdkt_audit::AuditReport::default();
+                        report.add(finding.clone());
+
+                        aggregate.add(finding);
+                        per_file.push((source_path.clone(), report));
                     }
                 }
-                Err(e) => {
-                    eprintln!("Error auditing source: {}", e);
-                    process::exit(1);
+            }
+            if audit_fmt == AuditFormat::Sarif {
+                let rules_info: Vec<sdkt_audit::RuleInfo> = sdkt_audit::all_rules()
+                    .iter()
+                    .map(|r| sdkt_audit::RuleInfo {
+                        id: r.id().to_string(),
+                        severity: r.severity(),
+                        description: r.description().to_string(),
+                    })
+                    .collect();
+                if multi_file {
+                    let sarif_str = sdkt_audit::sarif::report_to_sarif_string_multi_file(
+                        &aggregate,
+                        sdkt_version_string(),
+                        &rules_info,
+                    )
+                    .map_err(|e| e.to_string())?;
+                    println!("{}", sarif_str);
+                } else {
+                    let source_file = paths[0].as_str();
+                    let sarif_str = sdkt_audit::sarif::report_to_sarif_string(
+                        &aggregate,
+                        source_file,
+                        sdkt_version_string(),
+                        &rules_info,
+                    )
+                    .map_err(|e| e.to_string())?;
+                    println!("{}", sarif_str);
                 }
+                return Ok(());
+            }
+
+            if fmt == OutputFormat::Json {
+                if multi_file {
+                    #[derive(serde::Serialize)]
+                    struct MultiFileAuditReport {
+                        files: Vec<serde_json::Value>,
+                        summary: sdkt_audit::AuditSummary,
+                    }
+
+                    let files = per_file
+                        .iter()
+                        .map(|(path, report)| {
+                            serde_json::json!({
+                                "file": path.display().to_string(),
+                                "report": report,
+                            })
+                        })
+                        .collect();
+
+                    println!(
+                        "{}",
+                        serde_json::to_string(&MultiFileAuditReport {
+                            files,
+                            summary: aggregate.summary.clone(),
+                        })?
+                    );
+                } else {
+                    println!("{}", serde_json::to_string(&aggregate)?);
+                }
+            } else {
+                for (path, report) in &per_file {
+                    println!("Static Analysis Report: {}", path.display());
+
+                    if loaded_plugins > 0 {
+                        println!(
+                            "Rules loaded: 5 built-in, {} plugin{}",
+                            loaded_plugins,
+                            if loaded_plugins == 1 { "" } else { "s" }
+                        );
+                    }
+
+                    println!(
+                        "Severity: {} critical, {} warning, {} info ({} total)",
+                        report.summary.critical,
+                        report.summary.warning,
+                        report.summary.info,
+                        report.summary.total
+                    );
+
+                    if report.is_clean() {
+                        println!("No issues found.");
+                    } else {
+                        println!();
+                        for f in &report.findings {
+                            let loc = f
+                                .location
+                                .as_ref()
+                                .map(|l| format!(" [{}]", l))
+                                .unwrap_or_default();
+                            println!("  [{}] {} {}: {}", f.severity, f.rule_id, loc, f.message);
+                        }
+                    }
+
+                    println!();
+                }
+
+                if multi_file {
+                    println!(
+                        "Aggregate Severity: {} critical, {} warning, {} info ({} total)",
+                        aggregate.summary.critical,
+                        aggregate.summary.warning,
+                        aggregate.summary.info,
+                        aggregate.summary.total
+                    );
+                }
+            }
+            if had_file_errors {
+                process::exit(1);
             }
         }
         Commands::Wasm { action, net } => match action {
@@ -5961,6 +6500,19 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
                     println!("Public Key: {}", identity.public_key);
                 }
                 IdentityAction::Import { name, secret } => {
+                    // `-` means: read the secret from stdin. A secret passed on
+                    // argv is visible to any process listing on the machine;
+                    // piping it in is the CI-safe path.
+                    let secret = if secret == "-" {
+                        use std::io::Read;
+                        let mut buf = String::new();
+                        std::io::stdin()
+                            .read_to_string(&mut buf)
+                            .map_err(|e| format!("Failed to read secret from stdin: {e}"))?;
+                        buf.trim().to_string()
+                    } else {
+                        secret
+                    };
                     let identity = store.import(&name, &secret)?;
                     println!("Identity '{}' imported successfully.", identity.name);
                     println!("Public Key: {}", identity.public_key);
@@ -6141,6 +6693,7 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
                         if let Some(protocol) = outcome.protocol_version {
                             println!("  Protocol version: {}", protocol);
                         }
+                        print_network_identity(&outcome);
                     } else {
                         if outcome.reachable {
                             println!(
@@ -6157,6 +6710,7 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
                         if let Some(protocol) = outcome.protocol_version {
                             println!("  Protocol version: {}", protocol);
                         }
+                        print_network_identity(&outcome);
                         if let Some(err) = &outcome.error {
                             println!("  Error:            {}", err);
                         }
@@ -6350,15 +6904,22 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
                 }
             }
 
-            // Load identity for signing (shared by both code sources).
+            // Load identity for signing (shared by both code sources). The
+            // `--identity` flag defaults to the reserved "default" sentinel, so
+            // resolve it to the configured default identity.
             let identity_store = sdkt_storage::IdentityStore::new()
                 .map_err(|e| format!("Failed to access identity store: {}", e))?;
             let identity_obj = identity_store
-                .get(&identity)
-                .map_err(|e| format!("Identity '{}' not found: {}", identity, e))?;
+                .resolve_signing_identity(&identity)
+                .map_err(|e| format!("Failed to resolve signing identity: {}", e))?;
             let signing_key = identity_store
-                .load_signing_key(&identity)
-                .map_err(|e| format!("Failed to load signing key for '{}': {}", identity, e))?;
+                .load_signing_key(&identity_obj.name)
+                .map_err(|e| {
+                    format!(
+                        "Failed to load signing key for '{}': {}",
+                        identity_obj.name, e
+                    )
+                })?;
             let signer = sdkt_xdr::sign::Ed25519Signer::from_seed(&signing_key.to_bytes());
 
             let client = SorobanRpcClient::from_config(&network_config);
@@ -6688,15 +7249,22 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
                 other => Network::Custom(other.to_string()),
             };
 
-            // 2. Load the signing identity (keystore; no secret on argv).
+            // 2. Load the signing identity (keystore; no secret on argv). The
+            //    `--identity` flag defaults to the reserved "default" sentinel,
+            //    which resolves to the configured default identity.
             let identity_store = sdkt_storage::IdentityStore::new()
                 .map_err(|e| format!("Failed to access identity store: {e}"))?;
             let identity_obj = identity_store
-                .get(&identity)
-                .map_err(|e| format!("Identity '{}' not found: {e}", identity))?;
+                .resolve_signing_identity(&identity)
+                .map_err(|e| format!("Failed to resolve signing identity: {e}"))?;
             let signing_key = identity_store
-                .load_signing_key(&identity)
-                .map_err(|e| format!("Failed to load signing key for '{}': {e}", identity))?;
+                .load_signing_key(&identity_obj.name)
+                .map_err(|e| {
+                    format!(
+                        "Failed to load signing key for '{}': {e}",
+                        identity_obj.name
+                    )
+                })?;
             let signer = Ed25519Signer::from_seed(&signing_key.to_bytes());
 
             // 3. Parse typed args (shared parser; strict — typos must not be
@@ -7367,15 +7935,9 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
                 // contract — and avoids a redundant store lookup per iteration.
                 let identity_store = sdkt_storage::IdentityStore::new()
                     .map_err(|e| format!("Failed to access identity store: {}", e))?;
-                let identity_obj = if identity == "default" {
-                    identity_store
-                        .get_default()
-                        .map_err(|e| format!("Default identity not found: {}", e))?
-                } else {
-                    identity_store
-                        .get(&identity)
-                        .map_err(|e| format!("Identity '{}' not found: {}", identity, e))?
-                };
+                let identity_obj = identity_store
+                    .resolve_signing_identity(&identity)
+                    .map_err(|e| format!("Failed to resolve signing identity: {}", e))?;
                 let signing_key = identity_store
                     .load_signing_key(&identity_obj.name)
                     .map_err(|e| format!("Failed to load signing key: {}", e))?;
@@ -8011,6 +8573,25 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
+fn print_network_identity(outcome: &NetworkCheckOutcome) {
+    println!("  Profile passphrase: {}", outcome.configured_passphrase);
+    match &outcome.endpoint_passphrase {
+        Some(passphrase) => {
+            println!("  Endpoint passphrase: {}", passphrase);
+            if passphrase != &outcome.configured_passphrase {
+                println!("  Warning: endpoint passphrase does not match the profile.");
+            }
+        }
+        None => println!("  Endpoint passphrase: not reported by endpoint"),
+    }
+    if let Some(friendbot) = &outcome.friendbot_url {
+        println!("  Friendbot URL:      {}", friendbot);
+    }
+    if let Some(err) = &outcome.network_info_error {
+        println!("  Network identity:   not reported by endpoint ({})", err);
+    }
+}
+
 /// Execute `sdkt generate client`: parse the ContractSpec from a local WASM
 /// and emit a deterministic typed Rust client (offline, no network).
 fn run_generate_client(
@@ -8031,6 +8612,79 @@ fn run_generate_client(
         None => print!("{}", code),
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod events_topic_unit_tests {
+    use super::*;
+    use sdkt_wasm::ContractSpec;
+
+    fn spec_with_events(events: &[(&str, &[&str])]) -> ContractSpec {
+        ContractSpec {
+            env_meta: None,
+            functions: vec![],
+            custom_types: vec![],
+            events: events
+                .iter()
+                .map(|(name, prefix)| sdkt_wasm::spec::ContractEvent {
+                    name: name.to_string(),
+                    doc: String::new(),
+                    prefix_topics: prefix.iter().map(|p| p.to_string()).collect(),
+                    params: vec![],
+                    data_format: "single_value".to_string(),
+                })
+                .collect(),
+        }
+    }
+
+    #[test]
+    fn wire_topic_produces_no_warning() {
+        // Prefix topic is the wire topic; an event without prefix falls back to its name.
+        let spec = spec_with_events(&[("Transfer", &["transfer"]), ("Approval", &[])]);
+        assert_eq!(unknown_event_topic_warning(&spec, "transfer"), None);
+        assert_eq!(unknown_event_topic_warning(&spec, "Approval"), None);
+    }
+
+    #[test]
+    fn abi_name_differing_from_prefix_suggests_prefix() {
+        let spec = spec_with_events(&[("Transfer", &["transfer"])]);
+        let w = unknown_event_topic_warning(&spec, "Transfer").expect("warning");
+        assert!(w.contains("'Transfer' is the ABI name of an event"), "{w}");
+        assert!(
+            w.contains("did you mean 'transfer'? (the wire topic is the prefix topic)"),
+            "{w}"
+        );
+        assert!(w.ends_with("Querying anyway."), "{w}");
+    }
+
+    #[test]
+    fn abi_name_equal_to_prefix_produces_no_warning() {
+        let spec = spec_with_events(&[("transfer", &["transfer"])]);
+        assert_eq!(unknown_event_topic_warning(&spec, "transfer"), None);
+    }
+
+    #[test]
+    fn unknown_symbol_warns_and_lists_wire_topics() {
+        let spec = spec_with_events(&[("Transfer", &["transfer"]), ("Approval", &[])]);
+        let w = unknown_event_topic_warning(&spec, "Mint").expect("warning");
+        assert!(w.contains("'Mint' is not declared"), "{w}");
+        assert!(w.contains("declared: transfer, Approval."), "{w}");
+        assert!(!w.contains("did you mean"), "{w}");
+    }
+
+    #[test]
+    fn case_mismatch_suggests_exact_symbol() {
+        let spec = spec_with_events(&[("Approval", &["approval"])]);
+        let w = unknown_event_topic_warning(&spec, "APPROVAL").expect("warning");
+        assert!(w.contains("did you mean 'approval'?"), "{w}");
+    }
+
+    #[test]
+    fn spec_without_events_warns() {
+        let spec = spec_with_events(&[]);
+        let w = unknown_event_topic_warning(&spec, "Transfer").expect("warning");
+        assert!(w.contains("the ABI declares no events"), "{w}");
+    }
 }
 
 #[cfg(test)]

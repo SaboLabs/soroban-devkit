@@ -286,3 +286,68 @@ fn cli_deploy_hash_completes_create_only_flow() {
     assert_eq!(sim_count.load(Ordering::SeqCst), 1);
     assert_eq!(send_count.load(Ordering::SeqCst), 1);
 }
+
+#[test]
+fn cli_deploy_hash_uses_default_identity() {
+    let dir = tempfile::tempdir().unwrap();
+    let (url, sim_count, send_count) = spawn_mock();
+    let identity_dir = dir.path().join("identity");
+
+    // Generate an identity and register it as the keystore default.
+    Command::cargo_bin("sdkt")
+        .unwrap()
+        .env("SDKT_IDENTITY_DIR", &identity_dir)
+        .args(["identity", "generate", "deployer"])
+        .assert()
+        .success();
+    Command::cargo_bin("sdkt")
+        .unwrap()
+        .env("SDKT_IDENTITY_DIR", &identity_dir)
+        .args(["identity", "default", "deployer"])
+        .assert()
+        .success();
+
+    // No --identity: the flag's built-in "default" sentinel must resolve to the
+    // configured default identity instead of failing on a literal identity
+    // named "default".
+    sdkt(dir.path())
+        .args([
+            "deploy",
+            "--wasm-hash",
+            "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20",
+            "--salt",
+            "4242424242424242424242424242424242424242",
+            "--rpc-url",
+            &url,
+            "--network-passphrase",
+            "Test SDF Network ; September 2015",
+        ])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("Contract ID:"));
+
+    assert_eq!(sim_count.load(Ordering::SeqCst), 1);
+    assert_eq!(send_count.load(Ordering::SeqCst), 1);
+}
+
+#[test]
+fn cli_deploy_hash_without_default_identity_suggests_identity_default() {
+    let dir = tempfile::tempdir().unwrap();
+    let (url, _, _) = spawn_mock();
+
+    // No identity exists at all, so the sentinel cannot resolve and the error
+    // must tell the user how to set a default.
+    sdkt(dir.path())
+        .args([
+            "deploy",
+            "--wasm-hash",
+            "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20",
+            "--rpc-url",
+            &url,
+            "--network-passphrase",
+            "Test SDF Network ; September 2015",
+        ])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("sdkt identity default"));
+}

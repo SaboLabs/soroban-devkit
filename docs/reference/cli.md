@@ -157,6 +157,7 @@ sdkt
 │   ├── add <name>           [--rpc-url <URL>] [--passphrase <PASS>] [--friendbot <URL>] [--description <TEXT>]
 │   ├── list
 │   ├── show <name>          [--format json|pretty]
+│   ├── check <name>         [--format json|pretty]
 │   └── remove <name>
 
 ├── build                     Compile Rust contracts in the workspace into WASM artifacts
@@ -345,6 +346,25 @@ require the local WASM bytes.
 
 ## Network Profiles
 
+### Checking an RPC profile
+
+`sdkt network check <name> [--format json]` performs read-only RPC checks against
+the saved profile. It checks ledger reachability and node health, then asks the
+endpoint for its network identity with `getNetwork`. The output shows the
+profile's configured passphrase beside the endpoint-reported passphrase and
+warns when they differ; an available Friendbot URL is shown as well. A mismatch
+is advisory and does not change the profile or the command's exit status.
+
+Some RPC providers do not implement `getNetwork`. In that case the command
+still reports reachability, health, latest ledger, and protocol version from
+the other RPC checks, and labels the identity fields as not reported. JSON
+output keeps the existing `profile`, `rpc_url`, `reachable`, `status`,
+`latest_ledger`, `protocol_version`, and `error` keys, and adds
+`configured_passphrase`, nullable `endpoint_passphrase`, nullable
+`friendbot_url`, and nullable `network_info_error`. Only an unreachable or
+unhealthy endpoint causes a non-zero exit; failure of the optional identity
+query does not.
+
 Every RPC command (`inspect`, `verify`, `health`, `storage`, `events`, `account`,
 `tx`, `fee`, `wasm`, `deploy`, `project deploy`) accepts the same three optional
 flags for selecting / overriding the network endpoint:
@@ -482,7 +502,7 @@ offline — it reads a local `.wasm` artifact and emits Rust source.
 
 ```bash
 # Print the generated client to stdout
-sdkt generate client target/wasm32-unknown-unknown/release/my_contract.wasm
+sdkt generate client target/wasm32v1-none/release/my_contract.wasm
 
 # Write it to a file
 sdkt generate client contract.wasm --output src/client.rs

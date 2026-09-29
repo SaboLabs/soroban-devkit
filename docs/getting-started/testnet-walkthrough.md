@@ -21,7 +21,7 @@ Every command below exists at HEAD and is copy-pasteable. Expected output blocks
 | --- | --- |
 | `sdkt` on your `PATH` | See [installation](installation.md) or [Quick Start § Install](quick-start.md#step-1--install). Verify with `sdkt --version` (expects `2.5.0` or newer). |
 | Rust toolchain **1.88.0+** | Needed to compile the example contract (`rustc --version`). |
-| `wasm32-unknown-unknown` target | `rustup target add wasm32-unknown-unknown` |
+| `wasm32v1-none` target | `rustup target add wasm32v1-none` |
 | Stellar **Testnet** + Friendbot | Public RPC `https://soroban-testnet.stellar.org` and faucet `https://friendbot.stellar.org` must be reachable. Friendbot does **not** exist on Mainnet. |
 
 > Offline inspection / audit / diff from the Quick Start are unchanged. This document only adds the on-chain path.
@@ -191,7 +191,7 @@ Expected output (artifact path may vary slightly by Cargo package naming):
 
 ```
 ✓ Workspace built successfully
-  ✓ counter -> ./target/wasm32-unknown-unknown/release/hello_counter.wasm
+  ✓ counter -> ./target/wasm32v1-none/release/hello_counter.wasm
 ```
 
 You may also see an advisory `✓ Wrote sdkt.lock` block — that is expected. Note the `.wasm` path printed after `->`; use it in the next step.
@@ -204,7 +204,7 @@ If you see `No [contracts] configured in .sdkt.toml`, re-check Step 4's append.
 
 ```bash
 sdkt deploy \
-  --wasm target/wasm32-unknown-unknown/release/hello_counter.wasm \
+  --wasm target/wasm32v1-none/release/hello_counter.wasm \
   --identity alice \
   --network-profile testnet
 ```
@@ -263,7 +263,7 @@ Exit code is non-zero if the transaction fails. Repeat the command — the count
 
 ```bash
 sdkt call "$CONTRACT_ID" get \
-  --abi target/wasm32-unknown-unknown/release/hello_counter.wasm \
+  --abi target/wasm32v1-none/release/hello_counter.wasm \
   --network-profile testnet
 ```
 
@@ -286,7 +286,7 @@ With `--abi`, the result is decoded via the contract spec when possible. Without
 
 ```bash
 sdkt events "$CONTRACT_ID" \
-  --abi target/wasm32-unknown-unknown/release/hello_counter.wasm \
+  --abi target/wasm32v1-none/release/hello_counter.wasm \
   --network-profile testnet
 ```
 
