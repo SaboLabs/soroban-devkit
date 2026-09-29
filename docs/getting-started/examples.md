@@ -201,6 +201,7 @@ read the network from `.sdkt.toml` or default to testnet RPC.
 
 ```bash
 sdkt events <CONTRACT_ID> --abi contract.wasm
+sdkt events <CONTRACT_ID> --topic transfer   # only events whose first topic is `transfer`
 sdkt account <ADDRESS>
 sdkt fee estimate
 ```

@@ -117,9 +117,6 @@ impl Contract {
 rpc_url = "https://soroban-testnet.stellar.org"
 passphrase = "Test SDF Network ; September 2015"
 
-[build]
-target = "wasm32-unknown-unknown"
-
 [contracts.main]
 path = "."
 "#;
@@ -129,8 +126,9 @@ path = "."
 
     if !config.minimal {
         let readme = format!(
-            "# {name}\n\nA Soroban smart contract project.\n\n## Build\n\n```\nsdkt build\n```\n\n## Test\n\n```\ncargo test\n```\n",
+            "# {name}\n\nA Soroban smart contract project.\n\n## Build\n\n```\nsdkt build\n```\n\n## Test\n\n```\ncargo test\n```\n\n## Deploy to Testnet\n\nCreate and fund a test identity, then deploy the compiled contract:\n\n```\nsdkt identity generate my-dev\nsdkt network add testnet --rpc-url https://soroban-testnet.stellar.org --passphrase \"Test SDF Network ; September 2015\" --friendbot https://friendbot.stellar.org\nsdkt identity fund my-dev --network-profile testnet\nsdkt deploy --wasm target/wasm32-unknown-unknown/release/{crate_name}.wasm --identity my-dev --network-profile testnet\n```\n\n## Invoke\n\nReplace `<CONTRACT_ID>` with the deployed contract address:\n\n```\nsdkt call <CONTRACT_ID> hello --network-profile testnet\nsdkt invoke <CONTRACT_ID> hello --identity my-dev --network-profile testnet\n```\n",
             name = package_name,
+            crate_name = crate_name,
         );
         write_template(root, "README.md", &readme, &mut created)?;
 
@@ -409,6 +407,7 @@ impl AuditRule for {struct_name} {{
         for s in scans {{
             if s.fn_name.contains("{trigger}") {{
                 report.add(Finding {{
+                    file: None,
                     rule_id: self.id().to_string(),
                     severity: self.severity(),
                     message: format!("{{}} matched trigger function `{{}}`", "{rule_id}", s.fn_name),
@@ -871,6 +870,7 @@ fn rule_fires_on_trigger_function() {{
         invoke_contract: 0,
         bound: Default::default(),
         usage: Default::default(),
+        division_before_multiplication: false,
     }}];
     let ctx = AuditContext {{ spec: None }};
     let mut report = AuditReport::default();
@@ -892,6 +892,7 @@ fn rule_silent_on_normal_function() {{
         invoke_contract: 0,
         bound: Default::default(),
         usage: Default::default(),
+        division_before_multiplication: false,
     }}];
     let ctx = AuditContext {{ spec: None }};
     let mut report = AuditReport::default();
@@ -964,6 +965,12 @@ mod tests {
             config.network.passphrase,
             "Test SDF Network ; September 2015"
         );
+        let readme = fs::read_to_string(p.join("README.md")).unwrap();
+        assert!(readme.contains("## Deploy to Testnet"));
+        assert!(readme.contains("sdkt identity generate my-dev"));
+        assert!(readme
+            .contains("sdkt network add testnet --rpc-url https://soroban-testnet.stellar.org"));
+        assert!(readme.contains("sdkt invoke <CONTRACT_ID> hello"));
         assert_eq!(
             config.contracts.get("main").map(|c| c.path.as_str()),
             Some(".")

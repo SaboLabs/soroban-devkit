@@ -29,8 +29,8 @@ pub mod plugin_abi_wasm;
 pub mod plugin_loader_wasm;
 
 pub use audit::{
-    all_rules, audit_source, audit_source_with, audit_source_with_spec, scan_all_functions,
-    scan_all_functions_str, AuditContext, AuditRule, FnScan,
+    all_rules, audit_source, audit_source_with, audit_source_with_registry, audit_source_with_spec,
+    scan_all_functions, scan_all_functions_str, AuditContext, AuditRule, FnScan,
 };
 pub use error::AuditError;
 pub use plugin_doctor::{
@@ -45,7 +45,10 @@ pub use registry::{
     register_builtin_rules, register_rule, run_registered, BoxedRule, RuleRegistry,
 };
 pub use rules::{Auth001, Auth002, Auth003, Auth004, Move001};
-pub use sarif::{report_to_sarif_string, to_sarif, SarifLog};
+pub use sarif::{
+    report_to_sarif_string, report_to_sarif_string_multi_file, to_sarif, to_sarif_multi_file,
+    SarifLog,
+};
 pub use types::{AuditReport, AuditSummary, Finding, RuleInfo, Severity};
 
 #[cfg(feature = "plugins")]

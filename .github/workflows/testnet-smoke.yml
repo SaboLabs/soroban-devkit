@@ -1,0 +1,117 @@
+name: Testnet Deploy Smoke
+
+# Manual-only. Deliberately NOT triggered by pull_request, push, or release:
+# this workflow spends real Stellar Testnet resources (Friendbot funding, two
+# deployment transactions, one invocation) and needs a Testnet secret.
+# The offline PR gate stays in ci.yml, where `onboarding-smoke` runs
+# scripts/smoke_examples.sh (no network, no secrets).
+on:
+  workflow_dispatch:
+    inputs:
+      note:
+        description: "Optional free-text note recorded in the run summary"
+        required: false
+        default: ""
+
+permissions:
+  contents: read
+
+concurrency:
+  # Friendbot rate-limits per account; serialize smoke runs.
+  group: testnet-smoke
+  cancel-in-progress: false
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  testnet-smoke:
+    name: real Testnet deploy + verify
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Testnet-only guard
+        # Belt and braces: this workflow pins the SDF Testnet constants in the
+        # smoke script and refuses any dispatch note that names the public
+        # network. Mainnet is never deployed from CI.
+        env:
+          SMOKE_NOTE: ${{ github.event.inputs.note }}
+        run: |
+          if printf '%s' "$SMOKE_NOTE" | grep -qiE 'mainnet|public global stellar network'; then
+            echo "network: Testnet (mainnet refused)"
+            echo "::error::This workflow is Testnet-only."
+            exit 1
+          fi
+          echo "note: recorded (sanitized, not interpolated into a shell command)"
+          echo "- dispatch note: \`${SMOKE_NOTE:-(empty)}\`" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Set up Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32v1-none
+
+      - name: Install Rust WASM target
+        run: rustup target add wasm32v1-none
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          # The fixture is its own tiny workspace; caching it keeps the smoke
+          # run from rebuilding soroban-sdk from scratch every time.
+          key: testnet-smoke-fixture
+
+      - name: Build sdkt
+        run: cargo build --bin sdkt --release
+
+      - name: Secret availability check
+        # Presence only. The value is never printed. Absence is NOT a failure:
+        # the script then reports TESTNET NOT TESTED and exits 0.
+        env:
+          STELLAR_TESTNET_SECRET: ${{ secrets.STELLAR_TESTNET_SECRET }}
+        run: |
+          if [ -z "${STELLAR_TESTNET_SECRET:-}" ]; then
+            echo "STELLAR_TESTNET_SECRET is not configured for this repository."
+            echo "The smoke run will report TESTNET NOT TESTED (a skip, not a failure)."
+          else
+            echo "STELLAR_TESTNET_SECRET is present (value not printed)."
+          fi
+
+      - name: Run Testnet deployment smoke
+        env:
+          STELLAR_TESTNET_SECRET: ${{ secrets.STELLAR_TESTNET_SECRET }}
+          SDKT: ${{ github.workspace }}/target/release/sdkt
+          # The script records its ephemeral keystore path here so the cleanup
+          # step can prove it was removed.
+          SMOKE_WORKDIR_FILE: ${{ runner.temp }}/smoke-workdir
+        # The script maps its own exit codes onto named failure semantics:
+        #   0 SUCCESS / 0 TESTNET NOT TESTED / 2 guard / 3 infra / 4 deploy / 5 verify
+        run: bash tests/smoke/testnet-deploy-smoke.sh
+
+      - name: Verify ephemeral keystore cleanup
+        if: always()
+        env:
+          SMOKE_WORKDIR_FILE: ${{ runner.temp }}/smoke-workdir
+        run: |
+          if [ ! -s "$SMOKE_WORKDIR_FILE" ]; then
+            echo "no keystore was created (script stopped before import)"
+            exit 0
+          fi
+          wd="$(cat "$SMOKE_WORKDIR_FILE")"
+          if [ -e "$wd" ]; then
+            echo "::error::the ephemeral identity store still exists (secret material may linger)"
+            exit 1
+          fi
+          echo "ephemeral keystore removed on exit"
+          rm -f "$SMOKE_WORKDIR_FILE"
+
+      - name: Scan workspace for secret-shaped strings
+        if: always()
+        run: |
+          echo "checking tracked files for Stellar secret strkeys (S + 55 base32 chars)..."
+          if grep -rEl 'S[A-Z2-7]{55}' \
+              --exclude-dir=.git --exclude-dir=target --exclude-dir=node_modules . ; then
+            echo "::error::a secret-shaped string was found in the workspace"
+            exit 1
+          fi
+          echo "workspace clean of secret-shaped strings"

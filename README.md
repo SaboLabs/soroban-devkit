@@ -262,12 +262,13 @@ See [`docs/plugin-authoring.md`](docs/plugins/plugin-authoring.md) for how to bu
 | `sdkt storage restore --contract <id> --envelope <xdr>` | Restore archived entries (`RestoreFootprint`) using the `restorePreamble` from simulating the failed invocation. `--dry-run` shows the keys and fee without submitting. |
 | `sdkt tx inspect <hash>` | Transaction status / ledger inclusion. |
 | `sdkt tx validate --envelope <xdr>` | Offline pre-flight validation of an envelope (parses + structural checks). |
+| `sdkt tx decode <xdr>` | Human-readable view of an envelope (source, fee, operations with decoded args, footprint, signatures) for review before signing. Offline; `--format json` for a structured breakdown. |
 | `sdkt tx simulate <xdr>` | Offline pre-flight via `simulateTransaction` (RPC). `--abi <wasm>` decodes the invoke result via the contract spec. |
 | `sdkt tx sign --input <xdr> --identity <name>` | Sign an envelope with a local ED25519 identity — fully offline. |
 | `sdkt tx submit <xdr>` | Submit a transaction (with optional poll; RPC). |
 | `sdkt tx build` | Typed envelope builder. |
-| `sdkt events <contract-id>` | Emitted-contract event explorer (`--abi <wasm>`). |
-| `sdkt account <address>` | Account balances + signers (Horizon-enriched). |
+| `sdkt events <contract-id>` | Emitted-contract event explorer (`--abi <wasm>`; `--topic <SYMBOL>` filters by event name server-side). |
+| `sdkt account <address>` | Account balances (native + trustlines) and complete typed signers (Horizon-enriched with RPC fallback). |
 | `sdkt call <contract> <function> [--args TYPE:VALUE...]` | Read-only contract invocation. No signing, no submission. Returns result + events. `--abi <wasm>` decodes the result via the contract spec; `--abi-contract <id>` fetches the deployed contract's on-chain WASM instead. |
 | `sdkt diff` | Offline comparison of WASM binaries and API surfaces. |
 | `sdkt diff --old-wasm <A> --new-wasm <B>` | Offline ABI/function/event/type diff of two WASM files. Add `--upgrade-safety` for a breaking-change verdict. |
@@ -535,8 +536,9 @@ sdkt tx build \
   --function hello \
   --output unsigned.xdr
 
-# 3. Validate the envelope offline
+# 3. Validate the envelope offline and review what it does
 sdkt tx validate --envelope unsigned.xdr
+sdkt tx decode unsigned.xdr
 
 # 4. Simulate against the network (RPC) to catch failures early
 sdkt tx simulate --envelope unsigned.xdr

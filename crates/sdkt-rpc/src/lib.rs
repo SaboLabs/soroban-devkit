@@ -20,15 +20,18 @@ pub mod wasm;
 pub use account::{
     get_next_sequence, inspect_account, AccountBalance, AccountInspection, AccountSigner,
 };
-pub use client::SorobanRpcClient;
 pub use client::{fund_account, FundResult};
+pub use client::{NetworkInfo, SorobanRpcClient};
 pub use deploy::{
-    create_contract, deploy_contract, deploy_contract_with_args, format_json, format_pretty,
-    CreateContractArgs, DeployOutcome, DeployResult, PartialDeployResult,
+    create_contract, deploy_contract, deploy_contract_from_hash, deploy_contract_with_args,
+    format_json, format_pretty, CreateContractArgs, DeployOutcome, DeployResult,
+    PartialDeployResult,
 };
 pub use error::RpcError;
 pub use events::{
-    get_contract_events, resolve_ledger_range, ContractEvent, EventFilter, GetEventsRequest,
+    first_topic_filter, get_contract_events, get_contract_events_filtered, resolve_ledger_range,
+    ContractEvent, EventFilter, GetEventsRequest, TopicFilter, TOPIC_WILDCARD_ONE,
+    TOPIC_WILDCARD_REST,
 };
 pub use fee::{estimate_dynamic_fee, get_fee_stats, FeeDistribution, FeeStats};
 pub use inspect::{inspect_contract, ContractInspection, StorageKeyInfo, TtlInfoSummary};

@@ -8,7 +8,6 @@
 
 # IDE
 .idea/
-.vscode/
 *.swp
 *.swo
 *~
@@ -30,3 +29,7 @@ Thumbs.db
 # NOTE: Cargo.lock is intentionally tracked (not ignored) — the CI Action
 # installs with `cargo install --locked`, which requires it in the tree.
 .project/
+branch_structure.json
+temp_auto_push.bat
+temp_interactive_push.bat
+.gitignore

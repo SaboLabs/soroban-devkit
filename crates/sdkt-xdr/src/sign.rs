@@ -327,6 +327,7 @@ mod tests {
             contract_id: CTR.to_string(),
             function: "hello".to_string(),
             args: vec![],
+            memo: None,
         })
         .unwrap()
     }

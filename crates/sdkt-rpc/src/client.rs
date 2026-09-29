@@ -66,6 +66,11 @@ impl SorobanRpcClient {
         &self.endpoint
     }
 
+    /// Return a reference to the internal HTTP client.
+    pub fn http_client(&self) -> &reqwest::Client {
+        &self.http_client
+    }
+
     /// Helper for making JSON-RPC calls with basic timeout retry logic.
     pub async fn request<T: serde::de::DeserializeOwned>(
         &self,
@@ -128,6 +133,11 @@ impl SorobanRpcClient {
     /// Get the latest ledger info from the Soroban RPC node.
     pub async fn get_ledger(&self) -> Result<LedgerInfo, RpcError> {
         self.request("getLatestLedger", ()).await
+    }
+
+    /// Get network identity and protocol information from the RPC endpoint.
+    pub async fn get_network(&self) -> Result<NetworkInfo, RpcError> {
+        self.request("getNetwork", ()).await
     }
 
     /// Get contract storage entries.
@@ -243,6 +253,17 @@ pub struct LedgerInfo {
     pub sequence: u32,
 }
 
+/// Network identity and protocol details reported by `getNetwork`.
+#[derive(Debug, Clone, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct NetworkInfo {
+    #[serde(default)]
+    pub friendbot_url: Option<String>,
+    pub passphrase: String,
+    pub protocol_version: u32,
+    pub latest_ledger: u32,
+}
+
 /// Storage response payload.
 #[derive(Debug, Deserialize, PartialEq)]
 pub struct StorageResponse {
@@ -281,6 +302,25 @@ mod tests {
         };
         let c = SorobanRpcClient::from_config(&cfg);
         assert_eq!(c.endpoint(), "https://custom.example.com");
+    }
+
+    #[test]
+    fn network_info_deserializes_rpc_camel_case_fields() {
+        let info: NetworkInfo = serde_json::from_value(serde_json::json!({
+            "friendbotUrl": "https://friendbot.example",
+            "passphrase": "Test Network",
+            "protocolVersion": 22,
+            "latestLedger": 1234
+        }))
+        .unwrap();
+
+        assert_eq!(
+            info.friendbot_url.as_deref(),
+            Some("https://friendbot.example")
+        );
+        assert_eq!(info.passphrase, "Test Network");
+        assert_eq!(info.protocol_version, 22);
+        assert_eq!(info.latest_ledger, 1234);
     }
 
     #[test]

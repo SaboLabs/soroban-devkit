@@ -26,6 +26,7 @@ impl AuditRule for Probe {
     }
     fn check(&self, _s: &[FnScan], _c: &AuditContext, r: &mut AuditReport) {
         r.add(Finding {
+            file: None,
             rule_id: self.id.to_string(),
             severity: Severity::Info,
             message: "probe fired".into(),
@@ -58,7 +59,7 @@ fn registry_executes_builtins_and_external_rule() {
     let mut reg = RuleRegistry::new();
     reg.register_builtin_rules();
     reg.register_rule(Box::new(Probe { id: "PROBE-1" }) as BoxedRule);
-    assert_eq!(reg.registered_rules().len(), 6);
+    assert_eq!(reg.registered_rules().len(), 7);
 
     // Feed a source that triggers AUTH-001 (builtin) plus run the probe.
     let scans = sdkt_audit::scan_all_functions(

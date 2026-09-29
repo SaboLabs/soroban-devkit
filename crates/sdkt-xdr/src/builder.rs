@@ -34,6 +34,29 @@ pub struct InvokeTransactionParams {
     pub function: String,
     /// Optional arguments (as pre-encoded ScVal base64 strings)
     pub args: Vec<String>,
+    /// Optional transaction memo. `None` builds `Memo::None` (unchanged default).
+    pub memo: Option<Memo>,
+}
+
+/// Build a `Memo::Text`, enforcing the protocol's 28-byte limit.
+///
+/// Mirrors the validation the core transaction builder performs, so an
+/// over-long memo is rejected here with an actionable message instead of being
+/// silently truncated.
+pub fn memo_text(text: &str) -> Result<Memo, DecodeError> {
+    let bytes = text.as_bytes();
+    let vec_m = bytes.try_into().map_err(|_| {
+        DecodeError::Extraction(format!(
+            "memo text must be at most 28 bytes (got {})",
+            bytes.len()
+        ))
+    })?;
+    Ok(Memo::Text(vec_m))
+}
+
+/// Build a `Memo::Id`.
+pub fn memo_id(id: u64) -> Memo {
+    Memo::Id(id)
 }
 
 /// Decode a G... StrKey into an `AccountId`.
@@ -109,7 +132,7 @@ pub fn build_invoke_transaction(params: &InvokeTransactionParams) -> Result<Stri
         fee: params.fee,
         seq_num: SequenceNumber(params.sequence),
         cond: Preconditions::None,
-        memo: Memo::None,
+        memo: params.memo.clone().unwrap_or(Memo::None),
         operations: VecM::try_from(vec![op]).unwrap(),
         ext: TransactionExt::V0,
     };
@@ -181,7 +204,7 @@ pub fn build_invoke_transaction_with_data(
         fee: params.fee,
         seq_num: SequenceNumber(params.sequence),
         cond: Preconditions::None,
-        memo: Memo::None,
+        memo: params.memo.clone().unwrap_or(Memo::None),
         operations: VecM::try_from(vec![op]).unwrap(),
         ext: TransactionExt::V1(soroban_data),
     };
@@ -1132,6 +1155,7 @@ mod tests {
             contract_id: TEST_CONTRACT.to_string(),
             function: "hello".to_string(),
             args: vec![],
+            memo: None,
         };
 
         let envelope = build_invoke_transaction(&params).unwrap();
@@ -1165,10 +1189,85 @@ mod tests {
             contract_id: TEST_CONTRACT.to_string(),
             function: "add".to_string(),
             args: vec![arg_b64.to_string()],
+            memo: None,
         };
 
         let envelope = build_invoke_transaction(&params).unwrap();
         assert!(!envelope.is_empty());
+    }
+
+    fn envelope_memo(envelope_b64: &str) -> Memo {
+        let raw = STANDARD.decode(envelope_b64).unwrap();
+        let mut cursor = std::io::Cursor::new(&raw);
+        let mut l = stellar_xdr::Limited::new(&mut cursor, stellar_xdr::Limits::none());
+        match TransactionEnvelope::read_xdr(&mut l).unwrap() {
+            TransactionEnvelope::Tx(v1) => v1.tx.memo,
+            _ => panic!("Expected V1 envelope"),
+        }
+    }
+
+    #[test]
+    fn test_build_invoke_transaction_with_memo_text() {
+        let params = InvokeTransactionParams {
+            source_account: TEST_SOURCE.to_string(),
+            sequence: 7,
+            fee: 100,
+            contract_id: TEST_CONTRACT.to_string(),
+            function: "transfer".to_string(),
+            args: vec![],
+            memo: Some(memo_text("deposit-123").unwrap()),
+        };
+
+        let envelope = build_invoke_transaction(&params).unwrap();
+        let memo = envelope_memo(&envelope);
+
+        assert!(matches!(memo, Memo::Text(_)));
+        assert_eq!(memo, memo_text("deposit-123").unwrap());
+    }
+
+    #[test]
+    fn test_build_invoke_transaction_with_memo_id() {
+        let params = InvokeTransactionParams {
+            source_account: TEST_SOURCE.to_string(),
+            sequence: 7,
+            fee: 100,
+            contract_id: TEST_CONTRACT.to_string(),
+            function: "transfer".to_string(),
+            args: vec![],
+            memo: Some(memo_id(42)),
+        };
+
+        let envelope = build_invoke_transaction(&params).unwrap();
+        let memo = envelope_memo(&envelope);
+
+        assert!(matches!(memo, Memo::Id(_)));
+        assert_eq!(memo, Memo::Id(42));
+    }
+
+    #[test]
+    fn test_build_invoke_transaction_without_memo_is_none() {
+        let params = InvokeTransactionParams {
+            source_account: TEST_SOURCE.to_string(),
+            sequence: 7,
+            fee: 100,
+            contract_id: TEST_CONTRACT.to_string(),
+            function: "transfer".to_string(),
+            args: vec![],
+            memo: None,
+        };
+
+        let envelope = build_invoke_transaction(&params).unwrap();
+        assert_eq!(envelope_memo(&envelope), Memo::None);
+    }
+
+    #[test]
+    fn test_memo_text_accepts_max_length_and_rejects_over_long() {
+        let max = "x".repeat(28);
+        assert!(memo_text(&max).is_ok());
+
+        let too_long = "x".repeat(29);
+        let err = memo_text(&too_long).unwrap_err();
+        assert!(matches!(err, DecodeError::Extraction(msg) if msg.contains("28 bytes")));
     }
 
     #[test]

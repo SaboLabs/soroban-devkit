@@ -203,7 +203,10 @@ fn write_project_fixture(dir: &std::path::Path) {
         "[contracts.token]\npath = \"contracts/token\"\n",
     )
     .unwrap();
-    let release = dir.join("contracts/token/target/wasm32-unknown-unknown/release");
+    let release = dir
+        .join("contracts/token/target")
+        .join(sdkt_core::build::WASM_BUILD_TARGET)
+        .join("release");
     std::fs::create_dir_all(&release).unwrap();
     std::fs::write(release.join("token.wasm"), b"\0asm\x01\0\0\0").unwrap();
 }

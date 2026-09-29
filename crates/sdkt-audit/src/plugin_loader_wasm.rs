@@ -233,6 +233,7 @@ impl AuditRule for WasmPluginRule {
                 // This is an internal failure (serialising our own types), not a
                 // plugin failure. Emit one finding so the operator knows.
                 report.findings.push(Finding {
+                    file: None,
                     rule_id: self.id.to_string(),
                     severity: Severity::Warning,
                     message: format!("internal: failed to serialise check input: {e}"),
@@ -248,6 +249,7 @@ impl AuditRule for WasmPluginRule {
                 Ok(g) => g,
                 Err(_) => {
                     report.findings.push(Finding {
+                        file: None,
                         rule_id: self.id.to_string(),
                         severity: Severity::Warning,
                         message: "internal: wasm plugin mutex poisoned".into(),
@@ -260,6 +262,7 @@ impl AuditRule for WasmPluginRule {
                 Ok(s) => s,
                 Err(e) => {
                     report.findings.push(Finding {
+                        file: None,
                         rule_id: self.id.to_string(),
                         severity: Severity::Warning,
                         message: format!("wasm plugin trap during check: {e}"),
@@ -275,6 +278,7 @@ impl AuditRule for WasmPluginRule {
             Ok(v) => v,
             Err(e) => {
                 report.findings.push(Finding {
+                    file: None,
                     rule_id: self.id.to_string(),
                     severity: Severity::Warning,
                     message: format!("wasm plugin returned malformed JSON: {e}"),
@@ -289,6 +293,7 @@ impl AuditRule for WasmPluginRule {
         let safe_count = raw_findings.len().min(MAX_FINDINGS);
         for wf in &raw_findings[..safe_count] {
             report.findings.push(Finding {
+                file: None,
                 rule_id: wf.rule_id.clone(),
                 severity: wf.severity_enum(),
                 message: wf.message.clone(),

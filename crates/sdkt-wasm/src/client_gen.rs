@@ -124,13 +124,8 @@ fn write_header(
         output.push_str("// Skipped unsupported functions:\n");
 
         for (function, error) in skipped {
-            writeln!(
-                output,
-                "// - {}: {}",
-                function.name,
-                error
-            )
-            .expect("writing to String cannot fail");
+            writeln!(output, "// - {}: {}", function.name, error)
+                .expect("writing to String cannot fail");
         }
 
         output.push('\n');
@@ -178,14 +173,4 @@ fn write_function(output: &mut String, function: &ContractFunction) {
         function.name
     )
     .expect("writing to String cannot fail");
-
-    writeln!(
-        output,
-        "    pub fn {}(&self) {{",
-        function.name
-    )
-    .expect("writing to String cannot fail");
-
-    output.push_str("        // TODO: invoke the Soroban contract function.\n");
-    output.push_str("    }\n\n");
 }

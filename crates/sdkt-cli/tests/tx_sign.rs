@@ -49,6 +49,20 @@ fn gen_identity(dir: &std::path::Path, name: &str) {
     );
 }
 
+/// Register `name` as the keystore default so `tx sign` can omit `--identity`.
+fn set_default_identity(dir: &std::path::Path, name: &str) {
+    let out = Command::new(env!("CARGO_BIN_EXE_sdkt"))
+        .env("SDKT_IDENTITY_DIR", dir)
+        .args(["identity", "default", name])
+        .output()
+        .expect("failed to run sdkt identity default");
+    assert!(
+        out.status.success(),
+        "identity default failed: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+}
+
 fn run_sign(dir: &std::path::Path, args: &[&str]) -> (bool, String, String) {
     let out = Command::new(env!("CARGO_BIN_EXE_sdkt"))
         .env("SDKT_IDENTITY_DIR", dir)
@@ -268,5 +282,55 @@ fn cannot_write_output_errors() {
     );
     assert!(!ok, "sign to unwritable output must fail");
     assert!(stderr.contains("cannot write output"), "stderr: {}", stderr);
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn sign_without_identity_uses_configured_default() {
+    let dir = std::env::temp_dir().join(format!("sdkt_sign_default_{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    gen_identity(&dir, "alice");
+    set_default_identity(&dir, "alice");
+    let unsigned = build_unsigned(&dir);
+
+    // No --identity: the flag's built-in "default" sentinel must resolve to the
+    // identity registered with `sdkt identity default`.
+    let (ok, stdout, stderr) = run_sign(&dir, &["--input", unsigned.to_str().unwrap()]);
+    assert!(
+        ok,
+        "sign with the configured default identity should succeed, stderr: {stderr}"
+    );
+    assert!(
+        stdout.contains("Signed Transaction Envelope"),
+        "stdout: {stdout}"
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn sign_without_default_identity_suggests_identity_default() {
+    let dir = std::env::temp_dir().join(format!("sdkt_sign_nodefault_{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    // An identity exists, but it is not the default, so the sentinel cannot
+    // resolve and the error must point at `sdkt identity default <name>`.
+    gen_identity(&dir, "alice");
+    let unsigned = build_unsigned(&dir);
+
+    let (ok, _, stderr) = run_sign(&dir, &["--input", unsigned.to_str().unwrap()]);
+    assert!(!ok, "sign without a default identity must fail");
+    assert!(
+        stderr.contains("sdkt identity default"),
+        "stderr should suggest setting a default, got: {stderr}"
+    );
+    // The explicit-name path is unchanged: an unknown name still says so.
+    let (ok2, _, stderr2) = run_sign(
+        &dir,
+        &["--input", unsigned.to_str().unwrap(), "--identity", "ghost"],
+    );
+    assert!(!ok2, "sign with unknown identity must fail");
+    assert!(
+        stderr2.contains("unknown identity 'ghost'"),
+        "stderr: {stderr2}"
+    );
     let _ = std::fs::remove_dir_all(&dir);
 }

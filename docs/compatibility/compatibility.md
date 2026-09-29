@@ -98,8 +98,8 @@ recommended follow-up (see Known Limitations).
    `wasm32v1-none` (not `wasm32-unknown-unknown`) on rustc ≥ 1.82. DevKit's
    `init` scaffold pins `soroban-sdk = "=27.0.6"` (#111: every 21.x release now resolves an
    `ed25519-dalek` that breaks `cargo test`), so generated projects need Rust 1.91+ and build with
-   `cargo build --target wasm32v1-none --release`; `sdkt build` still passes
-   `--target wasm32-unknown-unknown` and does not build them yet.
+   `cargo build --target wasm32v1-none --release`; `sdkt build` now uses that
+   target for compilation and artifact resolution.
 3. **`audit` is heuristic, not a full borrow-checker.** MOVE-001 flags locals
    passed as call arguments multiple times (a possible move-after-use). On
    `atomic_swap` and `timelock` it surfaces 2–5 warnings that are false

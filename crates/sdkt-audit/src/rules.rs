@@ -20,6 +20,7 @@ impl AuditRule for Auth001 {
         for s in scans {
             if crate::audit::is_privileged(&s.fn_name) && s.require_auth == 0 {
                 report.add(Finding {
+                    file: None,
                     rule_id: self.id().to_string(),
                     severity: self.severity(),
                     message: format!(
@@ -50,6 +51,7 @@ impl AuditRule for Auth002 {
         for s in scans {
             if s.invoke_contract > 0 && s.require_auth == 0 {
                 report.add(Finding {
+                    file: None,
                     rule_id: self.id().to_string(),
                     severity: self.severity(),
                     message: format!(
@@ -94,6 +96,7 @@ impl AuditRule for Auth003 {
             };
             if exported {
                 report.add(Finding {
+                    file: None,
                     rule_id: self.id().to_string(),
                     severity: self.severity(),
                     message: format!(
@@ -129,6 +132,7 @@ impl AuditRule for Auth004 {
             );
             if is_transfer && s.require_auth == 0 {
                 report.add(Finding {
+                    file: None,
                     rule_id: self.id().to_string(),
                     severity: self.severity(),
                     message: format!(
@@ -160,6 +164,7 @@ impl AuditRule for Move001 {
             for (name, count) in &s.usage {
                 if *count >= 2 {
                     report.add(Finding {
+                        file: None,
                         rule_id: self.id().to_string(),
                         severity: self.severity(),
                         message: format!(
@@ -169,6 +174,36 @@ impl AuditRule for Move001 {
                         location: Some(format!("{}:{}", s.fn_name, name)),
                     });
                 }
+            }
+        }
+    }
+}
+
+/// MATH-001 — Division before multiplication can truncate precision.
+pub struct Math001;
+
+impl AuditRule for Math001 {
+    fn id(&self) -> &'static str {
+        "MATH-001"
+    }
+    fn severity(&self) -> Severity {
+        Severity::Warning
+    }
+    fn description(&self) -> &'static str {
+        "Division before multiplication may truncate numeric precision"
+    }
+    fn check(&self, scans: &[FnScan], _ctx: &AuditContext, report: &mut AuditReport) {
+        for scan in scans {
+            if scan.division_before_multiplication {
+                report.add(Finding {
+                    rule_id: self.id().to_string(),
+                    severity: self.severity(),
+                    message: format!(
+                        "Function `{}` divides before multiplying; division may truncate precision",
+                        scan.fn_name
+                    ),
+                    location: Some(scan.fn_name.clone()),
+                });
             }
         }
     }
@@ -191,6 +226,7 @@ mod tests {
             invoke_contract: 0,
             bound: Default::default(),
             usage: Default::default(),
+            division_before_multiplication: false,
         }];
         let mut rep = AuditReport::default();
         Auth001.check(&scans, &crate::audit::AuditContext { spec: None }, &mut rep);
@@ -208,6 +244,7 @@ mod tests {
             invoke_contract: 0,
             bound: Default::default(),
             usage: Default::default(),
+            division_before_multiplication: false,
         }];
         let mut rep = AuditReport::default();
         Auth001.check(&scans, &crate::audit::AuditContext { spec: None }, &mut rep);
@@ -225,6 +262,7 @@ mod tests {
             invoke_contract: 0,
             bound: Default::default(),
             usage: Default::default(),
+            division_before_multiplication: false,
         }];
         let mut rep = AuditReport::default();
         Auth001.check(&scans, &crate::audit::AuditContext { spec: None }, &mut rep);
@@ -242,6 +280,7 @@ mod tests {
             invoke_contract: 0,
             bound: Default::default(),
             usage: Default::default(),
+            division_before_multiplication: false,
         }];
         let mut rep = AuditReport::default();
         Auth001.check(&scans, &crate::audit::AuditContext { spec: None }, &mut rep);
@@ -259,6 +298,7 @@ mod tests {
             invoke_contract: 1,
             bound: Default::default(),
             usage: Default::default(),
+            division_before_multiplication: false,
         }];
         let mut rep = AuditReport::default();
         Auth002.check(&scans, &crate::audit::AuditContext { spec: None }, &mut rep);
@@ -276,6 +316,7 @@ mod tests {
             invoke_contract: 1,
             bound: Default::default(),
             usage: Default::default(),
+            division_before_multiplication: false,
         }];
         let mut rep = AuditReport::default();
         Auth002.check(&scans, &crate::audit::AuditContext { spec: None }, &mut rep);
@@ -293,6 +334,7 @@ mod tests {
             invoke_contract: 0,
             bound: Default::default(),
             usage: Default::default(),
+            division_before_multiplication: false,
         }];
         let mut rep = AuditReport::default();
         Auth002.check(&scans, &crate::audit::AuditContext { spec: None }, &mut rep);
@@ -310,6 +352,7 @@ mod tests {
             invoke_contract: 0,
             bound: Default::default(),
             usage: Default::default(),
+            division_before_multiplication: false,
         }];
         let mut rep = AuditReport::default();
         Auth003.check(&scans, &crate::audit::AuditContext { spec: None }, &mut rep);
@@ -327,6 +370,7 @@ mod tests {
             invoke_contract: 0,
             bound: Default::default(),
             usage: Default::default(),
+            division_before_multiplication: false,
         }];
         let mut rep = AuditReport::default();
         Auth003.check(&scans, &crate::audit::AuditContext { spec: None }, &mut rep);
@@ -344,6 +388,7 @@ mod tests {
             invoke_contract: 0,
             bound: Default::default(),
             usage: Default::default(),
+            division_before_multiplication: false,
         }];
         let mut rep = AuditReport::default();
         Auth003.check(&scans, &crate::audit::AuditContext { spec: None }, &mut rep);
@@ -361,6 +406,7 @@ mod tests {
             invoke_contract: 0,
             bound: Default::default(),
             usage: Default::default(),
+            division_before_multiplication: false,
         }];
         let mut rep = AuditReport::default();
         Auth003.check(&scans, &crate::audit::AuditContext { spec: None }, &mut rep);
@@ -381,6 +427,7 @@ mod tests {
             invoke_contract: 0,
             bound: Default::default(),
             usage,
+            division_before_multiplication: false,
         }];
         let mut rep = AuditReport::default();
         Move001.check(&scans, &crate::audit::AuditContext { spec: None }, &mut rep);
@@ -401,6 +448,7 @@ mod tests {
             invoke_contract: 0,
             bound: Default::default(),
             usage,
+            division_before_multiplication: false,
         }];
         let mut rep = AuditReport::default();
         Move001.check(&scans, &crate::audit::AuditContext { spec: None }, &mut rep);
@@ -418,6 +466,7 @@ mod tests {
             invoke_contract: 0,
             bound: Default::default(),
             usage: Default::default(),
+            division_before_multiplication: false,
         }];
         let mut rep = AuditReport::default();
         Move001.check(&scans, &crate::audit::AuditContext { spec: None }, &mut rep);
@@ -434,6 +483,7 @@ mod tests {
             invoke_contract: 0,
             bound: Default::default(),
             usage: Default::default(),
+            division_before_multiplication: false,
         }];
         let mut rep = AuditReport::default();
         Auth004.check(&scans, &crate::audit::AuditContext { spec: None }, &mut rep);
@@ -451,6 +501,7 @@ mod tests {
             invoke_contract: 0,
             bound: Default::default(),
             usage: Default::default(),
+            division_before_multiplication: false,
         }];
         let mut rep = AuditReport::default();
         Auth004.check(&scans, &crate::audit::AuditContext { spec: None }, &mut rep);
@@ -468,6 +519,7 @@ mod tests {
             invoke_contract: 0,
             bound: Default::default(),
             usage: Default::default(),
+            division_before_multiplication: false,
         }];
         let mut rep = AuditReport::default();
         Auth004.check(&scans, &crate::audit::AuditContext { spec: None }, &mut rep);
@@ -487,6 +539,7 @@ mod tests {
             invoke_contract: 0,
             bound: Default::default(),
             usage: Default::default(),
+            division_before_multiplication: false,
         }];
         let mut rep = AuditReport::default();
         Auth004.check(&scans, &crate::audit::AuditContext { spec: None }, &mut rep);
@@ -504,6 +557,7 @@ mod tests {
             invoke_contract: 0,
             bound: Default::default(),
             usage: Default::default(),
+            division_before_multiplication: false,
         }];
         let mut rep = AuditReport::default();
         Auth004.check(&scans, &crate::audit::AuditContext { spec: None }, &mut rep);
