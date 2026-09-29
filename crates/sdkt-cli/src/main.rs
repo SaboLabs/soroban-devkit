@@ -5077,16 +5077,13 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
                 paths_out
             };
 
-            // When the `plugins` feature is enabled, link the reference example
-            // rule into the registry. Off by default → identical behavior.
-            #[cfg(feature = "plugins")]
-            sdkt_audit_example_rule::register();
-
             let disabled_refs: Vec<&str> = disable.iter().map(String::as_str).collect();
 
             let mut aggregate = sdkt_audit::AuditReport::default();
             let mut per_file = Vec::new();
             let mut had_file_errors = false;
+            #[allow(unused_mut)]
+            let mut loaded_plugins = 0usize;
 
             for source_path in &source_paths {
                 let source = match fs::read_to_string(source_path) {
@@ -5112,7 +5109,9 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
                 };
 
                 let mut local_reg = sdkt_audit::RuleRegistry::new();
-                local_reg.register_builtin_rules();
+                if multi_file {
+                    local_reg.register_builtin_rules();
+                }
 
                 for (plugin_path, plugin_id) in &multi_file_plugin_paths {
                     let ext = plugin_path
@@ -5125,23 +5124,25 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
                         "so" | "dylib" | "dll" => {
                             #[cfg(feature = "plugins")]
                             {
-                                match sdkt_audit::PluginRule::load(plugin_path, &source) {
-                                    Ok(rule) => local_reg.register_rule(Box::new(rule)),
+                                let result = if single_file {
+                                    sdkt_audit::load_and_register(plugin_path, &source).map(|_| ())
+                                } else {
+                                    sdkt_audit::PluginRule::load(plugin_path, &source)
+                                        .map(|rule| local_reg.register_rule(Box::new(rule)))
+                                };
+
+                                match result {
+                                    Ok(()) => {
+                                        if single_file {
+                                            loaded_plugins += 1;
+                                        }
+                                    }
                                     Err(e) => {
-                                        if matches!(
-                                            e,
-                                            sdkt_audit::PluginLoadError::AbiMismatch { .. }
-                                        ) {
-                                            eprintln!(
-                                                "Warning: skipping native plugin '{}': {}",
-                                                plugin_id, e
-                                            );
+                                        if matches!(e, sdkt_audit::PluginLoadError::AbiMismatch { .. }) {
+                                            eprintln!("Warning: skipping native plugin '{}': {}", plugin_id, e);
                                             continue;
                                         }
-                                        eprintln!(
-                                            "Error loading native plugin '{}': {}",
-                                            plugin_id, e
-                                        );
+                                        eprintln!("Error loading native plugin '{}': {}", plugin_id, e);
                                         process::exit(1);
                                     }
                                 }
@@ -5159,23 +5160,25 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
                         "wasm" => {
                             #[cfg(feature = "wasm-plugins")]
                             {
-                                match sdkt_audit::WasmPluginRule::load(plugin_path, &source) {
-                                    Ok(rule) => local_reg.register_rule(Box::new(rule)),
+                                let result = if single_file {
+                                    sdkt_audit::load_and_register_wasm(plugin_path, &source).map(|_| ())
+                                } else {
+                                    sdkt_audit::WasmPluginRule::load(plugin_path, &source)
+                                        .map(|rule| local_reg.register_rule(Box::new(rule)))
+                                };
+
+                                match result {
+                                    Ok(()) => {
+                                        if single_file {
+                                            loaded_plugins += 1;
+                                        }
+                                    }
                                     Err(e) => {
-                                        if matches!(
-                                            e,
-                                            sdkt_audit::WasmPluginLoadError::AbiMismatch { .. }
-                                        ) {
-                                            eprintln!(
-                                                "Warning: skipping WASM plugin '{}': {}",
-                                                plugin_id, e
-                                            );
+                                        if matches!(e, sdkt_audit::WasmPluginLoadError::AbiMismatch { .. }) {
+                                            eprintln!("Warning: skipping WASM plugin '{}': {}", plugin_id, e);
                                             continue;
                                         }
-                                        eprintln!(
-                                            "Error loading WASM plugin '{}': {}",
-                                            plugin_id, e
-                                        );
+                                        eprintln!("Error loading WASM plugin '{}': {}", plugin_id, e);
                                         process::exit(1);
                                     }
                                 }
@@ -5197,6 +5200,27 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
                             );
                         }
                     }
+                }
+
+                if single_file {
+                    // Load dynamic rules first so registry ID deduplication
+                    // preserves the original single-file behavior.
+                    #[cfg(feature = "plugins")]
+                    sdkt_audit_example_rule::register();
+
+                    match sdkt_audit::audit_source_with(&source, &disabled_refs) {
+                        Ok(report) => {
+                            for finding in &report.findings {
+                                aggregate.add(finding.clone());
+                            }
+                            per_file.push((source_path.clone(), report));
+                        }
+                        Err(_) => {
+                            eprintln!("Error auditing source: Failed to parse Rust source");
+                            process::exit(1);
+                        }
+                    }
+                    continue;
                 }
 
                 match sdkt_audit::scan_all_functions_str(&source) {
@@ -5243,12 +5267,19 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
                 }
             }
             if audit_fmt == AuditFormat::Sarif {
-                let version = env!("CARGO_PKG_VERSION");
+                let rules_info: Vec<sdkt_audit::RuleInfo> = sdkt_audit::all_rules()
+                    .iter()
+                    .map(|r| sdkt_audit::RuleInfo {
+                        id: r.id().to_string(),
+                        severity: r.severity(),
+                        description: r.description().to_string(),
+                    })
+                    .collect();
                 if multi_file {
                     let sarif_str = sdkt_audit::sarif::report_to_sarif_string_multi_file(
                         &aggregate,
-                        version,
-                        &[],
+                        sdkt_version_string(),
+                        &rules_info,
                     )
                     .map_err(|e| e.to_string())?;
                     println!("{}", sarif_str);
@@ -5257,8 +5288,8 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
                     let sarif_str = sdkt_audit::sarif::report_to_sarif_string(
                         &aggregate,
                         source_file,
-                        version,
-                        &[],
+                        sdkt_version_string(),
+                        &rules_info,
                     )
                     .map_err(|e| e.to_string())?;
                     println!("{}", sarif_str);
@@ -5297,6 +5328,14 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
             } else {
                 for (path, report) in &per_file {
                     println!("Static Analysis Report: {}", path.display());
+
+                    if loaded_plugins > 0 {
+                        println!(
+                            "Rules loaded: 5 built-in, {} plugin{}",
+                            loaded_plugins,
+                            if loaded_plugins == 1 { "" } else { "s" }
+                        );
+                    }
 
                     println!(
                         "Severity: {} critical, {} warning, {} info ({} total)",
