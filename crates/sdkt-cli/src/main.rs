@@ -713,7 +713,7 @@ enum Commands {
         #[arg(long, default_value_t = false)]
         upgrade_safety: bool,
         /// Exit non-zero when the upgrade-safety verdict is not backwards-compatible.
-        /// Only meaningful with `--upgrade-safety`. Mirrors `sdkt deploy --deny-breaking`.
+        /// Requires `--upgrade-safety`. Mirrors `sdkt deploy --deny-breaking`.
         #[arg(long, default_value_t = false)]
         deny_breaking: bool,
         #[command(flatten)]
@@ -813,7 +813,7 @@ enum Commands {
         #[arg(long, default_value_t = false)]
         upgrade_safety: bool,
         /// Exit non-zero when the upgrade-safety verdict is not backwards-compatible.
-        /// Only meaningful with `--upgrade-safety`. Mirrors `sdkt deploy --deny-breaking`.
+        /// Requires `--upgrade-safety`. Mirrors `sdkt deploy --deny-breaking`.
         #[arg(long, default_value_t = false)]
         deny_breaking: bool,
     },
@@ -3974,6 +3974,13 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
             deny_breaking,
             net,
         } => {
+            if deny_breaking && !upgrade_safety {
+                eprintln!(
+                    "Error: --deny-breaking requires --upgrade-safety to compute a verdict to gate on"
+                );
+                process::exit(1);
+            }
+
             let fmt = parse_format_str(&format);
             let target = match resolve_target_network(network.as_deref(), &net) {
                 Ok(t) => t,
@@ -5180,6 +5187,13 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
             upgrade_safety,
             deny_breaking,
         } => {
+            if deny_breaking && !upgrade_safety {
+                eprintln!(
+                    "Error: --deny-breaking requires --upgrade-safety to compute a verdict to gate on"
+                );
+                process::exit(1);
+            }
+
             let fmt = parse_format_str(&format);
             let old_bytes = fs::read(&old_wasm)
                 .map_err(|e| format!("Failed to read OLD WASM '{}': {}", old_wasm, e))?;

@@ -181,6 +181,46 @@ fn verify_help_documents_deny_breaking() {
         .stdout(contains("deny-breaking"));
 }
 
+// ── --deny-breaking requires --upgrade-safety validation ────────────────────
+
+/// `sdkt diff --deny-breaking` without `--upgrade-safety` fails early with exit code 1.
+#[test]
+fn diff_deny_breaking_without_upgrade_safety_fails_early() {
+    sdkt()
+        .args([
+            "diff",
+            "--old-wasm",
+            &fixture("us_old.wasm"),
+            "--new-wasm",
+            &fixture("us_new.wasm"),
+            "--deny-breaking",
+        ])
+        .assert()
+        .code(1)
+        .stderr(contains(
+            "--deny-breaking requires --upgrade-safety to compute a verdict to gate on",
+        ));
+}
+
+/// `sdkt verify --deny-breaking` without `--upgrade-safety` fails early with exit code 1.
+#[test]
+fn verify_deny_breaking_without_upgrade_safety_fails_early() {
+    sdkt()
+        .args([
+            "verify",
+            "--contract",
+            VERIFY_CONTRACT_ID,
+            "--wasm",
+            &fixture("us_new.wasm"),
+            "--deny-breaking",
+        ])
+        .assert()
+        .code(1)
+        .stderr(contains(
+            "--deny-breaking requires --upgrade-safety to compute a verdict to gate on",
+        ));
+}
+
 // ── Mock RPC integration tests for verify --upgrade-safety gating ────────────
 
 use base64::engine::general_purpose::STANDARD;
