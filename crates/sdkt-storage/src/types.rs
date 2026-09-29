@@ -32,6 +32,9 @@ impl StorageClass {
 pub struct StorageEntry {
     /// The base64 XDR `LedgerKey` as returned by RPC.
     pub key: String,
+    /// Readable ABI-derived key label, when available.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub label: Option<String>,
     /// Classified storage type.
     pub class: StorageClass,
     pub current_ttl: u32,
