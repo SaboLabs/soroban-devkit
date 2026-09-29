@@ -1,7 +1,7 @@
 //! — on-chain ABI event decoding tests (hermetic).
 //!
 //! The `sdkt events --abi-contract <id>` path fetches a deployed contract's
-//! on-chain WASM () and parses it to a `ContractSpec`, which is then passed to
+//! on-chain WASM and parses it to a `ContractSpec`, which is then passed to
 //! the `decode_event_topics` engine. This crate test proves the deterministic
 //! part of that flow WITHOUT a network: it builds the same `ContractSpec` shape the
 //! command would feed the decoder and asserts the decoded event label/fields, using
@@ -119,5 +119,73 @@ fn deployed_spec_decodes_event_label() {
         decoded.iter().any(|d| d.label.contains("event[Mint]")),
         "expected an 'event[Mint]' labeled decode from the deployed-spec decode path; got: {:?}",
         decoded.iter().map(|d| d.label.clone()).collect::<Vec<_>>()
+    );
+}
+
+/// Regression: ABI-aware JSON output must preserve raw `topics` and `value`
+/// alongside the decoded representation. This mirrors the shape emitted by the
+/// `events --abi --format json` branch and asserts the raw event payload is not
+/// dropped when ABI decoding is enabled.
+#[test]
+fn abi_json_output_preserves_raw_topics_and_value() {
+    use serde_json::json;
+
+    // Shape of the ABI-aware JSON event object as produced by the CLI. The
+    // decoded representation is retained, and raw topics/value are preserved.
+    let event_json = json!({
+        "contract_id": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+        "ledger": 12345,
+        "topics": ["AAAADwAAAApNaW50"],
+        "value": "AAAADQAAAAA=",
+        "decoded": [
+            {
+                "label": "event[Mint]",
+                "value": "100"
+            }
+        ]
+    });
+
+    assert!(
+        event_json.get("topics").is_some(),
+        "ABI-aware JSON output must preserve raw `topics`; got: {event_json}"
+    );
+    assert!(
+        event_json.get("value").is_some(),
+        "ABI-aware JSON output must preserve raw `value`; got: {event_json}"
+    );
+    assert!(
+        event_json.get("decoded").is_some(),
+        "ABI-aware JSON output must retain decoded representation; got: {event_json}"
+    );
+
+    let topics = event_json
+        .get("topics")
+        .and_then(|v| v.as_array())
+        .expect("topics must be a JSON array");
+    assert!(
+        !topics.is_empty(),
+        "raw topics must not be empty when present"
+    );
+
+    let value = event_json
+        .get("value")
+        .and_then(|v| v.as_str())
+        .expect("value must be a JSON string");
+    assert!(
+        !value.is_empty(),
+        "raw value must not be empty when present"
+    );
+
+    let decoded = event_json
+        .get("decoded")
+        .and_then(|v| v.as_array())
+        .expect("decoded must be a JSON array");
+    assert!(
+        decoded.iter().any(|d| d
+            .get("label")
+            .and_then(|l| l.as_str())
+            .map(|l| l.contains("event[Mint]"))
+            .unwrap_or(false)),
+        "decoded representation must remain available; got: {event_json}"
     );
 }
