@@ -59,6 +59,9 @@ pub struct StorageSnapshot {
 pub struct SnapshotEntry {
     /// Base64 XDR encoded `LedgerKey`.
     pub key: String,
+    /// Readable ABI-derived key label, when available.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub label: Option<String>,
     /// TTL in ledgers relative to the ledger at snapshot time.
     pub current_ttl: u32,
 }
@@ -82,6 +85,7 @@ impl StorageSnapshot {
                 .iter()
                 .map(|e| SnapshotEntry {
                     key: e.key.clone(),
+                    label: e.label.clone(),
                     current_ttl: e.current_ttl,
                 })
                 .collect(),
@@ -121,6 +125,9 @@ pub enum DiffStatus {
 pub struct DiffEntry {
     /// Base64 XDR encoded `LedgerKey`.
     pub key: String,
+    /// Readable ABI-derived key label, when available.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub label: Option<String>,
     /// How this entry changed between the two snapshots.
     pub status: DiffStatus,
     /// TTL in the old snapshot (`None` for entries that are `Removed` and were
@@ -180,23 +187,19 @@ pub fn diff_snapshots(
 
     use std::collections::HashMap;
 
-    let old_map: HashMap<&str, u32> = old
-        .entries
-        .iter()
-        .map(|e| (e.key.as_str(), e.current_ttl))
-        .collect();
+    let old_map: HashMap<&str, &SnapshotEntry> =
+        old.entries.iter().map(|e| (e.key.as_str(), e)).collect();
 
-    let new_map: HashMap<&str, u32> = new
-        .entries
-        .iter()
-        .map(|e| (e.key.as_str(), e.current_ttl))
-        .collect();
+    let new_map: HashMap<&str, &SnapshotEntry> =
+        new.entries.iter().map(|e| (e.key.as_str(), e)).collect();
 
     let mut entries: Vec<DiffEntry> = Vec::new();
 
     // Entries present in old — may be removed or still alive.
-    for (key, &old_ttl) in &old_map {
-        if let Some(&new_ttl) = new_map.get(key) {
+    for (key, &old_entry) in &old_map {
+        let old_ttl = old_entry.current_ttl;
+        if let Some(&new_entry) = new_map.get(key) {
+            let new_ttl = new_entry.current_ttl;
             let status = if new_ttl < EXPIRING_SOON_LEDGERS {
                 DiffStatus::ExpiringSoon
             } else {
@@ -204,6 +207,7 @@ pub fn diff_snapshots(
             };
             entries.push(DiffEntry {
                 key: key.to_string(),
+                label: new_entry.label.clone().or_else(|| old_entry.label.clone()),
                 status,
                 old_ttl: Some(old_ttl),
                 new_ttl: Some(new_ttl),
@@ -211,6 +215,7 @@ pub fn diff_snapshots(
         } else {
             entries.push(DiffEntry {
                 key: key.to_string(),
+                label: old_entry.label.clone(),
                 status: DiffStatus::Removed,
                 old_ttl: Some(old_ttl),
                 new_ttl: None,
@@ -219,8 +224,9 @@ pub fn diff_snapshots(
     }
 
     // Entries that are new (only present in new snapshot).
-    for (key, &new_ttl) in &new_map {
+    for (key, &new_entry) in &new_map {
         if !old_map.contains_key(key) {
+            let new_ttl = new_entry.current_ttl;
             let status = if new_ttl < EXPIRING_SOON_LEDGERS {
                 DiffStatus::ExpiringSoon
             } else {
@@ -228,6 +234,7 @@ pub fn diff_snapshots(
             };
             entries.push(DiffEntry {
                 key: key.to_string(),
+                label: new_entry.label.clone(),
                 status,
                 old_ttl: None,
                 new_ttl: Some(new_ttl),
@@ -369,6 +376,7 @@ mod tests {
                 .into_iter()
                 .map(|(k, ttl)| SnapshotEntry {
                     key: k.to_string(),
+                    label: None,
                     current_ttl: ttl,
                 })
                 .collect(),
@@ -491,6 +499,27 @@ mod tests {
         assert_eq!(d1.entries[1].key, "zz");
     }
 
+    #[test]
+    fn diff_preserves_label_without_using_it_as_identity() {
+        let mut old = snap(vec![("keyA", 50_000)]);
+        let mut new = snap(vec![("keyA", 3_000)]);
+        old.entries[0].label = Some("old label".into());
+        new.entries[0].label = Some("DataKey::Balance(u32)".into());
+        let labeled = diff_snapshots(&old, &new).unwrap();
+        assert_eq!(labeled.entries.len(), 1);
+        assert_eq!(labeled.entries[0].key, "keyA");
+        assert_eq!(
+            labeled.entries[0].label.as_deref(),
+            Some("DataKey::Balance(u32)")
+        );
+        old.entries[0].label = None;
+        new.entries[0].label = None;
+        let plain = diff_snapshots(&old, &new).unwrap();
+        assert_eq!(plain.entries[0].status, labeled.entries[0].status);
+        assert_eq!(plain.entries[0].old_ttl, labeled.entries[0].old_ttl);
+        assert_eq!(plain.entries[0].new_ttl, labeled.entries[0].new_ttl);
+    }
+
     // -----------------------------------------------------------------------
     // derive_extend_plan
     // -----------------------------------------------------------------------
@@ -513,6 +542,7 @@ mod tests {
             contract_id: CONTRACT.to_string(),
             entries: vec![DiffEntry {
                 key: "k1".to_string(),
+                label: None,
                 status: DiffStatus::Removed,
                 old_ttl: Some(50_000),
                 new_ttl: None,
@@ -532,6 +562,7 @@ mod tests {
             contract_id: CONTRACT.to_string(),
             entries: vec![DiffEntry {
                 key: "k1".to_string(),
+                label: None,
                 status: DiffStatus::ExpiringSoon,
                 old_ttl: Some(50_000),
                 new_ttl: Some(remaining),
@@ -555,18 +586,21 @@ mod tests {
             entries: vec![
                 DiffEntry {
                     key: "k1".to_string(),
+                    label: None,
                     status: DiffStatus::ExpiringSoon,
                     old_ttl: Some(50_000),
                     new_ttl: Some(10_000),
                 },
                 DiffEntry {
                     key: "k2".to_string(),
+                    label: None,
                     status: DiffStatus::ExpiringSoon,
                     old_ttl: Some(50_000),
                     new_ttl: Some(1_000), // minimum
                 },
                 DiffEntry {
                     key: "k3".to_string(),
+                    label: None,
                     status: DiffStatus::Removed,
                     old_ttl: Some(50_000),
                     new_ttl: None,
@@ -586,12 +620,14 @@ mod tests {
             entries: vec![
                 DiffEntry {
                     key: "unchanged".to_string(),
+                    label: None,
                     status: DiffStatus::Unchanged,
                     old_ttl: Some(100_000),
                     new_ttl: Some(99_000),
                 },
                 DiffEntry {
                     key: "expiring".to_string(),
+                    label: None,
                     status: DiffStatus::ExpiringSoon,
                     old_ttl: Some(20_000),
                     new_ttl: Some(5_000),
@@ -634,6 +670,7 @@ mod tests {
             entries: vec![
                 StorageEntry {
                     key: "key1".to_string(),
+                    label: None,
                     class: StorageClass::Instance,
                     current_ttl: 10_000,
                     days_remaining: 0,
@@ -641,6 +678,7 @@ mod tests {
                 },
                 StorageEntry {
                     key: "key2".to_string(),
+                    label: None,
                     class: StorageClass::Persistent,
                     current_ttl: 5_000,
                     days_remaining: 0,

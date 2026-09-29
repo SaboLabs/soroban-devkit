@@ -10,6 +10,85 @@ fn sdkt() -> Command {
 
 const CONTRACT: &str = "CAE3U7JKESRWZHPEQ72DVNGOQ6WPA7HSPQZL5YV46NPCE4TMUPAGYMEC";
 
+#[test]
+fn abi_diff_labels_keys_without_changing_counts() {
+    use stellar_xdr::{
+        Limits, ScSpecEntry, ScSpecTypeDef, ScSpecUdtUnionCaseTupleV0, ScSpecUdtUnionCaseV0,
+        ScSpecUdtUnionV0, ScVal, WriteXdr,
+    };
+
+    let dir = tempdir().unwrap();
+    let wasm_path = dir.path().join("abi.wasm");
+    let union = ScSpecEntry::UdtUnionV0(ScSpecUdtUnionV0 {
+        doc: "".try_into().unwrap(),
+        lib: "test".try_into().unwrap(),
+        name: "DataKey".try_into().unwrap(),
+        cases: vec![ScSpecUdtUnionCaseV0::TupleV0(ScSpecUdtUnionCaseTupleV0 {
+            doc: "".try_into().unwrap(),
+            name: "Balance".try_into().unwrap(),
+            type_: vec![ScSpecTypeDef::U32].try_into().unwrap(),
+        })]
+        .try_into()
+        .unwrap(),
+    });
+    let mut section = vec!["contractspecv0".len() as u8];
+    section.extend_from_slice(b"contractspecv0");
+    section.extend_from_slice(&union.to_xdr(Limits::none()).unwrap());
+    let mut wasm = vec![0, 97, 115, 109, 1, 0, 0, 0, 0];
+    wasm.push(section.len() as u8);
+    wasm.extend_from_slice(&section);
+    fs::write(&wasm_path, wasm).unwrap();
+
+    let arg = sdkt_xdr::scval_to_base64(&ScVal::U32(7)).unwrap();
+    let key = sdkt_xdr::build_map_key("Balance", &[arg]).unwrap();
+    let raw = sdkt_xdr::encode_ledger_key(&sdkt_xdr::LedgerKeyParams::ContractDataEntry {
+        contract: CONTRACT.to_string(),
+        key,
+        durability: stellar_xdr::ContractDataDurability::Persistent,
+    })
+    .unwrap();
+    let old_path = dir.path().join("old.json");
+    let new_path = dir.path().join("new.json");
+    create_snapshot_file(&old_path, CONTRACT, &[(&raw, 50_000)]);
+    create_snapshot_file(&new_path, CONTRACT, &[(&raw, 3_000)]);
+
+    let run = |with_abi: bool| {
+        let mut cmd = sdkt();
+        cmd.args(["storage", "diff", "--old"])
+            .arg(&old_path)
+            .arg("--new")
+            .arg(&new_path)
+            .args(["--format", "json"]);
+        if with_abi {
+            cmd.arg("--abi").arg(&wasm_path);
+        }
+        let output = cmd.assert().success().get_output().stdout.clone();
+        serde_json::from_slice::<serde_json::Value>(&output).unwrap()
+    };
+    let plain = run(false);
+    let labeled = run(true);
+    assert_eq!(plain["entries"][0]["key"], labeled["entries"][0]["key"]);
+    assert_eq!(
+        plain["entries"].as_array().unwrap().len(),
+        labeled["entries"].as_array().unwrap().len()
+    );
+    assert!(plain["entries"][0].get("label").is_none());
+    assert_eq!(labeled["entries"][0]["label"], "DataKey::Balance(u32)");
+
+    let mut pretty = sdkt();
+    pretty
+        .args(["storage", "diff", "--old"])
+        .arg(&old_path)
+        .arg("--new")
+        .arg(&new_path)
+        .arg("--abi")
+        .arg(&wasm_path);
+    let output = pretty.assert().success().get_output().stdout.clone();
+    assert!(String::from_utf8(output)
+        .unwrap()
+        .contains("label=DataKey::Balance(u32)"));
+}
+
 fn create_snapshot_file(path: &Path, contract_id: &str, entries: &[(&str, u32)]) {
     let entry_objs: Vec<serde_json::Value> = entries
         .iter()
