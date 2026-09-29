@@ -29,7 +29,9 @@ pub use deploy::{
 };
 pub use error::RpcError;
 pub use events::{
-    get_contract_events, resolve_ledger_range, ContractEvent, EventFilter, GetEventsRequest,
+    first_topic_filter, get_contract_events, get_contract_events_filtered, resolve_ledger_range,
+    ContractEvent, EventFilter, GetEventsRequest, TopicFilter, TOPIC_WILDCARD_ONE,
+    TOPIC_WILDCARD_REST,
 };
 pub use fee::{estimate_dynamic_fee, get_fee_stats, FeeDistribution, FeeStats};
 pub use inspect::{inspect_contract, ContractInspection, StorageKeyInfo, TtlInfoSummary};
