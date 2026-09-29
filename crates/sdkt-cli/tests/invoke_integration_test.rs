@@ -782,3 +782,72 @@ fn tx_build_still_accepts_passthrough_args() {
         .success()
         .stdout(predicates::str::contains("Transaction Envelope"));
 }
+
+// ---------- Default identity resolution ----------
+
+/// Register `name` as the keystore default (creates the `default` symlink that
+/// `IdentityStore::get_default` reads), so commands may omit `--identity`.
+fn set_default_identity(dir: &std::path::Path, name: &str) {
+    sdkt_isolated(dir)
+        .args(["identity", "default", name])
+        .assert()
+        .success();
+}
+
+#[test]
+fn invoke_without_identity_uses_configured_default() {
+    let dir = tempdir().unwrap();
+    generate_identity(dir.path(), "alice");
+    set_default_identity(dir.path(), "alice");
+    let (url, seen) = mock_rpc_server(false);
+    add_mock_profile(dir.path(), &url);
+
+    // No --identity: the flag's built-in "default" sentinel must resolve to the
+    // identity registered with `sdkt identity default`, instead of failing on a
+    // literal identity named "default".
+    let output = sdkt_isolated(dir.path())
+        .args([
+            "invoke",
+            VALID_CONTRACT,
+            "increment",
+            "--network-profile",
+            "mocknet",
+            "--args",
+            "u32:42",
+        ])
+        .output()
+        .unwrap();
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        output.status.success(),
+        "stdout={stdout} stderr={}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(stdout.contains("Status:   SUCCESS"), "stdout={stdout}");
+
+    let methods = seen.lock().unwrap().join(",");
+    assert!(methods.contains("sendTransaction"), "methods={methods}");
+}
+
+#[test]
+fn invoke_without_default_identity_suggests_identity_default() {
+    let dir = tempdir().unwrap();
+    // An identity exists, but it is not the default, so the sentinel cannot
+    // resolve and the error must tell the user how to set one.
+    generate_identity(dir.path(), "alice");
+    let (url, _seen) = mock_rpc_server(false);
+    add_mock_profile(dir.path(), &url);
+
+    sdkt_isolated(dir.path())
+        .args([
+            "invoke",
+            VALID_CONTRACT,
+            "increment",
+            "--network-profile",
+            "mocknet",
+        ])
+        .assert()
+        .failure()
+        .stderr(predicates::str::contains("sdkt identity default"));
+}

@@ -16,6 +16,8 @@ pub enum StorageError {
     Io(#[from] std::io::Error),
     #[error("Not found: {0}")]
     NotFound(String),
+    #[error("no default identity set; choose one with `sdkt identity default <name>`")]
+    NoDefaultIdentity,
     #[error("Corrupt cache data: {0}")]
     CorruptCache(String),
     #[error("Config error: {0}")]

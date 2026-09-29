@@ -3713,12 +3713,19 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
 
                     let identity_store = sdkt_storage::IdentityStore::new()
                         .map_err(|e| format!("Failed to access identity store: {}", e))?;
+                    // `--identity` defaults to the reserved "default" sentinel;
+                    // resolve it to the configured default identity, if any.
                     let identity_obj = identity_store
-                        .get(&identity)
-                        .map_err(|e| format!("Identity '{}' not found: {}", identity, e))?;
-                    let signing_key = identity_store.load_signing_key(&identity).map_err(|e| {
-                        format!("Failed to load signing key for '{}': {}", identity, e)
-                    })?;
+                        .resolve_signing_identity(&identity)
+                        .map_err(|e| format!("Failed to resolve signing identity: {}", e))?;
+                    let signing_key = identity_store
+                        .load_signing_key(&identity_obj.name)
+                        .map_err(|e| {
+                            format!(
+                                "Failed to load signing key for '{}': {}",
+                                identity_obj.name, e
+                            )
+                        })?;
                     let signer = sdkt_xdr::sign::Ed25519Signer::from_seed(&signing_key.to_bytes());
                     let source_account = identity_obj.public_key.clone();
                     let client = SorobanRpcClient::from_config(&network_config);
@@ -3814,12 +3821,19 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
 
                     let identity_store = sdkt_storage::IdentityStore::new()
                         .map_err(|e| format!("Failed to access identity store: {}", e))?;
+                    // `--identity` defaults to the reserved "default" sentinel;
+                    // resolve it to the configured default identity, if any.
                     let identity_obj = identity_store
-                        .get(&identity)
-                        .map_err(|e| format!("Identity '{}' not found: {}", identity, e))?;
-                    let signing_key = identity_store.load_signing_key(&identity).map_err(|e| {
-                        format!("Failed to load signing key for '{}': {}", identity, e)
-                    })?;
+                        .resolve_signing_identity(&identity)
+                        .map_err(|e| format!("Failed to resolve signing identity: {}", e))?;
+                    let signing_key = identity_store
+                        .load_signing_key(&identity_obj.name)
+                        .map_err(|e| {
+                            format!(
+                                "Failed to load signing key for '{}': {}",
+                                identity_obj.name, e
+                            )
+                        })?;
                     let signer = sdkt_xdr::sign::Ed25519Signer::from_seed(&signing_key.to_bytes());
                     let source_account = identity_obj.public_key.clone();
                     let client = SorobanRpcClient::from_config(&network_config);
@@ -4881,10 +4895,24 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
                         process::exit(1);
                     }
                 };
-                let signing_key = match store.load_signing_key(&identity) {
+                // The flag defaults to the reserved "default" sentinel, which
+                // resolves to the configured default identity; an explicit name
+                // is looked up verbatim.
+                let identity_obj = match store.resolve_signing_identity(&identity) {
+                    Ok(obj) => obj,
+                    Err(e) => {
+                        if identity == sdkt_storage::DEFAULT_IDENTITY_NAME {
+                            eprintln!("Error: {}", e);
+                        } else {
+                            eprintln!("Error: unknown identity '{}'", identity);
+                        }
+                        process::exit(1);
+                    }
+                };
+                let signing_key = match store.load_signing_key(&identity_obj.name) {
                     Ok(k) => k,
-                    Err(_) => {
-                        eprintln!("Error: unknown identity '{}'", identity);
+                    Err(e) => {
+                        eprintln!("Error: cannot load identity '{}': {}", identity_obj.name, e);
                         process::exit(1);
                     }
                 };
@@ -6652,15 +6680,22 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
                 }
             }
 
-            // Load identity for signing (shared by both code sources).
+            // Load identity for signing (shared by both code sources). The
+            // `--identity` flag defaults to the reserved "default" sentinel, so
+            // resolve it to the configured default identity.
             let identity_store = sdkt_storage::IdentityStore::new()
                 .map_err(|e| format!("Failed to access identity store: {}", e))?;
             let identity_obj = identity_store
-                .get(&identity)
-                .map_err(|e| format!("Identity '{}' not found: {}", identity, e))?;
+                .resolve_signing_identity(&identity)
+                .map_err(|e| format!("Failed to resolve signing identity: {}", e))?;
             let signing_key = identity_store
-                .load_signing_key(&identity)
-                .map_err(|e| format!("Failed to load signing key for '{}': {}", identity, e))?;
+                .load_signing_key(&identity_obj.name)
+                .map_err(|e| {
+                    format!(
+                        "Failed to load signing key for '{}': {}",
+                        identity_obj.name, e
+                    )
+                })?;
             let signer = sdkt_xdr::sign::Ed25519Signer::from_seed(&signing_key.to_bytes());
 
             let client = SorobanRpcClient::from_config(&network_config);
@@ -6990,15 +7025,22 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
                 other => Network::Custom(other.to_string()),
             };
 
-            // 2. Load the signing identity (keystore; no secret on argv).
+            // 2. Load the signing identity (keystore; no secret on argv). The
+            //    `--identity` flag defaults to the reserved "default" sentinel,
+            //    which resolves to the configured default identity.
             let identity_store = sdkt_storage::IdentityStore::new()
                 .map_err(|e| format!("Failed to access identity store: {e}"))?;
             let identity_obj = identity_store
-                .get(&identity)
-                .map_err(|e| format!("Identity '{}' not found: {e}", identity))?;
+                .resolve_signing_identity(&identity)
+                .map_err(|e| format!("Failed to resolve signing identity: {e}"))?;
             let signing_key = identity_store
-                .load_signing_key(&identity)
-                .map_err(|e| format!("Failed to load signing key for '{}': {e}", identity))?;
+                .load_signing_key(&identity_obj.name)
+                .map_err(|e| {
+                    format!(
+                        "Failed to load signing key for '{}': {e}",
+                        identity_obj.name
+                    )
+                })?;
             let signer = Ed25519Signer::from_seed(&signing_key.to_bytes());
 
             // 3. Parse typed args (shared parser; strict — typos must not be
@@ -7669,15 +7711,9 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
                 // contract — and avoids a redundant store lookup per iteration.
                 let identity_store = sdkt_storage::IdentityStore::new()
                     .map_err(|e| format!("Failed to access identity store: {}", e))?;
-                let identity_obj = if identity == "default" {
-                    identity_store
-                        .get_default()
-                        .map_err(|e| format!("Default identity not found: {}", e))?
-                } else {
-                    identity_store
-                        .get(&identity)
-                        .map_err(|e| format!("Identity '{}' not found: {}", identity, e))?
-                };
+                let identity_obj = identity_store
+                    .resolve_signing_identity(&identity)
+                    .map_err(|e| format!("Failed to resolve signing identity: {}", e))?;
                 let signing_key = identity_store
                     .load_signing_key(&identity_obj.name)
                     .map_err(|e| format!("Failed to load signing key: {}", e))?;
