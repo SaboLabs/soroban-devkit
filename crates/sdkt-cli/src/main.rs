@@ -10,7 +10,8 @@ use sdkt_rpc::wasm::get_wasm_bytecode;
 use sdkt_rpc::{
     estimate_dynamic_fee, extend_footprint, get_contract_events, get_next_sequence, get_ttl_info,
     get_wasm_metadata, inspect_account, inspect_contract, inspect_transaction, read_contract_state,
-    restore_footprint, simulate_transaction, SorobanRpcClient, StorageKeyInfo, TtlInfoSummary,
+    restore_footprint, simulate_transaction, NetworkInfo, SorobanRpcClient, StorageKeyInfo,
+    TtlInfoSummary,
 };
 use sdkt_storage::WasmCache;
 use sdkt_storage::{NetworkProfile, NetworkStore, StorageAnalyzer};
@@ -334,8 +335,9 @@ fn resolve_rpc_client_mutating(
 ///
 /// Serializes to the structured JSON schema used by `--format json`:
 /// `profile`, `rpc_url`, `reachable`, `status`, `latest_ledger`,
-/// `protocol_version`, `error`. `error` is `None` (serialized as `null`) only
-/// when the endpoint is reachable *and* healthy.
+/// `protocol_version`, `configured_passphrase`, `endpoint_passphrase`,
+/// `friendbot_url`, `network_info_error`, `error`. `error` describes
+/// reachability/health only; unsupported `getNetwork` is reported separately.
 #[derive(Debug, serde::Serialize)]
 struct NetworkCheckOutcome {
     profile: String,
@@ -344,6 +346,10 @@ struct NetworkCheckOutcome {
     status: Option<String>,
     latest_ledger: Option<u32>,
     protocol_version: Option<u32>,
+    configured_passphrase: String,
+    endpoint_passphrase: Option<String>,
+    friendbot_url: Option<String>,
+    network_info_error: Option<String>,
     error: Option<String>,
 }
 
@@ -375,6 +381,10 @@ async fn probe_network_profile(profile: &str, cfg: &NetworkConfig) -> NetworkChe
         status: None,
         latest_ledger: None,
         protocol_version: None,
+        configured_passphrase: cfg.passphrase.clone(),
+        endpoint_passphrase: None,
+        friendbot_url: None,
+        network_info_error: None,
         error: None,
     };
 
@@ -401,6 +411,15 @@ async fn probe_network_profile(profile: &str, cfg: &NetworkConfig) -> NetworkChe
                     ));
                 }
             }
+
+            match client.get_network().await {
+                Ok(network) => {
+                    apply_network_info(&mut outcome, network);
+                }
+                Err(e) => {
+                    outcome.network_info_error = Some(e.to_string());
+                }
+            }
         }
         Err(e) => {
             outcome.error = Some(format!("RPC endpoint '{}' is unreachable: {}", rpc_url, e));
@@ -408,6 +427,13 @@ async fn probe_network_profile(profile: &str, cfg: &NetworkConfig) -> NetworkChe
     }
 
     outcome
+}
+
+fn apply_network_info(outcome: &mut NetworkCheckOutcome, network: NetworkInfo) {
+    outcome.latest_ledger = Some(network.latest_ledger);
+    outcome.protocol_version = Some(network.protocol_version);
+    outcome.endpoint_passphrase = Some(network.passphrase);
+    outcome.friendbot_url = network.friendbot_url;
 }
 
 /// Adapter that makes a closed consumer (EPIPE / `BrokenPipe`) look like a
@@ -6068,6 +6094,7 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
                         if let Some(protocol) = outcome.protocol_version {
                             println!("  Protocol version: {}", protocol);
                         }
+                        print_network_identity(&outcome);
                     } else {
                         if outcome.reachable {
                             println!(
@@ -6084,6 +6111,7 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
                         if let Some(protocol) = outcome.protocol_version {
                             println!("  Protocol version: {}", protocol);
                         }
+                        print_network_identity(&outcome);
                         if let Some(err) = &outcome.error {
                             println!("  Error:            {}", err);
                         }
@@ -7936,6 +7964,25 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
     }
 
     Ok(())
+}
+
+fn print_network_identity(outcome: &NetworkCheckOutcome) {
+    println!("  Profile passphrase: {}", outcome.configured_passphrase);
+    match &outcome.endpoint_passphrase {
+        Some(passphrase) => {
+            println!("  Endpoint passphrase: {}", passphrase);
+            if passphrase != &outcome.configured_passphrase {
+                println!("  Warning: endpoint passphrase does not match the profile.");
+            }
+        }
+        None => println!("  Endpoint passphrase: not reported by endpoint"),
+    }
+    if let Some(friendbot) = &outcome.friendbot_url {
+        println!("  Friendbot URL:      {}", friendbot);
+    }
+    if let Some(err) = &outcome.network_info_error {
+        println!("  Network identity:   not reported by endpoint ({})", err);
+    }
 }
 
 /// Execute `sdkt generate client`: parse the ContractSpec from a local WASM
