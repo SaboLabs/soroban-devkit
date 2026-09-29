@@ -69,6 +69,7 @@ fn project_deploy_rejects_wrong_length_salt() {
 }
 
 #[test]
+#[test]
 fn project_deploy_help_shows_salt_without_string_default() {
     let dir = temp_dir("help");
     sdkt_isolated(&dir)
