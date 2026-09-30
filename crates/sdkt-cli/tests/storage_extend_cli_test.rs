@@ -5,7 +5,11 @@ use std::io::{Read, Write};
 use std::net::{TcpListener, TcpStream};
 use std::sync::{Arc, Mutex};
 use std::thread;
-use stellar_xdr::{Limits, OperationBody, ReadXdr, TransactionEnvelope};
+use stellar_xdr::{
+    ContractDataDurability, ContractDataEntry, ContractId, ExtensionPoint, Hash, LedgerEntry,
+    LedgerEntryData, LedgerEntryExt, Limited, Limits, OperationBody, ReadXdr, ScAddress, ScVal,
+    TransactionEnvelope, WriteXdr,
+};
 use tempfile::tempdir;
 
 fn sdkt() -> Command {
@@ -121,6 +125,91 @@ fn mock_extend_rpc(latest_ledger: u32) -> (String, Arc<Mutex<Seen>>) {
     (url, seen)
 }
 
+fn mock_contract_data_entry_xdr() -> String {
+    let entry = LedgerEntry {
+        last_modified_ledger_seq: 1,
+        data: LedgerEntryData::ContractData(ContractDataEntry {
+            ext: ExtensionPoint::V0,
+            contract: ScAddress::Contract(ContractId(Hash([0; 32]))),
+            key: ScVal::LedgerKeyContractInstance,
+            durability: ContractDataDurability::Persistent,
+            val: ScVal::Void,
+        }),
+        ext: LedgerEntryExt::V0,
+    };
+    let mut bytes = Vec::new();
+    entry
+        .write_xdr(&mut Limited::new(&mut bytes, Limits::none()))
+        .unwrap();
+    base64::engine::general_purpose::STANDARD.encode(bytes)
+}
+
+/// Mock the storage read response and the optional latest-ledger enrichment.
+/// `latest_ledger: None` makes getLatestLedger return an RPC error.
+fn mock_storage_read_rpc(
+    latest_ledger: Option<u32>,
+    live_until_ledger: Option<u32>,
+) -> (String, Arc<Mutex<Seen>>) {
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let url = format!("http://{}", listener.local_addr().unwrap());
+    let seen: Arc<Mutex<Seen>> = Default::default();
+    let seen_thread = seen.clone();
+    let entry_xdr = mock_contract_data_entry_xdr();
+
+    thread::spawn(move || {
+        for conn in listener.incoming() {
+            let Ok(mut sock) = conn else { break };
+            let req = read_request(&mut sock);
+            let body = req.split_once("\r\n\r\n").map(|(_, b)| b).unwrap_or("");
+            let method = serde_json::from_str::<serde_json::Value>(body)
+                .ok()
+                .and_then(|v| v["method"].as_str().map(str::to_string))
+                .unwrap_or_default();
+            seen_thread.lock().unwrap().methods.push(method.clone());
+
+            let result = match method.as_str() {
+                "getLedgerEntries" => {
+                    let mut entry = serde_json::json!({
+                        "key": "AAAAAA==",
+                        "xdr": entry_xdr,
+                        "lastModifiedLedgerSeq": 1
+                    });
+                    if let Some(ttl) = live_until_ledger {
+                        entry["liveUntilLedgerSeq"] = serde_json::json!(ttl);
+                    }
+                    serde_json::json!({
+                        "entries": [entry],
+                        "latestLedger": latest_ledger.unwrap_or_default()
+                    })
+                    .to_string()
+                }
+                "getLatestLedger" => match latest_ledger {
+                    Some(sequence) => {
+                        format!(r#"{{"id":"mock","protocolVersion":22,"sequence":{sequence}}}"#)
+                    }
+                    None => r#"{"code":-32000,"message":"ledger unavailable"}"#.to_string(),
+                },
+                _ => r#"{"code":-32601,"message":"method not found"}"#.to_string(),
+            };
+            let is_error = (method == "getLatestLedger" && latest_ledger.is_none())
+                || (method != "getLedgerEntries" && method != "getLatestLedger");
+            let response_body = if is_error {
+                format!(r#"{{"jsonrpc":"2.0","id":1,"error":{result}}}"#)
+            } else {
+                format!(r#"{{"jsonrpc":"2.0","id":1,"result":{result}}}"#)
+            };
+            let response = format!(
+                "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+                response_body.len(),
+                response_body
+            );
+            let _ = sock.write_all(response.as_bytes());
+        }
+    });
+
+    (url, seen)
+}
+
 /// Decode the `extendTo` of the `ExtendFootprintTtl` operation in a
 /// `sendTransaction` request body.
 fn submitted_extend_to(send_body: &str) -> u32 {
@@ -159,6 +248,124 @@ fn setup_mock_network(dir: &std::path::Path, rpc_url: &str) {
         .args(["identity", "generate", "alice"])
         .assert()
         .success();
+}
+
+fn run_storage_read(rpc_url: &str, format: &str) -> std::process::Output {
+    sdkt()
+        .args([
+            "storage",
+            "--rpc-url",
+            rpc_url,
+            "read",
+            "--contract",
+            VALID_CONTRACT,
+            "--instance",
+            "--format",
+            format,
+        ])
+        .output()
+        .unwrap()
+}
+
+// ---------- #176: storage read TTL context ----------
+
+#[test]
+fn storage_read_shows_relative_ttl_and_extend_caution_at_threshold() {
+    let (url, _) = mock_storage_read_rpc(Some(100_000), Some(117_280));
+    let output = run_storage_read(&url, "pretty");
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8(output.stdout).unwrap();
+    assert!(stdout.contains(
+        "Live Until:     117280 (ledger; 17280 ledgers remaining, ~1.00 days at 5s/ledger)"
+    ));
+    assert!(stdout.contains("Caution:        Entry is expiring soon."));
+    assert!(stdout.contains("sdkt storage extend --contract"));
+    assert!(stdout.contains("--ledgers 518400"));
+
+    let (json_url, _) = mock_storage_read_rpc(Some(100_000), Some(117_280));
+    let json_output = run_storage_read(&json_url, "json");
+    assert!(json_output.status.success());
+    let json: serde_json::Value = serde_json::from_slice(&json_output.stdout).unwrap();
+    assert_eq!(json["ledgers_remaining"], 17_280);
+    assert_eq!(json["expiring_soon"], true);
+}
+
+#[test]
+fn storage_read_one_ledger_above_threshold_has_no_caution_and_json_context() {
+    let (url, _) = mock_storage_read_rpc(Some(100_000), Some(117_281));
+    let output = run_storage_read(&url, "json");
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let json: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(json["contract_id"], VALID_CONTRACT);
+    assert_eq!(json["live_until_ledger"], 117_281);
+    assert_eq!(json["ledgers_remaining"], 17_281);
+    assert_eq!(json["expiring_soon"], false);
+    for key in ["key", "entry_type", "durability", "value"] {
+        assert!(json.get(key).is_some(), "missing pre-existing field {key}");
+    }
+
+    let (pretty_url, _) = mock_storage_read_rpc(Some(100_000), Some(117_281));
+    let pretty_output = run_storage_read(&pretty_url, "pretty");
+    assert!(pretty_output.status.success());
+    let pretty = String::from_utf8(pretty_output.stdout).unwrap();
+    assert!(pretty.contains("Live Until:     117281 (ledger; 17281 ledgers remaining"));
+    assert!(!pretty.contains("Caution:"));
+}
+
+#[test]
+fn storage_read_without_ttl_does_not_fetch_latest_ledger_or_add_context() {
+    let (url, seen) = mock_storage_read_rpc(Some(100_000), None);
+    let output = run_storage_read(&url, "json");
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let json: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(json["live_until_ledger"], serde_json::Value::Null);
+    assert!(json.get("ledgers_remaining").is_none());
+    assert!(json.get("expiring_soon").is_none());
+    assert_eq!(seen.lock().unwrap().methods, ["getLedgerEntries"]);
+
+    let (pretty_url, _) = mock_storage_read_rpc(Some(100_000), None);
+    let pretty_output = run_storage_read(&pretty_url, "pretty");
+    assert!(pretty_output.status.success());
+    let pretty = String::from_utf8(pretty_output.stdout).unwrap();
+    assert!(!pretty.contains("Live Until:"));
+}
+
+#[test]
+fn storage_read_ledger_failure_falls_back_to_absolute_ttl() {
+    let (url, seen) = mock_storage_read_rpc(None, Some(100_123));
+    let output = run_storage_read(&url, "pretty");
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8(output.stdout).unwrap();
+    assert!(stdout.contains("Live Until:     100123 (ledger)"));
+    assert!(!stdout.contains("Caution:"));
+    assert_eq!(
+        seen.lock().unwrap().methods,
+        ["getLedgerEntries", "getLatestLedger"]
+    );
+
+    let (json_url, _) = mock_storage_read_rpc(None, Some(100_123));
+    let json_output = run_storage_read(&json_url, "json");
+    assert!(json_output.status.success());
+    let json: serde_json::Value = serde_json::from_slice(&json_output.stdout).unwrap();
+    assert_eq!(json["live_until_ledger"], 100_123);
+    assert!(json.get("ledgers_remaining").is_none());
+    assert!(json.get("expiring_soon").is_none());
 }
 
 // ---------- #110: --ledgers is a relative TTL ----------

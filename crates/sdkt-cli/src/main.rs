@@ -14,7 +14,9 @@ use sdkt_rpc::{
     SorobanRpcClient, StorageKeyInfo, TtlInfoSummary,
 };
 use sdkt_storage::WasmCache;
-use sdkt_storage::{NetworkProfile, NetworkStore, StorageAnalyzer};
+use sdkt_storage::{
+    NetworkProfile, NetworkStore, StorageAnalyzer, DEFAULT_SUGGESTED_LEDGERS, EXPIRING_SOON_LEDGERS,
+};
 use sdkt_wasm::spec::parse_contract_spec;
 use sdkt_xdr::abi_decode::decode_event_topics;
 use sdkt_xdr::decode;
@@ -4103,8 +4105,25 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
                         .await
                     {
                         Ok(res) => {
+                            // TTL context is optional enrichment. If fetching
+                            // the current ledger fails, keep the absolute TTL
+                            // display and existing JSON shape.
+                            let ttl_context = if let Some(live_until) = res.live_until_ledger {
+                                client.get_ledger().await.ok().map(|ledger| {
+                                    let remaining = live_until.saturating_sub(ledger.sequence);
+                                    (remaining, remaining <= EXPIRING_SOON_LEDGERS)
+                                })
+                            } else {
+                                None
+                            };
+
                             if fmt == OutputFormat::Json {
-                                println!("{}", serde_json::to_string(&res)?);
+                                let mut output = serde_json::to_value(&res)?;
+                                if let Some((remaining, expiring_soon)) = ttl_context {
+                                    output["ledgers_remaining"] = serde_json::json!(remaining);
+                                    output["expiring_soon"] = serde_json::json!(expiring_soon);
+                                }
+                                println!("{}", serde_json::to_string(&output)?);
                             } else {
                                 println!("Contract State Read");
                                 println!("  Contract:       {}", res.contract_id);
@@ -4114,7 +4133,22 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
                                     println!("  Durability:     {dur}");
                                 }
                                 if let Some(ttl) = res.live_until_ledger {
-                                    println!("  Live Until:     {ttl} (ledger)");
+                                    if let Some((remaining, expiring_soon)) = ttl_context {
+                                        let approx_days = remaining as f64 * 5.0 / 86_400.0;
+                                        println!(
+                                            "  Live Until:     {ttl} (ledger; {remaining} ledgers remaining, ~{approx_days:.2} days at 5s/ledger)"
+                                        );
+                                        if expiring_soon {
+                                            println!(
+                                                "  Caution:        Entry is expiring soon. Extend it with: sdkt storage extend --contract {} --key {} --ledgers {}",
+                                                res.contract_id,
+                                                res.key,
+                                                DEFAULT_SUGGESTED_LEDGERS
+                                            );
+                                        }
+                                    } else {
+                                        println!("  Live Until:     {ttl} (ledger)");
+                                    }
                                 }
                                 println!(
                                     "  Value:          {}",
