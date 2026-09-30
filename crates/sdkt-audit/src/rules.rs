@@ -210,6 +210,91 @@ impl AuditRule for Math001 {
     }
 }
 
+/// CEI-001 — External contract invocation precedes state write (Checks-Effects-Interactions hazard).
+///
+/// ## Heuristic Scope
+///
+/// This rule is a **static-analysis heuristic** that flags source-order hazards where a
+/// recognized external contract invocation appears before a recognized state-write operation
+/// in the same function. The detection is based on method names only; it does **not**:
+/// - Prove reentrancy vulnerability or exploitability
+/// - Track control flow or data dependencies
+/// - Analyze custom/unrecognized state mutation patterns
+/// - Detect interprocedural reentrancy
+/// - Provide runtime guarantees
+///
+/// A CEI-001 finding is an ordering signal requiring manual security review.
+///
+/// ## Recognized Patterns
+///
+/// **External Calls:**
+/// - `invoke_contract`
+/// - `invoke_contract_light`
+///
+/// **State-Write Methods:**
+/// - `set` - Direct storage writes
+/// - `write` - Alternative write method
+/// - `put` - Map/collection insertion
+/// - `remove` - Key removal
+/// - `delete` - Deletion operation
+/// - `extend` - Entry extension (e.g., ledger entries)
+///
+/// ## Example
+///
+/// **Vulnerable (CEI-001 warning):**
+/// ```ignore
+/// pub fn swap(env: Env) {
+///     env.invoke_contract(&pool, sym!("withdraw"), args);  // ← Recognized external call
+///     env.storage().set(key, value);                        // ← Recognized state write AFTER
+/// }
+/// ```
+///
+/// **Safe (no finding):**
+/// ```ignore
+/// pub fn swap_safe(env: Env) {
+///     env.storage().set(key, value);                        // ← State write first
+///     env.invoke_contract(&pool, sym!("withdraw"), args);  // ← External call after
+/// }
+/// ```
+///
+/// ## Limitations
+///
+/// - Unrecognized custom state-mutation methods are not detected
+/// - Method names are matched case-insensitively but must be exact
+/// - Only source-order heuristic; does not track actual execution flow
+/// - May produce false positives if external calls are deterministic (e.g., read-only)
+/// - May produce false negatives if custom patterns or indirect mutations are used
+pub struct Cei001;
+
+impl AuditRule for Cei001 {
+    fn id(&self) -> &'static str {
+        "CEI-001"
+    }
+    fn severity(&self) -> Severity {
+        Severity::Warning
+    }
+    fn description(&self) -> &'static str {
+        "External invocation before state write — reordering may prevent reentrancy"
+    }
+    fn check(&self, scans: &[FnScan], _ctx: &AuditContext, report: &mut AuditReport) {
+        for scan in scans {
+            if scan.external_call_before_state_write {
+                report.add(Finding {
+                    file: None,
+                    rule_id: self.id().to_string(),
+                    severity: self.severity(),
+                    message: format!(
+                        "Function `{}` calls an external contract before writing state — \
+                        reorder to Checks → Effects → Interactions to prevent reentrancy",
+                        scan.fn_name
+                    ),
+                    location: Some(scan.fn_name.clone()),
+                });
+            }
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -228,6 +313,7 @@ mod tests {
             bound: Default::default(),
             usage: Default::default(),
             division_before_multiplication: false,
+            external_call_before_state_write: false,
         }];
         let mut rep = AuditReport::default();
         Auth001.check(&scans, &crate::audit::AuditContext { spec: None }, &mut rep);
@@ -246,6 +332,7 @@ mod tests {
             bound: Default::default(),
             usage: Default::default(),
             division_before_multiplication: false,
+            external_call_before_state_write: false,
         }];
         let mut rep = AuditReport::default();
         Auth001.check(&scans, &crate::audit::AuditContext { spec: None }, &mut rep);
@@ -264,6 +351,7 @@ mod tests {
             bound: Default::default(),
             usage: Default::default(),
             division_before_multiplication: false,
+            external_call_before_state_write: false,
         }];
         let mut rep = AuditReport::default();
         Auth001.check(&scans, &crate::audit::AuditContext { spec: None }, &mut rep);
@@ -282,6 +370,7 @@ mod tests {
             bound: Default::default(),
             usage: Default::default(),
             division_before_multiplication: false,
+            external_call_before_state_write: false,
         }];
         let mut rep = AuditReport::default();
         Auth001.check(&scans, &crate::audit::AuditContext { spec: None }, &mut rep);
@@ -300,6 +389,7 @@ mod tests {
             bound: Default::default(),
             usage: Default::default(),
             division_before_multiplication: false,
+            external_call_before_state_write: false,
         }];
         let mut rep = AuditReport::default();
         Auth002.check(&scans, &crate::audit::AuditContext { spec: None }, &mut rep);
@@ -318,6 +408,7 @@ mod tests {
             bound: Default::default(),
             usage: Default::default(),
             division_before_multiplication: false,
+            external_call_before_state_write: false,
         }];
         let mut rep = AuditReport::default();
         Auth002.check(&scans, &crate::audit::AuditContext { spec: None }, &mut rep);
@@ -336,6 +427,7 @@ mod tests {
             bound: Default::default(),
             usage: Default::default(),
             division_before_multiplication: false,
+            external_call_before_state_write: false,
         }];
         let mut rep = AuditReport::default();
         Auth002.check(&scans, &crate::audit::AuditContext { spec: None }, &mut rep);
@@ -354,6 +446,7 @@ mod tests {
             bound: Default::default(),
             usage: Default::default(),
             division_before_multiplication: false,
+            external_call_before_state_write: false,
         }];
         let mut rep = AuditReport::default();
         Auth003.check(&scans, &crate::audit::AuditContext { spec: None }, &mut rep);
@@ -372,6 +465,7 @@ mod tests {
             bound: Default::default(),
             usage: Default::default(),
             division_before_multiplication: false,
+            external_call_before_state_write: false,
         }];
         let mut rep = AuditReport::default();
         Auth003.check(&scans, &crate::audit::AuditContext { spec: None }, &mut rep);
@@ -390,6 +484,7 @@ mod tests {
             bound: Default::default(),
             usage: Default::default(),
             division_before_multiplication: false,
+            external_call_before_state_write: false,
         }];
         let mut rep = AuditReport::default();
         Auth003.check(&scans, &crate::audit::AuditContext { spec: None }, &mut rep);
@@ -408,6 +503,7 @@ mod tests {
             bound: Default::default(),
             usage: Default::default(),
             division_before_multiplication: false,
+            external_call_before_state_write: false,
         }];
         let mut rep = AuditReport::default();
         Auth003.check(&scans, &crate::audit::AuditContext { spec: None }, &mut rep);
@@ -429,6 +525,7 @@ mod tests {
             bound: Default::default(),
             usage,
             division_before_multiplication: false,
+            external_call_before_state_write: false,
         }];
         let mut rep = AuditReport::default();
         Move001.check(&scans, &crate::audit::AuditContext { spec: None }, &mut rep);
@@ -450,6 +547,7 @@ mod tests {
             bound: Default::default(),
             usage,
             division_before_multiplication: false,
+            external_call_before_state_write: false,
         }];
         let mut rep = AuditReport::default();
         Move001.check(&scans, &crate::audit::AuditContext { spec: None }, &mut rep);
@@ -468,6 +566,7 @@ mod tests {
             bound: Default::default(),
             usage: Default::default(),
             division_before_multiplication: false,
+            external_call_before_state_write: false,
         }];
         let mut rep = AuditReport::default();
         Move001.check(&scans, &crate::audit::AuditContext { spec: None }, &mut rep);
@@ -485,6 +584,7 @@ mod tests {
             bound: Default::default(),
             usage: Default::default(),
             division_before_multiplication: false,
+            external_call_before_state_write: false,
         }];
         let mut rep = AuditReport::default();
         Auth004.check(&scans, &crate::audit::AuditContext { spec: None }, &mut rep);
@@ -503,6 +603,7 @@ mod tests {
             bound: Default::default(),
             usage: Default::default(),
             division_before_multiplication: false,
+            external_call_before_state_write: false,
         }];
         let mut rep = AuditReport::default();
         Auth004.check(&scans, &crate::audit::AuditContext { spec: None }, &mut rep);
@@ -521,6 +622,7 @@ mod tests {
             bound: Default::default(),
             usage: Default::default(),
             division_before_multiplication: false,
+            external_call_before_state_write: false,
         }];
         let mut rep = AuditReport::default();
         Auth004.check(&scans, &crate::audit::AuditContext { spec: None }, &mut rep);
@@ -541,6 +643,7 @@ mod tests {
             bound: Default::default(),
             usage: Default::default(),
             division_before_multiplication: false,
+            external_call_before_state_write: false,
         }];
         let mut rep = AuditReport::default();
         Auth004.check(&scans, &crate::audit::AuditContext { spec: None }, &mut rep);
@@ -559,12 +662,89 @@ mod tests {
             bound: Default::default(),
             usage: Default::default(),
             division_before_multiplication: false,
+            external_call_before_state_write: false,
         }];
         let mut rep = AuditReport::default();
         Auth004.check(&scans, &crate::audit::AuditContext { spec: None }, &mut rep);
         assert!(
             !has(&rep, "AUTH-004"),
             "admin_transfer should not trigger AUTH-004"
+        );
+    }
+
+    #[test]
+    fn cei001_flags_external_call_before_state_write() {
+        let scans = vec![FnScan {
+            fn_name: "swap".into(),
+            require_auth: 0,
+            invoke_contract: 1,
+            bound: Default::default(),
+            usage: Default::default(),
+            division_before_multiplication: false,
+            external_call_before_state_write: true,
+        }];
+        let mut rep = AuditReport::default();
+        Cei001.check(&scans, &crate::audit::AuditContext { spec: None }, &mut rep);
+        assert!(
+            has(&rep, "CEI-001"),
+            "external call before state write should trigger CEI-001"
+        );
+    }
+
+    #[test]
+    fn cei001_does_not_flag_state_write_before_external_call() {
+        let scans = vec![FnScan {
+            fn_name: "swap_safe".into(),
+            require_auth: 0,
+            invoke_contract: 1,
+            bound: Default::default(),
+            usage: Default::default(),
+            division_before_multiplication: false,
+            external_call_before_state_write: false,
+        }];
+        let mut rep = AuditReport::default();
+        Cei001.check(&scans, &crate::audit::AuditContext { spec: None }, &mut rep);
+        assert!(
+            !has(&rep, "CEI-001"),
+            "state write before external call should not trigger CEI-001"
+        );
+    }
+
+    #[test]
+    fn cei001_does_not_flag_only_external_call() {
+        let scans = vec![FnScan {
+            fn_name: "relay".into(),
+            require_auth: 0,
+            invoke_contract: 1,
+            bound: Default::default(),
+            usage: Default::default(),
+            division_before_multiplication: false,
+            external_call_before_state_write: false,
+        }];
+        let mut rep = AuditReport::default();
+        Cei001.check(&scans, &crate::audit::AuditContext { spec: None }, &mut rep);
+        assert!(
+            !has(&rep, "CEI-001"),
+            "only external call should not trigger CEI-001"
+        );
+    }
+
+    #[test]
+    fn cei001_does_not_flag_only_state_write() {
+        let scans = vec![FnScan {
+            fn_name: "set_state".into(),
+            require_auth: 0,
+            invoke_contract: 0,
+            bound: Default::default(),
+            usage: Default::default(),
+            division_before_multiplication: false,
+            external_call_before_state_write: false,
+        }];
+        let mut rep = AuditReport::default();
+        Cei001.check(&scans, &crate::audit::AuditContext { spec: None }, &mut rep);
+        assert!(
+            !has(&rep, "CEI-001"),
+            "only state write should not trigger CEI-001"
         );
     }
 }
