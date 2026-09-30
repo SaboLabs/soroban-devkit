@@ -4765,7 +4765,7 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
                     net.network_profile.clone(),
                 );
 
-                use sdkt_rpc::{submit_and_wait, PollConfig};
+                use sdkt_rpc::{submit_and_wait, PollConfig, TransactionStatus};
                 use std::time::Duration;
 
                 let poll_cfg = PollConfig {
@@ -4793,6 +4793,25 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
                                     println!("    {}", event);
                                 }
                             }
+                            if let Some(code) = &res.error_code {
+                                println!("  Error:    {}", code);
+                            }
+                            if let Some(xdr) = &res.error_result_xdr {
+                                println!("  Error Result XDR: {}", xdr);
+                            }
+                            if !res.diagnostic_events.is_empty() {
+                                println!("  Diagnostics:");
+                                for event in &res.diagnostic_events {
+                                    println!("    {}", event);
+                                }
+                            }
+                        }
+                        // A settled on-chain failure must not look like a
+                        // success to scripts: match `invoke`, which already
+                        // exits 1 unless the status is SUCCESS (a no-wait
+                        // PENDING submission still exits 0).
+                        if res.status == TransactionStatus::Failed {
+                            process::exit(1);
                         }
                     }
                     Err(e) => {
