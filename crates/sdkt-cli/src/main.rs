@@ -14,7 +14,7 @@ use sdkt_rpc::{
     SorobanRpcClient, StorageKeyInfo, TtlInfoSummary,
 };
 use sdkt_storage::WasmCache;
-use sdkt_storage::{NetworkProfile, NetworkStore, StorageAnalyzer};
+use sdkt_storage::{NetworkProfile, NetworkStore, StorageAnalyzer, EXPIRING_SOON_LEDGERS};
 use sdkt_wasm::spec::parse_contract_spec;
 use sdkt_xdr::abi_decode::decode_event_topics;
 use sdkt_xdr::decode;
@@ -1809,12 +1809,18 @@ or confirm you are comparing the correct artifact."
 
     if expiring_soon > 0 {
         reasons.push(format!(
-            "{} storage entr{} expiring soon (< 30 days).",
+            "{} storage entr{} expiring soon (within ~{} day{}).",
             expiring_soon,
             if expiring_soon == 1 {
                 "y is"
             } else {
                 "ies are"
+            },
+            (u64::from(EXPIRING_SOON_LEDGERS) * 5).div_ceil(86_400),
+            if (u64::from(EXPIRING_SOON_LEDGERS) * 5).div_ceil(86_400) == 1 {
+                ""
+            } else {
+                "s"
             }
         ));
     }
@@ -8834,7 +8840,13 @@ mod m23_tests {
     fn derive_verdict_at_risk_expiring() {
         let (h, reasons) = derive_verdict(Some(true), 2, 12);
         assert_eq!(h, "at_risk");
-        assert!(reasons.iter().any(|r| r.contains("2 storage entries")));
+        let reason = reasons
+            .iter()
+            .find(|r| r.contains("2 storage entries"))
+            .unwrap();
+        let threshold_days = (u64::from(EXPIRING_SOON_LEDGERS) * 5).div_ceil(86_400);
+        assert_eq!(threshold_days, 1);
+        assert!(reason.contains(&format!("within ~{threshold_days} day)")));
     }
 
     #[test]
