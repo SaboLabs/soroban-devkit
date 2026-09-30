@@ -30,6 +30,15 @@ pub trait AuditRule {
     fn check(&self, scans: &[FnScan], ctx: &AuditContext, report: &mut AuditReport);
 }
 
+/// Event types for CEI ordering tracking.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum OrderEvent {
+    /// External contract invocation (invoke_contract, invoke_contract_light, etc.)
+    ExternalCall,
+    /// State write operation (storage().set, storage().write, etc.)
+    StateWrite,
+}
+
 /// Per-function scan result.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct FnScan {
@@ -43,6 +52,9 @@ pub struct FnScan {
     /// True when a division result is subsequently multiplied in this function.
     #[serde(default)]
     pub division_before_multiplication: bool,
+    /// True when an external call precedes a state write in this function (CEI hazard).
+    #[serde(default)]
+    pub external_call_before_state_write: bool,
 }
 
 impl FnScan {
@@ -54,6 +66,7 @@ impl FnScan {
             bound: HashSet::new(),
             usage: HashMap::new(),
             division_before_multiplication: false,
+            external_call_before_state_write: false,
         }
     }
 }
@@ -110,6 +123,8 @@ pub(crate) fn unqualified(name: &str) -> &str {
 struct FnVisitor<'a> {
     scan: &'a mut FnScan,
     divided_bindings: HashSet<String>,
+    /// Ordered sequence of CEI events (external calls and state writes) in source order.
+    order_events: &'a mut Vec<OrderEvent>,
 }
 
 impl<'ast, 'a> Visit<'ast> for FnVisitor<'a> {
@@ -149,8 +164,9 @@ impl<'ast, 'a> Visit<'ast> for FnVisitor<'a> {
                 if is_auth_fn(&name) {
                     self.scan.require_auth += 1;
                 }
-                if name == "invoke_contract" {
+                if name == "invoke_contract" || name == "invoke_contract_light" {
                     self.scan.invoke_contract += 1;
+                    self.order_events.push(OrderEvent::ExternalCall);
                 }
             }
         }
@@ -165,9 +181,13 @@ impl<'ast, 'a> Visit<'ast> for FnVisitor<'a> {
         if is_auth_fn(&method) {
             self.scan.require_auth += 1;
         }
-        if method == "invoke_contract" {
+        if method == "invoke_contract" || method == "invoke_contract_light" {
             self.scan.invoke_contract += 1;
+            self.order_events.push(OrderEvent::ExternalCall);
         }
+        // Detect state write patterns: storage().set(...), storage().write(...), etc.
+        self.detect_state_write(&method);
+
         self.count_ident(&node.receiver);
         for arg in &node.args {
             self.count_ident(arg);
@@ -236,6 +256,18 @@ impl<'a> FnVisitor<'a> {
             }
         }
     }
+
+    /// Detect state write patterns and record them in the CEI order events.
+    fn detect_state_write(&mut self, method_name: &str) {
+        // Common state write patterns in Soroban:
+        // - storage().set(...), storage().write(...)
+        // - map.set(...), map.put(...)
+        // - set(...), put(...), write(...)
+        let patterns = ["set", "write", "put", "remove", "delete", "extend"];
+        if patterns.iter().any(|p| method_name.eq_ignore_ascii_case(p)) {
+            self.order_events.push(OrderEvent::StateWrite);
+        }
+    }
 }
 
 /// Scan every function in the AST into a `FnScan` per function.
@@ -290,11 +322,29 @@ fn fn_scan(sig: &syn::Signature, block: &syn::Block) -> FnScan {
             }
         }
     }
+    let mut order_events = Vec::new();
     let mut visitor = FnVisitor {
         scan: &mut scan,
         divided_bindings: HashSet::new(),
+        order_events: &mut order_events,
     };
     visitor.visit_block(block);
+
+    // Check if an external call precedes a state write (CEI hazard).
+    // Find the first external call and first state write indices.
+    let first_call = order_events
+        .iter()
+        .position(|e| *e == OrderEvent::ExternalCall);
+    let first_write = order_events
+        .iter()
+        .position(|e| *e == OrderEvent::StateWrite);
+
+    if let (Some(call_idx), Some(write_idx)) = (first_call, first_write) {
+        if call_idx < write_idx {
+            scan.external_call_before_state_write = true;
+        }
+    }
+
     scan
 }
 
@@ -545,6 +595,66 @@ mod tests {
             &audit_source_with(src, &["MATH-001"]).unwrap(),
             "MATH-001"
         ));
+    }
+
+    #[test]
+    fn cei001_fires_on_external_call_before_state_write() {
+        let src = r#"
+            pub fn swap(env: Env, to: Address) {
+                env.invoke_contract(&pool, sym!("withdraw"), args);
+                env.storage().set(key, value);
+            }
+        "#;
+        let rep = report_for(src);
+        assert!(has(&rep, "CEI-001"));
+    }
+
+    #[test]
+    fn cei001_silent_on_state_write_before_external_call() {
+        let src = r#"
+            pub fn swap_safe(env: Env, to: Address) {
+                env.storage().set(key, value);
+                env.invoke_contract(&pool, sym!("withdraw"), args);
+            }
+        "#;
+        let rep = report_for(src);
+        assert!(!has(&rep, "CEI-001"));
+    }
+
+    #[test]
+    fn cei001_silent_on_only_external_call() {
+        let src = r#"
+            pub fn relay(env: Env) {
+                env.invoke_contract(&addr, sym, args);
+            }
+        "#;
+        let rep = report_for(src);
+        assert!(!has(&rep, "CEI-001"));
+    }
+
+    #[test]
+    fn cei001_silent_on_only_state_write() {
+        let src = r#"
+            pub fn set_state(env: Env) {
+                env.storage().set(key, value);
+            }
+        "#;
+        let rep = report_for(src);
+        assert!(!has(&rep, "CEI-001"));
+    }
+
+    #[test]
+    fn cei001_can_be_disabled() {
+        let src = r#"
+            pub fn swap(env: Env) {
+                env.invoke_contract(&addr, sym, args);
+                env.storage().set(key, value);
+            }
+        "#;
+        assert!(
+            !has(&audit_source_with(src, &["CEI-001"]).unwrap(), "CEI-001"),
+            "CEI-001 should be suppressible"
+        );
     }
 
     #[test]
