@@ -30,7 +30,13 @@ pub trait AuditRule {
     fn check(&self, scans: &[FnScan], ctx: &AuditContext, report: &mut AuditReport);
 }
 
-/// Event types for CEI ordering tracking.
+/// Event types for CEI (Checks-Effects-Interactions) ordering tracking.
+///
+/// CEI-001 tracks these events in source order within a function to detect
+/// reentrancy-precondition hazards: when an external contract invocation
+/// appears before a state write in the same function.
+///
+/// See [`crate::rules::Cei001`] for heuristic scope and recognized patterns.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum OrderEvent {
     /// External contract invocation (invoke_contract, invoke_contract_light, etc.)
@@ -52,7 +58,11 @@ pub struct FnScan {
     /// True when a division result is subsequently multiplied in this function.
     #[serde(default)]
     pub division_before_multiplication: bool,
-    /// True when an external call precedes a state write in this function (CEI hazard).
+    /// True when a recognized external call precedes a recognized state write
+    /// in source order within this function (CEI-001 heuristic hazard).
+    ///
+    /// This is a static-analysis signal only; it does not prove reentrancy or
+    /// exploitability. See [`crate::rules::Cei001`] for heuristic scope and limitations.
     #[serde(default)]
     pub external_call_before_state_write: bool,
 }
@@ -271,6 +281,17 @@ impl<'a> FnVisitor<'a> {
     }
 
     /// Detect state write patterns and record them in the CEI order events.
+    ///
+    /// Recognized patterns (case-insensitive method names):
+    /// - `set` - Direct storage writes
+    /// - `write` - Alternative write method
+    /// - `put` - Map/collection insertion
+    /// - `remove` - Key removal
+    /// - `delete` - Deletion operation
+    /// - `extend` - Entry extension (e.g., ledger entries)
+    ///
+    /// Note: This is a heuristic based on method names only. Custom state-mutation
+    /// patterns not matching these names will not be detected.
     fn detect_state_write(&mut self, method_name: &str) {
         // Common state write patterns in Soroban:
         // - storage().set(...), storage().write(...)

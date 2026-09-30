@@ -211,6 +211,59 @@ impl AuditRule for Math001 {
 }
 
 /// CEI-001 — External contract invocation precedes state write (Checks-Effects-Interactions hazard).
+///
+/// ## Heuristic Scope
+///
+/// This rule is a **static-analysis heuristic** that flags source-order hazards where a
+/// recognized external contract invocation appears before a recognized state-write operation
+/// in the same function. The detection is based on method names only; it does **not**:
+/// - Prove reentrancy vulnerability or exploitability
+/// - Track control flow or data dependencies
+/// - Analyze custom/unrecognized state mutation patterns
+/// - Detect interprocedural reentrancy
+/// - Provide runtime guarantees
+///
+/// A CEI-001 finding is an ordering signal requiring manual security review.
+///
+/// ## Recognized Patterns
+///
+/// **External Calls:**
+/// - `invoke_contract`
+/// - `invoke_contract_light`
+///
+/// **State-Write Methods:**
+/// - `set` - Direct storage writes
+/// - `write` - Alternative write method
+/// - `put` - Map/collection insertion
+/// - `remove` - Key removal
+/// - `delete` - Deletion operation
+/// - `extend` - Entry extension (e.g., ledger entries)
+///
+/// ## Example
+///
+/// **Vulnerable (CEI-001 warning):**
+/// ```ignore
+/// pub fn swap(env: Env) {
+///     env.invoke_contract(&pool, sym!("withdraw"), args);  // ← Recognized external call
+///     env.storage().set(key, value);                        // ← Recognized state write AFTER
+/// }
+/// ```
+///
+/// **Safe (no finding):**
+/// ```ignore
+/// pub fn swap_safe(env: Env) {
+///     env.storage().set(key, value);                        // ← State write first
+///     env.invoke_contract(&pool, sym!("withdraw"), args);  // ← External call after
+/// }
+/// ```
+///
+/// ## Limitations
+///
+/// - Unrecognized custom state-mutation methods are not detected
+/// - Method names are matched case-insensitively but must be exact
+/// - Only source-order heuristic; does not track actual execution flow
+/// - May produce false positives if external calls are deterministic (e.g., read-only)
+/// - May produce false negatives if custom patterns or indirect mutations are used
 pub struct Cei001;
 
 impl AuditRule for Cei001 {
