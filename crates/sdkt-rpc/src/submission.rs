@@ -343,15 +343,32 @@ fn describe_transaction_result(result: &TransactionResultResult) -> String {
         // A fee-bump wrapper carries no failure of its own; the inner
         // transaction result holds the operative code.
         TransactionResultResult::TxFeeBumpInnerSuccess(pair)
-        | TransactionResultResult::TxFeeBumpInnerFailed(pair) => {
-            match &pair.result.result {
-                InnerTransactionResultResult::TxFailed(ops) => describe_failed_ops(ops),
-                InnerTransactionResultResult::TxSuccess(_) => "tx_success".to_string(),
-                // An exotic inner tx-level code (bad_seq, bad_auth, ...) inside
-                // a fee bump is vanishingly rare; report the outer failure.
-                _ => "tx_failed".to_string(),
+        | TransactionResultResult::TxFeeBumpInnerFailed(pair) => match &pair.result.result {
+            InnerTransactionResultResult::TxFailed(ops) => describe_failed_ops(ops),
+            InnerTransactionResultResult::TxSuccess(_) => "tx_success".to_string(),
+            InnerTransactionResultResult::TxTooEarly => "tx_too_early".to_string(),
+            InnerTransactionResultResult::TxTooLate => "tx_too_late".to_string(),
+            InnerTransactionResultResult::TxMissingOperation => "tx_missing_operation".to_string(),
+            InnerTransactionResultResult::TxBadSeq => "tx_bad_seq".to_string(),
+            InnerTransactionResultResult::TxBadAuth => "tx_bad_auth".to_string(),
+            InnerTransactionResultResult::TxInsufficientBalance => {
+                "tx_insufficient_balance".to_string()
             }
-        }
+            InnerTransactionResultResult::TxNoAccount => "tx_no_account".to_string(),
+            InnerTransactionResultResult::TxInsufficientFee => "tx_insufficient_fee".to_string(),
+            InnerTransactionResultResult::TxBadAuthExtra => "tx_bad_auth_extra".to_string(),
+            InnerTransactionResultResult::TxInternalError => "tx_internal_error".to_string(),
+            InnerTransactionResultResult::TxNotSupported => "tx_not_supported".to_string(),
+            InnerTransactionResultResult::TxBadSponsorship => "tx_bad_sponsorship".to_string(),
+            InnerTransactionResultResult::TxBadMinSeqAgeOrGap => {
+                "tx_bad_min_seq_age_or_gap".to_string()
+            }
+            InnerTransactionResultResult::TxMalformed => "tx_malformed".to_string(),
+            InnerTransactionResultResult::TxSorobanInvalid => "tx_soroban_invalid".to_string(),
+            InnerTransactionResultResult::TxFrozenKeyAccessed => {
+                "tx_frozen_key_accessed".to_string()
+            }
+        },
         TransactionResultResult::TxSuccess(_) => "tx_success".to_string(),
         TransactionResultResult::TxFailed(ops) => describe_failed_ops(ops),
         TransactionResultResult::TxTooEarly => "tx_too_early".to_string(),
@@ -839,5 +856,27 @@ mod tests {
             let resp: TransactionStatusResponse = serde_json::from_value(raw).unwrap();
             assert_eq!(settled_error_code(&resp), expected);
         }
+    }
+
+    #[test]
+    fn settled_error_names_fee_bump_inner_tx_code() {
+        use stellar_xdr::{
+            Hash, InnerTransactionResult, InnerTransactionResultPair, TransactionResultResult,
+        };
+        let pair = InnerTransactionResultPair {
+            transaction_hash: Hash::default(),
+            result: InnerTransactionResult {
+                fee_charged: 100,
+                result: stellar_xdr::InnerTransactionResultResult::TxBadAuth,
+                ext: Default::default(),
+            },
+        };
+        let raw = serde_json::json!({
+            "status": "FAILED",
+            "resultXdr": failed_result_xdr(TransactionResultResult::TxFeeBumpInnerFailed(pair)),
+            "error": null
+        });
+        let resp: TransactionStatusResponse = serde_json::from_value(raw).unwrap();
+        assert_eq!(settled_error_code(&resp), "tx_bad_auth");
     }
 }
