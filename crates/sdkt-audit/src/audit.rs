@@ -164,16 +164,24 @@ impl<'ast, 'a> Visit<'ast> for FnVisitor<'a> {
                 if is_auth_fn(&name) {
                     self.scan.require_auth += 1;
                 }
+            }
+        }
+        // Visit arguments first (to record nested events before this call).
+        for arg in &node.args {
+            self.count_ident(arg);
+            visit::visit_expr(self, arg);
+        }
+        // Then record this call after its arguments are processed.
+        if let Expr::Path(p) = &*node.func {
+            if let Some(seg) = p.path.segments.last() {
+                let name = seg.ident.to_string();
                 if name == "invoke_contract" || name == "invoke_contract_light" {
                     self.scan.invoke_contract += 1;
                     self.order_events.push(OrderEvent::ExternalCall);
                 }
             }
         }
-        for arg in &node.args {
-            self.count_ident(arg);
-        }
-        visit::visit_expr_call(self, node);
+        // Don't call visit::visit_expr_call since we've already visited arguments.
     }
 
     fn visit_expr_method_call(&mut self, node: &'ast ExprMethodCall) {
@@ -181,18 +189,23 @@ impl<'ast, 'a> Visit<'ast> for FnVisitor<'a> {
         if is_auth_fn(&method) {
             self.scan.require_auth += 1;
         }
+
+        // Visit receiver first.
+        visit::visit_expr(self, &node.receiver);
+        // Visit arguments.
+        for arg in &node.args {
+            self.count_ident(arg);
+            visit::visit_expr(self, arg);
+        }
+
+        // Now record the method call event after nested expressions are processed.
         if method == "invoke_contract" || method == "invoke_contract_light" {
             self.scan.invoke_contract += 1;
             self.order_events.push(OrderEvent::ExternalCall);
         }
         // Detect state write patterns: storage().set(...), storage().write(...), etc.
         self.detect_state_write(&method);
-
-        self.count_ident(&node.receiver);
-        for arg in &node.args {
-            self.count_ident(arg);
-        }
-        visit::visit_expr_method_call(self, node);
+        // Don't call visit::visit_expr_method_call since we've manually visited children.
     }
 }
 
@@ -330,18 +343,20 @@ fn fn_scan(sig: &syn::Signature, block: &syn::Block) -> FnScan {
     };
     visitor.visit_block(block);
 
-    // Check if an external call precedes a state write (CEI hazard).
-    // Find the first external call and first state write indices.
-    let first_call = order_events
-        .iter()
-        .position(|e| *e == OrderEvent::ExternalCall);
-    let first_write = order_events
-        .iter()
-        .position(|e| *e == OrderEvent::StateWrite);
-
-    if let (Some(call_idx), Some(write_idx)) = (first_call, first_write) {
-        if call_idx < write_idx {
-            scan.external_call_before_state_write = true;
+    // Check if any external call precedes any later state write (CEI hazard).
+    // Detect the pattern: external_call → ... → state_write
+    let mut found_external_call = false;
+    for event in order_events {
+        match event {
+            OrderEvent::ExternalCall => {
+                found_external_call = true;
+            }
+            OrderEvent::StateWrite if found_external_call => {
+                // An external call appeared before this state write.
+                scan.external_call_before_state_write = true;
+                break;
+            }
+            _ => {}
         }
     }
 
@@ -607,6 +622,86 @@ mod tests {
         "#;
         let rep = report_for(src);
         assert!(has(&rep, "CEI-001"));
+    }
+
+    #[test]
+    fn cei001_detects_nested_invoke_in_set_argument() {
+        // set(..., invoke_contract(...)) — the invoke is nested inside set args
+        // Arguments are evaluated before the outer call, so invoke happens before set's effect
+        let src = r#"
+            pub fn swap(env: Env) {
+                env.storage().set(key, env.invoke_contract(&pool, sym, args));
+            }
+        "#;
+        let rep = report_for(src);
+        // The invoke is inside the set's arguments and is evaluated before set's effect.
+        assert!(
+            has(&rep, "CEI-001"),
+            "invoke in set args happens before set's effect"
+        );
+    }
+
+    #[test]
+    fn cei001_detects_invoke_wrapping_set_argument() {
+        // invoke_contract(..., storage().set(...)) — set is nested inside invoke args
+        // Arguments are evaluated before the outer call, so set happens before invoke's effect
+        let src = r#"
+            pub fn swap(env: Env) {
+                env.invoke_contract(&pool, sym, env.storage().set(key, value));
+            }
+        "#;
+        let rep = report_for(src);
+        // The set happens in the arguments before invoke's effect.
+        // This should NOT flag because set comes BEFORE the external call's effect.
+        assert!(
+            !has(&rep, "CEI-001"),
+            "set in invoke args happens before invoke's effect"
+        );
+    }
+
+    #[test]
+    fn cei001_detects_write_call_write_pattern() {
+        // write → invoke → write: has both patterns, should flag on the second write
+        let src = r#"
+            pub fn swap(env: Env) {
+                env.storage().set(key1, value1);
+                env.invoke_contract(&pool, sym!("withdraw"), args);
+                env.storage().set(key2, value2);
+            }
+        "#;
+        let rep = report_for(src);
+        // The first set should not cause a flag (no prior call).
+        // The invoke should set found_external_call = true.
+        // The second set should flag because found_external_call is true.
+        assert!(
+            has(&rep, "CEI-001"),
+            "write → call → write should flag on second write"
+        );
+    }
+
+    #[test]
+    fn cei001_still_emits_one_finding_per_function() {
+        // Multiple write → call → write patterns should still emit only one finding.
+        let src = r#"
+            pub fn swap(env: Env) {
+                env.storage().set(key1, value1);
+                env.invoke_contract(&pool, sym!("withdraw"), args);
+                env.storage().set(key2, value2);
+                env.invoke_contract(&pool2, sym!("transfer"), args);
+                env.storage().set(key3, value3);
+            }
+        "#;
+        let rep = report_for(src);
+        let cei_findings: Vec<_> = rep
+            .findings
+            .iter()
+            .filter(|f| f.rule_id == "CEI-001")
+            .collect();
+        assert_eq!(
+            cei_findings.len(),
+            1,
+            "should emit only one CEI-001 finding per function"
+        );
     }
 
     #[test]
