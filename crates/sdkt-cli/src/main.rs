@@ -1456,6 +1456,11 @@ enum TxAction {
 
 #[derive(Subcommand)]
 enum ProjectCommand {
+    /// Show deployments recorded for the selected network profile.
+    Status {
+        #[arg(short, long, default_value = "pretty")]
+        format: String,
+    },
     /// Deploy all contracts defined in the workspace. Every deployed contract
     /// is persisted to `.sdkt-deployments.json` (per network profile) so a
     /// failure mid-graph never loses the contracts that already landed.
@@ -7794,6 +7799,87 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
             }
         },
         Commands::Project { action, net } => match action {
+            ProjectCommand::Status { format } => {
+                let fmt = parse_format_str(&format);
+                let network_config = match resolve_network_config(
+                    net.rpc_url.clone(),
+                    net.network_passphrase.clone(),
+                    net.network_profile.clone(),
+                ) {
+                    Ok(config) => config,
+                    Err(e) => {
+                        eprintln!("Error: {}", e);
+                        process::exit(1);
+                    }
+                };
+                let network_key = sdkt_core::deployment::network_key(
+                    if net.network_passphrase.is_some() {
+                        None
+                    } else {
+                        net.network_profile.as_deref()
+                    },
+                    &network_config.passphrase,
+                );
+                let record_path = Path::new(sdkt_core::deployment::DEPLOYMENT_RECORD_FILE);
+                let record_file =
+                    match sdkt_core::deployment::DeploymentRecordFile::read(record_path) {
+                        Ok(file) => file,
+                        Err(e) => {
+                            eprintln!("Error: {}", e);
+                            process::exit(1);
+                        }
+                    };
+                let mut deployments: Vec<_> = record_file
+                    .records_for(&network_key)
+                    .into_iter()
+                    .flat_map(|records| records.iter())
+                    .collect();
+                deployments.sort_by_key(|(alias, _)| *alias);
+
+                if fmt == OutputFormat::Json {
+                    let deployments: Vec<_> = deployments
+                        .into_iter()
+                        .map(|(alias, record)| {
+                            serde_json::json!({
+                                "alias": alias,
+                                "contract_id": record.contract_id,
+                                "wasm_hash": record.wasm_hash,
+                                "network": record.network,
+                                "timestamp": record.timestamp,
+                                "salt": record.salt,
+                            })
+                        })
+                        .collect();
+                    let status = if deployments.is_empty() {
+                        "no_deployments"
+                    } else {
+                        "deployed"
+                    };
+                    println!(
+                        "{}",
+                        serde_json::to_string(&serde_json::json!({
+                            "status": status,
+                            "network": network_key,
+                            "deployments": deployments,
+                        }))
+                        .unwrap()
+                    );
+                } else if deployments.is_empty() {
+                    println!("No deployments recorded for network '{}'.", network_key);
+                } else {
+                    println!("Project deployment status (network: {}):", network_key);
+                    for (alias, record) in deployments {
+                        println!("  {}", alias);
+                        println!("    Contract ID: {}", record.contract_id);
+                        println!("    WASM hash:   {}", record.wasm_hash);
+                        println!("    Recorded network: {}", record.network);
+                        println!("    Timestamp:  {}", record.timestamp);
+                        if let Some(salt) = &record.salt {
+                            println!("    Salt:       {}", salt);
+                        }
+                    }
+                }
+            }
             ProjectCommand::Deploy {
                 salt,
                 skip_deployed,
