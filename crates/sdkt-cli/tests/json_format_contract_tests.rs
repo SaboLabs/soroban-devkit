@@ -44,8 +44,18 @@
 //! - `approximation_ceiling`: string
 
 use assert_cmd::Command;
+use base64::engine::general_purpose::STANDARD;
+use base64::Engine;
+use sdkt_xdr::{encode_ledger_key, LedgerKeyParams};
 use serde_json::Value;
-use std::io::Write;
+use std::io::{Read, Write};
+use std::net::{TcpListener, TcpStream};
+use std::thread;
+use stellar_xdr::{
+    ContractDataDurability, ContractDataEntry, ContractExecutable, ContractId, ExtensionPoint,
+    Hash, LedgerEntry, LedgerEntryData, LedgerEntryExt, Limited, Limits, ScAddress,
+    ScContractInstance, ScVal, WriteXdr,
+};
 use tempfile::TempDir;
 
 // ---------------------------------------------------------------------------
@@ -78,6 +88,250 @@ fn assert_valid_json(s: &str) -> Value {
 
 static WASM_OLD: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/us_old.wasm");
 static WASM_NEW: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/us_new.wasm");
+
+const RPC_CONTRACT_ID: &str = "CAE3U7JKESRWZHPEQ72DVNGOQ6WPA7HSPQZL5YV46NPCE4TMUPAGYMEC";
+const RPC_CONTRACT_ID_HEX: &str =
+    "09ba7d2a24a36c9de487f43ab4ce87acf07cf27c32bee2bcf35e22726ca3c06c";
+const RPC_WASM_HASH_HEX: &str = "60cddae67f202c19ee7b000c894fd12aa8b44de09ab652f5e188bc0c63a6cf02";
+
+fn read_rpc_request(sock: &mut TcpStream) -> String {
+    let mut data = Vec::new();
+    let mut buf = [0u8; 4096];
+    loop {
+        let n = sock.read(&mut buf).unwrap_or(0);
+        if n == 0 {
+            break;
+        }
+        data.extend_from_slice(&buf[..n]);
+        let text = String::from_utf8_lossy(&data);
+        if let Some(end) = text.find("\r\n\r\n") {
+            let len = text[..end]
+                .lines()
+                .filter_map(|line| line.split_once(':'))
+                .find(|(key, _)| key.trim().eq_ignore_ascii_case("content-length"))
+                .and_then(|(_, value)| value.trim().parse::<usize>().ok())
+                .unwrap_or(0);
+            if data.len() >= end + 4 + len {
+                break;
+            }
+        }
+    }
+    String::from_utf8_lossy(&data).into_owned()
+}
+
+fn encode_ledger_entry(entry: &LedgerEntry) -> String {
+    let mut bytes = Vec::new();
+    entry
+        .write_xdr(&mut Limited::new(&mut bytes, Limits::none()))
+        .unwrap();
+    STANDARD.encode(bytes)
+}
+
+fn mock_contract_data_xdr() -> String {
+    let mut wasm_hash = [0u8; 32];
+    hex::decode_to_slice(RPC_WASM_HASH_HEX, &mut wasm_hash).unwrap();
+    encode_ledger_entry(&LedgerEntry {
+        last_modified_ledger_seq: 1,
+        data: LedgerEntryData::ContractData(ContractDataEntry {
+            ext: ExtensionPoint::V0,
+            contract: ScAddress::Contract(ContractId(Hash([0; 32]))),
+            key: ScVal::LedgerKeyContractInstance,
+            durability: ContractDataDurability::Persistent,
+            val: ScVal::ContractInstance(ScContractInstance {
+                executable: ContractExecutable::Wasm(Hash(wasm_hash)),
+                storage: None,
+            }),
+        }),
+        ext: LedgerEntryExt::V0,
+    })
+}
+
+fn mock_storage_inspect_rpc() -> String {
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let url = format!("http://{}", listener.local_addr().unwrap());
+    let contract_data_key = encode_ledger_key(&LedgerKeyParams::ContractData(
+        RPC_CONTRACT_ID_HEX.to_string(),
+    ))
+    .unwrap();
+    let contract_data_xdr = mock_contract_data_xdr();
+
+    thread::spawn(move || {
+        for conn in listener.incoming() {
+            let Ok(mut sock) = conn else { break };
+            let request = read_rpc_request(&mut sock);
+            let body = request
+                .split_once("\r\n\r\n")
+                .map(|(_, body)| body)
+                .unwrap_or("");
+            let request_json: Value = serde_json::from_str(body).unwrap_or_default();
+            let method = request_json["method"].as_str().unwrap_or("");
+            let response = match method {
+                "getLatestLedger" => {
+                    r#"{"jsonrpc":"2.0","id":1,"result":{"id":"mock","protocolVersion":22,"sequence":10000}}"#.to_string()
+                }
+                "getLedgerEntries" => {
+                    let requested: Vec<&str> = request_json["params"]["keys"]
+                        .as_array()
+                        .into_iter()
+                        .flatten()
+                        .filter_map(Value::as_str)
+                        .collect();
+                    let entries = if requested.contains(&contract_data_key.as_str()) {
+                        serde_json::json!([{
+                            "key": contract_data_key,
+                            "xdr": contract_data_xdr,
+                            "lastModifiedLedgerSeq": 1,
+                            "liveUntilLedgerSeq": 12345
+                        }])
+                    } else {
+                        serde_json::json!([])
+                    };
+                    serde_json::json!({
+                        "jsonrpc": "2.0",
+                        "id": 1,
+                        "result": { "entries": entries, "latestLedger": 10000 }
+                    })
+                    .to_string()
+                }
+                _ => r#"{"jsonrpc":"2.0","id":1,"error":{"code":-32601,"message":"method not found"}}"#.to_string(),
+            };
+            let http_response = format!(
+                "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+                response.len(),
+                response
+            );
+            let _ = sock.write_all(http_response.as_bytes());
+        }
+    });
+
+    url
+}
+
+fn run_storage_check(with_abi: bool) -> Value {
+    let rpc_url = mock_storage_inspect_rpc();
+    let mut cmd = sdkt();
+    cmd.args([
+        "storage",
+        "check",
+        RPC_CONTRACT_ID,
+        "--format",
+        "json",
+        "--rpc-url",
+    ])
+    .arg(rpc_url);
+    if with_abi {
+        cmd.arg("--abi").arg(WASM_NEW);
+    }
+    let output = cmd.assert().success().get_output().stdout.clone();
+    assert_valid_json(&String::from_utf8_lossy(&output))
+}
+
+fn run_contract_inspect(with_abi: bool) -> Value {
+    let rpc_url = mock_storage_inspect_rpc();
+    let mut cmd = sdkt();
+    cmd.args(["inspect", RPC_CONTRACT_ID, "--format", "json", "--rpc-url"])
+        .arg(rpc_url);
+    if with_abi {
+        cmd.arg("--abi").arg(WASM_NEW);
+    }
+    let output = cmd.assert().success().get_output().stdout.clone();
+    assert_valid_json(&String::from_utf8_lossy(&output))
+}
+
+fn assert_fields_unchanged(without_abi: &Value, with_abi: &Value, fields: &[&str]) {
+    for field in fields {
+        assert_eq!(
+            without_abi.get(field),
+            with_abi.get(field),
+            "existing field `{field}` changed when --abi was supplied"
+        );
+    }
+}
+
+mod storage_check_json_schema {
+    use super::*;
+
+    #[test]
+    fn abi_adds_metadata_without_changing_ttl_entries() {
+        let without_abi = run_storage_check(false);
+        let with_abi = run_storage_check(true);
+        let existing_fields = ["contract_id", "entries"];
+
+        assert_fields_unchanged(&without_abi, &with_abi, &existing_fields);
+        assert_eq!(
+            without_abi.as_object().unwrap().len(),
+            existing_fields.len()
+        );
+        assert_eq!(
+            with_abi.as_object().unwrap().len(),
+            existing_fields.len() + 1
+        );
+
+        let entries = with_abi["entries"]
+            .as_array()
+            .expect("entries remains an array with --abi");
+        assert!(!entries.is_empty());
+        for field in [
+            "key",
+            "current_ttl",
+            "expiration_time",
+            "days_remaining",
+            "extension_cost_stroops",
+        ] {
+            assert!(
+                entries[0].get(field).is_some(),
+                "missing entry field `{field}`"
+            );
+        }
+
+        assert!(with_abi["abi"]["functions"].is_array());
+        assert!(with_abi["abi"]["events"].is_array());
+        assert!(with_abi["abi"]["custom_types"].is_array());
+    }
+}
+
+mod inspect_json_schema {
+    use super::*;
+
+    #[test]
+    fn abi_adds_full_spec_without_changing_inspection_fields() {
+        let without_abi = run_contract_inspect(false);
+        let with_abi = run_contract_inspect(true);
+        let existing_fields = [
+            "contract_id",
+            "wasm_hash",
+            "wasm_size",
+            "abi",
+            "storage_summary",
+            "ttl_info",
+            "storage_keys",
+        ];
+
+        assert_fields_unchanged(&without_abi, &with_abi, &existing_fields);
+        assert_eq!(
+            without_abi.as_object().unwrap().len(),
+            existing_fields.len()
+        );
+        assert_eq!(
+            with_abi.as_object().unwrap().len(),
+            existing_fields.len() + 1
+        );
+        assert!(
+            with_abi["storage_keys"].is_array(),
+            "storage_keys remains an array with --abi"
+        );
+
+        let abi_spec = with_abi["abi_spec"]
+            .as_object()
+            .expect("abi_spec contains the full supplied ContractSpec");
+        for field in ["env_meta", "functions", "custom_types", "events"] {
+            assert!(
+                abi_spec.contains_key(field),
+                "missing ABI spec field `{field}`"
+            );
+        }
+    }
+}
 
 // ===========================================================================
 // sdkt wasm inspect --format json

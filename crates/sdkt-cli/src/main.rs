@@ -3688,21 +3688,15 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
                     match get_ttl_info(&client, &contract_id).await {
                         Ok(ttl_info) => {
                             if fmt == OutputFormat::Json {
-                                if let Some(spec) = contract_spec {
-                                    let json_str = serde_json::to_string(&serde_json::json!({
-                                        "contract_id": contract_id,
-                                        "entries": ttl_info.entries.len(),
-                                        "abi": serde_json::json!({
+                                let mut output = serde_json::to_value(&ttl_info)?;
+                                if let Some(spec) = contract_spec.as_ref() {
+                                    output["abi"] = serde_json::json!({
                                             "functions": spec.functions.iter().map(|f| f.name.as_str()).collect::<Vec<_>>(),
                                             "events": spec.events.iter().map(|e| e.name.as_str()).collect::<Vec<_>>(),
                                             "custom_types": spec.custom_types.iter().map(|t| t.name.as_str()).collect::<Vec<_>>()
-                                        })
-                                    }))?;
-                                    println!("{}", json_str);
-                                } else {
-                                    let json_str = serde_json::to_string(&ttl_info)?;
-                                    println!("{}", json_str);
+                                    });
                                 }
+                                println!("{}", serde_json::to_string(&output)?);
                             } else {
                                 println!("Storage Check for Contract ID: {}", contract_id);
                                 println!("Total Entries: {}", ttl_info.entries.len());
@@ -4181,18 +4175,11 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
             match inspect_contract(&client, &contract_id).await {
                 Ok(inspection) => {
                     if fmt == OutputFormat::Json {
-                        if let Some(spec) = contract_spec {
-                            let json_str = serde_json::to_string(&serde_json::json!({
-                                "contract_id": inspection.contract_id,
-                                "wasm_hash": inspection.wasm_hash,
-                                "storage_keys": inspection.storage_keys.len(),
-                                "abi": spec
-                            }))?;
-                            println!("{}", json_str);
-                        } else {
-                            let json_str = serde_json::to_string(&inspection)?;
-                            println!("{}", json_str);
+                        let mut output = serde_json::to_value(&inspection)?;
+                        if let Some(spec) = contract_spec.as_ref() {
+                            output["abi_spec"] = serde_json::to_value(spec)?;
                         }
+                        println!("{}", serde_json::to_string(&output)?);
                     } else {
                         if interface {
                             if let Some(spec) = contract_spec.as_ref() {
