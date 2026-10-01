@@ -6297,7 +6297,7 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
                         &client,
                     )
                     .await
-                    .map_err(|e| Box::<dyn std::error::Error>::from(e))?;
+                    .map_err(Box::<dyn std::error::Error>::from)?;
 
                     // Decode result with ABI if available
                     let (result_display, result_decoded) = if result_raw.is_empty() {
