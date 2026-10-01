@@ -2875,7 +2875,9 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
                 format,
             } = &action
             {
-                if let Err(e) = commands::abi::check_abi_mutual_exclusion(abi.as_ref(), abi_contract.as_ref()) {
+                if let Err(e) =
+                    commands::abi::check_abi_mutual_exclusion(abi.as_ref(), abi_contract.as_ref())
+                {
                     eprintln!("Error: {e}");
                     process::exit(1);
                 }
@@ -3027,7 +3029,9 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
                 return Ok(());
             }
 
-            if let Err(e) = commands::abi::check_abi_mutual_exclusion(abi.as_ref(), abi_contract.as_ref()) {
+            if let Err(e) =
+                commands::abi::check_abi_mutual_exclusion(abi.as_ref(), abi_contract.as_ref())
+            {
                 eprintln!("Error: {e}");
                 process::exit(1);
             }
@@ -3466,8 +3470,12 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
                     let client = SorobanRpcClient::from_config(&network_config);
 
                     let contract_spec: Option<sdkt_wasm::ContractSpec> =
-                        commands::abi::resolve_abi_spec(abi.as_ref(), abi_contract.as_ref(), &client)
-                            .await?;
+                        commands::abi::resolve_abi_spec(
+                            abi.as_ref(),
+                            abi_contract.as_ref(),
+                            &client,
+                        )
+                        .await?;
 
                     match read_contract_state(&client, &contract, &key_xdr, contract_spec.as_ref())
                         .await
@@ -3970,7 +3978,9 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
             } => {
                 // `--abi` (local WASM) and `--abi-contract` (on-chain WASM) are
                 // mutually exclusive sources for result decoding.
-                if let Err(e) = commands::abi::check_abi_mutual_exclusion(abi.as_ref(), abi_contract.as_ref()) {
+                if let Err(e) =
+                    commands::abi::check_abi_mutual_exclusion(abi.as_ref(), abi_contract.as_ref())
+                {
                     eprintln!("Error: {e}");
                     process::exit(1);
                 }
@@ -4534,7 +4544,9 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
             // Resolve the ABI ContractSpec from one of two sources (mutually
             // exclusive): a local WASM file (`--abi`) or a deployed contract's
             // on-chain WASM fetched via the path (`--abi-contract`).
-            if let Err(e) = commands::abi::check_abi_mutual_exclusion(abi.as_ref(), abi_contract.as_ref()) {
+            if let Err(e) =
+                commands::abi::check_abi_mutual_exclusion(abi.as_ref(), abi_contract.as_ref())
+            {
                 eprintln!("Error: {e}");
                 process::exit(1);
             }
@@ -6227,7 +6239,9 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
             // `--abi` (local WASM) and `--abi-contract` (on-chain WASM) are
             // mutually exclusive. Validate before any network I/O so the
             // error is deterministic regardless of RPC reachability.
-            if let Err(e) = commands::abi::check_abi_mutual_exclusion(abi.as_ref(), abi_contract.as_ref()) {
+            if let Err(e) =
+                commands::abi::check_abi_mutual_exclusion(abi.as_ref(), abi_contract.as_ref())
+            {
                 return Err(e.into());
             }
 

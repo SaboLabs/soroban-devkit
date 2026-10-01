@@ -22,8 +22,7 @@ use sdkt_wasm::ContractSpec;
 /// Reads the file at `wasm_path` and parses the embedded contract spec.
 /// Returns a human-readable `String` error on failure.
 pub fn load_local_abi(wasm_path: &str) -> Result<ContractSpec, String> {
-    let wasm_bytes =
-        std::fs::read(wasm_path).map_err(|e| format!("Failed to read WASM: {}", e))?;
+    let wasm_bytes = std::fs::read(wasm_path).map_err(|e| format!("Failed to read WASM: {}", e))?;
     parse_contract_spec(&wasm_bytes).map_err(|e| format!("Failed to parse ABI: {}", e))
 }
 
