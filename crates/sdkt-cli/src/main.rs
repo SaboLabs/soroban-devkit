@@ -2881,14 +2881,22 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
                 }
 
                 let fmt = parse_format_str(format);
-                let diff_client = resolve_rpc_client(
-                    net.rpc_url.clone(),
-                    net.network_passphrase.clone(),
-                    net.network_profile.clone(),
-                );
-                let contract_spec =
-                    commands::abi::resolve_abi_spec(abi.as_ref(), abi_contract.as_ref(), &diff_client)
-                        .await?;
+                // Resolve the RPC client lazily: only `--abi-contract` needs the
+                // network. The local `--abi` and no-ABI paths are fully offline
+                // so an unavailable or unconfigured network profile must not
+                // cause the command to fail before either snapshot is read.
+                let contract_spec = if let Some(id) = abi_contract.as_ref() {
+                    let diff_client = resolve_rpc_client(
+                        net.rpc_url.clone(),
+                        net.network_passphrase.clone(),
+                        net.network_profile.clone(),
+                    );
+                    commands::abi::resolve_abi_spec(None, Some(id), &diff_client).await?
+                } else if let Some(wasm_path) = abi.as_ref() {
+                    Some(commands::abi::load_local_abi(wasm_path)?)
+                } else {
+                    None
+                };
 
                 // Load old snapshot JSON (output of `sdkt storage analyze --format json`).
                 let old_bytes = match fs::read(old) {

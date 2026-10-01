@@ -12,8 +12,8 @@
 //! [`resolve_abi_spec`] handles both paths (plus the "neither" → `None` case)
 //! and is the entry point for all four callers.
 
-use sdkt_rpc::{inspect_contract, SorobanRpcClient};
 use sdkt_rpc::wasm::get_wasm_bytecode;
+use sdkt_rpc::{inspect_contract, SorobanRpcClient};
 use sdkt_wasm::spec::parse_contract_spec;
 use sdkt_wasm::ContractSpec;
 
