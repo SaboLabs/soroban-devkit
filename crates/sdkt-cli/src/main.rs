@@ -507,6 +507,44 @@ enum Commands {
         #[command(subcommand)]
         action: PluginAction,
     },
+    /// Read-only release-assurance: artifact → security → upgrade safety →
+    /// deployed verification → contract health, aggregated into one release
+    /// status. Never signs, submits, extends TTL, or mutates any state.
+    ReleaseAssurance {
+        /// Candidate WASM artifact to assess (hash, spec, upgrade diff, audit)
+        #[arg(long, value_name = "WASM")]
+        wasm: String,
+        /// Previous (baseline) WASM for the offline upgrade-safety diff
+        #[arg(long, value_name = "WASM")]
+        previous_wasm: Option<String>,
+        /// Rust source file(s) or directory for the static security audit
+        /// (same engine and semantics as `sdkt audit`)
+        #[arg(long, value_name = "PATH", num_args = 1..)]
+        audit: Vec<String>,
+        /// Disable an audit rule by id (repeatable), e.g. --disable AUTH-001
+        #[arg(long, value_name = "RULE_ID", action = clap::ArgAction::Append)]
+        disable: Vec<String>,
+        /// Deployed contract ID (C...) for on-chain verification + health.
+        /// On-chain checks are skipped entirely when omitted.
+        #[arg(short, long, value_name = "CONTRACT_ID")]
+        contract: Option<String>,
+        /// Deployed network (testnet | mainnet | futurenet) for the on-chain
+        /// checks. Only required together with --contract.
+        #[arg(
+            short,
+            long,
+            value_name = "NETWORK",
+            conflicts_with = "rpc_url",
+            conflicts_with = "network_profile",
+            conflicts_with = "network_passphrase"
+        )]
+        network: Option<String>,
+        /// Output format (pretty or json)
+        #[arg(short, long, default_value = "pretty")]
+        format: String,
+        #[command(flatten)]
+        net: NetworkArgs,
+    },
     /// Generate shell completion scripts for your shell
     Completions {
         /// Shell to generate completions for (bash, zsh, fish, powershell, elvish)
@@ -1415,6 +1453,572 @@ async fn verify_contract(
         verification_status: status,
         explanation,
     })
+}
+
+// === release-assurance foundation: shared types + pure classifiers ===
+// (No new engine — reuses sdkt-wasm, sdkt-audit, verify_contract, contract_health.)
+
+/// Status of a single release-assurance check.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
+#[serde(rename_all = "UPPERCASE")]
+enum RaStatus {
+    Pass,
+    Review,
+    Fail,
+    Skipped,
+    Error,
+}
+
+impl std::fmt::Display for RaStatus {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let s = match self {
+            RaStatus::Pass => "PASS",
+            RaStatus::Review => "REVIEW",
+            RaStatus::Fail => "FAIL",
+            RaStatus::Skipped => "SKIPPED",
+            RaStatus::Error => "ERROR",
+        };
+        f.write_str(s)
+    }
+}
+
+/// A single check section: status + machine-readable detail.
+#[derive(Debug, serde::Serialize)]
+struct RaCheck {
+    status: RaStatus,
+    detail: String,
+}
+
+/// Result of an on-chain check: the existing engine's report, or a classified
+/// status paired with the engine's original error message.
+type OnChainResult<T> = Result<T, (RaStatus, String)>;
+
+/// Artifact section.
+#[derive(Debug, serde::Serialize)]
+struct ArtifactResult {
+    #[serde(flatten)]
+    check: RaCheck,
+    /// The candidate WASM metadata (hash/size/spec), when parsed successfully.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    metadata: Option<sdkt_wasm::WasmMetadata>,
+}
+
+/// Security section, carrying the full audit report when run.
+#[derive(Debug, serde::Serialize)]
+struct SecurityResult {
+    #[serde(flatten)]
+    check: RaCheck,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    audit: Option<sdkt_audit::AuditReport>,
+}
+
+/// Upgrade-safety section.
+#[derive(Debug, serde::Serialize)]
+struct UpgradeResult {
+    #[serde(flatten)]
+    check: RaCheck,
+    /// Where the verdict came from: `previous WASM`, `live contract <id>`, etc.
+    baseline: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    verdict: Option<sdkt_wasm::UpgradeVerdict>,
+}
+
+/// Deployed verification section (reuses `verify_contract`'s report).
+#[derive(Debug, serde::Serialize)]
+struct VerifyResult {
+    #[serde(flatten)]
+    check: RaCheck,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    report: Option<VerificationReport>,
+}
+
+/// Contract health section (reuses `contract_health`'s report).
+#[derive(Debug, serde::Serialize)]
+struct HealthResult {
+    #[serde(flatten)]
+    check: RaCheck,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    report: Option<ContractHealthReport>,
+}
+
+/// Aggregate, machine-readable release-assurance result.
+#[derive(Debug, serde::Serialize)]
+struct ReleaseAssuranceReport {
+    contract: Option<String>,
+    network: String,
+    artifact: ArtifactResult,
+    security: SecurityResult,
+    upgrade_safety: UpgradeResult,
+    verification: VerifyResult,
+    health: HealthResult,
+    release_status: String,
+    reasons: Vec<String>,
+}
+
+/// Deterministic status from an audit report:
+/// critical findings → FAIL, warnings → REVIEW, otherwise PASS.
+fn audit_status(summary: &sdkt_audit::AuditSummary) -> RaStatus {
+    if summary.critical > 0 {
+        RaStatus::Fail
+    } else if summary.warning > 0 {
+        RaStatus::Review
+    } else {
+        RaStatus::Pass
+    }
+}
+
+/// Deterministic status from an upgrade verdict.
+fn upgrade_verdict_status(verdict: &sdkt_wasm::UpgradeVerdict) -> RaStatus {
+    if verdict.compatible {
+        RaStatus::Pass
+    } else {
+        RaStatus::Fail
+    }
+}
+
+/// Deterministic status from a verification report's match result.
+fn verification_status(matched: Option<bool>) -> RaStatus {
+    match matched {
+        Some(true) => RaStatus::Pass,
+        Some(false) => RaStatus::Fail,
+        None => RaStatus::Review,
+    }
+}
+
+/// Deterministic status from a contract-health label.
+fn health_status(health: &str) -> RaStatus {
+    match health {
+        "healthy" => RaStatus::Pass,
+        "at_risk" => RaStatus::Review,
+        "critical" => RaStatus::Fail,
+        _ => RaStatus::Error,
+    }
+}
+
+/// Aggregate the final release status from individual check statuses.
+/// FAIL/Error dominate; any REVIEW/SKIPPED (with no hard failure) → REVIEW;
+/// otherwise PASS.
+fn aggregate_release_status(statuses: &[RaStatus]) -> String {
+    if statuses
+        .iter()
+        .any(|s| *s == RaStatus::Fail || *s == RaStatus::Error)
+    {
+        return "FAIL".to_string();
+    }
+    if statuses
+        .iter()
+        .any(|s| *s == RaStatus::Review || *s == RaStatus::Skipped)
+    {
+        return "REVIEW".to_string();
+    }
+    "PASS".to_string()
+}
+
+/// Map an on-chain check error string onto a status: a missing contract is a
+/// hard FAIL (blocking), any transport/engine error is an ERROR.
+fn contract_not_found_status(e: &str) -> RaStatus {
+    if e.contains("Contract not found") || e.contains("not found on") {
+        RaStatus::Fail
+    } else {
+        RaStatus::Error
+    }
+}
+
+/// Pretty-print the aggregate report to stdout.
+fn print_release_assurance_pretty(r: &ReleaseAssuranceReport) {
+    println!("Soroban Release Assurance");
+    println!("────────────────────────");
+    println!("Artifact        {}", r.artifact.check.status);
+    println!("Security        {}", r.security.check.status);
+    println!("Upgrade Safety  {}", r.upgrade_safety.check.status);
+    println!("Verification    {}", r.verification.check.status);
+    println!("Contract Health {}", r.health.check.status);
+    println!();
+    println!("RELEASE STATUS  {}", r.release_status.to_uppercase());
+    if !r.reasons.is_empty() {
+        println!();
+        println!("Reasons:");
+        for reason in &r.reasons {
+            println!("  - {}", reason);
+        }
+    }
+}
+
+/// Read-only release-assurance composition reusing the existing SDKT engines:
+/// artifact (sdkt-wasm metadata) → security (sdkt-audit) → upgrade safety
+/// (sdkt-wasm diff/verdict) → deployed verification (`verify_contract`) →
+/// contract health (`contract_health`), aggregated into one release status.
+///
+/// No mutation, signing, submission, TTL extend/restore, or filesystem writes
+/// are performed. The returned report is printed and exit-coded by the caller.
+async fn run_release_assurance(
+    client: &SorobanRpcClient,
+    wasm_path: &str,
+    previous_wasm_path: Option<&str>,
+    audit_paths: &[String],
+    disable: &[String],
+    contract_id: Option<&str>,
+    network: &str,
+) -> Result<ReleaseAssuranceReport, String> {
+    // ---- 1. ARTIFACT (existing sdkt-wasm metadata engine, offline) ----
+    let candidate_bytes = fs::read(wasm_path)
+        .map_err(|e| format!("Failed to read WASM file {}: {}", wasm_path, e))?;
+
+    let artifact = match sdkt_wasm::parse_metadata(&candidate_bytes) {
+        Ok(metadata) => {
+            let detail = format!(
+                "valid WASM v{} ({} bytes, sha256 {})",
+                metadata.version, metadata.size_bytes, metadata.hash
+            );
+            ArtifactResult {
+                check: RaCheck {
+                    status: RaStatus::Pass,
+                    detail,
+                },
+                metadata: Some(metadata),
+            }
+        }
+        Err(e) => ArtifactResult {
+            check: RaCheck {
+                status: RaStatus::Fail,
+                detail: format!("{} is not valid WASM: {}", wasm_path, e),
+            },
+            metadata: None,
+        },
+    };
+
+    // ---- 2. SECURITY (existing sdkt-audit engine, offline) ----
+    let security = run_release_security(audit_paths, disable).await;
+
+    // ---- 3. UPGRADE SAFETY (existing upgrade engine, offline vs previous or live) ----
+    let upgrade = run_release_upgrade_safety(
+        client,
+        &candidate_bytes,
+        previous_wasm_path,
+        contract_id,
+        network,
+        &artifact,
+    )
+    .await;
+
+    // ---- 4. VERIFICATION + 5. HEALTH (existing verify_contract / contract_health) ----
+    // Errors carry (status, message): a not-found contract is a blocking FAIL,
+    // anything else is an ERROR; both keep the engine's own message.
+    let (verification, health): (
+        OnChainResult<VerificationReport>,
+        OnChainResult<ContractHealthReport>,
+    ) = match contract_id {
+        None => (
+            Err((
+                RaStatus::Skipped,
+                "--contract not supplied; on-chain check skipped".to_string(),
+            )),
+            Err((
+                RaStatus::Skipped,
+                "--contract not supplied; on-chain check skipped".to_string(),
+            )),
+        ),
+        Some(_) if artifact.check.status != RaStatus::Pass => (
+            Err((
+                RaStatus::Skipped,
+                "candidate WASM artifact is invalid; on-chain check skipped".to_string(),
+            )),
+            Err((
+                RaStatus::Skipped,
+                "candidate WASM artifact is invalid; on-chain check skipped".to_string(),
+            )),
+        ),
+        Some(cid) => {
+            let v = verify_contract(client, cid, Some(&candidate_bytes), network)
+                .await
+                .map_err(|e| (contract_not_found_status(&e), e));
+            let h = contract_health(client, cid, Some(&candidate_bytes), network)
+                .await
+                .map_err(|e| (contract_not_found_status(&e), e));
+            (v, h)
+        }
+    };
+
+    let verification_result = match verification {
+        Ok(report) => VerifyResult {
+            check: RaCheck {
+                status: verification_status(report.matches),
+                detail: if report.explanation.is_empty() {
+                    report.verification_status.clone()
+                } else {
+                    report.explanation.clone()
+                },
+            },
+            report: Some(report),
+        },
+        Err((status, msg)) => VerifyResult {
+            check: RaCheck {
+                status,
+                detail: msg,
+            },
+            report: None,
+        },
+    };
+
+    let health_result = match health {
+        Ok(report) => {
+            let st = health_status(&report.health);
+            let detail = if report.reasons.is_empty() {
+                format!("health: {}", report.health)
+            } else {
+                report.reasons.join(" ")
+            };
+            HealthResult {
+                check: RaCheck { status: st, detail },
+                report: Some(report),
+            }
+        }
+        Err((status, msg)) => HealthResult {
+            check: RaCheck {
+                status,
+                detail: msg,
+            },
+            report: None,
+        },
+    };
+
+    let statuses = [
+        artifact.check.status,
+        security.check.status,
+        upgrade.check.status,
+        verification_result.check.status,
+        health_result.check.status,
+    ];
+    let release_status = aggregate_release_status(&statuses);
+
+    let mut reasons = Vec::new();
+    for (label, s) in [
+        ("Artifact", artifact.check.status),
+        ("Security", security.check.status),
+        ("Upgrade Safety", upgrade.check.status),
+        ("Verification", verification_result.check.status),
+        ("Contract Health", health_result.check.status),
+    ] {
+        if matches!(s, RaStatus::Fail | RaStatus::Error | RaStatus::Review) {
+            reasons.push(format!("{}: {}", label, s));
+        }
+    }
+
+    Ok(ReleaseAssuranceReport {
+        contract: contract_id.map(|c| c.to_string()),
+        network: network.to_string(),
+        artifact,
+        security,
+        upgrade_safety: upgrade,
+        verification: verification_result,
+        health: health_result,
+        release_status,
+        reasons,
+    })
+}
+
+/// ---- 2. SECURITY engine reuse ----
+async fn run_release_security(audit_paths: &[String], disable: &[String]) -> SecurityResult {
+    if audit_paths.is_empty() {
+        return SecurityResult {
+            check: RaCheck {
+                status: RaStatus::Skipped,
+                detail: "no --audit supplied; static security audit not executed".to_string(),
+            },
+            audit: None,
+        };
+    }
+
+    let disabled_refs: Vec<&str> = disable.iter().map(String::as_str).collect();
+
+    let mut source_paths = Vec::new();
+    for input in audit_paths {
+        let input_path = std::path::Path::new(input);
+        match collect_rust_sources(input_path) {
+            Ok(mut files) => source_paths.append(&mut files),
+            Err(e) => {
+                return SecurityResult {
+                    check: RaCheck {
+                        status: RaStatus::Error,
+                        detail: format!("Failed to discover Rust sources '{}': {}", input, e),
+                    },
+                    audit: None,
+                };
+            }
+        }
+    }
+    source_paths.sort();
+    source_paths.dedup();
+
+    if source_paths.is_empty() {
+        return SecurityResult {
+            check: RaCheck {
+                status: RaStatus::Error,
+                detail: "No Rust source files (.rs) found in the supplied --audit paths"
+                    .to_string(),
+            },
+            audit: None,
+        };
+    }
+
+    let mut aggregate = sdkt_audit::AuditReport::default();
+    for source_path in &source_paths {
+        let source = match fs::read_to_string(source_path) {
+            Ok(source) => source,
+            Err(e) => {
+                aggregate.add(sdkt_audit::Finding {
+                    rule_id: "AUDIT-IO".to_string(),
+                    severity: sdkt_audit::Severity::Critical,
+                    message: format!("Failed to read source: {}", e),
+                    location: None,
+                    file: Some(source_path.display().to_string()),
+                });
+                continue;
+            }
+        };
+
+        match sdkt_audit::audit_source_with(&source, &disabled_refs) {
+            Ok(report) => {
+                for f in &report.findings {
+                    aggregate.add(f.clone());
+                }
+            }
+            Err(_) => {
+                aggregate.add(sdkt_audit::Finding {
+                    rule_id: "AUDIT-PARSE".to_string(),
+                    severity: sdkt_audit::Severity::Critical,
+                    message: "Failed to parse Rust source".to_string(),
+                    location: None,
+                    file: Some(source_path.display().to_string()),
+                });
+            }
+        }
+    }
+
+    let status = audit_status(&aggregate.summary);
+    let detail = format!(
+        "{} critical, {} warning, {} info findings across {} file(s)",
+        aggregate.summary.critical,
+        aggregate.summary.warning,
+        aggregate.summary.info,
+        source_paths.len()
+    );
+
+    SecurityResult {
+        check: RaCheck { status, detail },
+        audit: Some(aggregate),
+    }
+}
+
+/// ---- 3. UPGRADE SAFETY engine reuse ----
+async fn run_release_upgrade_safety(
+    client: &SorobanRpcClient,
+    candidate_bytes: &[u8],
+    previous_wasm_path: Option<&str>,
+    contract_id: Option<&str>,
+    network: &str,
+    artifact: &ArtifactResult,
+) -> UpgradeResult {
+    if artifact.check.status != RaStatus::Pass {
+        return UpgradeResult {
+            check: RaCheck {
+                status: RaStatus::Skipped,
+                detail: "candidate WASM artifact is invalid; upgrade-safety skipped".to_string(),
+            },
+            baseline: "none".to_string(),
+            verdict: None,
+        };
+    }
+
+    if let Some(prev_path) = previous_wasm_path {
+        match fs::read(prev_path) {
+            Ok(prev_bytes) => match sdkt_wasm::upgrade_safety_wasm(&prev_bytes, candidate_bytes) {
+                Ok(verdict) => {
+                    let detail = if verdict.compatible {
+                        format!(
+                            "compatible ({} breaking, {} non-breaking)",
+                            verdict.breaking_changes.len(),
+                            verdict.non_breaking_changes.len()
+                        )
+                    } else {
+                        format!(
+                            "INCOMPATIBLE ({} breaking changes)",
+                            verdict.breaking_changes.len()
+                        )
+                    };
+                    UpgradeResult {
+                        check: RaCheck {
+                            status: upgrade_verdict_status(&verdict),
+                            detail,
+                        },
+                        baseline: format!("previous WASM {}", prev_path),
+                        verdict: Some(verdict),
+                    }
+                }
+                Err(e) => UpgradeResult {
+                    check: RaCheck {
+                        status: RaStatus::Error,
+                        detail: format!("failed to diff baseline WASM: {}", e),
+                    },
+                    baseline: format!("previous WASM {}", prev_path),
+                    verdict: None,
+                },
+            },
+            Err(e) => UpgradeResult {
+                check: RaCheck {
+                    status: RaStatus::Error,
+                    detail: format!("Failed to read previous WASM {}: {}", prev_path, e),
+                },
+                baseline: format!("previous WASM {}", prev_path),
+                verdict: None,
+            },
+        }
+    } else if let Some(cid) = contract_id {
+        // Offline upgrade-safety needs a baseline: fetch the deployed WASM.
+        match upgrade_assurance_against_deployed(client, cid, candidate_bytes, network).await {
+            Ok((_diff, verdict, wasm_hash)) => {
+                let detail = if verdict.compatible {
+                    format!(
+                        "compatible vs live {} ({} breaking, {} non-breaking)",
+                        wasm_hash,
+                        verdict.breaking_changes.len(),
+                        verdict.non_breaking_changes.len()
+                    )
+                } else {
+                    format!(
+                        "INCOMPATIBLE vs live {} ({} breaking changes)",
+                        wasm_hash,
+                        verdict.breaking_changes.len()
+                    )
+                };
+                UpgradeResult {
+                    check: RaCheck {
+                        status: upgrade_verdict_status(&verdict),
+                        detail,
+                    },
+                    baseline: format!("live contract {}", cid),
+                    verdict: Some(verdict),
+                }
+            }
+            Err(e) => UpgradeResult {
+                check: RaCheck {
+                    status: contract_not_found_status(&e),
+                    detail: e,
+                },
+                baseline: format!("live contract {}", cid),
+                verdict: None,
+            },
+        }
+    } else {
+        UpgradeResult {
+            check: RaCheck {
+                status: RaStatus::Skipped,
+                detail: "no --previous-wasm and no --contract; upgrade-safety needs a baseline (off-line diff vs on-chain)".to_string(),
+            },
+            baseline: "none".to_string(),
+            verdict: None,
+        }
+    }
 }
 
 /// Parse a `--salt` value (40 hex chars) into a 20-byte deployment salt.
@@ -2397,18 +3001,22 @@ fn print_verdict_changes(changes: &[sdkt_wasm::VerdictChange]) {
 /// reuses `sdkt-rpc` retrieval and `sdkt-wasm` diffing verbatim. Read-only; the
 /// network/mainnet-safety guard is inherited from `resolve_rpc_client` in the
 /// caller.
-async fn run_upgrade_safety(
+/// Minimal extraction: run the existing upgrade-safety engine
+/// (`inspect_contract` → `get_wasm_bytecode` → `diff_wasm` →
+/// `UpgradeVerdict::from_diff`) against the *deployed* contract.
+///
+/// Shared verbatim by `sdkt verify --upgrade-safety` and the release-assurance
+/// composition so neither duplicates the comparison. Read-only.
+async fn upgrade_assurance_against_deployed(
     client: &SorobanRpcClient,
     contract_id: &str,
     candidate_bytes: &[u8],
     network: &str,
-    fmt: OutputFormat,
-) -> Result<(), String> {
+) -> Result<(sdkt_wasm::SpecDiff, sdkt_wasm::UpgradeVerdict, String), String> {
     // Candidate WASM is parsed offline first (fail-fast on malformed input).
-    let _candidate_meta = sdkt_wasm::parse_metadata(candidate_bytes)
-        .map_err(|e| format!("{} is not valid WASM: {}", "<candidate>", e))?;
+    sdkt_wasm::parse_metadata(candidate_bytes)
+        .map_err(|e| format!("candidate is not valid WASM: {}", e))?;
 
-    // On-chain WASM hash ( path).
     let inspection = inspect_contract(client, contract_id)
         .await
         .map_err(|e| match e {
@@ -2419,18 +3027,27 @@ async fn run_upgrade_safety(
         })?;
     let wasm_hash = inspection.wasm_hash;
 
-    // Fetch the raw on-chain WASM bytecode ( path) — reuse existing extractor.
     let deployed_bytes = get_wasm_bytecode(client, &wasm_hash)
         .await
         .map_err(|e| format!("could not fetch on-chain WASM for {}: {}", contract_id, e))?;
 
-    // Compare the two ContractSpecs with the engine (raw entry point reuses
-    // diff_specs internally). The "old" side is the deployed contract; the "new"
-    // side is the candidate local WASM.
+    // "old" side is the deployed contract; "new" side is the local candidate.
     let diff = sdkt_wasm::diff_wasm(&deployed_bytes, candidate_bytes)
         .map_err(|e| format!("failed to diff contracts: {}", e))?;
-
     let verdict = sdkt_wasm::UpgradeVerdict::from_diff(&diff);
+
+    Ok((diff, verdict, wasm_hash))
+}
+
+async fn run_upgrade_safety(
+    client: &SorobanRpcClient,
+    contract_id: &str,
+    candidate_bytes: &[u8],
+    network: &str,
+    fmt: OutputFormat,
+) -> Result<(), String> {
+    let (_diff, verdict, wasm_hash) =
+        upgrade_assurance_against_deployed(client, contract_id, candidate_bytes, network).await?;
 
     if fmt == OutputFormat::Json {
         println!(
@@ -7778,6 +8395,63 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
                 }
             }
         },
+        Commands::ReleaseAssurance {
+            wasm,
+            previous_wasm,
+            audit,
+            disable,
+            contract,
+            network,
+            format,
+            net,
+        } => {
+            let fmt = parse_format_str(&format);
+            // Read-only boundary: same resolution as `verify` / `health`
+            // (`resolve_target_network`). The mutating mainnet guard does not
+            // apply — release-assurance never signs, submits, or mutates.
+            let target = match resolve_target_network(network.as_deref(), &net) {
+                Ok(t) => t,
+                Err(e) => {
+                    eprintln!("Error: {}", e);
+                    process::exit(1);
+                }
+            };
+            let network_name = target.network_name;
+            let report = match run_release_assurance(
+                &target.client,
+                &wasm,
+                previous_wasm.as_deref(),
+                &audit,
+                &disable,
+                contract.as_deref(),
+                &network_name,
+            )
+            .await
+            {
+                Ok(report) => report,
+                Err(e) => {
+                    eprintln!("Error: {}", e);
+                    process::exit(1);
+                }
+            };
+            match fmt {
+                OutputFormat::Json => {
+                    println!(
+                        "{}",
+                        serde_json::to_string_pretty(&report).unwrap_or_else(|e| {
+                            eprintln!("Error serializing report: {}", e);
+                            process::exit(1);
+                        })
+                    );
+                }
+                OutputFormat::Pretty => print_release_assurance_pretty(&report),
+            }
+            // Deterministic exit status: blocking failure → 1, else 0
+            // (same convention as `sdkt doctor`).
+            if report.release_status == "FAIL" {
+                process::exit(1);
+            }
+        }
         Commands::Completions { shell } => {
             let mut cmd = Cli::command();
             // Wrap stdout so a consumer that closes the pipe early
