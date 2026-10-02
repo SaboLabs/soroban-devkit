@@ -13,7 +13,8 @@ use sdkt_rpc::{
 };
 use sdkt_storage::WasmCache;
 use sdkt_storage::{
-    NetworkStore, StorageAnalyzer, DEFAULT_SUGGESTED_LEDGERS, EXPIRING_SOON_LEDGERS,
+    capture_snapshot, diff_snapshots, NetworkProfile, NetworkStore, SnapshotDiff, StorageAnalyzer,
+    StorageSnapshot, DEFAULT_SUGGESTED_LEDGERS, EXPIRING_SOON_LEDGERS,
 };
 use sdkt_wasm::spec::parse_contract_spec;
 use sdkt_xdr::abi_decode::decode_event_topics;
@@ -1036,6 +1037,54 @@ enum StorageAction {
         #[arg(short, long, default_value = "pretty")]
         format: String,
     },
+    /// Capture a contract's storage into a JSON snapshot document.
+    ///
+    /// Records each tracked ledger key's storage class, durability, remaining
+    /// TTL, estimated rent, and its captured value (base64 XDR `ScVal`). The
+    /// contract instance entry is always included; add more keys with
+    /// `--key-xdr` or the typed `--map-key`/`--key-arg` options.
+    Snapshot {
+        contract_id: String,
+        /// Repeatable: extra ledger keys (base64 XDR or hex XDR) to record.
+        #[arg(long, value_name = "BASE64_XDR", alias = "key")]
+        key_xdr: Vec<String>,
+        /// Leading symbol of a typed data key — the map/enum-variant name.
+        /// Combined with `--key-arg` this builds `ScVec[symbol, args...]`,
+        /// e.g. `--map-key balances --key-arg address:G...`.
+        #[arg(long, value_name = "SYMBOL")]
+        map_key: Option<String>,
+        /// Repeatable typed key component (`TYPE:VALUE`, e.g. `address:G...`,
+        /// `u32:100`) appended after `--map-key`. Requires `--map-key`.
+        #[arg(long, value_name = "TYPE:VALUE")]
+        key_arg: Vec<String>,
+        /// Durability of a typed data key: `persistent` (default) or `temporary`.
+        #[arg(
+            long,
+            value_name = "persistent|temporary",
+            default_value = "persistent"
+        )]
+        durability: String,
+        /// File to write the snapshot document to.
+        #[arg(short, long, value_name = "FILE")]
+        out: String,
+        #[arg(short, long, default_value = "pretty")]
+        format: String,
+    },
+    /// Diff a recorded snapshot against a fresh live read of the same contract.
+    ///
+    /// Reports a `value_changed` delta when a tracked entry's captured value
+    /// differs but its TTL did not, a `ttl_changed` delta when TTL/rent moved,
+    /// and `added`/`removed` keys. Snapshots captured before value capture
+    /// existed still diff against TTL/rent only.
+    Diff {
+        /// Snapshot document written by `sdkt storage snapshot`.
+        snapshot: String,
+        /// Contract ID to read live. Defaults to the snapshot's recorded contract.
+        #[arg(long, value_name = "CONTRACT_ID")]
+        contract: Option<String>,
+        #[arg(short, long, default_value = "pretty")]
+        format: String,
+    },
     /// Extend the TTL of a contract's footprint via `ExtendFootprintTtl`.
     Extend {
         /// Contract whose storage footprint should have TTL extended.
@@ -2016,6 +2065,80 @@ fn resolve_storage_analyze_keys(
     }
 
     Ok(keys)
+}
+
+/// Render a storage diff for human consumption.
+///
+/// Kept pure (no I/O) so both the CLI output and its tests exercise the same
+/// formatting: the changed/unchanged summary followed by one block per change
+/// kind. Long base64 values are truncated to their leading characters, which is
+/// enough to tell two captured values apart.
+fn render_storage_diff_pretty(diff: &SnapshotDiff) -> String {
+    fn short(value: Option<&str>) -> String {
+        match value {
+            Some(v) => {
+                let head: String = v.chars().take(24).collect();
+                if head.len() < v.len() {
+                    format!("{head}…")
+                } else {
+                    head
+                }
+            }
+            None => "<none>".to_string(),
+        }
+    }
+
+    let mut out = String::new();
+    out.push_str(&format!(
+        "Storage Diff for Contract: {}\n",
+        diff.contract_id
+    ));
+    out.push_str(&format!("Changed:   {}\n", diff.changed()));
+    out.push_str(&format!("Unchanged: {}\n", diff.unchanged));
+
+    if !diff.value_changed.is_empty() {
+        out.push_str("\nValue Changed:\n");
+        for delta in &diff.value_changed {
+            out.push_str(&format!(
+                "  {} [{}]\n    before: {}\n    after:  {}\n",
+                delta.key,
+                delta.class.label(),
+                short(delta.before.as_deref()),
+                short(delta.after.as_deref()),
+            ));
+        }
+    }
+
+    if !diff.ttl_changed.is_empty() {
+        out.push_str("\nTTL Changed:\n");
+        for delta in &diff.ttl_changed {
+            out.push_str(&format!(
+                "  {} [{}] ttl {} -> {}, cost {} -> {} stroops\n",
+                delta.key,
+                delta.class.label(),
+                delta.before_ttl,
+                delta.after_ttl,
+                delta.before_extension_cost_stroops,
+                delta.after_extension_cost_stroops,
+            ));
+        }
+    }
+
+    if !diff.added.is_empty() {
+        out.push_str("\nAdded:\n");
+        for key in &diff.added {
+            out.push_str(&format!("  {key}\n"));
+        }
+    }
+
+    if !diff.removed.is_empty() {
+        out.push_str("\nRemoved:\n");
+        for key in &diff.removed {
+            out.push_str(&format!("  {key}\n"));
+        }
+    }
+
+    out
 }
 
 /// Encode typed `TYPE:VALUE` values to a single base64 XDR `ScVal` string.
@@ -3036,16 +3159,23 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
                 process::exit(1);
             }
 
-            let analyze_extra_keys = if let StorageAction::Analyze {
-                contract_id,
-                key_xdr,
-                map_key,
-                key_arg,
-                durability,
-                ..
-            } = &action
-            {
-                match resolve_storage_analyze_keys(
+            let analyze_extra_keys = match &action {
+                StorageAction::Analyze {
+                    contract_id,
+                    key_xdr,
+                    map_key,
+                    key_arg,
+                    durability,
+                    ..
+                }
+                | StorageAction::Snapshot {
+                    contract_id,
+                    key_xdr,
+                    map_key,
+                    key_arg,
+                    durability,
+                    ..
+                } => match resolve_storage_analyze_keys(
                     contract_id,
                     key_xdr,
                     map_key.as_deref(),
@@ -3057,9 +3187,8 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
                         eprintln!("Error: {e}");
                         process::exit(1);
                     }
-                }
-            } else {
-                None
+                },
+                _ => None,
             };
 
             let client = resolve_rpc_client(
@@ -3208,6 +3337,128 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
                         }
                         Err(e) => {
                             eprintln!("Error analyzing storage: {}", e);
+                            process::exit(1);
+                        }
+                    }
+                }
+                StorageAction::Snapshot {
+                    contract_id,
+                    out,
+                    format,
+                    ..
+                } => {
+                    let fmt = parse_format_str(&format);
+                    let extra_keys = analyze_extra_keys.expect("resolved for Snapshot");
+
+                    if out.trim().is_empty() {
+                        eprintln!("Error: --out must not be empty");
+                        process::exit(1);
+                    }
+
+                    let client = resolve_rpc_client(
+                        net.rpc_url.clone(),
+                        net.network_passphrase.clone(),
+                        net.network_profile.clone(),
+                    );
+
+                    match capture_snapshot(&client, &contract_id, &extra_keys).await {
+                        Ok(snapshot) => {
+                            let document = serde_json::to_string_pretty(&snapshot)?;
+                            if let Err(e) = fs::write(&out, &document) {
+                                eprintln!("Error: cannot write snapshot to '{}': {}", out, e);
+                                process::exit(1);
+                            }
+
+                            if fmt == OutputFormat::Json {
+                                println!("{}", document);
+                            } else {
+                                println!("Storage Snapshot for Contract: {}", snapshot.contract_id);
+                                if let Some(ledger) = snapshot.captured_at_ledger {
+                                    println!("Captured at ledger: {}", ledger);
+                                }
+                                println!("Entries: {}", snapshot.entries.len());
+                                println!("Snapshot written to: {}", out);
+                                for (i, entry) in snapshot.entries.iter().enumerate() {
+                                    println!(
+                                        "  #{:<3} [{}] ttl={} cost={} stroops value={}",
+                                        i + 1,
+                                        entry.class.label(),
+                                        entry.current_ttl,
+                                        entry.extension_cost_stroops,
+                                        match entry.value.as_deref() {
+                                            Some(v) => {
+                                                let head: String = v.chars().take(24).collect();
+                                                if head.len() < v.len() {
+                                                    format!("{head}…")
+                                                } else {
+                                                    head
+                                                }
+                                            }
+                                            None => "<none>".to_string(),
+                                        }
+                                    );
+                                }
+                            }
+                        }
+                        Err(e) => {
+                            eprintln!("Error capturing storage snapshot: {}", e);
+                            process::exit(1);
+                        }
+                    }
+                }
+                StorageAction::Diff {
+                    snapshot,
+                    contract,
+                    format,
+                } => {
+                    let fmt = parse_format_str(&format);
+
+                    let document = match fs::read_to_string(&snapshot) {
+                        Ok(d) => d,
+                        Err(e) => {
+                            eprintln!("Error: cannot read snapshot '{}': {}", snapshot, e);
+                            process::exit(1);
+                        }
+                    };
+                    let base: StorageSnapshot = match serde_json::from_str(&document) {
+                        Ok(s) => s,
+                        Err(e) => {
+                            eprintln!("Error: invalid snapshot document '{}': {}", snapshot, e);
+                            process::exit(1);
+                        }
+                    };
+
+                    let contract_id = match contract {
+                        Some(id) if !id.trim().is_empty() => id,
+                        _ => base.contract_id.clone(),
+                    };
+                    if contract_id.trim().is_empty() {
+                        eprintln!(
+                            "Error: snapshot records no contract id; pass --contract <CONTRACT_ID>"
+                        );
+                        process::exit(1);
+                    }
+
+                    let extra_keys: Vec<String> =
+                        base.entries.iter().map(|e| e.key.clone()).collect();
+
+                    let client = resolve_rpc_client(
+                        net.rpc_url.clone(),
+                        net.network_passphrase.clone(),
+                        net.network_profile.clone(),
+                    );
+
+                    match capture_snapshot(&client, &contract_id, &extra_keys).await {
+                        Ok(live) => {
+                            let diff = diff_snapshots(&base, &live);
+                            if fmt == OutputFormat::Json {
+                                println!("{}", serde_json::to_string(&diff)?);
+                            } else {
+                                print!("{}", render_storage_diff_pretty(&diff));
+                            }
+                        }
+                        Err(e) => {
+                            eprintln!("Error reading live storage for diff: {}", e);
                             process::exit(1);
                         }
                     }
