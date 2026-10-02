@@ -417,6 +417,15 @@ pub async fn read_ledger_entry(
     client: &SorobanRpcClient,
     key_b64: &str,
 ) -> Result<stellar_xdr::LedgerEntry, RpcError> {
+    read_ledger_entry_with_ttl(client, key_b64)
+        .await
+        .map(|(entry, _)| entry)
+}
+
+async fn read_ledger_entry_with_ttl(
+    client: &SorobanRpcClient,
+    key_b64: &str,
+) -> Result<(stellar_xdr::LedgerEntry, Option<u32>), RpcError> {
     let keys = vec![key_b64.to_string()];
     let response = client.get_contract_storage("", &keys).await?;
 
@@ -426,15 +435,18 @@ pub async fn read_ledger_entry(
         ));
     }
 
-    let entry_xdr = &response.entries[0].xdr;
+    let result = &response.entries[0];
+    let live_until_ledger = result.live_until_ledger_seq;
+    let entry_xdr = &result.xdr;
     let entry_bytes = base64::engine::general_purpose::STANDARD
         .decode(entry_xdr.trim())
         .map_err(|e| RpcError::Rpc(format!("Failed to decode LedgerEntry XDR: {e}")))?;
 
     let mut cursor = std::io::Cursor::new(&entry_bytes);
     let mut l = stellar_xdr::Limited::new(&mut cursor, stellar_xdr::Limits::none());
-    stellar_xdr::LedgerEntry::read_xdr(&mut l)
-        .map_err(|e| RpcError::Rpc(format!("Failed to parse LedgerEntry: {e}")))
+    let entry = stellar_xdr::LedgerEntry::read_xdr(&mut l)
+        .map_err(|e| RpcError::Rpc(format!("Failed to parse LedgerEntry: {e}")))?;
+    Ok((entry, live_until_ledger))
 }
 
 /// Result of a successful `storage read` call.
@@ -470,7 +482,7 @@ pub async fn read_contract_state(
         .map_err(|e| RpcError::Rpc(format!("Failed to re-encode LedgerKey: {e}")))?;
     let canonical_key_b64 = base64::engine::general_purpose::STANDARD.encode(&buf);
 
-    let entry = read_ledger_entry(client, &canonical_key_b64).await?;
+    let (entry, live_until_ledger) = read_ledger_entry_with_ttl(client, &canonical_key_b64).await?;
 
     let (entry_type, durability, value_json) = match &entry.data {
         LedgerEntryData::ContractData(cd) => {
@@ -526,7 +538,7 @@ pub async fn read_contract_state(
         entry_type,
         durability,
         value: value_json,
-        live_until_ledger: None,
+        live_until_ledger,
     })
 }
 
