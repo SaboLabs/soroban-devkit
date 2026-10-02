@@ -12,7 +12,6 @@ use sdkt_rpc::{
     SorobanRpcClient, StorageKeyInfo, TtlInfoSummary,
 };
 use sdkt_storage::WasmCache;
-use sdkt_storage::{NetworkProfile, NetworkStore, StorageAnalyzer, EXPIRING_SOON_LEDGERS};
 use sdkt_storage::{
     NetworkStore, StorageAnalyzer, DEFAULT_SUGGESTED_LEDGERS, EXPIRING_SOON_LEDGERS,
 };
