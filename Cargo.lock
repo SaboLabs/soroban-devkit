@@ -3094,7 +3094,7 @@ checksum = "94143f37725109f92c262ed2cf5e59bce7498c01bcc1502d7b9afe439a4e9f49"
 
 [[package]]
 name = "sdkt-audit"
-version = "2.5.0"
+version = "2.6.0"
 dependencies = [
  "dirs",
  "ed25519-dalek",
@@ -3113,7 +3113,7 @@ dependencies = [
 
 [[package]]
 name = "sdkt-audit-example-rule"
-version = "2.5.0"
+version = "2.6.0"
 dependencies = [
  "extism-pdk",
  "sdkt-audit",
@@ -3123,7 +3123,7 @@ dependencies = [
 
 [[package]]
 name = "sdkt-cli"
-version = "2.5.0"
+version = "2.6.0"
 dependencies = [
  "assert_cmd",
  "base64 0.23.1",
@@ -3150,7 +3150,7 @@ dependencies = [
 
 [[package]]
 name = "sdkt-core"
-version = "2.5.0"
+version = "2.6.0"
 dependencies = [
  "semver",
  "serde",
@@ -3167,7 +3167,7 @@ dependencies = [
 
 [[package]]
 name = "sdkt-rpc"
-version = "2.5.0"
+version = "2.6.0"
 dependencies = [
  "base64 0.23.1",
  "flate2",
@@ -3188,7 +3188,7 @@ dependencies = [
 
 [[package]]
 name = "sdkt-storage"
-version = "2.5.0"
+version = "2.6.0"
 dependencies = [
  "base64 0.23.1",
  "directories",
@@ -3208,7 +3208,7 @@ dependencies = [
 
 [[package]]
 name = "sdkt-wasm"
-version = "2.5.0"
+version = "2.6.0"
 dependencies = [
  "hex",
  "serde",
@@ -3220,7 +3220,7 @@ dependencies = [
 
 [[package]]
 name = "sdkt-xdr"
-version = "2.5.0"
+version = "2.6.0"
 dependencies = [
  "base64 0.23.1",
  "ed25519-dalek",

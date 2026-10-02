@@ -14,9 +14,9 @@ keywords = ["soroban", "stellar", "sdk", "toolkit", "blockchain"]
 categories = ["development-tools", "network-programming"]
 
 [dependencies]
-sdkt-core = { version = "2.5.0", path = "../sdkt-core" }
-sdkt-xdr = { version = "2.5.0", path = "../sdkt-xdr" }
-sdkt-wasm = { version = "2.5.0", path = "../sdkt-wasm" }
+sdkt-core = { version = "2.6.0", path = "../sdkt-core" }
+sdkt-xdr = { version = "2.6.0", path = "../sdkt-xdr" }
+sdkt-wasm = { version = "2.6.0", path = "../sdkt-wasm" }
 stellar-xdr = { version = "28.0.0", features = ["std", "arbitrary", "serde"] }
 stellar-strkey = "0.0.18"
 base64 = "0.23"
