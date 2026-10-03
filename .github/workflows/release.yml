@@ -184,8 +184,11 @@ jobs:
         if: matrix.os == 'windows-latest'
         shell: powershell
         run: |
-          cd target/${{ env.TARGET }}/release
-          Compress-Archive -Path sdkt.exe, sdkt.sha256 -DestinationPath "sdkt-${{ env.TARGET }}.zip" -Force
+          # Write the zip at the workspace root (no `cd`): the Verify and Upload
+          # steps below run from the workspace root, so the artifact must land
+          # there. Actions starts every step in the workspace root, so a `cd`
+          # here would silently place the zip under target/ and break Verify.
+          Compress-Archive -Path "target/${{ env.TARGET }}/release/sdkt.exe", "target/${{ env.TARGET }}/release/sdkt.sha256" -DestinationPath "sdkt-${{ env.TARGET }}.zip" -Force
         env:
           TARGET: ${{ matrix.target }}
 

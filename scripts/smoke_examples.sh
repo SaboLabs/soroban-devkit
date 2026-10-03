@@ -14,7 +14,12 @@ fail() { echo "SMOKE FAIL: $1"; exit 1; }
 command -v "$SDKT" >/dev/null 2>&1 || fail "sdkt binary not found at $SDKT (run: cargo build --bin sdkt)"
 
 echo "== [1] version =="
-"$SDKT" --version | grep -q "2.5.0" || fail "version != 2.5.0"
+# Single source of truth: the root workspace version (same idiom as the
+# Release workflow's version-check). Keeping the expected version derived
+# rather than hardcoded means a version bump cannot leave this check stale.
+EXPECTED_VERSION="$(grep -m1 '^version = ' "$REPO_ROOT/Cargo.toml" | sed -E 's/version = "([^"]+)".*/\1/')"
+[ -n "$EXPECTED_VERSION" ] || fail "could not read workspace version from $REPO_ROOT/Cargo.toml"
+"$SDKT" --version | grep -q "$EXPECTED_VERSION" || fail "version != $EXPECTED_VERSION"
 
 echo "== [2] wasm inspect (committed fixture) =="
 OUT=$("$SDKT" wasm inspect "$FIX/us_old.wasm")
