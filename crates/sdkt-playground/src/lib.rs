@@ -59,6 +59,11 @@ fn user_message(err: &WasmError) -> String {
             "The contract spec may be malformed or built with an incompatible SDK."
         )
         .to_string(),
+        WasmError::MetaXdr(_) => concat!(
+            "The `contractmetav0` section could not be decoded as Stellar XDR. ",
+            "The contract metadata may be malformed or built with an incompatible SDK."
+        )
+        .to_string(),
     }
 }
 
