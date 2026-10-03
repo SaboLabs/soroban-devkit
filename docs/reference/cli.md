@@ -134,7 +134,9 @@ sdkt
 │   ├── --old-wasm <A>
 │   ├── --new-wasm <B>
 │   ├── --format <json|pretty>
-│   └── --upgrade-safety      (emit UpgradeVerdict)
+│   ├── --upgrade-safety      (emit UpgradeVerdict; exclusive with size policy)
+│   ├── --max-growth-pct <N>  (fail when growth over the old artifact exceeds N%)
+│   └── --max-size-bytes <N>  (fail when the new artifact exceeds N bytes)
 │
 ├── audit [path.rs]
 │   ├── --list-rules          (list available audit rules and exit)
@@ -149,6 +151,8 @@ sdkt
 │   ├── --disable <RULE_ID>   (repeatable)
 │   ├── --contract <ID>       (deployed contract for on-chain checks; skipped if omitted)
 │   ├── --network <testnet>   (network for the on-chain checks; with --contract)
+│   ├── --max-size-bytes <N>  (fail when the candidate exceeds N bytes)
+│   ├── --max-growth-pct <N>  (fail when growth over --previous-wasm exceeds N%)
 │   └── --format <json|pretty>
 ├── identity
 │   ├── generate <name>
@@ -591,6 +595,21 @@ Store root precedence (lowest → highest): `<cwd>/.sdkt/plugins`,
 
 - `--format json` is supported on all read-style commands, every `plugin` subcommand, and on `diff`, `audit`, `deploy`, `init` for scripting / CI.
 - `diff --upgrade-safety` and `deploy --deny-breaking` implement the Upgrade Safety Guard (see `ROADMAP.md`).
+- **WASM size policy (opt-in).** `diff` and `release-assurance` accept `--max-size-bytes <N>` (absolute ceiling on the candidate artifact) and `--max-growth-pct <N>` (growth over the baseline). Thresholds are **operator-supplied policy** — SDKT hardcodes no Stellar network limit, and passing a threshold does not assert network-limit compliance. `diff` measures growth against `--old-wasm`; `release-assurance` requires `--previous-wasm` for a growth check and fails with an explicit error when it is missing rather than silently skipping. Violations exit non-zero: `diff` prints the violation on stderr after the report, and `release-assurance` marks the artifact section `FAIL` (so `release_status` becomes `FAIL`). Boundaries are inclusive — a size exactly at the limit or growth exactly at the cap passes. `diff --format json` also reports `size_delta_bytes` (signed) and `size_delta_pct` (one decimal, `null` when the old artifact is zero bytes). Size policy is independent of ABI compatibility: it is refused in combination with `diff --upgrade-safety`, and a size violation never changes an upgrade-safety verdict.
+
+  ```bash
+  # Report size change alongside the ABI diff (always on, no flags needed):
+  sdkt diff --old-wasm prev.wasm --new-wasm candidate.wasm --format json
+
+  # Fail the build on a >10% growth OR a >128 KiB candidate (your numbers):
+  sdkt diff --old-wasm prev.wasm --new-wasm candidate.wasm \
+      --max-growth-pct 10 --max-size-bytes 131072
+
+  # Gate a release on the same policy, inside the full assurance report:
+  sdkt release-assurance --wasm candidate.wasm --previous-wasm prev.wasm \
+      --max-growth-pct 10 --max-size-bytes 131072
+  ```
+
 - `audit` implements the static-analysis rules (AUTH-001/002/003/004, MOVE-001).
 - `audit --list-rules` discovers all registered built-in rules (with id, severity, and description). Supports `--format json` and does not require a source path argument.
 - **Mainnet safety.** Mutating commands (`tx submit`, `invoke`, `deploy`, `project deploy`) refuse to target mainnet unless you explicitly select the network — via `--network-profile`, `--rpc-url`, or `--network-passphrase`. A testnet-default passphrase pointed at a mainnet endpoint is rejected before any request is sent, protecting against signing for the wrong network.

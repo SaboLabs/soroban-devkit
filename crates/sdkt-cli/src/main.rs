@@ -340,6 +340,17 @@ enum Commands {
         /// Emit an upgrade-safety verdict (breaking vs non-breaking changes)
         #[arg(long, default_value_t = false)]
         upgrade_safety: bool,
+        /// Fail when the candidate grows more than N percent over the old
+        /// artifact (e.g. `--max-growth-pct 10`). Operator-supplied policy:
+        /// SDKT never assumes a network limit. Requires `--old-wasm` (always
+        /// present for `diff`). Violation exits non-zero.
+        #[arg(long, value_name = "N")]
+        max_growth_pct: Option<f64>,
+        /// Fail when the candidate artifact exceeds N bytes (e.g.
+        /// `--max-size-bytes 131072`). Operator-supplied policy; not a
+        /// hardcoded network limit. Violation exits non-zero.
+        #[arg(long, value_name = "N")]
+        max_size_bytes: Option<u64>,
     },
     /// Static security analysis of a Soroban contract source file (Gap C)
     Audit {
@@ -542,6 +553,19 @@ enum Commands {
         /// Output format (pretty or json)
         #[arg(short, long, default_value = "pretty")]
         format: String,
+        /// Fail (artifact section -> release FAIL, exit 1) when the candidate
+        /// artifact exceeds N bytes (e.g. `--max-size-bytes 131072`).
+        /// Operator-supplied policy; SDKT never hardcodes a network limit.
+        /// Violates when size > N; a size of exactly N passes.
+        #[arg(long, value_name = "N")]
+        max_size_bytes: Option<u64>,
+        /// Fail (artifact section -> release FAIL, exit 1) when the candidate
+        /// grew more than N percent over `--previous-wasm`. Requires
+        /// `--previous-wasm`; a request without it is an error, never a silent
+        /// skip. Violates when growth > N; exactly N passes. Growth is undefined
+        /// against a zero-byte baseline and is reported as such.
+        #[arg(long, value_name = "N")]
+        max_growth_pct: Option<f64>,
         #[command(flatten)]
         net: NetworkArgs,
     },
@@ -1622,6 +1646,165 @@ fn contract_not_found_status(e: &str) -> RaStatus {
     } else {
         RaStatus::Error
     }
+}
+
+/// Validates an operator-supplied byte threshold.
+///
+/// Thresholds are policy inputs, not network constants: SDKT ships no default
+/// and hardcodes no Stellar limit. `0` would reject every artifact, so it is
+/// rejected up front.
+fn validate_size_threshold_bytes(value: Option<u64>, flag: &str) -> Result<(), String> {
+    if value == Some(0) {
+        return Err(format!(
+            "{flag} must be greater than 0 (0 would reject every artifact)"
+        ));
+    }
+    Ok(())
+}
+
+/// Validates an operator-supplied percentage threshold (finite, non-negative).
+fn validate_size_threshold_pct(value: Option<f64>, flag: &str) -> Result<(), String> {
+    if let Some(v) = value {
+        if !v.is_finite() {
+            return Err(format!("{flag} must be a finite number (got {v})"));
+        }
+        if v < 0.0 {
+            return Err(format!("{flag} must not be negative (got {v})"));
+        }
+    }
+    Ok(())
+}
+
+/// Renders a growth value for policy messages, including the undefined case.
+fn format_growth_pct(pct: Option<f64>) -> String {
+    match pct {
+        Some(p) => format!("{p}%"),
+        None => "undefined (zero-byte baseline)".to_string(),
+    }
+}
+
+/// Evaluate the operator-supplied size policy against a measured size pair.
+///
+/// Returns the violated rules (empty when satisfied). Pure, shared by
+/// `sdkt diff` and `sdkt release-assurance` so both commands enforce the same
+/// semantics. Boundaries are inclusive: a violation requires size `>` limit or
+/// growth `>` pct — a value exactly at the threshold passes. `old_bytes: None`
+/// means no baseline is available (growth requested without one) and is always
+/// a violation rather than a silent skip. `size_delta_pct` returning `None`
+/// (zero-byte baseline, non-empty candidate) is also a violation: the request
+/// cannot be evaluated honestly.
+fn evaluate_size_policy(
+    old_bytes: Option<usize>,
+    new_bytes: usize,
+    max_size_bytes: Option<u64>,
+    max_growth_pct: Option<f64>,
+) -> Vec<String> {
+    let mut violations = Vec::new();
+    if let Some(max) = max_size_bytes {
+        if new_bytes as u64 > max {
+            violations.push(format!(
+                "artifact size {} bytes exceeds --max-size-bytes {}",
+                new_bytes, max
+            ));
+        }
+    }
+    if let Some(max_pct) = max_growth_pct {
+        match old_bytes {
+            None => violations.push(
+                "--max-growth-pct requires a previous artifact (--previous-wasm) to measure growth"
+                    .to_string(),
+            ),
+            Some(old) => match sdkt_wasm::size_delta_pct(old, new_bytes) {
+                Some(pct) if pct > max_pct => violations.push(format!(
+                    "size growth {} exceeds --max-growth-pct {}",
+                    format_growth_pct(Some(pct)),
+                    max_pct
+                )),
+                Some(_) => {}
+                None => violations.push(format!(
+                    "size growth is {} — cannot be compared against --max-growth-pct {}",
+                    format_growth_pct(None),
+                    max_pct
+                )),
+            },
+        }
+    }
+    violations
+}
+
+/// Map a [`sdkt_wasm::SpecDiff`]'s sizes onto the shared size policy.
+fn evaluate_size_policy_for_diff(
+    diff: &sdkt_wasm::SpecDiff,
+    max_size_bytes: Option<u64>,
+    max_growth_pct: Option<f64>,
+) -> Vec<String> {
+    evaluate_size_policy(
+        Some(diff.old.size_bytes),
+        diff.new.size_bytes,
+        max_size_bytes,
+        max_growth_pct,
+    )
+}
+
+/// Apply the opt-in size policy to a finished release-assurance report.
+///
+/// Mutates the artifact section (status → FAIL, violation text appended to its
+/// detail) and then re-runs the existing aggregation so `release_status`,
+/// `reasons`, and the process exit code stay internally consistent. No policy
+/// flags ⇒ the report is returned untouched.
+fn apply_size_policy_to_assurance(
+    report: &mut ReleaseAssuranceReport,
+    previous_wasm_path: Option<&str>,
+    max_size_bytes: Option<u64>,
+    max_growth_pct: Option<f64>,
+) -> Result<(), String> {
+    if max_size_bytes.is_none() && max_growth_pct.is_none() {
+        return Ok(());
+    }
+    // An unparsable candidate has no measurable size; the artifact section is
+    // already FAIL and the report must not be softened by policy.
+    let Some(new_bytes) = report.artifact.metadata.as_ref().map(|m| m.size_bytes) else {
+        return Ok(());
+    };
+    // Growth needs the baseline size only; a missing/unreadable file is an
+    // explicit error (the caller already required --previous-wasm for growth).
+    let previous_size_bytes = match (previous_wasm_path, max_growth_pct) {
+        (Some(path), Some(_)) => Some(
+            fs::read(path)
+                .map_err(|e| format!("Failed to read previous WASM {}: {}", path, e))?
+                .len(),
+        ),
+        _ => None,
+    };
+    let violations = evaluate_size_policy(
+        previous_size_bytes,
+        new_bytes,
+        max_size_bytes,
+        max_growth_pct,
+    );
+    if violations.is_empty() {
+        return Ok(());
+    }
+    for v in &violations {
+        report
+            .artifact
+            .check
+            .detail
+            .push_str(&format!("; size policy: {v}"));
+    }
+    report.artifact.check.status = RaStatus::Fail;
+    // Re-aggregate with the existing model so status/reasons/exit stay coherent.
+    let statuses = [
+        report.artifact.check.status,
+        report.security.check.status,
+        report.upgrade_safety.check.status,
+        report.verification.check.status,
+        report.health.check.status,
+    ];
+    report.release_status = aggregate_release_status(&statuses);
+    report.reasons.retain(|r| r != "Artifact: FAIL");
+    report.reasons.insert(0, "Artifact: FAIL".to_string());
+    Ok(())
 }
 
 /// Pretty-print the aggregate report to stdout.
@@ -5452,8 +5635,28 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
             new_wasm,
             format,
             upgrade_safety,
+            max_growth_pct,
+            max_size_bytes,
         } => {
             let fmt = parse_format_str(&format);
+            // Size policy is evaluated only in diff output mode: mixing it
+            // into --upgrade-safety would conflate size budget with ABI
+            // compatibility, so the combination is rejected explicitly.
+            if upgrade_safety && (max_size_bytes.is_some() || max_growth_pct.is_some()) {
+                eprintln!(
+                    "Error: size-policy flags apply to `sdkt diff` output only; \
+                     run without --upgrade-safety to enforce them (ABI verdict is a separate check)"
+                );
+                return Err("size policy cannot be combined with --upgrade-safety".into());
+            }
+            if let Err(e) = validate_size_threshold_bytes(max_size_bytes, "--max-size-bytes") {
+                eprintln!("Error: {e}");
+                return Err(e.into());
+            }
+            if let Err(e) = validate_size_threshold_pct(max_growth_pct, "--max-growth-pct") {
+                eprintln!("Error: {e}");
+                return Err(e.into());
+            }
             let old_bytes = fs::read(&old_wasm)
                 .map_err(|e| format!("Failed to read OLD WASM '{}': {}", old_wasm, e))?;
             let new_bytes = fs::read(&new_wasm)
@@ -5553,6 +5756,18 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
                         }
                         println!();
                         println!("Total changes: {}", report.total_changes());
+                    }
+                    // Size policy (opt-in): evaluated only after the report is
+                    // emitted so JSON consumers keep a clean document; violations
+                    // go to stderr and block the run (exit 1). ABI compatibility
+                    // is unaffected — the report itself is still produced.
+                    let violations =
+                        evaluate_size_policy_for_diff(&report, max_size_bytes, max_growth_pct);
+                    if !violations.is_empty() {
+                        for v in &violations {
+                            eprintln!("Error: size policy violation: {v}");
+                        }
+                        process::exit(1);
                     }
                 }
                 Err(e) => {
@@ -8422,9 +8637,28 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
             contract,
             network,
             format,
+            max_size_bytes,
+            max_growth_pct,
             net,
         } => {
             let fmt = parse_format_str(&format);
+            // Validate policy inputs before doing any work: a requested check
+            // that cannot be evaluated must fail loudly, never be skipped.
+            if let Err(e) = validate_size_threshold_bytes(max_size_bytes, "--max-size-bytes") {
+                eprintln!("Error: {e}");
+                process::exit(1);
+            }
+            if let Err(e) = validate_size_threshold_pct(max_growth_pct, "--max-growth-pct") {
+                eprintln!("Error: {e}");
+                process::exit(1);
+            }
+            if max_growth_pct.is_some() && previous_wasm.is_none() {
+                eprintln!(
+                    "Error: --max-growth-pct requires --previous-wasm (growth is measured against \
+                     the previous artifact; refusing to silently skip the requested check)"
+                );
+                process::exit(1);
+            }
             // Read-only boundary: same resolution as `verify` / `health`
             // (`resolve_target_network`). The mutating mainnet guard does not
             // apply — release-assurance never signs, submits, or mutates.
@@ -8453,6 +8687,17 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
                     process::exit(1);
                 }
             };
+            // Opt-in size policy, folded into the artifact section of the
+            // finished report: a violation flips artifact to FAIL, which the
+            // existing aggregation turns into release_status=FAIL (exit 1).
+            // With no policy flags this is a no-op.
+            let mut report = report;
+            apply_size_policy_to_assurance(
+                &mut report,
+                previous_wasm.as_deref(),
+                max_size_bytes,
+                max_growth_pct,
+            )?;
             match fmt {
                 OutputFormat::Json => {
                     println!(
@@ -8908,6 +9153,105 @@ mod m23_tests {
         };
         let json2 = serde_json::to_string(&r2).unwrap();
         assert!(json2.contains("\"verified\":null") || !json2.contains("\"verified\""));
+    }
+}
+
+#[cfg(test)]
+mod wasm_size_policy_tests {
+    use super::*;
+
+    // ---- threshold validation ----
+
+    #[test]
+    fn validates_byte_threshold_rejects_zero_and_accepts_none() {
+        assert!(validate_size_threshold_bytes(None, "--max-size-bytes").is_ok());
+        assert!(validate_size_threshold_bytes(Some(1), "--max-size-bytes").is_ok());
+        let err = validate_size_threshold_bytes(Some(0), "--max-size-bytes").unwrap_err();
+        assert!(err.contains("greater than 0"), "{err}");
+    }
+
+    #[test]
+    fn validates_pct_threshold_rejects_negative_and_non_finite() {
+        assert!(validate_size_threshold_pct(None, "--max-growth-pct").is_ok());
+        assert!(validate_size_threshold_pct(Some(0.0), "--max-growth-pct").is_ok());
+        assert!(validate_size_threshold_pct(Some(10.0), "--max-growth-pct").is_ok());
+        let neg = validate_size_threshold_pct(Some(-1.0), "--max-growth-pct").unwrap_err();
+        assert!(neg.contains("negative"), "{neg}");
+        let nan = validate_size_threshold_pct(Some(f64::NAN), "--max-growth-pct").unwrap_err();
+        assert!(nan.contains("finite"), "{nan}");
+        let inf = validate_size_threshold_pct(Some(f64::INFINITY), "--max-growth-pct").unwrap_err();
+        assert!(inf.contains("finite"), "{inf}");
+    }
+
+    // ---- policy evaluation: boundaries are inclusive (violation needs >) ----
+
+    #[test]
+    fn abs_policy_boundary_is_inclusive() {
+        // size == max -> pass; size == max+1 -> violation.
+        assert!(evaluate_size_policy(Some(1), 10542, Some(10542), None).is_empty());
+        let v = evaluate_size_policy(Some(1), 10543, Some(10542), None);
+        assert_eq!(v.len(), 1);
+        assert!(
+            v[0].contains("10543 bytes exceeds --max-size-bytes 10542"),
+            "{v:?}"
+        );
+    }
+
+    #[test]
+    fn growth_policy_boundary_is_inclusive() {
+        // 198 -> 530 is +167.7%; exactly 167.7 passes, 167.6 violates.
+        assert!(evaluate_size_policy(Some(198), 530, None, Some(167.7)).is_empty());
+        let v = evaluate_size_policy(Some(198), 530, None, Some(167.6));
+        assert_eq!(v.len(), 1);
+        assert!(
+            v[0].contains("167.7% exceeds --max-growth-pct 167.6"),
+            "{v:?}"
+        );
+    }
+
+    #[test]
+    fn negative_growth_never_violates_a_growth_cap() {
+        // Shrinking is not a regression.
+        assert!(evaluate_size_policy(Some(10543), 467, None, Some(0.0)).is_empty());
+        assert!(evaluate_size_policy(Some(10543), 467, None, Some(10.0)).is_empty());
+    }
+
+    #[test]
+    fn growth_policy_requires_a_baseline() {
+        let v = evaluate_size_policy(None, 100, None, Some(10.0));
+        assert_eq!(v.len(), 1);
+        assert!(v[0].contains("requires a previous artifact"), "{v:?}");
+    }
+
+    #[test]
+    fn growth_policy_reports_zero_baseline_as_undefined_violation() {
+        // 0-byte baseline with a non-empty candidate: undefined growth must be
+        // an explicit violation, never a silent pass.
+        let v = evaluate_size_policy(Some(0), 100, None, Some(10.0));
+        assert_eq!(v.len(), 1);
+        assert!(v[0].contains("undefined (zero-byte baseline)"), "{v:?}");
+        // Both artifacts empty is defined (0.0) and passes.
+        assert!(evaluate_size_policy(Some(0), 0, None, Some(10.0)).is_empty());
+    }
+
+    #[test]
+    fn no_policy_flags_means_no_violations() {
+        // 22x growth must be fine when no policy is configured.
+        assert!(evaluate_size_policy(Some(467), 10543, None, None).is_empty());
+    }
+
+    #[test]
+    fn both_policies_can_violate_together() {
+        let v = evaluate_size_policy(Some(467), 10543, Some(1000), Some(10.0));
+        assert_eq!(v.len(), 2);
+        assert!(v[0].contains("--max-size-bytes"), "{v:?}");
+        assert!(v[1].contains("--max-growth-pct"), "{v:?}");
+    }
+
+    #[test]
+    fn growth_value_renders_undefined_case() {
+        assert_eq!(format_growth_pct(Some(12.3)), "12.3%");
+        assert_eq!(format_growth_pct(None), "undefined (zero-byte baseline)");
     }
 }
 

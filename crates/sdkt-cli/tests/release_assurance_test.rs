@@ -261,3 +261,163 @@ fn minimal_wasm_parses_through_the_real_metadata_engine() {
     assert_eq!(v["artifact"]["metadata"]["size_bytes"], 8);
     assert_eq!(v["artifact"]["metadata"]["version"], 1);
 }
+
+// ---- WASM size policy on release-assurance (opt-in) ----
+//
+// us_old.wasm = 198 bytes, us_new.wasm = 530 bytes. Policy violations fold
+// into the ARTIFACT section (FAIL) which the existing aggregation turns into
+// release_status=FAIL and exit 1. No policy flags ⇒ unchanged behavior.
+
+#[test]
+fn ra_abs_size_boundary_is_inclusive() {
+    // Exactly at the limit passes.
+    release_assurance(&["--wasm", &fixture("us_new.wasm"), "--max-size-bytes", "530"])
+        .assert()
+        .success();
+    // One byte over fails, with the policy named in the report.
+    let assert = release_assurance(&[
+        "--wasm",
+        &fixture("us_new.wasm"),
+        "--max-size-bytes",
+        "529",
+        "--format",
+        "json",
+    ])
+    .assert()
+    .failure();
+    let out = assert.get_output().stdout.clone();
+    let v: serde_json::Value = serde_json::from_slice(&out).expect("valid JSON");
+    assert_eq!(v["artifact"]["status"], "FAIL");
+    assert_eq!(v["release_status"], "FAIL");
+    let detail = v["artifact"]["detail"].as_str().unwrap();
+    assert!(detail.contains("size policy"), "{detail}");
+    assert!(detail.contains("--max-size-bytes 529"), "{detail}");
+    // Reasons surface the section failure through the existing loop.
+    assert!(v["reasons"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|r| r == "Artifact: FAIL"));
+}
+
+#[test]
+fn ra_growth_policy_requires_previous_artifact() {
+    // Requested check without a baseline must fail loudly, never be skipped.
+    release_assurance(&["--wasm", &fixture("us_new.wasm"), "--max-growth-pct", "10"])
+        .assert()
+        .failure()
+        .stderr(predicates::str::contains(
+            "--max-growth-pct requires --previous-wasm",
+        ));
+}
+
+#[test]
+fn ra_growth_violation_blocks_release() {
+    // us_old -> us_new grows 167.7% > 0%; upgrade-safety ALSO fails on this
+    // pair (real ABI changes), so assert the policy fired in the artifact
+    // section rather than relying on exit code alone.
+    let assert = release_assurance(&[
+        "--wasm",
+        &fixture("us_new.wasm"),
+        "--previous-wasm",
+        &fixture("us_old.wasm"),
+        "--max-growth-pct",
+        "0",
+        "--format",
+        "json",
+    ])
+    .assert()
+    .failure();
+    let v: serde_json::Value =
+        serde_json::from_slice(&assert.get_output().stdout).expect("valid JSON");
+    let detail = v["artifact"]["detail"].as_str().unwrap();
+    assert!(detail.contains("size policy"), "{detail}");
+    assert!(detail.contains("167.7%"), "{detail}");
+    assert_eq!(v["artifact"]["status"], "FAIL");
+    assert_eq!(v["release_status"], "FAIL");
+}
+
+#[test]
+fn ra_zero_growth_identical_artifacts_passes_policy() {
+    // Identical candidate and baseline: 0% growth is at any non-negative
+    // threshold and the report stays REVIEW (on-chain sections skipped).
+    let assert = release_assurance(&[
+        "--wasm",
+        &fixture("us_new.wasm"),
+        "--previous-wasm",
+        &fixture("us_new.wasm"),
+        "--max-growth-pct",
+        "0",
+        "--format",
+        "json",
+    ])
+    .assert()
+    .success();
+    let v: serde_json::Value =
+        serde_json::from_slice(&assert.get_output().stdout).expect("valid JSON");
+    assert_eq!(v["artifact"]["status"], "PASS");
+    assert_eq!(v["upgrade_safety"]["status"], "PASS");
+    assert_eq!(v["release_status"], "REVIEW");
+}
+
+#[test]
+fn ra_compatible_artifact_fails_only_on_size_policy() {
+    // Same artifact twice: ABI verdict is PASS (identical), yet an absolute
+    // size policy of 197 bytes (us_old = 198) blocks the release — proving
+    // size policy and upgrade-safety are evaluated independently.
+    let assert = release_assurance(&[
+        "--wasm",
+        &fixture("us_old.wasm"),
+        "--previous-wasm",
+        &fixture("us_old.wasm"),
+        "--max-size-bytes",
+        "197",
+        "--format",
+        "json",
+    ])
+    .assert()
+    .failure();
+    let v: serde_json::Value =
+        serde_json::from_slice(&assert.get_output().stdout).expect("valid JSON");
+    // The size policy does not touch the ABI verdict: upgrade-safety ran
+    // normally (the policy is applied post-hoc) and reported its own
+    // comparison; only the artifact section is flipped by the size policy.
+    assert_eq!(
+        v["upgrade_safety"]["status"], "PASS",
+        "ABI untouched by size policy"
+    );
+    assert_eq!(v["artifact"]["status"], "FAIL");
+    assert_eq!(v["release_status"], "FAIL");
+    let detail = v["artifact"]["detail"].as_str().unwrap();
+    assert!(detail.contains("exceeds --max-size-bytes 197"), "{detail}");
+}
+
+#[test]
+fn ra_no_policy_flags_keeps_artifact_unchanged() {
+    // Regression guard: default artifact section identical to pre-policy.
+    let assert = release_assurance(&["--wasm", &fixture("us_new.wasm"), "--format", "json"])
+        .assert()
+        .success();
+    let v: serde_json::Value =
+        serde_json::from_slice(&assert.get_output().stdout).expect("valid JSON");
+    assert_eq!(v["artifact"]["status"], "PASS");
+    let detail = v["artifact"]["detail"].as_str().unwrap();
+    assert!(detail.starts_with("valid WASM"), "{detail}");
+    assert!(
+        !detail.contains("size policy"),
+        "no policy ⇒ no policy text: {detail}"
+    );
+    assert_eq!(v["release_status"], "REVIEW");
+}
+
+#[test]
+fn ra_rejects_invalid_threshold_inputs() {
+    release_assurance(&["--wasm", &fixture("us_new.wasm"), "--max-growth-pct", "NaN"])
+        .assert()
+        .failure()
+        .stderr(predicates::str::contains("finite"));
+    release_assurance(&["--wasm", &fixture("us_new.wasm"), "--max-size-bytes", "0"])
+        .assert()
+        .failure()
+        .stderr(predicates::str::contains("greater than 0"));
+}

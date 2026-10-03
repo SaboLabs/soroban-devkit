@@ -16,7 +16,9 @@ use crate::{
 };
 
 /// The full comparison result between two contract WASM binaries.
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
+///
+/// `Eq` is not derived because `size_delta_pct` is an `Option<f64>`.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
 pub struct SpecDiff {
     /// Metadata of the "old" (baseline) WASM.
     pub old: WasmSummary,
@@ -41,6 +43,16 @@ pub struct SpecDiff {
     pub removed_types: Vec<String>,
     /// Custom types present in both whose definition (kind or members) changed.
     pub changed_types: Vec<TypeDefinitionChange>,
+    /// Signed size change: `new.size_bytes - old.size_bytes` (negative when the
+    /// candidate shrank). Always present; independent of any policy flag.
+    pub size_delta_bytes: i64,
+    /// Percentage growth relative to the old artifact, rounded to one decimal
+    /// place (e.g. `2157.6`). `null` when the old artifact is zero bytes and
+    /// the new one is not — a relative change against an empty baseline is
+    /// mathematically undefined, and is never coerced to 0 or infinity.
+    /// Both artifacts empty ⇒ `Some(0.0)`.
+    #[serde(default)]
+    pub size_delta_pct: Option<f64>,
 }
 
 /// Lightweight WASM identity summary for diff context.
@@ -147,6 +159,8 @@ pub fn diff_specs(
         new: new_summary,
         ..Default::default()
     };
+    diff.size_delta_bytes = size_delta_bytes(diff.old.size_bytes, diff.new.size_bytes);
+    diff.size_delta_pct = size_delta_pct(diff.old.size_bytes, diff.new.size_bytes);
 
     // Index old by name for O(n) lookups.
     let old_fns: std::collections::BTreeMap<&str, &ContractFunction> =
@@ -465,6 +479,26 @@ impl UpgradeVerdict {
     }
 }
 
+/// Signed size delta in bytes between two artifacts.
+pub fn size_delta_bytes(old_bytes: usize, new_bytes: usize) -> i64 {
+    new_bytes as i64 - old_bytes as i64
+}
+
+/// Percentage growth of `new_bytes` relative to `old_bytes`, rounded to one
+/// decimal place.
+///
+/// Zero-byte baseline semantics (documented, no division by zero):
+/// - old == 0, new == 0 → `Some(0.0)` (nothing grew);
+/// - old == 0, new  > 0 → `None` — undefined relative change (rendered as
+///   `null` in JSON); absolute policy (`--max-size-bytes`) still applies.
+pub fn size_delta_pct(old_bytes: usize, new_bytes: usize) -> Option<f64> {
+    if old_bytes == 0 {
+        return if new_bytes == 0 { Some(0.0) } else { None };
+    }
+    let pct = (new_bytes as f64 - old_bytes as f64) * 100.0 / old_bytes as f64;
+    Some((pct * 10.0).round() / 10.0)
+}
+
 /// Build a `name(params) -> outputs` signature string for a function.
 fn sig_of(f: &ContractFunction) -> String {
     let params = f
@@ -551,6 +585,87 @@ pub fn upgrade_safety_wasm(old_raw: &[u8], new_raw: &[u8]) -> Result<UpgradeVerd
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // ---- size delta / growth policy math (WASM size policy) ----
+
+    #[test]
+    fn size_delta_bytes_is_signed_and_sums_correctly() {
+        assert_eq!(size_delta_bytes(467, 10543), 10076); // growth
+        assert_eq!(size_delta_bytes(10543, 467), -10076); // shrink
+        assert_eq!(size_delta_bytes(530, 530), 0); // equal
+        assert_eq!(size_delta_bytes(0, 0), 0);
+        assert_eq!(size_delta_bytes(0, 4096), 4096);
+    }
+
+    #[test]
+    fn size_delta_pct_rounds_to_one_decimal() {
+        assert_eq!(size_delta_pct(467, 10543), Some(2157.6));
+        assert_eq!(size_delta_pct(198, 530), Some(167.7)); // 167.676… -> 167.7
+        assert_eq!(size_delta_pct(467, 467), Some(0.0)); // equal
+        assert_eq!(size_delta_pct(1000, 900), Some(-10.0)); // negative growth
+        assert_eq!(size_delta_pct(10, 10), Some(0.0));
+        // 1.44 -> 1.4 (half-away-from-zero), 1.45 -> 1.5
+        assert_eq!(size_delta_pct(1000, 1014), Some(1.4));
+        assert_eq!(size_delta_pct(1000, 1015), Some(1.5));
+    }
+
+    #[test]
+    fn size_delta_pct_zero_baseline_is_none_unless_both_zero() {
+        // Division by zero must never happen: undefined relative change -> None.
+        assert_eq!(size_delta_pct(0, 1), None);
+        assert_eq!(size_delta_pct(0, 4096), None);
+        assert_eq!(size_delta_pct(0, 0), Some(0.0)); // nothing grew
+    }
+
+    #[test]
+    fn diff_specs_reports_size_fields() {
+        let old = ContractSpec {
+            env_meta: None,
+            functions: vec![],
+            custom_types: vec![],
+            events: vec![],
+        };
+        let new = old.clone();
+        let diff = diff_specs(
+            &old,
+            &new,
+            WasmSummary {
+                hash: "o".into(),
+                size_bytes: 467,
+            },
+            WasmSummary {
+                hash: "n".into(),
+                size_bytes: 530,
+            },
+        )
+        .unwrap();
+        assert_eq!(diff.size_delta_bytes, 63);
+        assert_eq!(diff.size_delta_pct, Some(13.5));
+        // JSON key presence/shape is asserted from the real CLI output in
+        // `sdkt-cli` integration tests (this crate has no serde_json dep).
+    }
+
+    #[test]
+    fn diff_specs_zero_baseline_serializes_null_pct() {
+        let spec = ContractSpec {
+            env_meta: None,
+            functions: vec![],
+            custom_types: vec![],
+            events: vec![],
+        };
+        let diff = diff_specs(
+            &spec,
+            &spec,
+            WasmSummary::default(),
+            WasmSummary {
+                hash: "n".into(),
+                size_bytes: 100,
+            },
+        )
+        .unwrap();
+        assert_eq!(diff.size_delta_bytes, 100);
+        assert_eq!(diff.size_delta_pct, None);
+    }
     use crate::spec::tests::func_entry;
     use crate::spec::tests::spec_section;
     use stellar_xdr::ScSpecTypeDef;

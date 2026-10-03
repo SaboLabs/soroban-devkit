@@ -5,6 +5,11 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+- **Opt-in WASM size policy (`sdkt diff` / `sdkt release-assurance`).** Size growth is now reported on every `sdkt diff` (`size_delta_bytes` signed, `size_delta_pct` one decimal; `null` when the old artifact is zero bytes, so a relative change is never invented against an empty baseline), and both commands accept `--max-size-bytes <N>` and `--max-growth-pct <N>` to turn that measurement into an enforced policy. Thresholds are operator-supplied: no Stellar network limit is hardcoded, and passing a threshold does not assert network-limit compliance. Boundaries are inclusive (a size exactly at the limit, or growth exactly at the cap, passes); shrinking never violates a growth cap; `release-assurance` refuses a growth check without `--previous-wasm` instead of silently skipping it. `diff` exits non-zero with the violation on stderr; `release-assurance` marks the artifact section `FAIL`, so the aggregate `release_status` becomes `FAIL` and the process exits 1. Size policy is kept independent of ABI compatibility — it is rejected in combination with `diff --upgrade-safety`, and it never alters an upgrade-safety verdict. Default behavior with no flags is unchanged. Adds `size_delta_bytes` / `size_delta_pct` to `sdkt-wasm`.
+
 ## [v2.6.0] - 2026-10-02
 
 ### Added
@@ -533,8 +538,3 @@ the release pipeline fully green end-to-end.
 - Base64 XDR parser via `sdkt-xdr` (`sdkt decode`).
 - Storage TTL analysis (`sdkt storage check`).
 - Basic workspace architecture and integration testing.
-
-## [Unreleased]
-
-No unreleased changes. AUTH-004 registration and the plugin bundle CLI (`pack` /
-`verify-bundle`) shipped in `v2.5.0`.
