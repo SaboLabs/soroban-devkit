@@ -614,7 +614,7 @@ enum IdentityAction {
         name: String,
         /// Secret key, or `-` to read it from stdin (keeps the secret out of
         /// the process argv / `ps` output — the path CI smoke jobs need).
-        secret: String,
+        secret: Option<String>,
     },
     List,
     Show {
@@ -6656,18 +6656,31 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
                     println!("Public Key: {}", identity.public_key);
                 }
                 IdentityAction::Import { name, secret } => {
-                    // `-` means: read the secret from stdin. A secret passed on
-                    // argv is visible to any process listing on the machine;
-                    // piping it in is the CI-safe path.
-                    let secret = if secret == "-" {
-                        use std::io::Read;
-                        let mut buf = String::new();
-                        std::io::stdin()
-                            .read_to_string(&mut buf)
-                            .map_err(|e| format!("Failed to read secret from stdin: {e}"))?;
-                        buf.trim().to_string()
-                    } else {
-                        secret
+                    // Deprecated path: secret on argv is visible in `ps` output.
+                    // Preferred: omit the secret and pipe it on stdin, optionally
+                    // with `-` as a placeholder argument.
+                    let secret = match secret.as_deref() {
+                        None | Some("-") => {
+                            use std::io::Read;
+                            let mut buf = String::new();
+                            std::io::stdin()
+                                .read_to_string(&mut buf)
+                                .map_err(|e| format!("Failed to read secret from stdin: {e}"))?;
+                            let secret = buf.trim().to_string();
+                            if secret.is_empty() {
+                                return Err(format!(
+                                    "No secret provided. Pass it on stdin, e.g. `sdkt identity import {name} -` or pipe it in."
+                                )
+                                .into());
+                            }
+                            secret
+                        }
+                        Some(plaintext) => {
+                            eprintln!(
+                                "warning: passing the secret as a command-line argument is deprecated; pipe it on stdin instead (e.g. `sdkt identity import {name} -`)."
+                            );
+                            plaintext.to_string()
+                        }
                     };
                     let identity = store.import(&name, &secret)?;
                     println!("Identity '{}' imported successfully.", identity.name);

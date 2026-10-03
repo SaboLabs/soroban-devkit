@@ -76,3 +76,50 @@ fn test_cli_identity_delete_missing_errors() {
         .stderr(predicate::str::contains("Identity 'alice' not found"))
         .stdout(predicate::str::contains("removed").not());
 }
+
+/// Write a throwaway secret to a temp file and return its path.
+fn throwaway_secret_at(dir: &std::path::Path, name: &str) -> std::path::PathBuf {
+    let path = dir.join(name);
+    std::fs::write(&path, "s3cr3t-bytes-not-a-real-key").unwrap();
+    path
+}
+
+#[test]
+fn test_cli_identity_import_argv_warns_but_succeeds() {
+    let dir = tempdir().unwrap();
+    let secret_path = throwaway_secret_at(dir.path(), "secret.txt");
+    let secret = std::fs::read_to_string(&secret_path).unwrap();
+
+    sdkt(dir.path())
+        .args(["identity", "import", "alice", &secret])
+        .assert()
+        .success()
+        .stderr(predicate::str::contains("deprecated"))
+        .stdout(predicate::str::contains("imported successfully"));
+}
+
+#[test]
+fn test_cli_identity_import_stdin_without_secret_arg() {
+    let dir = tempdir().unwrap();
+    let secret_path = throwaway_secret_at(dir.path(), "secret.txt");
+    let secret = std::fs::read_to_string(&secret_path).unwrap();
+
+    sdkt(dir.path())
+        .args(["identity", "import", "bob", "-"])
+        .write_stdin(secret)
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("imported successfully"));
+}
+
+#[test]
+fn test_cli_identity_import_empty_stdin_errors() {
+    let dir = tempdir().unwrap();
+
+    sdkt(dir.path())
+        .args(["identity", "import", "carol", "-"])
+        .write_stdin("")
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("No secret provided"));
+}

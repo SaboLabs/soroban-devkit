@@ -78,3 +78,13 @@ Verification does **not** audit plugin code for safety. A correctly signed bundl
 - False negatives can occur when malicious or vulnerable code uses non-obvious names or complex control flow.
 - Audit results should be treated as **indicators** to guide manual review, not as security guarantees.
 - Users should manually review important findings and not rely solely on automated audit results.
+
+## Identity secrets on stdin
+
+sdkt identity import no longer requires the secret on the command line.
+Passing secrets via argv exposes them in process listings (ps). Prefer:
+
+    sdkt identity import <name> - < secret.txt
+    # or omit the argument entirely and pipe the secret
+
+A plaintext secret argument still works but is deprecated and logs a warning.

@@ -113,7 +113,7 @@ sdkt
 │   └── --no-plugins          (skip loading installed plugins)
 ├── identity
 │   ├── generate <name>
-│   ├── import <name> <secret>
+│   ├── import <name> [secret|-]
 │   ├── list
 │   ├── show <name>
 │   ├── delete <name>
