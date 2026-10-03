@@ -180,13 +180,14 @@ enum Commands {
     },
     /// Encode typed values (TYPE:VALUE) to base64 XDR (reverse of decode)
     Encode {
-        /// One typed value: u32, i32, u64, i64, u128, i128, bool, string, symbol, bytes, or address.
-        /// Examples: u128:1000000 i128:-1000 bytes:deadbeef
+        /// One typed value: u32, i32, u64, i64, timepoint, duration, u128, i128, bool, string, symbol, bytes, or address.
+        /// Examples: u128:1000000 timepoint:1758000000 duration:86400 bytes:deadbeef
         ///
         /// Or json:<JSON> to encode ONE composite value (json:[1,2,3] is a single Vec):
         /// array -> Vec, object -> Map with String keys, null -> Void, bool -> Bool,
         /// string -> String, integer -> smallest of u32/u64 (or i32/i64 if negative).
         /// Floats are rejected. Example: json:'[{"alice":"100"},{"bob":"250"}]'
+
         #[arg(value_name = "TYPE:VALUE", num_args = 1..)]
         values: Vec<String>,
     },
@@ -2491,7 +2492,7 @@ fn storage_key_label(raw: &str, spec: &sdkt_wasm::ContractSpec) -> String {
 
 /// Shared typed-argument parser used by `call`, `tx build`, and `invoke`.
 ///
-/// Accepts `TYPE:VALUE` pairs (u32|i32|u64|i64|u128|i128|bool|string|bytes|
+/// Accepts `TYPE:VALUE` pairs (u32|i32|u64|i64|timepoint|duration|u128|i128|bool|string|bytes|
 /// address) and returns base64-encoded `ScVal` strings ready for
 /// `InvokeTransactionParams::args`. Values without a recognized `TYPE:` prefix
 /// are passed through as-is (assumed pre-encoded base64 ScVal), matching the
@@ -2521,6 +2522,7 @@ fn parse_hex_bytes(raw: &str) -> Result<Vec<u8>, String> {
 
 fn parse_typed_args(args: &[String], strict: bool) -> Result<Vec<String>, String> {
     use sdkt_xdr::{scval_to_base64, Address, IntoScVal};
+    use stellar_xdr::{Duration, TimePoint};
     let mut parsed = Vec::new();
     for a in args.iter() {
         if let Some((t, v)) = a.split_once(':') {
@@ -2538,6 +2540,20 @@ fn parse_typed_args(args: &[String], strict: bool) -> Result<Vec<String>, String
                 "u64" => {
                     let n: u64 = v.parse().map_err(|_| format!("invalid u64 value: {v}"))?;
                     scval_to_base64(&n.into_scval().map_err(|e| e.to_string())?)
+                        .map_err(|e| e.to_string())?
+                }
+                "timepoint" => {
+                    let n: u64 = v
+                        .parse()
+                        .map_err(|_| format!("invalid timepoint value: {v}"))?;
+                    scval_to_base64(&TimePoint(n).into_scval().map_err(|e| e.to_string())?)
+                        .map_err(|e| e.to_string())?
+                }
+                "duration" => {
+                    let n: u64 = v
+                        .parse()
+                        .map_err(|_| format!("invalid duration value: {v}"))?;
+                    scval_to_base64(&Duration(n).into_scval().map_err(|e| e.to_string())?)
                         .map_err(|e| e.to_string())?
                 }
                 "i64" => {
@@ -2591,7 +2607,7 @@ fn parse_typed_args(args: &[String], strict: bool) -> Result<Vec<String>, String
                 _ => {
                     if strict {
                         return Err(format!(
-                            "unknown arg type '{t}'. Use u32|i32|u64|i64|u128|i128|bool|string|symbol|bytes|address"
+                            "unknown arg type '{t}'. Use u32|i32|u64|i64|timepoint|duration|u128|i128|bool|string|symbol|bytes|address"
                         ));
                     }
                     a.clone() // passthrough: pre-encoded base64 ScVal
@@ -2815,7 +2831,7 @@ fn resolve_storage_analyze_keys(
 ///
 /// This is the write-direction counterpart to `sdkt decode`. Supported types
 /// are the primitives this CLI already encodes elsewhere (`parse_typed_args`):
-/// `u32`, `i32`, `u64`, `i64`, `u128`, `i128`, `bool`, `address`, `string`,
+/// `u32`, `i32`, `u64`, `i64`, `timepoint`, `duration`, `u128`, `i128`, `bool`, `address`, `string`,
 /// `symbol`, `bytes`. `json:<JSON>` encodes one composite value through
 /// `sdkt_xdr::json_to_scval`. Exactly one value is encoded per invocation;
 /// passing more than one is rejected to keep the output unambiguous.
@@ -2836,7 +2852,7 @@ fn run_encode(values: &[String]) -> Result<String, String> {
     })?;
 
     use sdkt_xdr::{scval_to_base64, Address, IntoScVal};
-    use stellar_xdr::{ScSymbol, ScVal};
+    use stellar_xdr::{Duration, ScSymbol, ScVal, TimePoint};
     let scval = match ty.to_lowercase().as_str() {
         "u32" => raw
             .parse::<u32>()
@@ -2853,6 +2869,18 @@ fn run_encode(values: &[String]) -> Result<String, String> {
             .map_err(|_| format!("invalid u64 value: {raw}"))?
             .into_scval()
             .map_err(|e| e.to_string())?,
+        "timepoint" => TimePoint(
+            raw.parse::<u64>()
+                .map_err(|_| format!("invalid timepoint value: {raw}"))?,
+        )
+        .into_scval()
+        .map_err(|e| e.to_string())?,
+        "duration" => Duration(
+            raw.parse::<u64>()
+                .map_err(|_| format!("invalid duration value: {raw}"))?,
+        )
+        .into_scval()
+        .map_err(|e| e.to_string())?,
         "i64" => raw
             .parse::<i64>()
             .map_err(|_| format!("invalid i64 value: {raw}"))?
@@ -2897,7 +2925,7 @@ fn run_encode(values: &[String]) -> Result<String, String> {
         }
         other => {
             return Err(format!(
-                "unknown type '{other}'. Use u32|i32|u64|i64|u128|i128|bool|string|symbol|bytes|address"
+                "unknown type '{other}'. Use u32|i32|u64|i64|timepoint|duration|u128|i128|bool|string|symbol|bytes|address"
             ))
         }
     };
@@ -2916,6 +2944,12 @@ mod encode_tests {
             "u128:+42",
             "u128:18446744073709551617",
             "u128:340282366920938463463374607431768211455",
+            "timepoint:0",
+            "timepoint:1758000000",
+            "timepoint:18446744073709551615",
+            "duration:0",
+            "duration:86400",
+            "duration:18446744073709551615",
             "U128:1000000",
             "i128:0",
             "i128:-0",
@@ -3048,6 +3082,24 @@ mod encode_tests {
         // Valid JSON the converter cannot represent (floats) is also reported per input.
         let err = run_encode(&["json:1.5".to_string()]).unwrap_err();
         assert_eq!(err, "cannot encode 'json:1.5': invalid JSON argument: 1.5");
+    }
+
+    #[test]
+    fn timepoint_and_duration_reject_invalid_u64_values_consistently() {
+        for input in [
+            "timepoint:abc",
+            "timepoint:-1",
+            "timepoint:18446744073709551616",
+            "duration:abc",
+            "duration:-1",
+            "duration:18446744073709551616",
+        ] {
+            let args = [input.to_string()];
+            let encode_error = run_encode(&args).unwrap_err();
+            for strict in [false, true] {
+                assert_eq!(parse_typed_args(&args, strict).unwrap_err(), encode_error);
+            }
+        }
     }
 }
 
