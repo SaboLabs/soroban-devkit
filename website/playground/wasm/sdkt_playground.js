@@ -1,4 +1,31 @@
 /**
+ * Compare two Soroban contract WASM binaries using the same offline
+ * upgrade-safety classification as the CLI.
+ * @param {Uint8Array} old_bytes
+ * @param {Uint8Array} new_bytes
+ * @returns {any}
+ */
+export function diff_wasm_result(old_bytes, new_bytes) {
+    try {
+        const retptr = wasm.__wbindgen_add_to_stack_pointer(-16);
+        const ptr0 = passArray8ToWasm0(old_bytes, wasm.__wbindgen_export);
+        const len0 = WASM_VECTOR_LEN;
+        const ptr1 = passArray8ToWasm0(new_bytes, wasm.__wbindgen_export);
+        const len1 = WASM_VECTOR_LEN;
+        wasm.diff_wasm_result(retptr, ptr0, len0, ptr1, len1);
+        var r0 = getDataViewMemory0().getInt32(retptr + 4 * 0, true);
+        var r1 = getDataViewMemory0().getInt32(retptr + 4 * 1, true);
+        var r2 = getDataViewMemory0().getInt32(retptr + 4 * 2, true);
+        if (r2) {
+            throw takeObject(r1);
+        }
+        return takeObject(r0);
+    } finally {
+        wasm.__wbindgen_add_to_stack_pointer(16);
+    }
+}
+
+/**
  * Inspect raw Soroban contract WASM bytes.
  *
  * Returns a plain JS object `{ metadata, spec, spec_error }` on success, or a

@@ -13,28 +13,47 @@ import assert from 'node:assert/strict';
 
 function makeEl() {
   const classes = new Set();
-  return {
+  const attrs = new Map();
+  const children = [];
+  const find = (selector) => {
+    const attrName = selector.startsWith('[') ? selector.slice(1, -1).split('=')[0] : selector;
+    for (const child of children) {
+      if (child && child.attributes?.has(attrName)) return child;
+      const nested = child?.querySelector?.(selector);
+      if (nested) return nested;
+    }
+    return null;
+  };
+  const el = {
     className: '', hidden: false, textContent: '', value: '', innerHTML: '',
     style: {}, dataset: {},
+    attributes: attrs, children,
     classList: {
       add: (c) => classes.add(c),
       remove: (c) => classes.delete(c),
       contains: (c) => classes.has(c),
     },
-    addEventListener: () => {}, setAttribute: () => {}, prepend: () => {},
-    appendChild: () => {}, focus: () => {}, querySelector: () => makeEl(),
+    addEventListener: () => {},
+    setAttribute: (k, v) => attrs.set(k, v), prepend: (child) => children.unshift(child),
+    appendChild: (child) => { children.push(child); if (child) child.parent = el; },
+    focus: () => {},
+    remove: () => { if (el.parent) el.parent.children.splice(el.parent.children.indexOf(el), 1); },
+    querySelector: find,
   };
+  return el;
 }
 
 const els = new Map();
-const ids = ['dropzone', 'fileInput', 'filebar', 'fname', 'fmeta', 'status',
+const ids = ['dropzone', 'fileInput', 'candidateInput', 'candidateName', 'filebar', 'fname', 'fmeta', 'status',
   'errorBox', 'errorMsg', 'results', 'resetBtn', 'modeChip'];
 for (const id of ids) els.set(id, makeEl());
 let resultAppendCount = 0;
-els.get('results').appendChild = () => { resultAppendCount += 1; };
+const appendResult = els.get('results').appendChild;
+els.get('results').appendChild = (child) => { resultAppendCount += 1; appendResult(child); };
 
 const handlers = new Map();
 els.get('dropzone').addEventListener = (type, fn) => { if (type === 'drop') handlers.set('drop', fn); };
+els.get('candidateInput').addEventListener = (_, fn) => handlers.set('candidate', fn);
 els.get('resetBtn').addEventListener = (_, fn) => handlers.set('reset', fn);
 
 const exampleBtns = [
@@ -54,6 +73,7 @@ class StubWorker {
   constructor() {
     this.onmessage = null;
     this.inspects = [];
+    this.diffs = [];
     workers.push(this);
   }
   postMessage(msg) {
@@ -64,6 +84,10 @@ class StubWorker {
     }
     if (msg.type === 'inspect') {
       this.inspects.push({ id: msg.id, bytes: msg.bytes, answered: false });
+      return;
+    }
+    if (msg.type === 'diff') {
+      this.diffs.push({ id: msg.id, answered: false });
     }
   }
   answer(i, payload) {
@@ -71,6 +95,14 @@ class StubWorker {
     assert.ok(m && !m.answered, 'inspect ' + i + ' must exist and be unanswered');
     m.answered = true;
     queueMicrotask(() => this.onmessage({ data: { id: m.id, ok: true, payload } }));
+  }
+  answerDiff(i, payload, error) {
+    const m = this.diffs[i];
+    assert.ok(m && !m.answered, 'diff ' + i + ' must exist and be unanswered');
+    m.answered = true;
+    queueMicrotask(() => this.onmessage({ data: error
+      ? { id: m.id, ok: false, error }
+      : { id: m.id, ok: true, payload } }));
   }
 }
 globalThis.Worker = StubWorker;
@@ -112,6 +144,10 @@ const reset = () => handlers.get('reset')({});
 const fname = () => els.get('fname').textContent;
 const statusText = () => els.get('status').textContent;
 const resultsHidden = () => els.get('results').classList.contains('hidden');
+function treeText(el) {
+  return [el.textContent || '', ...(el.children || []).map((child) =>
+    typeof child === 'string' ? child : treeText(child))].join(' ');
+}
 
 await import(new URL('../playground.js', import.meta.url).href);
 await tick();
@@ -163,6 +199,55 @@ worker.answer(3, payloadFor(null));     // c.wasm resolves after reset -> stale
 await tick();
 assert.equal(resultsHidden(), true, 'stale inspection must not re-render after reset');
 assert.equal(statusText(), '', 'stale inspection must not touch status');
+
+// 4) Upgrade panel rendering exercises the real selection/worker/render path:
+//    base-only idle, compatible verdict, and a worker error.
+dropFile('base.wasm');
+await tick();
+assert.equal(worker.inspects.length, 5, 'base upload starts inspection');
+worker.answer(4, payloadFor(null));
+await tick();
+assert.match(treeText(els.get('results')), /Load a candidate WASM/,
+  `base inspection renders the idle upgrade state; status=${statusText()}, children=${els.get('results').children.length}`);
+
+const candidate = (name) => ({ name, size: 3, type: 'application/wasm',
+  arrayBuffer: async () => new Uint8Array([4, 5, 6]).buffer });
+els.get('candidateInput').files = [candidate('candidate.wasm')];
+handlers.get('candidate')();
+await tick();
+assert.equal(worker.diffs.length, 1, 'candidate selection starts a comparison');
+worker.answerDiff(0, { compatible: false, breaking_changes: [
+  { kind: 'removed_function', name: 'old_method', detail: 'function was removed' },
+], non_breaking_changes: [
+  { kind: 'added_function', name: 'new_method' },
+  { kind: 'changed_event', name: 'Transfer' },
+  { kind: 'changed_type_definition', name: 'Point' },
+] });
+await tick();
+assert.match(treeText(els.get('results')), /Compatible no/,
+  'a verdict is rendered in the upgrade panel');
+assert.match(treeText(els.get('results')), /Added function: new_method\(\)/,
+  'verdict changes are visible');
+const breaking = els.get('results').querySelector('[data-breaking-changes]');
+const nonBreaking = els.get('results').querySelector('[data-non-breaking-changes]');
+assert.match(treeText(breaking), /Removed function: old_method\(\)/,
+  'breaking entries appear in the breaking group');
+assert.doesNotMatch(treeText(breaking), /Added function/,
+  'non-breaking entries do not appear in the breaking group');
+assert.match(treeText(nonBreaking), /Added function: new_method\(\)/,
+  'non-breaking entries appear in their own group');
+assert.match(treeText(nonBreaking), /Changed event: Transfer/,
+  'changed events use a readable label');
+assert.match(treeText(nonBreaking), /Changed type definition: Point/,
+  'changed type definitions use a readable label');
+
+els.get('candidateInput').files = [candidate('broken.wasm')];
+handlers.get('candidate')();
+await tick();
+worker.answerDiff(1, null, 'bad wasm input');
+await tick();
+assert.match(treeText(els.get('results')), /Error bad wasm input/,
+  'comparison errors are rendered in the upgrade panel');
 
 console.log('stale-race tests: OK');
 
