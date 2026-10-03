@@ -153,6 +153,12 @@ fn round_trip_all_supported_types() {
 }
 
 #[test]
+fn round_trip_timepoint_and_duration_as_their_xdr_variants() {
+    assert_round_trip("timepoint:1758000000", json!({"timepoint": "1758000000"}));
+    assert_round_trip("duration:86400", json!({"duration": "86400"}));
+}
+
+#[test]
 fn round_trip_address_preserves_strkey() {
     let b64 = encode(&format!("address:{VALID_ADDRESS}"));
     let out = sdkt()
@@ -269,7 +275,7 @@ fn rejects_unknown_type() {
         .code(1)
         .stderr(predicate::str::contains("unknown type 'foo'"))
         .stderr(predicate::str::contains(
-            "u32|i32|u64|i64|u128|i128|bool|string|symbol|bytes|address",
+            "u32|i32|u64|i64|timepoint|duration|u128|i128|bool|string|symbol|bytes|address",
         ));
 }
 
@@ -580,7 +586,7 @@ fn scalar_form_errors_are_unchanged() {
         ),
         (
             "foo:bar",
-            "unknown type 'foo'. Use u32|i32|u64|i64|u128|i128|bool|string|symbol|bytes|address",
+            "unknown type 'foo'. Use u32|i32|u64|i64|timepoint|duration|u128|i128|bool|string|symbol|bytes|address",
         ),
         (
             "justtext",
