@@ -142,6 +142,14 @@ sdkt
 │   ├── --disable <RULE_ID>   (repeatable)
 │   ├── --rules <PATH>        (repeatable; external rule paths)
 │   └── --no-plugins          (skip loading installed plugins)
+├── release-assurance
+│   ├── --wasm <WASM>         (candidate artifact; required)
+│   ├── --previous-wasm <WASM> (baseline for the offline upgrade diff)
+│   ├── --audit <PATH>...     (Rust source path(s)/dir(s); same engine as `audit`)
+│   ├── --disable <RULE_ID>   (repeatable)
+│   ├── --contract <ID>       (deployed contract for on-chain checks; skipped if omitted)
+│   ├── --network <testnet>   (network for the on-chain checks; with --contract)
+│   └── --format <json|pretty>
 ├── identity
 │   ├── generate <name>
 │   ├── import <name> <secret>

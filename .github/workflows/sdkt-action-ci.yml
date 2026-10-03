@@ -56,3 +56,42 @@ jobs:
             exit 1
           fi
           echo "OK: compatible upgrade correctly passed."
+
+      # Release assurance: us_new.wasm against the us_old.wasm baseline is a
+      # breaking upgrade, so release_status MUST be FAIL and the step MUST fail.
+      - name: Release-assurance should FAIL on breaking previous-wasm
+        id: ra_breaking
+        continue-on-error: true
+        uses: ./.github/actions/sdkt
+        with:
+          command: release-assurance
+          wasm: crates/sdkt-cli/tests/fixtures/us_new.wasm
+          previous-wasm: crates/sdkt-cli/tests/fixtures/us_old.wasm
+
+      - name: Assert release-assurance reported FAIL
+        shell: bash
+        run: |
+          if [ "${{ steps.ra_breaking.outcome }}" != "failure" ]; then
+            echo "::error::expected release-assurance to FAIL on a breaking baseline, but outcome was '${{ steps.ra_breaking.outcome }}'"
+            exit 1
+          fi
+          echo "OK: release-assurance correctly failed on a breaking baseline."
+
+      # Release assurance: the candidate alone (no --contract) leaves the
+      # on-chain sections SKIPPED, so the aggregate is REVIEW — which the CLI
+      # treats as exit 0, and the Action MUST NOT fail.
+      - name: Release-assurance should PASS with REVIEW (no on-chain check)
+        id: ra_review
+        uses: ./.github/actions/sdkt
+        with:
+          command: release-assurance
+          wasm: crates/sdkt-cli/tests/fixtures/us_new.wasm
+
+      - name: Assert release-assurance REVIEW passed
+        shell: bash
+        run: |
+          if [ "${{ steps.ra_review.outcome }}" != "success" ]; then
+            echo "::error::expected release-assurance to PASS with REVIEW, but outcome was '${{ steps.ra_review.outcome }}'"
+            exit 1
+          fi
+          echo "OK: release-assurance REVIEW did not fail the build."

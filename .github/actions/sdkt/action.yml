@@ -1,15 +1,15 @@
 name: "Soroban DevKit (sdkt) Action"
-description: "Run sdkt capabilities in CI: static security audit (sdkt audit) and contract upgrade-safety check (sdkt diff --upgrade-safety)."
+description: "Run sdkt capabilities in CI: static security audit (sdkt audit), contract upgrade-safety check (sdkt diff --upgrade-safety), and read-only release assurance (sdkt release-assurance)."
 author: "SaboLabs"
 
 inputs:
   command:
-    description: "Which check to run: 'audit' or 'upgrade-safety'."
+    description: "Which check to run: 'audit', 'upgrade-safety', or 'release-assurance'."
     required: true
   sdkt-version:
-    description: "sdkt git tag to install (e.g. v1.0.0). Must be a published tag in SaboLabs/soroban-devkit."
+    description: "sdkt git tag to install (e.g. v2.6.0). Must be a published tag in SaboLabs/soroban-devkit."
     required: false
-    default: "v1.0.0"
+    default: "v2.6.0"
   target:
     description: "Source file (.rs) to audit (used with command=audit)."
     required: false
@@ -26,6 +26,30 @@ inputs:
     description: "Minimum severity that fails the audit. One of: critical, warning, info. Default: critical (MOVE-001 warnings never fail CI)."
     required: false
     default: "critical"
+  wasm:
+    description: "Candidate WASM artifact to assess (used with command=release-assurance). Required for that command."
+    required: false
+    default: ""
+  previous-wasm:
+    description: "Previous (baseline) WASM for the offline upgrade-safety diff (used with command=release-assurance). Optional."
+    required: false
+    default: ""
+  audit:
+    description: "Rust source file(s) or directory for the static audit (used with command=release-assurance). Space-separated; each becomes a separate --audit argument."
+    required: false
+    default: ""
+  disable:
+    description: "Audit rule id(s) to disable (used with command=release-assurance). Space-separated; each becomes a repeated --disable argument."
+    required: false
+    default: ""
+  contract:
+    description: "Deployed contract ID (C...) for the on-chain verification + health checks (used with command=release-assurance). Optional; on-chain checks are skipped when empty."
+    required: false
+    default: ""
+  network:
+    description: "Deployed network (testnet | mainnet | futurenet) for the on-chain checks (used with command=release-assurance). Only meaningful with 'contract'."
+    required: false
+    default: ""
 
 runs:
   using: "composite"
@@ -106,3 +130,46 @@ runs:
           exit 1
         fi
         echo "sdkt upgrade-safety passed (upgrade is backwards-compatible)."
+
+    - name: Run sdkt release-assurance
+      if: ${{ inputs.command == 'release-assurance' }}
+      shell: bash
+      env:
+        SDKT_WASM: ${{ inputs.wasm }}
+        SDKT_PREV_WASM: ${{ inputs.previous-wasm }}
+        SDKT_AUDIT: ${{ inputs.audit }}
+        SDKT_DISABLE: ${{ inputs.disable }}
+        SDKT_CONTRACT: ${{ inputs.contract }}
+        SDKT_NETWORK: ${{ inputs.network }}
+      run: |
+        set -euo pipefail
+        if [ -z "$SDKT_WASM" ]; then
+          echo "::error::release-assurance command requires 'wasm' (path to the candidate .wasm artifact)"
+          exit 1
+        fi
+        # Variadic --audit and repeated --disable: split the space-separated
+        # inputs into individual arguments. Optional single-value flags are
+        # appended only when non-empty so CLI defaults stay in charge.
+        ARGS=(--wasm "$SDKT_WASM")
+        if [ -n "$SDKT_PREV_WASM" ]; then ARGS+=(--previous-wasm "$SDKT_PREV_WASM"); fi
+        if [ -n "$SDKT_AUDIT" ]; then
+          for path in $SDKT_AUDIT; do ARGS+=(--audit "$path"); done
+        fi
+        if [ -n "$SDKT_DISABLE" ]; then
+          for rule in $SDKT_DISABLE; do ARGS+=(--disable "$rule"); done
+        fi
+        if [ -n "$SDKT_CONTRACT" ]; then ARGS+=(--contract "$SDKT_CONTRACT"); fi
+        if [ -n "$SDKT_NETWORK" ]; then ARGS+=(--network "$SDKT_NETWORK"); fi
+        echo "Running: sdkt release-assurance ${ARGS[*]} --format json"
+        # The CLI itself exits 1 when release_status is FAIL; capture the JSON
+        # either way and let .release_status drive the verdict (FAIL -> exit 1,
+        # PASS/REVIEW/SKIPPED -> exit 0), matching the CLI's own semantics.
+        OUT=$(sdkt release-assurance "${ARGS[@]}" --format json) && RC=0 || RC=$?
+        echo "$OUT"
+        STATUS=$(echo "$OUT" | jq -r '.release_status')
+        echo "Release assurance status: $STATUS (cli exit code $RC)"
+        if [ "$STATUS" = "FAIL" ]; then
+          echo "::error::sdkt release-assurance reported FAIL (see report above)"
+          exit 1
+        fi
+        echo "sdkt release-assurance passed (release_status=$STATUS)."
