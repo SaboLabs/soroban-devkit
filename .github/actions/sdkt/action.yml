@@ -175,9 +175,10 @@ runs:
         if [ -n "$SDKT_MAX_SIZE_BYTES" ]; then ARGS+=(--max-size-bytes "$SDKT_MAX_SIZE_BYTES"); fi
         if [ -n "$SDKT_MAX_GROWTH_PCT" ]; then ARGS+=(--max-growth-pct "$SDKT_MAX_GROWTH_PCT"); fi
         echo "Running: sdkt release-assurance ${ARGS[*]} --format json"
-        # The CLI itself exits 1 when release_status is FAIL; capture the JSON
-        # either way and let .release_status drive the verdict (FAIL -> exit 1,
-        # PASS/REVIEW/SKIPPED -> exit 0), matching the CLI's own semantics.
+        # The CLI exits non-zero both for a FAIL verdict and for an error that
+        # produced no report (bad input, unreadable artifact, RPC failure). The
+        # JSON gate alone only sees the former: on an error there is no
+        # .release_status, so it must be decided from the captured exit code.
         OUT=$(sdkt release-assurance "${ARGS[@]}" --format json) && RC=0 || RC=$?
         echo "$OUT"
         STATUS=$(echo "$OUT" | jq -r '.release_status')
@@ -185,5 +186,9 @@ runs:
         if [ "$STATUS" = "FAIL" ]; then
           echo "::error::sdkt release-assurance reported FAIL (see report above)"
           exit 1
+        fi
+        if [ "$RC" -ne 0 ]; then
+          echo "::error::sdkt release-assurance failed (exit code $RC); see error above"
+          exit "$RC"
         fi
         echo "sdkt release-assurance passed (release_status=$STATUS)."

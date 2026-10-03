@@ -138,3 +138,26 @@ jobs:
             exit 1
           fi
           echo "OK: max-size-bytes forwarding proven — the ceiling violation failed the release."
+
+      # CLI ERROR propagation: --max-growth-pct without --previous-wasm is
+      # rejected by the CLI before any report is produced, so there is no
+      # .release_status to gate on and the failure must come from the exit code
+      # alone. Without that the step would stay green on a misconfigured
+      # policy that never ran.
+      - name: Release-assurance should FAIL on a CLI error with no report
+        id: ra_cli_error
+        continue-on-error: true
+        uses: ./.github/actions/sdkt
+        with:
+          command: release-assurance
+          wasm: crates/sdkt-cli/tests/fixtures/us_new.wasm
+          max-growth-pct: "10"
+
+      - name: Assert CLI error propagated
+        shell: bash
+        run: |
+          if [ "${{ steps.ra_cli_error.outcome }}" != "failure" ]; then
+            echo "::error::expected release-assurance to FAIL when the CLI rejects the invocation, but outcome was '${{ steps.ra_cli_error.outcome }}' — the Action is not propagating the CLI exit code"
+            exit 1
+          fi
+          echo "OK: a CLI error with no JSON report still failed the step."
