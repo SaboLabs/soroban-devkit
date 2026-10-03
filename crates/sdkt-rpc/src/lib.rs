@@ -34,7 +34,10 @@ pub use events::{
     TOPIC_WILDCARD_REST,
 };
 pub use fee::{estimate_dynamic_fee, get_fee_stats, FeeDistribution, FeeStats};
-pub use inspect::{inspect_contract, ContractInspection, StorageKeyInfo, TtlInfoSummary};
+pub use inspect::{
+    inspect_contract, resolve_external_executable, ContractInspection, ExecutableResolutionError,
+    StorageKeyInfo, TtlInfoSummary,
+};
 pub use invoke::{
     build_invoke_envelope, invoke_contract, simulate_invoke, InvokeBuildResult, InvokeResult,
     SimulatedInvoke, INCLUSION_FEE,

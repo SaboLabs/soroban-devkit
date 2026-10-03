@@ -281,6 +281,152 @@ pub fn extract_wasm_hash_from_live_ledger_entry(raw: &[u8]) -> Result<String, De
     extract_hash_from_contract_data(cd)
 }
 
+/// A contract's executable as recorded in its `ContractInstance` ledger entry.
+///
+/// Protocol 28 (CAP-0085) widened the `ContractExecutable` union beyond an
+/// inline Wasm hash, so "the contract's code" is no longer always a single
+/// `Hash`. This mirrors the XDR union faithfully; callers that need the actual
+/// code resolve the referenced entry through the RPC layer.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ContractExecutableRef {
+    /// `CONTRACT_EXECUTABLE_WASM`: the instance's own Wasm hash.
+    Wasm(Hash),
+    /// `CONTRACT_EXECUTABLE_STELLAR_ASSET`: a Stellar Asset Contract. This is
+    /// protocol-defined code with no Wasm artifact of its own — there is no hash
+    /// to report and nothing to download.
+    StellarAsset,
+    /// `CONTRACT_EXECUTABLE_EXTERNAL_REF` (CAP-0085): the instance holds no
+    /// code; it references an entry owned by another contract.
+    ExternalRef(ExternalExecutableRef),
+}
+
+/// The owner + tag pair of a CAP-85 `CONTRACT_EXECUTABLE_EXTERNAL_REF`.
+///
+/// Per CAP-0085 the referenced Wasm hash lives in a **persistent contract-data
+/// entry of `executable_owner`, keyed by `tag`**, with the value being the 32
+/// raw hash bytes. The owner contract is not invoked for the lookup.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ExternalExecutableRef {
+    /// Owner contract holding the executable entry (CAP-85 `executable_owner`).
+    pub owner: ScAddress,
+    /// The tag keying the owner's entry (CAP-85 `tag`, an `ScString`).
+    pub tag: String,
+}
+
+impl ContractExecutableRef {
+    /// Stable lowercase label (`wasm`, `stellar_asset`, `external_ref`).
+    pub fn kind(&self) -> &'static str {
+        match self {
+            ContractExecutableRef::Wasm(_) => "wasm",
+            ContractExecutableRef::StellarAsset => "stellar_asset",
+            ContractExecutableRef::ExternalRef(_) => "external_ref",
+        }
+    }
+
+    /// The ledger key of the owner's executable entry, for resolution.
+    ///
+    /// CAP-0085 keys this entry with `SCV_EXECUTABLE_TAG` and stores it as
+    /// `Persistent` contract data (the host rejects the `Temporary` and
+    /// `Instance` durabilities for such entries).
+    pub fn executable_tag_key(&self) -> Option<&ExternalExecutableRef> {
+        match self {
+            ContractExecutableRef::ExternalRef(r) => Some(r),
+            _ => None,
+        }
+    }
+}
+
+/// Decode a contract instance's executable out of a Base64 XDR `LedgerEntry`.
+///
+/// Accepts both wire layouts SDKT already tolerates (standard
+/// `lastModifiedLedgerSeq`-first, and the live data-first layout) and returns
+/// the union variant actually present. Non-`ContractInstance` payloads and
+/// undecodable data keep returning the existing [`DecodeError`] variants.
+pub fn extract_contract_executable(
+    base64_ledger_entry: &str,
+) -> Result<ContractExecutableRef, DecodeError> {
+    let raw = detect_and_decode(base64_ledger_entry)?;
+    match extract_executable_standard(&raw) {
+        Ok(exec) => Ok(exec),
+        Err(DecodeError::XdrParse(..)) => extract_executable_from_live_ledger_entry(&raw),
+        Err(e) => Err(e),
+    }
+}
+
+fn map_executable(executable: ContractExecutable) -> Result<ContractExecutableRef, DecodeError> {
+    Ok(match executable {
+        ContractExecutable::Wasm(h) => ContractExecutableRef::Wasm(h),
+        ContractExecutable::StellarAsset => ContractExecutableRef::StellarAsset,
+        ContractExecutable::ExternalRef(r) => {
+            ContractExecutableRef::ExternalRef(ExternalExecutableRef {
+                owner: r.executable_owner,
+                // `SCString` payload is not required to be valid UTF-8 (it is an
+                // opaque key); surface it losslessly rather than dropping bytes.
+                tag: String::from_utf8_lossy(r.tag.as_slice()).into_owned(),
+            })
+        }
+    })
+}
+
+fn executable_from_contract_data(
+    data: stellar_xdr::ContractDataEntry,
+) -> Result<ContractExecutableRef, DecodeError> {
+    let instance = match data.val {
+        ScVal::ContractInstance(i) => i,
+        _ => return Err(DecodeError::Extraction("Not a ContractInstance".into())),
+    };
+    map_executable(instance.executable)
+}
+
+fn extract_executable_standard(raw: &[u8]) -> Result<ContractExecutableRef, DecodeError> {
+    let mut cursor = std::io::Cursor::new(raw);
+    let mut l = Limited::new(&mut cursor, Limits::none());
+    let entry = LedgerEntry::read_xdr(&mut l)
+        .map_err(|e| DecodeError::XdrParse("LedgerEntry".to_string(), e))?;
+    let data = match entry.data {
+        LedgerEntryData::ContractData(d) => d,
+        _ => return Err(DecodeError::Extraction("Not a ContractData entry".into())),
+    };
+    executable_from_contract_data(data)
+}
+
+fn extract_executable_from_live_ledger_entry(
+    raw: &[u8],
+) -> Result<ContractExecutableRef, DecodeError> {
+    let mut cursor = std::io::Cursor::new(raw);
+    let mut l = Limited::new(&mut cursor, Limits::none());
+    let data = LedgerEntryData::read_xdr(&mut l)
+        .map_err(|e| DecodeError::XdrParse("LedgerEntryData(live)".to_string(), e))?;
+    let cd = match data {
+        LedgerEntryData::ContractData(d) => d,
+        _ => return Err(DecodeError::Extraction("Not a ContractData entry".into())),
+    };
+    executable_from_contract_data(cd)
+}
+
+/// Read the 32-byte Wasm hash stored in a CAP-85 executable-tag entry.
+///
+/// CAP-0085 constrains such an entry to a `Bytes` value holding the raw hash
+/// of an already-uploaded Wasm (the host rejects strings, integers, and any
+/// 32-byte value that is not a live Wasm hash). Anything else is rejected here
+/// rather than coerced.
+pub fn parse_external_executable_hash(value: &ScVal) -> Result<String, DecodeError> {
+    let ScVal::Bytes(bytes) = value else {
+        return Err(DecodeError::Extraction(format!(
+            "CAP-85 executable tag entry holds {}, expected a 32-byte Bytes Wasm hash",
+            value.name()
+        )));
+    };
+    let slice = bytes.as_slice();
+    if slice.len() != 32 {
+        return Err(DecodeError::Extraction(format!(
+            "CAP-85 executable tag entry holds {} bytes, expected 32",
+            slice.len()
+        )));
+    }
+    Ok(hex::encode(slice))
+}
+
 /// Shared tail of both decoders: ContractData -> ContractInstance -> Wasm hash.
 fn extract_hash_from_contract_data(
     data: stellar_xdr::ContractDataEntry,
@@ -762,6 +908,125 @@ mod tests {
         })
         .unwrap();
         assert_eq!(from_hex, from_strkey);
+    }
+
+    // ---- CAP-85 (Protocol 28) executable variants ----
+    //
+    // `ContractExecutable` is a Protocol 28 XDR union. These fixtures are built
+    // with the real `stellar-xdr` types and round-tripped through the same
+    // decoders the RPC inspection path uses, so they exercise the wire
+    // representation rather than a hand-written enum value.
+
+    /// Owner address used by the external-ref fixtures.
+    fn external_ref_fixture() -> (ContractExecutable, ScAddress) {
+        let owner = ScAddress::Contract(ContractId(Hash([7u8; 32])));
+        let tag =
+            stellar_xdr::ScString(stellar_xdr::StringM::try_from(b"oracle-v1".to_vec()).unwrap());
+        (
+            ContractExecutable::ExternalRef(stellar_xdr::ContractExecutableExternalRef {
+                executable_owner: owner.clone(),
+                tag,
+            }),
+            owner,
+        )
+    }
+
+    #[test]
+    fn test_extract_contract_executable_wasm() {
+        let hash = [9u8; 32];
+        let b64 = create_test_ledger_entry(ContractExecutable::Wasm(Hash(hash)));
+        let exec = extract_contract_executable(&b64).unwrap();
+        assert_eq!(exec.kind(), "wasm");
+        assert_eq!(exec, ContractExecutableRef::Wasm(Hash(hash)));
+        // The pre-existing Wasm-only extraction must keep reporting the same hash.
+        assert_eq!(extract_wasm_hash(&b64).unwrap(), hex::encode(hash));
+    }
+
+    #[test]
+    fn test_extract_contract_executable_stellar_asset_is_not_wasm() {
+        let b64 = create_test_ledger_entry(ContractExecutable::StellarAsset);
+        let exec = extract_contract_executable(&b64).unwrap();
+        assert_eq!(exec, ContractExecutableRef::StellarAsset);
+        assert_eq!(exec.kind(), "stellar_asset");
+        // A SAC must never be reported as a Wasm contract.
+        assert!(!matches!(exec, ContractExecutableRef::Wasm(_)));
+        assert!(exec.executable_tag_key().is_none());
+    }
+
+    #[test]
+    fn test_extract_contract_executable_external_ref() {
+        let (executable, owner) = external_ref_fixture();
+        let b64 = create_test_ledger_entry(executable);
+        let exec = extract_contract_executable(&b64).unwrap();
+        assert_eq!(exec.kind(), "external_ref");
+        let reference = exec.executable_tag_key().expect("external ref key");
+        assert_eq!(reference.owner, owner);
+        assert_eq!(reference.tag, "oracle-v1");
+        // An external ref has no inline hash: the legacy Wasm-only extractor must
+        // keep failing loudly rather than inventing one.
+        assert!(extract_wasm_hash(&b64).is_err());
+    }
+
+    #[test]
+    fn test_external_ref_survives_live_wire_layout() {
+        // The live RPC wire layout serialises `LedgerEntryData` first (with the
+        // remaining `LedgerEntry` fields trailing) — the layout the compatibility
+        // bridge exists for. Build exactly that: `LedgerEntryData` only.
+        let (executable, owner) = external_ref_fixture();
+        let data = LedgerEntryData::ContractData(ContractDataEntry {
+            ext: ExtensionPoint::V0,
+            contract: ScAddress::Contract(ContractId(Hash([0; 32]))),
+            key: ScVal::LedgerKeyContractInstance,
+            durability: ContractDataDurability::Persistent,
+            val: ScVal::ContractInstance(ScContractInstance {
+                executable,
+                storage: None,
+            }),
+        });
+        let mut buf = Vec::new();
+        let mut cursor = std::io::Cursor::new(&mut buf);
+        let mut l = Limited::new(&mut cursor, Limits::none());
+        data.write_xdr(&mut l).unwrap();
+
+        let exec = extract_executable_from_live_ledger_entry(&buf).unwrap();
+        assert_eq!(exec.kind(), "external_ref");
+        assert_eq!(exec.executable_tag_key().unwrap().owner, owner);
+        assert_eq!(exec.executable_tag_key().unwrap().tag, "oracle-v1");
+    }
+
+    #[test]
+    fn test_parse_external_executable_hash_accepts_32_bytes() {
+        let hash = [3u8; 32];
+        let val = ScVal::Bytes(stellar_xdr::ScBytes(
+            stellar_xdr::BytesM::try_from(hash.to_vec()).unwrap(),
+        ));
+        assert_eq!(
+            parse_external_executable_hash(&val).unwrap(),
+            hex::encode(hash)
+        );
+    }
+
+    #[test]
+    fn test_parse_external_executable_hash_rejects_non_hash_values() {
+        // CAP-0085 constrains the entry to raw 32-byte hash bytes; the host
+        // rejects these shapes, and so must we (no silent coercion).
+        let short = ScVal::Bytes(stellar_xdr::ScBytes(
+            stellar_xdr::BytesM::try_from(vec![1u8; 31]).unwrap(),
+        ));
+        assert!(parse_external_executable_hash(&short).is_err());
+
+        let as_string = ScVal::String(stellar_xdr::ScString(
+            stellar_xdr::StringM::try_from(vec![1u8; 32]).unwrap(),
+        ));
+        assert!(parse_external_executable_hash(&as_string).is_err());
+
+        assert!(parse_external_executable_hash(&ScVal::U32(5)).is_err());
+    }
+
+    #[test]
+    fn test_extract_contract_executable_rejects_non_contract_data() {
+        let err = extract_contract_executable("AAAABAAAAAE=").unwrap_err();
+        assert!(matches!(err, DecodeError::XdrParse(_, _)));
     }
 
     #[test]

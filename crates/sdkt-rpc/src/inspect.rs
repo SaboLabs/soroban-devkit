@@ -2,9 +2,14 @@ use crate::client::SorobanRpcClient;
 use crate::error::RpcError;
 use crate::wasm::get_wasm_bytecode;
 use sdkt_wasm::{parse_contract_spec, ContractSpec};
-use sdkt_xdr::{decode_contract_id, encode_ledger_key, extract_wasm_hash, LedgerKeyParams};
+use sdkt_xdr::{
+    decode_contract_id, encode_ledger_key, extract_contract_data_value,
+    extract_contract_executable, parse_external_executable_hash, ContractExecutableRef,
+    ExternalExecutableRef, LedgerKeyParams,
+};
 use serde::Deserialize;
 use serde::Serialize;
+use stellar_xdr::{ContractDataDurability, ScAddress, ScVal};
 
 /// Normalize a user-supplied contract identifier into a 32-byte hex string
 /// suitable for [`encode_ledger_key`].
@@ -95,6 +100,17 @@ pub struct StorageKeyInfo {
 /// (which has access to `StorageAnalyzer`) to populate, matching the existing
 /// architecture where storage analysis lives outside `sdkt-rpc`.
 ///
+/// ## Protocol 28 (CAP-85) executables
+///
+/// A `ContractInstance`'s executable is a union, not necessarily an inline Wasm
+/// hash. `Wasm` behaves exactly as before. `StellarAsset` is protocol-defined
+/// code with no Wasm artifact, and `ExternalRef` (CAP-85) holds no code at
+/// all — it names an entry owned by another contract. An external reference is
+/// resolved to its current Wasm hash via a single read-only owner lookup
+/// ([`resolve_external_executable`]); a `StellarAsset` has no hash at all, so
+/// the inspection fails with an explicit error naming the executable kind
+/// instead of reporting a misleading value.
+///
 /// Failures to fetch/parse the on-chain WASM code degrade gracefully: the
 /// inspection still returns the `contract_id` + `wasm_hash` it already recovered,
 /// with `wasm_size`/`abi` left as `None`. Only the initial contract-data lookup
@@ -117,8 +133,16 @@ pub async fn inspect_contract(
 
     let first_entry = &response.entries[0];
 
-    let wasm_hash = extract_wasm_hash(&first_entry.xdr)
-        .map_err(|e| RpcError::Rpc(format!("Failed to extract WASM hash: {e}")))?;
+    // Wasm executables resolve exactly as before. Non-Wasm variants get their
+    // own explicit, actionable message; the legacy decode-error wording is kept
+    // verbatim for undecodable entries so existing consumers are unaffected.
+    let wasm_hash = match resolve_inspection_wasm_hash(client, &first_entry.xdr).await {
+        Ok(hash) => hash,
+        Err(ExecutableResolutionError::Decode(e)) => {
+            return Err(RpcError::Rpc(format!("Failed to extract WASM hash: {e}")))
+        }
+        Err(e) => return Err(RpcError::Rpc(e.to_string())),
+    };
 
     // Enrich with on-chain WASM size + parsed ABI. Both steps are best-effort:
     // if the code entry is missing or unparseable, we keep what we have instead
@@ -141,6 +165,150 @@ pub async fn inspect_contract(
         ttl_info: None,
         storage_keys: Vec::new(),
     })
+}
+
+/// Resolve the Wasm hash a contract instance's inspection should report.
+///
+/// `Wasm` executables are returned unchanged, preserving the previous behavior
+/// byte-for-byte. For the other union variants the instance holds no inline
+/// hash, so resolution is delegated to [`resolve_external_executable`] when
+/// possible; anything without a resolvable hash yields a typed
+/// [`ExecutableResolutionError`] instead of a fabricated value.
+async fn resolve_inspection_wasm_hash(
+    client: &SorobanRpcClient,
+    entry_xdr: &str,
+) -> Result<String, ExecutableResolutionError> {
+    let executable =
+        extract_contract_executable(entry_xdr).map_err(ExecutableResolutionError::Decode)?;
+    match executable {
+        ContractExecutableRef::Wasm(hash) => Ok(hex::encode(hash.0)),
+        ContractExecutableRef::StellarAsset => Err(ExecutableResolutionError::Unsupported {
+            kind: executable.kind(),
+        }),
+        ContractExecutableRef::ExternalRef(reference) => {
+            resolve_external_executable(client, &reference).await
+        }
+    }
+}
+
+/// Why an inspection or resolution could not produce a Wasm hash.
+///
+/// Public because it is the error type of [`resolve_external_executable`]; the
+/// `Display` output is the actionable message surfaced to CLI users.
+#[derive(Debug)]
+pub enum ExecutableResolutionError {
+    /// The ledger entry itself could not be decoded.
+    Decode(sdkt_xdr::DecodeError),
+    /// The executable is a valid non-Wasm variant with no inline hash.
+    Unsupported {
+        /// `stellar_asset` — protocol-defined code with no Wasm artifact.
+        kind: &'static str,
+    },
+    /// A CAP-85 external reference could not be resolved to a Wasm hash.
+    External {
+        /// Owner contract holding the executable entry.
+        owner: ScAddress,
+        /// The tag keying the owner's entry.
+        tag: String,
+        /// Why resolution failed.
+        source: String,
+    },
+}
+
+impl std::fmt::Display for ExecutableResolutionError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            ExecutableResolutionError::Decode(e) => write!(f, "{e}"),
+            ExecutableResolutionError::Unsupported { kind } => write!(
+                f,
+                "contract executable is `{kind}` (Protocol 28): it is not a Wasm contract \
+                 and has no Wasm hash to report"
+            ),
+            ExecutableResolutionError::External { owner, tag, source } => write!(
+                f,
+                "could not resolve the CAP-85 external executable reference (owner {owner}, \
+                 tag \"{tag}\"): {source}"
+            ),
+        }
+    }
+}
+
+/// Resolve a CAP-85 `ExternalRef` to the Wasm hash it currently names.
+///
+/// CAP-0085 stores the referenced hash in a **persistent contract-data entry of
+/// the owner contract, keyed by the tag** (`SCV_EXECUTABLE_TAG`). This performs
+/// exactly that single read-only `getLedgerEntries` lookup; the owner contract
+/// is never invoked, and nothing is signed or submitted.
+pub async fn resolve_external_executable(
+    client: &SorobanRpcClient,
+    reference: &ExternalExecutableRef,
+) -> Result<String, ExecutableResolutionError> {
+    let owner = reference.owner.to_string();
+    let tag = reference.tag.clone();
+    let key = executable_tag_key(&reference.owner, &reference.tag).map_err(|source| {
+        ExecutableResolutionError::External {
+            owner: reference.owner.clone(),
+            tag: tag.clone(),
+            source,
+        }
+    })?;
+
+    let response = client
+        .get_contract_storage(&owner, &[key])
+        .await
+        .map_err(|e| ExecutableResolutionError::External {
+            owner: reference.owner.clone(),
+            tag: tag.clone(),
+            source: e.to_string(),
+        })?;
+
+    let entry = response
+        .entries
+        .first()
+        .ok_or_else(|| ExecutableResolutionError::External {
+            owner: reference.owner.clone(),
+            tag: tag.clone(),
+            source: format!(
+                "owner {owner} has no executable tag entry named \"{tag}\" (it may never have \
+                 been created, or the entry may have expired)"
+            ),
+        })?;
+
+    let value = extract_contract_data_value(&entry.xdr).map_err(|e| {
+        ExecutableResolutionError::External {
+            owner: reference.owner.clone(),
+            tag: tag.clone(),
+            source: format!("could not decode the owner's executable tag entry: {e}"),
+        }
+    })?;
+
+    parse_external_executable_hash(&value.val).map_err(|e| ExecutableResolutionError::External {
+        owner: reference.owner.clone(),
+        tag: tag.clone(),
+        source: e.to_string(),
+    })
+}
+
+/// Build the ledger key of a CAP-85 executable-tag entry.
+///
+/// The owner must be a contract address (only a contract can hold such an
+/// entry), and the tag travels as raw bytes because `SCString` is an opaque key
+/// that need not be valid UTF-8.
+fn executable_tag_key(owner: &ScAddress, tag: &str) -> Result<String, String> {
+    if !matches!(owner, ScAddress::Contract(_)) {
+        return Err(format!(
+            "executable owner {owner} is not a contract address; only a contract can hold an \
+             executable tag entry"
+        ));
+    }
+    let tag_bytes = stellar_xdr::StringM::try_from(tag.as_bytes().to_vec())
+        .map_err(|_| "executable tag exceeds the maximum ScString length".to_string())?;
+    encode_ledger_key(&LedgerKeyParams::ContractDataEntry {
+        contract: owner.to_string(),
+        key: ScVal::ExecutableTag(stellar_xdr::ScString(tag_bytes)),
+        durability: ContractDataDurability::Persistent,
+    })
+    .map_err(|e| e.to_string())
 }
 
 #[cfg(test)]
