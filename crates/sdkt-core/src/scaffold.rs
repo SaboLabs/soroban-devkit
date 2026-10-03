@@ -4,12 +4,18 @@ use std::path::Path;
 
 /// The exact `soroban-sdk` version `sdkt init` writes into a generated
 /// `Cargo.toml` (#111). Bump only to a release verified to give a project where
-/// `cargo check`, `cargo test` and a plain
-/// `cargo build --target wasm32v1-none --release` all succeed.
-const SCAFFOLD_SOROBAN_SDK_VERSION: &str = "27.0.6";
+/// `cargo check`, `cargo test` and `sdkt build` all succeed.
+///
+/// `28.0.0` is the first stable release targeting Protocol 28 (spec shaking v2
+/// always on, contract data migration, executable references). Because shaking is
+/// build-system-driven, a generated contract must be compiled with
+/// `stellar contract build` — which is exactly the path `sdkt build` selects for
+/// a `soroban-sdk >= 28` manifest.
+const SCAFFOLD_SOROBAN_SDK_VERSION: &str = "28.0.0";
 
-/// Minimum Rust for the generated project: `soroban-sdk` 25+ declares
-/// `rust-version = "1.91.0"`, above this workspace's own MSRV.
+/// Minimum Rust for the generated project. `soroban-sdk` 28.0.0 declares
+/// `rust-version = "1.91.0"` (crates.io metadata), above this workspace's own
+/// MSRV, so 1.91 remains correct.
 const SCAFFOLD_RUST_VERSION: &str = "1.91";
 
 /// Configuration for project scaffolding.
@@ -126,7 +132,7 @@ path = "."
 
     if !config.minimal {
         let readme = format!(
-            "# {name}\n\nA Soroban smart contract project.\n\n## Build\n\n```\nsdkt build\n```\n\n## Test\n\n```\ncargo test\n```\n\n## Deploy to Testnet\n\nCreate and fund a test identity, then deploy the compiled contract:\n\n```\nsdkt identity generate my-dev\nsdkt network add testnet --rpc-url https://soroban-testnet.stellar.org --passphrase \"Test SDF Network ; September 2015\" --friendbot https://friendbot.stellar.org\nsdkt identity fund my-dev --network-profile testnet\nsdkt deploy --wasm target/wasm32-unknown-unknown/release/{crate_name}.wasm --identity my-dev --network-profile testnet\n```\n\n## Invoke\n\nReplace `<CONTRACT_ID>` with the deployed contract address:\n\n```\nsdkt call <CONTRACT_ID> hello --network-profile testnet\nsdkt invoke <CONTRACT_ID> hello --identity my-dev --network-profile testnet\n```\n",
+            "# {name}\n\nA Soroban smart contract project.\n\n## Build\n\n```\nsdkt build\n```\n\n## Test\n\n```\ncargo test\n```\n\n## Deploy to Testnet\n\nCreate and fund a test identity, then deploy the compiled contract:\n\n```\nsdkt identity generate my-dev\nsdkt network add testnet --rpc-url https://soroban-testnet.stellar.org --passphrase \"Test SDF Network ; September 2015\" --friendbot https://friendbot.stellar.org\nsdkt identity fund my-dev --network-profile testnet\nsdkt deploy --wasm target/wasm32v1-none/release/{crate_name}.wasm --identity my-dev --network-profile testnet\n```\n\n## Invoke\n\nReplace `<CONTRACT_ID>` with the deployed contract address:\n\n```\nsdkt call <CONTRACT_ID> hello --network-profile testnet\nsdkt invoke <CONTRACT_ID> hello --identity my-dev --network-profile testnet\n```\n",
             name = package_name,
             crate_name = crate_name,
         );
@@ -1022,6 +1028,49 @@ mod tests {
         let content = fs::read_to_string(p.join("Cargo.toml")).unwrap();
         assert!(content.contains("[profile.release]"));
         assert!(content.contains("panic = \"abort\""));
+        let _ = fs::remove_dir_all(&p);
+    }
+
+    /// Protocol 28: the generated manifest must target `soroban-sdk` 28.x and
+    /// therefore route through the canonical `stellar contract build` path that
+    /// `sdkt build` selects for v28 contracts. The README must also point at the
+    /// real artifact directory (`wasm32v1-none`), not the legacy
+    /// `wasm32-unknown-unknown`.
+    #[test]
+    fn scaffold_targets_protocol_28_and_routes_to_canonical_build() {
+        let p = tmp_dir("protocol28");
+        generate_project(&cfg(&p, false, false)).unwrap();
+        let cargo = fs::read_to_string(p.join("Cargo.toml")).unwrap();
+
+        assert!(
+            cargo.contains(&format!(
+                "soroban-sdk = \"={SCAFFOLD_SOROBAN_SDK_VERSION}\""
+            )),
+            "{cargo}"
+        );
+        assert_eq!(
+            SCAFFOLD_SOROBAN_SDK_VERSION.split('.').next(),
+            Some("28"),
+            "generated projects must target Protocol 28"
+        );
+
+        // The generated manifest is what `sdkt build` reads to pick a build
+        // system: a >= 28 requirement must select the canonical v28 path.
+        assert!(
+            crate::build::requires_v28_build_system(&p),
+            "generated project must require the Protocol 28 build path"
+        );
+
+        let readme = fs::read_to_string(p.join("README.md")).unwrap();
+        assert!(
+            readme.contains("target/wasm32v1-none/release/"),
+            "README must point at the real artifact dir: {readme}"
+        );
+        assert!(
+            !readme.contains("wasm32-unknown-unknown"),
+            "README must not reference the legacy wasm target: {readme}"
+        );
+
         let _ = fs::remove_dir_all(&p);
     }
 

@@ -153,7 +153,10 @@ fn requires_sdk_28(manifest: &str) -> bool {
 
 /// Does this contract need the canonical Protocol 28 build system
 /// (`stellar contract build`), i.e. does it declare soroban-sdk >= 28?
-fn requires_v28_build_system(path: &Path) -> bool {
+///
+/// `pub(crate)` so the scaffold tests can prove a generated Protocol 28
+/// project routes through the canonical build path.
+pub(crate) fn requires_v28_build_system(path: &Path) -> bool {
     let Ok(manifest) = std::fs::read_to_string(path.join("Cargo.toml")) else {
         return false;
     };
