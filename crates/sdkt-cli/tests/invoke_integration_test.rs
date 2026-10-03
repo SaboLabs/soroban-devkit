@@ -13,7 +13,8 @@ use std::io::{Read, Write};
 use std::net::TcpListener;
 use std::thread;
 use stellar_xdr::{
-    ContractEvent, Limits, SorobanTransactionMeta, TransactionMeta, TransactionMetaV3, WriteXdr,
+    ContractEvent, Limits, ScVal, SorobanTransactionMeta, TransactionMeta, TransactionMetaV3,
+    WriteXdr,
 };
 use tempfile::tempdir;
 
@@ -34,12 +35,14 @@ const ACCOUNT_ENTRY_XDR: &str =
 /// SorobanTransactionData XDR: empty footprint, 1000 instructions, 150 stroops
 /// resource fee (so total fee = 100 inclusion + 150 = 250).
 const SOROBAN_DATA_XDR: &str = "AAAAAAAAAAAAAAAAAAAD6AAAAAoAAAAKAAAAAAAAAJY=";
+const ABI_WASM: &str = "tests/fixtures/us_old.wasm";
 
 fn result_meta_xdr_with_event() -> String {
     let event = ContractEvent::default();
     let meta = TransactionMeta::V3(TransactionMetaV3 {
         soroban_meta: Some(SorobanTransactionMeta {
             events: vec![event].try_into().unwrap(),
+            return_value: ScVal::U32(42),
             ..Default::default()
         }),
         ..Default::default()
@@ -850,4 +853,143 @@ fn invoke_without_default_identity_suggests_identity_default() {
         .assert()
         .failure()
         .stderr(predicates::str::contains("sdkt identity default"));
+}
+
+// ABI-aware invocation result decoding (#67).
+#[test]
+fn invoke_help_shows_abi_flags() {
+    Command::cargo_bin("sdkt")
+        .unwrap()
+        .args(["invoke", "--help"])
+        .assert()
+        .success()
+        .stdout(predicates::str::contains("--abi"))
+        .stdout(predicates::str::contains("--abi-contract"));
+}
+
+#[test]
+fn invoke_abi_and_abi_contract_are_mutually_exclusive() {
+    let dir = tempdir().unwrap();
+    generate_identity(dir.path(), "alice");
+    let (url, _seen) = mock_rpc_server(false);
+    add_mock_profile(dir.path(), &url);
+
+    sdkt_isolated(dir.path())
+        .args([
+            "invoke",
+            VALID_CONTRACT,
+            "increment",
+            "--identity",
+            "alice",
+            "--network-profile",
+            "mocknet",
+            "--abi",
+            ABI_WASM,
+            "--abi-contract",
+            VALID_CONTRACT,
+        ])
+        .assert()
+        .failure()
+        .stderr(predicates::str::contains(
+            "only one of --abi or --abi-contract",
+        ));
+}
+
+#[test]
+fn invoke_with_abi_decodes_return_value_pretty() {
+    let dir = tempdir().unwrap();
+    generate_identity(dir.path(), "alice");
+    let (url, _seen) = mock_rpc_server(false);
+    add_mock_profile(dir.path(), &url);
+
+    let output = sdkt_isolated(dir.path())
+        .args([
+            "invoke",
+            VALID_CONTRACT,
+            "transfer",
+            "--identity",
+            "alice",
+            "--network-profile",
+            "mocknet",
+            "--abi",
+            ABI_WASM,
+        ])
+        .output()
+        .unwrap();
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(output.status.success(), "stdout={stdout} stderr={stderr}");
+    // Raw result XDR must remain available alongside the decoded value.
+    assert!(stdout.contains("Result XDR:"), "stdout={stdout}");
+    assert!(stdout.contains("Decoded Result:"), "stdout={stdout}");
+    // ScVal::U32(42) decodes to 42.
+    assert!(stdout.contains("42"), "stdout={stdout}");
+}
+
+#[test]
+fn invoke_with_abi_json_includes_decoded_and_meta() {
+    let dir = tempdir().unwrap();
+    generate_identity(dir.path(), "alice");
+    let (url, _seen) = mock_rpc_server(false);
+    add_mock_profile(dir.path(), &url);
+
+    let output = sdkt_isolated(dir.path())
+        .args([
+            "invoke",
+            VALID_CONTRACT,
+            "transfer",
+            "--identity",
+            "alice",
+            "--network-profile",
+            "mocknet",
+            "--format",
+            "json",
+            "--abi",
+            ABI_WASM,
+        ])
+        .output()
+        .unwrap();
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(output.status.success(), "stdout={stdout}");
+    let parsed: serde_json::Value =
+        serde_json::from_str(&stdout).unwrap_or_else(|e| panic!("Invalid JSON: {e}\n{stdout}"));
+    assert_eq!(parsed["status"], "SUCCESS");
+    // Raw result + meta remain present; decoded is added.
+    assert!(parsed["resultMetaXdr"].as_str().is_some());
+    assert!(parsed.get("resultXdr").is_some());
+    assert!(parsed.get("decoded").is_some(), "decoded missing: {stdout}");
+}
+
+#[test]
+fn invoke_without_abi_still_omits_decoded() {
+    // Existing behavior unchanged: no --abi ⇒ no decoded field, raw result only.
+    let dir = tempdir().unwrap();
+    generate_identity(dir.path(), "alice");
+    let (url, _seen) = mock_rpc_server(false);
+    add_mock_profile(dir.path(), &url);
+
+    let output = sdkt_isolated(dir.path())
+        .args([
+            "invoke",
+            VALID_CONTRACT,
+            "increment",
+            "--identity",
+            "alice",
+            "--network-profile",
+            "mocknet",
+            "--format",
+            "json",
+        ])
+        .output()
+        .unwrap();
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(output.status.success(), "stdout={stdout}");
+    let parsed: serde_json::Value = serde_json::from_str(&stdout).unwrap();
+    assert!(
+        parsed.get("decoded").is_none(),
+        "decoded should be absent: {stdout}"
+    );
 }

@@ -487,6 +487,12 @@ enum Commands {
         /// Output format (pretty or json)
         #[arg(short, long, default_value = "pretty")]
         format: String,
+        /// Path to contract WASM for ABI-aware decoding of the return value.
+        #[arg(long, value_name = "WASM")]
+        abi: Option<String>,
+        /// Deployed contract ID whose on-chain WASM ABI decodes the return value.
+        #[arg(long, value_name = "CONTRACT_ID")]
+        abi_contract: Option<String>,
         /// Return after submission with the transaction hash instead of polling for settlement
         #[arg(long)]
         no_wait: bool,
@@ -7232,11 +7238,20 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
             args_json,
             identity,
             format,
+            abi,
+            abi_contract,
             no_wait,
             build_only,
             net,
         } => {
             let fmt = parse_format_str(&format);
+
+            // `--abi` (local WASM) and `--abi-contract` (on-chain WASM) are
+            // mutually exclusive sources for return-value decoding.
+            if abi.is_some() && abi_contract.is_some() {
+                eprintln!("Error: specify only one of --abi or --abi-contract");
+                process::exit(1);
+            }
 
             // 1. Resolve network (mutating operation → mainnet safety guard).
             let network_config = resolve_network_config(
@@ -7295,6 +7310,30 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
             let client = SorobanRpcClient::from_config(&network_config);
             let poll = sdkt_rpc::PollConfig::default();
 
+            // Load the contract spec for return-value decoding, if requested.
+            let contract_spec: Option<sdkt_wasm::ContractSpec> =
+                if let Some(wasm_path) = abi.as_ref() {
+                    let wasm_bytes =
+                        fs::read(wasm_path).map_err(|e| format!("Failed to read WASM: {e}"))?;
+                    Some(
+                        parse_contract_spec(&wasm_bytes)
+                            .map_err(|e| format!("Failed to parse ABI: {e}"))?,
+                    )
+                } else if let Some(id) = abi_contract.as_ref() {
+                    let inspection = inspect_contract(&client, id).await.map_err(|e| match &e {
+                        sdkt_rpc::RpcError::ContractNotFound => format!("contract {id} not found"),
+                        _ => format!("{e}"),
+                    })?;
+                    let deployed_bytes = get_wasm_bytecode(&client, &inspection.wasm_hash)
+                        .await
+                        .map_err(|e| format!("could not fetch on-chain WASM for {id}: {e}"))?;
+                    Some(
+                        parse_contract_spec(&deployed_bytes)
+                            .map_err(|e| format!("failed to parse deployed ABI: {e}"))?,
+                    )
+                } else {
+                    None
+                };
             // `--build-only`: stop after the envelope is built and signed. Nothing
             // is submitted, so the prepared envelope can be inspected (or handed to
             // `sdkt tx validate` / `sdkt tx submit`) without a signed transaction
@@ -7335,22 +7374,69 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
                 .await
             {
                 Ok(res) => {
+                    // Decode the return value with the ABI when a spec is present
+                    // and the transaction succeeded. On any failure to resolve
+                    // the return value, fall back to raw output (never fabricate).
+                    let decoded = if res.status == "SUCCESS" {
+                        contract_spec.as_ref().and_then(|spec| {
+                            match res.result_meta_xdr.as_deref() {
+                                Some(meta) => match sdkt_xdr::extract_return_value(meta) {
+                                    Ok(Some(scval)) => {
+                                        if !spec.functions.iter().any(|f| f.name == res.function) {
+                                            eprintln!(
+                                                "warning: function '{}' not found in ABI — showing raw result",
+                                                res.function
+                                            );
+                                            return None;
+                                        }
+                                        Some(sdkt_xdr::abi_decode::decode_with_abi(
+                                            spec, &scval, None,
+                                        ))
+                                    }
+                                    Ok(None) => {
+                                        eprintln!("warning: transaction meta carried no return value — showing raw result");
+                                        None
+                                    }
+                                    Err(e) => {
+                                        eprintln!("warning: could not decode return value ({e}) — showing raw result");
+                                        None
+                                    }
+                                },
+                                None => {
+                                    eprintln!("warning: no transaction meta available — showing raw result");
+                                    None
+                                }
+                            }
+                        })
+                    } else {
+                        None
+                    };
+
                     if fmt == OutputFormat::Json {
-                        let mut json = serde_json::json!({
+                        let mut json_obj = serde_json::json!({
                             "hash": res.hash,
                             "status": res.status,
                             "contractId": res.contract_id,
                             "function": res.function,
                             "fee": res.fee,
                             "resultXdr": res.result_xdr,
+                            "resultMetaXdr": res.result_meta_xdr,
                             "errorCode": res.error_code,
                             "errorResultXdr": res.error_result_xdr,
                             "diagnosticEvents": res.diagnostic_events,
                         });
                         if !res.events.is_empty() {
-                            json["events"] = serde_json::json!(res.events);
+                            json_obj["events"] = serde_json::json!(res.events);
                         }
-                        println!("{}", json);
+                        if let Some(d) = &decoded {
+                            json_obj["decoded"] = serde_json::json!({
+                                "raw": d.raw,
+                                "label": d.label,
+                                "matched_type": d.matched_type,
+                                "fields": d.fields,
+                            });
+                        }
+                        println!("{}", serde_json::to_string(&json_obj)?);
                     } else {
                         println!("Invocation Result:");
                         println!("  Contract: {}", res.contract_id);
@@ -7366,6 +7452,9 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
                             for event in &res.events {
                                 println!("    {}", event);
                             }
+                        }
+                        if let Some(d) = &decoded {
+                            println!("  Decoded Result: {}", d.label);
                         }
                         if let Some(code) = &res.error_code {
                             println!("  Error:    {}", code);
