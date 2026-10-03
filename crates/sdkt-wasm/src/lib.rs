@@ -12,8 +12,8 @@ pub use client_gen::{
     generate_client, generate_client_with_options, ClientGenError, GenerateOptions,
 };
 pub use spec::{
-    parse_contract_spec, ContractEvent, ContractFunction, ContractParameter, ContractSpec,
-    ContractType, EventParam, TypeMember,
+    decode_contract_meta, parse_contract_spec, ContractEvent, ContractFunction, ContractParameter,
+    ContractSpec, ContractType, EventParam, TypeMember,
 };
 pub use spec_diff::{
     diff_specs, diff_wasm, event_sig, type_sig, upgrade_safety, upgrade_safety_wasm, ChangeKind,
@@ -31,6 +31,22 @@ pub enum WasmError {
     NoContractSpec,
     #[error("XDR decode error in contract spec: {0}")]
     SpecXdr(stellar_xdr::Error),
+    #[error("XDR decode error in contractmetav0 metadata: {0}")]
+    MetaXdr(stellar_xdr::Error),
+}
+
+/// A single `contractmetav0` key/value entry.
+///
+/// Contract metadata is an arbitrary, open key/value space (the `SCMetaV0`
+/// XDR struct is literally a `string key` / `string val` pair), so entries are
+/// surfaced verbatim and in section order — no vocabulary is assumed and
+/// repeated keys are preserved as separate entries.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ContractMetaEntry {
+    /// The metadata key, exactly as declared by the contract (UTF-8).
+    pub key: String,
+    /// The metadata value, exactly as declared by the contract (UTF-8).
+    pub value: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -41,6 +57,10 @@ pub struct WasmMetadata {
     pub exports: Vec<WasmExport>,
     pub imports: Vec<WasmImport>,
     pub custom_sections: Vec<String>,
+    /// Decoded `contractmetav0` entries, in section order (additive; may be
+    /// empty when the module carries no contract metadata).
+    #[serde(default)]
+    pub contract_meta: Vec<ContractMetaEntry>,
     /// Number of functions declared in the module's function section.
     #[serde(default)]
     pub function_count: u32,
@@ -105,6 +125,7 @@ pub fn parse_metadata(wasm_bytes: &[u8]) -> Result<WasmMetadata, WasmError> {
         exports: Vec::new(),
         imports: Vec::new(),
         custom_sections: Vec::new(),
+        contract_meta: Vec::new(),
         function_count: 0,
         memory: None,
         table_count: 0,
@@ -141,7 +162,15 @@ pub fn parse_metadata(wasm_bytes: &[u8]) -> Result<WasmMetadata, WasmError> {
                 }
             }
             Payload::CustomSection(reader) => {
-                meta.custom_sections.push(reader.name().to_string());
+                let name = reader.name().to_string();
+                if name == spec::CONTRACT_META_V0 {
+                    // Decode the payload as ordered SCMetaEntry key/value pairs
+                    // (generic: no vocabulary is assumed). `custom_sections`
+                    // keeps recording the section name exactly as before.
+                    let entries = spec::decode_contract_meta(reader.data())?;
+                    meta.contract_meta.extend(entries);
+                }
+                meta.custom_sections.push(name);
             }
             Payload::FunctionSection(reader) => {
                 meta.function_count = reader.count();

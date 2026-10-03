@@ -250,6 +250,7 @@ mod tests {
             exports: vec![],
             imports: vec![],
             custom_sections: vec![],
+            contract_meta: vec![],
             function_count: 0,
             memory: None,
             table_count: 0,

@@ -9,15 +9,19 @@
 
 use serde::{Deserialize, Serialize};
 use std::io::Cursor;
-use stellar_xdr::{Limited, Limits, ReadXdr, ScSpecEntry, ScSpecEntryKind, ScSpecTypeDef};
+use stellar_xdr::{
+    Limited, Limits, ReadXdr, ScMetaEntry, ScSpecEntry, ScSpecEntryKind, ScSpecTypeDef,
+};
 use wasmparser::Payload;
 
-use crate::WasmError;
+use crate::{ContractMetaEntry, WasmError};
 
 /// Names of the Soroban custom sections this parser understands.
 pub const CONTRACT_SPEC_V0: &str = "contractspecv0";
 /// Environment metadata section (contract spec version marker).
 pub const CONTRACT_ENV_META_V0: &str = "contractenvmetav0";
+/// Contract metadata section (arbitrary key/value `SCMetaEntry` pairs, SEP-46).
+pub const CONTRACT_META_V0: &str = "contractmetav0";
 
 /// The full contract ABI, as declared in the compiled WASM.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -254,6 +258,38 @@ fn decode_env_meta_section(data: &[u8]) -> Result<EnvMetaSpec, WasmError> {
     Ok(EnvMetaSpec {
         interface_version: v,
     })
+}
+
+/// Decodes the `contractmetav0` payload into ordered key/value entries.
+///
+/// The section is a sequence of concatenated XDR `SCMetaEntry` values (each a
+/// `SCMetaV0 { string key; string val; }` union arm). The key/value vocabulary
+/// is open — SEP-58 continues to evolve it (`rsver`, `rssdkver`, `cliver`,
+/// `bldimg`, `source_repo`/`source_rev`, and newer names) — so this decoder
+/// performs no vocabulary matching and preserves duplicates and order.
+///
+/// A present-but-empty section yields an empty list. A payload that does not
+/// decode cleanly as XDR is surfaced as [`WasmError::MetaXdr`] rather than
+/// silently dropped, so a corrupted section cannot masquerade as "no metadata".
+pub fn decode_contract_meta(data: &[u8]) -> Result<Vec<ContractMetaEntry>, WasmError> {
+    let mut entries = Vec::new();
+    let mut items = data;
+    while !items.is_empty() {
+        let mut cursor = Cursor::new(items);
+        let mut limited = Limited::new(&mut cursor, Limits::none());
+        let entry = ScMetaEntry::read_xdr(&mut limited).map_err(WasmError::MetaXdr)?;
+
+        match entry {
+            ScMetaEntry::ScMetaV0(v0) => entries.push(ContractMetaEntry {
+                key: v0.key.to_utf8_string_lossy(),
+                value: v0.val.to_utf8_string_lossy(),
+            }),
+        }
+
+        let consumed = cursor.position() as usize;
+        items = &items[consumed..];
+    }
+    Ok(entries)
 }
 
 fn map_type_def(t: &ScSpecTypeDef) -> ContractType {
@@ -811,5 +847,144 @@ pub(crate) mod tests {
         assert_eq!(spec.custom_types[0].members.len(), 1);
         assert_eq!(spec.custom_types[0].members[0].name, "x");
         assert_eq!(spec.custom_types[0].members[0].types[0].name, "i32");
+    }
+
+    // ---- contractmetav0 (SEP-46 / SEP-58 provenance) ----
+    //
+    // Metadata is an open key/value space; these fixtures serialize real
+    // `SCMetaEntry` XDR values (stellar-xdr), never hand-rolled bytes, and one
+    // test runs against a REAL committed contract WASM carrying metadata.
+
+    fn meta_entry(key: &str, val: &str) -> ScMetaEntry {
+        ScMetaEntry::ScMetaV0(stellar_xdr::ScMetaV0 {
+            key: key.to_string().try_into().unwrap(),
+            val: val.to_string().try_into().unwrap(),
+        })
+    }
+
+    /// Encodes `SCMetaEntry` values into a bare `contractmetav0` payload.
+    fn encode_entries(entries: &[ScMetaEntry]) -> Vec<u8> {
+        let mut payload = Vec::new();
+        for e in entries {
+            let mut buf = Vec::new();
+            let mut cursor = Cursor::new(&mut buf);
+            let mut l = Limited::new(&mut cursor, Limits::none());
+            e.write_xdr(&mut l).unwrap();
+            payload.extend_from_slice(&buf);
+        }
+        payload
+    }
+
+    /// Wraps a `contractmetav0` payload in a real WASM custom section.
+    fn encode_meta_section(entries: &[ScMetaEntry]) -> Vec<u8> {
+        let mut section = Vec::new();
+        section.push(CONTRACT_META_V0.len() as u8);
+        section.extend_from_slice(CONTRACT_META_V0.as_bytes());
+        section.extend_from_slice(&encode_entries(entries));
+        let mut result = vec![0x00, 0x61, 0x73, 0x6d, 0x01, 0x00, 0x00, 0x00];
+        result.push(0); // custom-section id
+        let mut sz = section.len() as u32;
+        let mut size_bytes = Vec::new();
+        while sz >= 0x80 {
+            size_bytes.push((sz as u8 & 0x7f) | 0x80);
+            sz >>= 7;
+        }
+        size_bytes.push(sz as u8);
+        result.extend_from_slice(&size_bytes);
+        result.extend_from_slice(&section);
+        result
+    }
+
+    #[test]
+    fn decode_contract_meta_reads_generic_key_values_in_order() {
+        let payload = vec![
+            meta_entry("rsver", "1.97.1"),
+            meta_entry("totally_unknown_key", "arbitrary value"),
+            meta_entry("cliver", "27.1.0#deadbeef"),
+        ];
+        let decoded = decode_contract_meta(&encode_entries(&payload)).unwrap();
+        assert_eq!(decoded.len(), 3);
+        assert_eq!(decoded[0].key, "rsver");
+        assert_eq!(decoded[0].value, "1.97.1");
+        assert_eq!(decoded[1].key, "totally_unknown_key");
+        assert_eq!(decoded[1].value, "arbitrary value");
+        assert_eq!(decoded[2].value, "27.1.0#deadbeef");
+    }
+
+    #[test]
+    fn decode_contract_meta_preserves_duplicate_keys() {
+        let payload = vec![
+            meta_entry("k", "first"),
+            meta_entry("k", "second"),
+            meta_entry("k", "third"),
+        ];
+        let decoded = decode_contract_meta(&encode_entries(&payload)).unwrap();
+        let values: Vec<&str> = decoded.iter().map(|e| e.value.as_str()).collect();
+        assert_eq!(values, vec!["first", "second", "third"]);
+    }
+
+    #[test]
+    fn decode_contract_meta_empty_payload_is_empty_list() {
+        assert!(decode_contract_meta(&[]).unwrap().is_empty());
+    }
+
+    #[test]
+    fn decode_contract_meta_rejects_malformed_payload() {
+        // 0xFF is not a valid SCMetaKind discriminant.
+        assert!(matches!(
+            decode_contract_meta(&[0xff, 0x00, 0x00]).unwrap_err(),
+            WasmError::MetaXdr(_)
+        ));
+        // A truncated string length must be rejected, not silently truncated.
+        assert!(matches!(
+            decode_contract_meta(&[0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x40]).unwrap_err(),
+            WasmError::MetaXdr(_)
+        ));
+    }
+
+    #[test]
+    fn parse_metadata_surfaces_meta_and_keeps_custom_sections_unchanged() {
+        let wasm = encode_meta_section(&[
+            meta_entry("rsver", "1.97.1"),
+            meta_entry("cliver", "27.1.0#8e402ea282029"),
+        ]);
+        let meta = crate::parse_metadata(&wasm).unwrap();
+        // Existing behavior preserved: section still listed by name.
+        assert_eq!(meta.custom_sections, vec![CONTRACT_META_V0.to_string()]);
+        assert_eq!(meta.contract_meta.len(), 2);
+        assert_eq!(meta.contract_meta[0].key, "rsver");
+        assert_eq!(meta.contract_meta[1].value, "27.1.0#8e402ea282029");
+    }
+
+    #[test]
+    fn parse_metadata_without_meta_section_is_empty() {
+        let meta = crate::parse_metadata(VALID_WASM).unwrap();
+        assert!(meta.contract_meta.is_empty());
+        assert!(meta.custom_sections.is_empty());
+    }
+
+    #[test]
+    fn parse_metadata_decodes_real_committed_contract_metadata() {
+        // `us_new.wasm` is a real compiled Soroban contract committed here; it
+        // genuinely carries `contractmetav0`.
+        let bytes = std::fs::read(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../sdkt-cli/tests/fixtures/us_new.wasm"
+        ))
+        .expect("fixture present");
+        let meta = crate::parse_metadata(&bytes).unwrap();
+        assert!(meta.custom_sections.contains(&CONTRACT_META_V0.to_string()));
+        assert!(
+            !meta.contract_meta.is_empty(),
+            "real contract metadata must decode"
+        );
+        let get = |k: &str| {
+            meta.contract_meta
+                .iter()
+                .find(|e| e.key == k)
+                .map(|e| e.value.clone())
+        };
+        assert_eq!(get("rsver").as_deref(), Some("1.97.1"));
+        assert!(get("cliver").unwrap().starts_with("27.1.0#"));
     }
 }

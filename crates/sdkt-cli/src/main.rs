@@ -6180,6 +6180,16 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
                         println!("  - {}", section);
                     }
 
+                    // Contract metadata (contractmetav0): generic key/value
+                    // entries, section order, duplicates preserved.
+                    println!("\nContract Metadata ({}):", metadata.contract_meta.len());
+                    if metadata.contract_meta.is_empty() {
+                        println!("  (none)");
+                    }
+                    for entry in &metadata.contract_meta {
+                        println!("  {} = {}", entry.key, entry.value);
+                    }
+
                     println!("\nExported Functions ({}):", metadata.exports.len());
                     for export in &metadata.exports {
                         println!("  - {} [{}]", export.name, export.kind);
