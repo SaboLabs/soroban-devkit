@@ -100,6 +100,63 @@ fn audit_json_output_is_valid_report() {
 }
 
 #[test]
+fn audit_abi_correlates_initialize_with_contract_exports() {
+    let dir = TempDir::new().unwrap();
+    let path = write_fixture(&dir, "helper.rs", "pub fn initialize(admin: Address) { }\n");
+    let wasm = format!("{}/tests/fixtures/us_new.wasm", env!("CARGO_MANIFEST_DIR"));
+
+    sdkt()
+        .args(["audit", path.to_str().unwrap()])
+        .assert()
+        .success()
+        .stdout(predicates::str::contains("AUTH-003"));
+
+    sdkt()
+        .args(["audit", path.to_str().unwrap(), "--abi", &wasm])
+        .assert()
+        .success()
+        .stdout(predicates::str::contains(
+            "Spec-correlated analysis: enabled",
+        ))
+        .stdout(predicates::str::contains("AUTH-003").not());
+}
+
+#[test]
+fn audit_abi_rejects_unparseable_wasm_clearly() {
+    let dir = TempDir::new().unwrap();
+    let source = write_fixture(&dir, "source.rs", "pub fn initialize() {}\n");
+    let wasm = write_fixture(&dir, "bad.wasm", "not a wasm module");
+    sdkt()
+        .args([
+            "audit",
+            source.to_str().unwrap(),
+            "--abi",
+            wasm.to_str().unwrap(),
+        ])
+        .assert()
+        .failure()
+        .stderr(predicates::str::contains("Failed to parse ABI WASM"));
+}
+
+#[test]
+fn audit_abi_sources_are_mutually_exclusive_before_file_reads() {
+    sdkt()
+        .args([
+            "audit",
+            "/no/such/source.rs",
+            "--abi",
+            "/no/such/file.wasm",
+            "--abi-contract",
+            "C0000000000000000000000000000000000000000000000000000000",
+        ])
+        .assert()
+        .failure()
+        .stderr(predicates::str::contains(
+            "specify only one of --abi or --abi-contract",
+        ));
+}
+
+#[test]
 fn audit_division_before_multiplication_reports_json_and_can_be_disabled() {
     let dir = TempDir::new().unwrap();
     let path = write_fixture(
