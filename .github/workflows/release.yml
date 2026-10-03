@@ -196,6 +196,10 @@ jobs:
         if: matrix.os == 'windows-latest'
         shell: powershell
         run: |
+          # Windows PowerShell 5.1 does not load System.IO.Compression.FileSystem
+          # by default, so [System.IO.Compression.ZipFile] is unresolved without
+          # this explicit assembly load (pwsh 7 loads it implicitly).
+          Add-Type -AssemblyName System.IO.Compression.FileSystem
           $zip = Get-Content "sdkt-${{ env.TARGET }}.zip" -Raw
           $entries = [System.IO.Compression.ZipFile]::OpenRead("sdkt-${{ env.TARGET }}.zip").Entries.Name
           Write-Host "Contents of sdkt-${{ env.TARGET }}.zip:"
