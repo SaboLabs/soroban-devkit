@@ -11,7 +11,8 @@ use stellar_strkey::Strkey;
 use stellar_xdr::{
     AccountId, BytesM, ContractExecutable, ContractId, ContractIdPreimage,
     ContractIdPreimageFromAddress, CreateContractArgs, CreateContractArgsV2, ExtendFootprintTtlOp,
-    ExtensionPoint, Hash, HashIdPreimage, HashIdPreimageContractId, HostFunction,
+    ExtensionPoint, FeeBumpTransaction, FeeBumpTransactionEnvelope, FeeBumpTransactionExt,
+    FeeBumpTransactionInnerTx, Hash, HashIdPreimage, HashIdPreimageContractId, HostFunction,
     InvokeContractArgs, InvokeHostFunctionOp, LedgerFootprint, LedgerKey, Memo, MuxedAccount,
     Operation, OperationBody, Preconditions, PublicKey, ReadXdr, RestoreFootprintOp, ScAddress,
     ScSymbol, ScVal, SequenceNumber, SorobanAuthorizationEntry, SorobanResources,
@@ -72,6 +73,152 @@ pub fn decode_account_id(pubkey: &str) -> Result<AccountId, DecodeError> {
             "Expected ED25519 Public Key".into(),
         )),
     }
+}
+
+/// Result of wrapping a transaction in a fee-bump envelope.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FeeBumpBuildResult {
+    pub envelope: String,
+    pub inner_fee: i64,
+    pub fee_bump_fee: i64,
+    pub operation_count: usize,
+    pub minimum_fee: i64,
+}
+
+/// Calculate the protocol minimum fee for a fee-bump transaction.
+///
+/// CAP-0015 treats the fee bump as one additional operation. The outer fee
+/// must cover the effective operation count and retain at least the inner
+/// transaction's fee rate.
+pub fn fee_bump_minimum_fee(
+    inner_fee: i64,
+    resource_fee: i64,
+    operation_count: usize,
+    base_fee: i64,
+) -> Result<i64, DecodeError> {
+    if inner_fee < 0 {
+        return Err(DecodeError::Extraction(
+            "inner transaction fee must be non-negative".into(),
+        ));
+    }
+    if operation_count == 0 {
+        return Err(DecodeError::Extraction(
+            "inner transaction must contain at least one operation".into(),
+        ));
+    }
+    if base_fee <= 0 {
+        return Err(DecodeError::Extraction(
+            "base fee must be greater than zero".into(),
+        ));
+    }
+    if resource_fee < 0 {
+        return Err(DecodeError::Extraction(
+            "resource fee must be non-negative".into(),
+        ));
+    }
+    let operations = i64::try_from(operation_count)
+        .map_err(|_| DecodeError::Extraction("too many operations".into()))?;
+    let effective_operations = operations
+        .checked_add(1)
+        .ok_or_else(|| DecodeError::Extraction("operation count overflow".into()))?;
+    let inclusion_min = base_fee
+        .checked_mul(effective_operations)
+        .ok_or_else(|| DecodeError::Extraction("minimum fee overflow".into()))?;
+    let inclusion_fee = inner_fee
+        .checked_sub(resource_fee)
+        .ok_or_else(|| DecodeError::Extraction("inclusion fee overflow".into()))?;
+    // Stellar Core skips the rate comparison when the inner inclusion fee is
+    // non-positive; the fee bump still covers the resource fee and minimum
+    // inclusion fee for its own operation count.
+    let rate_min = if inclusion_fee > 0 {
+        inclusion_fee
+            .checked_mul(effective_operations)
+            .and_then(|n| n.checked_add(operations - 1))
+            .map(|n| n / operations)
+            .ok_or_else(|| DecodeError::Extraction("minimum fee overflow".into()))?
+    } else {
+        0
+    };
+    resource_fee
+        .checked_add(inclusion_min.max(rate_min))
+        .ok_or_else(|| DecodeError::Extraction("minimum fee overflow".into()))
+}
+
+/// Wrap a plain V1 transaction envelope in a fee-bump envelope.
+///
+/// The inner transaction is cloned as a complete XDR value, including all
+/// existing signatures. V0 and already fee-bumped envelopes are rejected.
+pub fn wrap_fee_bump_transaction(
+    envelope_b64: &str,
+    fee_source: &str,
+    fee: i64,
+    base_fee: i64,
+) -> Result<FeeBumpBuildResult, DecodeError> {
+    if fee < 0 {
+        return Err(DecodeError::Extraction(
+            "fee-bump fee must be non-negative".into(),
+        ));
+    }
+    let raw = STANDARD.decode(envelope_b64.trim())?;
+    let mut cursor = std::io::Cursor::new(&raw);
+    let mut limited = stellar_xdr::Limited::new(&mut cursor, stellar_xdr::Limits::none());
+    let parsed = TransactionEnvelope::read_xdr(&mut limited)
+        .map_err(|e| DecodeError::XdrParse("TransactionEnvelope".into(), e))?;
+    if cursor.position() != raw.len() as u64 {
+        return Err(DecodeError::Extraction(
+            "transaction envelope contains trailing bytes".into(),
+        ));
+    }
+    let inner = match parsed {
+        TransactionEnvelope::Tx(inner) => inner,
+        TransactionEnvelope::TxV0(_) => {
+            return Err(DecodeError::Extraction(
+                "fee bumps require a V1 transaction envelope; TxV0 is not supported".into(),
+            ))
+        }
+        TransactionEnvelope::TxFeeBump(_) => {
+            return Err(DecodeError::Extraction(
+                "envelope is already a fee-bump transaction".into(),
+            ))
+        }
+    };
+    let operation_count = inner.tx.operations.len();
+    let resource_fee = match &inner.tx.ext {
+        TransactionExt::V0 => 0,
+        TransactionExt::V1(data) => data.resource_fee,
+    };
+    let minimum_fee =
+        fee_bump_minimum_fee(inner.tx.fee.into(), resource_fee, operation_count, base_fee)?;
+    if fee < minimum_fee {
+        return Err(DecodeError::Extraction(format!(
+            "fee-bump fee {} is below the protocol minimum {} for {} inner operation(s) and base fee {}",
+            fee, minimum_fee, operation_count, base_fee
+        )));
+    }
+    let fee_source = match decode_account_id(fee_source)?.0 {
+        PublicKey::PublicKeyTypeEd25519(key) => MuxedAccount::Ed25519(key),
+    };
+    let envelope = TransactionEnvelope::TxFeeBump(FeeBumpTransactionEnvelope {
+        tx: FeeBumpTransaction {
+            fee_source,
+            fee,
+            inner_tx: FeeBumpTransactionInnerTx::Tx(inner.clone()),
+            ext: FeeBumpTransactionExt::V0,
+        },
+        signatures: VecM::default(),
+    });
+    let mut output = Vec::new();
+    let mut limited = stellar_xdr::Limited::new(&mut output, stellar_xdr::Limits::none());
+    envelope
+        .write_xdr(&mut limited)
+        .map_err(DecodeError::XdrWrite)?;
+    Ok(FeeBumpBuildResult {
+        envelope: STANDARD.encode(output),
+        inner_fee: inner.tx.fee.into(),
+        fee_bump_fee: fee,
+        operation_count,
+        minimum_fee,
+    })
 }
 
 /// Decode a C... StrKey into a 32-byte `Hash`.
@@ -1144,6 +1291,76 @@ mod tests {
     #[test]
     fn test_decode_contract_id_invalid() {
         assert!(decode_contract_id(TEST_SOURCE).is_err()); // Wrong type (Account)
+    }
+
+    #[test]
+    fn fee_bump_wrap_preserves_inner_transaction_and_reports_fees() {
+        let inner_b64 = build_invoke_transaction(&InvokeTransactionParams {
+            source_account: TEST_SOURCE.to_string(),
+            sequence: 7,
+            fee: 100,
+            contract_id: TEST_CONTRACT.to_string(),
+            function: "hello".to_string(),
+            args: vec![],
+            memo: None,
+        })
+        .unwrap();
+        let result = wrap_fee_bump_transaction(&inner_b64, TEST_SOURCE, 200, 100).unwrap();
+        assert_eq!(result.inner_fee, 100);
+        assert_eq!(result.fee_bump_fee, 200);
+        assert_eq!(result.minimum_fee, 200);
+        assert_eq!(result.operation_count, 1);
+
+        let raw = STANDARD.decode(&result.envelope).unwrap();
+        let mut cursor = std::io::Cursor::new(raw);
+        let mut limited = stellar_xdr::Limited::new(&mut cursor, stellar_xdr::Limits::none());
+        let wrapped = TransactionEnvelope::read_xdr(&mut limited).unwrap();
+        let TransactionEnvelope::Tx(inner) =
+            TransactionEnvelope::read_xdr(&mut stellar_xdr::Limited::new(
+                &mut std::io::Cursor::new(STANDARD.decode(inner_b64).unwrap()),
+                stellar_xdr::Limits::none(),
+            ))
+            .unwrap()
+        else {
+            panic!("expected V1 inner envelope");
+        };
+        let TransactionEnvelope::TxFeeBump(wrapped) = wrapped else {
+            panic!("expected fee-bump envelope");
+        };
+        assert_eq!(wrapped.tx.fee, 200);
+        assert_eq!(wrapped.tx.inner_tx, FeeBumpTransactionInnerTx::Tx(inner));
+    }
+
+    #[test]
+    fn fee_bump_wrap_rejects_insufficient_protocol_fee() {
+        let inner_b64 = build_invoke_transaction(&InvokeTransactionParams {
+            source_account: TEST_SOURCE.to_string(),
+            sequence: 7,
+            fee: 250,
+            contract_id: TEST_CONTRACT.to_string(),
+            function: "hello".to_string(),
+            args: vec![],
+            memo: None,
+        })
+        .unwrap();
+        let err = wrap_fee_bump_transaction(&inner_b64, TEST_SOURCE, 499, 100).unwrap_err();
+        assert!(matches!(err, DecodeError::Extraction(message) if message.contains("minimum 500")));
+    }
+
+    #[test]
+    fn fee_bump_minimum_keeps_resource_fee_flat_and_rates_only_inclusion_fee() {
+        assert_eq!(
+            fee_bump_minimum_fee(50_100, 50_000, 1, 100).unwrap(),
+            50_200
+        );
+        assert_eq!(
+            fee_bump_minimum_fee(49_900, 50_000, 1, 100).unwrap(),
+            50_200
+        );
+        assert_eq!(
+            fee_bump_minimum_fee(50_000, 50_000, 1, 100).unwrap(),
+            50_200
+        );
     }
 
     #[test]
