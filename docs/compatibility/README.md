@@ -25,6 +25,8 @@ mode, and fails the step when the check does not pass.
 | `disable` | no | `""` | Audit rule id(s) to disable (space-separated) |
 | `contract` | no | `""` | Deployed contract ID (C...) for on-chain checks; skipped when empty |
 | `network` | no | `""` | `testnet` \| `mainnet` \| `futurenet` for the on-chain checks |
+| `max-size-bytes` | for `release-assurance` | `""` | Fail the release when the candidate artifact exceeds N bytes (forwards `--max-size-bytes`) |
+| `max-growth-pct` | for `release-assurance` | `""` | Fail the release when the candidate grew more than N percent over `previous-wasm` (forwards `--max-growth-pct`) |
 
 **Threshold semantics:** only findings at or above `severity-threshold` fail
 the build. The default `critical` means `MOVE-001` (Warning) never breaks CI.
@@ -33,6 +35,14 @@ the build. The default `critical` means `MOVE-001` (Warning) never breaks CI.
 step. `FAIL` blocks (step exits 1); `PASS`, `REVIEW`, and `SKIPPED`-only
 results do **not** block (exit 0), matching the CLI. A breaking baseline
 therefore fails CI, while a report that only needs human review passes.
+
+**Size policy:** `max-size-bytes` and `max-growth-pct` are optional and
+forwarded to the CLI's existing size policy. Thresholds are
+operator-supplied — SDKT hardcodes no network limit. Boundaries are
+inclusive, so a size exactly at the limit or growth exactly at the cap
+passes. `max-growth-pct` requires `previous-wasm`; without it the CLI
+fails rather than silently skipping the check. Omitting both inputs
+leaves the release-assurance result unchanged.
 
 **Read-only:** `release-assurance` never signs, submits, deploys, extends TTL,
 or mutates state, and the Action passes no credentials.

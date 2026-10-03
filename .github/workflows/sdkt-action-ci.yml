@@ -95,3 +95,46 @@ jobs:
             exit 1
           fi
           echo "OK: release-assurance REVIEW did not fail the build."
+
+      # Size policy forwarding + compliance: us_new.wasm is 530 bytes.
+      # --max-size-bytes 1024 is satisfied, so the release must NOT fail.
+      - name: Release-assurance should PASS with a satisfied size ceiling
+        id: ra_size_ok
+        uses: ./.github/actions/sdkt
+        with:
+          command: release-assurance
+          wasm: crates/sdkt-cli/tests/fixtures/us_new.wasm
+          max-size-bytes: "1024"
+
+      - name: Assert satisfied size ceiling passed
+        shell: bash
+        run: |
+          if [ "${{ steps.ra_size_ok.outcome }}" != "success" ]; then
+            echo "::error::expected release-assurance to PASS under --max-size-bytes 1024, but outcome was '${{ steps.ra_size_ok.outcome }}'"
+            exit 1
+          fi
+          echo "OK: max-size-bytes was accepted and the satisfied ceiling did not fail the release."
+
+      # Size policy ENFORCEMENT — the discriminating check. The same 530-byte
+      # artifact under a 256-byte ceiling goes artifact FAIL -> release_status
+      # FAIL, which the Action turns into a step failure. Without the input
+      # forwarded this run is the plain ra_review case and stays green, so
+      # failure here is positive proof the flag reaches the CLI. Boundaries are
+      # inclusive, hence 256 < 530 rather than 530.
+      - name: Release-assurance should FAIL on exceeded max-size-bytes
+        id: ra_size_violation
+        continue-on-error: true
+        uses: ./.github/actions/sdkt
+        with:
+          command: release-assurance
+          wasm: crates/sdkt-cli/tests/fixtures/us_new.wasm
+          max-size-bytes: "256"
+
+      - name: Assert exceeded size ceiling failed
+        shell: bash
+        run: |
+          if [ "${{ steps.ra_size_violation.outcome }}" != "failure" ]; then
+            echo "::error::expected release-assurance to FAIL under --max-size-bytes 256, but outcome was '${{ steps.ra_size_violation.outcome }}' — the Action may not be forwarding max-size-bytes"
+            exit 1
+          fi
+          echo "OK: max-size-bytes forwarding proven — the ceiling violation failed the release."

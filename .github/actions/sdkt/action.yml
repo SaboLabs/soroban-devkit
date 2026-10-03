@@ -50,6 +50,14 @@ inputs:
     description: "Deployed network (testnet | mainnet | futurenet) for the on-chain checks (used with command=release-assurance). Only meaningful with 'contract'."
     required: false
     default: ""
+  max-size-bytes:
+    description: "Fail the release when the candidate artifact exceeds N bytes (used with command=release-assurance). Optional; forwards --max-size-bytes. Operator-supplied policy, SDKT hardcodes no network limit. Violates when size > N; exactly N passes."
+    required: false
+    default: ""
+  max-growth-pct:
+    description: "Fail the release when the candidate grew more than N percent over 'previous-wasm' (used with command=release-assurance). Optional; forwards --max-growth-pct. Requires 'previous-wasm'. Violates when growth > N; exactly N passes."
+    required: false
+    default: ""
 
 runs:
   using: "composite"
@@ -141,6 +149,8 @@ runs:
         SDKT_DISABLE: ${{ inputs.disable }}
         SDKT_CONTRACT: ${{ inputs.contract }}
         SDKT_NETWORK: ${{ inputs.network }}
+        SDKT_MAX_SIZE_BYTES: ${{ inputs.max-size-bytes }}
+        SDKT_MAX_GROWTH_PCT: ${{ inputs.max-growth-pct }}
       run: |
         set -euo pipefail
         if [ -z "$SDKT_WASM" ]; then
@@ -160,6 +170,10 @@ runs:
         fi
         if [ -n "$SDKT_CONTRACT" ]; then ARGS+=(--contract "$SDKT_CONTRACT"); fi
         if [ -n "$SDKT_NETWORK" ]; then ARGS+=(--network "$SDKT_NETWORK"); fi
+        # Opt-in WASM size policy: forwarded only when the input is non-empty so
+        # the CLI's own defaults and validation stay in charge.
+        if [ -n "$SDKT_MAX_SIZE_BYTES" ]; then ARGS+=(--max-size-bytes "$SDKT_MAX_SIZE_BYTES"); fi
+        if [ -n "$SDKT_MAX_GROWTH_PCT" ]; then ARGS+=(--max-growth-pct "$SDKT_MAX_GROWTH_PCT"); fi
         echo "Running: sdkt release-assurance ${ARGS[*]} --format json"
         # The CLI itself exits 1 when release_status is FAIL; capture the JSON
         # either way and let .release_status drive the verdict (FAIL -> exit 1,
