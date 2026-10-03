@@ -4354,6 +4354,15 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
                             println!("{}", report.explanation);
                         }
                     }
+                    // Exit-code contract: a reported Mismatch is a failed
+                    // verification and must fail a caller/CI step. `Verified`
+                    // and `OnChainOnly` keep exiting 0; genuine RPC/IO errors
+                    // keep exiting non-zero via the `Err` arm below. Mirrors
+                    // `release-assurance`, which already fails on mismatch.
+                    if report.matches == Some(false) {
+                        eprintln!("Error: local WASM does NOT match the deployed contract code");
+                        process::exit(1);
+                    }
                 }
                 Err(e) => {
                     // Surface actionable messages per _PLAN.md §9.
