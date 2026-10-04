@@ -307,7 +307,14 @@ mod tests {
         .write(tmp.path());
         let argv = fx.argv_for(&["health", "--contract", "CABC", "--format", "json"]);
         let raw = Executor::with_program(fx.program, Duration::from_secs(30)).run(&argv);
-        assert_eq!(raw.stdout, "health|--contract|CABC|--format|json|");
+        // On any mismatch, report the whole process outcome (not just the
+        // stdout bytes): an empty string alone cannot distinguish "no argv
+        // seen" from "script never ran".
+        assert_eq!(
+            raw.stdout, "health|--contract|CABC|--format|json|",
+            "spawn_failed={} exit={:?} stderr={:?}",
+            raw.spawn_failed, raw.exit_code, raw.stderr
+        );
         assert_eq!(raw.exit_code, Some(0));
     }
 

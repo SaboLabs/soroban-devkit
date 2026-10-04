@@ -9,15 +9,20 @@
 // instead of the behaviour under test. Instead, one declarative [`FakeCli`]
 // spec is emitted as a native script per platform:
 //
-// | platform | program | script |
-// |----------|---------|--------|
-// | unix     | the script itself (mode 0755) | `#!/bin/sh` + `printf` |
-// | windows  | `powershell.exe` | `.ps1` using `[Console]::Out/Error` |
+// | platform | program        | script                              |
+// |----------|----------------|-------------------------------------|
+// | unix     | `/bin/sh`      | `.sh` + `printf`                    |
+// | windows  | `powershell.exe`| `.ps1` using `[Console]::Out/Error` |
+//
+// Both are invoked through an interpreter with the script as the first
+// argument, never exec'd directly: on Linux, exec'ing a file that was just
+// written races with the still-closing write handle and fails with
+// `ETXTBSY`, which made the argv test intermittently red on CI.
 //
 // Both emit **byte-identical** stdout/stderr for the same spec, so every
-// assertion downstream is platform-independent — including the exact argv
-// echo, which is why PowerShell is used rather than `cmd.exe` (cmd cannot
-// reproduce `printf '%s|' "$@"` faithfully).
+// assertion downstream is platform-independent. The argv echo uses an
+// explicit per-argument loop rather than `printf '%s|' "$@"`, because
+// multi-operand `printf` is not portable across shells.
 //
 // Payloads are embedded as literal strings and escaped per platform, so the
 // spec is written once and never duplicated as shell syntax.
@@ -27,6 +32,7 @@
 // truth for how a fake `sdkt` behaves.
 
 use std::fs;
+use std::io::Write;
 use std::path::{Path, PathBuf};
 
 /// Declarative description of what the fake CLI should do when invoked.
@@ -92,7 +98,14 @@ impl FakeCli {
         }
     }
 
-    /// Unix: a `#!/bin/sh` script with the executable bit set.
+    /// Unix: a `#!/bin/sh` script, run through `/bin/sh`.
+    ///
+    /// Invoked as `sh <script>` rather than executed directly. Executing a
+    /// file that was just written is racy on Linux: `execve` fails with
+    /// `ETXTBSY` while any descriptor for that inode is still open for
+    /// writing, which made this test intermittently flaky. Naming the
+    /// interpreter sidesteps that entirely and also drops the need to set an
+    /// execute bit, so the fixture is identical in shape to the Windows one.
     fn write_sh(&self, dir: &Path) -> Fixture {
         let path = dir.join("fake-sdkt.sh");
         let mut body = String::from("#!/bin/sh\n");
@@ -106,9 +119,11 @@ impl FakeCli {
         }
 
         if self.echo_args {
-            // `printf '%s|'` per argument: no trailing newline, no separators
-            // beyond the pipe, exactly as received.
-            body.push_str("printf '%s|' \"$@\"\n");
+            // One write per argument, no trailing newline: exactly the argv
+            // the executor passed. An explicit loop avoids depending on
+            // `printf` consuming several operands, which is not portable
+            // across shells.
+            body.push_str("for a in \"$@\"; do printf '%s|' \"$a\"; done\n");
         } else if self.big_bytes > 0 {
             let out = "a".repeat(64);
             let err = "b".repeat(64);
@@ -131,15 +146,10 @@ impl FakeCli {
         }
 
         body.push_str(&format!("exit {}\n", self.exit_code));
-        fs::write(&path, body).unwrap();
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::PermissionsExt;
-            fs::set_permissions(&path, fs::Permissions::from_mode(0o755)).unwrap();
-        }
+        write_script(&path, &body);
         Fixture {
-            program: path.to_string_lossy().into_owned(),
-            prefix: Vec::new(),
+            program: "/bin/sh".to_string(),
+            prefix: vec![path.to_string_lossy().into_owned()],
         }
     }
 
@@ -159,7 +169,7 @@ impl FakeCli {
 
         if let Some(marker) = &self.marker {
             body.push_str(&format!(
-                "[IO.File]::WriteAllText('{}', '')\n",
+                "[IO.File]::WriteAllText({}, '')\n",
                 ps_quote(&marker.to_string_lossy())
             ));
         }
@@ -180,21 +190,21 @@ impl FakeCli {
         } else {
             if !self.stdout.is_empty() {
                 body.push_str(&format!(
-                    "[Console]::Out.Write('{}')\n",
+                    "[Console]::Out.Write({})\n",
                     ps_quote(&self.stdout)
                 ));
             }
             if !self.stderr.is_empty() {
                 body.push_str(&format!(
-                    "[Console]::Error.Write('{}')\n",
+                    "[Console]::Error.Write({})\n",
                     ps_quote(&self.stderr)
                 ));
             }
         }
 
-        body.push_str("[Console]::Out.Flush()\n");
+        body.push_str("[Console]::Out.Flush(); [Console]::Error.Flush()\n");
         body.push_str(&format!("exit {}\n", self.exit_code));
-        fs::write(&path, body).unwrap();
+        write_script(&path, &body);
         Fixture {
             program: "powershell.exe".to_string(),
             prefix: vec![
@@ -214,12 +224,43 @@ fn sh_quote(s: &str) -> String {
     format!("'{}'", s.replace('\'', r"'\''"))
 }
 
-/// Single-quote a string for PowerShell.
+/// Write a script and make sure no descriptor for it is left open.
 ///
-/// Doubles embedded single quotes and doubles backticks, because PowerShell
-/// treats the backtick as an escape character even inside a single-quoted
-/// string. Without this, a payload containing `` ` `` would silently write
-/// different bytes on Windows than on unix.
+/// The caller execs (or asks an interpreter to read) the file immediately,
+/// and Linux refuses with `ETXTBSY` if any descriptor for the same inode is
+/// still open for writing. Dropping the handle here — explicitly, rather than
+/// relying on `fs::write` — removes that race. On unix the execute bit is
+/// still set so the file is usable either way.
+fn write_script(path: &Path, body: &str) {
+    {
+        let mut file = fs::File::create(path).expect("create fake script");
+        file.write_all(body.as_bytes()).expect("write fake script");
+        file.flush().expect("flush fake script");
+    } // handle closed here
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        fs::set_permissions(path, fs::Permissions::from_mode(0o755)).expect("chmod fake script");
+    }
+}
+
+/// Quote a string as a **single-line** PowerShell expression.
+///
+/// Two hazards are avoided here:
+///
+/// * The backtick is PowerShell's escape character even inside single quotes,
+///   so it is doubled; otherwise a payload containing one would silently write
+///   different bytes on Windows than on unix.
+/// * A literal newline inside the quoted string would put a line break in the
+///   middle of the statement. Windows PowerShell 5.1 mis-parses multi-line
+///   string literals in LF-only script files, which surfaced on CI as exit 1
+///   with an empty stdout. Newlines are therefore re-expressed as
+///   `[char]10` concatenations, keeping every emitted statement on one line
+///   while producing byte-identical output to the unix fixture.
 fn ps_quote(s: &str) -> String {
-    format!("'{}'", s.replace('\'', "''").replace('`', "``"))
+    let parts: Vec<String> = s
+        .split('\n')
+        .map(|part| format!("'{}'", part.replace('\'', "''").replace('`', "``")))
+        .collect();
+    parts.join(" + [char]10 + ")
 }
