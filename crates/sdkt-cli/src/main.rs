@@ -6329,6 +6329,7 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
                     struct MultiFileAuditReport {
                         files: Vec<serde_json::Value>,
                         summary: sdkt_audit::AuditSummary,
+                        spec_correlated: bool,
                     }
 
                     let files = per_file
@@ -6346,10 +6347,13 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
                         serde_json::to_string(&MultiFileAuditReport {
                             files,
                             summary: aggregate.summary.clone(),
+                            spec_correlated: audit_spec.is_some(),
                         })?
                     );
                 } else {
-                    println!("{}", serde_json::to_string(&aggregate)?);
+                    let mut report = serde_json::to_value(&aggregate)?;
+                    report["spec_correlated"] = serde_json::Value::Bool(audit_spec.is_some());
+                    println!("{}", serde_json::to_string(&report)?);
                 }
             } else {
                 for (path, report) in &per_file {

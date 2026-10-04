@@ -122,6 +122,40 @@ fn audit_abi_correlates_initialize_with_contract_exports() {
 }
 
 #[test]
+fn audit_json_reports_whether_analysis_is_spec_correlated() {
+    let dir = TempDir::new().unwrap();
+    let path = write_fixture(&dir, "helper.rs", "pub fn initialize(admin: Address) { }\n");
+    let wasm = format!("{}/tests/fixtures/us_new.wasm", env!("CARGO_MANIFEST_DIR"));
+
+    let source_only = sdkt()
+        .args(["audit", path.to_str().unwrap(), "--format", "json"])
+        .output()
+        .expect("run source-only audit JSON");
+    assert!(source_only.status.success());
+    let source_report: serde_json::Value = serde_json::from_slice(&source_only.stdout).unwrap();
+    assert_eq!(source_report["spec_correlated"], false);
+    assert!(source_report.get("findings").is_some());
+    assert!(source_report.get("summary").is_some());
+
+    let spec_aware = sdkt()
+        .args([
+            "audit",
+            path.to_str().unwrap(),
+            "--abi",
+            &wasm,
+            "--format",
+            "json",
+        ])
+        .output()
+        .expect("run spec-aware audit JSON");
+    assert!(spec_aware.status.success());
+    let spec_report: serde_json::Value = serde_json::from_slice(&spec_aware.stdout).unwrap();
+    assert_eq!(spec_report["spec_correlated"], true);
+    assert!(spec_report.get("findings").is_some());
+    assert!(spec_report.get("summary").is_some());
+}
+
+#[test]
 fn audit_abi_rejects_unparseable_wasm_clearly() {
     let dir = TempDir::new().unwrap();
     let source = write_fixture(&dir, "source.rs", "pub fn initialize() {}\n");
