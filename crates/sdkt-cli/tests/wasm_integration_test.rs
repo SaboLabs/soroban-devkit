@@ -461,6 +461,93 @@ fn test_cli_wasm_metadata_mock_rpc_cache_namespace() {
 }
 
 #[test]
+fn test_cli_wasm_metadata_mock_rpc_reports_contract_metadata() {
+    // #171: the on-chain `wasm metadata --contract` path must report the same
+    // contractmetav0 entries the offline `wasm inspect` prints, when the WASM
+    // bytes are available (here: served by the mock RPC).
+    let cache_dir = tempdir().unwrap();
+    let network_dir = tempdir().unwrap();
+    let mock_url = spawn_mock_rpc_server(WASM_FIXTURE);
+
+    sdkt_isolated(cache_dir.path(), network_dir.path())
+        .args([
+            "network",
+            "add",
+            "profile_meta",
+            "--rpc-url",
+            &mock_url,
+            "--passphrase",
+            "Test SDF Network ; September 2015",
+        ])
+        .assert()
+        .success();
+
+    // Pretty output: decoded key = value entries, matching the fixture.
+    let pretty = sdkt_isolated(cache_dir.path(), network_dir.path())
+        .args([
+            "wasm",
+            "metadata",
+            "--contract",
+            CONTRACT_ID,
+            "--network-profile",
+            "profile_meta",
+        ])
+        .assert()
+        .success();
+    let stdout = String::from_utf8_lossy(&pretty.get_output().stdout).clone();
+    assert!(
+        stdout.contains("Contract Metadata (3):"),
+        "expected contractmetav0 entries on the on-chain path, got:\n{stdout}"
+    );
+    assert!(stdout.contains("rsver = 1.97.1"));
+    assert!(stdout.contains("rssdkver = 22.0.11#"));
+    assert!(stdout.contains("cliver = 27.1.0#"));
+
+    // JSON output: additive top-level `contract_meta` array, and every
+    // pre-existing inspection key still present and unrenamed.
+    let json_out = sdkt_isolated(cache_dir.path(), network_dir.path())
+        .args([
+            "wasm",
+            "metadata",
+            "--contract",
+            CONTRACT_ID,
+            "--network-profile",
+            "profile_meta",
+            "--format",
+            "json",
+        ])
+        .assert()
+        .success();
+    let json = String::from_utf8_lossy(&json_out.get_output().stdout).clone();
+    let v: serde_json::Value =
+        serde_json::from_str(&json).unwrap_or_else(|e| panic!("invalid JSON ({e}): {json}"));
+
+    for key in [
+        "contract_id",
+        "wasm_hash",
+        "wasm_size",
+        "abi",
+        "storage_summary",
+        "ttl_info",
+        "storage_keys",
+        "contract_meta",
+    ] {
+        assert!(v.get(key).is_some(), "missing `{key}` in {v}");
+    }
+
+    let entries = v["contract_meta"]
+        .as_array()
+        .expect("contract_meta should be an array");
+    assert_eq!(entries.len(), 3, "expected 3 entries, got {entries:?}");
+    let keys: Vec<&str> = entries
+        .iter()
+        .filter_map(|e| e.get("key").and_then(|k| k.as_str()))
+        .collect();
+    assert_eq!(keys, vec!["rsver", "rssdkver", "cliver"]);
+    assert_eq!(entries[0]["value"].as_str(), Some("1.97.1"));
+}
+
+#[test]
 fn test_cli_cache_namespace_isolation_regression() {
     let cache_dir = tempdir().unwrap();
     let network_dir = tempdir().unwrap();

@@ -6541,8 +6541,20 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
                 }
 
                 if fmt == OutputFormat::Json {
-                    let json_str = serde_json::to_string(&inspection)?;
-                    println!("{}", json_str);
+                    // Additive: the decoded contractmetav0 entries travel with
+                    // the report so the on-chain path carries the same
+                    // provenance the offline `wasm inspect` prints. The field
+                    // is appended to the serialized object rather than added
+                    // to `ContractInspection`, keeping that type's public
+                    // shape (and its existing consumers) unchanged.
+                    let mut value = serde_json::to_value(&inspection)?;
+                    if let Some(obj) = value.as_object_mut() {
+                        obj.insert(
+                            "contract_meta".to_string(),
+                            serde_json::to_value(&meta.contract_meta)?,
+                        );
+                    }
+                    println!("{}", serde_json::to_string(&value)?);
                 } else {
                     println!("WASM Metadata:");
                     println!("Contract ID: {}", contract);
@@ -6554,6 +6566,13 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
                     println!("Exports: {}", meta.exports.len());
                     println!("Imports: {}", meta.imports.len());
                     println!("Custom Sections: {}", meta.custom_sections.len());
+                    println!("Contract Metadata ({}):", meta.contract_meta.len());
+                    if meta.contract_meta.is_empty() {
+                        println!("  (none)");
+                    }
+                    for entry in &meta.contract_meta {
+                        println!("  {} = {}", entry.key, entry.value);
+                    }
                     if let Some(abi) = &inspection.abi {
                         println!(
                             "Functions ({}): {}",
