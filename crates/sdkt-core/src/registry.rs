@@ -575,7 +575,7 @@ const CAPABILITIES: [Capability; CAP_COUNT] = [
         optional_args: &["--output <PATH>", "--skip-unsupported"],
         safety: Safety::LocalWrite,
         evidence: Evidence::VerifiedLocal,
-        notes: Some("No --format json; emits Rust source (stdout or --out)."),
+        notes: Some("No --format json; emits Rust source (stdout or --output)."),
         ..Capability::BASE
     },
     Capability {
@@ -821,7 +821,7 @@ const CAPABILITIES: [Capability; CAP_COUNT] = [
         requires_confirmation: true,
         network: NetworkRequirement::Both,
         evidence: Evidence::Unverified,
-        notes: Some("Submits a transaction and spends fees. --dry-run is read-only and is the only mode an agent may call unattended."),
+        notes: Some("Submits a transaction and spends fees. It has no dry-run mode, so an agent must never call it unattended."),
         ..Capability::BASE
     },
     Capability {
