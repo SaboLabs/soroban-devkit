@@ -466,6 +466,12 @@ sdkt encode u128:340282366920938463463374607431768211455 | xargs sdkt decode --t
 sdkt encode i128:-1000 | xargs sdkt decode --type ScVal
 # {"i128": "-1000"}
 
+sdkt encode timepoint:1758000000 | xargs sdkt decode --type ScVal
+# {"timepoint": "1758000000"}
+
+sdkt encode duration:86400 | xargs sdkt decode --type ScVal
+# {"duration": "86400"}
+
 sdkt encode bytes:000aFF | xargs sdkt decode --type ScVal
 # {"bytes": "000aff"}
 
@@ -475,7 +481,7 @@ sdkt encode json:'[1,2,3]' | xargs sdkt decode --type ScVal
 
 ### Supported types (core subset)
 
-`u32`, `i32`, `u64`, `i64`, `u128`, `i128`, `bool`, `string`,
+`u32`, `i32`, `u64`, `i64`, `timepoint`, `duration`, `u128`, `i128`, `bool`, `string`,
 `symbol` (up to 32 bytes), `bytes`, `address` (Stellar `G...` strkey).
 
 Exactly one value is encoded per invocation; the `TYPE:VALUE` syntax matches

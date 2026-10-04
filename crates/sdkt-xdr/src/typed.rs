@@ -8,8 +8,8 @@
 //! truncation is rejected at the scalar boundary (see [`FromScVal`]).
 
 use stellar_xdr::{
-    Int128Parts, ReadXdr, ScAddress, ScBytes, ScMap, ScMapEntry, ScString, ScVal, ScVec,
-    UInt128Parts, VecM,
+    Duration, Int128Parts, ReadXdr, ScAddress, ScBytes, ScMap, ScMapEntry, ScString, ScVal, ScVec,
+    TimePoint, UInt128Parts, VecM,
 };
 
 /// Error produced when a Rust value cannot be represented as a [`ScVal`] or
@@ -171,6 +171,34 @@ impl FromScVal for u64 {
         match v {
             ScVal::U64(n) => Ok(*n),
             _ => Err(ScValError::TypeMismatch("u64")),
+        }
+    }
+}
+
+impl IntoScVal for TimePoint {
+    fn into_scval(self) -> Result<ScVal, ScValError> {
+        Ok(ScVal::Timepoint(self))
+    }
+}
+impl FromScVal for TimePoint {
+    fn from_scval(v: &ScVal) -> Result<Self, ScValError> {
+        match v {
+            ScVal::Timepoint(value) => Ok(value.clone()),
+            _ => Err(ScValError::TypeMismatch("timepoint")),
+        }
+    }
+}
+
+impl IntoScVal for Duration {
+    fn into_scval(self) -> Result<ScVal, ScValError> {
+        Ok(ScVal::Duration(self))
+    }
+}
+impl FromScVal for Duration {
+    fn from_scval(v: &ScVal) -> Result<Self, ScValError> {
+        match v {
+            ScVal::Duration(value) => Ok(value.clone()),
+            _ => Err(ScValError::TypeMismatch("duration")),
         }
     }
 }
@@ -430,6 +458,26 @@ mod tests {
         let i = -(0x_0123_4567_89ab_cdef_0000_0000_0000_0001i128);
         let sv = i.into_scval().unwrap();
         assert_eq!(i128::from_scval(&sv).unwrap(), i);
+    }
+
+    #[test]
+    fn timepoint_and_duration_roundtrip_as_distinct_scvals() {
+        for value in [0, 1, u64::MAX] {
+            let timepoint = TimePoint(value).into_scval().unwrap();
+            assert_eq!(timepoint, ScVal::Timepoint(TimePoint(value)));
+            assert_eq!(TimePoint::from_scval(&timepoint).unwrap(), TimePoint(value));
+
+            let duration = Duration(value).into_scval().unwrap();
+            assert_eq!(duration, ScVal::Duration(Duration(value)));
+            assert_eq!(Duration::from_scval(&duration).unwrap(), Duration(value));
+
+            for encoded in [
+                scval_to_base64(&timepoint).unwrap(),
+                scval_to_base64(&duration).unwrap(),
+            ] {
+                assert!(scval_from_base64(&encoded).is_some());
+            }
+        }
     }
 
     #[test]

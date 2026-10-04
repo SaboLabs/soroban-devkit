@@ -129,6 +129,8 @@ fn decode_scval_to_string(val: &ScVal, _spec: &ContractSpec) -> String {
         ScVal::U32(n) => format!("u32({})", n),
         ScVal::I32(n) => format!("i32({})", n),
         ScVal::U64(n) => format!("u64({})", n),
+        ScVal::Timepoint(value) => format!("timepoint({})", value.0),
+        ScVal::Duration(value) => format!("duration({})", value.0),
         ScVal::I64(n) => format!("i64({})", n),
         ScVal::U128(p) => format!(
             "u128({} hi={}, lo={})",
@@ -151,7 +153,7 @@ fn decode_scval_to_string(val: &ScVal, _spec: &ContractSpec) -> String {
             let len = v.as_ref().map(|items| items.len()).unwrap_or(0);
             format!("vec(len={})", len)
         }
-        // Note: MuxedAddress, Option, Result, Timepoint, Duration, Error are not direct ScVal variants in stellar-xdr 28; omitted for minimal scope.
+        // MuxedAddress, Option, Result, and Error are not primitive ScVal variants.
         _ => format!("scval({:?})", val),
     }
 }
@@ -254,6 +256,19 @@ mod tests {
         let val = ScVal::U32(42);
         let decoded = decode_with_abi(&spec, &val, None);
         assert!(decoded.label.contains("u32(42)"));
+    }
+
+    #[test]
+    fn decode_timepoint_and_duration_primitives() {
+        let spec = dummy_spec();
+        assert_eq!(
+            decode_with_abi(&spec, &ScVal::Timepoint(1234_u64.into()), None).label,
+            "timepoint(1234)"
+        );
+        assert_eq!(
+            decode_with_abi(&spec, &ScVal::Duration(86400_u64.into()), None).label,
+            "duration(86400)"
+        );
     }
 
     #[test]

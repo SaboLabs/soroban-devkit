@@ -317,7 +317,7 @@ sdkt call C... balance --abi /path/to/contract.wasm --format json --network-prof
 sdkt call C... balance --abi-contract C... --format json --network-profile testnet
 ```
 
-- `--args` accepts typed values: `u32:N`, `u64:N`, `i32:N`, `i64:N`, `bool:true|false`, `string:text`, `address:G...`
+- `--args` accepts typed values: `u32:N`, `u64:N`, `i32:N`, `i64:N`, `timepoint:N`, `duration:N`, `bool:true|false`, `string:text`, `address:G...`
 - `--abi <wasm>` enables ABI-aware result decoding using the contract spec from a local WASM file. Without it, the raw base64 XDR result is shown.
 - `--abi-contract <id>` resolves the ABI from the deployed contract over RPC instead (`inspect_contract` → `get_wasm_bytecode` → spec parse) — no local artifact needed. Mutually exclusive with `--abi`.
 - When an ABI is supplied and the function is found in the spec, the decoded human-readable label appears in the output. JSON includes both raw and decoded fields.
