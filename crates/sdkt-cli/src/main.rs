@@ -439,7 +439,11 @@ enum Commands {
         net: NetworkArgs,
     },
     /// Compile Rust contracts into WASM artifacts
-    Build,
+    Build {
+        /// Output format (pretty or json)
+        #[arg(short, long, default_value = "pretty")]
+        format: String,
+    },
     /// Invoke a contract function (read-only, no signing/submission)
     Call {
         /// Stellar contract ID (C...)
@@ -4657,6 +4661,16 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
                             );
                         }
                     }
+                    // A `critical` verdict (mismatched deployed WASM, per
+                    // `derive_verdict`) is a real failure and must be
+                    // observable from the exit code alone, so CI and agents
+                    // cannot read a green run over a mismatched artifact.
+                    // `at_risk` keeps its existing non-blocking meaning, and
+                    // `release-assurance` treats both the same way via
+                    // `health_status()` (Fail vs Review).
+                    if health_status(&report.health) == RaStatus::Fail {
+                        process::exit(1);
+                    }
                 }
                 Err(e) => {
                     // Surface actionable messages per _PLAN.md §11.
@@ -7084,16 +7098,53 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
                 }
             }
         }
-        Commands::Build => {
+        Commands::Build { format } => {
+            let fmt = parse_format_str(&format);
             let config = load_config();
             match sdkt_core::build::build_workspace(&config) {
                 Ok(results) => {
-                    println!("✓ Workspace built successfully");
-                    for res in results {
-                        println!("  ✓ {} -> {}", res.alias, res.wasm_artifact.display());
+                    if fmt == OutputFormat::Json {
+                        // Deterministic, additive machine-readable result: the
+                        // success flag plus one entry per built artifact.
+                        // Existing pretty output is unchanged.
+                        let artifacts: Vec<serde_json::Value> = results
+                            .iter()
+                            .map(|res| {
+                                serde_json::json!({
+                                    "alias": res.alias,
+                                    "path": res.path,
+                                    "wasm_artifact": res.wasm_artifact.display().to_string(),
+                                })
+                            })
+                            .collect();
+                        println!(
+                            "{}",
+                            serde_json::to_string_pretty(&serde_json::json!({
+                                "success": true,
+                                "artifacts": artifacts,
+                            }))?
+                        );
+                    } else {
+                        println!("✓ Workspace built successfully");
+                        for res in results {
+                            println!("  ✓ {} -> {}", res.alias, res.wasm_artifact.display());
+                        }
                     }
                 }
                 Err(e) => {
+                    if fmt == OutputFormat::Json {
+                        // Error envelope on stdout with a non-zero exit, so an
+                        // agent can parse the failure deterministically instead
+                        // of reading stderr text. Mirrors `package validate`.
+                        println!(
+                            "{}",
+                            serde_json::to_string_pretty(&serde_json::json!({
+                                "success": false,
+                                "error": e.to_string(),
+                            }))?
+                        );
+                        std::process::exit(1);
+                    }
                     eprintln!("Error building workspace: {}", e);
                     std::process::exit(1);
                 }

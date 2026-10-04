@@ -298,8 +298,12 @@ pub fn build_workspace(config: &DevKitConfig) -> Result<Vec<BuildResult>, BuildE
         match crate::lock::write_lock(Path::new("."), &lock) {
             Ok(path) => {
                 if let Ok(toml) = crate::lock::lock_to_toml(&lock) {
-                    println!("✓ Wrote {}", path.display());
-                    println!("{}", toml);
+                    // Advisory lock report goes to stderr, not stdout, so
+                    // `sdkt build --format json` emits the JSON document alone
+                    // and stays machine-parseable. The information is
+                    // unchanged for a human running the pretty form.
+                    eprintln!("✓ Wrote {}", path.display());
+                    eprintln!("{}", toml);
                 }
             }
             Err(e) => eprintln!("Warning: could not write sdkt.lock: {}", e),

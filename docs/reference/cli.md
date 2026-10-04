@@ -173,6 +173,7 @@ sdkt
 │   └── remove <name>
 
 ├── build                     Compile Rust contracts in the workspace into WASM artifacts
+│   └── --format <json|pretty>   (default: pretty)
 
 ├── lock                      Generate or inspect `sdkt.lock`
 │   ├── generate              Write `sdkt.lock` from current build artifacts (run `sdkt build` first)
@@ -612,6 +613,8 @@ Store root precedence (lowest → highest): `<cwd>/.sdkt/plugins`,
 
 - `audit` implements the static-analysis rules (AUTH-001/002/003/004, MOVE-001).
 - `audit --list-rules` discovers all registered built-in rules (with id, severity, and description). Supports `--format json` and does not require a source path argument.
+- **Health verdict exit codes.** `sdkt health` exits non-zero when the verdict is `critical` (for example, the deployed WASM does not match the file passed with `--wasm`), so a mismatched artifact cannot pass CI or an agent check that only reads the exit code. `at_risk` remains non-blocking (exit 0), matching how `release-assurance` treats it.
+- **`sdkt build --format json`.** Emits a single JSON document on stdout: `{"success": true, "artifacts": [{"alias", "path", "wasm_artifact"}]}` on success, or `{"success": false, "error": "..."}` with a non-zero exit on failure. The advisory `sdkt.lock` report is written to stderr so stdout stays parseable; the default pretty output is unchanged.
 - **Contract metadata (`contractmetav0`).** `sdkt wasm inspect <file.wasm>` decodes the `contractmetav0` custom section and prints a `Contract Metadata` block of `key = value` entries (for example the `rsver`, `rssdkver`, and `cliver` provenance keys) in section order, with duplicate keys preserved. A WASM without the section prints `Contract Metadata (0):` followed by `(none)`. With `--format json` the entries appear as the additive `metadata.contract_meta` array of `{ "key": ..., "value": ... }` objects — an empty array when the section is absent — alongside the existing `metadata` keys, which are unchanged. A malformed `contractmetav0` payload is reported as a classified error rather than a panic.
 - `sdkt wasm metadata --contract <id>` reports the same entries for the deployed contract, from the fetched (or cached) WASM bytes: pretty output gains the identical `Contract Metadata` block, and `--format json` gains an additive top-level `contract_meta` array alongside the existing inspection keys, which are unchanged. It is empty when the deployed WASM carries no `contractmetav0`.
 - **Mainnet safety.** Mutating commands (`tx submit`, `invoke`, `deploy`, `project deploy`) refuse to target mainnet unless you explicitly select the network — via `--network-profile`, `--rpc-url`, or `--network-passphrase`. A testnet-default passphrase pointed at a mainnet endpoint is rejected before any request is sent, protecting against signing for the wrong network.

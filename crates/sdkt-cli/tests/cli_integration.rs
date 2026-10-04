@@ -515,6 +515,154 @@ fn build_rejects_duplicate_contract_name() {
 }
 
 // ---------------------------------------------------------------------------
+// `sdkt build --format json` (machine-readable, offline, hermetic).
+// ---------------------------------------------------------------------------
+
+/// Write a single-contract project whose `src/lib.rs` builds for
+/// `wasm32v1-none` with no external dependencies, so the success path needs
+/// no network and no prebuilt artifact.
+fn write_buildable_no_std_project(root: &std::path::Path) {
+    let contract = root.join("contracts").join("token");
+    std::fs::create_dir_all(contract.join("src")).unwrap();
+    std::fs::write(
+        root.join(".sdkt.toml"),
+        "[contracts.token]\npath = \"contracts/token\"\n",
+    )
+    .unwrap();
+    std::fs::write(
+        contract.join("Cargo.toml"),
+        "[package]\nname = \"token\"\nversion = \"0.1.0\"\nedition = \"2021\"\n\n\
+         [lib]\ncrate-type = [\"cdylib\"]\n",
+    )
+    .unwrap();
+    // `#![no_std]` + a panic handler are required by wasm32v1-none, and the
+    // crate has no dependencies, so this compiles offline in well under a
+    // second when the wasm32v1-none std-less target is installed.
+    std::fs::write(
+        contract.join("src").join("lib.rs"),
+        "#![no_std]\n\
+         #[panic_handler]\n\
+         fn p(_: &core::panic::PanicInfo) -> ! { loop {} }\n\
+         #[no_mangle]\n\
+         pub extern \"C\" fn f() {}\n",
+    )
+    .unwrap();
+}
+
+/// True when the wasm32v1-none target is installed for the active toolchain,
+/// i.e. a real `sdkt build` can compile to the artifact.
+fn wasm32v1_none_installed() -> bool {
+    std::process::Command::new("rustup")
+        .args(["target", "list", "--installed"])
+        .output()
+        .map(|o| {
+            String::from_utf8_lossy(&o.stdout)
+                .lines()
+                .any(|l| l.trim() == sdkt_core::build::WASM_BUILD_TARGET)
+        })
+        .unwrap_or(false)
+}
+
+#[test]
+fn build_json_success_emits_only_a_json_document() {
+    if !wasm32v1_none_installed() {
+        eprintln!("skipping: wasm32v1-none target not installed");
+        return;
+    }
+    let tmp = std::env::temp_dir().join(format!(
+        "sdkt-it-build-json-ok-{}",
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos()
+    ));
+    let _ = std::fs::remove_dir_all(&tmp);
+    write_buildable_no_std_project(&tmp);
+
+    let mut cmd = Command::cargo_bin("sdkt").expect("sdkt binary built");
+    let assert = cmd
+        .current_dir(&tmp)
+        .args(["build", "--format", "json"])
+        .assert()
+        .success();
+    let stdout = String::from_utf8_lossy(&assert.get_output().stdout).clone();
+
+    // stdout must be parseable on its own: the advisory lock report written by
+    // the build engine must not contaminate the JSON document.
+    let v: serde_json::Value =
+        serde_json::from_str(&stdout).unwrap_or_else(|e| panic!("invalid JSON ({e}): {stdout}"));
+    assert_eq!(v["success"], serde_json::json!(true));
+    let artifacts = v["artifacts"]
+        .as_array()
+        .unwrap_or_else(|| panic!("artifacts must be an array: {v}"));
+    assert_eq!(artifacts.len(), 1, "one contract configured: {v}");
+    assert_eq!(artifacts[0]["alias"], serde_json::json!("token"));
+    assert!(artifacts[0]["wasm_artifact"]
+        .as_str()
+        .expect("wasm_artifact path")
+        .ends_with(".wasm"));
+
+    let _ = std::fs::remove_dir_all(&tmp);
+}
+
+#[test]
+fn build_json_failure_emits_error_envelope_and_exits_nonzero() {
+    // No [contracts] configured: the failure must be machine-readable on
+    // stdout (an `error` envelope) and still exit non-zero.
+    let tmp = std::env::temp_dir().join(format!(
+        "sdkt-it-build-json-err-{}",
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos()
+    ));
+    let _ = std::fs::remove_dir_all(&tmp);
+    std::fs::create_dir_all(&tmp).unwrap();
+    std::fs::write(tmp.join(".sdkt.toml"), "[package]\nname = \"x\"\n").unwrap();
+
+    let mut cmd = Command::cargo_bin("sdkt").expect("sdkt binary built");
+    let assert = cmd
+        .current_dir(&tmp)
+        .args(["build", "--format", "json"])
+        .assert()
+        .failure();
+    let stdout = String::from_utf8_lossy(&assert.get_output().stdout).clone();
+    let v: serde_json::Value =
+        serde_json::from_str(&stdout).unwrap_or_else(|e| panic!("invalid JSON ({e}): {stdout}"));
+    assert_eq!(v["success"], serde_json::json!(false));
+    assert!(
+        v["error"].as_str().is_some_and(|e| !e.is_empty()),
+        "error envelope must carry a message: {v}"
+    );
+
+    let _ = std::fs::remove_dir_all(&tmp);
+}
+
+#[test]
+fn build_pretty_output_unchanged() {
+    // The default (pretty) form must keep printing the human summary on
+    // stdout; the JSON form is strictly additive.
+    let tmp = std::env::temp_dir().join(format!(
+        "sdkt-it-build-pretty-{}",
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos()
+    ));
+    let _ = std::fs::remove_dir_all(&tmp);
+    write_sdkt_toml(&tmp, "[contracts.router]\npath = \"contracts/router\"\n");
+
+    let mut cmd = Command::cargo_bin("sdkt").expect("sdkt binary built");
+    let assert = cmd.current_dir(&tmp).arg("build").assert().failure();
+    let out = String::from_utf8_lossy(&assert.get_output().stderr);
+    assert!(
+        out.contains("Error building workspace"),
+        "pretty failure message must stay on stderr: {out}"
+    );
+    let _ = std::fs::remove_dir_all(&tmp);
+}
+
+// ---------------------------------------------------------------------------
 // — local package manifest validation (offline, hermetic).
 // `sdkt package validate` checks `[package]` metadata and the local
 // `[dependencies]` graph, never touching the network.
