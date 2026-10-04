@@ -37,6 +37,52 @@ fn every_registered_command_path_exists() {
     }
 }
 
+/// Every flag the registry lists for a capability must actually be accepted
+/// by that command. Registry metadata is consumed as an argument contract, so
+/// a stale flag (e.g. `--out` where the CLI only has `--output`, or
+/// `--dry-run` on a command without it) misleads anything that trusts it.
+///
+/// Matching compares the leading flag token only, so `--network` never
+/// satisfies a claim for `--network-passphrase`.
+#[test]
+fn declared_flags_exist_in_the_real_cli() {
+    let mut stale = Vec::new();
+    for c in capabilities() {
+        let Some(help) = help_for(c.command) else {
+            stale.push(format!("{}: command path not resolvable", c.id));
+            continue;
+        };
+        // Long flags the CLI documents. A line may list a short form first
+        // ("-c, --contract <X>"), so collect every `--` token on the line
+        // rather than only the first.
+        let declared: std::collections::HashSet<&str> = help
+            .lines()
+            .flat_map(|l| l.split_whitespace())
+            .map(|tok| tok.trim_end_matches(','))
+            .filter(|tok| tok.starts_with("--"))
+            .collect();
+
+        for arg in c.required_args.iter().chain(c.optional_args) {
+            let Some(tok) = arg.split_whitespace().next() else {
+                continue; // positional placeholder, e.g. "<name>"
+            };
+            if tok.starts_with("--") && !declared.contains(tok) {
+                stale.push(format!(
+                    "{}: registry lists {tok}, but `{} --help` does not accept it",
+                    c.id,
+                    c.argv()
+                ));
+            }
+        }
+    }
+    assert!(
+        stale.is_empty(),
+        "registry advertises flags the CLI rejects ({} entries):\n{}",
+        stale.len(),
+        stale.join("\n")
+    );
+}
+
 #[test]
 fn json_format_claims_match_the_real_cli() {
     let mut mismatches = Vec::new();

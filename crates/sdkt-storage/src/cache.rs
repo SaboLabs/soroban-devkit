@@ -139,10 +139,22 @@ impl WasmCache {
     }
 
     /// Removes a specific WASM entry (both JSON and `.wasm`) from the cache.
+    ///
+    /// A hash that is not cached is an error, not a silent success: callers
+    /// print "Removed" on `Ok`, and reporting success for a no-op reads as a
+    /// completed mutation to scripts and agents. Matches `identity delete` and
+    /// `network remove`, which surface `Not found:` and exit non-zero.
     pub fn remove(&self, network: &str, wasm_hash: &str) -> Result<(), StorageError> {
         let net_dir = self.network_dir(network)?;
         let meta_path = net_dir.join(format!("{}.json", wasm_hash));
         let wasm_path = net_dir.join(format!("{}.wasm", wasm_hash));
+
+        if !meta_path.exists() && !wasm_path.exists() {
+            return Err(StorageError::NotFound(format!(
+                "WASM cache entry '{}' not found in {} cache",
+                wasm_hash, network
+            )));
+        }
 
         if meta_path.exists() {
             fs::remove_file(meta_path).map_err(StorageError::Io)?;
@@ -155,6 +167,10 @@ impl WasmCache {
     }
 
     /// Clears all cached WASM entries for a specific network.
+    ///
+    /// Unlike `remove`, this stays truthful as a no-op success: "cleared" is
+    /// accurate for an empty cache (the post-condition holds), and unlike a
+    /// hash miss it is not evidence that a named target was deleted.
     pub fn clear(&self, network: &str) -> Result<(), StorageError> {
         let net_dir = self.network_dir(network)?;
         if net_dir.exists() {
@@ -292,6 +308,20 @@ mod tests {
         assert_eq!(info.entry_count, 0);
         assert_eq!(info.total_metadata_size_bytes, 0);
         assert_eq!(info.total_wasm_size_bytes, 0);
+    }
+
+    #[test]
+    fn test_remove_missing_is_not_found_error() {
+        // A no-op removal must not report success: callers print "Removed" on
+        // Ok, and scripts/agents read that as a completed mutation.
+        let (cache, _dir) = get_temp_cache();
+        let err = cache
+            .remove("mainnet", "never_cached")
+            .expect_err("removing an absent entry must fail");
+        assert!(
+            matches!(&err, StorageError::NotFound(m) if m.contains("never_cached")),
+            "expected NotFound, got {err:?}"
+        );
     }
 
     #[test]

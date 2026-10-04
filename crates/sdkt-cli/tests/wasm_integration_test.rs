@@ -40,9 +40,17 @@ fn test_cli_wasm_cache_clear() {
 }
 
 #[test]
-fn test_cli_wasm_cache_remove() {
+fn test_cli_wasm_cache_remove_existing_entry_succeeds() {
+    // Real cache layout, so the removal genuinely happens: <cache>/wasm/testnet/<hash>.{json,wasm}
+    let cache = tempfile::tempdir().unwrap();
+    let net_dir = cache.path().join("wasm").join("testnet");
+    std::fs::create_dir_all(&net_dir).unwrap();
+    std::fs::write(net_dir.join("fakehash123.json"), "{}").unwrap();
+    std::fs::write(net_dir.join("fakehash123.wasm"), b"wasm-bytes").unwrap();
+
     let mut cmd = Command::cargo_bin("sdkt").unwrap();
     let assert = cmd
+        .env("SDKT_CACHE_DIR", cache.path())
         .arg("wasm")
         .arg("cache")
         .arg("remove")
@@ -51,6 +59,84 @@ fn test_cli_wasm_cache_remove() {
     assert.success().stdout(predicates::str::contains(
         "Removed fakehash123 from testnet cache.",
     ));
+
+    // Both files are physically gone.
+    assert!(!net_dir.join("fakehash123.json").exists());
+    assert!(!net_dir.join("fakehash123.wasm").exists());
+}
+
+#[test]
+fn test_cli_wasm_cache_remove_missing_entry_is_not_a_success() {
+    // Regression: removing a hash that is not cached used to print
+    // "Removed …" and exit 0, which reads as a completed mutation to scripts
+    // and agents. It must fail like `identity delete` / `network remove`.
+    let cache = tempfile::tempdir().unwrap();
+
+    let mut cmd = Command::cargo_bin("sdkt").unwrap();
+    let assert = cmd
+        .env("SDKT_CACHE_DIR", cache.path())
+        .arg("wasm")
+        .arg("cache")
+        .arg("remove")
+        .arg("definitelynotcached")
+        .assert();
+    assert
+        .failure()
+        .stderr(predicates::str::contains("Not found"))
+        .stderr(predicates::str::contains("'definitelynotcached'"))
+        .stderr(predicates::str::contains("not found in testnet cache"))
+        .stdout(predicates::str::contains("Removed").not());
+}
+
+#[test]
+fn test_cli_wasm_cache_clear_reports_truthfully_on_empty_cache() {
+    // Clearing an empty cache is a true no-op success (the post-condition
+    // holds), unlike removing a named artifact that does not exist.
+    let cache = tempfile::tempdir().unwrap();
+
+    let mut cmd = Command::cargo_bin("sdkt").unwrap();
+    let assert = cmd
+        .env("SDKT_CACHE_DIR", cache.path())
+        .arg("wasm")
+        .arg("cache")
+        .arg("clear")
+        .arg("--network")
+        .arg("testnet")
+        .assert();
+    assert.success().stdout(predicates::str::contains(
+        "Cleared all cache entries for testnet.",
+    ));
+}
+
+#[test]
+fn test_cli_wasm_cache_clear_removes_existing_entries() {
+    let cache = tempfile::tempdir().unwrap();
+    let net_dir = cache.path().join("wasm").join("testnet");
+    std::fs::create_dir_all(&net_dir).unwrap();
+    std::fs::write(net_dir.join("aaa.json"), "{}").unwrap();
+    std::fs::write(net_dir.join("aaa.wasm"), b"wasm-bytes").unwrap();
+
+    let mut cmd = Command::cargo_bin("sdkt").unwrap();
+    let assert = cmd
+        .env("SDKT_CACHE_DIR", cache.path())
+        .arg("wasm")
+        .arg("cache")
+        .arg("clear")
+        .arg("--network")
+        .arg("testnet")
+        .assert();
+    assert.success().stdout(predicates::str::contains(
+        "Cleared all cache entries for testnet.",
+    ));
+
+    let mut info = Command::cargo_bin("sdkt").unwrap();
+    info.env("SDKT_CACHE_DIR", cache.path())
+        .arg("wasm")
+        .arg("cache")
+        .arg("info")
+        .assert()
+        .success()
+        .stdout(predicates::str::contains("Entries: 0"));
 }
 
 #[test]
