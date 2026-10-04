@@ -1,0 +1,27 @@
+[package]
+name = "sdkt-agent"
+description = "Read-only natural-language front end for the Soroban DevKit toolkit."
+authors.workspace = true
+license.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+version.workspace = true
+repository.workspace = true
+homepage.workspace = true
+
+readme = "../../README.md"
+documentation = "https://docs.rs/sdkt-agent"
+
+[[bin]]
+name = "sdkt-agent"
+path = "src/main.rs"
+
+[dependencies]
+clap = { version = "4.6", features = ["derive"] }
+sdkt-core = { version = "2.6.0", path = "../sdkt-core" }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+[dev-dependencies]
+assert_cmd = "2"
+tempfile = "3"

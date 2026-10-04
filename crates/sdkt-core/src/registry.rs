@@ -264,7 +264,7 @@ const CAPABILITIES: [Capability; CAP_COUNT] = [
         command: &["wasm", "metadata"],
         summary: "Metadata + parsed ABI + storage/TTL posture for a deployed contract (cached; optional refresh).",
         required_args: &["--contract <C...>"],
-        optional_args: &["--network", "--network-profile", "--refresh", "--format"],
+        optional_args: &["--rpc-url", "--network-passphrase", "--network", "--network-profile", "--refresh", "--format"],
         formats: PRETTY_JSON,
         network: NetworkRequirement::Both,
         evidence: Evidence::VerifiedTestnet,
@@ -286,12 +286,14 @@ const CAPABILITIES: [Capability; CAP_COUNT] = [
     Capability {
         id: "diff.upgrade_safety",
         command: &["diff", "--upgrade-safety"],
-        summary: "Breaking/non-breaking upgrade verdict between two artifacts; incompatible upgrades exit non-zero.",
+        summary: "Breaking/non-breaking upgrade verdict between two artifacts.",
         required_args: &["--old-wasm <f>", "--new-wasm <f>"],
         optional_args: &["--format"],
         formats: PRETTY_JSON,
-        exit: ExitSemantics::VERDICT_GATED,
         evidence: Evidence::VerifiedLocal,
+        notes: Some(
+            "An incompatible verdict is reported in the JSON (`compatible: false`) but still exits 0 — it is a signal to read, not a gate. Only the opt-in size policy (--max-size-bytes / --max-growth-pct) makes `diff` exit non-zero.",
+        ),
         ..Capability::BASE
     },
     // ---- Static audit -----------------------------------------------------
@@ -323,7 +325,7 @@ const CAPABILITIES: [Capability; CAP_COUNT] = [
         command: &["verify"],
         summary: "Compare a local WASM's offline hash against the deployed contract's on-chain hash.",
         required_args: &["--contract <C...>"],
-        optional_args: &["--wasm <f>", "--network", "--network-profile", "--format", "--upgrade-safety"],
+        optional_args: &["--rpc-url", "--network-passphrase", "--wasm <f>", "--network", "--network-profile", "--format", "--upgrade-safety"],
         formats: PRETTY_JSON,
         exit: ExitSemantics::VERDICT_GATED,
         network: NetworkRequirement::Both,
@@ -336,7 +338,7 @@ const CAPABILITIES: [Capability; CAP_COUNT] = [
         command: &["health"],
         summary: "Read-only contract posture: WASM verification, storage layout, TTL expiry, verdict + reasons.",
         required_args: &["--contract <C...>"],
-        optional_args: &["--wasm <f>", "--network", "--network-profile", "--format"],
+        optional_args: &["--rpc-url", "--network-passphrase", "--wasm <f>", "--network", "--network-profile", "--format"],
         formats: PRETTY_JSON,
         exit: ExitSemantics::VERDICT_GATED,
         network: NetworkRequirement::Both,
@@ -349,7 +351,7 @@ const CAPABILITIES: [Capability; CAP_COUNT] = [
         command: &["inspect"],
         summary: "On-chain contract inspection: wasm hash/size, ABI summary, storage and TTL.",
         required_args: &["<contract-id>"],
-        optional_args: &["--network", "--network-profile", "--format"],
+        optional_args: &["--rpc-url", "--network-passphrase", "--network", "--network-profile", "--format"],
         formats: PRETTY_JSON,
         network: NetworkRequirement::Both,
         evidence: Evidence::VerifiedTestnet,
@@ -362,6 +364,8 @@ const CAPABILITIES: [Capability; CAP_COUNT] = [
         summary: "Aggregate release verdict: artifact, audit, upgrade safety, deployed verification, health, size policy.",
         required_args: &["--wasm <f>"],
         optional_args: &[
+            "--rpc-url",
+            "--network-passphrase",
             "--previous-wasm <f>", "--audit <path>", "--disable <RULE>", "--contract <C>",
             "--network <n>", "--max-size-bytes <N>", "--max-growth-pct <N>", "--format",
         ],
@@ -378,7 +382,7 @@ const CAPABILITIES: [Capability; CAP_COUNT] = [
         command: &["storage", "analyze"],
         summary: "Classify a contract's storage into Instance/Persistent/Temporary with TTL summary.",
         required_args: &["<contract-id>"],
-        optional_args: &["--key-xdr", "--map-key", "--key-arg", "--durability", "--abi-contract", "--format"],
+        optional_args: &["--rpc-url", "--network-passphrase", "--key-xdr", "--map-key", "--key-arg", "--durability", "--abi-contract", "--format"],
         formats: PRETTY_JSON,
         network: NetworkRequirement::Both,
         evidence: Evidence::VerifiedTestnet,
@@ -389,7 +393,7 @@ const CAPABILITIES: [Capability; CAP_COUNT] = [
         command: &["events"],
         summary: "Fetch contract events with ledger range, server-side topic filter, optional ABI decoding.",
         required_args: &["<contract-id>"],
-        optional_args: &["--start-ledger", "--end-ledger", "--topic", "--abi", "--abi-contract", "--format"],
+        optional_args: &["--rpc-url", "--network-passphrase", "--start-ledger", "--end-ledger", "--topic", "--abi", "--abi-contract", "--format"],
         formats: PRETTY_JSON,
         network: NetworkRequirement::Both,
         evidence: Evidence::VerifiedTestnet,
@@ -401,7 +405,7 @@ const CAPABILITIES: [Capability; CAP_COUNT] = [
         command: &["call"],
         summary: "Read-only contract invocation via simulation; never signs or submits.",
         required_args: &["<contract-id>", "<function>"],
-        optional_args: &["--args", "--args-json", "--abi", "--abi-contract", "--network", "--format"],
+        optional_args: &["--rpc-url", "--network-passphrase", "--args", "--args-json", "--abi", "--abi-contract", "--network", "--format"],
         formats: PRETTY_JSON,
         network: NetworkRequirement::Both,
         evidence: Evidence::Unverified,
@@ -415,7 +419,7 @@ const CAPABILITIES: [Capability; CAP_COUNT] = [
         command: &["account"],
         summary: "Account balances and complete signer list (Horizon-enriched).",
         required_args: &["<address>"],
-        optional_args: &["--network", "--network-profile", "--format"],
+        optional_args: &["--rpc-url", "--network-passphrase", "--network", "--network-profile", "--format"],
         formats: PRETTY_JSON,
         network: NetworkRequirement::Both,
         evidence: Evidence::VerifiedTestnet,
@@ -451,7 +455,9 @@ const CAPABILITIES: [Capability; CAP_COUNT] = [
         formats: PRETTY_JSON,
         network: NetworkRequirement::Both,
         evidence: Evidence::VerifiedLocal,
-        notes: Some("Verified against a saved profile on a reachable host; identity verification is advisory."),
+        notes: Some(
+            "Resolves a SAVED profile by name and has no --rpc-url; verified against a saved profile on a reachable host.",
+        ),
         ..Capability::BASE
     },
     Capability {
@@ -678,7 +684,7 @@ const CAPABILITIES: [Capability; CAP_COUNT] = [
         id: "fee.estimate",
         command: &["fee", "estimate"],
         summary: "Fee estimate from supplied base fees or live RPC ledger-fee statistics.",
-        optional_args: &["--network", "--base-fees", "--rpc", "--network-profile", "--format"],
+        optional_args: &["--rpc-url", "--network-passphrase", "--network", "--base-fees", "--rpc", "--network-profile", "--format"],
         formats: PRETTY_JSON,
         network: NetworkRequirement::Both,
         evidence: Evidence::VerifiedLocal,
@@ -712,7 +718,7 @@ const CAPABILITIES: [Capability; CAP_COUNT] = [
         command: &["tx", "simulate"],
         summary: "Simulate an envelope without submitting: resources, auth entries, diagnostics, stateChanges.",
         required_args: &["--envelope <xdr|file>"],
-        optional_args: &["--abi", "--abi-contract", "--network", "--network-profile", "--format"],
+        optional_args: &["--rpc-url", "--network-passphrase", "--abi", "--abi-contract", "--network", "--network-profile", "--format"],
         formats: PRETTY_JSON,
         network: NetworkRequirement::Both,
         evidence: Evidence::Unverified,
@@ -724,7 +730,7 @@ const CAPABILITIES: [Capability; CAP_COUNT] = [
         command: &["tx", "build"],
         summary: "Build an invocation envelope (optionally simulating to adopt fee/footprint).",
         required_args: &["--contract <C>", "--function <fn>"],
-        optional_args: &["--arg", "--source", "--sequence", "--fee", "--memo-text", "--network-profile", "--format"],
+        optional_args: &["--rpc-url", "--network-passphrase", "--arg", "--source", "--sequence", "--fee", "--memo-text", "--network-profile", "--format"],
         formats: PRETTY_JSON,
         network: NetworkRequirement::Both,
         safety: Safety::ReadOnly,
@@ -736,7 +742,7 @@ const CAPABILITIES: [Capability; CAP_COUNT] = [
         id: "project.status",
         command: &["project", "status"],
         summary: "Multi-contract project resolution + deployment status.",
-        optional_args: &["--format", "--network-profile"],
+        optional_args: &["--rpc-url", "--network-passphrase", "--format", "--network-profile"],
         formats: PRETTY_JSON,
         network: NetworkRequirement::Both,
         evidence: Evidence::Unverified,
@@ -1042,20 +1048,23 @@ mod tests {
     #[test]
     fn verdict_gated_commands_are_marked() {
         // Commands that can exit 1 while still emitting a valid report.
-        for id in [
-            "health",
-            "verify",
-            "release_assurance",
-            "diff",
-            "diff.upgrade_safety",
-        ] {
+        for id in ["health", "verify", "release_assurance", "diff"] {
             let c = find(id).expect("pinned verdict command");
             assert!(
                 c.exit.verdict_can_fail,
                 "{id}: verdict-gated exit must be flagged"
             );
         }
-        for id in ["wasm.inspect", "audit", "inspect", "events", "account"] {
+        // `diff.upgrade_safety` reports incompatibility in JSON but exits 0:
+        // verified by running it, so it must NOT claim a verdict gate.
+        for id in [
+            "wasm.inspect",
+            "audit",
+            "inspect",
+            "events",
+            "account",
+            "diff.upgrade_safety",
+        ] {
             let c = find(id).expect("pinned command");
             assert!(
                 !c.exit.verdict_can_fail,

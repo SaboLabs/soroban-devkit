@@ -7,6 +7,7 @@ members = [
     "crates/sdkt-storage", "crates/sdkt-wasm",
     "crates/sdkt-audit",
     "crates/sdkt-audit-example-rule",
+    "crates/sdkt-agent",
 ]
 # Browser-only glue crate for the Web Playground. Excluded so that
 # `cargo build/clippy/test --workspace` stays a pure native build; it is built

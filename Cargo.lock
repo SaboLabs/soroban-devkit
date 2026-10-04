@@ -3093,6 +3093,18 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "94143f37725109f92c262ed2cf5e59bce7498c01bcc1502d7b9afe439a4e9f49"
 
 [[package]]
+name = "sdkt-agent"
+version = "2.6.0"
+dependencies = [
+ "assert_cmd",
+ "clap",
+ "sdkt-core",
+ "serde",
+ "serde_json",
+ "tempfile",
+]
+
+[[package]]
 name = "sdkt-audit"
 version = "2.6.0"
 dependencies = [
