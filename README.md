@@ -86,12 +86,10 @@ verifies its SHA-256 checksum, and installs `sdkt` to `~/.local/bin/sdkt`.
    | Platform | Asset |
    |----------|-------|
    | Linux (x86_64) | `sdkt-x86_64-unknown-linux-gnu.tar.gz` |
-   | Linux (aarch64) | not in v2.5.0 Release — use `install.sh` or `cargo install sdkt-cli` |
+   | Linux (aarch64) | not in the v2.6.0 Release — use `install.sh` or `cargo install sdkt-cli` |
    | macOS (Intel) | `sdkt-x86_64-apple-darwin.tar.gz` |
    | macOS (Apple Silicon) | `sdkt-aarch64-apple-darwin.tar.gz` |
-
-   Windows x86_64 is not included in the v2.5.0 GitHub Release. Windows
-   users can install via `cargo install sdkt-cli` or build from source.
+   | Windows (x86_64) | `sdkt-x86_64-pc-windows-msvc.zip` (from v2.6.0) |
 
 2. Extract and run:
 
@@ -105,7 +103,8 @@ verifies its SHA-256 checksum, and installs `sdkt` to `~/.local/bin/sdkt`.
    sudo mv sdkt /usr/local/bin/
    ```
 
-   **Windows (v2.5.0):** no GitHub Release zip yet. Use crates.io or source:
+   **Windows (v2.6.0+):** use `sdkt-x86_64-pc-windows-msvc.zip` from the
+   GitHub Release. Alternatively, install from crates.io or source:
 
    ```powershell
    cargo install sdkt-cli

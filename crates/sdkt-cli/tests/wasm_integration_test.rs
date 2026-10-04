@@ -144,6 +144,41 @@ fn test_cli_wasm_inspect_us_new_pretty_kind_strings() {
     assert!(!stdout.contains("[Memory]"));
     assert!(stdout.contains("[func]") || stdout.contains("[memory]"));
 }
+
+#[test]
+fn test_cli_wasm_inspect_us_new_contract_metadata_pretty() {
+    // contractmetav0 payload must be decoded and surfaced as key = value
+    // lines (issue #171), not just the section name.
+    let wasm_path = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/us_new.wasm");
+    let mut cmd = Command::cargo_bin("sdkt").unwrap();
+    let assert = cmd.arg("wasm").arg("inspect").arg(wasm_path).assert();
+
+    let output = assert.success().get_output().stdout.clone();
+    let stdout = String::from_utf8_lossy(&output);
+    assert!(
+        stdout.contains("Contract Metadata (3):"),
+        "expected a Contract Metadata block, got:\n{stdout}"
+    );
+    // Values matching XDR ground truth for this fixture.
+    assert!(stdout.contains("rsver = 1.97.1"));
+    assert!(stdout.contains("rssdkver = 22.0.11#"));
+    assert!(stdout.contains("cliver = 27.1.0#"));
+}
+
+#[test]
+fn test_cli_wasm_inspect_us_old_contract_metadata_empty() {
+    // us_old.wasm carries no contractmetav0: the block is shown as (none)
+    // and everything else renders as before.
+    let wasm_path = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/us_old.wasm");
+    let mut cmd = Command::cargo_bin("sdkt").unwrap();
+    let assert = cmd.arg("wasm").arg("inspect").arg(wasm_path).assert();
+
+    let output = assert.success().get_output().stdout.clone();
+    let stdout = String::from_utf8_lossy(&output);
+    assert!(stdout.contains("Contract Metadata (0):"));
+    assert!(stdout.contains("(none)"));
+}
+
 #[test]
 fn test_cli_wasm_metadata_missing_contract() {
     let mut cmd = Command::cargo_bin("sdkt").unwrap();

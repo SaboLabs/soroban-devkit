@@ -1,7 +1,7 @@
 # Soroban DevKit (`sdkt`) — Roadmap
 
-**Last updated:** 2026-08-07
-**Status:** Active development · default branch `main` · current release **v2.5.0**
+**Last updated:** 2026-10-03
+**Status:** Active development · default branch `main` · current release **v2.6.0**
 
 ---
 
@@ -11,10 +11,10 @@
 
 | | |
 |---|---|
-| **Current release** | `v2.5.0` (tags `v2.0.0`, `v2.1.0`, `v2.1.1`, `v2.2.0`, `v2.3.0`, `v2.4.0`, `v2.5.0` also published) |
+| **Current release** | `v2.6.0` (tags `v2.0.0`, `v2.1.0`, `v2.1.1`, `v2.2.0`, `v2.3.0`, `v2.4.0`, `v2.5.0`, `v2.6.0` also published) |
 | **Repository status** | Active · all capabilities merged to `main` |
 | **Crates** | 8 (`sdkt-cli` + 7 supporting crates) |
-| **Current focus** | Post-2.0 direction — mainnet tooling, plugin ecosystem |
+| **Current focus** | Release assurance — artifact, security, upgrade, deployed reality, health |
 
 A new contributor can understand the project from this summary alone: a test-covered Soroban toolchain with a clear path toward mainnet readiness and an extensible plugin architecture.
 
@@ -37,7 +37,7 @@ The workspace is a Cargo virtual workspace. The `sdkt` binary is produced by `sd
 | `sdkt-wasm` | Contract WASM inspection & offline analysis | `ContractSpec` parser, `WasmModule` inspector, `SpecDiff`, `UpgradeVerdict`. Offline only. |
 | `sdkt-rpc` | Soroban RPC client & on-chain aggregation | `SorobanRpcClient` (persistent pooled `reqwest`), `TtlInfo`, `ContractInspection`; `simulate` / `submission` / `builder` modules. **The only network-I/O crate.** |
 | `sdkt-storage` | Storage analysis, WASM caching, keystore | `StorageAnalyzer`, `StorageReport`, `WasmCache`, `IdentityStore` (ED25519, `~/.sdkt/identities`). |
-| `sdkt-audit` | Offline static security analysis | `Severity`, `Finding`, `AuditReport`, `AuditRule`, `RuleRegistry`, `register_rule!`; built-in rules `AUTH-001/002/003/004`, `MOVE-001`; plugin author API. |
+| `sdkt-audit` | Offline static security analysis | `Severity`, `Finding`, `AuditReport`, `AuditRule`, `RuleRegistry`, `register_rule!`; built-in rules `AUTH-001`, `AUTH-002`, `AUTH-003`, `AUTH-004`, `MOVE-001`, `MATH-001`, `CEI-001`; plugin author API. |
 | `sdkt-audit-example-rule` | Reference plugin crate | Rule `EXAMPLE-001`; produces `libsdkt_audit_example_rule` (native) and `sdkt_audit_example_rule.wasm` behind the `plugins` / `wasm-plugins` features. |
 | `sdkt-cli` | User-facing CLI | `Cli`, `Commands`; routes arguments to crates and formats output (pretty + `--format json`). Builds the `sdkt` binary. |
 
@@ -75,8 +75,10 @@ Capabilities are grouped by theme below.
 ### Security & Analysis
 
 - ABI/WASM diff — `sdkt diff --old-wasm --new-wasm` offline comparison (alpha)
-- Static security analysis — `sdkt-audit` crate with rules `AUTH-001/002/003/004` and `MOVE-001`; exposed via `sdkt audit <path>` (alpha)
-- Upgrade safety guard — `UpgradeVerdict`; `sdkt diff --upgrade-safety`; `sdkt deploy --deny-breaking` (alpha)
+- Static security analysis — `sdkt-audit` crate with rules `AUTH-001`, `AUTH-002`, `AUTH-003`, `AUTH-004`, `MOVE-001`, `MATH-001`, `CEI-001`; exposed via `sdkt audit <path>`
+- Upgrade safety guard — `UpgradeVerdict`; `sdkt diff --upgrade-safety`; `sdkt deploy --deny-breaking`
+- Release assurance — `sdkt release-assurance` aggregates artifact metadata, static security audit, upgrade safety, deployed WASM verification, and contract health into one `PASS`/`REVIEW`/`FAIL`/`SKIPPED`/`ERROR` verdict with a machine-readable JSON report
+- WASM size policy — opt-in `--max-size-bytes` / `--max-growth-pct` on `sdkt diff` and `sdkt release-assurance`; thresholds are operator-supplied and no network limit is hardcoded
 
 ### Plugin System
 
@@ -88,13 +90,16 @@ Capabilities are grouped by theme below.
 ### Soroban Ecosystem Integration
 
 - On-chain contract inspection — `sdkt wasm metadata --contract <id>` returns complete WASM metadata, parsed ABI, storage summary, and TTL
+- Contract metadata decoding — `sdkt wasm inspect` decodes the `contractmetav0` custom section into `key = value` provenance entries (pretty and additive `metadata.contract_meta` JSON)
 - On-chain upgrade-safety verification — `sdkt verify --contract <id> --wasm <candidate.wasm> --upgrade-safety` fetches the live contract's spec and classifies breaking vs non-breaking changes
 - Live-contract ABI for events — `sdkt events --abi-contract <id>` uses the deployed contract's on-chain WASM to decode events without a local artifact
 - Live-contract ABI for storage — `sdkt storage --abi-contract <id>` uses the deployed contract's on-chain WASM for storage analysis
+- Protocol 28 support — `sdkt init` scaffolds and `sdkt build` compiles for Protocol 28 targets
+- CAP-85 external executables — `sdkt inspect` resolves protocol-defined (`stellar_asset`) and `ExternalRef` executables that carry no WASM artifact
 
 ### CI & Release
 
-- GitHub composite Action — `.github/actions/sdkt/action.yml` wraps `sdkt audit` + `sdkt diff --upgrade-safety` for CI
+- GitHub composite Action — `.github/actions/sdkt/action.yml` wraps `sdkt audit`, `sdkt diff --upgrade-safety`, and `sdkt release-assurance` (including the WASM size policy) for CI
 - Release engineering — Unified workspace version; `release.yml`; install-script validation; panic audit on user paths
 - Stability — MSRV gate, CI hardening, Windows compatibility, dependency compaction
 
@@ -128,8 +133,8 @@ Capabilities are grouped by theme below.
 
 **Where is this project today?**
 
-- **Released:** All capabilities are merged to `main` and shipped in releases through `v2.5.0`.
-- **Current release:** `v2.5.0` (tagged). Prior tagged releases: `v2.4.0`, `v2.3.0`, `v2.2.0`, `v2.1.1`, `v2.1.0`, `v2.0.0`.
+- **Released:** All capabilities are merged to `main` and shipped in releases through `v2.6.0`.
+- **Current release:** `v2.6.0` (tagged). Prior tagged releases: `v2.5.0`, `v2.4.0`, `v2.3.0`, `v2.2.0`, `v2.1.1`, `v2.1.0`, `v2.0.0`.
 - **Repository health:** Healthy. 8 crates, all quality gates enforced in CI (`cargo fmt`, `cargo clippy --workspace --all-targets -- -D warnings` default + all-features, `cargo test --workspace`).
 - **CI status:** Green. Workflows: `ci.yml` (fmt/clippy/test on Ubuntu/macOS/Windows + MSRV + install-script validation), `release.yml` (tag-gated cross-platform binaries, checksums, crates.io publish), `compatibility.yml` (real-world `stellar/soroban-examples` validation), `sdkt-action-ci.yml` (self-validates the reusable Action).
 
@@ -156,7 +161,7 @@ Status of the original gaps identified in the project's inception. Every row ref
 |--------------|-------|
 | Gap A — Unified CLI lifecycle | ✅ Closed |
 | Gap B — Storage rent visibility | ✅ Closed |
-| Gap C — Static security analysis | ✅ Closed — `sdkt-audit` crate with rules `AUTH-001/002/003/004` + `MOVE-001`, `sdkt audit` CLI |
+| Gap C — Static security analysis | ✅ Closed — `sdkt-audit` crate with rules `AUTH-001`–`AUTH-004`, `MOVE-001`, `MATH-001`, `CEI-001`, `sdkt audit` CLI |
 | Gap D — Local XDR decoder | ✅ Closed |
 | Gap E — ABI/interface viewer | ✅ Closed |
 | Plugin system | ✅ Closed — rule registry, dynamic native loading, and sandboxed WASM plugins are all merged to `main` |

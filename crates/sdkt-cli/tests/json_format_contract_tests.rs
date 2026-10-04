@@ -15,6 +15,9 @@
 //! - `file`: string (basename only, not absolute path)
 //! - `metadata.hash`: hex string
 //! - `metadata.size_bytes`: u64
+//! - `metadata.contract_meta`: array of {key, value} decoded from the
+//!   `contractmetav0` custom section, in section order with duplicates
+//!   preserved. Empty array when the WASM carries no such section.
 //! - `spec`: object with functions/events/custom_types arrays
 //!
 //! ### `sdkt diff --upgrade-safety --format json`
@@ -354,6 +357,75 @@ mod wasm_inspect {
         assert!(v.get("file").is_some(), "missing `file` field");
         assert!(v.get("metadata").is_some(), "missing `metadata` field");
         assert!(v.get("spec").is_some(), "missing `spec` field");
+    }
+
+    #[test]
+    fn json_metadata_contract_meta_is_an_additive_key_value_array() {
+        let out = sdkt()
+            .args(["wasm", "inspect", WASM_NEW, "--format", "json"])
+            .assert()
+            .success()
+            .get_output()
+            .stdout
+            .clone();
+        let v = assert_valid_json(&String::from_utf8_lossy(&out));
+        let meta = v.get("metadata").expect("metadata field");
+
+        let entries = meta
+            .get("contract_meta")
+            .and_then(|m| m.as_array())
+            .expect("metadata.contract_meta should be an array");
+
+        // The committed fixture carries contractmetav0 with SDK/rustc/cli
+        // provenance entries; assert the decoded shape, not a fixed count.
+        assert!(
+            !entries.is_empty(),
+            "us_new.wasm should expose contractmetav0 entries"
+        );
+        for entry in entries {
+            let key = entry.get("key").and_then(|k| k.as_str());
+            let value = entry.get("value").and_then(|val| val.as_str());
+            assert!(key.is_some(), "each entry needs a string `key`: {entry}");
+            assert!(
+                value.is_some(),
+                "each entry needs a string `value`: {entry}"
+            );
+        }
+
+        // Ground truth for this fixture: the SDK/rustc/cli provenance keys.
+        let keys: Vec<&str> = entries
+            .iter()
+            .filter_map(|e| e.get("key").and_then(|k| k.as_str()))
+            .collect();
+        for expected in ["rsver", "rssdkver", "cliver"] {
+            assert!(
+                keys.contains(&expected),
+                "expected contract_meta key `{expected}`, got {keys:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn json_metadata_without_contract_meta_is_an_empty_array() {
+        // us_old.wasm has no contractmetav0: the field must still be present
+        // and empty, so consumers can rely on the key existing.
+        let out = sdkt()
+            .args(["wasm", "inspect", WASM_OLD, "--format", "json"])
+            .assert()
+            .success()
+            .get_output()
+            .stdout
+            .clone();
+        let v = assert_valid_json(&String::from_utf8_lossy(&out));
+        let entries = v
+            .get("metadata")
+            .and_then(|m| m.get("contract_meta"))
+            .and_then(|m| m.as_array())
+            .expect("metadata.contract_meta should be present and an array");
+        assert!(
+            entries.is_empty(),
+            "us_old.wasm has no contractmetav0, expected [], got {entries:?}"
+        );
     }
 
     #[test]

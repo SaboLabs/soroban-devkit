@@ -34,7 +34,10 @@ the build. The default `critical` means `MOVE-001` (Warning) never breaks CI.
 **Release-assurance semantics:** the aggregated `release_status` gates the
 step. `FAIL` blocks (step exits 1); `PASS`, `REVIEW`, and `SKIPPED`-only
 results do **not** block (exit 0), matching the CLI. A breaking baseline
-therefore fails CI, while a report that only needs human review passes.
+therefore fails CI, while a report that only needs human review passes. A
+CLI error that produces no report at all (invalid input, unreadable artifact,
+RPC failure) also fails the step: the Action propagates the CLI's exit code
+rather than relying on `release_status` alone.
 
 **Size policy:** `max-size-bytes` and `max-growth-pct` are optional and
 forwarded to the CLI's existing size policy. Thresholds are

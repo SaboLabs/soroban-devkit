@@ -612,6 +612,7 @@ Store root precedence (lowest → highest): `<cwd>/.sdkt/plugins`,
 
 - `audit` implements the static-analysis rules (AUTH-001/002/003/004, MOVE-001).
 - `audit --list-rules` discovers all registered built-in rules (with id, severity, and description). Supports `--format json` and does not require a source path argument.
+- **Contract metadata (`contractmetav0`).** `sdkt wasm inspect <file.wasm>` decodes the `contractmetav0` custom section and prints a `Contract Metadata` block of `key = value` entries (for example the `rsver`, `rssdkver`, and `cliver` provenance keys) in section order, with duplicate keys preserved. A WASM without the section prints `Contract Metadata (0):` followed by `(none)`. With `--format json` the entries appear as the additive `metadata.contract_meta` array of `{ "key": ..., "value": ... }` objects — an empty array when the section is absent — alongside the existing `metadata` keys, which are unchanged. A malformed `contractmetav0` payload is reported as a classified error rather than a panic.
 - **Mainnet safety.** Mutating commands (`tx submit`, `invoke`, `deploy`, `project deploy`) refuse to target mainnet unless you explicitly select the network — via `--network-profile`, `--rpc-url`, or `--network-passphrase`. A testnet-default passphrase pointed at a mainnet endpoint is rejected before any request is sent, protecting against signing for the wrong network.
 
 ## Error Handling
