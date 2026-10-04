@@ -64,6 +64,15 @@ pub enum PlanError {
     },
     /// A network was named that this read-only agent will not pick.
     RefusedNetwork(String),
+    /// The request named an artifact this capability has no argument for.
+    /// Refused rather than emitted positionally, which would build a command
+    /// line the CLI rejects with a usage error.
+    UnmappableArgument {
+        /// Capability that cannot express the request.
+        capability_id: &'static str,
+        /// Role that has no matching flag in the registry.
+        argument: &'static str,
+    },
 }
 
 impl PlanError {
@@ -74,6 +83,7 @@ impl PlanError {
             PlanError::UnknownCapability(_) => "unknown_capability",
             PlanError::Blocked { .. } => "blocked_unsafe",
             PlanError::RefusedNetwork(_) => "refused_network",
+            PlanError::UnmappableArgument { .. } => "unmappable_argument",
         }
     }
 
@@ -99,6 +109,13 @@ impl PlanError {
             PlanError::RefusedNetwork(net) => format!(
                 "refusing to target {net}: the v0.1 agent runs read-only checks and will not \
                  select a production network implicitly; name a saved network profile instead"
+            ),
+            PlanError::UnmappableArgument {
+                capability_id,
+                argument,
+            } => format!(
+                "{capability_id} has no argument for the {argument}; refusing to build a \
+                 command line the CLI would reject. Ask for one artifact at a time."
             ),
         }
     }
@@ -191,23 +208,47 @@ fn build_argv(cap: &Capability, args: &intent::IntentArgs) -> Result<Vec<String>
     }
     // Artifact paths are positional or flagged per command, and the registry's
     // own argument lists are the source of that fact: `wasm inspect <f>` takes
-    // a positional file, `verify --wasm <f>` a flag, `diff --old-wasm/--new-wasm`
-    // two flags. Guessing one shape for all three produced an exit-2 usage
-    // error, so the flag is emitted only when the capability declares it.
+    // a positional file, `verify --wasm <f>` a flag, `diff --old-wasm /
+    // --new-wasm` and `release-assurance --wasm / --previous-wasm` two flags
+    // under different names. The flag for each role is therefore looked up in
+    // the capability's argument lists rather than fixed to one spelling — the
+    // previous spelling-only mapping emitted `release-assurance <candidate>
+    // --wasm <baseline>`, which clap rejected with an exit-2 usage error.
+    // Resolve each artifact's flag from the registry, then emit the pair in the
+    // order the registry declares them: `diff` lists `--old-wasm` first, so the
+    // baseline leads; `release-assurance` lists the required `--wasm` first, so
+    // the candidate leads. Ordering therefore follows the capability rather
+    // than per-command code in this planner.
+    let mut artifacts: Vec<(usize, Vec<String>)> = Vec::new();
     if let Some(w) = &args.previous_wasm {
-        if flag_for(cap, "--old-wasm") {
-            argv.push("--old-wasm".to_string());
-        }
-        argv.push(w.clone());
-    }
-    if let Some(w) = &args.wasm {
-        for flag in ["--new-wasm", "--wasm"] {
-            if flag_for(cap, flag) {
-                argv.push(flag.to_string());
-                break;
+        match flag_for_any(cap, BASELINE_FLAGS) {
+            Some(flag) => {
+                artifacts.push((arg_position(cap, flag), vec![flag.to_string(), w.clone()]))
+            }
+            // No flag for a baseline artifact means this capability does not
+            // take one. Emitting the path anyway would put it in positional
+            // position and reproduce the malformed-command bug above, so the
+            // request is refused instead.
+            None => {
+                return Err(PlanError::UnmappableArgument {
+                    capability_id: cap.id,
+                    argument: "baseline artifact",
+                })
             }
         }
-        argv.push(w.clone());
+    }
+    if let Some(w) = &args.wasm {
+        match flag_for_any(cap, CANDIDATE_FLAGS) {
+            Some(flag) => {
+                artifacts.push((arg_position(cap, flag), vec![flag.to_string(), w.clone()]))
+            }
+            // Positional artifact (e.g. `wasm inspect <file.wasm>`).
+            None => artifacts.push((arg_position(cap, "<file.wasm>"), vec![w.clone()])),
+        }
+    }
+    artifacts.sort_by_key(|(position, _)| *position);
+    for (_, words) in artifacts {
+        argv.extend(words);
     }
     if let Some(s) = &args.source_path {
         argv.push(s.clone());
@@ -238,11 +279,49 @@ fn build_argv(cap: &Capability, args: &intent::IntentArgs) -> Result<Vec<String>
     Ok(argv)
 }
 
+/// Flag spellings that can carry the *baseline* (previously deployed)
+/// artifact, in the order they are preferred. Which one applies is decided by
+/// the registry, not by the request text.
+const BASELINE_FLAGS: &[&str] = &["--previous-wasm", "--old-wasm"];
+
+/// Flag spellings that can carry the *candidate* (newly built) artifact.
+const CANDIDATE_FLAGS: &[&str] = &["--wasm", "--new-wasm"];
+
 /// True when the registry lists this flag for the capability.
 fn flag_for(cap: &Capability, flag: &str) -> bool {
     let in_required = cap.required_args.iter().any(|a| a.contains(flag));
     let in_optional = cap.optional_args.iter().any(|a| a.contains(flag));
     in_required || in_optional
+}
+
+/// First flag in `candidates` that the registry declares for this capability.
+///
+/// Matching is exact on the flag name so a longer flag cannot be mistaken for
+/// a shorter one: `--wasm` must not satisfy a lookup for `--previous-wasm`,
+/// which contains it as a substring.
+fn flag_for_any<'a>(cap: &Capability, candidates: &[&'a str]) -> Option<&'a str> {
+    candidates
+        .iter()
+        .find(|flag| declares_arg(cap, flag))
+        .copied()
+}
+
+/// Position of an argument in the registry's declaration order, used only to
+/// emit a capability's artifact flags in that same order.
+fn arg_position(cap: &Capability, flag: &str) -> usize {
+    cap.required_args
+        .iter()
+        .chain(cap.optional_args)
+        .position(|a| a.split_whitespace().next().unwrap_or_default() == flag)
+        .unwrap_or(usize::MAX)
+}
+
+/// Whether the registry declares `flag` as an argument of its own.
+fn declares_arg(cap: &Capability, flag: &str) -> bool {
+    // An entry looks like `--wasm <f>` or `--rpc-url`; compare the leading
+    // flag token only, so `<f>` placeholders and argument names never match.
+    let declared = |a: &&str| a.split_whitespace().next().unwrap_or_default() == flag;
+    cap.required_args.iter().any(declared) || cap.optional_args.iter().any(declared)
 }
 
 #[cfg(test)]
@@ -264,6 +343,112 @@ mod tests {
     }
 
     const CID: &str = "CAD6C24POQGRYXMBNBEGVDHUROF5ZC37XRDC6NCVILTXWMYJIBMISZCV";
+
+    #[test]
+    fn release_assurance_maps_both_artifacts_to_their_own_flags() {
+        // Regression: the candidate was emitted as a positional argument and
+        // the baseline took `--wasm`, so sdkt rejected the line with exit 2.
+        let p = plan_ok("release assurance for candidate.wasm previous baseline.wasm");
+        assert_eq!(p.capability_id, "release_assurance");
+        let head: Vec<&str> = p.argv.iter().take(4).map(String::as_str).collect();
+        assert_eq!(
+            head,
+            vec![
+                "release-assurance",
+                "--wasm",
+                "candidate.wasm",
+                "--previous-wasm"
+            ],
+            "argv was {:?}",
+            p.argv
+        );
+        assert_eq!(p.argv.get(4).map(String::as_str), Some("baseline.wasm"));
+        // The invariant is about values, not flags: no artifact may sit in the
+        // positional slot right after the subcommand — that is exactly the
+        // shape clap rejected.
+        let positional = &p.argv[1];
+        assert!(
+            positional.starts_with("--"),
+            "nothing may follow the subcommand positionally, found {positional:?} in {:?}",
+            p.argv
+        );
+        for (flag, value) in [
+            ("--wasm", "candidate.wasm"),
+            ("--previous-wasm", "baseline.wasm"),
+        ] {
+            let i = p.argv.iter().position(|a| a == flag).expect("flag present");
+            assert_eq!(p.argv[i + 1], value, "{flag} must be followed by {value}");
+        }
+    }
+
+    #[test]
+    fn release_assurance_role_order_does_not_depend_on_phrasing() {
+        // "NEW previous OLD" and "OLD then NEW" must yield the same roles.
+        let a = plan_ok("release assurance for candidate.wasm previous baseline.wasm");
+        let b = plan_ok("release assurance for baseline.wasm candidate.wasm");
+        let pick = |p: &Plan, flag: &str| {
+            let i = p.argv.iter().position(|a| a == flag).expect("flag present");
+            p.argv[i + 1].clone()
+        };
+        assert_eq!(pick(&a, "--wasm"), "candidate.wasm");
+        assert_eq!(pick(&a, "--previous-wasm"), "baseline.wasm");
+        assert_eq!(pick(&b, "--wasm"), "candidate.wasm");
+        assert_eq!(pick(&b, "--previous-wasm"), "baseline.wasm");
+    }
+
+    #[test]
+    fn diff_keeps_its_own_flag_spelling_and_order() {
+        // The registry-driven mapping must not disturb the capability that
+        // spells its pair differently.
+        let p = plan_ok("check upgrade safety from old.wasm to new.wasm");
+        assert_eq!(p.capability_id, "diff.upgrade_safety");
+        assert_eq!(
+            &p.argv[..6],
+            &[
+                "diff",
+                "--upgrade-safety",
+                "--old-wasm",
+                "old.wasm",
+                "--new-wasm",
+                "new.wasm"
+            ],
+            "{:?}",
+            p.argv
+        );
+    }
+
+    #[test]
+    fn baseline_argument_is_refused_when_the_capability_has_none() {
+        // `verify` takes one artifact. A second path must not be emitted
+        // positionally — that is the shape of the bug being fixed.
+        let e = plan_err(&format!(
+            "verify contract {CID} against candidate.wasm previous baseline.wasm"
+        ));
+        match e {
+            PlanError::UnmappableArgument {
+                capability_id,
+                argument,
+            } => {
+                assert_eq!(capability_id, "verify");
+                assert!(argument.contains("baseline"));
+            }
+            other => panic!("expected UnmappableArgument, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn flag_lookup_is_exact_not_substring() {
+        // `--previous-wasm` contains `--wasm`; a substring lookup would let the
+        // candidate claim the baseline's flag.
+        let ra = sdkt_core::registry::find("release_assurance").expect("in registry");
+        assert!(declares_arg(ra, "--wasm"));
+        assert!(declares_arg(ra, "--previous-wasm"));
+        assert!(!declares_arg(ra, "--old-wasm"));
+        let d = sdkt_core::registry::find("diff").expect("in registry");
+        assert!(declares_arg(d, "--old-wasm"));
+        assert!(!declares_arg(d, "--previous-wasm"));
+        assert!(!declares_arg(d, "--wasm"));
+    }
 
     #[test]
     fn health_request_plans_a_valid_argv() {

@@ -295,6 +295,115 @@ fn h_stderr_never_contaminates_json_stdout() {
     assert_eq!(v["status"], "success");
 }
 
+// ------------------------------------------------- release-assurance argv ---
+#[test]
+fn release_assurance_baseline_reaches_sdkt_as_a_flagged_pair() {
+    // Regression: the candidate used to be emitted as a positional argument
+    // and the baseline took `--wasm`, so sdkt answered with an exit-2 usage
+    // error. The fake echoes the argv it actually received, which is what the
+    // real CLI parses.
+    let tmp = tempfile::tempdir().unwrap();
+    let fx = FakeCli {
+        echo_args: true,
+        ..FakeCli::ok()
+    }
+    .write(tmp.path());
+
+    let out = agent(
+        &fx,
+        "release assurance for candidate.wasm previous baseline.wasm",
+        true,
+    );
+    let v = parse_json(&out);
+
+    assert_eq!(v["capability_id"], "release_assurance");
+    assert_eq!(v["status"], "success", "{v}");
+    assert_eq!(v["exit_code"], 0);
+
+    // argv as received by the child, not as the planner remembers it.
+    let echoed = v["stdout_text"].as_str().unwrap();
+    assert_eq!(
+        echoed,
+        "release-assurance|--wasm|candidate.wasm|--previous-wasm|baseline.wasm|--rpc-url|\
+         https://soroban-testnet.stellar.org|--network-passphrase|Test SDF Network ; September \
+         2015|--format|json|",
+        "argv reached sdkt malformed: {echoed}"
+    );
+    // The planner's own record must agree.
+    let argv: Vec<&str> = v["argv"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|a| a.as_str().unwrap())
+        .collect();
+    assert_eq!(
+        &argv[..4],
+        &[
+            "release-assurance",
+            "--wasm",
+            "candidate.wasm",
+            "--previous-wasm"
+        ]
+    );
+    assert_eq!(argv[4], "baseline.wasm");
+}
+
+#[test]
+fn release_assurance_single_artifact_still_works() {
+    let tmp = tempfile::tempdir().unwrap();
+    let fx = FakeCli {
+        stdout: "{\"release_status\":\"REVIEW\"}\n".into(),
+        ..FakeCli::ok()
+    }
+    .write(tmp.path());
+    let out = agent(&fx, "release assurance for candidate.wasm", true);
+    let v = parse_json(&out);
+    assert_eq!(v["status"], "success");
+    let argv: Vec<&str> = v["argv"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|a| a.as_str().unwrap())
+        .collect();
+    assert_eq!(
+        &argv[..3],
+        &["release-assurance", "--wasm", "candidate.wasm"]
+    );
+    assert!(!argv.contains(&"--previous-wasm"));
+}
+
+#[test]
+fn usage_error_is_not_reported_as_a_failed_verdict() {
+    // A clap usage error exits 2 with an empty stdout. Calling that a failed
+    // verdict points the reader at a report that was never produced.
+    let tmp = tempfile::tempdir().unwrap();
+    let fx = FakeCli {
+        stderr: "error: unexpected argument 'candidate.wasm' found\n".into(),
+        exit_code: 2,
+        ..FakeCli::ok()
+    }
+    .write(tmp.path());
+
+    let out = agent(&fx, "release assurance for candidate.wasm", true);
+    let v = parse_json(&out);
+
+    assert_eq!(v["exit_code"], 2);
+    assert_eq!(v["status"], "failed");
+    let explanation = v["explanation"].as_str().unwrap();
+    assert!(
+        explanation.contains("usage error"),
+        "usage error must be named: {explanation}"
+    );
+    assert!(
+        !explanation.contains("verdict failed"),
+        "a usage error must not be described as a failed verdict: {explanation}"
+    );
+    assert!(
+        !explanation.contains("the report above"),
+        "no report exists for a usage error: {explanation}"
+    );
+}
+
 // ------------------------------------------------------------ extra ---
 #[test]
 fn mainnet_request_is_refused_without_executing() {

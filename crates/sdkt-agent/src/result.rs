@@ -95,7 +95,10 @@ impl ExecutionResult {
             schema_version: AGENT_SCHEMA_VERSION,
             request: request.to_string(),
             capability_id: match error {
-                PlanError::Blocked { capability_id, .. } => Some((*capability_id).to_string()),
+                PlanError::Blocked { capability_id, .. }
+                | PlanError::UnmappableArgument { capability_id, .. } => {
+                    Some((*capability_id).to_string())
+                }
                 PlanError::Parse(crate::intent::ParseError::MutationRequested {
                     capability_id,
                 }) => Some((*capability_id).to_string()),
@@ -226,8 +229,20 @@ fn explain(
             }
             None => "the read-only check completed successfully".to_string(),
         },
-        (Status::Failed, Some(c)) if verdict_gated => format!(
+        // Exit 2 is sdkt's usage error: the command line was rejected before
+        // anything ran, so no report exists and calling it a failed verdict
+        // would misdirect the reader to evidence that was never produced.
+        (Status::Failed, Some(2)) => {
+            "sdkt rejected the command line (usage error, exit 2); no check ran and no report \
+             exists — see stderr for the rejected argument"
+                .to_string()
+        }
+        (Status::Failed, Some(c)) if verdict_gated && json.is_some() => format!(
             "sdkt ran to completion but the verdict failed (exit {c}); the report above is the evidence"
+        ),
+        (Status::Failed, Some(c)) if verdict_gated => format!(
+            "sdkt ran to completion but the verdict failed (exit {c}); no report was produced \
+             (empty stdout) — see stderr for the diagnostic"
         ),
         (Status::Failed, Some(c)) => {
             format!("the command failed (exit {c}); see stderr for the diagnostic")
@@ -300,6 +315,53 @@ mod tests {
         assert_eq!(r.status, Status::Failed);
         assert_eq!(r.exit_code, Some(1));
         assert!(r.stdout_json.is_some(), "the report is still evidence");
+    }
+
+    #[test]
+    fn usage_error_is_explained_as_such_not_as_a_verdict_failure() {
+        // exit 2 from clap: nothing ran, so there is no report to point at.
+        let raw = RawExecution {
+            exit_code: Some(2),
+            stdout: String::new(),
+            stderr: "error: unexpected argument 'x.wasm' found".into(),
+            timed_out: false,
+            spawn_failed: false,
+        };
+        let r = ExecutionResult::from_execution(&sample_plan(), &raw);
+        assert_eq!(r.status, Status::Failed);
+        assert_eq!(r.exit_code, Some(2));
+        assert!(r.stdout_json.is_none());
+        assert!(r.explanation.contains("usage error"), "{}", r.explanation);
+        assert!(
+            !r.explanation.contains("verdict failed"),
+            "{}",
+            r.explanation
+        );
+        assert!(!r.explanation.contains("report above"), "{}", r.explanation);
+    }
+
+    #[test]
+    fn verdict_failure_without_a_report_does_not_claim_one() {
+        // exit 1 from a verdict-gated capability, but stdout is empty: the
+        // message must not promise evidence that is absent.
+        let raw = RawExecution {
+            exit_code: Some(1),
+            stdout: String::new(),
+            stderr: "boom".into(),
+            timed_out: false,
+            spawn_failed: false,
+        };
+        let r = ExecutionResult::from_execution(&sample_plan(), &raw);
+        assert!(
+            r.explanation.contains("verdict failed"),
+            "{}",
+            r.explanation
+        );
+        assert!(
+            !r.explanation.contains("the report above"),
+            "{}",
+            r.explanation
+        );
     }
 
     #[test]

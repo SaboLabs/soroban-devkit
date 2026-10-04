@@ -347,41 +347,79 @@ fn extract_args(request: &str) -> IntentArgs {
         }
     }
 
-    // Two wasm paths: the earlier one is the baseline when the request reads
-    // "from A to B" (the natural phrasing for an upgrade).
+    // Two wasm paths: assign roles by what precedes each path in the request.
+    // A path right after a baseline marker ("from", "previous", "old",
+    // "baseline") is the previously deployed artifact; a path right after
+    // "to"/"new" is the candidate. This keeps "from OLD to NEW" and
+    // "NEW previous OLD" both correct rather than guessing from list order.
     match wasm_paths.len() {
         0 => {}
         1 => args.wasm = Some(wasm_paths.remove(0)),
         _ => {
-            let from = find_from_index(&raw_tokens);
-            if let Some(from_idx) = from {
-                // Only a "to" *after* the "from" marks the destination; an
-                // earlier one belongs to phrasing like "safe to upgrade".
-                let to_idx = raw_tokens
-                    .iter()
-                    .enumerate()
-                    .skip(from_idx + 1)
-                    .find(|(_, t)| t.eq_ignore_ascii_case("to") || t.eq_ignore_ascii_case("new"))
-                    .map(|(i, _)| i)
-                    .unwrap_or(usize::MAX);
-                if from_idx < to_idx {
-                    args.previous_wasm = Some(wasm_paths[0].clone());
-                    args.wasm = Some(wasm_paths[1].clone());
-                } else {
-                    args.wasm = Some(wasm_paths[0].clone());
-                    args.previous_wasm = Some(wasm_paths[1].clone());
-                }
-            } else {
-                // Without an explicit direction, the first path is the
-                // baseline — the `--old-wasm --new-wasm` order.
-                args.previous_wasm = Some(wasm_paths[0].clone());
-                args.wasm = Some(wasm_paths[1].clone());
-            }
+            let roles = wasm_roles_by_marker(&raw_tokens, &wasm_paths);
+            args.previous_wasm = roles.0;
+            args.wasm = roles.1;
         }
     }
 
     args.profile = profile;
     args
+}
+
+/// Assign the two artifact paths to (baseline, candidate) by the word that
+/// precedes each of them in the request.
+///
+/// Falls back to "first path is the baseline", the `--old-wasm --new-wasm`
+/// reading, when nothing in the request marks a role.
+fn wasm_roles_by_marker(tokens: &[&str], paths: &[String]) -> (Option<String>, Option<String>) {
+    let is_baseline_marker = |t: &str| {
+        ["from", "old", "previous", "baseline"]
+            .iter()
+            .any(|m| t.eq_ignore_ascii_case(m))
+    };
+    let is_candidate_marker = |t: &str| ["to", "new"].iter().any(|m| t.eq_ignore_ascii_case(m));
+
+    // Walk the token list; remember which role the most recent marker claims
+    // for the next `.wasm` path seen.
+    let mut pending: Option<bool> = None; // true = baseline, false = candidate
+    let mut baseline: Option<String> = None;
+    let mut candidate: Option<String> = None;
+    for token in tokens {
+        let cleaned = token.trim_matches(|c: char| {
+            c == ',' || c == ';' || c == '"' || c == '\'' || c == '(' || c == ')' || c == '.'
+        });
+        if is_baseline_marker(cleaned) {
+            pending = Some(true);
+            continue;
+        }
+        if is_candidate_marker(cleaned) {
+            pending = Some(false);
+            continue;
+        }
+        if cleaned.to_ascii_lowercase().ends_with(".wasm")
+            && paths.iter().any(|p| p.eq_ignore_ascii_case(cleaned))
+        {
+            match pending.take() {
+                Some(true) if baseline.is_none() => baseline = Some(cleaned.to_string()),
+                Some(false) if candidate.is_none() => candidate = Some(cleaned.to_string()),
+                _ => {}
+            }
+        }
+    }
+
+    // Anything unclaimed fills the remaining role in listed order.
+    for path in paths {
+        if baseline.as_deref() == Some(path.as_str()) || candidate.as_deref() == Some(path.as_str())
+        {
+            continue;
+        }
+        if baseline.is_none() {
+            baseline = Some(path.clone());
+        } else if candidate.is_none() {
+            candidate = Some(path.clone());
+        }
+    }
+    (baseline, candidate)
 }
 
 /// A profile name follows the literal word `profile` ("… profile wl-testnet").
@@ -399,12 +437,6 @@ fn extract_profile(tokens: &[&str]) -> Option<String> {
         next.trim_matches(|c: char| c == ',' || c == ';' || c == '"' || c == '\'' || c == ')')
             .to_string(),
     )
-}
-
-fn find_from_index(tokens: &[&str]) -> Option<usize> {
-    tokens
-        .iter()
-        .position(|t| t.eq_ignore_ascii_case("from") || t.eq_ignore_ascii_case("old"))
 }
 
 /// `C` followed by 55 base32 characters, as produced by StrKey.
