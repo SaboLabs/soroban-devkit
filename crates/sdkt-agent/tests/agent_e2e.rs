@@ -7,25 +7,22 @@
 //! is about.
 
 use assert_cmd::Command;
-use std::fs;
-use std::path::Path;
 use std::process::Output;
 
-/// Write a fake `sdkt` script and return its path.
-fn fake_sdkt(dir: &Path, body: &str) -> String {
-    let path = dir.join("fake-sdkt.sh");
-    fs::write(&path, format!("#!/bin/sh\n{body}\n")).unwrap();
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        fs::set_permissions(&path, fs::Permissions::from_mode(0o755)).unwrap();
-    }
-    path.to_string_lossy().into_owned()
-}
+// The same fake-CLI spec the executor unit tests use: a native script per
+// platform (sh on unix, PowerShell on Windows) with identical bytes out.
+#[path = "common/fixture.rs"]
+mod fixture;
 
-fn agent(bin: &str, request: &str, json: bool) -> Output {
+use fixture::FakeCli;
+
+/// Run the agent against a prepared fake CLI.
+fn agent(fx: &fixture::Fixture, request: &str, json: bool) -> Output {
     let mut cmd = Command::cargo_bin("sdkt-agent").expect("sdkt-agent built");
-    cmd.env("SDKT_AGENT_BIN", bin);
+    cmd.env("SDKT_AGENT_BIN", &fx.program);
+    // Windows runs the fake as `powershell.exe -File <script>`, so the
+    // fixed leading arguments have to reach the executor too.
+    cmd.env("SDKT_AGENT_BIN_ARGS", fx.prefix.join("|"));
     if json {
         cmd.arg("--format").arg("json");
     }
@@ -46,13 +43,14 @@ const CID: &str = "CAD6C24POQGRYXMBNBEGVDHUROF5ZC37XRDC6NCVILTXWMYJIBMISZCV";
 fn a_health_request_resolves_and_executes() {
     let tmp = tempfile::tempdir().unwrap();
     // Echo the argv so the test can prove what was actually run.
-    let bin = fake_sdkt(
-        tmp.path(),
-        r#"printf '{"health":"healthy","argv":"%s"}\n' "$*""#,
-    );
+    let fx = FakeCli {
+        stdout: "{\"health\":\"healthy\"}\n".into(),
+        ..FakeCli::ok()
+    }
+    .write(tmp.path());
 
     let out = agent(
-        &bin,
+        &fx,
         &format!("check health of contract {CID} on testnet"),
         true,
     );
@@ -87,15 +85,16 @@ fn a_health_request_resolves_and_executes() {
 fn b_verify_preserves_exit_code_and_json() {
     let tmp = tempfile::tempdir().unwrap();
     // A mismatch: valid report on stdout, exit 1.
-    let bin = fake_sdkt(
-        tmp.path(),
-        r#"printf '{"match":false,"verification_status":"Mismatch"}\n'
-echo "Error: local WASM does NOT match" 1>&2
-exit 1"#,
-    );
+    let fx = FakeCli {
+        stdout: "{\"match\":false,\"verification_status\":\"Mismatch\"}\n".into(),
+        stderr: "Error: local WASM does NOT match\n".into(),
+        exit_code: 1,
+        ..FakeCli::ok()
+    }
+    .write(tmp.path());
 
     let out = agent(
-        &bin,
+        &fx,
         &format!("verify contract {CID} against us_new.wasm on testnet"),
         true,
     );
@@ -122,10 +121,14 @@ exit 1"#,
 #[test]
 fn c_upgrade_safety_plans_old_and_new() {
     let tmp = tempfile::tempdir().unwrap();
-    let bin = fake_sdkt(tmp.path(), r#"printf '{"compatible":false}\n'"#);
+    let fx = FakeCli {
+        stdout: "{\"compatible\":false}\n".into(),
+        ..FakeCli::ok()
+    }
+    .write(tmp.path());
 
     let out = agent(
-        &bin,
+        &fx,
         "check whether this wasm is safe to upgrade from us_old.wasm to us_new.wasm",
         true,
     );
@@ -151,12 +154,16 @@ fn d_ambiguous_request_is_clarified_and_never_executed() {
     let tmp = tempfile::tempdir().unwrap();
     // A marker file proves the fake CLI was never invoked.
     let marker = tmp.path().join("ran");
-    let bin = fake_sdkt(
-        tmp.path(),
-        &format!("touch {}\nprintf '{{}}\\n'", marker.display()),
-    );
+    let fx = FakeCli {
+        stdout: "{}
+"
+        .into(),
+        marker: Some(marker.clone()),
+        ..FakeCli::ok()
+    }
+    .write(tmp.path());
 
-    let out = agent(&bin, "check health and verify the contract", true);
+    let out = agent(&fx, "check health and verify the contract", true);
     let v = parse_json(&out);
     assert_eq!(v["status"], "needs_clarification");
     assert_eq!(v["error_code"], "ambiguous_request");
@@ -175,12 +182,16 @@ fn e_mutation_request_is_blocked_and_never_executed() {
     ] {
         let tmp = tempfile::tempdir().unwrap();
         let marker = tmp.path().join("ran");
-        let bin = fake_sdkt(
-            tmp.path(),
-            &format!("touch {}\nprintf '{{}}\\n'", marker.display()),
-        );
+        let fx = FakeCli {
+            stdout: "{}
+"
+            .into(),
+            marker: Some(marker.clone()),
+            ..FakeCli::ok()
+        }
+        .write(tmp.path());
 
-        let out = agent(&bin, request, true);
+        let out = agent(&fx, request, true);
         let v = parse_json(&out);
         assert_eq!(v["status"], "blocked", "{request}");
         assert_eq!(v["capability_id"], id, "{request}");
@@ -197,12 +208,16 @@ fn e_mutation_request_is_blocked_and_never_executed() {
 fn f_missing_argument_is_clarified_and_never_executed() {
     let tmp = tempfile::tempdir().unwrap();
     let marker = tmp.path().join("ran");
-    let bin = fake_sdkt(
-        tmp.path(),
-        &format!("touch {}\nprintf '{{}}\\n'", marker.display()),
-    );
+    let fx = FakeCli {
+        stdout: "{}
+"
+        .into(),
+        marker: Some(marker.clone()),
+        ..FakeCli::ok()
+    }
+    .write(tmp.path());
 
-    let out = agent(&bin, "check health of the contract", true);
+    let out = agent(&fx, "check health of the contract", true);
     let v = parse_json(&out);
     assert_eq!(v["status"], "needs_clarification");
     assert_eq!(v["error_code"], "missing_argument");
@@ -215,15 +230,16 @@ fn g_critical_health_exit_1_stays_failed() {
     let tmp = tempfile::tempdir().unwrap();
     // This is the exact shape of a `critical` health run: a perfectly valid
     // JSON report AND a non-zero exit.
-    let bin = fake_sdkt(
-        tmp.path(),
-        r#"printf '{"health":"critical","verified":false}\n'
-echo "Verdict: On-chain WASM does NOT match" 1>&2
-exit 1"#,
-    );
+    let fx = FakeCli {
+        stdout: "{\"health\":\"critical\",\"verified\":false}\n".into(),
+        stderr: "Verdict: On-chain WASM does NOT match\n".into(),
+        exit_code: 1,
+        ..FakeCli::ok()
+    }
+    .write(tmp.path());
 
     let out = agent(
-        &bin,
+        &fx,
         &format!("check health of contract {CID} on testnet"),
         true,
     );
@@ -239,16 +255,15 @@ exit 1"#,
 #[test]
 fn h_stderr_never_contaminates_json_stdout() {
     let tmp = tempfile::tempdir().unwrap();
-    let bin = fake_sdkt(
-        tmp.path(),
-        r#"printf '{"health":"healthy"}\n'
-echo "noise line one" 1>&2
-echo "noise line two" 1>&2
-exit 0"#,
-    );
+    let fx = FakeCli {
+        stdout: "{\"health\":\"healthy\"}\n".into(),
+        stderr: "noise line one\nnoise line two\n".into(),
+        ..FakeCli::ok()
+    }
+    .write(tmp.path());
 
     let out = agent(
-        &bin,
+        &fx,
         &format!("check health of contract {CID} on testnet"),
         true,
     );
@@ -285,13 +300,17 @@ exit 0"#,
 fn mainnet_request_is_refused_without_executing() {
     let tmp = tempfile::tempdir().unwrap();
     let marker = tmp.path().join("ran");
-    let bin = fake_sdkt(
-        tmp.path(),
-        &format!("touch {}\nprintf '{{}}\\n'", marker.display()),
-    );
+    let fx = FakeCli {
+        stdout: "{}
+"
+        .into(),
+        marker: Some(marker.clone()),
+        ..FakeCli::ok()
+    }
+    .write(tmp.path());
 
     let out = agent(
-        &bin,
+        &fx,
         &format!("check health of contract {CID} on mainnet"),
         true,
     );
@@ -321,9 +340,13 @@ fn help_and_version_work() {
 #[test]
 fn pretty_output_is_concise_and_labelled() {
     let tmp = tempfile::tempdir().unwrap();
-    let bin = fake_sdkt(tmp.path(), r#"printf '{"health":"healthy"}\n'"#);
+    let fx = FakeCli {
+        stdout: "{\"health\":\"healthy\"}\n".into(),
+        ..FakeCli::ok()
+    }
+    .write(tmp.path());
     let out = agent(
-        &bin,
+        &fx,
         &format!("check health of contract {CID} on testnet"),
         false,
     );

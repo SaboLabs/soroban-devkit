@@ -17,6 +17,12 @@ pub const BIN_ENV: &str = "SDKT_AGENT_BIN";
 /// Name of the binary the agent drives by default.
 pub const DEFAULT_BIN: &str = "sdkt";
 
+/// Optional fixed arguments placed before the caller's argv. The test
+/// fixtures need it because on Windows the fake CLI runs as
+/// `powershell.exe -File <script>`: the program alone is not enough.
+/// Unset in normal use, so real invocations are unaffected.
+pub const BIN_ARGS_ENV: &str = "SDKT_AGENT_BIN_ARGS";
+
 /// Default wall-clock budget for one execution.
 pub const DEFAULT_TIMEOUT: Duration = Duration::from_secs(20);
 
@@ -71,6 +77,16 @@ impl Executor {
             program: env::var(BIN_ENV).unwrap_or_else(|_| DEFAULT_BIN.to_string()),
             timeout: DEFAULT_TIMEOUT,
         }
+    }
+
+    /// Fixed prefix arguments, when [`BIN_ARGS_ENV`] is set.
+    fn prefix_args() -> Vec<String> {
+        env::var(BIN_ARGS_ENV)
+            .unwrap_or_default()
+            .split('|')
+            .filter(|s| !s.is_empty())
+            .map(str::to_string)
+            .collect()
     }
 
     /// Executor for an arbitrary program — used by tests with fake binaries.
@@ -139,7 +155,9 @@ impl Executor {
 
 /// Convenience wrapper: run with the default `sdkt` binary.
 pub fn execute(args: &[String]) -> RawExecution {
-    Executor::for_sdkt().run(args)
+    let mut full = Executor::prefix_args();
+    full.extend_from_slice(args);
+    Executor::for_sdkt().run(&full)
 }
 
 fn spawn_reader<R: Read + Send + 'static>(mut reader: R) -> thread::JoinHandle<String> {
@@ -161,42 +179,48 @@ fn join_reader(handle: Option<thread::JoinHandle<String>>) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::fs;
-    use std::path::Path;
 
-    /// Write an executable shell script and return its path.
-    fn fake_script(dir: &Path, body: &str) -> String {
-        let path = dir.join("fake-sdkt.sh");
-        fs::write(&path, format!("#!/bin/sh\n{body}\n")).unwrap();
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::PermissionsExt;
-            fs::set_permissions(&path, fs::Permissions::from_mode(0o755)).unwrap();
-        }
-        path.to_string_lossy().into_owned()
-    }
+    // One source of truth for how a fake `sdkt` behaves, shared with the
+    // integration tests. Included rather than declared as a module so the
+    // helper is compiled once per crate that needs it.
+    include!("../tests/common/fixture.rs");
+
+    /// Path to a binary that exists on every platform, used to prove a
+    /// spawn failure is reported. A relative path with no directory is
+    /// resolved against PATH, and no PATH entry provides this name.
+    const NONEXISTENT_BIN: &str = "sdkt-agent-nonexistent-binary-for-tests";
 
     #[test]
     fn exit_code_is_recorded_not_swallowed() {
         let tmp = tempfile::tempdir().unwrap();
-        let bin = fake_script(tmp.path(), "echo ok\nexit 3\n");
-        let raw = Executor::with_program(bin, Duration::from_secs(5)).run(&[]);
+        let fx = FakeCli {
+            stdout: "ok\n".into(),
+            exit_code: 3,
+            ..FakeCli::ok()
+        }
+        .write(tmp.path());
+        let argv = fx.argv_for(&[]);
+        let raw = Executor::with_program(fx.program, Duration::from_secs(30)).run(&argv);
         assert_eq!(raw.exit_code, Some(3));
         assert_eq!(raw.stdout, "ok\n");
-        assert!(raw.stderr.is_empty());
+        assert!(raw.stderr.is_empty(), "stderr: {:?}", raw.stderr);
         assert!(!raw.timed_out);
+        assert!(!raw.spawn_failed, "stderr: {:?}", raw.stderr);
     }
 
     #[test]
     fn stdout_and_stderr_never_mix() {
         let tmp = tempfile::tempdir().unwrap();
-        // stdout: pure JSON. stderr: human noise + shell warnings.
-        let body = r#"printf '{"health":"critical"}\n'
-echo "warning: something on stderr" 1>&2
-echo "Error: actionable failure" 1>&2
-exit 1"#;
-        let bin = fake_script(tmp.path(), body);
-        let raw = Executor::with_program(bin, Duration::from_secs(5)).run(&[]);
+        // stdout: pure JSON. stderr: human noise, written to the other stream.
+        let fx = FakeCli {
+            stdout: "{\"health\":\"critical\"}\n".into(),
+            stderr: "warning: something on stderr\nError: actionable failure\n".into(),
+            exit_code: 1,
+            ..FakeCli::ok()
+        }
+        .write(tmp.path());
+        let argv = fx.argv_for(&[]);
+        let raw = Executor::with_program(fx.program, Duration::from_secs(30)).run(&argv);
         assert_eq!(raw.exit_code, Some(1));
         assert!(
             raw.stdout.trim().parse::<serde_json::Value>().is_ok(),
@@ -215,8 +239,16 @@ exit 1"#;
     #[test]
     fn timeout_kills_and_reports_no_exit_code() {
         let tmp = tempfile::tempdir().unwrap();
-        let bin = fake_script(tmp.path(), "sleep 5\n");
-        let raw = Executor::with_program(bin, Duration::from_millis(150)).run(&[]);
+        // Sleep well past the budget so the kill path is genuinely exercised.
+        // Kept short: after the kill the reader threads can only return once
+        // the pipe closes, so a long sleep would make the test wait for it.
+        let fx = FakeCli {
+            sleep_ms: 2_000,
+            ..FakeCli::ok()
+        }
+        .write(tmp.path());
+        let argv = fx.argv_for(&[]);
+        let raw = Executor::with_program(fx.program, Duration::from_millis(300)).run(&argv);
         assert!(raw.timed_out, "expected a timeout");
         assert_eq!(raw.exit_code, None, "a killed run has no usable code");
     }
@@ -224,22 +256,42 @@ exit 1"#;
     #[test]
     fn large_output_on_both_streams_does_not_deadlock() {
         let tmp = tempfile::tempdir().unwrap();
-        // ~128 KiB on each stream, well past the 64 KiB pipe buffer.
-        let body = "i=0\nwhile [ $i -lt 2000 ]; do echo \"line $i aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\"; echo \"err $i bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\" 1>&2; i=$((i+1)); done";
-        let bin = fake_script(tmp.path(), body);
-        let raw = Executor::with_program(bin, Duration::from_secs(20)).run(&[]);
+        // ~128 KiB on each stream, well past the 64 KiB pipe buffer. Distinct
+        // payloads prove both pipes were drained and stayed separate.
+        let fx = FakeCli {
+            big_bytes: 128 * 1024,
+            ..FakeCli::ok()
+        }
+        .write(tmp.path());
+        let argv = fx.argv_for(&[]);
+        let raw = Executor::with_program(fx.program, Duration::from_secs(60)).run(&argv);
         assert_eq!(raw.exit_code, Some(0));
-        assert!(raw.stdout.contains("line 1999"));
-        assert!(raw.stderr.contains("err 1999"));
+        assert!(
+            raw.stdout.len() >= 128 * 1024,
+            "stdout truncated: {}",
+            raw.stdout.len()
+        );
+        assert!(
+            raw.stderr.len() >= 128 * 1024,
+            "stderr truncated: {}",
+            raw.stderr.len()
+        );
+        assert!(
+            raw.stdout.chars().all(|c| c == 'a'),
+            "stdout carried stderr payload"
+        );
+        assert!(
+            raw.stderr.chars().all(|c| c == 'b'),
+            "stderr carried stdout payload"
+        );
     }
 
     #[test]
     fn failed_spawn_is_reported_not_silenced() {
-        let raw = Executor::with_program(
-            "/nonexistent/sdkt-binary-does-not-exist",
-            Duration::from_secs(5),
-        )
-        .run(&["health".to_string()]);
+        // A name that exists on no PATH entry, so the spawn fails on every
+        // platform for the same reason.
+        let raw = Executor::with_program(NONEXISTENT_BIN, Duration::from_secs(5))
+            .run(&["health".to_string()]);
         assert!(raw.spawn_failed);
         assert_eq!(raw.exit_code, None);
         assert!(!raw.stderr.is_empty(), "spawn error must carry a message");
@@ -248,15 +300,13 @@ exit 1"#;
     #[test]
     fn argv_is_passed_through_unchanged() {
         let tmp = tempfile::tempdir().unwrap();
-        // Echo the received arguments so the test can assert exact forwarding.
-        let bin = fake_script(tmp.path(), "printf '%s|' \"$@\"");
-        let raw = Executor::with_program(bin, Duration::from_secs(5)).run(&[
-            "health".to_string(),
-            "--contract".to_string(),
-            "CABC".to_string(),
-            "--format".to_string(),
-            "json".to_string(),
-        ]);
+        let fx = FakeCli {
+            echo_args: true,
+            ..FakeCli::ok()
+        }
+        .write(tmp.path());
+        let argv = fx.argv_for(&["health", "--contract", "CABC", "--format", "json"]);
+        let raw = Executor::with_program(fx.program, Duration::from_secs(30)).run(&argv);
         assert_eq!(raw.stdout, "health|--contract|CABC|--format|json|");
         assert_eq!(raw.exit_code, Some(0));
     }
@@ -264,7 +314,8 @@ exit 1"#;
     #[test]
     fn bin_env_selects_the_program() {
         // The override is what lets integration tests use a fake CLI.
-        std::env::set_var(BIN_ENV, "/tmp/definitely-not-sdkt");
+        std::env::set_var(BIN_ENV, NONEXISTENT_BIN);
+        std::env::remove_var(BIN_ARGS_ENV);
         let raw = execute(&["health".to_string()]);
         std::env::remove_var(BIN_ENV);
         assert!(raw.spawn_failed);
