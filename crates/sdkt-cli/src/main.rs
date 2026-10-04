@@ -374,6 +374,14 @@ enum Commands {
         /// Skip loading installed plugins automatically from the plugin store
         #[arg(long, default_value_t = false)]
         no_plugins: bool,
+        /// Path to a contract WASM for spec-correlated analysis.
+        #[arg(long, value_name = "WASM")]
+        abi: Option<String>,
+        /// Contract ID whose deployed WASM should provide the ABI.
+        #[arg(long, value_name = "CONTRACT_ID")]
+        abi_contract: Option<String>,
+        #[command(flatten)]
+        net: NetworkArgs,
     },
     /// Manage Soroban identities (keys)
     Identity {
@@ -5849,6 +5857,9 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
             disable,
             rules,
             no_plugins,
+            abi,
+            abi_contract,
+            net,
         } => {
             // Audit supports three output formats: pretty, json, sarif.
             // We parse the format here rather than through the shared
@@ -5920,6 +5931,36 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
                 }
                 return Ok(());
             }
+
+            if abi.is_some() && abi_contract.is_some() {
+                return Err("specify only one of --abi or --abi-contract".into());
+            }
+            let audit_spec = if let Some(wasm_path) = abi.as_ref() {
+                let bytes = fs::read(wasm_path)
+                    .map_err(|e| format!("Failed to read ABI WASM '{}': {}", wasm_path, e))?;
+                Some(
+                    parse_contract_spec(&bytes)
+                        .map_err(|e| format!("Failed to parse ABI WASM: {}", e))?,
+                )
+            } else if let Some(contract_id) = abi_contract.as_ref() {
+                let client = resolve_rpc_client(
+                    net.rpc_url.clone(),
+                    net.network_passphrase.clone(),
+                    net.network_profile.clone(),
+                );
+                let inspection = inspect_contract(&client, contract_id).await.map_err(|e| {
+                    format!("Failed to inspect ABI contract {}: {}", contract_id, e)
+                })?;
+                let bytes = get_wasm_bytecode(&client, &inspection.wasm_hash)
+                    .await
+                    .map_err(|e| format!("Failed to fetch ABI contract {}: {}", contract_id, e))?;
+                Some(
+                    parse_contract_spec(&bytes)
+                        .map_err(|e| format!("Failed to parse ABI WASM: {}", e))?,
+                )
+            } else {
+                None
+            };
 
             if !rules.is_empty() {
                 // Validate/resolve each --rules entry before reading source.
@@ -6251,7 +6292,13 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
                     #[cfg(feature = "plugins")]
                     sdkt_audit_example_rule::register();
 
-                    match sdkt_audit::audit_source_with(&source, &disabled_refs) {
+                    let result = match audit_spec.as_ref() {
+                        Some(spec) => {
+                            sdkt_audit::audit_source_with_spec(&source, spec, &disabled_refs)
+                        }
+                        None => sdkt_audit::audit_source_with(&source, &disabled_refs),
+                    };
+                    match result {
                         Ok(report) => {
                             for finding in &report.findings {
                                 aggregate.add(finding.clone());
@@ -6268,7 +6315,9 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
 
                 match sdkt_audit::scan_all_functions_str(&source) {
                     Some(scans) => {
-                        let ctx = sdkt_audit::AuditContext { spec: None };
+                        let ctx = sdkt_audit::AuditContext {
+                            spec: audit_spec.as_ref(),
+                        };
                         let mut report = sdkt_audit::AuditReport::default();
                         local_reg.run_all(&scans, &ctx, &disabled_refs, &mut report);
 
@@ -6346,6 +6395,7 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
                     struct MultiFileAuditReport {
                         files: Vec<serde_json::Value>,
                         summary: sdkt_audit::AuditSummary,
+                        spec_correlated: bool,
                     }
 
                     let files = per_file
@@ -6363,14 +6413,21 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
                         serde_json::to_string(&MultiFileAuditReport {
                             files,
                             summary: aggregate.summary.clone(),
+                            spec_correlated: audit_spec.is_some(),
                         })?
                     );
                 } else {
-                    println!("{}", serde_json::to_string(&aggregate)?);
+                    let mut report = serde_json::to_value(&aggregate)?;
+                    report["spec_correlated"] = serde_json::Value::Bool(audit_spec.is_some());
+                    println!("{}", serde_json::to_string(&report)?);
                 }
             } else {
                 for (path, report) in &per_file {
                     println!("Static Analysis Report: {}", path.display());
+
+                    if audit_spec.is_some() {
+                        println!("  Spec-correlated analysis: enabled");
+                    }
 
                     if loaded_plugins > 0 {
                         println!(
