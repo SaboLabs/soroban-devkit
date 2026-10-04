@@ -8,6 +8,7 @@ pub mod lock;
 pub mod network_safety;
 pub mod package;
 pub mod project;
+pub mod registry;
 pub mod scaffold;
 pub mod sync;
 pub mod tx_builder;
