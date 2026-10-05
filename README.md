@@ -277,7 +277,7 @@ See [`docs/plugin-authoring.md`](docs/plugins/plugin-authoring.md) for how to bu
 | `sdkt diff` | Offline comparison of WASM binaries and API surfaces. |
 | `sdkt diff --old-wasm <A> --new-wasm <B>` | Offline ABI/function/event/type diff of two WASM files. Add `--upgrade-safety` for a breaking-change verdict. |
 | `sdkt build` | Compile workspace rust contracts into optimized WASMs. |
-| `sdkt-agent "<request>"` | Read-only natural-language front end: plans a request against the capability registry, refuses anything mutating, runs the CLI and returns structured evidence. `--format json` for a machine-readable result. |
+| `sdkt-agent "<request>"` | Read-only natural-language front end: plans a request against the capability registry, refuses anything mutating, runs the CLI and returns structured evidence. `--format json` for a machine-readable result. Not on crates.io — build from source. See [docs/agent.md](docs/reference/agent.md). |
 | `sdkt deploy --wasm <file> [--salt <salt>] [--arg <type:value>...]` | Upload WASM + instantiate. Salt is auto-generated if omitted (see [Deploy a single contract](#deploy-a-single-contract) below). Pass constructor arguments via repeated `--arg type:value` flags (uses `CreateContractV2`). Add `--deny-breaking --old-wasm <deployed.wasm>` to abort on a non-backwards-compatible upgrade. |
 | `sdkt project deploy` | Deploy multi-contract workspace orchestrating topological dependency sorting. |
 | `sdkt verify --contract <ID> [--wasm <file>] [--network <net>]` | Verify a deployed contract matches a local WASM (offline hash vs on-chain hash). |
@@ -580,6 +580,7 @@ upgrade-safety-on-release).
 ## Documentation
 
 - [docs/quick-start.md](docs/getting-started/quick-start.md) — five-minute first-time walkthrough (offline).
+- [docs/agent.md](docs/reference/agent.md) — `sdkt-agent`: natural-language front end, capability surface, safety and refusal behaviour.
 - [docs/testnet-walkthrough.md](docs/getting-started/testnet-walkthrough.md) — end-to-end Testnet loop: identity → fund → deploy → invoke → events / storage.
 - [docs/getting-started.md](docs/getting-started/getting-started.md) — deeper offline `diff` and `audit` examples.
 - [docs/examples.md](docs/getting-started/examples.md) — command recipes & CI gating.
