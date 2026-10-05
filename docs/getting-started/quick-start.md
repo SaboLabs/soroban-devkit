@@ -136,8 +136,15 @@ pub struct Token;
 
 #[contractimpl]
 impl Token {
-    pub fn transfer(_from: Address, _to: Address, _amount: u64) {
-        // NOTE: intentionally missing require_auth() — sdkt audit will flag this
+    // Guarded entrypoint — the analyzer is satisfied by require_auth().
+    pub fn transfer(from: Address, to: Address, amount: u64) {
+        from.require_auth();
+        let _ = (to, amount);
+    }
+
+    // Privileged-shaped name with no auth guard — this is what AUTH-001 flags.
+    pub fn admin_action(admin: Address) {
+        let _ = admin;
     }
 }
 EOF
@@ -145,8 +152,16 @@ EOF
 sdkt audit /tmp/example_contract.rs
 ```
 
+```
+Static Analysis Report: /tmp/example_contract.rs
+Severity: 1 critical, 0 warning, 0 info (1 total)
+
+  [critical] AUTH-001  [Token::admin_action]: Function `Token::admin_action` looks privileged but does not call require_auth()
+```
+
 Interpreting the output:
 
+* The `AUTH-001` rule flags a function whose **name looks privileged** (`admin_action`) and which never calls `require_auth()`. The guarded `transfer` next to it is not flagged — that is the difference the rule detects. (This is the same rule and shape as the repository's own `examples/sample_token/src/lib.rs` fixture.)
 * `Severity: 0 critical, 0 warning, 0 info (0 total)` with `No issues found.` means the analyzer found nothing to flag.
 * `critical` findings (e.g. `AUTH-001/002/003/004` — missing auth checks) should block a deploy.
 * `warning` findings (e.g. `MOVE-001` — a possible move-after-use of a local) are heuristic and worth a look but are not necessarily bugs.

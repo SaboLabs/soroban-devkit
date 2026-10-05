@@ -129,7 +129,7 @@ capabilities that the parser cannot map from prose (for example `network.add`,
 report `unrecognised_request`; use `sdkt` directly for those. The authoritative
 surface is the registry itself — see
 [CLI Command Reference](cli.md) and the
-[command table](../README.md#commands).
+[command table](../../README.md#commands).
 
 ***
 

@@ -278,7 +278,7 @@ sdkt init my-contract --minimal
 cd my-contract
 
 # 2. Build the contract into a Soroban WASM
-#    Output: target/wasm32-unknown-unknown/release/<project>.wasm
+#    Output: target/wasm32v1-none/release/<project>.wasm
 sdkt build
 
 # 3. Generate a local signing identity
@@ -301,7 +301,7 @@ openssl rand -hex 20
 
 # 7. Deploy to Testnet
 sdkt deploy \
-  --wasm target/wasm32-unknown-unknown/release/my_contract.wasm \
+  --wasm target/wasm32v1-none/release/my_contract.wasm \
   --salt <paste-hex-from-step-6> \
   --identity my-deployer \
   --network-profile testnet
@@ -405,7 +405,7 @@ sdkt network add testnet \
 
 # 5. Deploy (salt is auto-generated if omitted)
 sdkt deploy \
-  --wasm target/wasm32-unknown-unknown/release/<project>.wasm \
+  --wasm target/wasm32v1-none/release/<project>.wasm \
   --identity my-deployer \
   --network-profile testnet
 

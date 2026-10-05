@@ -67,7 +67,7 @@
         </div>
         <div class="term-body">
 <div class="t-cmd">sdkt --version</div>
-<div class="t-out">sdkt 2.5.0</div>
+<div class="t-out">sdkt 2.6.0</div>
 <div class="t-out">&nbsp;</div>
 <div class="t-cmd">sdkt wasm inspect contract.wasm</div>
 <div class="t-out">WASM Inspection Report: contract.wasm
@@ -78,6 +78,9 @@ Version: 1
 
 Custom Sections (1):
   - contractspecv0
+
+Contract Metadata (0):
+  (none)
 
 Contract Spec Available: Yes
   Functions: 2
@@ -95,12 +98,14 @@ Contract Spec Available: Yes
 Compatible: <span class="t-bad">NO</span>
 
 <span class="t-bad">Breaking:</span>
-  - Changed signature: mint()
+  - Removed function: mint()
+  - Removed function: transfer()
   - Removed event: Transfer
+  - Removed type: Point
 
 <span class="t-v">Non-breaking:</span>
-  - Added function: balance()
-  - Added event: Mint</div>
+  - Added function: hello()
+  - Added function: increment()</div>
         </div>
       </div>
     </div>
