@@ -1,12 +1,14 @@
 # Soroban DevKit
 
-**Soroban DevKit** (`sdkt`) is an offline-first CLI and Rust toolkit for
-building, inspecting, auditing, and deploying
-[Stellar / Soroban](https://soroban.stellar.org) smart contracts. It
-consolidates contract inspection, XDR decoding, storage analysis, static
-security auditing, WASM diffing, transaction lifecycle management, and
-multi-contract deployment orchestration into a single command-line
-interface — so developers stop juggling 5+ separate tools.
+**Soroban DevKit** (`sdkt`) is a release-assurance and operational
+verification toolkit for [Stellar / Soroban](https://soroban.stellar.org)
+smart contracts. It consolidates the checks that answer "is this build safe
+to release?" — contract inspection, static security auditing, upgrade-safety
+diffing, deployed-contract verification, and contract health — into one
+command-line interface with an aggregated release decision
+(`sdkt release-assurance`), and covers the surrounding workflow (XDR
+decoding, storage analysis, transaction lifecycle management, multi-contract
+deployment orchestration) so developers stop juggling 5+ separate tools.
 
 The workspace is a Rust workspace published as `sdkt-cli` (binary name:
 `sdkt`). Most commands run fully offline; only on-chain operations require
@@ -16,6 +18,7 @@ an RPC endpoint.
 
 | Area | Capabilities |
 |------|--------------|
+| **Release assurance** | One read-only command aggregates artifact checks, static audit, upgrade safety, deployed verification, and contract health into a single `PASS`/`REVIEW`/`FAIL` decision (`release-assurance`) |
 | **Project workflow** | Scaffold new Soroban projects (`init`), compile contracts to WASM (`build`), inspect WASM artifacts offline (`wasm inspect`) |
 | **ABI / ContractSpec** | Decode base64 XDR (`decode`), inspect contract ABI and storage (`inspect`), diff two WASM files for upgrade safety (`diff`) |
 | **Security** | Static analysis of contract source with built-in rules (`audit`), plus a plugin system for custom rules |

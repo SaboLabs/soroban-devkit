@@ -3,11 +3,11 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Soroban DevKit — The CLI Toolkit for Stellar Soroban Developers</title>
-<meta name="description" content="Soroban DevKit (sdkt) is an open-source, Rust-powered CLI toolkit for Stellar Soroban developers. Inspect, analyze, test, build, and deploy contracts from one CLI.">
+<title>Soroban DevKit — Release Assurance &amp; Verification Toolkit for Soroban</title>
+<meta name="description" content="Soroban DevKit (sdkt) is an open-source, Rust-powered release-assurance and operational verification toolkit for Soroban smart contracts. Inspect, verify, audit, compare upgrades, and validate deployed contracts from one CLI.">
 <meta name="theme-color" content="#0a0a0c">
 <meta property="og:title" content="Soroban DevKit — Developer Tooling for Stellar Soroban">
-<meta property="og:description" content="Offline-first CLI toolkit for Soroban contract inspection, static analysis, and upgrade safety.">
+<meta property="og:description" content="Release assurance and operational verification toolkit for Soroban smart contracts — inspect, verify, audit, compare upgrades, and validate deployed contracts.">
 <meta property="og:type" content="website">
 <meta property="og:url" content="https://github.com/SaboLabs/soroban-devkit">
 <link rel="icon" type="image/svg+xml" href="logo.svg">
@@ -43,9 +43,10 @@
   <div class="wrap hero-grid">
     <div>
       <h1>Soroban DevKit</h1>
-      <p class="tagline">The CLI toolkit for Stellar Soroban developers.</p>
-      <p class="sub">Build, inspect, analyze, invoke, and deploy Soroban
-        contracts from one developer-focused CLI.</p>
+      <p class="tagline">Release assurance &amp; verification for Soroban contracts.</p>
+      <p class="sub">Release assurance and operational verification for Soroban
+        contracts — inspect, verify, audit, compare upgrades, and validate
+        deployed contracts from one CLI.</p>
       <div class="btns">
         <a class="btn btn-primary" href="#install">Get Started</a>
         <a class="btn btn-ghost" href="playground/" rel="noopener">Open Web Playground</a>
@@ -110,10 +111,15 @@ Compatible: <span class="t-bad">NO</span>
   <div class="wrap">
     <div class="section-num">01</div><p class="eyebrow">Features</p>
     <h2 class="h2">Everything a Soroban dev needs, in one CLI</h2>
-    <p class="lead">sdkt consolidates the full developer lifecycle — contract
-      inspection, invocation, XDR decoding, storage TTL management, security
-      auditing, WASM diffing, and deployment — into a single CLI.</p>
+    <p class="lead">sdkt consolidates the release-assurance and verification
+      workflow — artifact inspection, static security auditing, upgrade-safety
+      diffing, deployed-contract verification, and contract health — into one
+      report, and the surrounding lifecycle into a single CLI.</p>
     <div class="feature-grid">
+      <div class="card">
+        <h3><svg class="card-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 3h6l1 3h3v15H5V6h3z"/><path d="M9 12l2 2 4-4"/></svg> Release Assurance</h3>
+        <p>One read-only command answers the release question: candidate artifact, security audit, upgrade safety, deployed verification, and contract health, aggregated into a single <code>PASS</code>/<code>REVIEW</code>/<code>FAIL</code> decision. <code>sdkt release-assurance</code></p>
+      </div>
       <div class="card">
         <h3><svg class="card-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polygon points="5 3 19 12 5 21 5 3"/></svg> Contract Invocation</h3>
         <p>State-changing execution in one command (sequence → simulate → sign → submit → poll) with <code>sdkt invoke</code>, or instant read-only simulation with <code>sdkt call</code>.</p>
@@ -227,6 +233,11 @@ Compatible: <span class="t-bad">NO</span>
         <div class="flow-n">06</div>
         <div class="flow-t">Invoke</div>
         <div class="flow-c"><span>sdkt invoke &lt;contract-id&gt; &lt;fn&gt; --args &lt;type:val&gt; --identity &lt;id&gt; (primary one-command flow)</span><span>sdkt call &lt;contract-id&gt; &lt;fn&gt; --args &lt;type:val&gt; (read-only simulation)</span><span>Advanced: sdkt tx build → tx simulate → tx sign → tx submit</span></div>
+      </div>
+      <div class="flow-step">
+        <div class="flow-n">07</div>
+        <div class="flow-t">Release</div>
+        <div class="flow-c"><span>sdkt release-assurance --wasm &lt;candidate&gt; --previous-wasm &lt;baseline&gt;</span><span>PASS / REVIEW / FAIL → release decision (read-only)</span></div>
       </div>
     </div>
   </div>
