@@ -21,10 +21,11 @@ Choose **one** of the following.
     | Platform              | Asset                                  |
     | --------------------- | -------------------------------------- |
     | Linux (x86\_64)       | `sdkt-x86_64-unknown-linux-gnu.tar.gz` |
+    | Linux (aarch64)       | `sdkt-aarch64-unknown-linux-gnu.tar.gz` (from the next tag after v2.6.0) |
     | macOS (Intel)         | `sdkt-x86_64-apple-darwin.tar.gz`      |
     | macOS (Apple Silicon) | `sdkt-aarch64-apple-darwin.tar.gz`     |
 
-    Windows: `cargo install sdkt-cli` (v2.5.0 has no Windows GitHub Release zip).
+    Windows: `sdkt-x86_64-pc-windows-msvc.zip` (v2.6.0+) or `cargo install sdkt-cli` (crates.io is at v2.5.0).
 
 **A2. crates.io (Rust 1.88.0+):**
 
@@ -51,6 +52,12 @@ cd soroban-devkit
 cargo install --path crates/sdkt-cli
 ```
 
+> **Version note:** the GitHub Release carries the current repository release
+> (v2.6.0). crates.io currently publishes **v2.5.0**, so `cargo install
+> sdkt-cli` installs v2.5.0 — which lacks the WASM size policy, the
+> `sdkt health` critical-exit fix, `sdkt-agent`, and the Windows zip. For
+> v2.6.0 use the release binary or build from source (option B).
+
 ***
 
 ## Step 2 — Verify installation
@@ -62,7 +69,7 @@ sdkt --version
 Expected output (version may be newer):
 
 ```
-sdkt 2.5.0
+sdkt 2.6.0
 ```
 
 Then confirm the CLI is responsive:
@@ -145,7 +152,16 @@ Interpreting the output:
 * `warning` findings (e.g. `MOVE-001` — a possible move-after-use of a local) are heuristic and worth a look but are not necessarily bugs.
 * JSON mode (`--format json`) emits the same result as structured data for CI.
 
-Audit runs entirely offline and is safe to gate every pull request on. See [docs/examples.md](./) for the audit-on-PR recipe.
+> **Exit code:** `sdkt audit` exits `0` even when it reports `critical` findings —
+> the CLI does not encode finding severity into its exit status. A CI gate must
+> therefore read the result, not just the exit code: either use the
+> [reusable Action](../compatibility/ci-cd.md) (its `severity-threshold` input
+> fails the build on `critical`) or parse `--format json` and check
+> `summary.critical`.
+
+Audit runs entirely offline and is safe to gate pull requests on — through the
+Action or a `summary.critical` check, not the raw exit code (see the note
+above). See [examples.md](examples.md) for the audit-on-PR recipe.
 
 ***
 
@@ -191,7 +207,7 @@ This tells you the upgrade changes `mint()`'s signature and drops the `Transfer`
 
 ***
 
-## Step 5 — Sign a transaction (offline)
+## Step 6 — Sign a transaction (offline)
 
 `sdkt` can sign a built transaction envelope with a local ED25519 identity, **without any network or secret exposure**. First create an identity, then build and sign an envelope.
 
@@ -220,13 +236,13 @@ The signed envelope in `signed.xdr` is ready to broadcast with `sdkt tx submit -
 
 ***
 
-## Step 6 — Where to go next
+## Step 7 — Where to go next
 
 You now know the three core offline workflows. Continue with:
 
 * [**Testnet walkthrough**](testnet-walkthrough.md) — **on-chain loop**: identity → Friendbot fund → network profile → build → deploy → invoke → call → events / storage.
 * [**Web Playground**](https://sabolabs.github.io/soroban-devkit/playground/) — inspect your own `.wasm` in the browser (no install).
-* [**docs/examples.md**](./) — copy-paste recipes for every subcommand (decode, storage, tx, deploy) and CI gating patterns.
+* [**examples.md**](examples.md) — copy-paste recipes for every subcommand (decode, storage, tx, deploy) and CI gating patterns.
 * [**docs/compatibility.md**](../compatibility/compatibility.md) — which real-world Soroban contracts `sdkt` is validated against, and the compatibility matrix.
 * [**docs/ci-cd.md**](../compatibility/ci-cd.md) — wire `sdkt audit` and `sdkt diff --upgrade-safety` into GitHub Actions to block bad PRs and unsafe releases.
 

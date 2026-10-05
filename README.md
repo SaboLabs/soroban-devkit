@@ -86,7 +86,7 @@ verifies its SHA-256 checksum, and installs `sdkt` to `~/.local/bin/sdkt`.
    | Platform | Asset |
    |----------|-------|
    | Linux (x86_64) | `sdkt-x86_64-unknown-linux-gnu.tar.gz` |
-   | Linux (aarch64) | not in the v2.6.0 Release — use `install.sh` or `cargo install sdkt-cli` |
+   | Linux (aarch64) | `sdkt-aarch64-unknown-linux-gnu.tar.gz` (built from the next tag after v2.6.0 — the v2.6.0 Release predates it; for v2.6.0 on ARM Linux use a source build) |
    | macOS (Intel) | `sdkt-x86_64-apple-darwin.tar.gz` |
    | macOS (Apple Silicon) | `sdkt-aarch64-apple-darwin.tar.gz` |
    | Windows (x86_64) | `sdkt-x86_64-pc-windows-msvc.zip` (from v2.6.0) |
@@ -110,6 +110,13 @@ verifies its SHA-256 checksum, and installs `sdkt` to `~/.local/bin/sdkt`.
    cargo install sdkt-cli
    sdkt --version
    ```
+
+   > **Version note:** the GitHub Release carries the current repository
+   > release (v2.6.0). crates.io currently publishes **v2.5.0**, so
+   > `cargo install sdkt-cli` installs v2.5.0 — which lacks the WASM size
+   > policy, the `sdkt health` critical-exit fix, `sdkt-agent`, and the
+   > Windows zip. For v2.6.0 use the release binary, or build from source
+   > (below).
 
 #### Alternative — Build from source (requires Rust 1.88.0+)
 
@@ -226,8 +233,6 @@ sdkt deploy \
 
 # 8. Invoke a contract function (state-changing: sequence → simulate → sign → submit → poll)
 sdkt invoke <CONTRACT_ID> increment --args u32:1 --identity my-deployer --network-profile testnet
-
-main
 ```
 
 For a detailed explanation of each step, see [Deploy a single contract](#deploy-a-single-contract).
@@ -510,7 +515,12 @@ Most commands accept `--format json` for scripting / CI integration.
 
 ## Common Workflows
 
-- **Audit every PR** — gate merges on `sdkt audit` (fails on `critical`). See
+- **Audit every PR** — gate merges on `sdkt audit` via the
+  [reusable Action](docs/compatibility/ci-cd.md), whose `severity-threshold`
+  input fails the build on `critical` findings. The CLI itself reports findings
+  but does **not** encode severity into its exit code — `sdkt audit` exits 0
+  even when it prints critical findings, so gate on the Action (or parse
+  `--format json`'s `summary.critical`) rather than on the bare exit code. See
   [docs/ci-cd.md](docs/compatibility/ci-cd.md).
 - **Safe upgrades** — run `sdkt diff --upgrade-safety` in release CI to block
   breaking contract changes.

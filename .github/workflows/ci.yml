@@ -106,6 +106,26 @@ jobs:
     - name: Offline self-test (checksum standalone plus embedded fallback)
       run: bash install.sh --selftest
 
+  # ARM64 Linux is a supported release target (see release.yml matrix), so the
+  # installer must work on that architecture and the two must not drift apart.
+  install-script-arm:
+    name: install-script validation (aarch64)
+    runs-on: ubuntu-24.04-arm
+    steps:
+    - uses: actions/checkout@v7
+    - name: Syntax check (no network)
+      run: bash -n install.sh
+    - name: Offline self-test on aarch64
+      run: bash install.sh --selftest
+    - name: Release matrix and installer agree on aarch64 target
+      run: |
+        TARGET="aarch64-unknown-linux-gnu"
+        grep -q "target: $TARGET" .github/workflows/release.yml \
+          || { echo "FAIL: release.yml matrix has no $TARGET target"; exit 1; }
+        grep -q "$TARGET" install.sh \
+          || { echo "FAIL: install.sh does not reference $TARGET"; exit 1; }
+        echo "OK: release.yml and install.sh both cover $TARGET"
+
   msrv:
     runs-on: ubuntu-latest
     steps:
@@ -121,6 +141,32 @@ jobs:
 
     - name: Check MSRV
       run: cargo check --workspace
+
+  # Current-release documentation must track the workspace version: stale pins
+  # in getting-started, compatibility and Action examples mislead a fresh
+  # developer. Historical release notes (docs/releases/) are exempt.
+  docs-version-consistency:
+    name: docs version consistency
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v7
+    - name: Current docs describe the workspace version
+      run: |
+        VER="$(grep -m1 '^version = ' Cargo.toml | sed -E 's/version = "([^"]+)".*/\1/')"
+        echo "workspace version: $VER"
+        PREV="$(printf '%s' "$VER" | awk -F. '{printf "%s.%s.0", $1, $2-1}')"
+        echo "stale pin to look for: $PREV"
+        # crates.io legitimately lags: lines that name crates.io may state the
+        # older version, so exclude them explicitly.
+        MATCHES="$(grep -rn "$PREV" README.md docs/ --include='*.md' \
+          | grep -v '^docs/releases/' \
+          | grep -vi 'crates.io\|published\|--version \|lacks\|predates\|older v' || true)"
+        if [[ -n "$MATCHES" ]]; then
+          echo "::error::stale $PREV reference(s) in current documentation:"
+          echo "$MATCHES"
+          exit 1
+        fi
+        echo "OK: no stale $PREV pins outside crates.io notes and release history"
 
   onboarding-smoke:
     name: offline onboarding smoke test

@@ -69,6 +69,8 @@ jobs:
         include:
           - os: ubuntu-latest
             target: x86_64-unknown-linux-gnu
+          - os: ubuntu-24.04-arm
+            target: aarch64-unknown-linux-gnu
           - os: macos-latest
             target: x86_64-apple-darwin
           - os: macos-latest
@@ -108,16 +110,21 @@ jobs:
             chmod +x "$BIN"
 
             # Native platforms: verify the binary actually runs offline commands.
-            if [[ "${{ matrix.target }}" == "x86_64-unknown-linux-gnu" && "${{ matrix.os }}" == "ubuntu-latest" ]]; then
+            # A target that matches the runner's own architecture runs directly
+            # (x86_64 Linux on ubuntu-latest, aarch64 Linux on ubuntu-24.04-arm,
+            # aarch64 macOS on the arm64 macos-latest runner).
+            RUNNER_ARCH="$(uname -m)"
+            RUN=""
+            if [[ "${{ matrix.target }}" == "$RUNNER_ARCH-unknown-linux-gnu" ]]; then
               RUN="$BIN"
-            elif [[ "${{ matrix.target }}" == "aarch64-apple-darwin" && "$(uname -m)" == "arm64" ]]; then
+            elif [[ "${{ matrix.target }}" == "aarch64-apple-darwin" && "$RUNNER_ARCH" == "arm64" ]]; then
               RUN="$BIN"
             elif [[ "${{ matrix.target }}" == "x86_64-apple-darwin" && "${{ matrix.os }}" == "macos-latest" ]]; then
               # Cross-compiled on an arm64 runner; run under Rosetta if available.
               RUN="arch -x86_64 $BIN"
-            else
+            fi
+            if [[ -z "$RUN" ]]; then
               echo "Skipping execution smoke test on cross-compiled target."
-              RUN=""
             fi
 
             if [[ -n "$RUN" ]]; then

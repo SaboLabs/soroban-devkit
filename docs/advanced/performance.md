@@ -12,7 +12,7 @@ offline `sdkt` commands so future releases can detect regressions.
 | Memory | 3.7 GiB total |
 | OS | Linux (Ubuntu) |
 | Rust | rustc 1.97.1 (stable) |
-| sdkt | 2.1.1 (release build) — **historical baseline**, measured on the 2.1.1 release; not re-run on 2.5.0 |
+| sdkt | 2.1.1 (release build) — **historical baseline**, measured on the 2.1.1 release; not re-run since |
 | Benchmark date | 2026-08-06 |
 
 > Reported numbers were captured on the project VPS. Absolute values will vary
