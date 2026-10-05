@@ -5,7 +5,7 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [v2.7.0] - 2026-10-05
 
 ### Added
 - **Deployment verification (`sdkt deployment-verify`).** A read-only command that answers "is the deployed contract the artifact I built?" with a deterministic verdict: `MATCH`, `DRIFT`, `UNKNOWN`, `NOT_FOUND`. The local WASM is hashed offline first (fail-fast, before any network call); the deployed side is obtained by probing the raw contract-instance ledger entry (`getLedgerEntries`) — the contract's inline `Wasm` executable hash, or a CAP-85 `external_ref` resolved through the same read-only owner lookup `inspect` uses. A `stellar_asset` contract has no WASM artifact at all, and an unreadable code entry has no authoritative hash: both are reported `UNKNOWN` with a reason, never a guessed match, because a reachable RPC is not a verified deployment. Explicit `--contract` and an explicit network target (`--network` or `--rpc-url` / `--network-profile`) are required; no bytecode download, no ABI fetch, no envelope, no signing, no submission. `--format json` emits a versioned machine-readable report (`schema_version: 1`, contract/network/rpc_url, both hashes, deployed executable kind, verdict, reason) shaped to become a section input for a future release-assurance revision. Exit codes are verdict-gated: `0` only for `MATCH`; `DRIFT`, `UNKNOWN`, and `NOT_FOUND` exit `1` while still printing the report; genuine input/transport errors exit `1` with no report. Registered as read-only capability `deployment.verify`; the new `sdkt-rpc::probe_deployed_executable` primitive is the one addition to the RPC layer.
@@ -22,6 +22,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 - **`sdkt health` exits non-zero on a `critical` verdict.** A mismatched deployed WASM (or any other critical posture) previously printed `health: critical` and still exited 0, so a CI gate or agent reading only the exit code could pass a release it should have blocked. The verdict now gates the exit code, matching `release-assurance`'s `health_status()` mapping. `at_risk` keeps its existing non-blocking meaning.
 - **Release-assurance errors propagate through the GitHub Action.** The Action's release-assurance step gated only on `.release_status == "FAIL"`, so a CLI failure that produced no JSON report (invalid input, unreadable artifact, RPC failure) left the status empty and exited 0 — a misconfigured check could pass CI while never running. The step now also fails on any non-zero CLI exit code, preserving the code; the existing `FAIL` verdict path and its message are unchanged. Adds Action CI coverage for the CLI-error case.
+
+### Behavior Changes
+Two correctness fixes above change what CI observes. Neither is a regression; both are intended. Plan for them when upgrading.
+
+- **`sdkt health` now exits non-zero on a `critical` verdict.** Previously a `critical` posture (for example the deployed WASM not matching the supplied `--wasm`) printed `health: critical` and still exited 0. Pipelines that were green *only because* they gate on the `health` exit code can therefore start failing after this upgrade — the failures are the verdicts those pipelines should always have caught. `at_risk` keeps its existing non-blocking meaning (exit 0); only `critical` gates.
+- **The GitHub Action now propagates CLI errors for `release-assurance`.** Previously a misconfigured check (bad `wasm` path, unreadable artifact, RPC failure) could produce no JSON report, gate on an empty `release_status`, and pass CI while never actually running. Such cases now fail the step with the CLI's own exit code. Workflows with configuration or input errors that previously passed silently may start failing after this upgrade — that is the fix working; correct the configuration rather than expecting the old silence. Verdict semantics are unchanged: `PASS`/`REVIEW` still exit 0 (REVIEW non-blocking), `FAIL` still exits 1.
 
 ## [v2.6.0] - 2026-10-02
 

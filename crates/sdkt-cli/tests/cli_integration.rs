@@ -69,7 +69,10 @@ fn version_reports_current_release() {
         .arg("--version")
         .assert()
         .success()
-        .stdout(predicate::str::contains("sdkt 2.6.0"));
+        .stdout(predicate::str::contains(format!(
+            "sdkt {}",
+            env!("CARGO_PKG_VERSION")
+        )));
 }
 
 #[test]
