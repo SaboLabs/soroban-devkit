@@ -654,7 +654,7 @@ dependencies = [
 
 [[package]]
 name = "sdkt-playground"
-version = "2.6.0"
+version = "2.7.0"
 dependencies = [
  "sdkt-wasm",
  "serde",
@@ -665,7 +665,7 @@ dependencies = [
 
 [[package]]
 name = "sdkt-wasm"
-version = "2.6.0"
+version = "2.7.0"
 dependencies = [
  "hex",
  "serde",

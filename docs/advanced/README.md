@@ -11,7 +11,7 @@ These examples are owned and maintained by the `soroban-devkit` repository.
 ### Real-World Contract Compatibility Validation
 
 **Repository:** [stellar/soroban-examples](https://github.com/stellar/soroban-examples)
-**sdkt version:** 2.6.0 (workspace version)
+**sdkt version:** 2.7.0 (workspace version)
 **Workflow:** `.github/workflows/compatibility.yml`
 
 The CI pipeline clones the official Stellar example contracts (token,
@@ -60,7 +60,7 @@ Requires: Rust stable with `wasm32v1-none` target (`rustup target add wasm32v1-n
 ### CI Test Suite
 
 **Repository:** [naninu123/soroban-devkit](https://github.com/naninu123/soroban-devkit)
-**sdkt version:** 2.6.0
+**sdkt version:** 2.7.0
 **Workflow:** `.github/workflows/ci.yml`
 
 The CI pipeline runs `sdkt` commands as part of the test and validation
@@ -82,7 +82,7 @@ infrastructure:
 ### On-Chain Fixture Validation
 
 **Repository:** [naninu123/soroban-devkit](https://github.com/naninu123/soroban-devkit)
-**sdkt version:** 2.6.0
+**sdkt version:** 2.7.0
 **Workflow:** `.github/workflows/compatibility.yml` (online steps)
 
 Committed JSON fixtures in `tests/fixtures/onchain/` capture the exact output

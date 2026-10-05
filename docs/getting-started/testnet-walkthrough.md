@@ -19,7 +19,7 @@ Every command below exists at HEAD and is copy-pasteable. Expected output blocks
 
 | Requirement | Notes |
 | --- | --- |
-| `sdkt` on your `PATH` | See [installation](installation.md) or [Quick Start § Install](quick-start.md#step-1--install). Verify with `sdkt --version` (expects `2.6.0` or newer). |
+| `sdkt` on your `PATH` | See [installation](installation.md) or [Quick Start § Install](quick-start.md#step-1--install). Verify with `sdkt --version` (expects `2.7.0` or newer). |
 | Rust toolchain **1.88.0+** | Needed to compile the example contract (`rustc --version`). |
 | `wasm32v1-none` target | `rustup target add wasm32v1-none` |
 | Stellar **Testnet** + Friendbot | Public RPC `https://soroban-testnet.stellar.org` and faucet `https://friendbot.stellar.org` must be reachable. Friendbot does **not** exist on Mainnet. |

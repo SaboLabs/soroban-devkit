@@ -1,7 +1,7 @@
 # Compatibility Matrix — Real-World Soroban Projects
 
 Validated: 2026-08-06 against sdkt 2.1.1 (historical baseline — see note below).
-Current workspace version: **2.6.0** (`sdkt --version` → 2.6.0). The results
+Current workspace version: **2.7.0** (`sdkt --version` → 2.7.0). The results
 below were captured on the 2.1.1 build listed in the environment header and
 have not been re-run since.
 Toolchain: rustc 1.97.1, target `wasm32v1-none`

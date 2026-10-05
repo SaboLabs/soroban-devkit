@@ -26,7 +26,7 @@ bash scripts/smoke_examples.sh
 
 The script verifies, against the actual binary:
 
-1. `sdkt --version` reports `2.6.0`.
+1. `sdkt --version` reports `2.7.0`.
 2. `sdkt wasm inspect crates/sdkt-cli/tests/fixtures/us_old.wasm` shows a
    contract spec with `fn transfer`.
 3. `sdkt audit examples/sample_token/src/lib.rs` reports `AUTH-001` on
@@ -335,7 +335,7 @@ jobs:
       - uses: SaboLabs/soroban-devkit/.github/actions/sdkt@main
         with:
           command: audit
-          sdkt-version: v2.6.0
+          sdkt-version: v2.7.0
           target: contracts/token/src/lib.rs
           severity-threshold: critical
 ```
@@ -356,7 +356,7 @@ jobs:
       - uses: SaboLabs/soroban-devkit/.github/actions/sdkt@main
         with:
           command: upgrade-safety
-          sdkt-version: v2.6.0
+          sdkt-version: v2.7.0
           old-wasm: builds/current.wasm
           new-wasm: builds/candidate.wasm
 ```
