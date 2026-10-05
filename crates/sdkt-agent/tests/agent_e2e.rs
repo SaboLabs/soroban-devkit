@@ -432,6 +432,86 @@ fn mainnet_request_is_refused_without_executing() {
     );
 }
 
+// ---------------------------------------------------------------- P2-1 ---
+#[test]
+fn unmarked_artifact_pair_is_clarified_and_never_executed() {
+    // Release assurance with two paths and no role markers must refuse:
+    // assigning them by listing order once inverted candidate/baseline.
+    let tmp = tempfile::tempdir().unwrap();
+    let marker = tmp.path().join("ran");
+    let fx = FakeCli {
+        stdout: "{}
+"
+        .into(),
+        marker: Some(marker.clone()),
+        ..FakeCli::ok()
+    }
+    .write(tmp.path());
+
+    for request in [
+        "release assurance for newbuild.wasm snapshot.wasm",
+        "release assurance for snapshot.wasm newbuild.wasm",
+    ] {
+        let out = agent(&fx, request, true);
+        let v = parse_json(&out);
+        assert_eq!(v["status"], "needs_clarification", "{request:?}");
+        assert_eq!(v["error_code"], "ambiguous_artifact_roles", "{request:?}");
+        assert!(v["argv"].as_array().unwrap().is_empty(), "{request:?}");
+        assert!(!marker.exists(), "{request:?}: nothing may be executed");
+    }
+}
+
+#[test]
+fn marked_artifact_pair_executes_with_correct_roles() {
+    let tmp = tempfile::tempdir().unwrap();
+    let fx = FakeCli {
+        echo_args: true,
+        ..FakeCli::ok()
+    }
+    .write(tmp.path());
+    let out = agent(
+        &fx,
+        "release assurance for candidate new.wasm previous old.wasm",
+        true,
+    );
+    let v = parse_json(&out);
+    assert_eq!(v["status"], "success");
+    let echoed = v["stdout_text"].as_str().unwrap();
+    assert!(
+        echoed.contains("release-assurance|--wasm|new.wasm|--previous-wasm|old.wasm|"),
+        "roles inverted in the argv the CLI received: {echoed}"
+    );
+}
+
+// ---------------------------------------------------------------- P2-2 ---
+#[test]
+fn unsupported_argument_is_refused_and_never_executed() {
+    // A flag the selected capability cannot express must refuse the whole
+    // request instead of dropping the word and reporting a green partial run.
+    let tmp = tempfile::tempdir().unwrap();
+    let marker = tmp.path().join("ran");
+    let fx = FakeCli {
+        stdout: "{}
+"
+        .into(),
+        marker: Some(marker.clone()),
+        ..FakeCli::ok()
+    }
+    .write(tmp.path());
+
+    for request in [
+        &format!("inspect contract {CID} --max-growth-pct 50"),
+        "inspect wasm a.wasm b.wasm",
+    ] {
+        let out = agent(&fx, request, true);
+        let v = parse_json(&out);
+        assert_eq!(v["status"], "needs_clarification", "{request:?}");
+        assert_eq!(v["error_code"], "unsupported_argument", "{request:?}");
+        assert!(v["argv"].as_array().unwrap().is_empty(), "{request:?}");
+        assert!(!marker.exists(), "{request:?}: nothing may be executed");
+    }
+}
+
 #[test]
 fn help_and_version_work() {
     Command::cargo_bin("sdkt-agent")
