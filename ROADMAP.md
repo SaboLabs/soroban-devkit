@@ -13,7 +13,7 @@
 |---|---|
 | **Current release** | `v2.6.0` (tags `v2.0.0`, `v2.1.0`, `v2.1.1`, `v2.2.0`, `v2.3.0`, `v2.4.0`, `v2.5.0`, `v2.6.0` also published) |
 | **Repository status** | Active · all capabilities merged to `main` |
-| **Crates** | 8 (`sdkt-cli` + 7 supporting crates) |
+| **Crates** | 10 (`sdkt-cli` + 9 supporting crates) |
 | **Current focus** | Release assurance — artifact, security, upgrade, deployed reality, health |
 
 A new contributor can understand the project from this summary alone: a test-covered Soroban toolchain with a clear path toward mainnet readiness and an extensible plugin architecture.

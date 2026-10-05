@@ -7,9 +7,9 @@ inputs:
     description: "Which check to run: 'audit', 'upgrade-safety', or 'release-assurance'."
     required: true
   sdkt-version:
-    description: "sdkt git tag to install (e.g. v2.6.0). Must be a published tag in SaboLabs/soroban-devkit."
+    description: "sdkt git tag to install (e.g. v2.7.0). Must be a published tag in SaboLabs/soroban-devkit."
     required: false
-    default: "v2.6.0"
+    default: "v2.7.0"
   target:
     description: "Source file (.rs) to audit (used with command=audit)."
     required: false
