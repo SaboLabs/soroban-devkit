@@ -35,8 +35,8 @@ pub use events::{
 };
 pub use fee::{estimate_dynamic_fee, get_fee_stats, FeeDistribution, FeeStats};
 pub use inspect::{
-    inspect_contract, resolve_external_executable, ContractInspection, ExecutableResolutionError,
-    StorageKeyInfo, TtlInfoSummary,
+    inspect_contract, probe_deployed_executable, resolve_external_executable, ContractInspection,
+    DeployedExecutable, ExecutableResolutionError, StorageKeyInfo, TtlInfoSummary,
 };
 pub use invoke::{
     build_invoke_envelope, invoke_contract, simulate_invoke, InvokeBuildResult, InvokeResult,

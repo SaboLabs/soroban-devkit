@@ -393,6 +393,36 @@ enum Commands {
         #[command(subcommand)]
         action: NetworkAction,
     },
+    /// Read-only deployment verification: is the deployed contract the
+    /// artifact I built?
+    ///
+    /// Compares a local WASM's offline SHA-256 against the deployed
+    /// contract's executable, obtained by a raw ledger probe (no inspection
+    /// shortcuts, no bytecode download). Verdicts: MATCH, DRIFT, UNKNOWN,
+    /// NOT_FOUND. Never signs, submits, or deploys.
+    DeploymentVerify {
+        /// Stellar contract ID (C...)
+        #[arg(short, long, value_name = "CONTRACT_ID")]
+        contract: String,
+        /// Path to a local WASM file to compare against the on-chain code
+        #[arg(long, value_name = "WASM")]
+        wasm: Option<String>,
+        /// Network to verify against (testnet | mainnet | futurenet)
+        #[arg(
+            short,
+            long,
+            value_name = "NETWORK",
+            conflicts_with = "rpc_url",
+            conflicts_with = "network_profile",
+            conflicts_with = "network_passphrase"
+        )]
+        network: Option<String>,
+        /// Output format
+        #[arg(short, long, default_value = "pretty")]
+        format: String,
+        #[command(flatten)]
+        net: NetworkArgs,
+    },
     /// Initialize a new Soroban contract project
     Init {
         /// Project name (directory)
@@ -6891,6 +6921,23 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
         }
         Commands::Network { action } => {
             commands::network::run_network_action(action).await?;
+        }
+        Commands::DeploymentVerify {
+            contract,
+            wasm,
+            network,
+            format,
+            net,
+        } => {
+            let fmt = parse_format_str(&format);
+            commands::deployment_verify::run_deployment_verify(
+                &contract,
+                wasm.as_deref(),
+                network,
+                &net,
+                &fmt,
+            )
+            .await?;
         }
         Commands::Init {
             name,

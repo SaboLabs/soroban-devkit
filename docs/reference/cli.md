@@ -125,6 +125,17 @@ sdkt
 │                               Requires --wasm. Read-only; inherits mainnet-safety
 │                               guard.)
 │
+├── deployment-verify --contract <contract-id>
+│   ├── --wasm <file.wasm>    (local artifact to compare; offline hashed)
+│   ├── --network <testnet>   (RPC network; conflicts with --rpc-url)
+│   └── --format <json|pretty>
+│
+│   Read-only. Verdicts: MATCH (exit 0), DRIFT (exit 1), UNKNOWN (exit 1,
+│   reason given), NOT_FOUND (exit 1). Probes the raw contract-instance
+│   ledger entry — no inspection shortcuts, no bytecode download. A
+│   `stellar_asset` executable has no WASM artifact, so it is UNKNOWN, not
+│   a match. Never signs, submits, or deploys.
+│
 ├── health --contract <contract-id>
 │   ├── --wasm <file.wasm>    (optional local artifact to verify against)
 │   ├── --network <testnet>   (RPC network / report label)
@@ -170,7 +181,18 @@ sdkt
 │   ├── list
 │   ├── show <name>          [--format json|pretty]
 │   ├── check <name>         [--format json|pretty]
+│   ├── diagnose [--network <testnet>] [--rpc-url <URL>] [--format json|pretty]
 │   └── remove <name>
+│
+│   `diagnose` is read-only: getHealth/getNetwork/getLatestLedger plus two
+│   Horizon GETs. Reports passphrase identity (match/mismatch/unknown),
+│   protocol agreement across RPC and Horizon, the local sdkt version, and
+│   the ledger resource limits Horizon actually observed
+│   (base_fee_in_stroops, base_reserve_in_stroops, max_tx_set_size,
+│   protocol_version) — `unavailable` with a reason when Horizon does not
+│   answer. Limits are never hardcoded. Exit 0 only when status is `ok`;
+│   identity mismatch, protocol inconsistency or an unreachable endpoint exit
+│   1 with a valid report. Never signs, submits, or deploys.
 
 ├── build                     Compile Rust contracts in the workspace into WASM artifacts
 │   └── --format <json|pretty>   (default: pretty)

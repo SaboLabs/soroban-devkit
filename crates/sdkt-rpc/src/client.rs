@@ -254,6 +254,12 @@ pub struct LedgerInfo {
 }
 
 /// Network identity and protocol details reported by `getNetwork`.
+///
+/// `latest_ledger` is optional because the SDF endpoints (testnet, futurenet,
+/// mainnet) answer `getNetwork` with only `passphrase`, `protocolVersion` and
+/// `friendbotUrl`; a required field there made every `getNetwork` decode fail
+/// on those endpoints and the error was swallowed by callers that treated the
+/// probe as best-effort.
 #[derive(Debug, Clone, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct NetworkInfo {
@@ -261,7 +267,8 @@ pub struct NetworkInfo {
     pub friendbot_url: Option<String>,
     pub passphrase: String,
     pub protocol_version: u32,
-    pub latest_ledger: u32,
+    #[serde(default)]
+    pub latest_ledger: Option<u32>,
 }
 
 /// Storage response payload.
@@ -320,7 +327,21 @@ mod tests {
         );
         assert_eq!(info.passphrase, "Test Network");
         assert_eq!(info.protocol_version, 22);
-        assert_eq!(info.latest_ledger, 1234);
+        assert_eq!(info.latest_ledger, Some(1234));
+    }
+
+    /// The live SDF endpoints answer `getNetwork` without `latestLedger`; a
+    /// required field there made the decode fail on every real endpoint.
+    #[test]
+    fn network_info_deserializes_without_latest_ledger() {
+        let info: NetworkInfo = serde_json::from_value(serde_json::json!({
+            "friendbotUrl": "https://friendbot.stellar.org/",
+            "passphrase": "Test SDF Network ; September 2015",
+            "protocolVersion": 29
+        }))
+        .unwrap();
+        assert_eq!(info.protocol_version, 29);
+        assert_eq!(info.latest_ledger, None);
     }
 
     #[test]

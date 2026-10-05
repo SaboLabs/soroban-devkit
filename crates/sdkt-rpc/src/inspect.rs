@@ -167,6 +167,96 @@ pub async fn inspect_contract(
     })
 }
 
+/// Outcome of a read-only deployed-executable probe.
+///
+/// Unlike [`inspect_contract`], this never fetches code or ABI and never
+/// converts a non-Wasm executable into an error: it reports exactly what the
+/// contract instance ledger entry says, so a caller (deployment verification)
+/// can distinguish `MATCH`-eligible data from an honest `UNKNOWN`.
+#[derive(Debug, Clone, PartialEq)]
+pub struct DeployedExecutable {
+    /// True when a contract-instance entry exists at this target. False means
+    /// the contract does not exist here — not an error, a verdict input.
+    pub instance_found: bool,
+    /// The executable as decoded from the instance entry, when decodable.
+    pub executable: Option<sdkt_xdr::ContractExecutableRef>,
+    /// The Wasm hash, when one exists authoritatively: an inline `Wasm`
+    /// executable's own hash, or a `ExternalRef` resolved through the existing
+    /// read-only owner lookup. `None` for `StellarAsset` (no artifact exists)
+    /// or when resolution failed.
+    pub wasm_hash: Option<String>,
+    /// Why the instance entry could not be decoded, when applicable.
+    pub decode_error: Option<String>,
+    /// Why an `ExternalRef` could not be resolved to a hash, when applicable.
+    pub resolve_error: Option<String>,
+    /// Transport/RPC error; `Err` means the probe could not run at all.
+    pub error: Option<String>,
+}
+
+/// Probe the deployed executable of `contract_id` with a single
+/// `getLedgerEntries` read of its instance singleton key (plus, for CAP-85
+/// `external_ref` executables only, the existing owner-entry lookup).
+///
+/// Read-only: no bytecode download, no ABI parse, no signing or submission.
+pub async fn probe_deployed_executable(
+    client: &SorobanRpcClient,
+    contract_id: &str,
+) -> Result<DeployedExecutable, RpcError> {
+    let contract_id_hex = contract_id_to_hex(contract_id)?;
+    let encoded_key = encode_ledger_key(&LedgerKeyParams::ContractData(contract_id_hex))
+        .map_err(|e| RpcError::Rpc(format!("Failed to encode ledger key: {e}")))?;
+
+    let response = client.get_contract_storage("", &[encoded_key]).await?;
+    if response.entries.is_empty() {
+        return Ok(DeployedExecutable {
+            instance_found: false,
+            executable: None,
+            wasm_hash: None,
+            decode_error: None,
+            resolve_error: None,
+            error: None,
+        });
+    }
+
+    let entry = &response.entries[0].xdr;
+    let executable = match extract_contract_executable(entry) {
+        Ok(exec) => Some(exec),
+        Err(e) => {
+            return Ok(DeployedExecutable {
+                instance_found: true,
+                executable: None,
+                wasm_hash: None,
+                decode_error: Some(format!("{e}")),
+                resolve_error: None,
+                error: None,
+            })
+        }
+    };
+
+    let mut wasm_hash = None;
+    let mut resolve_error = None;
+    if let Some(sdkt_xdr::ContractExecutableRef::Wasm(hash)) = &executable {
+        wasm_hash = Some(hex::encode(hash.0));
+    } else if let Some(r) = executable.as_ref().and_then(|e| e.executable_tag_key()) {
+        // CAP-85: resolve through the same read-only owner lookup `inspect`
+        // uses, so an unresolvable reference is reported as such rather than
+        // as a missing hash.
+        match resolve_external_executable(client, r).await {
+            Ok(hash) => wasm_hash = Some(hash),
+            Err(e) => resolve_error = Some(format!("{e}")),
+        }
+    }
+
+    Ok(DeployedExecutable {
+        instance_found: true,
+        executable,
+        wasm_hash,
+        decode_error: None,
+        resolve_error,
+        error: None,
+    })
+}
+
 /// Resolve the Wasm hash a contract instance's inspection should report.
 ///
 /// `Wasm` executables are returned unchanged, preserving the previous behavior

@@ -334,6 +334,28 @@ const CAPABILITIES: [Capability; CAP_COUNT] = [
         ..Capability::BASE
     },
     Capability {
+        id: "deployment.verify",
+        command: &["deployment-verify"],
+        summary: "Read-only deployment verification: compare a local WASM's offline hash against the deployed contract's executable. Verdicts: MATCH, DRIFT, UNKNOWN, NOT_FOUND.",
+        required_args: &["--contract <C...>"],
+        optional_args: &[
+            "--wasm <f>",
+            "--network",
+            "--rpc-url",
+            "--network-passphrase",
+            "--network-profile",
+            "--format",
+        ],
+        formats: PRETTY_JSON,
+        exit: ExitSemantics::VERDICT_GATED,
+        network: NetworkRequirement::Both,
+        evidence: Evidence::VerifiedTestnet,
+        notes: Some(
+            "Exits 0 only on MATCH; DRIFT, UNKNOWN and NOT_FOUND exit 1 with a valid report. Probes the raw contract-instance ledger entry (no bytecode download); non-Wasm executables (stellar_asset) and unresolvable CAP-85 external refs are UNKNOWN with a reason, never a guessed match. Read-only: never signs, submits or deploys.",
+        ),
+        ..Capability::BASE
+    },
+    Capability {
         id: "health",
         command: &["health"],
         summary: "Read-only contract posture: WASM verification, storage layout, TTL expiry, verdict + reasons.",
@@ -457,6 +479,26 @@ const CAPABILITIES: [Capability; CAP_COUNT] = [
         evidence: Evidence::VerifiedLocal,
         notes: Some(
             "Resolves a SAVED profile by name and has no --rpc-url; verified against a saved profile on a reachable host.",
+        ),
+        ..Capability::BASE
+    },
+    Capability {
+        id: "network.diagnose",
+        command: &["network", "diagnose"],
+        summary: "Read-only network diagnosis: passphrase identity, protocol agreement across RPC and Horizon, and the ledger resource limits Horizon actually observed.",
+        optional_args: &[
+            "--network",
+            "--rpc-url",
+            "--network-passphrase",
+            "--network-profile",
+            "--format",
+        ],
+        formats: PRETTY_JSON,
+        exit: ExitSemantics::VERDICT_GATED,
+        network: NetworkRequirement::Both,
+        evidence: Evidence::VerifiedTestnet,
+        notes: Some(
+            "Exit 0 only when the diagnosis status is ok; identity mismatch, protocol inconsistency or an unreachable endpoint exit 1 with a valid report. Resource limits come solely from Horizon's ledger resource and are reported unavailable (never hardcoded) when Horizon does not answer. Read-only: getHealth/getNetwork/getLatestLedger plus Horizon GETs only.",
         ),
         ..Capability::BASE
     },
@@ -869,7 +911,7 @@ const CAPABILITIES: [Capability; CAP_COUNT] = [
 
 /// Number of described capabilities; kept as a const so the array length is
 /// checked by the compiler against every entry.
-const CAP_COUNT: usize = 51;
+const CAP_COUNT: usize = 53;
 
 #[cfg(test)]
 mod tests {
@@ -989,6 +1031,8 @@ mod tests {
             "health",
             "inspect",
             "release_assurance",
+            "deployment.verify",
+            "network.diagnose",
             "storage.analyze",
             "events",
             "call",
@@ -1048,7 +1092,14 @@ mod tests {
     #[test]
     fn verdict_gated_commands_are_marked() {
         // Commands that can exit 1 while still emitting a valid report.
-        for id in ["health", "verify", "release_assurance", "diff"] {
+        for id in [
+            "health",
+            "verify",
+            "release_assurance",
+            "diff",
+            "deployment.verify",
+            "network.diagnose",
+        ] {
             let c = find(id).expect("pinned verdict command");
             assert!(
                 c.exit.verdict_can_fail,

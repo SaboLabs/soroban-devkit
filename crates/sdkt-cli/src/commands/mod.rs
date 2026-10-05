@@ -4,4 +4,6 @@
 //! keeps the clap definitions and delegates to these modules.
 
 pub mod abi;
+pub mod deployment_verify;
+pub mod diagnostics;
 pub mod network;

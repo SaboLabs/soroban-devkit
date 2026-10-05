@@ -68,6 +68,31 @@ pub(crate) enum NetworkAction {
         #[arg(short, long, default_value = "pretty")]
         format: String,
     },
+    /// Read-only network identity / protocol / resource-limit diagnosis
+    ///
+    /// Resolves the target exactly like `verify` / `release-assurance`
+    /// (explicit `--network`, or `--rpc-url` / `--network-profile` /
+    /// `.sdkt.toml` defaults) and reports the passphrase identity, protocol
+    /// agreement across RPC and Horizon, and the ledger limits Horizon
+    /// actually observed. Never signs, submits, or deploys; when a source
+    /// does not answer, the value is reported unavailable — never assumed.
+    Diagnose {
+        /// Network to diagnose (testnet | mainnet | futurenet)
+        #[arg(
+            short,
+            long,
+            value_name = "NETWORK",
+            conflicts_with = "rpc_url",
+            conflicts_with = "network_profile",
+            conflicts_with = "network_passphrase"
+        )]
+        network: Option<String>,
+        /// Output format (pretty or json)
+        #[arg(short, long, default_value = "pretty")]
+        format: String,
+        #[command(flatten)]
+        net: NetworkArgs,
+    },
 }
 
 /// Apply resolution precedence onto a base [`NetworkConfig`].
@@ -419,7 +444,9 @@ async fn probe_network_profile(profile: &str, cfg: &NetworkConfig) -> NetworkChe
 }
 
 fn apply_network_info(outcome: &mut NetworkCheckOutcome, network: NetworkInfo) {
-    outcome.latest_ledger = Some(network.latest_ledger);
+    if network.latest_ledger.is_some() {
+        outcome.latest_ledger = network.latest_ledger;
+    }
     outcome.protocol_version = Some(network.protocol_version);
     outcome.endpoint_passphrase = Some(network.passphrase);
     outcome.friendbot_url = network.friendbot_url;
@@ -574,6 +601,14 @@ pub(crate) async fn run_network_action(
             if !outcome.is_healthy() {
                 process::exit(1);
             }
+        }
+        crate::NetworkAction::Diagnose {
+            network,
+            format,
+            net,
+        } => {
+            let fmt = crate::parse_format_str(&format);
+            crate::commands::diagnostics::run_network_diagnose(network, &net, &fmt).await?;
         }
     }
 
