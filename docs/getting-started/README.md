@@ -190,6 +190,21 @@ sdkt network remove testnet
 
 # Machine-readable output for scripting / CI
 sdkt network show testnet --format json
+
+# Diagnose a network before trusting it: passphrase identity, protocol
+# agreement across RPC + Horizon, and the ledger resource limits Horizon
+# actually observed. Read-only; never signs, submits, or deploys.
+sdkt network diagnose --network testnet
+sdkt network diagnose --network testnet --format json
+```
+
+### Verify a deployed contract is the artifact you built
+
+```bash
+# Compare a local WASM's SHA-256 against the deployed contract's executable
+# via a raw ledger probe. Verdicts: MATCH / DRIFT / UNKNOWN / NOT_FOUND.
+# Read-only; never signs, submits, or deploys.
+sdkt deployment-verify --contract <CONTRACT_ID> --wasm target/wasm32v1-none/release/contract.wasm --network testnet
 ```
 
 ### Fund an identity (Testnet only)

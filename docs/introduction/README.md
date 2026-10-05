@@ -26,7 +26,8 @@ an RPC endpoint.
 | **Deployment** | Upload WASM + instantiate contracts (`deploy`) with optional `--deny-breaking` upgrade guard; multi-contract workspace orchestration (`project deploy`) |
 | **Contract interaction** | Read-only calls (`call`) and state-changing invocations (`invoke`) with typed arguments and ABI-aware result decoding |
 | **Events & storage** | Event explorer (`events`), storage TTL analysis and extension (`storage *`) |
-| **Network** | Named network profiles for RPC endpoints + passphrases (`network *`) |
+| **Network** | Named network profiles for RPC endpoints + passphrases (`network *`); read-only network identity / protocol / resource-limit diagnosis (`network diagnose`) |
+| **Deployment verification** | Read-only check that a deployed contract matches a local WASM artifact (`deployment-verify`) |
 | **Plugins** | Local, offline-first plugin store with `.sdktplugin` bundle support (`plugin *`) |
 | **Identity** | ED25519 keystore management and Testnet Friendbot funding (`identity *`) |
 

@@ -365,6 +365,8 @@ See [`docs/plugin-authoring.md`](docs/plugins/plugin-authoring.md) for how to bu
 | `sdkt identity <generate\|import\|list\|show\|delete\|default>` | ED25519 keystore management. |
 | `sdkt identity fund <name> --network-profile <NAME>` | Fund an identity via Stellar Testnet Friendbot. |
 | `sdkt network <add\|list\|show\|remove>` | Named network profiles (RPC URL + passphrase). Combine with `--network-profile <NAME>` on any RPC command to avoid repeating endpoints; `--rpc-url` / `--network-passphrase` override. |
+| `sdkt network diagnose [--network <testnet>]` | Read-only network identity / protocol / resource-limit diagnosis. Reports passphrase identity, protocol agreement, and ledger limits. Never signs or mutates. |
+| `sdkt deployment-verify --contract <ID>` | Read-only deployment verification: is the deployed contract the artifact I built? Compares local WASM SHA-256 against on-chain executable. |
 || `sdkt init <name>` | Scaffold a new Soroban project (`--minimal`, `--force`). |
 | `sdkt lock generate` | Write `sdkt.lock` recording each built artifact's SHA-256 + deploy order (after `sdkt build`). |
 | `sdkt lock verify` | Verify `sdkt.lock` against current on-disk artifacts **and** package dependencies (lock matches manifest, git commits, path existence). Advisory; never fails the build. Prints `✓ lock file verified` / `✓ package dependencies verified` or lists drift. |
