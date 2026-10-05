@@ -14,7 +14,7 @@ mode, and fails the step when the check does not pass.
 | Input | Required | Default | Meaning |
 |-------|----------|---------|---------|
 | `command` | yes | — | `audit`, `upgrade-safety`, or `release-assurance` |
-| `sdkt-version` | no | `v2.6.0` | Pinned `sdkt` git tag to install |
+| `sdkt-version` | no | `v2.7.0` | Pinned `sdkt` git tag to install |
 | `target` | for `audit` | `""` | Path to the `.rs` source to audit |
 | `old-wasm` | for `upgrade-safety` | `""` | Baseline (currently deployed) WASM |
 | `new-wasm` | for `upgrade-safety` | `""` | Candidate (new) WASM |
@@ -70,7 +70,7 @@ jobs:
         uses: SaboLabs/soroban-devkit/.github/actions/sdkt@main
         with:
           command: audit
-          sdkt-version: v2.6.0
+          sdkt-version: v2.7.0
           target: contracts/token/src/lib.rs
           severity-threshold: critical
 ```
@@ -97,7 +97,7 @@ jobs:
         uses: SaboLabs/soroban-devkit/.github/actions/sdkt@main
         with:
           command: upgrade-safety
-          sdkt-version: v2.6.0
+          sdkt-version: v2.7.0
           old-wasm: builds/current.wasm
           new-wasm: builds/candidate.wasm
 ```
@@ -125,7 +125,7 @@ jobs:
         uses: SaboLabs/soroban-devkit/.github/actions/sdkt@main
         with:
           command: release-assurance
-          sdkt-version: v2.6.0
+          sdkt-version: v2.7.0
           wasm: builds/candidate.wasm
           previous-wasm: builds/current.wasm
           audit: contracts/token/src/lib.rs

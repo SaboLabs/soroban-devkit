@@ -155,10 +155,10 @@ verifies its SHA-256 checksum, and installs `sdkt` to `~/.local/bin/sdkt`.
    | Platform | Asset |
    |----------|-------|
    | Linux (x86_64) | `sdkt-x86_64-unknown-linux-gnu.tar.gz` |
-   | Linux (aarch64) | `sdkt-aarch64-unknown-linux-gnu.tar.gz` (built from the next tag after v2.6.0 — the v2.6.0 Release predates it; for v2.6.0 on ARM Linux use a source build) |
+   | Linux (aarch64) | `sdkt-aarch64-unknown-linux-gnu.tar.gz` |
    | macOS (Intel) | `sdkt-x86_64-apple-darwin.tar.gz` |
    | macOS (Apple Silicon) | `sdkt-aarch64-apple-darwin.tar.gz` |
-   | Windows (x86_64) | `sdkt-x86_64-pc-windows-msvc.zip` (from v2.6.0) |
+   | Windows (x86_64) | `sdkt-x86_64-pc-windows-msvc.zip` |
 
 2. Extract and run:
 
@@ -172,7 +172,7 @@ verifies its SHA-256 checksum, and installs `sdkt` to `~/.local/bin/sdkt`.
    sudo mv sdkt /usr/local/bin/
    ```
 
-   **Windows (v2.6.0+):** use `sdkt-x86_64-pc-windows-msvc.zip` from the
+   **Windows:** use `sdkt-x86_64-pc-windows-msvc.zip` from the
    GitHub Release. Alternatively, install from crates.io or source:
 
    ```powershell
@@ -181,10 +181,10 @@ verifies its SHA-256 checksum, and installs `sdkt` to `~/.local/bin/sdkt`.
    ```
 
    > **Version note:** the GitHub Release carries the current repository
-   > release (v2.6.0). crates.io currently publishes **v2.5.0**, so
+   > release (v2.7.0). crates.io currently publishes **v2.5.0**, so
    > `cargo install sdkt-cli` installs v2.5.0 — which lacks the WASM size
    > policy, the `sdkt health` critical-exit fix, `sdkt-agent`, and the
-   > Windows zip. For v2.6.0 use the release binary, or build from source
+   > Windows zip. For v2.7.0 use the release binary, or build from source
    > (below).
 
 #### Alternative — Build from source (requires Rust 1.88.0+)

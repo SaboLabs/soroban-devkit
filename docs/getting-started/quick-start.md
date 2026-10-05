@@ -21,7 +21,7 @@ Choose **one** of the following.
     | Platform              | Asset                                  |
     | --------------------- | -------------------------------------- |
     | Linux (x86\_64)       | `sdkt-x86_64-unknown-linux-gnu.tar.gz` |
-    | Linux (aarch64)       | `sdkt-aarch64-unknown-linux-gnu.tar.gz` (from the next tag after v2.6.0) |
+    | Linux (aarch64)       | `sdkt-aarch64-unknown-linux-gnu.tar.gz` |
     | macOS (Intel)         | `sdkt-x86_64-apple-darwin.tar.gz`      |
     | macOS (Apple Silicon) | `sdkt-aarch64-apple-darwin.tar.gz`     |
 
@@ -53,10 +53,10 @@ cargo install --path crates/sdkt-cli
 ```
 
 > **Version note:** the GitHub Release carries the current repository release
-> (v2.6.0). crates.io currently publishes **v2.5.0**, so `cargo install
+> (v2.7.0). crates.io currently publishes **v2.5.0**, so `cargo install
 > sdkt-cli` installs v2.5.0 — which lacks the WASM size policy, the
 > `sdkt health` critical-exit fix, `sdkt-agent`, and the Windows zip. For
-> v2.6.0 use the release binary or build from source (option B).
+> v2.7.0 use the release binary or build from source (option B).
 
 ***
 
@@ -69,7 +69,7 @@ sdkt --version
 Expected output (version may be newer):
 
 ```
-sdkt 2.6.0
+sdkt 2.7.0
 ```
 
 Then confirm the CLI is responsive:
