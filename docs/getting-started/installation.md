@@ -124,14 +124,11 @@ cargo build --bin sdkt
 
 ## Option C — From crates.io (published)
 
-crates.io currently publishes **`v2.5.0`** — it lags the repository's current
-release, `v2.7.0`, so the crates.io install below gives you v2.5.0 (without the
-WASM size policy, the `sdkt health` critical-exit fix, `sdkt-agent`, or the
-Windows zip). Use the release binary or a source build for v2.7.0.
-
-All workspace crates are published to crates.io at that version:
-`sdkt-cli`, `sdkt-core`, `sdkt-xdr`, `sdkt-wasm`, `sdkt-rpc`, `sdkt-storage`,
-`sdkt-audit`, and `sdkt-audit-example-rule`. Install the CLI binary directly:
+crates.io currently publishes **`v2.7.0`** — matching the repository's
+current release. The 8 published crates are `sdkt-cli`, `sdkt-core`,
+`sdkt-xdr`, `sdkt-wasm`, `sdkt-rpc`, `sdkt-storage`, `sdkt-audit`, and
+`sdkt-audit-example-rule`. `sdkt-agent` remains a repo-only prototype and is
+not published. Install the CLI binary directly:
 
 ```bash
 cargo install sdkt-cli
@@ -141,7 +138,7 @@ sdkt --version
 To pin a released version:
 
 ```bash
-cargo install sdkt-cli --version 2.5.0   # latest published on crates.io
+cargo install sdkt-cli --version 2.7.0   # latest published on crates.io
 ```
 
 The `sdkt` binary name is reserved by `sdkt-cli` (the published package name is

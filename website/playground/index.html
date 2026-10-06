@@ -24,9 +24,9 @@
       <a href="#main" class="active" aria-current="page">Inspector</a>
       <span class="soon" role="link" aria-disabled="true" title="Coming soon — not implemented yet">Analyze</span>
       <span class="soon" role="link" aria-disabled="true" title="Coming soon — not implemented yet">XDR</span>
-      <span class="soon" role="link" aria-disabled="true" title="Coming soon — not implemented yet">Diff</span>
+      <a href="#compare" role="link">Diff</a>
       <span class="soon" role="link" aria-disabled="true" title="Coming soon — not implemented yet">Health</span>
-      <span class="nav-ver">v2.5.0</span>
+      <span class="nav-ver">v2.7.0</span>
     </nav>
   </div>
 </header>
@@ -52,7 +52,7 @@
         <input type="file" id="fileInput" accept=".wasm,application/wasm">
       </div>
 
-      <div class="compare-slot">
+      <div class="compare-slot" id="compare">
         <h2 class="example-title">Compare an upgrade</h2>
         <p class="example-desc">Load a candidate WASM to run the offline upgrade-safety check.</p>
         <label class="dz-btn" for="candidateInput">Choose candidate</label>
@@ -118,7 +118,7 @@
 
 <footer class="site-foot">
   <div class="wrap" style="display:flex;flex-wrap:wrap;gap:0.75rem;justify-content:space-between;width:100%">
-    <span>Soroban DevKit v2.5.0 · Web Playground · MIT License</span>
+    <span>Soroban DevKit v2.7.0 · Web Playground · MIT License</span>
     <span>
       <a href="https://github.com/SaboLabs/soroban-devkit" rel="noopener">GitHub</a> ·
       <a href="../">Landing page</a> ·
