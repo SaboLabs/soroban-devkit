@@ -1,7 +1,7 @@
 # Soroban DevKit (`sdkt`) — Roadmap
 
 **Last updated:** 2026-10-03
-**Status:** Active development · default branch `main` · current release **v2.6.0**
+**Status:** Active development · default branch `main` · current release **v2.7.0**
 
 ---
 
@@ -11,7 +11,7 @@
 
 | | |
 |---|---|
-| **Current release** | `v2.6.0` (tags `v2.0.0`, `v2.1.0`, `v2.1.1`, `v2.2.0`, `v2.3.0`, `v2.4.0`, `v2.5.0`, `v2.6.0` also published) |
+| **Current release** | `v2.7.0` (tags `v2.0.0`, `v2.1.0`, `v2.1.1`, `v2.2.0`, `v2.3.0`, `v2.4.0`, `v2.5.0`, `v2.6.0`, `v2.7.0` also published) |
 | **Repository status** | Active · all capabilities merged to `main` |
 | **Crates** | 10 (`sdkt-cli` + 9 supporting crates) |
 | **Current focus** | Release assurance — artifact, security, upgrade, deployed reality, health |
@@ -133,8 +133,8 @@ Capabilities are grouped by theme below.
 
 **Where is this project today?**
 
-- **Released:** All capabilities are merged to `main` and shipped in releases through `v2.6.0`.
-- **Current release:** `v2.6.0` (tagged). Prior tagged releases: `v2.5.0`, `v2.4.0`, `v2.3.0`, `v2.2.0`, `v2.1.1`, `v2.1.0`, `v2.0.0`.
+- **Released:** All capabilities are merged to `main` and shipped in releases through `v2.7.0`.
+- **Current release:** `v2.7.0` (tagged). Prior tagged releases: `v2.6.0`, `v2.5.0`, `v2.4.0`, `v2.3.0`, `v2.2.0`, `v2.1.1`, `v2.1.0`, `v2.0.0`.
 - **Repository health:** Healthy. 8 crates, all quality gates enforced in CI (`cargo fmt`, `cargo clippy --workspace --all-targets -- -D warnings` default + all-features, `cargo test --workspace`).
 - **CI status:** Green. Workflows: `ci.yml` (fmt/clippy/test on Ubuntu/macOS/Windows + MSRV + install-script validation), `release.yml` (tag-gated cross-platform binaries, checksums, crates.io publish), `compatibility.yml` (real-world `stellar/soroban-examples` validation), `sdkt-action-ci.yml` (self-validates the reusable Action).
 

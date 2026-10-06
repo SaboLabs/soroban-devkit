@@ -29,14 +29,14 @@ repository:
 - Terminal output blocks are copied from real local runs of
   `sdkt --version`, `sdkt wasm inspect`, `sdkt diff --upgrade-safety`, and
   `sdkt audit` against `crates/sdkt-cli/tests/fixtures/*.wasm`.
-- The version shown is `2.6.0`, matching `[workspace.package] version` in
+- The version shown is `2.7.0`, matching `[workspace.package] version` in
   the root `Cargo.toml`.
 - No adoption metrics, star counts, user counts, contributor counts,
   testimonials, partner logos, funding, or grant-approval claims appear
   anywhere on the page. Do not add them without verifiable evidence.
 
-When bumping the release version, update the four `v2.6.0` occurrences in
-`index.html` (nav pill, hero chip, install note, footer) plus the `sdkt 2.6.0`
+When bumping the release version, update the four `v2.7.0` occurrences in
+`index.html` (nav pill, hero chip, install note, footer) plus the `sdkt 2.7.0`
 line in the hero terminal block.
 
 ## Files
