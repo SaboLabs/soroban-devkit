@@ -597,3 +597,87 @@ fn network_check_does_not_mutate_stored_profile() {
     let after = std::fs::read_to_string(&path).unwrap();
     assert_eq!(before, after, "network check must not mutate the profile");
 }
+
+// ---------- : mainnet has no built-in public RPC endpoint ----------
+
+#[test]
+fn network_diagnose_mainnet_without_rpc_url_fails_actionably() {
+    // SDF operates public JSON-RPC for testnet and futurenet only. Explicit
+    // `--network mainnet` without `--rpc-url` must fail with an actionable
+    // error — never silently target a non-existent endpoint.
+    let dir = tempdir().unwrap();
+
+    sdkt(dir.path())
+        .args(["network", "diagnose", "--network", "mainnet"])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("no built-in public RPC endpoint"))
+        .stderr(predicate::str::contains("--rpc-url"));
+}
+
+#[test]
+fn network_diagnose_mainnet_with_explicit_rpc_url_is_accepted() {
+    // An explicit provider URL + mainnet passphrase must reach the network
+    // layer and produce a real diagnosis (here: a healthy mock mainnet).
+    // This proves the mainnet path works without any built-in endpoint.
+    // (`--network` conflicts with `--rpc-url` by design, so the supported
+    // explicit-provider path is `--rpc-url` + `--network-passphrase`.)
+    let dir = tempdir().unwrap();
+    let url = spawn_mock_rpc_with_network(
+        64_000_000,
+        29,
+        "Public Global Stellar Network ; September 2015",
+        false,
+    );
+
+    sdkt(dir.path())
+        .args([
+            "network",
+            "diagnose",
+            "--rpc-url",
+            &url,
+            "--network-passphrase",
+            "Public Global Stellar Network ; September 2015",
+        ])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("Network        : mainnet"))
+        .stdout(predicate::str::contains("Status         : ok"));
+}
+
+#[test]
+fn network_diagnose_testnet_and_futurenet_defaults_still_resolve() {
+    // Regression guard: the built-in SDF endpoints for testnet and futurenet
+    // must remain the defaults (no error, no network call needed to resolve).
+    let dir = tempdir().unwrap();
+
+    // testnet: resolution succeeds; the probe then fails (no network in CI),
+    // which is fine — the point is resolution did not error.
+    let out = sdkt(dir.path())
+        .args(["network", "diagnose", "--network", "testnet"])
+        .output()
+        .unwrap();
+    let combined = format!(
+        "{}{}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert!(
+        !combined.contains("no built-in public RPC endpoint"),
+        "testnet must keep its built-in default: {combined}"
+    );
+
+    let out = sdkt(dir.path())
+        .args(["network", "diagnose", "--network", "futurenet"])
+        .output()
+        .unwrap();
+    let combined = format!(
+        "{}{}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert!(
+        !combined.contains("no built-in public RPC endpoint"),
+        "futurenet must keep its built-in default: {combined}"
+    );
+}
