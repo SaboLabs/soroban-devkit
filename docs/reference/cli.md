@@ -166,10 +166,10 @@ sdkt
 │   ├── --max-growth-pct <N>  (fail when growth over --previous-wasm exceeds N%)
 │   └── --format <json|pretty>
 ├── identity
-│   ├── generate <name>
+│   ├── generate <name>       [--format pretty|json]
 │   ├── import <name> <secret>
-│   ├── list
-│   ├── show <name>
+│   ├── list                  [--format pretty|json]
+│   ├── show <name>           [--format pretty|json]
 │   ├── delete <name>
 │   ├── default <name>
 │   └── fund <name>           [--network-profile <NAME>] [--format pretty|json]
