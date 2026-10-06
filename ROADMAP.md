@@ -1,6 +1,6 @@
 # Soroban DevKit (`sdkt`) — Roadmap
 
-**Last updated:** 2026-10-03
+**Last updated:** 2026-10-06
 **Status:** Active development · default branch `main` · current release **v2.7.0**
 
 ---
@@ -13,7 +13,7 @@
 |---|---|
 | **Current release** | `v2.7.0` (tags `v2.0.0`, `v2.1.0`, `v2.1.1`, `v2.2.0`, `v2.3.0`, `v2.4.0`, `v2.5.0`, `v2.6.0`, `v2.7.0` also published) |
 | **Repository status** | Active · all capabilities merged to `main` |
-| **Crates** | 10 (`sdkt-cli` + 9 supporting crates) |
+| **Crates** | 9 workspace crates — 8 published to crates.io, `sdkt-agent` repo-only prototype — plus the `sdkt-playground` WASM surface (excluded from the workspace) |
 | **Current focus** | Release assurance — artifact, security, upgrade, deployed reality, health |
 
 A new contributor can understand the project from this summary alone: a test-covered Soroban toolchain with a clear path toward mainnet readiness and an extensible plugin architecture.
@@ -40,6 +40,8 @@ The workspace is a Cargo virtual workspace. The `sdkt` binary is produced by `sd
 | `sdkt-audit` | Offline static security analysis | `Severity`, `Finding`, `AuditReport`, `AuditRule`, `RuleRegistry`, `register_rule!`; built-in rules `AUTH-001`, `AUTH-002`, `AUTH-003`, `AUTH-004`, `MOVE-001`, `MATH-001`, `CEI-001`; plugin author API. |
 | `sdkt-audit-example-rule` | Reference plugin crate | Rule `EXAMPLE-001`; produces `libsdkt_audit_example_rule` (native) and `sdkt_audit_example_rule.wasm` behind the `plugins` / `wasm-plugins` features. |
 | `sdkt-cli` | User-facing CLI | `Cli`, `Commands`; routes arguments to crates and formats output (pretty + `--format json`). Builds the `sdkt` binary. |
+| `sdkt-agent` | Read-only natural-language front end (prototype, repo-only — not published) | Deterministic rule-based planner over `sdkt_core::registry`; refuses mutating/mainnet/ambiguous requests; versioned JSON results. |
+| `sdkt-playground` | Browser WASM surface (excluded from the workspace, not published) | `sdkt-wasm` inspector exposed to the browser via `wasm-bindgen`; offline inspection plus the upgrade-safety comparison added in v2.7.0. |
 
 **Dependency rules**
 
@@ -79,13 +81,17 @@ Capabilities are grouped by theme below.
 - Upgrade safety guard — `UpgradeVerdict`; `sdkt diff --upgrade-safety`; `sdkt deploy --deny-breaking`
 - Release assurance — `sdkt release-assurance` aggregates artifact metadata, static security audit, upgrade safety, deployed WASM verification, and contract health into one `PASS`/`REVIEW`/`FAIL`/`SKIPPED`/`ERROR` verdict with a machine-readable JSON report
 - WASM size policy — opt-in `--max-size-bytes` / `--max-growth-pct` on `sdkt diff` and `sdkt release-assurance`; thresholds are operator-supplied and no network limit is hardcoded
+- Deployment verification — `sdkt deployment-verify` compares a local WASM's SHA-256 against the deployed contract's on-chain executable (`MATCH`/`DRIFT`/`UNKNOWN`/`NOT_FOUND`, exit-gated)
+- Network diagnostics — `sdkt network diagnose` reports network identity, protocol agreement, and observed ledger resource limits before a release verification trusts a target
+- Agent (prototype) — `sdkt-agent` maps plain-English requests onto the capability registry and runs them read-only; repo-only, not published
 
 ### Plugin System
 
 - Rule registry — `RuleRegistry` in `sdkt-audit`; additive `--rules <path>`; plugin author API; example rule crate
 - Dynamic rule loading — Native `.so`/`.dylib`/`.dll` plugins via `libloading` + C-ABI; `sdkt audit --rules <plugin.so>`; ABI major-version gate (feature `plugins`, default OFF)
 - WASM sandbox — Sandboxed `.wasm` plugins via `extism` + JSON-ABI; `sdkt audit --rules <plugin.wasm>`; no FS/network (feature `wasm-plugins`, default OFF)
-- Plugin local store — Offline plugin store with `plugin.toml` metadata; `sdkt plugin list/show/install/remove/update` (local-only); identity-based `--rules <id>` resolution; shipped in `v2.5.0`
+- **Plugin local store** — Offline plugin store with `plugin.toml` metadata; `sdkt plugin list/show/install/remove/update` (local-only); identity-based `--rules <id>` resolution; shipped in `v2.5.0`
+- **Plugin bundle packaging & signing** — `sdkt plugin pack` produces a `.sdktplugin` bundle (manifest + artifact + `manifest.sha256`) and can sign it with an Ed25519 secret key (`--secret-key <file>`); `sdkt plugin install <bundle>.sdktplugin` verifies digests and the signature when present, and `--public-key <file>` pins the expected signer; `sdkt plugin verify-bundle` and `sdkt plugin doctor` check bundle integrity. Shipped in `v2.6.0` (#213).
 
 ### Soroban Ecosystem Integration
 
@@ -96,6 +102,7 @@ Capabilities are grouped by theme below.
 - Live-contract ABI for storage — `sdkt storage --abi-contract <id>` uses the deployed contract's on-chain WASM for storage analysis
 - Protocol 28 support — `sdkt init` scaffolds and `sdkt build` compiles for Protocol 28 targets
 - CAP-85 external executables — `sdkt inspect` resolves protocol-defined (`stellar_asset`) and `ExternalRef` executables that carry no WASM artifact
+- Verification mismatch exit gate — `sdkt verify` returns non-zero on a mismatched deployed WASM, so CI gates reading the exit code cannot pass a wrong artifact
 
 ### CI & Release
 
@@ -135,7 +142,7 @@ Capabilities are grouped by theme below.
 
 - **Released:** All capabilities are merged to `main` and shipped in releases through `v2.7.0`.
 - **Current release:** `v2.7.0` (tagged). Prior tagged releases: `v2.6.0`, `v2.5.0`, `v2.4.0`, `v2.3.0`, `v2.2.0`, `v2.1.1`, `v2.1.0`, `v2.0.0`.
-- **Repository health:** Healthy. 8 crates, all quality gates enforced in CI (`cargo fmt`, `cargo clippy --workspace --all-targets -- -D warnings` default + all-features, `cargo test --workspace`).
+- **Repository health:** Healthy. 8 published crates (+ `sdkt-agent` prototype, repo-only), all quality gates enforced in CI (`cargo fmt`, `cargo clippy --workspace --all-targets -- -D warnings` default + all-features, `cargo test --workspace`).
 - **CI status:** Green. Workflows: `ci.yml` (fmt/clippy/test on Ubuntu/macOS/Windows + MSRV + install-script validation), `release.yml` (tag-gated cross-platform binaries, checksums, crates.io publish), `compatibility.yml` (real-world `stellar/soroban-examples` validation), `sdkt-action-ci.yml` (self-validates the reusable Action).
 
 ---
@@ -146,7 +153,7 @@ The package-manager, plugin-ecosystem, and on-chain inspection lines are fully s
 
 ### Future Work (unscheduled backlog)
 
-- **Plugin ecosystem / marketplace — remote slice.** The local offline-first store is shipped. The remaining remote/marketplace layer — a hosted index/server, remote `https` plugin sources, remote `sdkt plugin update`, plugin signing / checksum verification, and a `.sdktplugin` bundle format — stays unscheduled backlog.
+- **Plugin ecosystem / marketplace — remote slice.** The local offline-first store, `.sdktplugin` bundle packaging, and Ed25519 bundle signing/verification are shipped (v2.6.0, #213). The remaining remote/marketplace layer — a hosted index/server, remote `https` plugin sources, and remote `sdkt plugin update` — stays unscheduled backlog.
 - **Broader Soroban ecosystem integration.** On-chain inspection is shipped. Deeper compatibility-matrix work (beyond the on-chain inspection path) remains unscheduled.
 - **Developer productivity** — continuing DX investments (faster feedback, better errors, smoother onboarding).
 - **Hosted package registry** — a remote index/server that the `DependencyFetcher` trait can target; explicitly deferred.

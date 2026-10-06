@@ -181,11 +181,12 @@ verifies its SHA-256 checksum, and installs `sdkt` to `~/.local/bin/sdkt`.
    ```
 
    > **Version note:** the GitHub Release carries the current repository
-   > release (v2.7.0). crates.io currently publishes **v2.5.0**, so
-   > `cargo install sdkt-cli` installs v2.5.0 — which lacks the WASM size
-   > policy, the `sdkt health` critical-exit fix, `sdkt-agent`, and the
-   > Windows zip. For v2.7.0 use the release binary, or build from source
-   > (below).
+   > release (v2.7.0). crates.io also publishes **v2.7.0** (the 8 published
+   > crates: `sdkt-cli`, `sdkt-core`, `sdkt-xdr`, `sdkt-wasm`, `sdkt-rpc`,
+   > `sdkt-storage`, `sdkt-audit`, `sdkt-audit-example-rule`), so
+   > `cargo install sdkt-cli` installs v2.7.0. `sdkt-agent` remains a
+   > repo-only prototype and is not on crates.io. For the Windows zip use
+   > the release binary, or build from source (below).
 
 #### Alternative — Build from source (requires Rust 1.88.0+)
 

@@ -25,7 +25,7 @@ Choose **one** of the following.
     | macOS (Intel)         | `sdkt-x86_64-apple-darwin.tar.gz`      |
     | macOS (Apple Silicon) | `sdkt-aarch64-apple-darwin.tar.gz`     |
 
-    Windows: `sdkt-x86_64-pc-windows-msvc.zip` (v2.6.0+) or `cargo install sdkt-cli` (crates.io is at v2.5.0).
+    Windows: `sdkt-x86_64-pc-windows-msvc.zip` (v2.6.0+) or `cargo install sdkt-cli` (crates.io is at v2.7.0).
 
 **A2. crates.io (Rust 1.88.0+):**
 
@@ -53,10 +53,10 @@ cargo install --path crates/sdkt-cli
 ```
 
 > **Version note:** the GitHub Release carries the current repository release
-> (v2.7.0). crates.io currently publishes **v2.5.0**, so `cargo install
-> sdkt-cli` installs v2.5.0 — which lacks the WASM size policy, the
-> `sdkt health` critical-exit fix, `sdkt-agent`, and the Windows zip. For
-> v2.7.0 use the release binary or build from source (option B).
+> (v2.7.0). crates.io also publishes **v2.7.0**, so `cargo install sdkt-cli`
+> installs v2.7.0. `sdkt-agent` remains a repo-only prototype and is not on
+> crates.io. For the Windows zip use the release binary or build from source
+> (option B).
 
 ***
 
