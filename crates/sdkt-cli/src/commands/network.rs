@@ -205,6 +205,10 @@ impl std::fmt::Debug for TargetNetwork {
 /// `--network-profile`, and `--network-passphrase`. When omitted, the network is resolved
 /// from `NetworkArgs` (profile, rpc-url, or defaults), and the canonical name is derived
 /// from the profile or passphrase.
+///
+/// `mainnet` has no built-in public RPC endpoint: SDF operates public JSON-RPC only for
+/// testnet and futurenet. Explicit `--network mainnet` without `--rpc-url` therefore
+/// fails with an actionable error instead of silently targeting a non-existent endpoint.
 pub(crate) fn resolve_target_network(
     network: Option<&str>,
     net: &NetworkArgs,
@@ -226,11 +230,17 @@ pub(crate) fn resolve_target_network(
                         TESTNET_PASSPHRASE,
                         "testnet",
                     ),
-                    "mainnet" => (
-                        "https://soroban-rpc.stellar.org",
-                        MAINNET_PASSPHRASE,
-                        "mainnet",
-                    ),
+                    "mainnet" => {
+                        return Err(
+                            "mainnet has no built-in public RPC endpoint (SDF operates public \
+                             JSON-RPC for testnet and futurenet only). Provide an explicit RPC \
+                             provider URL with --rpc-url <URL> and the mainnet passphrase with \
+                             --network-passphrase \"Public Global Stellar Network ; September \
+                             2015\", or save a profile via `sdkt network add mainnet ...`. See \
+                             https://developers.stellar.org/docs/data/apis/rpc/providers"
+                                .to_string(),
+                        );
+                    }
                     "futurenet" => (
                         "https://rpc-futurenet.stellar.org",
                         "Test SDF Future Network ; October 2022",
@@ -709,11 +719,18 @@ mod tests {
         assert_eq!(target.config.rpc_url, "https://soroban-testnet.stellar.org");
         assert_eq!(target.config.passphrase, TESTNET_PASSPHRASE);
 
-        // mainnet
-        let target = resolve_target_network(Some("mainnet"), &net).unwrap();
-        assert_eq!(target.network_name, "mainnet");
-        assert_eq!(target.config.rpc_url, "https://soroban-rpc.stellar.org");
-        assert_eq!(target.config.passphrase, MAINNET_PASSPHRASE);
+        // mainnet: no built-in public RPC endpoint — explicit --network mainnet
+        // must fail with an actionable error instead of silently targeting a
+        // non-existent endpoint.
+        let err = resolve_target_network(Some("mainnet"), &net).unwrap_err();
+        assert!(
+            err.contains("no built-in public RPC endpoint"),
+            "unexpected mainnet error: {err}"
+        );
+        assert!(
+            err.contains("--rpc-url"),
+            "mainnet error must point at --rpc-url: {err}"
+        );
 
         // futurenet
         let target = resolve_target_network(Some("futurenet"), &net).unwrap();
@@ -725,8 +742,12 @@ mod tests {
         );
 
         // case insensitivity
-        let target = resolve_target_network(Some("MainNet"), &net).unwrap();
-        assert_eq!(target.network_name, "mainnet");
+        let target = resolve_target_network(Some("FutureNet"), &net).unwrap();
+        assert_eq!(target.network_name, "futurenet");
+
+        // case insensitivity also applies to mainnet (error must be reached)
+        let err = resolve_target_network(Some("MainNet"), &net).unwrap_err();
+        assert!(err.contains("no built-in public RPC endpoint"));
     }
 
     #[test]
