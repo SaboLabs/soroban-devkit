@@ -539,9 +539,11 @@ const CAPABILITIES: [Capability; CAP_COUNT] = [
         id: "identity.list",
         command: &["identity", "list"],
         summary: "Local ED25519 identities (names + public keys; no secret material).",
+        optional_args: &["--format"],
+        formats: PRETTY_JSON,
         safety: Safety::ReadOnly,
         evidence: Evidence::VerifiedLocal,
-        notes: Some("No --format json (known limitation; output is human text only)."),
+        notes: Some("`--format json` emits a name-sorted array of {name, public_key, default}; an empty store prints `[]`."),
         ..Capability::BASE
     },
     Capability {
@@ -549,10 +551,11 @@ const CAPABILITIES: [Capability; CAP_COUNT] = [
         command: &["identity", "generate"],
         summary: "Create a new keypair in the local keystore.",
         required_args: &["<name>"],
-        optional_args: &[],
+        optional_args: &["--format"],
+        formats: PRETTY_JSON,
         safety: Safety::LocalWrite,
         evidence: Evidence::Unverified,
-        notes: Some("Not executed by the audit; keystore write, no ledger interaction. Secret material must never be surfaced to an agent."),
+        notes: Some("Not executed by the audit; keystore write, no ledger interaction. Secret material must never be surfaced to an agent. `--format json` prints public fields only (name + public key)."),
         ..Capability::BASE
     },
     Capability {
@@ -1067,8 +1070,10 @@ mod tests {
             "storage.restore",
             "project.deploy",
             "identity.fund",
+            "identity.generate",
+            "identity.list",
         ];
-        const NO_JSON: &[&str] = &["identity.list", "generate.client", "package.publish"];
+        const NO_JSON: &[&str] = &["generate.client", "package.publish"];
         for id in JSON {
             let c = find(id).unwrap_or_else(|| panic!("missing {id}"));
             assert!(
