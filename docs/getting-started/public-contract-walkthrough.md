@@ -6,13 +6,35 @@ Unlike the deployment walkthrough which requires compiling WASM and funding acco
 
 ---
 
+## Prerequisites
+
+Before running the commands in this guide, ensure the following dependencies are installed and accessible on your system:
+
+1. **Build `sdkt` from checkout**:
+   ```bash
+   cargo build -p sdkt-cli --bin sdkt
+   ```
+   Add the compiled binary to your `PATH`, or reference it directly via `target/debug/sdkt` (or `$CARGO_TARGET_DIR/debug/sdkt`).
+
+2. **JSON query utility (`jq`)**:
+   `jq` is required for parsing JSON CLI outputs in automated shell and CI scripts:
+   ```bash
+   # Ubuntu / Debian
+   sudo apt-get install jq
+
+   # macOS (Homebrew)
+   brew install jq
+   ```
+
+---
+
 ## Constants & Testnet Environment
 
-The walkthrough targets the canonical Native Stellar Asset Contract (SAC) deployed on the public Stellar Testnet:
+The walkthrough targets a stable, publicly deployed WASM contract on the public Stellar Testnet:
 
 | Parameter | Value |
 | :--- | :--- |
-| **Contract ID** | `CDLZFC3SYJYDZT7K67VZ75HPJVIEUVNIXF47ZG2FB2RMQQVU2HHGCYSC` |
+| **Contract ID** | `CAE3U7JKESRWZHPEQ72DVNGOQ6WPA7HSPQZL5YV46NPCE4TMUPAGYMEC` |
 | **Network Name** | `testnet` |
 | **RPC Endpoint** | `https://soroban-testnet.stellar.org` |
 | **Network Passphrase** | `Test SDF Network ; September 2015` |
@@ -22,7 +44,7 @@ The walkthrough targets the canonical Native Stellar Asset Contract (SAC) deploy
 
 ## Step 1 — Configuring the Network Profile
 
-Create a named network profile for Testnet (or verify your existing one):
+Create a named network profile for Testnet:
 
 ```bash
 sdkt network add testnet \
@@ -45,11 +67,12 @@ sdkt network check testnet --format json
   "rpc_url": "https://soroban-testnet.stellar.org",
   "reachable": true,
   "status": "healthy",
-  "latest_ledger": 1045231,
-  "protocol_version": 22,
+  "latest_ledger": 5069471,
+  "protocol_version": 29,
   "configured_passphrase": "Test SDF Network ; September 2015",
-  "endpoint_passphrase": "Test SDF Network ; September 2015",
-  "friendbot_url": "https://friendbot.stellar.org",
+  "endpoint_passphrase": null,
+  "friendbot_url": null,
+  "network_info_error": null,
   "error": null
 }
 ```
@@ -58,17 +81,17 @@ sdkt network check testnet --format json
 
 ## Step 2 — Inspecting the Contract Spec & Metadata
 
-Query the on-chain contract instance to extract its code hash and exported ABI interface:
+Query the on-chain contract instance to extract its WASM hash, code size, and exported ABI functions/types:
 
 ```bash
-sdkt inspect CDLZFC3SYJYDZT7K67VZ75HPJVIEUVNIXF47ZG2FB2RMQQVU2HHGCYSC \
+sdkt inspect CAE3U7JKESRWZHPEQ72DVNGOQ6WPA7HSPQZL5YV46NPCE4TMUPAGYMEC \
   --network-profile testnet
 ```
 
 For automated CI ingestion, request structured JSON:
 
 ```bash
-sdkt inspect CDLZFC3SYJYDZT7K67VZ75HPJVIEUVNIXF47ZG2FB2RMQQVU2HHGCYSC \
+sdkt inspect CAE3U7JKESRWZHPEQ72DVNGOQ6WPA7HSPQZL5YV46NPCE4TMUPAGYMEC \
   --network-profile testnet \
   --format json
 ```
@@ -76,26 +99,34 @@ sdkt inspect CDLZFC3SYJYDZT7K67VZ75HPJVIEUVNIXF47ZG2FB2RMQQVU2HHGCYSC \
 ### Expected Output Schema:
 ```json
 {
-  "contract_id": "CDLZFC3SYJYDZT7K67VZ75HPJVIEUVNIXF47ZG2FB2RMQQVU2HHGCYSC",
-  "executable_type": "wasm",
-  "wasm_hash": "6b3f68...",
-  "spec_available": true,
-  "functions": [
-    {
-      "name": "balance",
-      "inputs": [{"name": "id", "type": "Address"}],
-      "outputs": [{"type": "i128"}]
-    },
-    {
-      "name": "transfer",
-      "inputs": [
-        {"name": "from", "type": "Address"},
-        {"name": "to", "type": "Address"},
-        {"name": "amount", "type": "i128"}
-      ],
-      "outputs": []
-    }
-  ]
+  "contract_id": "CAE3U7JKESRWZHPEQ72DVNGOQ6WPA7HSPQZL5YV46NPCE4TMUPAGYMEC",
+  "wasm_hash": "60cddae67f202c19ee7b000c894fd12aa8b44de09ab652f5e188bc0c63a6cf02",
+  "wasm_size": 65152,
+  "abi": {
+    "functions": [
+      "pause",
+      "unpause",
+      "upgrade",
+      "get_order",
+      "liquidate",
+      "initialize"
+    ],
+    "events": [],
+    "types": [
+      "DataKey",
+      "Order",
+      "FeeTier",
+      "PoolInfo",
+      "Position"
+    ]
+  },
+  "storage_summary": {
+    "instance_entries": 0,
+    "persistent_entries": 0,
+    "temporary_entries": 0
+  },
+  "ttl_info": null,
+  "storage_keys": []
 }
 ```
 
@@ -106,14 +137,14 @@ sdkt inspect CDLZFC3SYJYDZT7K67VZ75HPJVIEUVNIXF47ZG2FB2RMQQVU2HHGCYSC \
 Run the diagnostic health command to evaluate contract state reachability and storage integrity:
 
 ```bash
-sdkt health --contract CDLZFC3SYJYDZT7K67VZ75HPJVIEUVNIXF47ZG2FB2RMQQVU2HHGCYSC \
+sdkt health --contract CAE3U7JKESRWZHPEQ72DVNGOQ6WPA7HSPQZL5YV46NPCE4TMUPAGYMEC \
   --network testnet
 ```
 
 Structured JSON verification:
 
 ```bash
-sdkt health --contract CDLZFC3SYJYDZT7K67VZ75HPJVIEUVNIXF47ZG2FB2RMQQVU2HHGCYSC \
+sdkt health --contract CAE3U7JKESRWZHPEQ72DVNGOQ6WPA7HSPQZL5YV46NPCE4TMUPAGYMEC \
   --network testnet \
   --format json
 ```
@@ -121,13 +152,25 @@ sdkt health --contract CDLZFC3SYJYDZT7K67VZ75HPJVIEUVNIXF47ZG2FB2RMQQVU2HHGCYSC 
 ### Expected Output Schema:
 ```json
 {
-  "contract_id": "CDLZFC3SYJYDZT7K67VZ75HPJVIEUVNIXF47ZG2FB2RMQQVU2HHGCYSC",
+  "contract_id": "CAE3U7JKESRWZHPEQ72DVNGOQ6WPA7HSPQZL5YV46NPCE4TMUPAGYMEC",
   "network": "testnet",
-  "status": "healthy",
-  "instance_live": true,
-  "ttl_remaining_ledgers": 298412,
-  "executable_reachable": true,
-  "issues": []
+  "health": "healthy",
+  "on_chain_wasm_hash": "60cddae67f202c19ee7b000c894fd12aa8b44de09ab652f5e188bc0c63a6cf02",
+  "storage": {
+    "total_entries": 1,
+    "instance_entries": 1,
+    "persistent_entries": 0,
+    "temporary_entries": 0,
+    "other_entries": 0,
+    "ttl": {
+      "minimum_ttl": 264353,
+      "maximum_ttl": 264353,
+      "average_ttl": 264353,
+      "expiring_entries_count": 0,
+      "estimated_rent_cost": 26435300
+    }
+  },
+  "reasons": []
 }
 ```
 
@@ -138,26 +181,25 @@ sdkt health --contract CDLZFC3SYJYDZT7K67VZ75HPJVIEUVNIXF47ZG2FB2RMQQVU2HHGCYSC 
 Retrieve emitted contract events across recent ledger sequences:
 
 ```bash
-sdkt events CDLZFC3SYJYDZT7K67VZ75HPJVIEUVNIXF47ZG2FB2RMQQVU2HHGCYSC \
+sdkt events CAE3U7JKESRWZHPEQ72DVNGOQ6WPA7HSPQZL5YV46NPCE4TMUPAGYMEC \
   --network-profile testnet \
   --format json
 ```
 
 ### Expected Output Schema:
+Returns a JSON array of event items (or an empty array `[]` when no events fall within the current ledger window):
+
 ```json
-{
-  "contract_id": "CDLZFC3SYJYDZT7K67VZ75HPJVIEUVNIXF47ZG2FB2RMQQVU2HHGCYSC",
-  "events": [
-    {
-      "ledger": 1045210,
-      "ledger_closed_at": "2026-10-01T18:22:10Z",
-      "id": "0001045210-0000000001",
-      "type": "contract",
-      "topics": ["transfer", "G...", "G..."],
-      "value": "100000000"
-    }
-  ]
-}
+[
+  {
+    "contract_id": "CAE3U7JKESRWZHPEQ72DVNGOQ6WPA7HSPQZL5YV46NPCE4TMUPAGYMEC",
+    "ledger": 5068458,
+    "topics": [
+      "AAAADwAAAAh0cmFuc2Zlcg=="
+    ],
+    "value": "AAAACgAAAAAAAAAAAAAAF0h26AA="
+  }
+]
 ```
 
 ---
@@ -167,7 +209,7 @@ sdkt events CDLZFC3SYJYDZT7K67VZ75HPJVIEUVNIXF47ZG2FB2RMQQVU2HHGCYSC \
 Inspect the contract's persistent, temporary, and instance storage footprints:
 
 ```bash
-sdkt storage analyze CDLZFC3SYJYDZT7K67VZ75HPJVIEUVNIXF47ZG2FB2RMQQVU2HHGCYSC \
+sdkt storage analyze CAE3U7JKESRWZHPEQ72DVNGOQ6WPA7HSPQZL5YV46NPCE4TMUPAGYMEC \
   --network-profile testnet \
   --format json
 ```
@@ -175,18 +217,29 @@ sdkt storage analyze CDLZFC3SYJYDZT7K67VZ75HPJVIEUVNIXF47ZG2FB2RMQQVU2HHGCYSC \
 ### Expected Output Schema:
 ```json
 {
-  "contract_id": "CDLZFC3SYJYDZT7K67VZ75HPJVIEUVNIXF47ZG2FB2RMQQVU2HHGCYSC",
-  "total_entries": 42,
-  "categories": {
-    "instance": 1,
-    "persistent": 41,
-    "temporary": 0
+  "contract_id": "CAE3U7JKESRWZHPEQ72DVNGOQ6WPA7HSPQZL5YV46NPCE4TMUPAGYMEC",
+  "total_entries": 1,
+  "instance_entries": 1,
+  "persistent_entries": 0,
+  "temporary_entries": 0,
+  "other_entries": 0,
+  "total_size_bytes": null,
+  "ttl_summary": {
+    "minimum_ttl": 264352,
+    "maximum_ttl": 264352,
+    "average_ttl": 264352,
+    "expiring_entries_count": 0,
+    "estimated_rent_cost": 26435200
   },
-  "ttl_status": {
-    "min_ttl_ledgers": 128450,
-    "max_ttl_ledgers": 518400,
-    "expiring_soon_count": 0
-  }
+  "entries": [
+    {
+      "key": "AAAABgAAAAEJun0qJKNsneSH9Dq0zoes8HzyfDK+4rzzXiJybKPAbAAAABQAAAAB",
+      "class": "instance",
+      "current_ttl": 264352,
+      "days_remaining": 15,
+      "extension_cost_stroops": 26435200
+    }
+  ]
 }
 ```
 
@@ -197,16 +250,16 @@ sdkt storage analyze CDLZFC3SYJYDZT7K67VZ75HPJVIEUVNIXF47ZG2FB2RMQQVU2HHGCYSC \
 In continuous integration, validate contract health and status using standard tools like `jq`:
 
 ```bash
-# Assert contract status is healthy
-HEALTH=$(sdkt health --contract CDLZFC3SYJYDZT7K67VZ75HPJVIEUVNIXF47ZG2FB2RMQQVU2HHGCYSC --network testnet --format json)
-STATUS=$(echo "$HEALTH" | jq -r '.status')
+# Assert contract health verdict is healthy
+HEALTH=$(sdkt health --contract CAE3U7JKESRWZHPEQ72DVNGOQ6WPA7HSPQZL5YV46NPCE4TMUPAGYMEC --network testnet --format json)
+STATUS=$(echo "$HEALTH" | jq -r '.health')
 if [ "$STATUS" != "healthy" ]; then
   echo "Contract health check failed: $STATUS"
   exit 1
 fi
 
-# Assert instance is live with sufficient TTL
-TTL=$(echo "$HEALTH" | jq '.ttl_remaining_ledgers')
+# Assert instance storage has sufficient TTL
+TTL=$(echo "$HEALTH" | jq '.storage.ttl.minimum_ttl')
 if [ "$TTL" -lt 50000 ]; then
   echo "Warning: Contract TTL low ($TTL ledgers remaining)"
 fi
@@ -237,4 +290,4 @@ export SDKT_TESTNET_ENABLED=1
 ./scripts/testnet_public_contract_smoke.sh
 ```
 
-When `SDKT_TESTNET_ENABLED` is omitted, the smoke script exits cleanly (exit code `0`), ensuring local builds and CI remain green in air-gapped or offline environments.
+When `SDKT_TESTNET_ENABLED` is omitted or set to `0`, the smoke script exits cleanly (exit code `0`), ensuring local builds and CI remain green in air-gapped or offline environments.
