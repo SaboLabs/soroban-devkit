@@ -593,6 +593,12 @@ enum Commands {
             conflicts_with = "network_passphrase"
         )]
         network: Option<String>,
+        /// Attach the JSON evidence file written by a completed `sdkt fuzz
+        /// campaign --artifact-dir` run (release-assurance records the
+        /// evidence; it never runs a fuzz campaign itself). Only
+        /// Classification::Finding entries count as security evidence.
+        #[arg(long, value_name = "EVIDENCE_JSON")]
+        fuzz_evidence: Option<String>,
         /// Output format (pretty or json)
         #[arg(short, long, default_value = "pretty")]
         format: String,
@@ -627,9 +633,66 @@ enum Commands {
         #[arg(long, conflicts_with = "format")]
         json: bool,
     },
+    /// Soroban-aware deterministic fuzzing for release assurance (offline,
+    /// read-only: executes contracts in an isolated in-memory host; never
+    /// signs, submits, or touches the network). Findings are rule-driven:
+    /// only explicitly declared expectations can produce them, and a finding
+    /// is evidence, not a vulnerability claim.
+    #[command(subcommand)]
+    Fuzz(FuzzAction),
     /// Generate typed clients and other artifacts from contract interfaces
     #[command(subcommand)]
     Generate(GenerateAction),
+}
+
+#[derive(Subcommand)]
+enum FuzzAction {
+    /// Run a deterministic fuzz campaign against a compiled contract
+    Campaign {
+        /// Path to the compiled contract WASM file
+        #[arg(value_name = "WASM")]
+        wasm: String,
+        /// Deterministic seed (u64)
+        #[arg(long, value_name = "N", default_value_t = 0)]
+        seed: u64,
+        /// Number of cases to execute
+        #[arg(long, value_name = "N", default_value_t = 100)]
+        cases: usize,
+        /// Restrict the campaign to one exported function
+        #[arg(long, value_name = "NAME")]
+        function: Option<String>,
+        /// Directory for finding artifacts (default: ./sdkt-fuzz-artifacts)
+        #[arg(long, value_name = "DIR")]
+        artifact_dir: Option<String>,
+        /// Authorization mode for every case: no-auth | correct-auth |
+        /// wrong-auth (see the sdkt-fuzz docs for exact semantics)
+        #[arg(long, value_name = "MODE", default_value = "no-auth")]
+        auth: String,
+        /// Declare that a function must succeed: --expect-success NAME
+        /// (repeatable). Violations become RETURN_MISMATCH or
+        /// UNEXPECTED_ERROR findings.
+        #[arg(long, value_name = "FN", action = clap::ArgAction::Append)]
+        expect_success: Vec<String>,
+        /// Declare that a function must fail: --expect-error FN:TYPE:CODE
+        /// (repeatable), e.g. --expect-error bump:Auth:6
+        #[arg(long, value_name = "FN:TYPE:CODE", action = clap::ArgAction::Append)]
+        expect_error: Vec<String>,
+        /// Replay every written artifact to verify determinism
+        #[arg(long)]
+        replay: bool,
+        /// Output format (pretty | json | jsonl)
+        #[arg(short, long, default_value = "pretty")]
+        format: String,
+    },
+    /// Replay a finding artifact against its WASM and verify it reproduces
+    Replay {
+        /// Path to the finding artifact (JSON)
+        #[arg(value_name = "ARTIFACT")]
+        artifact: String,
+        /// Path to the campaign WASM the artifact was produced from
+        #[arg(long, value_name = "WASM")]
+        wasm: String,
+    },
 }
 
 #[derive(Subcommand)]
@@ -1631,8 +1694,20 @@ struct ReleaseAssuranceReport {
     upgrade_safety: UpgradeResult,
     verification: VerifyResult,
     health: HealthResult,
+    /// Fuzz evidence attached from a completed campaign
+    /// (`--fuzz-evidence`); absent (and JSON-skipped) unless supplied.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    fuzz: Option<FuzzEvidenceResult>,
     release_status: String,
     reasons: Vec<String>,
+}
+
+/// Release-assurance section for a recorded fuzz campaign evidence file.
+#[derive(Debug, serde::Serialize)]
+struct FuzzEvidenceResult {
+    #[serde(flatten)]
+    check: RaCheck,
+    evidence: sdkt_fuzz::CampaignEvidence,
 }
 
 /// Deterministic status from an audit report:
@@ -1856,6 +1931,12 @@ fn apply_size_policy_to_assurance(
         report.upgrade_safety.check.status,
         report.verification.check.status,
         report.health.check.status,
+        // A recorded fuzz-evidence status must survive re-aggregation.
+        report
+            .fuzz
+            .as_ref()
+            .map(|f| f.check.status)
+            .unwrap_or(RaStatus::Pass),
     ];
     report.release_status = aggregate_release_status(&statuses);
     report.reasons.retain(|r| r != "Artifact: FAIL");
@@ -1872,6 +1953,9 @@ fn print_release_assurance_pretty(r: &ReleaseAssuranceReport) {
     println!("Upgrade Safety  {}", r.upgrade_safety.check.status);
     println!("Verification    {}", r.verification.check.status);
     println!("Contract Health {}", r.health.check.status);
+    if let Some(f) = &r.fuzz {
+        println!("Fuzz Evidence   {}", f.check.status);
+    }
     println!();
     println!("RELEASE STATUS  {}", r.release_status.to_uppercase());
     if !r.reasons.is_empty() {
@@ -1890,6 +1974,10 @@ fn print_release_assurance_pretty(r: &ReleaseAssuranceReport) {
 ///
 /// No mutation, signing, submission, TTL extend/restore, or filesystem writes
 /// are performed. The returned report is printed and exit-coded by the caller.
+//
+/// One parameter per `ReleaseAssurance` CLI flag; bundling would only relocate
+/// the clap surface into a throwaway struct.
+#[allow(clippy::too_many_arguments)]
 async fn run_release_assurance(
     client: &SorobanRpcClient,
     wasm_path: &str,
@@ -1898,6 +1986,7 @@ async fn run_release_assurance(
     disable: &[String],
     contract_id: Option<&str>,
     network: &str,
+    fuzz_evidence: Option<&str>,
 ) -> Result<ReleaseAssuranceReport, String> {
     // ---- 1. ARTIFACT (existing sdkt-wasm metadata engine, offline) ----
     let candidate_bytes = fs::read(wasm_path)
@@ -2021,6 +2110,14 @@ async fn run_release_assurance(
         },
     };
 
+    // ---- 6. FUZZ EVIDENCE (recorded, never executed here) ----
+    //
+    // `--fuzz-evidence` attaches the evidence JSON written by an already
+    // completed `sdkt fuzz` campaign. Release assurance does not run
+    // campaigns: it records what a completed one produced, and only
+    // `Classification::Finding` entries count as security evidence.
+    let (fuzz_evidence, fuzz_status) = read_fuzz_evidence(fuzz_evidence)?;
+
     let statuses = [
         artifact.check.status,
         security.check.status,
@@ -2028,7 +2125,15 @@ async fn run_release_assurance(
         verification_result.check.status,
         health_result.check.status,
     ];
-    let release_status = aggregate_release_status(&statuses);
+    let release_status = match fuzz_status {
+        // Fold the recorded evidence status in as one more section.
+        Some(fuzz) => {
+            let mut all = statuses.to_vec();
+            all.push(fuzz);
+            aggregate_release_status(&all)
+        }
+        None => aggregate_release_status(&statuses),
+    };
 
     let mut reasons = Vec::new();
     for (label, s) in [
@@ -2042,6 +2147,11 @@ async fn run_release_assurance(
             reasons.push(format!("{}: {}", label, s));
         }
     }
+    if let Some(s) = fuzz_status {
+        if matches!(s, RaStatus::Fail | RaStatus::Error | RaStatus::Review) {
+            reasons.push(format!("Fuzz Evidence: {s}"));
+        }
+    }
 
     Ok(ReleaseAssuranceReport {
         contract: contract_id.map(|c| c.to_string()),
@@ -2051,9 +2161,56 @@ async fn run_release_assurance(
         upgrade_safety: upgrade,
         verification: verification_result,
         health: health_result,
+        fuzz: fuzz_evidence,
         release_status,
         reasons,
     })
+}
+
+/// Read a fuzz evidence JSON file produced by a completed `sdkt fuzz`
+/// campaign.
+///
+/// Returns `(section, status)`: the section is `None` only when
+/// `--fuzz-evidence` was not supplied (existing releases with no fuzz
+/// section are unaffected), and the status folds into the aggregate. Only
+/// `Classification::Finding` entries are security evidence; a completed
+/// campaign with zero findings is a clean record and stays SKIPPED.
+fn read_fuzz_evidence(
+    path: Option<&str>,
+) -> Result<(Option<FuzzEvidenceResult>, Option<RaStatus>), String> {
+    let Some(path) = path else {
+        return Ok((None, None));
+    };
+    let file = std::fs::File::open(path)
+        .map_err(|e| format!("Failed to read fuzz evidence {path}: {e}"))?;
+    let evidence: sdkt_fuzz::CampaignEvidence =
+        serde_json::from_reader(std::io::BufReader::new(file))
+            .map_err(|e| format!("Failed to parse fuzz evidence {path}: {e}"))?;
+
+    let status = if !evidence.campaign_completed {
+        RaStatus::Error
+    } else if !evidence.findings.is_empty() {
+        RaStatus::Fail
+    } else {
+        // Completed with zero findings: a clean record, not "not executed".
+        RaStatus::Pass
+    };
+    let detail = format!(
+        "fuzz campaign: cases={} findings={} minimized={} artifacts={} replayed={} deterministic={}",
+        evidence.case_count,
+        evidence.findings.len(),
+        evidence.minimized_findings,
+        evidence.artifacts_available,
+        evidence.replay.len(),
+        evidence.deterministic,
+    );
+    Ok((
+        Some(FuzzEvidenceResult {
+            check: RaCheck { status, detail },
+            evidence,
+        }),
+        Some(status),
+    ))
 }
 
 /// ---- 2. SECURITY engine reuse ----
@@ -8897,6 +9054,7 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
         Commands::ReleaseAssurance {
             wasm,
             previous_wasm,
+            fuzz_evidence,
             audit,
             disable,
             contract,
@@ -8943,6 +9101,7 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
                 &disable,
                 contract.as_deref(),
                 &network_name,
+                fuzz_evidence.as_deref(),
             )
             .await
             {
@@ -8997,6 +9156,53 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
             };
             run_doctor(fmt);
         }
+        Commands::Fuzz(action) => match action {
+            FuzzAction::Campaign {
+                wasm,
+                seed,
+                cases,
+                function,
+                artifact_dir,
+                auth,
+                expect_success,
+                expect_error,
+                replay,
+                format,
+            } => {
+                match commands::fuzz::run(
+                    &wasm,
+                    seed,
+                    cases,
+                    function,
+                    artifact_dir,
+                    &auth,
+                    expect_success,
+                    expect_error,
+                    replay,
+                    &format,
+                ) {
+                    // Findings exist → exit 1 (the only exit code that means
+                    // "a declared rule was violated").
+                    Ok(true) => process::exit(1),
+                    Ok(false) => {}
+                    // Usage/input error → exit 2, distinct from findings.
+                    Err(e) => {
+                        eprintln!("Error: {e}");
+                        process::exit(2);
+                    }
+                }
+            }
+            FuzzAction::Replay { artifact, wasm } => {
+                match commands::fuzz::run_replay(&artifact, &wasm, "pretty") {
+                    Ok(true) => {}
+                    Ok(false) => process::exit(1),
+                    Err(e) => {
+                        eprintln!("Error: {e}");
+                        process::exit(2);
+                    }
+                }
+            }
+        },
         Commands::Generate(action) => match action {
             GenerateAction::Client {
                 wasm,
