@@ -19,7 +19,7 @@ path = "src/lib.rs"
 [dependencies]
 # The only crate in the workspace that may depend on the Soroban host engine.
 # Everything else treats execution as an untrusted, opaque dependency.
-soroban-env-host = "=28.0.2"
+soroban-env-host = "=29.0.0"
 
 # ContractSpec source of truth: the generator consumes sdkt-wasm's parsed
 # model. There is deliberately no second ContractSpec parser in this crate.
@@ -38,4 +38,4 @@ serde_json = "1.0"
 
 [dev-dependencies]
 serde_json = "1"
-soroban-env-host = "=28.0.2"
+soroban-env-host = "=29.0.0"
