@@ -218,7 +218,7 @@ jobs:
           TARGET: ${{ matrix.target }}
 
       - name: Upload artifact
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@v6
         with:
           name: sdkt-${{ matrix.target }}
           path: |

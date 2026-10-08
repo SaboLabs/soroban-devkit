@@ -28,7 +28,7 @@ jobs:
         persist-credentials: false
 
     - name: Set up Rust
-      uses: dtolnay/rust-toolchain@1.88.0
+      uses: dtolnay/rust-toolchain@1.120.0
       with:
         targets: wasm32-unknown-unknown
 
@@ -56,7 +56,7 @@ jobs:
         echo "PLAYGROUND_WASM_OUT=$PLAYGROUND_WASM_OUT" >> "$GITHUB_ENV"
 
     - name: Upload generated playground artifacts
-      uses: actions/upload-artifact@v4
+      uses: actions/upload-artifact@v6
       with:
         name: playground-wasm-generated
         path: ${{ env.PLAYGROUND_WASM_OUT }}
