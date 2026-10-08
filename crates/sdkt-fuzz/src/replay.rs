@@ -28,7 +28,7 @@ use crate::environment::Environment;
 use crate::executor::Executor;
 use crate::observation::Observation;
 use crate::oracle::{Classification, Oracle, ReasonCode};
-use crate::sequence::execute_sequence;
+use crate::sequence::execute_sequence_auth;
 
 /// Replay could not be carried out — invalid input, never a finding.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
@@ -168,37 +168,59 @@ pub fn replay(artifact: &FindingArtifact, wasm: &[u8]) -> Result<ReplayOutcome, 
     let executor =
         Executor::new(wasm, config).map_err(|e| ReplayError::Execution(e.to_string()))?;
 
-    // Auth entries: rebuilt from the artifact's declared mode. The root
-    // invocation is the artifact's first step (the campaign executes one
-    // call per case). Modes the public API cannot exercise faithfully are
-    // refused explicitly rather than approximated.
-    let auth_entries = if artifact.auth_mode == AuthMode::NoAuth.name() {
+    // Auth entries: rebuilt from the artifact's declared mode, one entry
+    // list per step — the same construction the campaign used
+    // (`auth_for_steps`: root invocation = each step's own call). Modes the
+    // public API cannot exercise faithfully are refused explicitly rather
+    // than approximated.
+    let auth_mode = AuthMode::from_name(&artifact.auth_mode).ok_or_else(|| {
+        ReplayError::InvalidArtifact(format!("unknown auth_mode `{}`", artifact.auth_mode))
+    })?;
+    let auth_per_step: Vec<Vec<Vec<u8>>> = if auth_mode == AuthMode::NoAuth {
         Vec::new()
     } else {
-        let mode = AuthMode::from_name(&artifact.auth_mode).ok_or_else(|| {
-            ReplayError::InvalidArtifact(format!("unknown auth_mode `{}`", artifact.auth_mode))
-        })?;
-        let contract = executor
-            .case(&artifact.case_id, steps[0].clone(), Vec::new())
-            .contract_address();
-        crate::auth::invoke_auth_entries(mode, &contract, &steps[0])
-            .map_err(|e| ReplayError::Execution(e.to_string()))?
+        steps
+            .iter()
+            .enumerate()
+            .map(|(i, call)| {
+                let contract = executor
+                    .case(
+                        format!("{}/step{i}", artifact.case_id),
+                        call.clone(),
+                        Vec::new(),
+                    )
+                    .contract_address();
+                crate::auth::invoke_auth_entries(auth_mode, &contract, call)
+                    .map_err(|e| ReplayError::Execution(e.to_string()))
+            })
+            .collect::<Result<Vec<_>, _>>()?
     };
 
     // Execute exactly what the artifact describes, through the public path.
+    // Multi-step uses the auth-aware sequence path so Correct/WrongAuth
+    // artifacts replay under the same authorization posture as the campaign
+    // that produced them (single-step keeps its established behavior).
     let observation: Observation = if steps.len() > 1 {
-        execute_sequence(&executor, &[], &environment, &steps, &artifact.case_id)
-            .map_err(|e| ReplayError::Execution(e.to_string()))?
-            .final_observation
+        execute_sequence_auth(
+            &executor,
+            &[],
+            &environment,
+            &steps,
+            &artifact.case_id,
+            &auth_per_step,
+        )
+        .map_err(|e| ReplayError::Execution(e.to_string()))?
+        .final_observation
     } else {
         let case = executor.case(&artifact.case_id, steps[0].clone(), Vec::new());
+        let entries = auth_per_step.first().map(Vec::as_slice).unwrap_or(&[]);
         executor
-            .execute_with_auth(&case, &environment, &auth_entries)
+            .execute_with_auth(&case, &environment, entries)
             .map_err(|e| ReplayError::Execution(e.to_string()))?
     };
 
-    // Re-apply the recorded oracle rules.
-    let oracle = Oracle::new(artifact.expected());
+    // Re-apply the recorded oracle rules (with the artifact's auth posture).
+    let oracle = Oracle::with_auth_mode(artifact.expected(), auth_mode);
     let actual = oracle.classify(&observation);
     let observation_hash = observation_hash(&observation);
     let artifact_hash = artifact.canonical_hash();

@@ -32,9 +32,10 @@ use crate::error::FuzzError;
 use soroban_env_host::xdr::{ContractExecutable, ContractIdPreimage, Limits};
 
 /// How a case authenticates its invocation.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum AuthMode {
     /// No authorization entries; the host enforces against an empty set.
+    #[default]
     NoAuth,
     /// Valid source-account authorization for this exact call.
     CorrectAuth,

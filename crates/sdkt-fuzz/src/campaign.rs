@@ -285,7 +285,7 @@ fn run_campaign_inner(
 
         // --- Expectation & oracle --------------------------------------
         let expected = expectations.get(&function).cloned().unwrap_or_default();
-        let oracle = Oracle::new(expected.clone());
+        let oracle = Oracle::with_auth_mode(expected.clone(), input.auth_mode);
 
         // --- Authorization entries for this case -----------------------
         let auth_per_step = auth_for_steps(&executor, &steps, input.auth_mode, &case_id)?;

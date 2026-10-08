@@ -114,9 +114,15 @@ pub enum Classification {
 }
 
 /// The oracle: classifies an [`Observation`] against a declared [`Expected`].
+///
+/// `auth_mode` is the authorization posture the classified execution ran
+/// under. It is only consulted by the AUTHORIZATION_BYPASS rule (an
+/// authorized success is not a bypass); every other rule is mode-independent.
+/// The default ([`AuthMode::NoAuth`]) preserves the historical semantics.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct Oracle {
     pub expected: Expected,
+    pub auth_mode: crate::auth::AuthMode,
 }
 
 /// Budget-class host error: the host's Budget error type.
@@ -125,8 +131,20 @@ pub(crate) fn is_budget_error(error_type: &str) -> bool {
 }
 
 impl Oracle {
+    /// Oracle for an execution that ran without authorization entries.
     pub fn new(expected: Expected) -> Self {
-        Self { expected }
+        Self {
+            expected,
+            auth_mode: crate::auth::AuthMode::NoAuth,
+        }
+    }
+
+    /// Oracle for an execution that ran under an explicit [`AuthMode`].
+    pub fn with_auth_mode(expected: Expected, auth_mode: crate::auth::AuthMode) -> Self {
+        Self {
+            expected,
+            auth_mode,
+        }
     }
 
     /// Classify one observation. Deterministic pure function.
@@ -181,10 +199,12 @@ impl Oracle {
         }
 
         // --- Authorization bypass ------------------------------------
-        // Only when: declared auth_required AND host enforced AND success.
-        // (This oracle instance classifies a NoAuth execution; the campaign
-        // wires Correct/WrongAuth runs through ExpectedError declarations.)
-        if self.expected.auth_required && obs.is_success() {
+        // Declared auth_required + success + the case was NOT authorized with
+        // a matching credential.
+        if self.expected.auth_required
+            && obs.is_success()
+            && self.auth_mode != crate::auth::AuthMode::CorrectAuth
+        {
             return Classification::Finding(ReasonCode::AuthorizationBypass);
         }
 
