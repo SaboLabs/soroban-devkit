@@ -1961,6 +1961,10 @@ fn print_release_assurance_pretty(r: &ReleaseAssuranceReport) {
 ///
 /// No mutation, signing, submission, TTL extend/restore, or filesystem writes
 /// are performed. The returned report is printed and exit-coded by the caller.
+//
+/// One parameter per `ReleaseAssurance` CLI flag; bundling would only relocate
+/// the clap surface into a throwaway struct.
+#[allow(clippy::too_many_arguments)]
 async fn run_release_assurance(
     client: &SorobanRpcClient,
     wasm_path: &str,

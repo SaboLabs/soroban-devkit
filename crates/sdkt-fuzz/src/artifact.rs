@@ -590,18 +590,18 @@ pub(crate) fn unhex_xdr(hex_str: &str) -> Option<soroban_env_host::xdr::ScVal> {
 }
 
 pub(crate) fn unhex(s: &str) -> Option<Vec<u8>> {
-    if s.len() % 2 != 0 {
+    if !s.len().is_multiple_of(2) {
         return None;
     }
-    let mut out = Vec::with_capacity(s.len() / 2);
-    let mut chunks = s.as_bytes().chunks_exact(2);
-    for pair in &mut chunks {
+    let (pairs, remainder) = s.as_bytes().as_chunks::<2>();
+    if !remainder.is_empty() {
+        return None;
+    }
+    let mut out = Vec::with_capacity(pairs.len());
+    for pair in pairs {
         let hi = hex_digit(pair[0])?;
         let lo = hex_digit(pair[1])?;
         out.push((hi << 4) | lo);
-    }
-    if !chunks.remainder().is_empty() {
-        return None;
     }
     Some(out)
 }

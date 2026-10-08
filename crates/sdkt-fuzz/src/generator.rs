@@ -146,13 +146,13 @@ pub fn derive_key(seed: &[u8; 32], labels: &[&str]) -> Vec<u8> {
     h.update(seed);
     for l in labels {
         h.update(l.as_bytes());
-        h.update(&[0xff]); // label separator: ("ab","c") != ("a","bc")
+        h.update([0xff]); // label separator: ("ab","c") != ("a","bc")
     }
     h.finalize().to_vec()
 }
 
 /// The parameter types a [`ContractFunction`] accepts, in order.
-pub fn function_param_types<'a>(f: &'a ContractFunction) -> Vec<&'a ContractType> {
+pub fn function_param_types(f: &ContractFunction) -> Vec<&ContractType> {
     f.parameters.iter().map(|p| &p.type_).collect()
 }
 

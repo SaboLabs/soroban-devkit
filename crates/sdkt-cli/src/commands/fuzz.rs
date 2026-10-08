@@ -74,6 +74,10 @@ pub fn options_from(
 
 /// Run one campaign and render it. `Ok(true)` = findings produced, `Ok(false)`
 /// = clean run; `Err(_)` = usage/input error.
+//
+/// The argument list mirrors clap's campaign flag surface one-to-one; the
+/// engine already bundles these into `FuzzRunOptions` via `options_from`.
+#[allow(clippy::too_many_arguments)]
 pub fn run(
     wasm: &str,
     seed: u64,

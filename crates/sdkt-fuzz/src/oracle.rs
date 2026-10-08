@@ -52,20 +52,15 @@ pub struct Expected {
 }
 
 /// Declared call outcome.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub enum ExpectedBehavior {
     /// Must succeed; optionally the return value must equal this.
     Success { expect_return: Option<ScVal> },
     /// Must fail with exactly this (error_type, code) pair.
     Error { error_type: String, code: u32 },
     /// Outcome unchecked.
+    #[default]
     Any,
-}
-
-impl Default for ExpectedBehavior {
-    fn default() -> Self {
-        ExpectedBehavior::Any
-    }
 }
 
 /// Reason a finding was raised. Stable names; the *absence* of a reason for
@@ -173,13 +168,13 @@ impl Oracle {
                 if matches!(self.expected.behavior, ExpectedBehavior::Any) {
                     // Outcome unchecked, but state/events/auth checks below
                     // still apply when declared.
-                } else if let ExpectedBehavior::Success { expect_return } = &self.expected.behavior
+                } else if let ExpectedBehavior::Success {
+                    expect_return: Some(want),
+                } = &self.expected.behavior
                 {
-                    if let Some(want) = expect_return {
-                        let got = obs.return_value().cloned().unwrap_or(ScVal::Void);
-                        if got != *want {
-                            return Classification::Finding(ReasonCode::ReturnMismatch);
-                        }
+                    let got = obs.return_value().cloned().unwrap_or(ScVal::Void);
+                    if got != *want {
+                        return Classification::Finding(ReasonCode::ReturnMismatch);
                     }
                 }
             }
