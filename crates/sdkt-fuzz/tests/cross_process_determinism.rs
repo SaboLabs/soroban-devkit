@@ -7,7 +7,6 @@
 use std::process::Command;
 
 use sdkt_fuzz::{Environment, Executor, FunctionCall, GenerationCaps};
-use soroban_env_host::xdr::ScVal;
 
 const COUNTER_WASM: &[u8] = include_bytes!("../../../crates/sdkt-cli/tests/fixtures/us_new.wasm");
 const AUTH_WASM: &[u8] = include_bytes!("fixtures/auth_probe.wasm");

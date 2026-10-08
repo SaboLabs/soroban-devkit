@@ -237,7 +237,7 @@ fn evidence_reports_a_completed_campaign() {
     );
     assert!(!ev.artifacts_available);
     assert!(ev.deterministic);
-    assert!(ev.all_reproduced() == false, "nothing replayed yet");
+    assert!(!ev.all_reproduced(), "nothing replayed yet");
 
     // With replayed artifacts.
     let mut replay = BTreeMap::new();

@@ -424,8 +424,10 @@ fn invoke_auth_entries_for(
 }
 
 fn default_config(input: &CampaignInput) -> Result<crate::config::FuzzConfig, FuzzError> {
-    let mut cfg = crate::config::FuzzConfig::default();
-    cfg.seed = input.seed;
+    let cfg = crate::config::FuzzConfig {
+        seed: input.seed,
+        ..Default::default()
+    };
     input.environment.validate(&cfg)?;
     Ok(cfg)
 }

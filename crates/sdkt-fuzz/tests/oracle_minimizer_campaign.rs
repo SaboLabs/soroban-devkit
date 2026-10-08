@@ -227,8 +227,10 @@ fn oracle_state_and_event_mismatch() {
 #[test]
 fn oracle_resource_limit_needs_the_explicit_rule() {
     let exec = counter();
-    let mut env = Environment::default();
-    env.budget = sdkt_fuzz::BudgetPlan::Capped { cpu: 1, mem: 1 };
+    let env = Environment {
+        budget: sdkt_fuzz::BudgetPlan::Capped { cpu: 1, mem: 1 },
+        ..Default::default()
+    };
     let obs = exec
         .execute_with(
             &exec.case("q", FunctionCall::new("hello", vec![]), vec![]),

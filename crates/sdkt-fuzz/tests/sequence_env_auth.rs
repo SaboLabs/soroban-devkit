@@ -215,8 +215,10 @@ fn environment_is_deterministic_and_separable() {
 #[test]
 fn budget_exhaustion_is_an_outcome_not_a_verdict() {
     let exec = counter();
-    let mut env = Environment::default();
-    env.budget = BudgetPlan::Capped { cpu: 1, mem: 1 };
+    let env = Environment {
+        budget: BudgetPlan::Capped { cpu: 1, mem: 1 },
+        ..Default::default()
+    };
 
     let obs = exec
         .execute_with(

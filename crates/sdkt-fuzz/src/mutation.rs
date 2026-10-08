@@ -83,7 +83,7 @@ impl Operator {
     fn for_type(t: &ContractType) -> Vec<Operator> {
         match (t.kind.as_str(), t.name.as_str()) {
             ("primitive", "bool") => vec![Operator::BoolTrue, Operator::BoolFalse],
-            ("primitive", n) if matches!(n, "u32" | "i32" | "u64" | "i64" | "u128" | "i128") => {
+            ("primitive", "u32" | "i32" | "u64" | "i64" | "u128" | "i128") => {
                 vec![
                     Operator::Zero,
                     Operator::One,
