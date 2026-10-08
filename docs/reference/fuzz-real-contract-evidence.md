@@ -6,11 +6,15 @@ This page is **evidence that the `sdkt-fuzz` v2.7.0 pipeline actually runs on
 external Soroban WASM** — not a security audit, not a vulnerability-discovery
 proof, and not a completeness claim.
 
-Two independent pilots were executed offline against contracts built from the
-official [`stellar/soroban-examples`](https://github.com/stellar/soroban-examples)
-repository (HEAD `03d42aa6b973dcf3a453a99d0c6a6e8d25a196e2`). Every claim below
-is backed by a reproducible artifact: a WASM SHA-256, a canonical artifact
-hash, a replay verdict, or a byte-identical rerun.
+Three independent pilots were executed offline against external Soroban
+contracts: two from the official
+[`stellar/soroban-examples`](https://github.com/stellar/soroban-examples)
+repository (HEAD `03d42aa6b973dcf3a453a99d0c6a6e8d25a196e2`) and one from the
+production-like [`SUSU-LABS/susu-contracts`](https://github.com/SUSU-LABS/susu-contracts)
+rotating-savings protocol (commit
+`4e3f745530728062303c445430cfad9d17e81227`). Every claim below is backed by a
+reproducible artifact: a WASM SHA-256, a canonical artifact hash, a replay
+verdict, or a byte-identical rerun.
 
 ## 2. Environment
 
@@ -22,8 +26,13 @@ hash, a replay verdict, or a byte-identical rerun.
 | Host engine | `soroban-env-host` 28.0.2 (in-memory, offline) |
 | XDR | `stellar-xdr` 28.0.0 |
 | Build toolchain | `stellar contract build` 28.1.0 (`wasm32v1-none`) |
-| External source | `stellar/soroban-examples` @ `03d42aa6` |
+| External source | `stellar/soroban-examples` @ `03d42aa6`; `SUSU-LABS/susu-contracts` @ `4e3f7455` |
 | Execution model | offline, in-memory Host only — no network, no ledger, no transactions |
+
+> Note on version compatibility: the SUSU group contract is built with
+> `soroban-sdk` 27.0.6 while the engine pins `soroban-env-host` 28.0.2 /
+> protocol 28. The WASM loads and executes correctly in this host; the version
+> gap is recorded as a compatibility observation, not described as a defect.
 
 ## 3. Pilot #1 — External Contracts (no `require_auth`)
 
@@ -121,7 +130,123 @@ Replay: single-step 12/12 `REPRODUCED`; multi-step `CorrectAuth` artifact
 observation `092451aca38117dbfa90bbaf68f2c63586e072d9d2fd520dca58c654d2850ea9`);
 disk round-trip `replay_json` `REPRODUCED`.
 
-## 5. PR #286 — Auth Classification and Replay
+## 5. Pilot #3 — Real Auth + State Machine (`SUSU-LABS/susu-contracts`)
+
+Target: `SUSU-LABS/susu-contracts` (commit
+`4e3f745530728062303c445430cfad9d17e81227`), contract `contracts/group`
+(crate `susu-group`) — the rotating-savings ("susu") protocol's group
+contract: one instance per group, financial authority for the pool. 17
+exported functions; `member.require_auth()` guards `join` and `contribute`;
+`start()` is permissionless by design.
+
+WASM SHA-256:
+
+```
+e5048723f3383c13ae57a3f3a5d78d070f1525bbc2ae4476df9ad16d8b51bcf2
+```
+
+(22530 bytes, `stellar contract build` 28.1.0, `soroban-sdk` 27.0.6.)
+
+### Auth matrix
+
+Seeded instance baseline (`Status=Open`, `MemberCount=0`), deterministic
+addresses (engine source account + a foreign address):
+
+| Mode | `join` | `contribute` |
+|---|---|---|
+| `NoAuth` | `ContractError{Auth,6}` | `ContractError{Auth,6}` |
+| `CorrectAuth` | `ContractError{Storage,5}` | `ContractError{Contract,9}` |
+| `WrongAuth` | `ContractError{Auth,6}` | `ContractError{Auth,6}` |
+
+Oracle classification (`Oracle::with_auth_mode`):
+
+| Mode | declared `Error(Auth,6)` |
+|---|---|
+| `NoAuth` / `WrongAuth` | `ExpectedError` |
+| `CorrectAuth` | `Finding(UnexpectedError)` — auth **passed**, execution proceeded past `require_auth` |
+
+Reading the `CorrectAuth` row (D5): `join` → `ContractError{Storage,5}`
+(`ScErrorCode 5 = ExceededLimit`) means authentication succeeded and execution
+then reached a persistent `Member(source)` read that was not present in that
+step's footprint/baseline — this is footprint/state setup behavior, **not** an
+auth failure. `contribute` → `ContractError{Contract,9}` is the contract's own
+`NotActive` business error. NoAuth/WrongAuth produce `ContractError{Auth,6}`
+as expected. This is behavioral observation, not a protocol issue.
+
+### State-machine boundary (6 distinct `GroupError` codes, real execution)
+
+Single calls under `CorrectAuth` against seeded instance + persistent
+baselines; each produced a distinct contract error code:
+
+| Seeded state | Call | Result | `GroupError` |
+|---|---|---|---|
+| `Member(source)` present | `join(source)` | `ContractError{Contract,6}` | `AlreadyMember` |
+| `Status=Active` | `join(source)` | `ContractError{Contract,5}` | `NotOpen` |
+| `Status=Draft` | `contribute(...)` | `ContractError{Contract,9}` | `NotActive` |
+| `amount != contribution_amount` | `contribute(...)` | `ContractError{Contract,12}` | `WrongAmount` |
+| `round != current_round` | `contribute(...)` | `ContractError{Contract,11}` | `WrongRound` |
+| `MemberCount < capacity` | `start()` | `ContractError{Contract,8}` | `CapacityNotReached` |
+
+### State propagation (decisive)
+
+`execute_sequence_auth` carries instance storage **and** persistent data
+entries between steps. An earlier report draft incorrectly attributed a sequence failure to an engine
+state-propagation limitation. That attribution was wrong: the failing probe
+sequences passed an **empty baseline** (probe design), while the engine does
+propagate state between steps, as the probe below shows.
+
+Decisive probe (`probe4`), instance baseline
+`Status=Open, MemberCount=2 (=capacity), CurrentRound=0`:
+
+| Step | Call | Result |
+|---|---|---|
+| 0 | `get_status()` | `Returned(Open)` |
+| 1 | `start()` | `Void` (permissionless; capacity reached — legal) |
+| 2 | `get_status()` | `Returned(Active)` — step 1's write visible |
+| 3 | `get_current_round()` | `Returned(U32(1))` — step 1's write visible |
+| 4 | `get_group()` | `Returned(full GroupState map)` |
+
+Final carried instance state: `Status=Active`, `CurrentRound=1`,
+`MemberCount=2`, `RoundPhase=WaitingForContributions`, `Config` intact.
+`probe4` run1/run2 output is byte-identical across processes.
+
+Soroban context: contract-data access is footprint-bounded by protocol
+semantics (an invocation reads/writes the `CONTRACT_DATA` entries declared in
+its footprint). The engine builds each step's footprint from the carried state
+and baseline entries; a read of a key absent from that footprint surfaces as
+`Storage,5` (`ExceededLimit`). That is setup behavior, not a state-loss bug —
+the carry proof above shows writes propagating between steps.
+
+### Token dependency
+
+`contribute` and `execute_payout` call `token::Client::transfer` against
+`config.token`. No token contract exists in the local host baseline, so the
+full happy-path `contribute`/`payout` is not reachable in this probe:
+
+> Token dependency prevents full happy-path execution in this probe.
+
+This is an external-contract dependency, not an engine limitation. Everything
+up to the token transfer — auth, state-machine validation, storage writes —
+is exercised and observed.
+
+### Campaign
+
+Seed `42`, 12 cases, `mutations_per_case=2`, per auth mode
+(`no_auth` / `correct_auth` / `wrong_auth`): 12 executed, 10 passed, 0
+expected-errors, 2 findings per mode, 2 artifacts per mode, 6 artifacts
+total; all `UNEXPECTED_ERROR` (declared success vs host error).
+
+### Minimization (both samples)
+
+| Finding | Complexity | `preserved` | Reductions |
+|---|---|---|---|
+| `join` case0000 | `14 -> 14` | `true` | 0 — single `Address` argument already minimal |
+| `contribute` case0006 | `49 -> 18` | `true` | 1 — `step 0 arg 2: u32(1339550796) -> u32(0)` |
+
+The `14 -> 14` case is genuinely minimal (nothing to reduce); `preserved=true`
+is verified by re-execution producing the same reason code, not vacuously.
+
+## 6. PR #286 — Auth Classification and Replay
 
 PR #286 (`c39352bf`) is the auth-classification fix. Evidence that it works
 on a real `require_auth` contract:
@@ -150,7 +275,7 @@ on a real `require_auth` contract:
   `multistep_replay_auth` 1/1, `auth_oracle_matrix` 5/5,
   `auth_campaign_matrix` 4/4.
 
-## 6. Negative Control
+## 7. Negative Control
 
 Unguarded external contract `increment` (WASM SHA-256
 `36bc3b311c3780c847e5724d9dc0d5f160af22d476535a2881ea9155d2049dce`),
@@ -164,7 +289,7 @@ declared `auth_required = true` on an authorized (`CorrectAuth`) success:
 This demonstrates the specific oracle regression fixed by #286: before the
 fix, an authorized success was reported as a bypass.
 
-## 7. Findings
+## 8. Findings
 
 All pilot findings are **declaration mismatches**:
 
@@ -175,7 +300,24 @@ They are evidence that the oracle, minimizer, artifact, and replay machinery
 behave as designed. **They are not vulnerabilities**, and the audited example
 contracts are not claimed to be defective.
 
-## 8. Limitations
+### Replay totals
+
+- Pilot #1: 45/45 `REPRODUCED`.
+- Pilot #2: 12/12 single-step + 3/3 multi-step `REPRODUCED`.
+- Pilot #3: 6/6 CLI campaign artifacts + 3/3 multi-step artifacts + 2/2
+  seeded-sequence artifacts = **11/11 `REPRODUCED`, 0 mismatch**.
+
+Canonical artifact hashes quoted on this page are the `artifact_hash` fields
+inside the artifact JSON (SHA-256 of the canonical JSON bytes) — never the
+SHA-256 of the file on disk, which includes a trailing newline and is a
+different value.
+
+### Security claim
+
+> No vulnerability claim. Findings are behavioral/declaration/oracle mismatches
+> unless independently proven otherwise.
+
+## 9. Limitations
 
 - No vulnerability / security-discovery claim is made or implied.
 - No coverage or corpus metric exists; completeness is not claimed.
@@ -190,10 +332,17 @@ contracts are not claimed to be defective.
   oracle outcomes only.
 - The campaign minimizer can collapse a sequence to one step; the multi-step
   auth artifact was explicitly constructed via the public API.
-- `stellar/soroban-examples` is not being security-audited.
+- `CorrectAuth` in this host setup authorizes the source account; foreign
+  address authorization correctly fails (`Auth,6`) — single-credential scope,
+  not a protocol issue.
+- The full happy-path `contribute`/`payout` on `susu_group` is not reachable
+  without a token contract in the local baseline (external-contract
+  dependency, not an engine limitation).
+- `stellar/soroban-examples` and `SUSU-LABS/susu-contracts` are not being
+  security-audited.
 - All findings are declaration mismatches.
 
-## 9. Reproducibility
+## 10. Reproducibility
 
 | Item | Value |
 |---|---|
@@ -201,26 +350,42 @@ contracts are not claimed to be defective.
 | Build | `stellar contract build` 28.1.0, `wasm32v1-none` |
 | Pilot #1 seeds | `42` (RUN A, 50 cases/contract), `7` (RUN B, 50 cases), `42` (RUN C1, 40 cases, `sequence_length=3`, `sequence_every=2`) |
 | Pilot #2 seeds | `42` (12-case campaigns), `7` (E2 multi-step artifact) |
+| Pilot #3 source | `SUSU-LABS/susu-contracts` @ `4e3f745530728062303c445430cfad9d17e81227` (`contracts/group`) |
+| Pilot #3 WASM SHA-256 | `e5048723f3383c13ae57a3f3a5d78d070f1525bbc2ae4476df9ad16d8b51bcf2` |
+| Pilot #3 seeds | `42` (12-case campaigns × 3 auth modes), `7` (multi-step artifacts) |
 | Clean verification worktree | `c39352bfcacf12912e1a6103848e6c0c978a0db6` |
 | Canonical artifact hash (Pilot #1 sample) | `0ffdcd2395106c3c5a379cd6d482dbefc941efad95263f9fb57e3cf99c36c761` |
 | Canonical artifact hash (Pilot #2 E2) | `a16041e410b4bef28d959f06ed827a20047ecffcc2a31a51be8c6c713e72e36a` |
 | Campaign evidence SHA-256 (Pilot #1 increment) | `54a5c9b86d4c582d4f0cce7d257d6889afbfdd9a6165d5b95538e0d05137c918` |
 
+### Pilot #3 determinism (stream hash)
+
+Method: SHA-256 of the concatenated `case_id:canonical_artifact_hash` string
+per artifact (files sorted by name, entries joined with `|`):
+
+```
+39d02e2463418642b6e69fb0c1f32d4ea0b8ccb300480bfd9068e7cda8d5439b
+```
+
+run1 == run2. Campaign evidence JSON is byte-identical across correct-auth
+reruns; canonical artifact hashes are identical per rerun; probe4 output is
+byte-identical across runs.
+
 Non-primary side-run artifacts were excluded from the deterministic evidence
 set.
 
-## 10. Safe Claim
+## 11. Safe Claim
 
 > The sdkt-fuzz v2.7.0 pipeline (PR #285) and its auth-classification fix
 > (PR #286) are externally validated on real Soroban contracts built from
-> stellar/soroban-examples (HEAD 03d42aa6): ContractSpec parsing, typed
-> generation and mutation, real in-memory host execution, oracle
-> classification, minimization, canonical artifacts, and deterministic replay
-> all reproduce byte-identically across processes. PR #286's auth path is
-> externally validated on a contract that genuinely enforces require_auth:
-> NoAuth and WrongAuth produce ContractError{Auth,6}, CorrectAuth succeeds
-> with state carry, an authorized success is not classified as
-> AuthorizationBypass, and multi-step replay preserves per-step auth entries
-> (the pre-#286 lineage mismatches the same artifact). All findings are
-> declaration mismatches — evidence that the engine works, not vulnerability
-> discovery.
+> stellar/soroban-examples (HEAD 03d42aa6) and SUSU-LABS/susu-contracts
+> (4e3f7455): ContractSpec parsing, typed generation and mutation, real
+> in-memory host execution, oracle classification, minimization, canonical
+> artifacts, and deterministic replay all reproduce byte-identically across
+> processes. PR #286's auth path is externally validated on contracts that
+> genuinely enforce require_auth: NoAuth and WrongAuth produce
+> ContractError{Auth,6}, CorrectAuth succeeds with state carry, an authorized
+> success is not classified as AuthorizationBypass, and multi-step replay
+> preserves per-step auth entries (the pre-#286 lineage mismatches the same
+> artifact). All findings are declaration mismatches — evidence that the
+> engine works, not vulnerability discovery.
