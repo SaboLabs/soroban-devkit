@@ -329,9 +329,15 @@ pub fn build_capture(
     }
 
     // 3. Per-entry liveness and stability.
+    //
+    // `liveUntilLedgerSeq == 0` (or None) means the RPC did not report a TTL
+    // for the entry — permanent entries (ContractCode, Account) and entries
+    // whose TTL is not tracked carry no live-until marker. Absence of a TTL
+    // is not an expiry: only a *positive* live-until that has already passed
+    // proves the entry was not live at the simulation ledger.
     for e in &entries {
         if let Some(live_until) = e.live_until_ledger_seq {
-            if live_until < simulation_latest_ledger {
+            if live_until != 0 && live_until < simulation_latest_ledger {
                 return StateCaptureOutcome::Blocked {
                     reason: StateUnverified::EntryNotLive {
                         key_b64: e.key_b64.clone(),
@@ -442,6 +448,17 @@ pub fn encode_entry(entry: &LedgerEntry) -> Result<String, String> {
     let mut buf = Vec::new();
     let mut l = stellar_xdr::Limited::new(&mut buf, stellar_xdr::Limits::none());
     entry.write_xdr(&mut l).map_err(|e| e.to_string())?;
+    Ok(base64::engine::general_purpose::STANDARD.encode(&buf))
+}
+
+/// Canonical base64 XDR for a `LedgerEntryData` union — the shape
+/// `getLedgerEntries` returns in its `xdr` field (the sequence and ext fields
+/// arrive separately as `lastModifiedLedgerSeq` / `liveUntilLedgerSeq`).
+pub fn encode_entry_data(data: &stellar_xdr::LedgerEntryData) -> Result<String, String> {
+    use base64::Engine;
+    let mut buf = Vec::new();
+    let mut l = stellar_xdr::Limited::new(&mut buf, stellar_xdr::Limits::none());
+    data.write_xdr(&mut l).map_err(|e| e.to_string())?;
     Ok(base64::engine::general_purpose::STANDARD.encode(&buf))
 }
 
@@ -559,6 +576,23 @@ mod tests {
         assert_eq!(
             out.block_reason().map(|r| r.category()),
             Some("entry_not_live")
+        );
+    }
+
+    /// Regression for the live experiment: the RPC reports
+    /// `liveUntilLedgerSeq = 0` for entries without a tracked TTL
+    /// (permanent entries like ContractCode, and temporary entries the node
+    /// does not track). Absence of a TTL is not an expiry — a zero
+    /// live-until must not block a capture whose other conditions hold.
+    #[test]
+    fn zero_live_until_is_not_an_expiry() {
+        let keys = vec![key_b64(6)];
+        let raw = vec![raw_present(&keys[0], 100, Some(0))];
+        let out = build_capture(&keys, &raw, 5_000, 5_000);
+        assert!(
+            !out.is_blocked(),
+            "liveUntil=0 must not block: {:?}",
+            out.block_reason()
         );
     }
 

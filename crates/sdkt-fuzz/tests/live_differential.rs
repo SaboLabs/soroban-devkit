@@ -1151,3 +1151,48 @@ fn profile_for_test() -> NetworkProfile {
         cost_params_observed_at: Some(ledger),
     })
 }
+
+/// Regression for the live state-matched experiment: `getLedgerEntries`
+/// returns the **LedgerEntryData** value for each key, not a full
+/// `LedgerEntry` — the key, `lastModifiedLedgerSeq` and `liveUntilLedgerSeq`
+/// arrive as separate response fields. Decoding the `xdr` field as a full
+/// `LedgerEntry` fails ("xdr value invalid"); the workspace helper for the
+/// actual shape is `sdkt_rpc::network_capture::decode_ledger_entry_data_b64`,
+/// which is what the capture path must use.
+///
+/// Note the two shapes are genuinely different: `stateChanges.before/after`
+/// carry a full `LedgerEntry` (they decode fine as one), while
+/// `getLedgerEntries.xdr` carries only the `LedgerEntryData` union. The test
+/// pins that distinction so a future change cannot conflate them.
+#[test]
+fn get_ledger_entries_payload_is_entry_data_not_full_entry() {
+    // stateChanges carries full LedgerEntry values — they decode as one.
+    let after = fixture_state_changes_full()
+        .into_iter()
+        .find(|(_, _, _, after)| after.is_some())
+        .expect("fixture has an after value")
+        .3
+        .unwrap();
+    assert!(
+        sdkt_fuzz::state_capture::decode_entry(&after).is_ok(),
+        "stateChanges values are full LedgerEntry payloads"
+    );
+
+    // The entries endpoint's `xdr` field is the LedgerEntryData union only:
+    // the same value without the seq/ext wrapper. Re-encoding just the data
+    // union and decoding it with the entries-endpoint helper is the shape
+    // the capture path uses.
+    let entry = sdkt_fuzz::state_capture::decode_entry(&after).expect("decodes");
+    let data_b64 = sdkt_fuzz::state_capture::encode_entry_data(&entry.data)
+        .expect("LedgerEntryData re-encodes");
+    let data = sdkt_rpc::network_capture::decode_ledger_entry_data_b64(&data_b64)
+        .expect("LedgerEntryData decodes");
+    assert!(matches!(
+        data,
+        stellar_xdr::LedgerEntryData::ContractData(_)
+    ));
+
+    // And the full-entry decoder rejects the data-only payload: the shapes
+    // are not interchangeable.
+    assert!(sdkt_fuzz::state_capture::decode_entry(&data_b64).is_err());
+}
