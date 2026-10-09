@@ -212,16 +212,27 @@ fn build_local_case(exec: &Executor, function: &str) -> sdkt_fuzz::FuzzCase {
     )
 }
 
+/// The local-side production environment for the differential run.
+///
+/// Both the differential runner ([`local_run`]) and the regression test build
+/// their environment through this helper, so they cannot drift apart: if the
+/// runner ever seeds a ledger into the local environment, the regression test
+/// runs under the same seeded ledger and its empty-baseline assertions catch
+/// it directly.
+fn build_local_environment(profile: &NetworkProfile) -> Environment {
+    Environment {
+        ledger: Default::default(),
+        budget: network_faithful_plan(profile.clone()),
+    }
+}
+
 /// The local side: run the contract through the pinned host under the live
-/// profile's budget, via [`build_local_case`].
+/// profile's budget, via [`build_local_case`] and [`build_local_environment`].
 fn local_run(profile: &NetworkProfile, function: &str) -> (LocalExecutionMetrics, String) {
     let wasm = sdkt_xdr::extract_wasm_bytecode_from_live_ledger_entry(TESTNET_CODE_ENTRY)
         .expect("fixture decodes to contract WASM");
     let exec = Executor::new(&wasm, Default::default()).expect("executor builds");
-    let env = Environment {
-        ledger: Default::default(),
-        budget: network_faithful_plan(profile.clone()),
-    };
+    let env = build_local_environment(profile);
     let obs = exec
         .execute_with(&build_local_case(&exec, function), &env)
         .expect("local execution");
@@ -732,11 +743,13 @@ async fn bad_source_address_is_an_envelope_failure_blocker() {
 /// storage reproduced from the network.
 ///
 /// This test exercises the PRODUCTION path, not a duplicate: it calls
-/// [`build_local_case`] — the same helper `local_run` uses — and asserts the
-/// case it returns carries no baseline storage. The property is therefore
-/// pinned at the point where the baseline is actually chosen, so a future
-/// change that seeds storage into the local run fails here rather than
-/// silently turning the differential into a state-matched comparison.
+/// [`build_local_case`] and [`build_local_environment`] — the same helpers
+/// `local_run` uses — and asserts the case and environment they return carry
+/// no baseline storage. The property is therefore pinned at the point where
+/// the baseline is actually chosen, so a future change that seeds storage
+/// into the local run (through the case OR through the environment) fails
+/// here rather than silently turning the differential into a state-matched
+/// comparison.
 #[tokio::test]
 async fn local_execution_uses_an_empty_baseline() {
     let profile = live_testnet_profile().await;
@@ -744,8 +757,9 @@ async fn local_execution_uses_an_empty_baseline() {
         .expect("fixture decodes");
     let exec = Executor::new(&wasm, Default::default()).expect("executor");
 
-    // The production-path case: this is what local_run executes.
+    // The production-path case and environment: this is what local_run executes.
     let case = build_local_case(&exec, "pause");
+    let env = build_local_environment(&profile);
 
     // Objective evidence: the case carries no baseline ledger entries and no
     // instance storage. If either is ever populated, this fails.
@@ -758,12 +772,8 @@ async fn local_execution_uses_an_empty_baseline() {
         "local run must not seed instance storage: instance_storage is non-empty"
     );
 
-    // And the run through that case still executes for real under the live
-    // budget — the empty baseline is not a no-op.
-    let env = Environment {
-        ledger: Default::default(),
-        budget: network_faithful_plan(profile.clone()),
-    };
+    // And the run through that case and environment still executes for real
+    // under the live budget — the empty baseline is not a no-op.
     let obs = exec.execute_with(&case, &env).expect("local execution");
     assert!(
         obs.budget.consumed_cpu > 0,
