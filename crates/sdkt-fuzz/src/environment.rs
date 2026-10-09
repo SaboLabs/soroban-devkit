@@ -150,6 +150,7 @@ impl Default for Environment {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::network_cost::NETWORK_COST_ENTRY_COUNT;
     use soroban_env_host::xdr::ContractCostType;
 
     fn protocol_initial_budget() -> Budget {
@@ -252,6 +253,119 @@ mod tests {
             initial.get_mem_bytes_remaining().unwrap()
         );
         assert!(!BudgetPlan::Default.eq(&BudgetPlan::ProtocolInitial));
+    }
+
+    /// Runtime behavior for cost types beyond the 23-entry protocol-initial
+    /// table. Source: `BudgetDimension::try_from_config` (soroban-env-host
+    /// 28.0.2 `src/budget/dimension.rs`) only overwrites `cost_models[i]` for
+    /// `i < cost_params.0.len()`; the array is sized
+    /// `[MeteredCostComponent::default(); ContractCostType::variants().len()]`
+    /// (`dimension.rs:50`), so every index >= 23 keeps the zero model
+    /// (const 0, linear 0). `BudgetImpl::charge` (`budget.rs:235`) then
+    /// charges `const_term * iterations` = 0 and never errors for an in-range
+    /// index. So the variant is safe to run, but those cost types are free —
+    /// the budget does not represent their protocol cost.
+    #[test]
+    fn cost_types_beyond_the_initial_table_are_charged_zero_not_errored() {
+        let budget = protocol_initial_budget();
+        // ParseWasmInstructions is index 23 — the first cost type the
+        // protocol-initial table does not cover. The host's own default model
+        // charges it (const 73077, linear 25410), so this is a real contrast.
+        let extra = ContractCostType::ParseWasmInstructions;
+        assert!(
+            (extra as usize) >= NETWORK_COST_ENTRY_COUNT,
+            "test requires a cost type outside the 23-entry table"
+        );
+        // Charging must succeed (no error) and must consume nothing.
+        budget.charge(extra, Some(1_000)).unwrap();
+        assert_eq!(budget.get_cpu_insns_consumed().unwrap(), 0);
+        assert_eq!(budget.get_mem_bytes_consumed().unwrap(), 0);
+        assert_eq!(budget.get_cpu_insns_remaining().unwrap(), 2_500_000);
+        assert_eq!(budget.get_mem_bytes_remaining().unwrap(), 2_000_000);
+        let tracker = budget.get_tracker(extra).unwrap();
+        assert_eq!(tracker.iterations, 1, "charge must hit this cost type");
+        assert_eq!(tracker.cpu, 0, "uncovered cost type must be free");
+        assert_eq!(tracker.mem, 0, "uncovered cost type must be free");
+    }
+
+    /// The same uncovered cost type is *not* free under the host default
+    /// model — proving the zero charge above is a property of the
+    /// protocol-initial table, not of the host.
+    #[test]
+    fn host_default_charges_the_uncovered_cost_type() {
+        let host_default = Budget::default();
+        let extra = ContractCostType::ParseWasmInstructions;
+        host_default.charge(extra, Some(1_000)).unwrap();
+        let tracker = host_default.get_tracker(extra).unwrap();
+        assert_eq!(tracker.iterations, 1);
+        assert!(
+            tracker.cpu > 0,
+            "host default must charge ParseWasmInstructions (const 73077)"
+        );
+    }
+
+    /// The uncovered cost types are exactly the ones the host charges when it
+    /// parses/instantiates a module through the V1 path
+    /// (`VersionedContractCodeCostInputs::V1` in
+    /// `src/vm/parsed_module.rs`). Ties the zero-charge behavior to real
+    /// symbols rather than to the enum length alone.
+    #[test]
+    fn the_host_parse_cost_types_are_outside_the_initial_table() {
+        for ct in [
+            ContractCostType::ParseWasmInstructions,
+            ContractCostType::ParseWasmFunctions,
+            ContractCostType::ParseWasmGlobals,
+            ContractCostType::ParseWasmTableEntries,
+            ContractCostType::ParseWasmTypes,
+            ContractCostType::ParseWasmDataSegments,
+            ContractCostType::ParseWasmElemSegments,
+            ContractCostType::ParseWasmImports,
+            ContractCostType::ParseWasmExports,
+            ContractCostType::ParseWasmDataSegmentBytes,
+            ContractCostType::InstantiateWasmInstructions,
+            ContractCostType::InstantiateWasmFunctions,
+            ContractCostType::InstantiateWasmGlobals,
+            ContractCostType::InstantiateWasmTableEntries,
+            ContractCostType::InstantiateWasmTypes,
+            ContractCostType::InstantiateWasmDataSegments,
+            ContractCostType::InstantiateWasmElemSegments,
+            ContractCostType::InstantiateWasmImports,
+            ContractCostType::InstantiateWasmExports,
+            ContractCostType::InstantiateWasmDataSegmentBytes,
+        ] {
+            assert!(
+                (ct as usize) >= NETWORK_COST_ENTRY_COUNT,
+                "{ct:?} must sit outside the 23-entry protocol-initial table"
+            );
+            // And each one must be free under the variant, charged under the
+            // host default — the exact asymmetry the docs describes. The
+            // input shape must match the model: `ParseWasm*`/`Instantiate*`
+            // are linear models (Some input); a const-only model rejects
+            // Some() with a Budget InternalError, so try both shapes and
+            // keep whichever the host accepts. `InstantiateWasmTypes` is
+            // (0, 0) in the host default too, so it is excluded from the
+            // "must be charged" half of the assertion.
+            let plan = protocol_initial_budget();
+            let host_default = Budget::default();
+            [None, Some(64u64)]
+                .into_iter()
+                .find(|input| {
+                    plan.charge(ct, *input).is_ok() && host_default.charge(ct, *input).is_ok()
+                })
+                .expect("host must accept one input shape for this cost type");
+            assert_eq!(
+                plan.get_tracker(ct).unwrap().cpu,
+                0,
+                "{ct:?} must be free under ProtocolInitial"
+            );
+            let host_cpu = host_default.get_tracker(ct).unwrap().cpu;
+            if ct != ContractCostType::InstantiateWasmTypes {
+                assert!(
+                    host_cpu > 0,
+                    "{ct:?} must be charged by the host default model"
+                );
+            }
+        }
     }
 
     #[test]

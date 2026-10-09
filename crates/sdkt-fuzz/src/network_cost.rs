@@ -22,6 +22,22 @@
 //!   vendored copy of the protocol configuration. Anything that needs the
 //!   *current* network table must read it from a ledger, not from here.
 //!
+//! ## Cost types outside the table
+//!
+//! The vendored table is 23 entries, but the host's budget dimension is sized
+//! `ContractCostType::variants().len()` and `Budget::try_from_configs` only
+//! overwrites the first 23 models. Every cost type at index >= 23 therefore
+//! keeps the zero model (const 0, linear 0) and is charged **zero** — it is
+//! never an error and never a fallback, but it is also not priced. The host
+//! charges several of those entries on real paths (`ParseWasm*` and
+//! `InstantiateWasm*` during module parse/instantiation), so a
+//! `ProtocolInitial` run is **cheaper than the network would be** for those
+//! operations. Treat the variant as a protocol-initial *floor*, not as a
+//! faithful total: it is useful for exercising the covered cost types and the
+//! resource ceilings, not for reproducing the full network cost of a
+//! contract. See `the_host_parse_cost_types_are_outside_the_initial_table` in
+//! `environment.rs` for the executable statement of this behavior.
+//!
 //! ## Separate concerns
 //!
 //! The **host version** (soroban-env-host 28.0.2), the **protocol version**
