@@ -64,6 +64,7 @@ pub mod auth;
 pub mod campaign;
 mod case;
 mod config;
+pub mod differential;
 pub mod environment;
 mod error;
 pub mod evidence;
@@ -73,8 +74,10 @@ pub mod generator;
 pub mod minimizer;
 pub mod mutation;
 pub mod network_cost;
+pub mod network_profile;
 mod observation;
 pub mod oracle;
+pub mod profile_bridge;
 pub mod replay;
 pub mod runner;
 pub mod sequence;
@@ -84,7 +87,11 @@ pub use auth::AuthMode;
 pub use campaign::{run_campaign, run_campaign_artifacts, CampaignInput, CampaignResult};
 pub use case::{FunctionCall, FuzzCase};
 pub use config::{BudgetConfig, FuzzConfig, LedgerConfig, PROTOCOL_VERSION};
-pub use environment::{BudgetPlan, Environment};
+pub use differential::{
+    compare as compare_differential, DifferentialRecord, LocalExecutionMetrics, MismatchClass,
+    RpcSimulationMetrics, MAX_COMPARISON_LEDGER_GAP,
+};
+pub use environment::{network_faithful_plan, BudgetCoverage, BudgetPlan, Environment};
 pub use error::{FuzzError, SetupError};
 pub use evidence::{CampaignEvidence, ReplayStatus};
 pub use executor::Executor;
@@ -92,10 +99,17 @@ pub use finding::{CaseIdentity, Finding, SkippedFunction};
 pub use generator::{GeneratedCall, GenerationCaps, GeneratorError, UnsupportedContractType};
 pub use minimizer::{minimize_with_oracle, Minimization, MinimizationOutcome, MinimizationTarget};
 pub use mutation::{Mutation, MutationError, Operator};
+pub use network_profile::{
+    network_id_from_passphrase, network_name_for_passphrase, CostParamEntrySnapshot,
+    CostParamsSnapshot, NetworkConfigSnapshot, NetworkProfile, Observed, ParamSource, ProfileError,
+    ProfileStatus, Provenance, HOST_SUPPORTED_PROTOCOL, MAX_SNAPSHOT_AGE_LEDGERS,
+    PROFILE_SCHEMA_VERSION,
+};
 pub use observation::{
     BudgetUsage, EventRecord, ExecutionStatus, Observation, StateChange, StateEntry,
 };
 pub use oracle::{Classification, Expected, ExpectedBehavior, Oracle, ReasonCode};
+pub use profile_bridge::{profile_from_capture, CaptureInput};
 pub use replay::{parse_artifact, replay, replay_json, ReplayError, ReplayOutcome};
 pub use runner::{
     artifact_file_name, expand_seed, load_artifact, replay_line, run as run_fuzz, run_replay,

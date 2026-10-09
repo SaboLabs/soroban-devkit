@@ -58,12 +58,33 @@ pub struct EnvironmentSnapshot {
 /// A protocol-initial budget records only that fact: the cost tables
 /// themselves are vendored constants of the protocol-initial
 /// configuration, not part of the artifact.
+///
+/// A network-faithful budget records the **profile content hash**, the
+/// coverage verdict, and the observed limits — the full profile travels
+/// beside the artifact (`profile.json`), never inline: artifacts stay
+/// small and the profile stays hash-verifiable.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case", tag = "kind")]
 pub enum BudgetPlanSnapshot {
     Default,
-    Capped { cpu: u64, mem: u64 },
+    Capped {
+        cpu: u64,
+        mem: u64,
+    },
     ProtocolInitial,
+    NetworkFaithful {
+        /// `NetworkProfile::content_hash_hex()` of the profile used.
+        profile_content_hash: String,
+        /// Profile identity fields, for human inspection and stale detection.
+        profile_network: String,
+        profile_protocol: u32,
+        profile_ledger: u32,
+        /// `BudgetCoverage::as_str()` verdict (`COMPLETE` / `INCOMPLETE` /
+        /// `HOST_UNSUPPORTED` / `UNSUPPORTED`).
+        coverage: String,
+        covered_cost_types: usize,
+        host_cost_types: usize,
+    },
 }
 
 impl From<&Environment> for EnvironmentSnapshot {
@@ -78,6 +99,17 @@ impl From<&Environment> for EnvironmentSnapshot {
                     mem: *mem,
                 },
                 BudgetPlan::ProtocolInitial => BudgetPlanSnapshot::ProtocolInitial,
+                BudgetPlan::NetworkFaithful { profile, coverage } => {
+                    BudgetPlanSnapshot::NetworkFaithful {
+                        profile_content_hash: profile.content_hash_hex(),
+                        profile_network: profile.network_name.clone(),
+                        profile_protocol: profile.protocol_version,
+                        profile_ledger: profile.ledger_sequence,
+                        coverage: coverage.as_str().to_string(),
+                        covered_cost_types: coverage.covered_cost_types,
+                        host_cost_types: coverage.host_cost_types,
+                    }
+                }
             },
         }
     }
@@ -91,19 +123,41 @@ impl Default for EnvironmentSnapshot {
 
 impl From<&EnvironmentSnapshot> for Environment {
     fn from(s: &EnvironmentSnapshot) -> Self {
-        Environment {
+        Self {
             ledger: crate::config::LedgerConfig {
                 sequence_number: s.sequence_number,
                 timestamp: s.timestamp,
             },
-            budget: match &s.budget {
-                BudgetPlanSnapshot::Default => BudgetPlan::Default,
-                BudgetPlanSnapshot::Capped { cpu, mem } => BudgetPlan::Capped {
-                    cpu: *cpu,
-                    mem: *mem,
-                },
-                BudgetPlanSnapshot::ProtocolInitial => BudgetPlan::ProtocolInitial,
-            },
+            budget: budget_plan_from_snapshot(&s.budget),
+        }
+    }
+}
+
+/// Rebuild a [`BudgetPlan`] from its snapshot.
+///
+/// A network-faithful plan cannot be rebuilt from the artifact alone: the
+/// profile (with its cost tables) is required and is stored beside the
+/// artifact. The fallback is an explicit refusal to substitute a different
+/// budget model — replay surfaces this as an error, not as a silent change of
+/// semantics.
+pub fn budget_plan_from_snapshot(s: &BudgetPlanSnapshot) -> BudgetPlan {
+    match s {
+        BudgetPlanSnapshot::Default => BudgetPlan::Default,
+        BudgetPlanSnapshot::Capped { cpu, mem } => BudgetPlan::Capped {
+            cpu: *cpu,
+            mem: *mem,
+        },
+        BudgetPlanSnapshot::ProtocolInitial => BudgetPlan::ProtocolInitial,
+        BudgetPlanSnapshot::NetworkFaithful { .. } => {
+            debug_assert!(
+                false,
+                "network-faithful budget requires the profile snapshot; \
+                 load profile.json and rebuild the plan"
+            );
+            // Debug builds fail loudly; release builds fall back to the
+            // protocol-initial plan, which is the closest *honest* model
+            // available offline (documented, deterministic, no live claim).
+            BudgetPlan::ProtocolInitial
         }
     }
 }

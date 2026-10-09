@@ -11,6 +11,7 @@ pub mod events;
 pub mod fee;
 pub mod inspect;
 pub mod invoke;
+pub mod network_capture;
 pub mod simulate;
 pub mod storage;
 pub mod submission;

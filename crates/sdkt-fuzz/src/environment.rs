@@ -15,6 +15,7 @@ use crate::error::FuzzError;
 use crate::network_cost::{
     network_cpu_cost_params, network_mem_cost_params, NETWORK_CPU_LIMIT, NETWORK_MEM_LIMIT,
 };
+use crate::network_profile::{NetworkProfile, ProfileStatus};
 
 /// How the per-case budget is built.
 #[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
@@ -48,6 +49,152 @@ pub enum BudgetPlan {
     /// differ. No RPC, no network access: the tables are vendored, so the
     /// budget is deterministic offline.
     ProtocolInitial,
+    /// Fresh per-case budget built from a **live-observed** network profile
+    /// ([`crate::network_profile::NetworkProfile`]).
+    ///
+    /// Unlike [`BudgetPlan::ProtocolInitial`], the cost table and limits are
+    /// the values the network actually reported, not a vendored table. The
+    /// profile also carries a coverage verdict ([`BudgetCoverage`]) which is
+    /// stored alongside the plan so a caller can never mistake a partial model
+    /// for a complete one.
+    ///
+    /// Construction refuses (never silently degrades) when:
+    ///
+    /// - the profile's config is incomplete (`ProfileStatus::Incomplete`), or
+    /// - the profile's protocol exceeds [`crate::network_profile::HOST_SUPPORTED_PROTOCOL`]
+    ///   (`ProfileStatus::HostUnsupported`) — the pinned host would reject the
+    ///   ledger protocol anyway, and pretending otherwise would be a false
+    ///   parity claim.
+    ///
+    /// The budget itself is still buildable from an unsupported profile's cost
+    /// table (useful for differential comparison against RPC simulation); the
+    /// distinction is carried by [`BudgetCoverage::status`] rather than by
+    /// refusing to construct.
+    NetworkFaithful {
+        profile: Box<NetworkProfile>,
+        coverage: BudgetCoverage,
+    },
+}
+
+/// How much of the network's cost model a `NetworkFaithful` budget actually
+/// reproduces.
+///
+/// This is the honest answer to "is this network-faithful?": the plan is
+/// faithful to the observed *table*, but a table shorter than the host's cost
+/// type count means the uncovered types are charged zero, so the model is
+/// partial.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct BudgetCoverage {
+    /// Profile status this budget was built from.
+    pub profile_status: ProfileStatus,
+    /// Cost types the observed table covers.
+    pub covered_cost_types: usize,
+    /// Cost types the pinned host knows about.
+    pub host_cost_types: usize,
+    /// `covered_cost_types >= host_cost_types` and the profile was complete
+    /// for the host's protocol.
+    pub complete: bool,
+}
+
+impl BudgetCoverage {
+    /// Build a coverage verdict for a profile against the pinned host.
+    pub fn for_profile(profile: &NetworkProfile, host_cost_types: usize) -> Self {
+        let covered = profile
+            .config
+            .cost_params
+            .value
+            .as_ref()
+            .map(|p| p.entry_count())
+            .unwrap_or(0);
+        let status = profile.status();
+        let complete = status == ProfileStatus::Complete && covered >= host_cost_types;
+        Self {
+            profile_status: status,
+            covered_cost_types: covered,
+            host_cost_types,
+            complete,
+        }
+    }
+
+    /// One-line verdict, matching the status vocabulary the PR uses.
+    pub fn as_str(&self) -> &'static str {
+        if self.complete {
+            "COMPLETE"
+        } else if self.profile_status == ProfileStatus::HostUnsupported {
+            "HOST_UNSUPPORTED"
+        } else if self.covered_cost_types < self.host_cost_types {
+            "INCOMPLETE"
+        } else {
+            "UNSUPPORTED"
+        }
+    }
+}
+
+/// One-line coverage verdict for the `NetworkFaithful` refusal message.
+fn coverage_str(c: &BudgetCoverage) -> &'static str {
+    c.as_str()
+}
+
+/// The number of `ContractCostType` variants the pinned host understands.
+pub fn host_cost_type_count() -> usize {
+    soroban_env_host::xdr::ContractCostType::variants().len()
+}
+
+/// Build a `ContractCostParams` from a profile's snapshot entries.
+///
+/// `cpu` selects the CPU or memory dimension. The entries must be ordered by
+/// index (the profile validator guarantees this); a gap or a name/index
+/// mismatch is an explicit error rather than a mis-mapped charge.
+fn cost_params_from_snapshot(
+    cpu: &[crate::network_profile::CostParamEntrySnapshot],
+    mem: &[crate::network_profile::CostParamEntrySnapshot],
+    for_cpu: bool,
+) -> Result<ContractCostParams, FuzzError> {
+    let dim = if for_cpu { cpu } else { mem };
+    let mut entries = Vec::with_capacity(dim.len());
+    for (i, e) in dim.iter().enumerate() {
+        if e.index as usize != i {
+            return Err(FuzzError::InvalidConfig(format!(
+                "profile cost params: entry {} declares index {}",
+                i, e.index
+            )));
+        }
+        let cost_type =
+            soroban_env_host::xdr::ContractCostType::try_from(i as i32).map_err(|_| {
+                FuzzError::InvalidConfig(format!(
+                    "cost type index {i} is not a valid ContractCostType"
+                ))
+            })?;
+        if cost_type.name() != e.cost_type {
+            return Err(FuzzError::InvalidConfig(format!(
+                "profile cost params: index {i} is `{}` on the host but `{}` in the profile",
+                cost_type.name(),
+                e.cost_type
+            )));
+        }
+        entries.push(ContractCostParamEntry {
+            ext: ExtensionPoint::V0,
+            const_term: e.const_term,
+            linear_term: e.linear_term,
+        });
+    }
+    ContractCostParams::try_from(entries)
+        .map_err(|e| FuzzError::InvalidConfig(format!("profile cost params: {e}")))
+}
+
+/// Construct a `BudgetPlan::NetworkFaithful` from a profile.
+///
+/// The coverage is computed here, once, from the profile and the pinned host —
+/// so the plan always carries the verdict that matches its data. A profile
+/// whose status is not `Complete` still produces a plan (useful for reporting
+/// and differential comparison), but [`Environment::make_budget`] refuses to
+/// build a budget from it.
+pub fn network_faithful_plan(profile: NetworkProfile) -> BudgetPlan {
+    let coverage = BudgetCoverage::for_profile(&profile, host_cost_type_count());
+    BudgetPlan::NetworkFaithful {
+        profile: Box::new(profile),
+        coverage,
+    }
 }
 
 /// Per-execution environment: ledger context + budget plan.
@@ -91,7 +238,11 @@ impl Environment {
     /// cost tables and stellar-core resource limits. A protocol-initial
     /// construction failure is an explicit error, never a silent fallback to
     /// the synthetic model.
-    pub(crate) fn make_budget(&self) -> Result<Budget, FuzzError> {
+    ///
+    /// `NetworkFaithful` refuses (with the coverage verdict named in the
+    /// error) when the profile is incomplete or its protocol exceeds the
+    /// pinned host's.
+    pub fn make_budget(&self) -> Result<Budget, FuzzError> {
         match &self.budget {
             BudgetPlan::Default => Ok(Budget::default()),
             BudgetPlan::Capped { cpu, mem } => {
@@ -121,6 +272,41 @@ impl Environment {
                     mem_params,
                 )
                 .map_err(|e| FuzzError::InvalidConfig(format!("protocol-initial budget: {e}")))
+            }
+            BudgetPlan::NetworkFaithful { profile, coverage } => {
+                if !coverage.complete {
+                    // Refuse rather than silently substituting a partial model.
+                    // The caller asked for network-faithful execution; telling
+                    // them they got something else by returning Ok would be the
+                    // false-parity claim this whole module exists to avoid.
+                    return Err(FuzzError::InvalidConfig(format!(
+                        "NetworkFaithful budget unavailable: {} \
+                         (profile {}, covered {}/{} cost types)",
+                        coverage_str(coverage),
+                        coverage.profile_status.as_str(),
+                        coverage.covered_cost_types,
+                        coverage.host_cost_types,
+                    )));
+                }
+                let params = profile.config.cost_params.value.as_ref().ok_or_else(|| {
+                    FuzzError::InvalidConfig(
+                        "NetworkFaithful budget: profile has no cost params".to_string(),
+                    )
+                })?;
+                let cpu = profile.config.cpu_limit.value.ok_or_else(|| {
+                    FuzzError::InvalidConfig(
+                        "NetworkFaithful budget: profile has no CPU limit".to_string(),
+                    )
+                })?;
+                let mem = profile.config.mem_limit.value.ok_or_else(|| {
+                    FuzzError::InvalidConfig(
+                        "NetworkFaithful budget: profile has no memory limit".to_string(),
+                    )
+                })?;
+                let cpu_params = cost_params_from_snapshot(&params.cpu, &params.mem, true)?;
+                let mem_params = cost_params_from_snapshot(&params.cpu, &params.mem, false)?;
+                Budget::try_from_configs(cpu, mem, cpu_params, mem_params)
+                    .map_err(|e| FuzzError::InvalidConfig(format!("network-faithful budget: {e}")))
             }
         }
     }
