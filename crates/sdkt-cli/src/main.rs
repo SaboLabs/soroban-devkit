@@ -13,7 +13,8 @@ use sdkt_rpc::{
 };
 use sdkt_storage::WasmCache;
 use sdkt_storage::{
-    NetworkStore, StorageAnalyzer, DEFAULT_SUGGESTED_LEDGERS, EXPIRING_SOON_LEDGERS,
+    capture_snapshot, diff_snapshots, NetworkStore, SnapshotDiff, StorageAnalyzer, StorageSnapshot,
+    DEFAULT_SUGGESTED_LEDGERS, EXPIRING_SOON_LEDGERS,
 };
 use sdkt_wasm::spec::parse_contract_spec;
 use sdkt_xdr::abi_decode::decode_event_topics;
@@ -1188,7 +1189,6 @@ enum StorageAction {
     },
     /// Analyze a contract's storage layout (Instance/Persistent/Temporary
     /// categorization, TTL summary, and per-entry detail).
-    #[command(alias = "snapshot")]
     Analyze {
         contract_id: String,
         /// Repeatable: extra ledger keys (base64 XDR or hex XDR) to include in
@@ -1214,6 +1214,94 @@ enum StorageAction {
             default_value = "persistent"
         )]
         durability: String,
+        #[arg(short, long, default_value = "pretty")]
+        format: String,
+    },
+    /// Capture a contract's storage into a JSON snapshot document.
+    ///
+    /// Records each tracked ledger key's storage class, durability, remaining
+    /// TTL, estimated rent, and its captured value (base64 XDR `ScVal`). The
+    /// contract instance entry is always included; add more keys with
+    /// `--key-xdr` or the typed `--map-key`/`--key-arg` options.
+    ///
+    /// Soroban RPC cannot enumerate storage, so the document records exactly the
+    /// keys this command requested. Write it to `--out` (and/or read it from
+    /// stdout) and compare it later with `sdkt storage diff`.
+    Snapshot {
+        contract_id: String,
+        /// Repeatable: extra ledger keys (base64 XDR or hex XDR) to record.
+        #[arg(long, value_name = "BASE64_XDR", alias = "key")]
+        key_xdr: Vec<String>,
+        /// Leading symbol of a typed data key — the map/enum-variant name.
+        /// Combined with `--key-arg` this builds `ScVec[symbol, args...]`,
+        /// e.g. `--map-key balances --key-arg address:G...`.
+        #[arg(long, value_name = "SYMBOL")]
+        map_key: Option<String>,
+        /// Repeatable typed key component (`TYPE:VALUE`, e.g. `address:G...`,
+        /// `u32:100`) appended after `--map-key`. Requires `--map-key`.
+        #[arg(long, value_name = "TYPE:VALUE")]
+        key_arg: Vec<String>,
+        /// Include the contract's instance-storage entry (always included by default).
+        #[arg(long)]
+        instance: bool,
+        /// Durability of a typed data key: `persistent` (default) or `temporary`.
+        #[arg(
+            long,
+            value_name = "persistent|temporary",
+            default_value = "persistent"
+        )]
+        durability: String,
+        /// File to write the snapshot document to. When omitted the document is
+        /// only printed to stdout.
+        #[arg(short, long, value_name = "FILE")]
+        out: Option<String>,
+        #[arg(short, long, default_value = "pretty")]
+        format: String,
+    },
+    /// Diff a recorded snapshot against a fresh live read of the same contract,
+    /// or diff two recorded snapshots.
+    ///
+    /// With a `SNAPSHOT` positional the snapshot is compared against a live read
+    /// of the same contract: a `value_changed` delta is reported when a tracked
+    /// entry's captured value moved but its TTL did not, a `ttl_changed` delta
+    /// when TTL/rent moved, plus `added`/`removed` keys. Snapshots captured
+    /// before value capture existed still diff against TTL/rent only.
+    ///
+    /// `--old`/`--new` diff two recorded `sdkt storage analyze --format json`
+    /// reports offline instead (no RPC), and `--extend-plan` additionally prints
+    /// the remediation plan. The offline form remains available under its
+    /// historical name `sdkt storage storage-diff`.
+    ///
+    /// The live capture requests exactly the snapshot's keys plus the contract
+    /// instance entry, so a key created after the snapshot is invisible unless
+    /// it is passed explicitly with `--key-xdr` (it then shows up under
+    /// `added`).
+    #[command(visible_alias = "storage-diff")]
+    Diff {
+        /// Snapshot document written by `sdkt storage snapshot`. When given, it
+        /// is compared against a fresh live read of the same contract.
+        #[arg(value_name = "SNAPSHOT")]
+        snapshot: Option<String>,
+        /// Path to the OLD (baseline) storage report JSON file.
+        #[arg(long, value_name = "FILE")]
+        old: Option<String>,
+        /// Path to the NEW (current) storage report JSON file.
+        #[arg(long, value_name = "FILE")]
+        new: Option<String>,
+        /// Contract ID to read live. Must match the snapshot's recorded contract
+        /// when it records one; a cross-contract diff is rejected.
+        #[arg(long, value_name = "CONTRACT_ID")]
+        contract: Option<String>,
+        /// Repeatable: extra ledger keys (base64 XDR or hex XDR) to probe in the
+        /// live read, so keys created after the snapshot can be reported under
+        /// `added`.
+        #[arg(long, value_name = "BASE64_XDR")]
+        key_xdr: Vec<String>,
+        /// Derive and print a TTL extension plan from the diff.
+        /// Prints the contract, ledger keys, and suggested --ledgers value.
+        /// No transaction is built, signed, or submitted.
+        #[arg(long, default_value_t = false)]
+        extend_plan: bool,
         #[arg(short, long, default_value = "pretty")]
         format: String,
     },
@@ -1288,35 +1376,6 @@ enum StorageAction {
             default_value = "persistent"
         )]
         durability: String,
-        #[arg(short, long, default_value = "pretty")]
-        format: String,
-    },
-    /// Diff two storage snapshots and, optionally, derive a TTL extension plan.
-    ///
-    /// `--old` and `--new` each point to a JSON file that is the output of
-    /// `sdkt storage analyze --format json` (a serialised `StorageReport`).
-    ///
-    /// Without `--extend-plan` the command prints the diff entries only.
-    ///
-    /// With `--extend-plan` the command additionally prints the remediation
-    /// plan: the contract ID, the ledger keys covering the removed/expiring
-    /// entries, and a suggested `--ledgers` value.  Nothing is signed or
-    /// submitted.
-    ///
-    /// Exit codes: 0 in all non-error cases (including an empty plan).
-    #[command(name = "storage-diff", alias = "diff")]
-    StorageDiff {
-        /// Path to the OLD (baseline) storage snapshot JSON file.
-        #[arg(long, value_name = "FILE")]
-        old: String,
-        /// Path to the NEW (current) storage snapshot JSON file.
-        #[arg(long, value_name = "FILE")]
-        new: String,
-        /// Derive and print a TTL extension plan from the diff.
-        /// Prints the contract, ledger keys, and suggested --ledgers value.
-        /// No transaction is built, signed, or submitted.
-        #[arg(long, default_value_t = false)]
-        extend_plan: bool,
         #[arg(short, long, default_value = "pretty")]
         format: String,
     },
@@ -2637,6 +2696,81 @@ fn print_diff_pretty(diff: &sdkt_storage::SnapshotDiff) {
     }
 }
 
+/// Truncate a base64 XDR value for display; long values are shortened to their
+/// leading characters, which is enough to tell two captured values apart.
+fn short_value(value: Option<&str>) -> String {
+    match value {
+        Some(v) => {
+            let head: String = v.chars().take(24).collect();
+            if head.len() < v.len() {
+                format!("{head}…")
+            } else {
+                head
+            }
+        }
+        None => "<none>".to_string(),
+    }
+}
+
+/// Pretty-print the value-aware view of a [`sdkt_storage::SnapshotDiff`].
+///
+/// Kept pure (no I/O) so both the CLI output and its tests exercise the same
+/// formatting: the changed/unchanged summary followed by one block per change
+/// kind. Sections whose change set is empty are omitted entirely.
+fn render_storage_diff_pretty(diff: &SnapshotDiff) -> String {
+    let mut out = String::new();
+    out.push_str(&format!(
+        "Storage Diff for Contract: {}\n",
+        diff.contract_id
+    ));
+    out.push_str(&format!("Changed:   {}\n", diff.changed()));
+    out.push_str(&format!("Unchanged: {}\n", diff.unchanged));
+
+    if !diff.value_changed.is_empty() {
+        out.push_str("\nValue Changed:\n");
+        for delta in &diff.value_changed {
+            out.push_str(&format!(
+                "  {} [{}]\n    before: {}\n    after:  {}\n",
+                delta.key,
+                delta.class.label(),
+                short_value(delta.before.as_deref()),
+                short_value(delta.after.as_deref()),
+            ));
+        }
+    }
+
+    if !diff.ttl_changed.is_empty() {
+        out.push_str("\nTTL Changed:\n");
+        for delta in &diff.ttl_changed {
+            out.push_str(&format!(
+                "  {} [{}] ttl {} -> {}, cost {} -> {} stroops\n",
+                delta.key,
+                delta.class.label(),
+                delta.before_ttl,
+                delta.after_ttl,
+                delta.before_extension_cost_stroops,
+                delta.after_extension_cost_stroops,
+            ));
+        }
+    }
+
+    if !diff.added.is_empty() {
+        out.push_str("\nAdded:\n");
+        for key in &diff.added {
+            out.push_str(&format!("  {key}\n"));
+        }
+    }
+
+    if !diff.removed.is_empty() {
+        out.push_str("\nRemoved:\n");
+        for key in &diff.removed {
+            out.push_str(&format!("  {key}\n"));
+        }
+    }
+
+    out
+}
+
 /// Project an ABI key name without changing the raw LedgerKey used for identity.
 fn storage_key_label(raw: &str, spec: &sdkt_wasm::ContractSpec) -> String {
     use stellar_xdr::ScVal;
@@ -3936,15 +4070,127 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
                 return Ok(());
             }
 
-            // Storage storage-diff is completely offline and self-contained; dispatch
-            // before shared storage RPC client setup or on-chain ABI resolution.
-            if let StorageAction::StorageDiff {
+            // `storage diff` is offline in its two-report mode and
+            // self-contained in its live mode; dispatch before shared storage RPC
+            // client setup or on-chain ABI resolution.
+            if let StorageAction::Diff {
+                snapshot,
                 old,
                 new,
+                contract,
+                key_xdr,
                 extend_plan,
                 format,
             } = &action
             {
+                let fmt = parse_format_str(format);
+
+                if let Some(snapshot_path) = snapshot.as_ref() {
+                    // Live mode: one recorded snapshot vs a fresh live read.
+                    let document = match fs::read_to_string(snapshot_path) {
+                        Ok(d) => d,
+                        Err(e) => {
+                            eprintln!("Error: cannot read snapshot '{}': {}", snapshot_path, e);
+                            process::exit(1);
+                        }
+                    };
+                    let base: StorageSnapshot = match serde_json::from_str(&document) {
+                        Ok(s) => s,
+                        Err(e) => {
+                            eprintln!(
+                                "Error: invalid snapshot document '{}': {}",
+                                snapshot_path, e
+                            );
+                            process::exit(1);
+                        }
+                    };
+
+                    // A snapshot's ledger keys embed the contract address they
+                    // were captured from, so diffing a live read of a *different*
+                    // contract against them would silently mix two contracts
+                    // under one header. Only honour an override that matches.
+                    let recorded = base.contract_id.trim().to_string();
+                    let contract_id = match contract
+                        .as_ref()
+                        .map(|c| c.trim())
+                        .filter(|c| !c.is_empty())
+                    {
+                        Some(override_id) => {
+                            if !recorded.is_empty() && recorded != override_id {
+                                eprintln!(
+                                        "Error: --contract '{}' does not match the snapshot's contract '{}'; refusing a cross-contract diff",
+                                        override_id, recorded
+                                    );
+                                process::exit(1);
+                            }
+                            override_id.to_string()
+                        }
+                        None => recorded.clone(),
+                    };
+                    if contract_id.is_empty() {
+                        eprintln!(
+                            "Error: snapshot records no contract id; pass --contract <CONTRACT_ID>"
+                        );
+                        process::exit(1);
+                    }
+
+                    // The live capture requests exactly the snapshot's keys plus
+                    // the instance entry, so explicitly probed keys are the only
+                    // way a key created after the snapshot can show up as `added`.
+                    let mut extra_keys: Vec<String> =
+                        base.entries.iter().map(|e| e.key.clone()).collect();
+                    if !key_xdr.is_empty() {
+                        match resolve_storage_analyze_keys(
+                            &contract_id,
+                            key_xdr,
+                            None,
+                            &[],
+                            "persistent",
+                        ) {
+                            Ok(mut probes) => extra_keys.append(&mut probes),
+                            Err(e) => {
+                                eprintln!("Error: {e}");
+                                process::exit(1);
+                            }
+                        }
+                    }
+
+                    let client = resolve_rpc_client(
+                        net.rpc_url.clone(),
+                        net.network_passphrase.clone(),
+                        net.network_profile.clone(),
+                    );
+
+                    match capture_snapshot(&client, &contract_id, &extra_keys).await {
+                        Ok(live) => {
+                            let diff = match diff_snapshots(&base, &live) {
+                                Ok(d) => d,
+                                Err(e) => {
+                                    eprintln!("Error: {e}");
+                                    process::exit(1);
+                                }
+                            };
+                            if fmt == OutputFormat::Json {
+                                println!("{}", serde_json::to_string(&diff)?);
+                            } else {
+                                print!("{}", render_storage_diff_pretty(&diff));
+                            }
+                        }
+                        Err(e) => {
+                            eprintln!("Error reading live storage for diff: {}", e);
+                            process::exit(1);
+                        }
+                    }
+                    return Ok(());
+                }
+
+                let (Some(old), Some(new)) = (old.as_ref(), new.as_ref()) else {
+                    eprintln!(
+                        "Error: pass a snapshot document (`sdkt storage diff <SNAPSHOT>`) or both --old <FILE> and --new <FILE>"
+                    );
+                    process::exit(1);
+                };
+
                 if let Err(e) =
                     commands::abi::check_abi_mutual_exclusion(abi.as_ref(), abi_contract.as_ref())
                 {
@@ -3952,7 +4198,6 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
                     process::exit(1);
                 }
 
-                let fmt = parse_format_str(format);
                 // Resolve the RPC client lazily: only `--abi-contract` needs the
                 // network. The local `--abi` and no-ABI paths are fully offline
                 // so an unavailable or unconfigured network profile must not
@@ -4106,16 +4351,23 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
                 process::exit(1);
             }
 
-            let analyze_extra_keys = if let StorageAction::Analyze {
-                contract_id,
-                key_xdr,
-                map_key,
-                key_arg,
-                durability,
-                ..
-            } = &action
-            {
-                match resolve_storage_analyze_keys(
+            let analyze_extra_keys = match &action {
+                StorageAction::Analyze {
+                    contract_id,
+                    key_xdr,
+                    map_key,
+                    key_arg,
+                    durability,
+                    ..
+                }
+                | StorageAction::Snapshot {
+                    contract_id,
+                    key_xdr,
+                    map_key,
+                    key_arg,
+                    durability,
+                    ..
+                } => match resolve_storage_analyze_keys(
                     contract_id,
                     key_xdr,
                     map_key.as_deref(),
@@ -4127,9 +4379,8 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
                         eprintln!("Error: {e}");
                         process::exit(1);
                     }
-                }
-            } else {
-                None
+                },
+                _ => None,
             };
 
             let client = resolve_rpc_client(
@@ -4278,6 +4529,70 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
                         }
                         Err(e) => {
                             eprintln!("Error analyzing storage: {}", e);
+                            process::exit(1);
+                        }
+                    }
+                }
+                StorageAction::Snapshot {
+                    contract_id,
+                    out,
+                    format,
+                    ..
+                } => {
+                    let fmt = parse_format_str(&format);
+                    let extra_keys = analyze_extra_keys.expect("resolved for Snapshot");
+
+                    let client = resolve_rpc_client(
+                        net.rpc_url.clone(),
+                        net.network_passphrase.clone(),
+                        net.network_profile.clone(),
+                    );
+
+                    match capture_snapshot(&client, &contract_id, &extra_keys).await {
+                        Ok(mut snapshot) => {
+                            if let Some(spec) = contract_spec.as_ref() {
+                                for entry in &mut snapshot.entries {
+                                    entry.label = Some(storage_key_label(&entry.key, spec));
+                                }
+                            }
+
+                            let document = serde_json::to_string_pretty(&snapshot)?;
+                            let out_path = out.as_deref().filter(|p| !p.trim().is_empty());
+                            if let Some(path) = out_path {
+                                if let Err(e) = fs::write(path, &document) {
+                                    eprintln!("Error: cannot write snapshot to '{}': {}", path, e);
+                                    process::exit(1);
+                                }
+                            }
+
+                            if fmt == OutputFormat::Json {
+                                println!("{}", document);
+                            } else {
+                                println!("Storage Snapshot for Contract: {}", snapshot.contract_id);
+                                if let Some(ledger) = snapshot.captured_at_ledger {
+                                    println!("Captured at ledger: {}", ledger);
+                                }
+                                println!("Entries: {}", snapshot.entries.len());
+                                if let Some(path) = out_path {
+                                    println!("Snapshot written to: {}", path);
+                                }
+                                for (i, entry) in snapshot.entries.iter().enumerate() {
+                                    println!(
+                                        "  #{:<3} [{}] ttl={} cost={} stroops value={}",
+                                        i + 1,
+                                        entry.class.label(),
+                                        entry.current_ttl,
+                                        entry.extension_cost_stroops,
+                                        short_value(entry.value.as_deref()),
+                                    );
+                                    if let Some(label) = &entry.label {
+                                        println!("        key={} label={}", entry.key, label);
+                                    }
+                                }
+                            }
+                        }
+                        Err(e) => {
+                            eprintln!("Error capturing storage snapshot: {}", e);
                             process::exit(1);
                         }
                     }
@@ -4608,7 +4923,7 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
                         }
                     }
                 }
-                StorageAction::StorageDiff { .. } => unreachable!(),
+                StorageAction::Diff { .. } => unreachable!(),
             }
         }
         Commands::Inspect {

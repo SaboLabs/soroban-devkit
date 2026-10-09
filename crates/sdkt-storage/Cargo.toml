@@ -27,6 +27,7 @@ stellar-xdr = { version = "28.0.0", features = ["std", "base64"] }
 base64 = "0.23"
 thiserror = "2"
 tokio = { version = "1", features = ["rt-multi-thread", "macros"] }
+sdkt-xdr = { version = "2.6.0", path = "../sdkt-xdr" }
 
 [dev-dependencies]
 tempfile = "3"

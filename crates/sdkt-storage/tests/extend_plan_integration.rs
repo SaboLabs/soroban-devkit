@@ -29,8 +29,8 @@ fn snap(entries: Vec<(&str, u32)>) -> StorageSnapshot {
             .into_iter()
             .map(|(k, ttl)| SnapshotEntry {
                 key: k.to_string(),
-                label: None,
                 current_ttl: ttl,
+                ..Default::default()
             })
             .collect(),
     )
@@ -252,11 +252,12 @@ fn snapshot_diff_json_has_stable_field_names() {
         contract_id: CONTRACT.to_string(),
         entries: vec![DiffEntry {
             key: "k1".to_string(),
-            label: None,
             status: DiffStatus::ExpiringSoon,
             old_ttl: Some(50_000),
             new_ttl: Some(1_000),
+            ..Default::default()
         }],
+        ..Default::default()
     };
 
     let json = serde_json::to_string(&diff).unwrap();
@@ -278,11 +279,12 @@ fn removed_entry_json_new_ttl_is_null() {
         contract_id: CONTRACT.to_string(),
         entries: vec![DiffEntry {
             key: "k1".to_string(),
-            label: None,
             status: DiffStatus::Removed,
             old_ttl: Some(50_000),
             new_ttl: None,
+            ..Default::default()
         }],
+        ..Default::default()
     };
 
     let json = serde_json::to_string(&diff).unwrap();

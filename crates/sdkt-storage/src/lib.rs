@@ -18,7 +18,8 @@ pub use estimate::{
 pub use identity::{Identity, IdentityStore, DEFAULT_IDENTITY_NAME};
 pub use network::{NetworkProfile, NetworkStore};
 pub use snapshot::{
-    derive_extend_plan, diff_snapshots, DiffEntry, DiffStatus, ExtendPlan, SnapshotDiff,
-    SnapshotEntry, StorageSnapshot, DEFAULT_SUGGESTED_LEDGERS, EXPIRING_SOON_LEDGERS,
+    capture_snapshot, derive_extend_plan, diff_snapshots, DiffEntry, DiffStatus, ExtendPlan,
+    SnapshotDiff, SnapshotEntry, StorageSnapshot, TtlDelta, ValueDelta, DEFAULT_SUGGESTED_LEDGERS,
+    EXPIRING_SOON_LEDGERS,
 };
 pub use types::{StorageClass, StorageEntry, StorageReport, TtlInfoSummary};

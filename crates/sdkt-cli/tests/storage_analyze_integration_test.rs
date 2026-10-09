@@ -147,6 +147,36 @@ fn contract_data_key(
     .unwrap()
 }
 
+/// Encode a ContractData `LedgerEntry` (base64 XDR) for a ledger key + value.
+///
+/// `storage snapshot` reads each entry's value, so its mock must serve a
+/// decodable `LedgerEntry` — a placeholder blob is only enough for the TTL-only
+/// `storage analyze` path.
+fn contract_data_entry_xdr(ledger_key: &str, val: stellar_xdr::ScVal) -> String {
+    use base64::Engine;
+    use stellar_xdr::WriteXdr;
+
+    let decoded = sdkt_xdr::decode_ledger_key(ledger_key).expect("valid ledger key");
+    let stellar_xdr::LedgerKey::ContractData(cd) = decoded else {
+        panic!("expected a ContractData ledger key");
+    };
+    let entry = stellar_xdr::LedgerEntry {
+        last_modified_ledger_seq: 100,
+        data: stellar_xdr::LedgerEntryData::ContractData(stellar_xdr::ContractDataEntry {
+            ext: stellar_xdr::ExtensionPoint::V0,
+            contract: cd.contract,
+            key: cd.key,
+            durability: cd.durability,
+            val,
+        }),
+        ext: stellar_xdr::LedgerEntryExt::V0,
+    };
+    let mut buf = Vec::new();
+    let mut limited = stellar_xdr::Limited::new(&mut buf, stellar_xdr::Limits::none());
+    entry.write_xdr(&mut limited).unwrap();
+    base64::engine::general_purpose::STANDARD.encode(&buf)
+}
+
 // ---------------- Existing tests ----------------
 
 /// `sdkt storage analyze <id>` should reject an empty contract id with a
@@ -300,7 +330,10 @@ fn snapshot_abi_adds_label_without_changing_plain_json() {
     );
     let entries = serde_json::json!([{
         "key": instance_key,
-        "xdr": "AAAAAQAAAABpc25nAAAA",
+        "xdr": contract_data_entry_xdr(
+            &instance_key,
+            stellar_xdr::ScVal::LedgerKeyContractInstance
+        ),
         "lastModifiedLedgerSeq": 100,
         "liveUntilLedgerSeq": 200
     }]);

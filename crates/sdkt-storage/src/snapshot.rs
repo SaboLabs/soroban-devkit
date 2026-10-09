@@ -1,32 +1,44 @@
-//! Snapshot-diffing and TTL extension-plan derivation for contract storage.
+//! Storage snapshots, value-aware diffing and TTL extension-plan derivation.
 //!
 //! # Overview
 //!
-//! A [`StorageSnapshot`] is a point-in-time capture of a contract's storage
-//! entries (key + TTL), obtained from [`crate::StorageReport`] or built by the
-//! CLI directly from an RPC response.
+//! A [`StorageSnapshot`] records, for each tracked ledger key, its storage
+//! class, durability, remaining TTL, estimated rent and — when the value can be
+//! read — the captured value as a base64 XDR `ScVal`. Snapshots are plain JSON,
+//! so a document written before value capture existed still deserializes with
+//! `value: None` and diffs on TTL/rent only.
 //!
 //! [`diff_snapshots`] compares an **old** (baseline) snapshot against a **new**
-//! (current) one and classifies each entry as:
-//! - [`DiffStatus::Removed`]  — entry present in old, absent in new (expired or
-//!   otherwise gone).
-//! - [`DiffStatus::ExpiringSoon`] — entry still live in new but with a TTL below
-//!   [`EXPIRING_SOON_LEDGERS`] (≈ 1 day).
-//! - [`DiffStatus::Unchanged`] — entry live and above the threshold.
+//! (current) one and returns a [`SnapshotDiff`] carrying two views of the same
+//! comparison:
 //!
-//! [`derive_extend_plan`] turns the diff result into a non-mutating
-//! [`ExtendPlan`]: the set of ledger keys that need remediation, the contract
-//! they belong to, and a suggested `--ledgers` value the operator can pass
-//! directly to `sdkt storage extend`.
+//! * the remediation view — one [`DiffEntry`] per key, classified as
+//!   [`DiffStatus::Removed`], [`DiffStatus::ExpiringSoon`],
+//!   [`DiffStatus::ValueChanged`] or [`DiffStatus::Unchanged`].  This is what
+//!   [`derive_extend_plan`] consumes to build a non-mutating [`ExtendPlan`].
+//! * the value-aware change sets — [`ValueDelta`] (captured value moved),
+//!   [`TtlDelta`] (TTL/rent moved), plus `added`/`removed` keys.
 //!
 //! # Guarantees
 //! - No RPC mutation methods are called in this module.
 //! - An empty diff (no removed or expiring entries) produces an [`ExtendPlan`]
 //!   with an empty key list and exits cleanly.
+//!
+//! # Tracked key set
+//! Soroban RPC cannot enumerate a contract's storage: `getLedgerEntries` only
+//! returns the keys that were explicitly requested. A live capture therefore
+//! requests exactly the baseline snapshot's keys plus the contract instance
+//! entry (and any extra keys the caller passes), so a key **created after** the
+//! snapshot is invisible unless the caller supplies it explicitly.
 
+use crate::analyzer::classify_key;
 use crate::error::StorageError;
-use crate::types::StorageReport;
+use crate::types::{StorageClass, StorageReport};
+use base64::Engine;
+use sdkt_rpc::SorobanRpcClient;
 use serde::{Deserialize, Serialize};
+use std::collections::BTreeMap;
+use stellar_xdr::WriteXdr;
 
 /// Threshold in ledgers below which a live entry is flagged as "expiring soon".
 /// ~1 day at 5 s/ledger (17 280 ledgers).  Matches the constant used in
@@ -43,27 +55,52 @@ pub const DEFAULT_SUGGESTED_LEDGERS: u32 = 518_400;
 
 /// A point-in-time capture of one contract's storage entries.
 ///
-/// The snapshot intentionally stores only the data needed for diffing
-/// (`key` + `current_ttl`).  Callers may build it from a [`StorageReport`]
-/// via [`StorageSnapshot::from_report`], or construct it directly in tests.
+/// Callers may build it from a [`StorageReport`] via
+/// [`StorageSnapshot::from_report`], from raw entries via
+/// [`StorageSnapshot::from_entries`], or capture one directly over RPC with
+/// [`capture_snapshot`].
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
 pub struct StorageSnapshot {
     /// The on-chain contract identifier (C… StrKey or hex).
     pub contract_id: String,
+    /// Ledger sequence at capture time, when it could be read.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub captured_at_ledger: Option<u32>,
     /// Entries captured at the time this snapshot was taken.
+    #[serde(default)]
     pub entries: Vec<SnapshotEntry>,
 }
 
 /// A single entry inside a [`StorageSnapshot`].
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+///
+/// Every field except `key` is defaulted so a document written before value
+/// capture (or before class/durability were recorded) still parses.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
 pub struct SnapshotEntry {
     /// Base64 XDR encoded `LedgerKey`.
     pub key: String,
     /// Readable ABI-derived key label, when available.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub label: Option<String>,
+    /// Storage class derived from the ledger key.
+    #[serde(default)]
+    pub class: StorageClass,
+    /// Durability of the entry (`persistent` / `temporary`); absent for
+    /// non-contract-data keys.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub durability: Option<String>,
     /// TTL in ledgers relative to the ledger at snapshot time.
+    #[serde(default)]
     pub current_ttl: u32,
+    /// Estimated rent extension cost in stroops.
+    #[serde(default)]
+    pub extension_cost_stroops: u64,
+    /// Captured entry value as a base64 XDR `ScVal`.
+    ///
+    /// Optional so snapshots written before value capture existed keep parsing;
+    /// serialized only when a value was actually captured.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub value: Option<String>,
 }
 
 impl StorageSnapshot {
@@ -80,13 +117,18 @@ impl StorageSnapshot {
         }
         Ok(Self {
             contract_id: report.contract_id.clone(),
+            captured_at_ledger: None,
             entries: report
                 .entries
                 .iter()
                 .map(|e| SnapshotEntry {
                     key: e.key.clone(),
                     label: e.label.clone(),
+                    class: e.class,
+                    durability: durability_label(e.class),
                     current_ttl: e.current_ttl,
+                    extension_cost_stroops: e.extension_cost_stroops,
+                    value: None,
                 })
                 .collect(),
         })
@@ -97,9 +139,44 @@ impl StorageSnapshot {
     pub fn from_entries(contract_id: impl Into<String>, entries: Vec<SnapshotEntry>) -> Self {
         Self {
             contract_id: contract_id.into(),
+            captured_at_ledger: None,
             entries,
         }
     }
+}
+
+// ---------------------------------------------------------------------------
+// Value-aware change sets
+// ---------------------------------------------------------------------------
+
+/// A tracked entry whose captured value changed between two snapshots.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ValueDelta {
+    /// Base64 XDR encoded `LedgerKey`.
+    pub key: String,
+    /// Storage class derived from the ledger key.
+    pub class: StorageClass,
+    /// Value in the base snapshot (base64 XDR `ScVal`).
+    pub before: Option<String>,
+    /// Value in the live snapshot (base64 XDR `ScVal`).
+    pub after: Option<String>,
+}
+
+/// A tracked entry whose TTL or estimated rent changed between two snapshots.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct TtlDelta {
+    /// Base64 XDR encoded `LedgerKey`.
+    pub key: String,
+    /// Storage class derived from the ledger key.
+    pub class: StorageClass,
+    /// TTL in the base snapshot.
+    pub before_ttl: u32,
+    /// TTL in the live snapshot.
+    pub after_ttl: u32,
+    /// Estimated rent in the base snapshot, in stroops.
+    pub before_extension_cost_stroops: u64,
+    /// Estimated rent in the live snapshot, in stroops.
+    pub after_extension_cost_stroops: u64,
 }
 
 // ---------------------------------------------------------------------------
@@ -107,7 +184,12 @@ impl StorageSnapshot {
 // ---------------------------------------------------------------------------
 
 /// Classification of a single entry in a snapshot diff.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+///
+/// This is the *remediation* view: it describes what the TTL extension plan
+/// needs to know. A captured value change is reported separately in
+/// [`SnapshotDiff::value_changed`] (and in `status` only when nothing more
+/// urgent applies).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "snake_case")]
 pub enum DiffStatus {
     /// Entry was present in the old snapshot but is absent in the new one.
@@ -116,12 +198,15 @@ pub enum DiffStatus {
     /// Entry is still live in the new snapshot but its TTL is below
     /// [`EXPIRING_SOON_LEDGERS`].  Action is recommended before it expires.
     ExpiringSoon,
+    /// Entry is still live with a healthy TTL, but its captured value moved.
+    ValueChanged,
     /// Entry is still live and its TTL is above the expiring-soon threshold.
+    #[default]
     Unchanged,
 }
 
-/// A single entry in a [`SnapshotDiff`].
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+/// A single entry in a [`SnapshotDiff`]'s remediation view.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
 pub struct DiffEntry {
     /// Base64 XDR encoded `LedgerKey`.
     pub key: String,
@@ -138,15 +223,41 @@ pub struct DiffEntry {
 }
 
 /// The complete result of diffing two [`StorageSnapshot`]s.
+///
+/// Carries both the per-entry remediation view (`entries`) and the value-aware
+/// change sets (`value_changed`, `ttl_changed`, `added`, `removed`). The empty
+/// change sets are omitted from JSON so a clean diff never advertises sections
+/// that did not fire.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
 pub struct SnapshotDiff {
     /// Contract these snapshots describe.
     pub contract_id: String,
-    /// All entries across both snapshots.
+    /// Remediation view: every tracked key across both snapshots.
     pub entries: Vec<DiffEntry>,
+    /// Tracked entries present in both snapshots with identical value, TTL and
+    /// rent. (Entries that only appear in the live capture are `added`, not
+    /// unchanged.)
+    pub unchanged: usize,
+    /// Entries whose captured value changed.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub value_changed: Vec<ValueDelta>,
+    /// Entries whose TTL and/or estimated rent changed.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub ttl_changed: Vec<TtlDelta>,
+    /// Keys present in the live snapshot but not in the base snapshot.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub added: Vec<String>,
+    /// Keys present in the base snapshot but not in the live snapshot.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub removed: Vec<String>,
 }
 
 impl SnapshotDiff {
+    /// Total number of deltas across all change kinds.
+    pub fn changed(&self) -> usize {
+        self.value_changed.len() + self.ttl_changed.len() + self.added.len() + self.removed.len()
+    }
+
     /// Return only the entries that need remediation (removed or expiring soon).
     pub fn actionable(&self) -> impl Iterator<Item = &DiffEntry> {
         self.entries
@@ -161,19 +272,23 @@ impl SnapshotDiff {
 
 /// Diff an **old** (baseline) snapshot against a **new** (current) one.
 ///
-/// Entries are keyed by their base64 XDR `LedgerKey`.  The diff is computed as
-/// follows:
+/// Entries are keyed by their canonical base64 XDR `LedgerKey`, so a key
+/// expressed as hex in one document and base64 in the other still compares
+/// equal. For each key present in both snapshots the value and the TTL/rent are
+/// compared independently: a value-only change produces a [`ValueDelta`], a
+/// TTL/rent-only change produces a [`TtlDelta`], and an entry where both match
+/// counts as unchanged. A value is only compared when **both** sides captured
+/// one, so snapshots written before value capture existed keep their original
+/// TTL/rent-only diff semantics.
 ///
-/// 1. Every key in the old snapshot that is absent in the new snapshot →
-///    [`DiffStatus::Removed`].
-/// 2. Every key in the new snapshot whose TTL < [`EXPIRING_SOON_LEDGERS`] →
-///    [`DiffStatus::ExpiringSoon`].
-/// 3. All other keys present in the new snapshot → [`DiffStatus::Unchanged`].
+/// The remediation classification in [`DiffStatus`] is derived as follows:
+/// 1. absent in the new snapshot → [`DiffStatus::Removed`];
+/// 2. live with `new_ttl < EXPIRING_SOON_LEDGERS` → [`DiffStatus::ExpiringSoon`];
+/// 3. live, healthy TTL, but captured value moved → [`DiffStatus::ValueChanged`];
+/// 4. otherwise → [`DiffStatus::Unchanged`].
 ///
-/// Keys that appear only in the new snapshot (added entries) are reported as
-/// [`DiffStatus::Unchanged`] (or `ExpiringSoon` if their TTL is low).  There is
-/// intentionally no `Added` status because the diff is used exclusively to drive
-/// remediation of *at-risk* entries.
+/// Keys that appear only in the new snapshot are reported as `added` (and, for
+/// the remediation view, as `Unchanged` or `ExpiringSoon` depending on TTL).
 pub fn diff_snapshots(
     old: &StorageSnapshot,
     new: &StorageSnapshot,
@@ -185,70 +300,190 @@ pub fn diff_snapshots(
         });
     }
 
-    use std::collections::HashMap;
+    let old_entries = index_entries(&old.entries);
+    let new_entries = index_entries(&new.entries);
 
-    let old_map: HashMap<&str, &SnapshotEntry> =
-        old.entries.iter().map(|e| (e.key.as_str(), e)).collect();
+    let mut diff = SnapshotDiff {
+        contract_id: old.contract_id.clone(),
+        ..Default::default()
+    };
 
-    let new_map: HashMap<&str, &SnapshotEntry> =
-        new.entries.iter().map(|e| (e.key.as_str(), e)).collect();
-
-    let mut entries: Vec<DiffEntry> = Vec::new();
-
-    // Entries present in old — may be removed or still alive.
-    for (key, &old_entry) in &old_map {
-        let old_ttl = old_entry.current_ttl;
-        if let Some(&new_entry) = new_map.get(key) {
-            let new_ttl = new_entry.current_ttl;
-            let status = if new_ttl < EXPIRING_SOON_LEDGERS {
-                DiffStatus::ExpiringSoon
-            } else {
-                DiffStatus::Unchanged
-            };
-            entries.push(DiffEntry {
-                key: key.to_string(),
-                label: new_entry.label.clone().or_else(|| old_entry.label.clone()),
-                status,
-                old_ttl: Some(old_ttl),
-                new_ttl: Some(new_ttl),
-            });
-        } else {
-            entries.push(DiffEntry {
-                key: key.to_string(),
-                label: old_entry.label.clone(),
+    for (key, before) in &old_entries {
+        let Some(after) = new_entries.get(key) else {
+            diff.removed.push(key.clone());
+            diff.entries.push(DiffEntry {
+                key: key.clone(),
+                label: before.label.clone(),
                 status: DiffStatus::Removed,
-                old_ttl: Some(old_ttl),
+                old_ttl: Some(before.current_ttl),
                 new_ttl: None,
             });
-        }
-    }
+            continue;
+        };
 
-    // Entries that are new (only present in new snapshot).
-    for (key, &new_entry) in &new_map {
-        if !old_map.contains_key(key) {
-            let new_ttl = new_entry.current_ttl;
-            let status = if new_ttl < EXPIRING_SOON_LEDGERS {
-                DiffStatus::ExpiringSoon
-            } else {
-                DiffStatus::Unchanged
-            };
-            entries.push(DiffEntry {
-                key: key.to_string(),
-                label: new_entry.label.clone(),
-                status,
-                old_ttl: None,
-                new_ttl: Some(new_ttl),
+        let value_moved = match (&before.value, &after.value) {
+            (Some(before_value), Some(after_value)) => before_value != after_value,
+            // Value capture was absent on one side: nothing to compare.
+            _ => false,
+        };
+        let ttl_moved = before.current_ttl != after.current_ttl
+            || before.extension_cost_stroops != after.extension_cost_stroops;
+
+        if value_moved {
+            diff.value_changed.push(ValueDelta {
+                key: key.clone(),
+                class: after.class,
+                before: before.value.clone(),
+                after: after.value.clone(),
             });
         }
+        if ttl_moved {
+            diff.ttl_changed.push(TtlDelta {
+                key: key.clone(),
+                class: after.class,
+                before_ttl: before.current_ttl,
+                after_ttl: after.current_ttl,
+                before_extension_cost_stroops: before.extension_cost_stroops,
+                after_extension_cost_stroops: after.extension_cost_stroops,
+            });
+        }
+        if !value_moved && !ttl_moved {
+            diff.unchanged += 1;
+        }
+
+        let status = if after.current_ttl < EXPIRING_SOON_LEDGERS {
+            DiffStatus::ExpiringSoon
+        } else if value_moved {
+            DiffStatus::ValueChanged
+        } else {
+            DiffStatus::Unchanged
+        };
+        diff.entries.push(DiffEntry {
+            key: key.clone(),
+            label: after.label.clone().or_else(|| before.label.clone()),
+            status,
+            old_ttl: Some(before.current_ttl),
+            new_ttl: Some(after.current_ttl),
+        });
+    }
+
+    // Entries that are new (only present in the live snapshot).
+    for (key, after) in &new_entries {
+        if old_entries.contains_key(key) {
+            continue;
+        }
+        diff.added.push(key.clone());
+        let status = if after.current_ttl < EXPIRING_SOON_LEDGERS {
+            DiffStatus::ExpiringSoon
+        } else {
+            DiffStatus::Unchanged
+        };
+        diff.entries.push(DiffEntry {
+            key: key.clone(),
+            label: after.label.clone(),
+            status,
+            old_ttl: None,
+            new_ttl: Some(after.current_ttl),
+        });
     }
 
     // Stable sort so output is deterministic (by key, then by status).
-    entries.sort_by(|a, b| a.key.cmp(&b.key));
+    diff.entries.sort_by(|a, b| a.key.cmp(&b.key));
+    diff.value_changed.sort_by(|a, b| a.key.cmp(&b.key));
+    diff.ttl_changed.sort_by(|a, b| a.key.cmp(&b.key));
+    diff.added.sort();
+    diff.removed.sort();
 
-    Ok(SnapshotDiff {
-        contract_id: old.contract_id.clone(),
+    Ok(diff)
+}
+
+/// Index entries by their canonical base64 `LedgerKey`, so a key expressed as
+/// hex in one document and base64 in the other still compares equal.
+fn index_entries(entries: &[SnapshotEntry]) -> BTreeMap<String, &SnapshotEntry> {
+    let mut map = BTreeMap::new();
+    for entry in entries {
+        map.insert(canonical_key(&entry.key), entry);
+    }
+    map
+}
+
+/// Canonicalise a `LedgerKey` string (base64 or hex XDR) to standard base64.
+///
+/// Falls back to the trimmed input when it is not a decodable `LedgerKey`, so
+/// hand-written or opaque keys still compare by exact string.
+pub(crate) fn canonical_key(key: &str) -> String {
+    let trimmed = key.trim();
+    let Ok(decoded) = sdkt_xdr::decode_ledger_key(trimmed) else {
+        return trimmed.to_string();
+    };
+    let mut buf = Vec::new();
+    let mut limited = stellar_xdr::Limited::new(&mut buf, stellar_xdr::Limits::none());
+    if decoded.write_xdr(&mut limited).is_err() {
+        return trimmed.to_string();
+    }
+    base64::engine::general_purpose::STANDARD.encode(&buf)
+}
+
+// ---------------------------------------------------------------------------
+// capture_snapshot
+// ---------------------------------------------------------------------------
+
+/// Capture a snapshot of a contract's storage.
+///
+/// `extra_keys` are additional ledger keys (base64/hex XDR) beyond the always
+/// tracked contract instance singleton. TTL and rent come from
+/// [`sdkt_rpc::get_ttl_info_for_keys`] and the value from
+/// [`sdkt_rpc::read_contract_state`] — the same ledger-key capture path the rest
+/// of the storage surface uses, so both see identical keys.
+pub async fn capture_snapshot(
+    client: &SorobanRpcClient,
+    contract_id: &str,
+    extra_keys: &[String],
+) -> Result<StorageSnapshot, StorageError> {
+    let ttl_info = sdkt_rpc::get_ttl_info_for_keys(client, contract_id, extra_keys).await?;
+    let captured_at_ledger = client.get_ledger().await.ok().map(|info| info.sequence);
+
+    let mut entries = Vec::with_capacity(ttl_info.entries.len());
+    for entry in &ttl_info.entries {
+        let class = classify_key(&entry.key);
+        let value = match sdkt_rpc::read_contract_state(client, contract_id, &entry.key, None).await
+        {
+            Ok(state) => state
+                .value
+                .get("xdr")
+                .and_then(|v| v.as_str())
+                .map(str::to_string),
+            // Non-contract-data keys (accounts, code) carry no `ScVal` value to
+            // capture. Every other read failure is a real error and must not be
+            // silently recorded as "no value".
+            Err(_) if class == StorageClass::Other => None,
+            Err(e) => return Err(e.into()),
+        };
+
+        entries.push(SnapshotEntry {
+            key: entry.key.clone(),
+            label: None,
+            class,
+            durability: durability_label(class),
+            current_ttl: entry.current_ttl,
+            extension_cost_stroops: entry.extension_cost_stroops,
+            value,
+        });
+    }
+
+    Ok(StorageSnapshot {
+        contract_id: contract_id.to_string(),
+        captured_at_ledger,
         entries,
     })
+}
+
+fn durability_label(class: StorageClass) -> Option<String> {
+    match class {
+        StorageClass::Instance | StorageClass::Persistent => Some("persistent".to_string()),
+        StorageClass::Temporary => Some("temporary".to_string()),
+        StorageClass::Other => None,
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -366,6 +601,10 @@ pub fn derive_extend_plan(diff: &SnapshotDiff) -> ExtendPlan {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::io::{Read, Write};
+    use std::net::TcpListener;
+    use std::sync::{Arc, Mutex};
+    use std::thread;
 
     const CONTRACT: &str = "CAE3U7JKESRWZHPEQ72DVNGOQ6WPA7HSPQZL5YV46NPCE4TMUPAGYMEC";
 
@@ -376,8 +615,8 @@ mod tests {
                 .into_iter()
                 .map(|(k, ttl)| SnapshotEntry {
                     key: k.to_string(),
-                    label: None,
                     current_ttl: ttl,
+                    ..Default::default()
                 })
                 .collect(),
         )
@@ -391,11 +630,11 @@ mod tests {
     fn diff_mismatched_contract_ids_returns_error() {
         let old = StorageSnapshot {
             contract_id: "CCONTRACTA".to_string(),
-            entries: vec![],
+            ..Default::default()
         };
         let new = StorageSnapshot {
             contract_id: "CCONTRACTB".to_string(),
-            entries: vec![],
+            ..Default::default()
         };
         let err = diff_snapshots(&old, &new).unwrap_err();
         assert!(matches!(
@@ -411,6 +650,8 @@ mod tests {
         let new = snap(vec![]);
         let diff = diff_snapshots(&old, &new).unwrap();
         assert!(diff.entries.is_empty());
+        assert_eq!(diff.changed(), 0);
+        assert_eq!(diff.unchanged, 0);
     }
 
     #[test]
@@ -425,6 +666,7 @@ mod tests {
             .iter()
             .all(|e| e.status == DiffStatus::Unchanged));
         assert!(diff.actionable().count() == 0);
+        assert_eq!(diff.unchanged, 2);
     }
 
     #[test]
@@ -442,6 +684,11 @@ mod tests {
         assert_eq!(removed[0].key, "keyB");
         assert_eq!(removed[0].old_ttl, Some(50_000));
         assert_eq!(removed[0].new_ttl, None);
+        // Entering the TTL change set only means TTL moved on a *live* entry:
+        // keyB is gone, so it is `removed`, not a TTL delta.
+        assert_eq!(diff.removed, vec!["keyB".to_string()]);
+        assert_eq!(diff.ttl_changed.len(), 1);
+        assert_eq!(diff.ttl_changed[0].key, "keyA");
     }
 
     #[test]
@@ -521,6 +768,423 @@ mod tests {
     }
 
     // -----------------------------------------------------------------------
+    // Value-aware diffing
+    // -----------------------------------------------------------------------
+
+    fn entry(key: &str, value: Option<&str>, ttl: u32, rent: u64) -> SnapshotEntry {
+        SnapshotEntry {
+            key: key.to_string(),
+            class: StorageClass::Persistent,
+            durability: Some("persistent".to_string()),
+            current_ttl: ttl,
+            extension_cost_stroops: rent,
+            value: value.map(str::to_string),
+            ..Default::default()
+        }
+    }
+
+    fn snapshot(entries: Vec<SnapshotEntry>) -> StorageSnapshot {
+        StorageSnapshot {
+            contract_id: CONTRACT.to_string(),
+            captured_at_ledger: Some(1000),
+            entries,
+        }
+    }
+
+    #[test]
+    fn value_only_change_is_a_value_delta_not_ttl() {
+        let base = snapshot(vec![entry("k1", Some("AAAA"), 20000, 2_000_000)]);
+        let live = snapshot(vec![entry("k1", Some("BBBB"), 20000, 2_000_000)]);
+
+        let diff = diff_snapshots(&base, &live).unwrap();
+
+        assert_eq!(diff.changed(), 1);
+        assert_eq!(diff.unchanged, 0);
+        assert!(diff.ttl_changed.is_empty(), "TTL matched, so no TTL delta");
+        assert_eq!(diff.value_changed.len(), 1);
+        let delta = &diff.value_changed[0];
+        assert_eq!(delta.key, "k1");
+        assert_eq!(delta.before.as_deref(), Some("AAAA"));
+        assert_eq!(delta.after.as_deref(), Some("BBBB"));
+        assert_eq!(diff.entries[0].status, DiffStatus::ValueChanged);
+    }
+
+    #[test]
+    fn matching_value_and_ttl_is_unchanged() {
+        let base = snapshot(vec![entry("k1", Some("AAAA"), 20000, 2_000_000)]);
+        let live = snapshot(vec![entry("k1", Some("AAAA"), 20000, 2_000_000)]);
+
+        let diff = diff_snapshots(&base, &live).unwrap();
+
+        assert_eq!(diff.changed(), 0);
+        assert_eq!(diff.unchanged, 1);
+        assert_eq!(diff.entries[0].status, DiffStatus::Unchanged);
+    }
+
+    #[test]
+    fn ttl_only_change_reports_only_ttl_delta() {
+        let base = snapshot(vec![entry("k1", Some("AAAA"), 20000, 2_000_000)]);
+        let live = snapshot(vec![entry("k1", Some("AAAA"), 15000, 1_500_000)]);
+
+        let diff = diff_snapshots(&base, &live).unwrap();
+
+        assert_eq!(diff.changed(), 1);
+        assert!(
+            diff.value_changed.is_empty(),
+            "value matched, so no value delta"
+        );
+        assert_eq!(diff.ttl_changed.len(), 1);
+        let delta = &diff.ttl_changed[0];
+        assert_eq!(delta.before_ttl, 20000);
+        assert_eq!(delta.after_ttl, 15000);
+        assert_eq!(delta.before_extension_cost_stroops, 2_000_000);
+        assert_eq!(delta.after_extension_cost_stroops, 1_500_000);
+        // 15 000 ledgers is below the expiring-soon threshold.
+        assert_eq!(diff.entries[0].status, DiffStatus::ExpiringSoon);
+    }
+
+    #[test]
+    fn rent_change_without_ttl_change_is_a_ttl_delta() {
+        let base = snapshot(vec![entry("k1", Some("AAAA"), 20000, 2_000_000)]);
+        let live = snapshot(vec![entry("k1", Some("AAAA"), 20000, 2_500_000)]);
+
+        let diff = diff_snapshots(&base, &live).unwrap();
+
+        assert!(diff.value_changed.is_empty());
+        assert_eq!(diff.ttl_changed.len(), 1);
+        assert_eq!(diff.unchanged, 0);
+    }
+
+    #[test]
+    fn value_less_snapshot_keeps_ttl_only_semantics() {
+        // A document written before value capture existed has no `value` field.
+        let base = snapshot(vec![entry("k1", None, 20000, 2_000_000)]);
+        let live = snapshot(vec![entry("k1", Some("BBBB"), 20000, 2_000_000)]);
+
+        let diff = diff_snapshots(&base, &live).unwrap();
+
+        assert_eq!(
+            diff.changed(),
+            0,
+            "with no captured base value there is nothing to compare"
+        );
+        assert_eq!(diff.unchanged, 1);
+    }
+
+    #[test]
+    fn added_and_removed_keys_are_reported() {
+        let base = snapshot(vec![
+            entry("gone", Some("AAAA"), 10, 1000),
+            entry("same", None, 5, 500),
+        ]);
+        let live = snapshot(vec![
+            entry("same", None, 5, 500),
+            entry("fresh", None, 7, 700),
+        ]);
+
+        let diff = diff_snapshots(&base, &live).unwrap();
+
+        assert_eq!(diff.removed, vec!["gone".to_string()]);
+        assert_eq!(diff.added, vec!["fresh".to_string()]);
+        assert_eq!(diff.unchanged, 1);
+        assert_eq!(diff.changed(), 2);
+    }
+
+    #[test]
+    fn keys_are_compared_by_canonical_form() {
+        // The same ledger key, written with surrounding whitespace, must match.
+        let key = sdkt_xdr::encode_ledger_key(&sdkt_xdr::LedgerKeyParams::ContractDataEntry {
+            contract: CONTRACT.to_string(),
+            key: stellar_xdr::ScVal::U32(1),
+            durability: stellar_xdr::ContractDataDurability::Persistent,
+        })
+        .unwrap();
+
+        let base = snapshot(vec![entry(&key, Some("AAAA"), 10, 1000)]);
+        let live = snapshot(vec![entry(&format!("  {key}  "), Some("BBBB"), 10, 1000)]);
+
+        let diff = diff_snapshots(&base, &live).unwrap();
+
+        assert_eq!(diff.value_changed.len(), 1);
+        assert_eq!(diff.removed.len(), 0);
+        assert_eq!(diff.added.len(), 0);
+    }
+
+    #[test]
+    fn value_less_document_deserializes_with_value_none() {
+        // Snapshot JSON written before this change: no `value` key present.
+        let json = format!(
+            r#"{{"contract_id":"{CONTRACT}","entries":[
+                {{"key":"some-key","class":"persistent","durability":"persistent",
+                  "current_ttl":20000,"extension_cost_stroops":2000000}}
+            ]}}"#
+        );
+
+        let snapshot: StorageSnapshot = serde_json::from_str(&json).unwrap();
+        assert_eq!(snapshot.entries.len(), 1);
+        assert_eq!(snapshot.entries[0].value, None);
+        assert_eq!(snapshot.entries[0].current_ttl, 20000);
+
+        // A minimal document with only a key also parses (defaulted fields).
+        let minimal: StorageSnapshot = serde_json::from_str(&format!(
+            r#"{{"contract_id":"{CONTRACT}","entries":[{{"key":"k"}}]}}"#
+        ))
+        .unwrap();
+        assert_eq!(minimal.entries[0].value, None);
+        assert_eq!(minimal.entries[0].current_ttl, 0);
+    }
+
+    #[test]
+    fn captured_value_is_serialized_only_when_present() {
+        let with_value = snapshot(vec![entry("k1", Some("AAAA"), 10, 100)]);
+        let json = serde_json::to_string(&with_value).unwrap();
+        assert!(json.contains(r#""value":"AAAA""#));
+
+        let without_value = snapshot(vec![entry("k1", None, 10, 100)]);
+        let json = serde_json::to_string(&without_value).unwrap();
+        assert!(!json.contains("\"value\""));
+    }
+
+    #[test]
+    fn empty_change_sets_are_omitted_from_json() {
+        let base = snapshot(vec![entry("k1", Some("AAAA"), 20000, 2_000_000)]);
+        let live = snapshot(vec![entry("k1", Some("AAAA"), 20000, 2_000_000)]);
+        let diff = diff_snapshots(&base, &live).unwrap();
+        let json = serde_json::to_string(&diff).unwrap();
+        assert!(!json.contains("\"value_changed\""));
+        assert!(!json.contains("\"ttl_changed\""));
+        assert!(!json.contains("\"added\""));
+        assert!(!json.contains("\"removed\""));
+        assert!(json.contains("\"unchanged\":1"));
+    }
+
+    /// Encode an `ScVal` as the base64 XDR string `read_contract_state` returns.
+    fn scval_base64(val: &stellar_xdr::ScVal) -> String {
+        let mut buf = Vec::new();
+        let mut limited = stellar_xdr::Limited::new(&mut buf, stellar_xdr::Limits::none());
+        val.write_xdr(&mut limited).unwrap();
+        base64::engine::general_purpose::STANDARD.encode(&buf)
+    }
+
+    /// Encode a `ContractData` `LedgerEntry` whose captured value is `val`.
+    fn contract_data_entry_xdr(val: stellar_xdr::ScVal) -> String {
+        use stellar_xdr::{
+            ContractDataDurability, ContractDataEntry, ContractId, ExtensionPoint, Hash,
+            LedgerEntry, LedgerEntryData, LedgerEntryExt, ScAddress,
+        };
+
+        let ledger_entry = LedgerEntry {
+            last_modified_ledger_seq: 100,
+            data: LedgerEntryData::ContractData(ContractDataEntry {
+                ext: ExtensionPoint::V0,
+                contract: ScAddress::Contract(ContractId(Hash([0u8; 32]))),
+                key: stellar_xdr::ScVal::U32(1),
+                durability: ContractDataDurability::Persistent,
+                val,
+            }),
+            ext: LedgerEntryExt::V0,
+        };
+        let mut buf = Vec::new();
+        let mut limited = stellar_xdr::Limited::new(&mut buf, stellar_xdr::Limits::none());
+        ledger_entry.write_xdr(&mut limited).unwrap();
+        base64::engine::general_purpose::STANDARD.encode(&buf)
+    }
+
+    fn contract_data_key(key: stellar_xdr::ScVal) -> String {
+        sdkt_xdr::encode_ledger_key(&sdkt_xdr::LedgerKeyParams::ContractDataEntry {
+            contract: CONTRACT.to_string(),
+            key,
+            durability: stellar_xdr::ContractDataDurability::Persistent,
+        })
+        .unwrap()
+    }
+
+    /// Read one HTTP request in full (headers + body per Content-Length).
+    fn read_request(sock: &mut std::net::TcpStream) -> String {
+        let mut data = Vec::new();
+        let mut buf = [0u8; 4096];
+        loop {
+            let n = sock.read(&mut buf).unwrap_or(0);
+            if n == 0 {
+                break;
+            }
+            data.extend_from_slice(&buf[..n]);
+            let text = String::from_utf8_lossy(&data).to_string();
+            if let Some(end) = text.find("\r\n\r\n") {
+                let len = text[..end]
+                    .lines()
+                    .filter_map(|l| l.split_once(':'))
+                    .find(|(k, _)| k.trim().eq_ignore_ascii_case("content-length"))
+                    .and_then(|(_, v)| v.trim().parse::<usize>().ok())
+                    .unwrap_or(0);
+                if data.len() >= end + 4 + len {
+                    break;
+                }
+            }
+        }
+        String::from_utf8_lossy(&data).to_string()
+    }
+
+    /// Mock RPC that echoes one entry per requested key, taking each entry's
+    /// captured value from `values` (default 100) and a fixed TTL.
+    fn mock_snapshot_rpc(
+        values: Arc<Mutex<BTreeMap<String, u32>>>,
+    ) -> (String, Arc<Mutex<Vec<Vec<String>>>>) {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let url = format!("http://{}", listener.local_addr().unwrap());
+        let queried: Arc<Mutex<Vec<Vec<String>>>> = Default::default();
+        let queried_thread = queried.clone();
+
+        thread::spawn(move || {
+            for conn in listener.incoming() {
+                let Ok(mut sock) = conn else { break };
+                let req = read_request(&mut sock);
+                let body = req.split_once("\r\n\r\n").map(|(_, b)| b).unwrap_or("");
+                let parsed: Option<serde_json::Value> = serde_json::from_str(body).ok();
+                let method = parsed
+                    .as_ref()
+                    .and_then(|v| v["method"].as_str())
+                    .unwrap_or_default()
+                    .to_string();
+
+                let resp_body = match method.as_str() {
+                    "getLatestLedger" => {
+                        r#"{"jsonrpc":"2.0","id":1,"result":{"id":"mock","protocolVersion":22,"sequence":1200}}"#
+                            .to_string()
+                    }
+                    "getLedgerEntries" => {
+                        let keys: Vec<String> = parsed
+                            .as_ref()
+                            .and_then(|v| v["params"]["keys"].as_array())
+                            .map(|a| {
+                                a.iter()
+                                    .filter_map(|k| k.as_str().map(str::to_string))
+                                    .collect()
+                            })
+                            .unwrap_or_default();
+                        queried_thread.lock().unwrap().push(keys.clone());
+
+                        let values = values.lock().unwrap();
+                        let entries: Vec<serde_json::Value> = keys
+                            .iter()
+                            .map(|k| {
+                                let val = *values.get(k).unwrap_or(&100);
+                                serde_json::json!({
+                                    "key": k,
+                                    "xdr": contract_data_entry_xdr(stellar_xdr::ScVal::U32(val)),
+                                    "lastModifiedLedgerSeq": 1000,
+                                    "liveUntilLedgerSeq": 21200,
+                                })
+                            })
+                            .collect();
+                        serde_json::json!({
+                            "jsonrpc": "2.0",
+                            "id": 1,
+                            "result": { "entries": entries, "latestLedger": 1200 }
+                        })
+                        .to_string()
+                    }
+                    _ => r#"{"jsonrpc":"2.0","id":1,"error":{"code":-32601,"message":"not found"}}"#
+                        .to_string(),
+                };
+
+                let resp = format!(
+                    "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+                    resp_body.len(),
+                    resp_body
+                );
+                let _ = sock.write_all(resp.as_bytes());
+            }
+        });
+
+        (url, queried)
+    }
+
+    #[tokio::test]
+    async fn capture_snapshot_records_each_entry_value() {
+        let persistent_key = contract_data_key(stellar_xdr::ScVal::U32(10));
+        let instance_key = contract_data_key(stellar_xdr::ScVal::LedgerKeyContractInstance);
+
+        let mut initial = BTreeMap::new();
+        initial.insert(persistent_key.clone(), 4242);
+        initial.insert(instance_key.clone(), 7);
+        let values = Arc::new(Mutex::new(initial));
+
+        let (url, _queried) = mock_snapshot_rpc(values.clone());
+        let client = SorobanRpcClient::new(&url);
+
+        let snapshot = capture_snapshot(&client, CONTRACT, std::slice::from_ref(&persistent_key))
+            .await
+            .unwrap();
+
+        assert_eq!(snapshot.contract_id, CONTRACT);
+        assert_eq!(snapshot.captured_at_ledger, Some(1200));
+        assert_eq!(snapshot.entries.len(), 2);
+
+        let persistent = snapshot
+            .entries
+            .iter()
+            .find(|e| e.key == persistent_key)
+            .expect("persistent entry captured");
+        assert_eq!(persistent.class, StorageClass::Persistent);
+        assert_eq!(persistent.durability.as_deref(), Some("persistent"));
+        assert_eq!(persistent.current_ttl, 20000);
+        assert_eq!(
+            persistent.value.as_deref(),
+            Some(scval_base64(&stellar_xdr::ScVal::U32(4242)).as_str())
+        );
+
+        let instance = snapshot
+            .entries
+            .iter()
+            .find(|e| e.key == instance_key)
+            .expect("instance entry captured");
+        assert_eq!(instance.class, StorageClass::Instance);
+    }
+
+    #[tokio::test]
+    async fn capture_then_diff_reports_value_only_change() {
+        let persistent_key = contract_data_key(stellar_xdr::ScVal::U32(10));
+        let instance_key = contract_data_key(stellar_xdr::ScVal::LedgerKeyContractInstance);
+
+        let mut initial = BTreeMap::new();
+        initial.insert(persistent_key.clone(), 100);
+        initial.insert(instance_key.clone(), 7);
+        let values = Arc::new(Mutex::new(initial));
+
+        let (url, _queried) = mock_snapshot_rpc(values.clone());
+        let client = SorobanRpcClient::new(&url);
+
+        let base = capture_snapshot(&client, CONTRACT, std::slice::from_ref(&persistent_key))
+            .await
+            .unwrap();
+
+        // Only the persistent entry's value changes; its TTL and the whole
+        // instance entry stay identical.
+        values.lock().unwrap().insert(persistent_key.clone(), 0);
+
+        let live = capture_snapshot(&client, CONTRACT, std::slice::from_ref(&persistent_key))
+            .await
+            .unwrap();
+
+        let diff = diff_snapshots(&base, &live).unwrap();
+
+        assert_eq!(diff.changed(), 1, "{diff:?}");
+        assert_eq!(diff.unchanged, 1);
+        assert!(diff.ttl_changed.is_empty());
+        assert_eq!(diff.value_changed.len(), 1);
+        assert_eq!(diff.value_changed[0].key, persistent_key);
+        assert_eq!(
+            diff.value_changed[0].before.as_deref(),
+            Some(scval_base64(&stellar_xdr::ScVal::U32(100)).as_str())
+        );
+        assert_eq!(
+            diff.value_changed[0].after.as_deref(),
+            Some(scval_base64(&stellar_xdr::ScVal::U32(0)).as_str())
+        );
+    }
+
+    // -----------------------------------------------------------------------
     // derive_extend_plan
     // -----------------------------------------------------------------------
 
@@ -528,7 +1192,7 @@ mod tests {
     fn plan_empty_diff_produces_empty_plan() {
         let diff = SnapshotDiff {
             contract_id: CONTRACT.to_string(),
-            entries: vec![],
+            ..Default::default()
         };
         let plan = derive_extend_plan(&diff);
         assert!(plan.keys.is_empty());
@@ -542,11 +1206,12 @@ mod tests {
             contract_id: CONTRACT.to_string(),
             entries: vec![DiffEntry {
                 key: "k1".to_string(),
-                label: None,
                 status: DiffStatus::Removed,
                 old_ttl: Some(50_000),
                 new_ttl: None,
+                ..Default::default()
             }],
+            ..Default::default()
         };
         let plan = derive_extend_plan(&diff);
         assert_eq!(plan.keys, vec!["k1"]);
@@ -562,11 +1227,12 @@ mod tests {
             contract_id: CONTRACT.to_string(),
             entries: vec![DiffEntry {
                 key: "k1".to_string(),
-                label: None,
                 status: DiffStatus::ExpiringSoon,
                 old_ttl: Some(50_000),
                 new_ttl: Some(remaining),
+                ..Default::default()
             }],
+            ..Default::default()
         };
         let plan = derive_extend_plan(&diff);
         assert_eq!(plan.keys, vec!["k1"]);
@@ -586,26 +1252,27 @@ mod tests {
             entries: vec![
                 DiffEntry {
                     key: "k1".to_string(),
-                    label: None,
                     status: DiffStatus::ExpiringSoon,
                     old_ttl: Some(50_000),
                     new_ttl: Some(10_000),
+                    ..Default::default()
                 },
                 DiffEntry {
                     key: "k2".to_string(),
-                    label: None,
                     status: DiffStatus::ExpiringSoon,
                     old_ttl: Some(50_000),
                     new_ttl: Some(1_000), // minimum
+                    ..Default::default()
                 },
                 DiffEntry {
                     key: "k3".to_string(),
-                    label: None,
                     status: DiffStatus::Removed,
                     old_ttl: Some(50_000),
                     new_ttl: None,
+                    ..Default::default()
                 },
             ],
+            ..Default::default()
         };
         let plan = derive_extend_plan(&diff);
         assert_eq!(plan.keys.len(), 3);
@@ -620,19 +1287,20 @@ mod tests {
             entries: vec![
                 DiffEntry {
                     key: "unchanged".to_string(),
-                    label: None,
                     status: DiffStatus::Unchanged,
                     old_ttl: Some(100_000),
                     new_ttl: Some(99_000),
+                    ..Default::default()
                 },
                 DiffEntry {
                     key: "expiring".to_string(),
-                    label: None,
                     status: DiffStatus::ExpiringSoon,
                     old_ttl: Some(20_000),
                     new_ttl: Some(5_000),
+                    ..Default::default()
                 },
             ],
+            ..Default::default()
         };
         let plan = derive_extend_plan(&diff);
         assert_eq!(plan.keys, vec!["expiring"]);
@@ -682,7 +1350,7 @@ mod tests {
                     class: StorageClass::Persistent,
                     current_ttl: 5_000,
                     days_remaining: 0,
-                    extension_cost_stroops: 0,
+                    extension_cost_stroops: 1234,
                 },
             ],
         };
@@ -691,6 +1359,11 @@ mod tests {
         assert_eq!(snap.entries.len(), 2);
         assert_eq!(snap.entries[0].key, "key1");
         assert_eq!(snap.entries[0].current_ttl, 10_000);
+        assert_eq!(snap.entries[0].class, StorageClass::Instance);
+        assert_eq!(snap.entries[0].durability.as_deref(), Some("persistent"));
+        // Rent and value are carried over from the report / left absent.
+        assert_eq!(snap.entries[1].extension_cost_stroops, 1234);
+        assert_eq!(snap.entries[1].value, None);
     }
 
     #[test]
