@@ -89,7 +89,8 @@ pub use case::{FunctionCall, FuzzCase};
 pub use config::{BudgetConfig, FuzzConfig, LedgerConfig, PROTOCOL_VERSION};
 pub use differential::{
     compare as compare_differential, DifferentialOutcome, DifferentialRecord,
-    LocalExecutionMetrics, MismatchClass, RpcSimulationMetrics, MAX_COMPARISON_LEDGER_GAP,
+    LocalExecutionMetrics, MismatchClass, RpcBlockReason, RpcSimulationMetrics,
+    MAX_COMPARISON_LEDGER_GAP,
 };
 pub use environment::{network_faithful_plan, BudgetCoverage, BudgetPlan, Environment};
 pub use error::{FuzzError, SetupError};

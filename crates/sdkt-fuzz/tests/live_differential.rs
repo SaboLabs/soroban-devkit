@@ -239,14 +239,16 @@ fn local_run(profile: &NetworkProfile, function: &str) -> (LocalExecutionMetrics
 async fn rpc_run(
     client: &SorobanRpcClient,
     function: &str,
-) -> Result<RpcSimulationMetrics, String> {
+) -> Result<RpcSimulationMetrics, sdkt_fuzz::RpcBlockReason> {
     // 1. Source account.
     let source = std::env::var("SDKT_DIFFERENTIAL_SOURCE").unwrap_or_default();
     let (source_account, sequence) = if source.trim().is_empty() {
         // Ephemeral account: simulation does not check that the account
         // exists, only that the envelope is well-formed.
         let mut seed = [0u8; 32];
-        getrandom::fill(&mut seed).map_err(|e| format!("random source: {e}"))?;
+        getrandom::fill(&mut seed).map_err(|e| {
+            sdkt_fuzz::RpcBlockReason::envelope_failure(format!("random source: {e}"))
+        })?;
         let signer = sdkt_xdr::Ed25519Signer::from_seed(&seed);
         let pubkey = signer.public_key_bytes_owned();
         let source_account = Strkey::PublicKeyEd25519(stellar_strkey::ed25519::PublicKey(pubkey))
@@ -256,7 +258,9 @@ async fn rpc_run(
     } else {
         let seq = sdkt_rpc::get_next_sequence(client, source.trim())
             .await
-            .map_err(|e| format!("get_next_sequence: {e}"))?;
+            .map_err(|e| {
+                sdkt_fuzz::RpcBlockReason::envelope_failure(format!("get_next_sequence: {e}"))
+            })?;
         (source.trim().to_string(), seq)
     };
 
@@ -270,14 +274,15 @@ async fn rpc_run(
         args: vec![],
         memo: None,
     };
-    let envelope = sdkt_xdr::build_invoke_transaction(&params)
-        .map_err(|e| format!("build_invoke_transaction: {e}"))?;
+    let envelope = sdkt_xdr::build_invoke_transaction(&params).map_err(|e| {
+        sdkt_fuzz::RpcBlockReason::envelope_failure(format!("build_invoke_transaction: {e}"))
+    })?;
 
     // 3. Real simulation. Debug-print the response while this path is new,
     //    so a malformed-envelope decode failure is visible rather than silent.
     let response = sdkt_rpc::simulate_transaction(client, &envelope)
         .await
-        .map_err(|e| format!("simulateTransaction: {e}"))?;
+        .map_err(|e| sdkt_fuzz::RpcBlockReason::rpc_failure(format!("simulateTransaction: {e}")))?;
     if let Ok(path) = std::env::var("SDKT_SIM_CAPTURE") {
         let json = serde_json::to_string_pretty(&serde_json::json!({
             "envelope": envelope,
@@ -307,31 +312,36 @@ async fn rpc_run(
         .as_deref()
         .unwrap_or("0")
         .parse::<u32>()
-        .map_err(|e| format!("latestLedger not a number: {e}"))?;
+        .map_err(|e| {
+            sdkt_fuzz::RpcBlockReason::rpc_failure(format!("latestLedger not a number: {e}"))
+        })?;
     let cost = response.cost.as_ref().ok_or_else(|| {
-        format!(
+        sdkt_fuzz::RpcBlockReason::missing_cost(format!(
             "simulateTransaction returned no cost metrics (transactionData={} bytes, \
              minResourceFee={}, latestLedger={latest}); no CPU/memory numbers exist to \
              compare against. Blocker recorded, not zero-filled.",
             response.transaction_data.len(),
             response.min_resource_fee,
-        )
+        ))
     })?;
     let cpu = cost
         .cpu_insns
         .parse::<u64>()
-        .map_err(|e| format!("cpuInsns: {e}"))?;
+        .map_err(|e| sdkt_fuzz::RpcBlockReason::rpc_failure(format!("cpuInsns: {e}")))?;
     let mem = cost
         .mem_bytes
         .parse::<u64>()
-        .map_err(|e| format!("memBytes: {e}"))?;
+        .map_err(|e| sdkt_fuzz::RpcBlockReason::rpc_failure(format!("memBytes: {e}")))?;
+    let protocol_version = client
+        .get_network()
+        .await
+        .map_err(|e| {
+            sdkt_fuzz::RpcBlockReason::network_metadata_failure(format!("getNetwork: {e}"))
+        })?
+        .protocol_version;
     Ok(RpcSimulationMetrics {
         ledger_sequence: latest,
-        protocol_version: client
-            .get_network()
-            .await
-            .map_err(|e| format!("getNetwork: {e}"))?
-            .protocol_version,
+        protocol_version,
         cpu_insns: cpu,
         mem_bytes: mem,
         error: response.error.is_some(),
@@ -392,13 +402,15 @@ async fn live_differential_run_is_recorded_with_classification() {
             );
             m
         }
-        Err(reason) => {
+        Err(block) => {
             // The blocker is a real, recorded outcome: the local execution
             // ran, the RPC side could not, and no comparison exists.
             // DifferentialOutcome::Blocked carries no classification, so it
             // cannot produce MATCH / RESOURCE_DRIFT / EXECUTION_DIVERGENCE.
+            let category = block.category();
+            let detail = block.detail().to_string();
             let out = DifferentialOutcome::Blocked {
-                reason: reason.clone(),
+                block,
                 profile_content_hash: profile.content_hash_hex(),
                 network: profile.network_name.clone(),
                 protocol_version: profile.protocol_version,
@@ -414,17 +426,19 @@ async fn live_differential_run_is_recorded_with_classification() {
                 "blocked outcome must not carry a comparison classification: {json}"
             );
             assert!(json.contains(&profile.content_hash_hex()), "{json}");
-            assert!(json.contains(&reason), "{json}");
+            assert!(json.contains(&detail), "{json}");
+            // The category is recorded structurally, not inferred from prose.
+            assert!(
+                json.contains(&format!(r#""category": "{category}""#)),
+                "{json}"
+            );
             assert!(out.is_blocked());
             assert_eq!(out.classification(), None);
-            assert!(
-                json.contains("no cost metrics"),
-                "the blocker reason must name the missing metrics, not zero-fill: {json}"
-            );
+            assert_eq!(out.block_reason().map(|b| b.category()), Some(category));
             if let DifferentialOutcome::Blocked { local, .. } = &out {
                 assert!(local.cpu_insns > 0, "local execution must consume CPU");
                 eprintln!(
-                    "RPC differential blocked (recorded, not mocked): {reason}; \
+                    "RPC differential blocked [{category}] (recorded, not mocked): {detail}; \
                      local cpu={} mem={}",
                     local.cpu_insns, local.mem_bytes
                 );
@@ -535,21 +549,30 @@ fn fixture_response_has_no_cost_metrics() {
 }
 
 /// The blocker path: a response without cost must not yield (0, 0) metrics.
+///
+/// This is a parsing/transport test against the captured live payload — it is
+/// NOT live parity evidence: no network call, no local-vs-RPC comparison.
 #[test]
 fn missing_cost_is_a_blocker_not_zero_metrics() {
     let r = fixture_response();
-    let reason = match r.cost.as_ref() {
+    let block = match r.cost.as_ref() {
         Some(_) => panic!("fixture unexpectedly carries cost"),
-        None => format!(
+        None => sdkt_fuzz::RpcBlockReason::missing_cost(format!(
             "simulateTransaction returned no cost metrics (transactionData={} bytes, \
              minResourceFee={}, latestLedger={}); no CPU/memory numbers exist to \
              compare against. Blocker recorded, not zero-filled.",
             r.transaction_data.len(),
             r.min_resource_fee,
             r.latest_ledger.as_deref().unwrap_or("0"),
-        ),
+        )),
     };
-    assert!(reason.contains("no cost metrics"), "{reason}");
+    // The category is structural, and the diagnostic detail survives.
+    assert_eq!(block.category(), "missing_cost");
+    assert!(
+        block.detail().contains("no cost metrics"),
+        "{}",
+        block.detail()
+    );
     // And the outcome built from it is Blocked, with no classification.
     let local = LocalExecutionMetrics {
         ledger_sequence: 5101905,
@@ -560,7 +583,7 @@ fn missing_cost_is_a_blocker_not_zero_metrics() {
         error_type: Some("Contract".to_string()),
     };
     let out = DifferentialOutcome::Blocked {
-        reason,
+        block,
         profile_content_hash: "fixture".to_string(),
         network: "testnet".to_string(),
         protocol_version: 29,
@@ -569,6 +592,9 @@ fn missing_cost_is_a_blocker_not_zero_metrics() {
     };
     assert!(out.is_blocked());
     assert_eq!(out.classification(), None);
+    let json = serde_json::to_string(&out).unwrap();
+    assert!(json.contains(r#""category":"missing_cost""#), "{json}");
+    assert!(!json.contains("classification"), "{json}");
 }
 
 /// A response WITH cost decodes into real numbers (constructed, not captured —
@@ -589,4 +615,81 @@ fn response_with_cost_decodes_into_real_numbers() {
     assert_eq!(cost.cpu_insns, "554025");
     assert_eq!(cost.mem_bytes, "1336202");
     assert_eq!(r.latest_ledger.as_deref(), Some("5101905"));
+}
+
+// ---------------------------------------------------------------------------
+// Transport-failure tests.
+//
+// These point the RPC client at an endpoint that cannot answer, so the RPC
+// call itself fails. They prove an RpcFailure blocker is recorded as its own
+// category — never as MissingCost, never as a comparison verdict. They make
+// no network claim about testnet and are NOT live parity evidence.
+// ---------------------------------------------------------------------------
+
+/// An RPC call against a dead endpoint must surface as an RpcFailure blocker
+/// with the transport error preserved.
+#[tokio::test]
+async fn dead_endpoint_is_an_rpc_failure_blocker() {
+    let client = SorobanRpcClient::with_options("http://127.0.0.1:9", Some(3), Some(1));
+    let result = rpc_run(&client, "pause").await;
+    let block = result.expect_err("dead endpoint must fail");
+    assert_eq!(block.category(), "rpc_failure", "{}", block.detail());
+    assert!(
+        block.detail().contains("simulateTransaction"),
+        "{}",
+        block.detail()
+    );
+
+    let profile = live_testnet_profile().await;
+    let (local, _) = local_run(&profile, "pause");
+    let out = DifferentialOutcome::Blocked {
+        block,
+        profile_content_hash: profile.content_hash_hex(),
+        network: profile.network_name.clone(),
+        protocol_version: profile.protocol_version,
+        local,
+        function: "pause".to_string(),
+    };
+    assert!(out.is_blocked());
+    assert_eq!(out.classification(), None);
+    let json = serde_json::to_string(&out).unwrap();
+    assert!(json.contains(r#""category":"rpc_failure""#), "{json}");
+    assert!(!json.contains(r#""category":"missing_cost""#), "{json}");
+    assert!(!json.contains("classification"), "{json}");
+}
+
+/// A bad source address must surface as an EnvelopeFailure blocker (the
+/// sequence lookup fails before any envelope is built), not as MissingCost.
+#[tokio::test]
+async fn bad_source_address_is_an_envelope_failure_blocker() {
+    let client = SorobanRpcClient::new(TESTNET_RPC);
+    // SAFETY: env vars in tests run on threads; this is a single assignment
+    // restored immediately after, and no other test reads this var.
+    unsafe { std::env::set_var("SDKT_DIFFERENTIAL_SOURCE", "NOT_A_G_ADDRESS") };
+    let result = rpc_run(&client, "pause").await;
+    unsafe { std::env::remove_var("SDKT_DIFFERENTIAL_SOURCE") };
+    let block = result.expect_err("bad source must fail");
+    assert_eq!(block.category(), "envelope_failure", "{}", block.detail());
+    assert!(
+        block.detail().contains("get_next_sequence"),
+        "{}",
+        block.detail()
+    );
+
+    let profile = live_testnet_profile().await;
+    let (local, _) = local_run(&profile, "pause");
+    let out = DifferentialOutcome::Blocked {
+        block,
+        profile_content_hash: profile.content_hash_hex(),
+        network: profile.network_name.clone(),
+        protocol_version: profile.protocol_version,
+        local,
+        function: "pause".to_string(),
+    };
+    assert!(out.is_blocked());
+    assert_eq!(out.classification(), None);
+    let json = serde_json::to_string(&out).unwrap();
+    assert!(json.contains(r#""category":"envelope_failure""#), "{json}");
+    assert!(!json.contains(r#""category":"missing_cost""#), "{json}");
+    assert!(!json.contains("classification"), "{json}");
 }

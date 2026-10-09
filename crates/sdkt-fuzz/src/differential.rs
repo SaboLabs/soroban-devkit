@@ -140,6 +140,89 @@ impl DifferentialRecord {
     }
 }
 
+/// Why the RPC side of a differential run was unavailable.
+///
+/// Separate variants — not a single string — so a test or report can
+/// distinguish "the RPC call failed" from "the RPC call succeeded but the
+/// response carried no cost metrics". The diagnostic detail is preserved in
+/// each variant; the category is structural.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case", tag = "category")]
+pub enum RpcBlockReason {
+    /// `simulateTransaction` succeeded but the response had no `cost` block,
+    /// so no CPU/memory numbers exist to compare. The response shape is
+    /// recorded (what it carried instead) — never zero-filled.
+    MissingCost {
+        /// Human-readable detail (what the response did carry).
+        detail: String,
+    },
+    /// The `simulateTransaction` RPC call itself failed (transport, decode,
+    /// or a malformed envelope the network rejected).
+    RpcFailure {
+        /// The underlying RPC error, verbatim.
+        detail: String,
+    },
+    /// The invoke envelope could not be built (bad source account, bad
+    /// contract id, sequence lookup failure, builder error).
+    EnvelopeFailure {
+        /// The underlying builder/lookup error, verbatim.
+        detail: String,
+    },
+    /// Network metadata (`getNetwork` / `getLatestLedger`) could not be
+    /// fetched, so the RPC metrics cannot be attributed to a protocol or
+    /// ledger.
+    NetworkMetadataFailure {
+        /// The underlying error, verbatim.
+        detail: String,
+    },
+}
+
+impl RpcBlockReason {
+    /// The category name, matching the task vocabulary.
+    pub fn category(&self) -> &'static str {
+        match self {
+            RpcBlockReason::MissingCost { .. } => "missing_cost",
+            RpcBlockReason::RpcFailure { .. } => "rpc_failure",
+            RpcBlockReason::EnvelopeFailure { .. } => "envelope_failure",
+            RpcBlockReason::NetworkMetadataFailure { .. } => "network_metadata_failure",
+        }
+    }
+
+    /// The diagnostic detail, preserved verbatim.
+    pub fn detail(&self) -> &str {
+        match self {
+            RpcBlockReason::MissingCost { detail }
+            | RpcBlockReason::RpcFailure { detail }
+            | RpcBlockReason::EnvelopeFailure { detail }
+            | RpcBlockReason::NetworkMetadataFailure { detail } => detail,
+        }
+    }
+
+    pub fn missing_cost(detail: impl Into<String>) -> Self {
+        RpcBlockReason::MissingCost {
+            detail: detail.into(),
+        }
+    }
+
+    pub fn rpc_failure(detail: impl Into<String>) -> Self {
+        RpcBlockReason::RpcFailure {
+            detail: detail.into(),
+        }
+    }
+
+    pub fn envelope_failure(detail: impl Into<String>) -> Self {
+        RpcBlockReason::EnvelopeFailure {
+            detail: detail.into(),
+        }
+    }
+
+    pub fn network_metadata_failure(detail: impl Into<String>) -> Self {
+        RpcBlockReason::NetworkMetadataFailure {
+            detail: detail.into(),
+        }
+    }
+}
+
 /// The outcome of a differential run: either a real comparison, or an
 /// explicit blocker.
 ///
@@ -157,8 +240,8 @@ pub enum DifferentialOutcome {
     },
     /// The RPC side could not be obtained. No metric comparison exists.
     Blocked {
-        /// Why the RPC side was unavailable.
-        reason: String,
+        /// Why the RPC side was unavailable (typed category + detail).
+        block: RpcBlockReason,
         /// Profile the local side ran under.
         profile_content_hash: String,
         /// Network and protocol, for inspection.
@@ -186,10 +269,10 @@ impl DifferentialOutcome {
         matches!(self, DifferentialOutcome::Blocked { .. })
     }
 
-    /// The blocker reason, when blocked.
-    pub fn block_reason(&self) -> Option<&str> {
+    /// The blocker, when blocked.
+    pub fn block_reason(&self) -> Option<&RpcBlockReason> {
         match self {
-            DifferentialOutcome::Blocked { reason, .. } => Some(reason),
+            DifferentialOutcome::Blocked { block, .. } => Some(block),
             DifferentialOutcome::Compared { .. } => None,
         }
     }
@@ -566,10 +649,12 @@ mod tests {
 
     // --- DifferentialOutcome: a blocked run is never a parity claim --------
 
-    fn blocked_outcome() -> DifferentialOutcome {
+    /// Build a blocked outcome for a given category, with a real local
+    /// execution attached so the evidence is reproducible.
+    fn blocked(category: RpcBlockReason) -> DifferentialOutcome {
         let p = profile(29, true);
         DifferentialOutcome::Blocked {
-            reason: "no funded identity".to_string(),
+            block: category,
             profile_content_hash: p.content_hash_hex(),
             network: p.network_name.clone(),
             protocol_version: p.protocol_version,
@@ -580,11 +665,14 @@ mod tests {
 
     #[test]
     fn a_blocked_outcome_has_no_classification() {
-        let out = blocked_outcome();
+        let out = blocked(RpcBlockReason::rpc_failure("connection refused"));
         assert!(out.is_blocked());
         assert_eq!(out.record(), None);
         assert_eq!(out.classification(), None);
-        assert_eq!(out.block_reason(), Some("no funded identity"));
+        assert_eq!(
+            out.block_reason().map(|b| b.category()),
+            Some("rpc_failure")
+        );
         // The critical property: a blocked run cannot be read as any
         // comparison verdict.
         assert!(!matches!(
@@ -597,7 +685,7 @@ mod tests {
 
     #[test]
     fn a_blocked_outcome_serializes_as_blocked_not_as_a_record() {
-        let out = blocked_outcome();
+        let out = blocked(RpcBlockReason::rpc_failure("connection refused"));
         let json = serde_json::to_string(&out).unwrap();
         assert!(json.contains(r#""outcome":"blocked""#), "{json}");
         // It must not carry any comparison classification.
@@ -605,10 +693,119 @@ mod tests {
         // It must carry the evidence needed to reproduce the local side.
         assert!(json.contains("554025"), "{json}");
         assert!(json.contains("profile_content_hash"), "{json}");
-        assert!(json.contains("no funded identity"), "{json}");
+        assert!(json.contains("connection refused"), "{json}");
         let back: DifferentialOutcome = serde_json::from_str(&json).unwrap();
         assert_eq!(back, out);
         assert!(back.is_blocked());
+    }
+
+    // --- Per-category blockers: each is distinct and carries its detail ----
+
+    #[test]
+    fn missing_cost_is_its_own_category() {
+        let reason = RpcBlockReason::missing_cost(
+            "simulateTransaction returned no cost metrics (transactionData=272 bytes, \
+             minResourceFee=247484390, latestLedger=5102023)",
+        );
+        assert_eq!(reason.category(), "missing_cost");
+        assert!(reason.detail().contains("no cost metrics"));
+        assert!(reason.detail().contains("247484390"));
+
+        let out = blocked(reason);
+        assert!(out.is_blocked());
+        assert_eq!(out.classification(), None);
+        let json = serde_json::to_string(&out).unwrap();
+        assert!(json.contains(r#""category":"missing_cost""#), "{json}");
+        assert!(!json.contains("classification"), "{json}");
+    }
+
+    #[test]
+    fn rpc_failure_is_its_own_category() {
+        let reason = RpcBlockReason::rpc_failure("simulateTransaction: connection refused");
+        assert_eq!(reason.category(), "rpc_failure");
+        assert!(reason.detail().contains("connection refused"));
+
+        let out = blocked(reason);
+        assert!(out.is_blocked());
+        assert_eq!(out.classification(), None);
+        let json = serde_json::to_string(&out).unwrap();
+        assert!(json.contains(r#""category":"rpc_failure""#), "{json}");
+        assert!(!json.contains("classification"), "{json}");
+    }
+
+    #[test]
+    fn envelope_failure_is_its_own_category() {
+        let reason = RpcBlockReason::envelope_failure(
+            "build_invoke_transaction: Invalid public key: not a G address",
+        );
+        assert_eq!(reason.category(), "envelope_failure");
+        assert!(reason.detail().contains("Invalid public key"));
+
+        let out = blocked(reason);
+        assert!(out.is_blocked());
+        assert_eq!(out.classification(), None);
+        let json = serde_json::to_string(&out).unwrap();
+        assert!(json.contains(r#""category":"envelope_failure""#), "{json}");
+        assert!(!json.contains("classification"), "{json}");
+    }
+
+    #[test]
+    fn network_metadata_failure_is_its_own_category() {
+        let reason = RpcBlockReason::network_metadata_failure("getNetwork: timeout");
+        assert_eq!(reason.category(), "network_metadata_failure");
+        assert!(reason.detail().contains("timeout"));
+
+        let out = blocked(reason);
+        assert!(out.is_blocked());
+        assert_eq!(out.classification(), None);
+        let json = serde_json::to_string(&out).unwrap();
+        assert!(
+            json.contains(r#""category":"network_metadata_failure""#),
+            "{json}"
+        );
+        assert!(!json.contains("classification"), "{json}");
+    }
+
+    /// A transport failure must never be reported as a missing-cost blocker:
+    /// the categories are structurally distinct, so mislabelling is a type
+    /// error rather than a string match.
+    #[test]
+    fn categories_are_structurally_distinct() {
+        let transport = blocked(RpcBlockReason::rpc_failure("connection refused"));
+        let missing = blocked(RpcBlockReason::missing_cost("no cost block"));
+        assert_ne!(transport, missing);
+        assert_ne!(
+            transport.block_reason().map(|b| b.category()),
+            missing.block_reason().map(|b| b.category())
+        );
+        // And neither carries a comparison verdict.
+        assert_eq!(transport.classification(), None);
+        assert_eq!(missing.classification(), None);
+    }
+
+    /// Every category round-trips through serialization with its detail
+    /// intact and still carries no classification.
+    #[test]
+    fn every_category_round_trips_without_classification() {
+        let all = [
+            RpcBlockReason::missing_cost("no cost block"),
+            RpcBlockReason::rpc_failure("connection refused"),
+            RpcBlockReason::envelope_failure("bad key"),
+            RpcBlockReason::network_metadata_failure("timeout"),
+        ];
+        for reason in all {
+            let out = blocked(reason.clone());
+            let json = serde_json::to_string(&out).unwrap();
+            assert!(!json.contains("classification"), "{json}");
+            assert!(json.contains(reason.detail()), "{json}");
+            let back: DifferentialOutcome = serde_json::from_str(&json).unwrap();
+            assert_eq!(back, out);
+            assert_eq!(back.classification(), None);
+            assert_eq!(
+                back.block_reason().map(|b| b.category()),
+                Some(reason.category())
+            );
+        }
     }
 
     #[test]
