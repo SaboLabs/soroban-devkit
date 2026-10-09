@@ -197,8 +197,23 @@ fn to_snapshot(
     }
 }
 
+/// Build the production-path case for the differential run.
+///
+/// The case carries NO baseline storage: `local_run` reproduces no ledger
+/// entries from the network, so the local execution runs on an empty
+/// baseline. This is a deliberate, tested property (see
+/// `local_execution_uses_an_empty_baseline`), not an oversight — and it must
+/// stay empty unless state reproduction is explicitly implemented.
+fn build_local_case(exec: &Executor, function: &str) -> sdkt_fuzz::FuzzCase {
+    exec.case(
+        format!("differential-{function}"),
+        FunctionCall::new(function, vec![]),
+        vec![],
+    )
+}
+
 /// The local side: run the contract through the pinned host under the live
-/// profile's budget.
+/// profile's budget, via [`build_local_case`].
 fn local_run(profile: &NetworkProfile, function: &str) -> (LocalExecutionMetrics, String) {
     let wasm = sdkt_xdr::extract_wasm_bytecode_from_live_ledger_entry(TESTNET_CODE_ENTRY)
         .expect("fixture decodes to contract WASM");
@@ -208,14 +223,7 @@ fn local_run(profile: &NetworkProfile, function: &str) -> (LocalExecutionMetrics
         budget: network_faithful_plan(profile.clone()),
     };
     let obs = exec
-        .execute_with(
-            &exec.case(
-                format!("differential-{function}"),
-                FunctionCall::new(function, vec![]),
-                vec![],
-            ),
-            &env,
-        )
+        .execute_with(&build_local_case(&exec, function), &env)
         .expect("local execution");
     let metrics = LocalExecutionMetrics {
         ledger_sequence: profile.ledger_sequence,
@@ -721,37 +729,49 @@ async fn bad_source_address_is_an_envelope_failure_blocker() {
 }
 
 /// Regression: the local side runs on an EMPTY baseline ledger, not on
-/// storage reproduced from the network. This pins the documented behaviour so
-/// the "not a state-matched comparison" claim cannot silently drift.
+/// storage reproduced from the network.
+///
+/// This test exercises the PRODUCTION path, not a duplicate: it calls
+/// [`build_local_case`] — the same helper `local_run` uses — and asserts the
+/// case it returns carries no baseline storage. The property is therefore
+/// pinned at the point where the baseline is actually chosen, so a future
+/// change that seeds storage into the local run fails here rather than
+/// silently turning the differential into a state-matched comparison.
 #[tokio::test]
 async fn local_execution_uses_an_empty_baseline() {
     let profile = live_testnet_profile().await;
     let wasm = sdkt_xdr::extract_wasm_bytecode_from_live_ledger_entry(TESTNET_CODE_ENTRY)
         .expect("fixture decodes");
     let exec = Executor::new(&wasm, Default::default()).expect("executor");
-    // The baseline the local run uses: empty, by construction.
+
+    // The production-path case: this is what local_run executes.
+    let case = build_local_case(&exec, "pause");
+
+    // Objective evidence: the case carries no baseline ledger entries and no
+    // instance storage. If either is ever populated, this fails.
+    assert!(
+        case.baseline_entries.is_empty(),
+        "local run must not reproduce network storage: baseline_entries is non-empty"
+    );
+    assert!(
+        case.instance_storage.is_empty(),
+        "local run must not seed instance storage: instance_storage is non-empty"
+    );
+
+    // And the run through that case still executes for real under the live
+    // budget — the empty baseline is not a no-op.
     let env = Environment {
         ledger: Default::default(),
         budget: network_faithful_plan(profile.clone()),
     };
-    let obs = exec
-        .execute_with(
-            &exec.case(
-                "differential-empty-baseline",
-                FunctionCall::new("pause", vec![]),
-                vec![],
-            ),
-            &env,
-        )
-        .expect("local execution");
-    // The run completes with real budget consumption, but its ledger carries
-    // no entries reproduced from the network — the empty-baseline property.
+    let obs = exec.execute_with(&case, &env).expect("local execution");
     assert!(
         obs.budget.consumed_cpu > 0,
         "real execution must consume CPU"
     );
-    // And the differential record for a Compared outcome never claims a
-    // state-matched comparison: the reason text must not promise one.
+
+    // A Compared record must never claim state-matched or state-reproducing
+    // parity: the reason text must not promise what the setup cannot deliver.
     let rec = compare_differential(
         "differential-empty-baseline",
         "pause",
