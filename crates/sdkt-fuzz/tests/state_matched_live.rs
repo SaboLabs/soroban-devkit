@@ -43,8 +43,7 @@
 //! a network-state change is distinguishable from a code regression.
 
 use sdkt_fuzz::state_capture::{
-    build_capture, decode_entry, footprint_keys_from_transaction_data,
-    verify_against_state_changes, RawCapture,
+    build_capture, footprint_keys_from_transaction_data, verify_against_state_changes, RawCapture,
 };
 use sdkt_rpc::{fetch_ledger_entries, SorobanRpcClient};
 use stellar_strkey::Strkey;
