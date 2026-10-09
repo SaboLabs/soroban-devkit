@@ -55,11 +55,15 @@ pub struct EnvironmentSnapshot {
 
 /// Serializable budget plan. A capped budget is a *synthetic*
 /// instruction-cost model, not network-faithful — recorded, not hidden.
+/// A network-faithful budget records only that fact: the cost tables
+/// themselves are vendored constants of the Protocol 29 configuration, not
+/// part of the artifact.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case", tag = "kind")]
 pub enum BudgetPlanSnapshot {
     Default,
     Capped { cpu: u64, mem: u64 },
+    NetworkFaithful,
 }
 
 impl From<&Environment> for EnvironmentSnapshot {
@@ -73,6 +77,7 @@ impl From<&Environment> for EnvironmentSnapshot {
                     cpu: *cpu,
                     mem: *mem,
                 },
+                BudgetPlan::NetworkFaithful => BudgetPlanSnapshot::NetworkFaithful,
             },
         }
     }
@@ -97,6 +102,7 @@ impl From<&EnvironmentSnapshot> for Environment {
                     cpu: *cpu,
                     mem: *mem,
                 },
+                BudgetPlanSnapshot::NetworkFaithful => BudgetPlan::NetworkFaithful,
             },
         }
     }
