@@ -1,4 +1,4 @@
-use crate::client::SorobanRpcClient;
+use crate::client::{SorobanRpcClient, StorageResponse};
 use crate::error::RpcError;
 use base64::Engine;
 use serde::Serialize;
@@ -420,6 +420,20 @@ pub async fn read_ledger_entry(
     read_ledger_entry_with_ttl(client, key_b64)
         .await
         .map(|(entry, _)| entry)
+}
+
+/// Fetch the current ledger entries for a set of keys, preserving per-entry
+/// provenance (`lastModifiedLedgerSeq`, `liveUntilLedgerSeq`).
+///
+/// This is the state-capture primitive for a state-matched differential run.
+/// It reads **current** ledger state — the RPC has no ledger-pinning
+/// parameter — so callers must verify consistency against the simulation
+/// ledger themselves (see `sdkt_fuzz::state_capture`).
+pub async fn fetch_ledger_entries(
+    client: &SorobanRpcClient,
+    keys: &[String],
+) -> Result<StorageResponse, RpcError> {
+    client.get_contract_storage("", keys).await
 }
 
 async fn read_ledger_entry_with_ttl(

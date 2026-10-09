@@ -32,6 +32,11 @@ soroban-env-host = "=29.0.0"
 # model. There is deliberately no second ContractSpec parser in this crate.
 sdkt-wasm = { version = "2.7.0", path = "../sdkt-wasm" }
 
+# State capture decodes the simulation's SorobanTransactionData footprint to
+# enumerate the keys that must be fetched. This is a production-path dep, not
+# a test-only one: the capture pipeline runs against real RPC responses.
+sdkt-xdr = { version = "2.7.0", path = "../sdkt-xdr" }
+
 sha2 = "0.11"
 thiserror = "2"
 
@@ -40,9 +45,9 @@ thiserror = "2"
 # canonical artifact format; `soroban_env_host::xdr::ScVal` and the
 # `stellar_xdr::ScVal` used here are the same type.
 stellar-xdr = { version = "=28.0.0", features = ["std", "serde"] }
+base64 = "0.23"
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
-
 [dev-dependencies]
 serde_json = "1"
 soroban-env-host = "=29.0.0"
@@ -52,3 +57,4 @@ sdkt-xdr = { version = "2.7.0", path = "../sdkt-xdr" }
 getrandom = "0.4"
 stellar-strkey = "0.0.18"
 tokio = { version = "1.53.1", features = ["macros", "rt-multi-thread"] }
+base64 = "0.23"

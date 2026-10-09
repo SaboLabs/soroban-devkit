@@ -55,8 +55,14 @@ pub struct FuzzCase {
     /// Baseline contract-data entries restored before execution.
     pub baseline_entries: Vec<LedgerEntry>,
     /// Baseline instance-storage pairs seeded into the executor-owned
-    /// instance entry (state carry-forward for sequences).
+    /// instance entry (state carry-forward for sequences). Ignored when
+    /// [`FuzzCase::external_instance_entry`] is set.
     pub instance_storage: InstanceStorage,
+    /// An externally-verified contract-instance entry to use instead of a
+    /// synthesized one. When set, the executor uses this entry verbatim
+    /// (after validating its contract address and key shape). This is the
+    /// state-matched path.
+    pub external_instance_entry: Option<LedgerEntry>,
 }
 
 impl FuzzCase {
@@ -79,6 +85,7 @@ impl FuzzCase {
             call,
             baseline_entries,
             instance_storage: Vec::new(),
+            external_instance_entry: None,
         }
     }
 
@@ -86,6 +93,29 @@ impl FuzzCase {
     pub fn with_instance_storage(mut self, storage: InstanceStorage) -> Self {
         self.instance_storage = storage;
         self
+    }
+
+    /// Seed the case with an externally-verified contract-instance entry.
+    ///
+    /// This is the state-matched path: the instance entry comes from the
+    /// network (e.g. a `simulateTransaction` response's `stateChanges.before`
+    /// or a `getLedgerEntries` read) rather than being synthesized by the
+    /// executor. The executor will use this entry as-is — including its
+    /// executable and storage map — instead of building one from the campaign
+    /// WASM hash.
+    ///
+    /// The entry must be a `ContractData` entry whose key is
+    /// `LedgerKeyContractInstance` and whose contract matches this case's
+    /// address; anything else is rejected at execution time, so a bad seed
+    /// cannot silently change what is executed.
+    pub fn with_external_instance_entry(mut self, entry: LedgerEntry) -> Self {
+        self.external_instance_entry = Some(entry);
+        self
+    }
+
+    /// The externally-provided instance entry, when set.
+    pub fn external_instance_entry(&self) -> Option<&LedgerEntry> {
+        self.external_instance_entry.as_ref()
     }
 
     /// The contract address this case executes against.

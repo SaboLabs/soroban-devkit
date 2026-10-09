@@ -255,7 +255,37 @@ impl Executor {
             }
         }
 
-        let instance = instance_entry(&contract, &self.wasm_hash, &case.instance_storage);
+        // The instance entry: an externally-verified one when the case
+        // carries it (state-matched path), otherwise the executor's own
+        // synthesized entry.
+        let instance = match &case.external_instance_entry {
+            Some(entry) => {
+                // Validate before use: the entry must be this contract's
+                // instance entry, or the run would silently execute against
+                // a different contract's state.
+                match &entry.data {
+                    LedgerEntryData::ContractData(cd) => {
+                        if cd.contract != contract {
+                            return Err(FuzzError::InvalidSetup(SetupError::BaselineEntry(
+                                "external instance entry belongs to another contract".to_string(),
+                            )));
+                        }
+                        if !matches!(cd.key, ScVal::LedgerKeyContractInstance) {
+                            return Err(FuzzError::InvalidSetup(SetupError::BaselineEntry(
+                                "external instance entry is not a contract instance".to_string(),
+                            )));
+                        }
+                        entry.clone()
+                    }
+                    _ => {
+                        return Err(FuzzError::InvalidSetup(SetupError::BaselineEntry(
+                            "external instance entry must be a ContractData entry".to_string(),
+                        )))
+                    }
+                }
+            }
+            None => instance_entry(&contract, &self.wasm_hash, &case.instance_storage),
+        };
 
         // --- Footprint: read-only code entry; read-write instance + data ---
         let code_key = LedgerKey::ContractCode(LedgerKeyContractCode {

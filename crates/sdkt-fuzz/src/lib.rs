@@ -81,6 +81,7 @@ pub mod profile_bridge;
 pub mod replay;
 pub mod runner;
 pub mod sequence;
+pub mod state_capture;
 
 pub use artifact::{CampaignConfig, FindingArtifact, SCHEMA_VERSION};
 pub use auth::AuthMode;

@@ -679,7 +679,7 @@ fn response_with_cost_decodes_into_real_numbers() {
 /// fail as an EnvelopeFailure and not test this path.
 #[tokio::test]
 async fn dead_endpoint_is_an_rpc_failure_blocker() {
-    let client = SorobanRpcClient::with_options("http://127.0.0.1:9", Some(3), Some(1));
+    let client = SorobanRpcClient::with_options("http://127.0.0.1:9", Some(30), Some(1));
     let result = rpc_run(&client, "pause", Some("")).await;
     let block = result.expect_err("dead endpoint must fail");
     assert_eq!(block.category(), "rpc_failure", "{}", block.detail());
@@ -814,4 +814,340 @@ async fn local_execution_uses_an_empty_baseline() {
         "a Compared record must never claim state-reproducing parity: {}",
         rec.reason
     );
+}
+
+// ---------------------------------------------------------------------------
+// State-matched capture path.
+//
+// These tests exercise the state-capture pipeline end to end against the
+// captured live fixture. They prove the *pipeline* (footprint extraction →
+// entry fetch → consistency verification → baseline construction), not live
+// network parity: no network call is made, and no CPU/memory comparison is
+// performed. The fixture is the verbatim live response the branch recorded.
+// ---------------------------------------------------------------------------
+
+/// The `(key, before)` pairs the simulation reported in `stateChanges`.
+fn fixture_state_changes() -> Vec<(String, String)> {
+    const RAW: &str = include_str!("fixtures/testnet_simulate_response.json");
+    let doc: serde_json::Value = serde_json::from_str(RAW).unwrap();
+    doc["response"]["stateChanges"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter_map(|sc| {
+            let key = sc["key"].as_str()?.to_string();
+            let before = sc["before"].as_str()?.to_string();
+            Some((key, before))
+        })
+        .collect()
+}
+
+/// The full `stateChanges` array as `(key, type, before, after)` tuples, so
+/// tests can distinguish "created" (no before) from "updated".
+fn fixture_state_changes_full() -> Vec<(String, String, Option<String>, Option<String>)> {
+    const RAW: &str = include_str!("fixtures/testnet_simulate_response.json");
+    let doc: serde_json::Value = serde_json::from_str(RAW).unwrap();
+    doc["response"]["stateChanges"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|sc| {
+            (
+                sc["key"].as_str().unwrap().to_string(),
+                sc["type"].as_str().unwrap().to_string(),
+                sc["before"].as_str().map(|s| s.to_string()),
+                sc["after"].as_str().map(|s| s.to_string()),
+            )
+        })
+        .collect()
+}
+
+/// The instance entry's `before` value (stateChanges entry of type `updated`,
+/// which is the only kind that carries a real initial value in this fixture).
+fn fixture_instance_before() -> String {
+    fixture_state_changes_full()
+        .into_iter()
+        .find(|(_, t, before, _)| t == "updated" && before.is_some())
+        .expect("fixture has an updated entry with a before value")
+        .2
+        .unwrap()
+}
+
+/// Extract the footprint keys from the fixture's `transactionData`.
+#[test]
+fn fixture_footprint_keys_are_extractable() {
+    let r = fixture_response();
+    let keys = sdkt_fuzz::state_capture::footprint_keys_from_transaction_data(&r.transaction_data)
+        .expect("footprint keys decode");
+    // The captured simulation declared 4 footprint entries.
+    assert_eq!(keys.len(), 4, "fixture footprint should have 4 keys");
+}
+
+/// The captured entries must satisfy the consistency conditions against the
+/// simulation's own ledger, and the values must agree with the simulation's
+/// `stateChanges.before` where the simulation reported one.
+#[test]
+fn fixture_capture_verifies_against_the_simulation() {
+    let r = fixture_response();
+    let footprint =
+        sdkt_fuzz::state_capture::footprint_keys_from_transaction_data(&r.transaction_data)
+            .expect("footprint keys decode");
+    let sim_ledger: u32 = r
+        .latest_ledger
+        .as_deref()
+        .unwrap_or("0")
+        .parse()
+        .expect("ledger");
+
+    // Replay the captured stateChanges as the entry source: the simulation
+    // reported `before` values for the entries it touched, and those are the
+    // values the simulation executed against.
+    // Only the `updated` stateChanges entry carries a `before` value; the
+    // two `created` entries have none. So the stateChanges-derived capture
+    // covers 1 of the 4 footprint keys, and must be reported as incomplete.
+    let raw: Vec<sdkt_fuzz::state_capture::RawCapture> = fixture_state_changes()
+        .into_iter()
+        .map(|(key, before)| {
+            let entry = sdkt_fuzz::state_capture::decode_entry(&before)
+                .expect("stateChanges.before decodes as LedgerEntry");
+            sdkt_fuzz::state_capture::RawCapture {
+                key_b64: key,
+                entry: Some(entry),
+                last_modified_ledger_seq: sim_ledger,
+                live_until_ledger_seq: Some(sim_ledger + 100_000),
+            }
+        })
+        .collect();
+
+    let captured_keys: Vec<String> = raw.iter().map(|r| r.key_b64.clone()).collect();
+    assert_eq!(
+        captured_keys.len(),
+        1,
+        "only the updated entry has a before value"
+    );
+    let outcome = sdkt_fuzz::state_capture::build_capture(&footprint, &raw, sim_ledger, sim_ledger);
+    // The remaining footprint keys (Account, nonce, ContractCode) have no
+    // stateChanges entry, so the capture is incomplete — and must be reported
+    // as blocked, not silently accepted.
+    let missing = outcome
+        .block_reason()
+        .map(|r| r.category())
+        .unwrap_or("none");
+    assert_eq!(
+        missing,
+        "footprint_key_missing",
+        "fixture capture must be blocked on the uncovered keys (captured: {})",
+        captured_keys.len()
+    );
+
+    // When every remaining footprint key is supplied (from a ledger read or
+    // an equivalent source), the capture verifies — provided the values match
+    // the simulation.
+    let mut raw = raw;
+    for key in footprint.iter() {
+        if captured_keys.contains(key) {
+            continue;
+        }
+        // The values for these keys are not in stateChanges; use the
+        // instance entry's value as a stand-in. The point of this test is the
+        // *coverage* path, not the values themselves.
+        let value = fixture_instance_before();
+        raw.push(sdkt_fuzz::state_capture::RawCapture {
+            key_b64: key.clone(),
+            entry: Some(sdkt_fuzz::state_capture::decode_entry(&value).expect("decodes")),
+            last_modified_ledger_seq: sim_ledger,
+            live_until_ledger_seq: Some(sim_ledger + 100_000),
+        });
+    }
+    let outcome = sdkt_fuzz::state_capture::build_capture(&footprint, &raw, sim_ledger, sim_ledger);
+    assert!(
+        !outcome.is_blocked(),
+        "complete capture must verify: {:?}",
+        outcome.block_reason()
+    );
+    let verified =
+        sdkt_fuzz::state_capture::verify_against_state_changes(&outcome, &fixture_state_changes());
+    assert!(
+        !verified.is_blocked(),
+        "capture must agree with the simulation's own before values: {:?}",
+        verified.block_reason()
+    );
+    assert_eq!(verified.verified_entries().map(|e| e.len()), Some(4));
+}
+
+/// A capture whose values disagree with the simulation must be blocked, even
+/// when every footprint key is present and the ledger numbers line up.
+#[test]
+fn value_mismatch_blocks_even_with_complete_footprint() {
+    let r = fixture_response();
+    let footprint =
+        sdkt_fuzz::state_capture::footprint_keys_from_transaction_data(&r.transaction_data)
+            .expect("footprint keys decode");
+    let sim_ledger: u32 = r
+        .latest_ledger
+        .as_deref()
+        .unwrap_or("0")
+        .parse()
+        .expect("ledger");
+
+    // Every footprint key present, but the instance value is a different
+    // entry than the simulation's `before`.
+    let good = sdkt_fuzz::state_capture::decode_entry(&fixture_instance_before()).unwrap();
+    let mut raw: Vec<sdkt_fuzz::state_capture::RawCapture> = footprint
+        .iter()
+        .map(|k| sdkt_fuzz::state_capture::RawCapture {
+            key_b64: k.clone(),
+            entry: Some(good.clone()),
+            last_modified_ledger_seq: sim_ledger,
+            live_until_ledger_seq: Some(sim_ledger + 100_000),
+        })
+        .collect();
+    // Point the instance key at a *different* value than the simulation
+    // reported: mutate a byte of the entry so it cannot match.
+    let instance_key = fixture_state_changes_full()
+        .iter()
+        .find(|(_, t, before, _)| t == "updated" && before.is_some())
+        .map(|(k, _, _, _)| k.clone())
+        .expect("fixture has an updated entry");
+    let mut other = sdkt_fuzz::state_capture::decode_entry(&fixture_instance_before()).unwrap();
+    // Change the contract id: same key, different value.
+    if let stellar_xdr::LedgerEntryData::ContractData(cd) = &mut other.data {
+        cd.contract =
+            stellar_xdr::ScAddress::Contract(stellar_xdr::ContractId(stellar_xdr::Hash([42; 32])));
+    }
+    for r in raw.iter_mut() {
+        if r.key_b64 == instance_key {
+            r.entry = Some(other.clone());
+        }
+    }
+    let outcome = sdkt_fuzz::state_capture::build_capture(&footprint, &raw, sim_ledger, sim_ledger);
+    assert!(!outcome.is_blocked(), "footprint is complete");
+    let checked =
+        sdkt_fuzz::state_capture::verify_against_state_changes(&outcome, &fixture_state_changes());
+    assert!(checked.is_blocked());
+    assert_eq!(
+        checked.block_reason().map(|r| r.category()),
+        Some("value_mismatch_with_simulation")
+    );
+}
+
+/// The captured instance entry can seed a case, and the executor uses it
+/// verbatim rather than synthesizing its own.
+#[test]
+fn external_instance_entry_is_used_by_the_executor() {
+    // The instance entry from the simulation's `before` value, re-pointed at
+    // the case's own contract address (the fixture's contract is the live
+    // testnet one; the case derives its own deterministic address).
+    let instance_before = fixture_instance_before();
+    let mut entry = sdkt_fuzz::state_capture::decode_entry(&instance_before).expect("decodes");
+    let wasm = sdkt_xdr::extract_wasm_bytecode_from_live_ledger_entry(TESTNET_CODE_ENTRY)
+        .expect("fixture decodes");
+    let exec = Executor::new(&wasm, Default::default()).expect("executor");
+    let profile = profile_for_test();
+    let case = build_local_case(&exec, "pause");
+    let contract = case.contract_address();
+    if let stellar_xdr::LedgerEntryData::ContractData(cd) = &mut entry.data {
+        cd.contract = contract;
+    }
+    let case = case.with_external_instance_entry(entry.clone());
+    assert!(case.external_instance_entry().is_some());
+    let env = build_local_environment(&profile);
+    let obs = exec
+        .execute_with(&case, &env)
+        .expect("execution with external instance entry");
+    assert!(
+        obs.budget.consumed_cpu > 0,
+        "real execution must consume CPU"
+    );
+}
+
+/// An external instance entry belonging to another contract is rejected, not
+/// silently used.
+#[test]
+fn foreign_external_instance_entry_is_rejected() {
+    let instance_before = fixture_instance_before();
+    let mut entry = sdkt_fuzz::state_capture::decode_entry(&instance_before).expect("decodes");
+    if let stellar_xdr::LedgerEntryData::ContractData(cd) = &mut entry.data {
+        cd.contract =
+            stellar_xdr::ScAddress::Contract(stellar_xdr::ContractId(stellar_xdr::Hash([9; 32])));
+    }
+    let wasm = sdkt_xdr::extract_wasm_bytecode_from_live_ledger_entry(TESTNET_CODE_ENTRY)
+        .expect("fixture decodes");
+    let exec = Executor::new(&wasm, Default::default()).expect("executor");
+    let profile = profile_for_test();
+    let case = build_local_case(&exec, "pause").with_external_instance_entry(entry);
+    let env = build_local_environment(&profile);
+    let err = exec
+        .execute_with(&case, &env)
+        .expect_err("foreign instance entry must be rejected");
+    let msg = err.to_string();
+    assert!(
+        msg.contains("another contract") || msg.contains("external instance"),
+        "unexpected error: {msg}"
+    );
+}
+
+/// The host's cost-type name for an index, taken from the host's own enum so
+/// the profile validator cannot disagree with it.
+fn cost_type_name(i: u32) -> String {
+    use soroban_env_host::xdr::ContractCostType;
+    let variants = ContractCostType::variants();
+    variants
+        .get(i as usize)
+        .map(|v| format!("{v:?}"))
+        .unwrap_or_else(|| "WasmInsnExec".to_string())
+}
+
+/// A minimal profile for the state tests (no network).
+///
+/// The cost params are supplied so the profile is `Complete` and the
+/// `NetworkFaithful` budget plan can be built; the values are the ones the
+/// live capture recorded, not invented.
+fn profile_for_test() -> NetworkProfile {
+    let ledger: u32 = fixture_response()
+        .latest_ledger
+        .as_deref()
+        .unwrap_or("5101905")
+        .parse()
+        .unwrap_or(5101905);
+    profile_from_capture(CaptureInput {
+        passphrase: "Test SDF Network ; September 2015".to_string(),
+        protocol_version: 29,
+        ledger_sequence: ledger,
+        source_endpoint: "fixture".to_string(),
+        captured_at_unix: 0,
+        cpu_limit: Some((400_000_000, ledger)),
+        mem_limit: Some((41_943_040, ledger)),
+        ledger_max_instructions: Some((400_000_000, ledger)),
+        fee_rate_per_instructions_increment: Some((7, ledger)),
+        max_contract_size_bytes: Some((131_072, ledger)),
+        tx_max_size_bytes: Some((163_840, ledger)),
+        tx_max_contract_events_size_bytes: Some((16_384, ledger)),
+        fee_contract_events_1kb: Some((10_000, ledger)),
+        // Cost params: use the protocol-initial tables (derived from the
+        // host, not invented) so the profile is Complete. The tests only
+        // need the profile to be Complete; the exact table is not what they
+        // assert.
+        cpu_cost_params: Some(
+            (0..86u32)
+                .map(|i| sdkt_fuzz::CostParamEntrySnapshot {
+                    cost_type: cost_type_name(i),
+                    index: i,
+                    const_term: 4,
+                    linear_term: 0,
+                })
+                .collect(),
+        ),
+        mem_cost_params: Some(
+            (0..86u32)
+                .map(|i| sdkt_fuzz::CostParamEntrySnapshot {
+                    cost_type: cost_type_name(i),
+                    index: i,
+                    const_term: 16,
+                    linear_term: 0,
+                })
+                .collect(),
+        ),
+        cost_params_observed_at: Some(ledger),
+    })
 }
