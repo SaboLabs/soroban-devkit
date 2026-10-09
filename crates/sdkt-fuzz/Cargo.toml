@@ -49,4 +49,6 @@ soroban-env-host = "=29.0.0"
 sdkt-rpc = { version = "2.7.0", path = "../sdkt-rpc" }
 sdkt-wasm = { version = "2.7.0", path = "../sdkt-wasm" }
 sdkt-xdr = { version = "2.7.0", path = "../sdkt-xdr" }
+getrandom = "0.4"
+stellar-strkey = "0.0.18"
 tokio = { version = "1.53.1", features = ["macros", "rt-multi-thread"] }

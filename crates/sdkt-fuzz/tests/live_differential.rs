@@ -29,6 +29,7 @@ use sdkt_rpc::network_capture::{
     config_setting_key, decode_into, decode_ledger_entry_data_b64, CapturedNetworkConfig,
 };
 use sdkt_rpc::SorobanRpcClient;
+use stellar_strkey::Strkey;
 use stellar_xdr::ConfigSettingId;
 
 /// The public testnet contract used by the repo's own walkthrough
@@ -44,6 +45,14 @@ const TESTNET_CODE_ENTRY: &[u8] = include_bytes!("fixtures/testnet_contract_code
 /// state-mutating call on the order book; it is used here only as a
 /// reproducible input, not as a claim about the contract's behaviour.
 const TARGET_FUNCTION: &str = "pause";
+
+/// A read-only function on the same contract. Read-only calls do not need
+/// auth, so the network may report a full cost block for them where the
+/// auth-requiring path returns none. When `SDKT_DIFFERENTIAL_FUNCTION` is set,
+/// it overrides the target for both sides.
+fn target_function() -> String {
+    std::env::var("SDKT_DIFFERENTIAL_FUNCTION").unwrap_or_else(|_| TARGET_FUNCTION.to_string())
+}
 
 /// Fetch the live testnet configuration and build a profile from it.
 async fn live_testnet_profile() -> NetworkProfile {
@@ -175,7 +184,7 @@ fn to_snapshot(
 
 /// The local side: run the contract through the pinned host under the live
 /// profile's budget.
-fn local_run(profile: &NetworkProfile) -> (LocalExecutionMetrics, String) {
+fn local_run(profile: &NetworkProfile, function: &str) -> (LocalExecutionMetrics, String) {
     let wasm = sdkt_xdr::extract_wasm_bytecode_from_live_ledger_entry(TESTNET_CODE_ENTRY)
         .expect("fixture decodes to contract WASM");
     let exec = Executor::new(&wasm, Default::default()).expect("executor builds");
@@ -186,8 +195,8 @@ fn local_run(profile: &NetworkProfile) -> (LocalExecutionMetrics, String) {
     let obs = exec
         .execute_with(
             &exec.case(
-                "differential-pause",
-                FunctionCall::new(TARGET_FUNCTION, vec![]),
+                format!("differential-{function}"),
+                FunctionCall::new(function, vec![]),
                 vec![],
             ),
             &env,
@@ -212,20 +221,121 @@ fn local_run(profile: &NetworkProfile) -> (LocalExecutionMetrics, String) {
 
 /// The RPC side: `simulateTransaction` for the same call.
 ///
-/// Building a valid invoke envelope requires a funded source account and a
-/// valid sequence number. This is the part that needs network state; when it
-/// is unavailable the test reports a blocker rather than substituting a mock.
-async fn rpc_run() -> Result<RpcSimulationMetrics, String> {
-    let client = SorobanRpcClient::new(TESTNET_RPC);
-    let _ = client.get_health().await.map_err(|e| e.to_string())?;
-    // A real simulation needs a signed envelope from a funded account. The
-    // repo has no testnet identity for this contract, so the honest outcome
-    // is a recorded blocker, not a fabricated comparison.
-    Err(format!(
-        "simulateTransaction requires a funded source account and a signed \
-         envelope for {TESTNET_CONTRACT_ID}; no testnet identity is available \
-         in this environment. Blocker recorded, not mocked."
-    ))
+/// Uses the workspace's real envelope path:
+///
+/// 1. source account — the `SDKT_DIFFERENTIAL_SOURCE` env var (a `G...`
+///    address) when set, else an ephemeral random account (simulation only
+///    needs *an* account, not a funded one);
+/// 2. sequence — `get_next_sequence` from the network, or 1 for a fresh
+///    account;
+/// 3. envelope — `sdkt_xdr::build_invoke_transaction` (unsigned; simulation
+///    does not require a signature);
+/// 4. simulation — `sdkt_rpc::simulate_transaction`, whose `cost`
+///    (`cpuInsns`, `memBytes`) and `latestLedger` are the only metrics
+///    compared.
+///
+/// The `SDKT_DIFFERENTIAL_SECRET` env var (`S...` secret) is accepted for a
+/// future signed-envelope path; it is not needed for simulation.
+async fn rpc_run(
+    client: &SorobanRpcClient,
+    function: &str,
+) -> Result<RpcSimulationMetrics, String> {
+    // 1. Source account.
+    let source = std::env::var("SDKT_DIFFERENTIAL_SOURCE").unwrap_or_default();
+    let (source_account, sequence) = if source.trim().is_empty() {
+        // Ephemeral account: simulation does not check that the account
+        // exists, only that the envelope is well-formed.
+        let mut seed = [0u8; 32];
+        getrandom::fill(&mut seed).map_err(|e| format!("random source: {e}"))?;
+        let signer = sdkt_xdr::Ed25519Signer::from_seed(&seed);
+        let pubkey = signer.public_key_bytes_owned();
+        let source_account = Strkey::PublicKeyEd25519(stellar_strkey::ed25519::PublicKey(pubkey))
+            .to_string()
+            .to_string();
+        (source_account, 1i64)
+    } else {
+        let seq = sdkt_rpc::get_next_sequence(client, source.trim())
+            .await
+            .map_err(|e| format!("get_next_sequence: {e}"))?;
+        (source.trim().to_string(), seq)
+    };
+
+    // 2. Unsigned invoke envelope via the workspace builder.
+    let params = sdkt_xdr::InvokeTransactionParams {
+        source_account,
+        sequence,
+        fee: 100,
+        contract_id: TESTNET_CONTRACT_ID.to_string(),
+        function: function.to_string(),
+        args: vec![],
+        memo: None,
+    };
+    let envelope = sdkt_xdr::build_invoke_transaction(&params)
+        .map_err(|e| format!("build_invoke_transaction: {e}"))?;
+
+    // 3. Real simulation. Debug-print the response while this path is new,
+    //    so a malformed-envelope decode failure is visible rather than silent.
+    let response = sdkt_rpc::simulate_transaction(client, &envelope)
+        .await
+        .map_err(|e| format!("simulateTransaction: {e}"))?;
+    if let Ok(path) = std::env::var("SDKT_SIM_CAPTURE") {
+        let json = serde_json::to_string_pretty(&serde_json::json!({
+            "envelope": envelope,
+            "response": response,
+        }))
+        .unwrap_or_default();
+        let _ = std::fs::write(path, json);
+    }
+    if std::env::var("SDKT_SIM_DEBUG").is_ok() {
+        eprintln!("simulateTransaction response: {response:?}");
+    }
+
+    // 4. Extract the comparable metrics.
+    //
+    //    `simulateTransaction` does not always return `cost`: a live testnet
+    //    response for this contract carried `transactionData`,
+    //    `minResourceFee`, `latestLedger`, auth entries and state changes but
+    //    **no `cost` block**. When `cost` is absent, the CPU/memory metrics do
+    //    not exist and must NOT be reported as zero — zero is a value, absence
+    //    is not. That case is a blocker ("RPC returned no cost metrics"), never
+    //    a (0, 0) metric pair that could classify as RESOURCE_DRIFT or MATCH.
+    //
+    //    Fixture: `fixtures/testnet_simulate_response.json` is the verbatim
+    //    live response this branch observed.
+    let latest = response
+        .latest_ledger
+        .as_deref()
+        .unwrap_or("0")
+        .parse::<u32>()
+        .map_err(|e| format!("latestLedger not a number: {e}"))?;
+    let cost = response.cost.as_ref().ok_or_else(|| {
+        format!(
+            "simulateTransaction returned no cost metrics (transactionData={} bytes, \
+             minResourceFee={}, latestLedger={latest}); no CPU/memory numbers exist to \
+             compare against. Blocker recorded, not zero-filled.",
+            response.transaction_data.len(),
+            response.min_resource_fee,
+        )
+    })?;
+    let cpu = cost
+        .cpu_insns
+        .parse::<u64>()
+        .map_err(|e| format!("cpuInsns: {e}"))?;
+    let mem = cost
+        .mem_bytes
+        .parse::<u64>()
+        .map_err(|e| format!("memBytes: {e}"))?;
+    Ok(RpcSimulationMetrics {
+        ledger_sequence: latest,
+        protocol_version: client
+            .get_network()
+            .await
+            .map_err(|e| format!("getNetwork: {e}"))?
+            .protocol_version,
+        cpu_insns: cpu,
+        mem_bytes: mem,
+        error: response.error.is_some(),
+    })
 }
 
 #[tokio::test]
@@ -264,18 +374,24 @@ async fn live_differential_run_is_recorded_with_classification() {
     );
 
     // The local execution really runs under the live budget.
-    let (local, status) = local_run(&profile);
+    let function = target_function();
+    let (local, status) = local_run(&profile, &function);
     assert_eq!(local.protocol_version, 29);
     assert!(
         local.cpu_insns > 0,
         "a real execution must consume CPU: {status}"
     );
 
-    // The RPC side needs a funded source account and a signed envelope. When
-    // that is unavailable the run records a blocker — a distinct outcome
-    // type, never a synthetic metric set passed to compare_differential.
-    let rpc = match rpc_run().await {
-        Ok(m) => m,
+    // The RPC side: build a real envelope and simulate it.
+    let client = SorobanRpcClient::new(TESTNET_RPC);
+    let rpc = match rpc_run(&client, &function).await {
+        Ok(m) => {
+            eprintln!(
+                "RPC simulation returned: cpu={} mem={} ledger={} error={}",
+                m.cpu_insns, m.mem_bytes, m.ledger_sequence, m.error
+            );
+            m
+        }
         Err(reason) => {
             // The blocker is a real, recorded outcome: the local execution
             // ran, the RPC side could not, and no comparison exists.
@@ -287,7 +403,7 @@ async fn live_differential_run_is_recorded_with_classification() {
                 network: profile.network_name.clone(),
                 protocol_version: profile.protocol_version,
                 local,
-                function: TARGET_FUNCTION.to_string(),
+                function: function.clone(),
             };
             let json = serde_json::to_string_pretty(&out).unwrap();
             // Evidence: it is blocked, it carries no classification, and it
@@ -301,6 +417,10 @@ async fn live_differential_run_is_recorded_with_classification() {
             assert!(json.contains(&reason), "{json}");
             assert!(out.is_blocked());
             assert_eq!(out.classification(), None);
+            assert!(
+                json.contains("no cost metrics"),
+                "the blocker reason must name the missing metrics, not zero-fill: {json}"
+            );
             if let DifferentialOutcome::Blocked { local, .. } = &out {
                 assert!(local.cpu_insns > 0, "local execution must consume CPU");
                 eprintln!(
@@ -315,8 +435,8 @@ async fn live_differential_run_is_recorded_with_classification() {
 
     // The RPC side returned real metrics, so a real comparison runs.
     let rec = compare_differential(
-        "differential-pause",
-        TARGET_FUNCTION,
+        &format!("differential-{function}"),
+        &function,
         &profile,
         local,
         rpc,
@@ -350,8 +470,9 @@ async fn live_differential_run_is_recorded_with_classification() {
 #[tokio::test]
 async fn local_execution_is_deterministic_under_the_live_profile() {
     let profile = live_testnet_profile().await;
-    let (a, _) = local_run(&profile);
-    let (b, _) = local_run(&profile);
+    let function = target_function();
+    let (a, _) = local_run(&profile, &function);
+    let (b, _) = local_run(&profile, &function);
     assert_eq!(a, b, "same profile + fixture must reproduce metrics");
 }
 
@@ -363,4 +484,109 @@ fn fixture_decodes_to_the_testnet_contract_wasm() {
     // WASM magic + version.
     assert_eq!(&wasm[..4], &[0x00, 0x61, 0x73, 0x6d]);
     assert!(wasm.len() > 10_000, "contract WASM is substantial");
+}
+
+// ---------------------------------------------------------------------------
+// Fixture-based parsing/transport tests.
+//
+// These exercise the RESPONSE DECODER and the blocker extraction path against
+// a captured live payload. They are NOT live parity evidence: no network call
+// is made, and nothing here compares local execution against the network. The
+// fixture is the verbatim response the live test observed
+// (`fixtures/testnet_simulate_response.json`), used to pin the decoder's
+// behaviour for shapes the live run happens to produce.
+// ---------------------------------------------------------------------------
+
+/// The captured live response, parsed the same way the RPC client parses it.
+fn fixture_response() -> sdkt_rpc::SimulateResponse {
+    const RAW: &str = include_str!("fixtures/testnet_simulate_response.json");
+    let doc: serde_json::Value = serde_json::from_str(RAW).expect("fixture is valid JSON");
+    let response = doc.get("response").expect("fixture carries a response");
+    serde_json::from_value(response.clone()).expect("fixture decodes as SimulateResponse")
+}
+
+#[test]
+fn fixture_response_decodes_real_fields() {
+    let r = fixture_response();
+    assert!(
+        !r.transaction_data.is_empty(),
+        "live transactionData present"
+    );
+    assert_eq!(r.min_resource_fee, "247928411");
+    assert_eq!(r.latest_ledger.as_deref(), Some("5101905"));
+    assert_eq!(r.results.len(), 1);
+    assert_eq!(r.results[0].auth.len(), 1, "one auth entry");
+    assert_eq!(r.events.len(), 3);
+    assert_eq!(r.state_changes.len(), 3);
+    assert!(r.error.is_none());
+}
+
+/// The captured live response has **no** `cost` block. The decoder must report
+/// that as absence, so the metric extraction can classify it as a blocker
+/// rather than fabricating zeros.
+#[test]
+fn fixture_response_has_no_cost_metrics() {
+    let r = fixture_response();
+    assert!(
+        r.cost.is_none(),
+        "the captured live response had no cost block; if this changes, the \
+         blocker path needs revisiting"
+    );
+}
+
+/// The blocker path: a response without cost must not yield (0, 0) metrics.
+#[test]
+fn missing_cost_is_a_blocker_not_zero_metrics() {
+    let r = fixture_response();
+    let reason = match r.cost.as_ref() {
+        Some(_) => panic!("fixture unexpectedly carries cost"),
+        None => format!(
+            "simulateTransaction returned no cost metrics (transactionData={} bytes, \
+             minResourceFee={}, latestLedger={}); no CPU/memory numbers exist to \
+             compare against. Blocker recorded, not zero-filled.",
+            r.transaction_data.len(),
+            r.min_resource_fee,
+            r.latest_ledger.as_deref().unwrap_or("0"),
+        ),
+    };
+    assert!(reason.contains("no cost metrics"), "{reason}");
+    // And the outcome built from it is Blocked, with no classification.
+    let local = LocalExecutionMetrics {
+        ledger_sequence: 5101905,
+        protocol_version: 29,
+        cpu_insns: 554025,
+        mem_bytes: 1336202,
+        succeeded: false,
+        error_type: Some("Contract".to_string()),
+    };
+    let out = DifferentialOutcome::Blocked {
+        reason,
+        profile_content_hash: "fixture".to_string(),
+        network: "testnet".to_string(),
+        protocol_version: 29,
+        local,
+        function: "pause".to_string(),
+    };
+    assert!(out.is_blocked());
+    assert_eq!(out.classification(), None);
+}
+
+/// A response WITH cost decodes into real numbers (constructed, not captured —
+/// this is a shape test for the decoder, not a live observation).
+#[test]
+fn response_with_cost_decodes_into_real_numbers() {
+    let raw = serde_json::json!({
+        "transactionData": "AAAAAQ==",
+        "minResourceFee": "1234",
+        "results": [],
+        "cost": {"cpuInsns": "554025", "memBytes": "1336202"},
+        "latestLedger": 5101905,
+        "events": [],
+        "stateChanges": []
+    });
+    let r: sdkt_rpc::SimulateResponse = serde_json::from_value(raw).unwrap();
+    let cost = r.cost.expect("cost present");
+    assert_eq!(cost.cpu_insns, "554025");
+    assert_eq!(cost.mem_bytes, "1336202");
+    assert_eq!(r.latest_ledger.as_deref(), Some("5101905"));
 }
