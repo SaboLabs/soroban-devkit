@@ -236,12 +236,22 @@ fn local_run(profile: &NetworkProfile, function: &str) -> (LocalExecutionMetrics
 ///
 /// The `SDKT_DIFFERENTIAL_SECRET` env var (`S...` secret) is accepted for a
 /// future signed-envelope path; it is not needed for simulation.
+///
+/// `source_override`: `None` reads `SDKT_DIFFERENTIAL_SOURCE` (a `G...`
+/// address) when set, else an ephemeral account; `Some("")` forces the
+/// ephemeral path; `Some(addr)` uses that address. The override exists so
+/// tests never race on the process-global env var (Rust runs tests on
+/// threads in one process).
 async fn rpc_run(
     client: &SorobanRpcClient,
     function: &str,
+    source_override: Option<&str>,
 ) -> Result<RpcSimulationMetrics, sdkt_fuzz::RpcBlockReason> {
     // 1. Source account.
-    let source = std::env::var("SDKT_DIFFERENTIAL_SOURCE").unwrap_or_default();
+    let source = match source_override {
+        Some(s) => s.to_string(),
+        None => std::env::var("SDKT_DIFFERENTIAL_SOURCE").unwrap_or_default(),
+    };
     let (source_account, sequence) = if source.trim().is_empty() {
         // Ephemeral account: simulation does not check that the account
         // exists, only that the envelope is well-formed.
@@ -394,7 +404,7 @@ async fn live_differential_run_is_recorded_with_classification() {
 
     // The RPC side: build a real envelope and simulate it.
     let client = SorobanRpcClient::new(TESTNET_RPC);
-    let rpc = match rpc_run(&client, &function).await {
+    let rpc = match rpc_run(&client, &function, None).await {
         Ok(m) => {
             eprintln!(
                 "RPC simulation returned: cpu={} mem={} ledger={} error={}",
@@ -628,10 +638,15 @@ fn response_with_cost_decodes_into_real_numbers() {
 
 /// An RPC call against a dead endpoint must surface as an RpcFailure blocker
 /// with the transport error preserved.
+///
+/// The ephemeral source path is used (sequence 1, no network call), so the
+/// only network call is `simulateTransaction` itself — which is what must
+/// fail. A named source would need `get_next_sequence` first, which would
+/// fail as an EnvelopeFailure and not test this path.
 #[tokio::test]
 async fn dead_endpoint_is_an_rpc_failure_blocker() {
     let client = SorobanRpcClient::with_options("http://127.0.0.1:9", Some(3), Some(1));
-    let result = rpc_run(&client, "pause").await;
+    let result = rpc_run(&client, "pause", Some("")).await;
     let block = result.expect_err("dead endpoint must fail");
     assert_eq!(block.category(), "rpc_failure", "{}", block.detail());
     assert!(
@@ -663,11 +678,7 @@ async fn dead_endpoint_is_an_rpc_failure_blocker() {
 #[tokio::test]
 async fn bad_source_address_is_an_envelope_failure_blocker() {
     let client = SorobanRpcClient::new(TESTNET_RPC);
-    // SAFETY: env vars in tests run on threads; this is a single assignment
-    // restored immediately after, and no other test reads this var.
-    unsafe { std::env::set_var("SDKT_DIFFERENTIAL_SOURCE", "NOT_A_G_ADDRESS") };
-    let result = rpc_run(&client, "pause").await;
-    unsafe { std::env::remove_var("SDKT_DIFFERENTIAL_SOURCE") };
+    let result = rpc_run(&client, "pause", Some("NOT_A_G_ADDRESS")).await;
     let block = result.expect_err("bad source must fail");
     assert_eq!(block.category(), "envelope_failure", "{}", block.detail());
     assert!(
