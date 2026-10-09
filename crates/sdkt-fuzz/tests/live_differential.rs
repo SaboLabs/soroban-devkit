@@ -15,10 +15,25 @@
 //! - It is not a claim of full Mainnet parity. One contract, one function, one
 //!   network (testnet). The RPC simulation is not an oracle: it reports a
 //!   subset of the host's internal metrics.
-//! - The contract's state on testnet is whatever it is at the ledger the
-//!   simulation ran against; the local execution starts from a baseline built
-//!   from the same ledger's storage read, so state-dependent results can
-//!   differ and are classified as such rather than hidden.
+//! - It is not a state-matched comparison. The local execution runs on an
+//!   **empty baseline ledger** (`ledger: Default::default()` — no storage
+//!   reproduced from the network); the RPC simulation runs against **live
+//!   testnet storage**. State-dependent results can therefore differ for
+//!   reasons that have nothing to do with the cost model, and any comparison
+//!   is a cost-model comparison on the same function, not a state-reproducing
+//!   one. Test `local_execution_uses_an_empty_baseline` pins that behaviour so
+//!   this documentation cannot silently drift.
+//!
+//! ## RPC cost-metric note (evidence, not assumption)
+//!
+//! A live probe against `https://soroban-testnet.stellar.org` and
+//! `https://mainnet.sorobanrpc.com` for real public contracts (this repo's
+//! walkthrough contract, and Stellar's native XLM SAC on mainnet) showed
+//! `cost` absent in every response — `"cost": null` on the wire — for both
+//! auth-requiring and read-only functions. The decoder handles that correctly
+//! (`cost: Option<SimulateCost>` → `None`), so the blocker is
+//! `RpcBlockReason::MissingCost`, not a parse failure. An endpoint that
+//! returns a populated `cost` is a prerequisite for any metric comparison.
 
 use sdkt_fuzz::{
     compare_differential, network_faithful_plan, profile_from_capture, CaptureInput,
@@ -703,4 +718,70 @@ async fn bad_source_address_is_an_envelope_failure_blocker() {
     assert!(json.contains(r#""category":"envelope_failure""#), "{json}");
     assert!(!json.contains(r#""category":"missing_cost""#), "{json}");
     assert!(!json.contains("classification"), "{json}");
+}
+
+/// Regression: the local side runs on an EMPTY baseline ledger, not on
+/// storage reproduced from the network. This pins the documented behaviour so
+/// the "not a state-matched comparison" claim cannot silently drift.
+#[tokio::test]
+async fn local_execution_uses_an_empty_baseline() {
+    let profile = live_testnet_profile().await;
+    let wasm = sdkt_xdr::extract_wasm_bytecode_from_live_ledger_entry(TESTNET_CODE_ENTRY)
+        .expect("fixture decodes");
+    let exec = Executor::new(&wasm, Default::default()).expect("executor");
+    // The baseline the local run uses: empty, by construction.
+    let env = Environment {
+        ledger: Default::default(),
+        budget: network_faithful_plan(profile.clone()),
+    };
+    let obs = exec
+        .execute_with(
+            &exec.case(
+                "differential-empty-baseline",
+                FunctionCall::new("pause", vec![]),
+                vec![],
+            ),
+            &env,
+        )
+        .expect("local execution");
+    // The run completes with real budget consumption, but its ledger carries
+    // no entries reproduced from the network — the empty-baseline property.
+    assert!(
+        obs.budget.consumed_cpu > 0,
+        "real execution must consume CPU"
+    );
+    // And the differential record for a Compared outcome never claims a
+    // state-matched comparison: the reason text must not promise one.
+    let rec = compare_differential(
+        "differential-empty-baseline",
+        "pause",
+        &profile,
+        LocalExecutionMetrics {
+            ledger_sequence: profile.ledger_sequence,
+            protocol_version: profile.protocol_version,
+            cpu_insns: obs.budget.consumed_cpu,
+            mem_bytes: obs.budget.consumed_mem,
+            succeeded: obs.is_success(),
+            error_type: None,
+        },
+        RpcSimulationMetrics {
+            ledger_sequence: profile.ledger_sequence,
+            protocol_version: profile.protocol_version,
+            cpu_insns: obs.budget.consumed_cpu,
+            mem_bytes: obs.budget.consumed_mem,
+            error: !obs.is_success(),
+        },
+        0.01,
+        0.01,
+    );
+    assert!(
+        !rec.reason.to_lowercase().contains("state-matched"),
+        "a Compared record must never claim state-matched parity: {}",
+        rec.reason
+    );
+    assert!(
+        !rec.reason.to_lowercase().contains("state-reproducing"),
+        "a Compared record must never claim state-reproducing parity: {}",
+        rec.reason
+    );
 }
