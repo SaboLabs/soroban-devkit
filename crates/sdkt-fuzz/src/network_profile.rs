@@ -31,13 +31,15 @@ use sha2::{Digest, Sha256};
 
 /// The protocol version the pinned host can execute.
 ///
-/// `soroban-env-host 28.0.2` is built from `soroban-env-common 28.0.2`, whose
-/// `meta::INTERFACE_VERSION.protocol` is 28 (`src/meta.rs`:
-/// `ledger_protocol_version: 28` for the non-`next` build). The host rejects a
-/// ledger protocol above that in `Host::check_ledger_protocol_supported`
-/// ("ledger protocol version too new for host"), so protocol 29 execution is
-/// **not** available with this dependency.
-pub const HOST_SUPPORTED_PROTOCOL: u32 = 28;
+/// Read from the host's own metadata rather than hardcoded: the host refuses a
+/// ledger protocol above its `meta::INTERFACE_VERSION.protocol` in
+/// `Host::check_ledger_protocol_supported`, so this constant must track the
+/// pinned `soroban-env-host` version. `soroban-env-common` re-exports it as
+/// `soroban_env_host::xdr::...`'s sibling `meta` module through the host crate.
+///
+/// A hardcoded value here would silently drift on the next host bump and
+/// produce a false `HostUnsupported`/`Complete` verdict.
+pub const HOST_SUPPORTED_PROTOCOL: u32 = soroban_env_host::meta::INTERFACE_VERSION.protocol;
 
 /// Maximum snapshot age, in ledgers, before a profile is considered stale
 /// against a freshly observed ledger. Mainnet closes roughly every 5s, so this
@@ -643,13 +645,25 @@ mod tests {
     }
 
     #[test]
-    fn mainnet_protocol_29_is_host_unsupported_not_complete() {
+    fn mainnet_protocol_29_is_now_supported_by_the_host() {
+        // With soroban-env-host 29.0.0 the pinned host supports protocol 29,
+        // so a fully-observed mainnet profile is Complete, not
+        // HostUnsupported.
         let mut p = profile(MAINNET, 29);
         p.config.cpu_limit = Observed::live(400_000_000, 1000);
         p.config.mem_limit = Observed::live(41_943_040, 1000);
+        assert_eq!(p.status(), ProfileStatus::Complete);
+        assert!(p.status().is_complete_execution_ready());
+        assert!(p.has_complete_configuration(), "config itself is complete");
+    }
+
+    #[test]
+    fn a_protocol_above_the_host_is_still_host_unsupported() {
+        // The guard is not removed: a protocol above the host's is still
+        // refused, and the profile says so.
+        let p = profile(MAINNET, HOST_SUPPORTED_PROTOCOL + 1);
         assert_eq!(p.status(), ProfileStatus::HostUnsupported);
         assert!(!p.status().is_complete_execution_ready());
-        assert!(p.has_complete_configuration(), "config itself is complete");
     }
 
     #[test]
@@ -788,7 +802,7 @@ mod tests {
         let json = serde_json::to_string(&p).unwrap();
         let back: NetworkProfile = serde_json::from_str(&json).unwrap();
         assert_eq!(back.content_hash(), p.content_hash());
-        assert_eq!(back.status(), ProfileStatus::HostUnsupported);
+        assert_eq!(back.status(), ProfileStatus::Complete);
         back.validate(None).unwrap();
     }
 

@@ -290,6 +290,7 @@ fn within_tolerance(local: u64, rpc: u64, tolerance: f64) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::network_profile::HOST_SUPPORTED_PROTOCOL;
     use crate::network_profile::{
         CostParamEntrySnapshot, CostParamsSnapshot, NetworkConfigSnapshot, Observed, ProfileStatus,
     };
@@ -467,20 +468,39 @@ mod tests {
     }
 
     #[test]
-    fn mainnet_profile_is_classified_host_unsupported() {
-        let p = profile(29, true);
-        assert_eq!(p.status(), ProfileStatus::HostUnsupported);
-        // A comparison against a protocol-29 network is a protocol mismatch,
-        // which is the honest classification.
+    fn protocol_above_the_host_is_classified_protocol_mismatch() {
+        // The local host's protocol is pinned to the host's own metadata. A
+        // network one step above it is a protocol mismatch: the local
+        // execution is not a model of that network.
+        let p = profile(HOST_SUPPORTED_PROTOCOL + 1, true);
         let rec = compare(
             "c",
             "f",
             &p,
-            local(28, 100, 100, true),
-            rpc(29, 100, 100, false),
+            local(HOST_SUPPORTED_PROTOCOL, 100, 100, true),
+            rpc(HOST_SUPPORTED_PROTOCOL + 1, 100, 100, false),
             0.01,
             0.01,
         );
         assert_eq!(rec.classification, MismatchClass::ProtocolMismatch);
+        assert!(rec.reason.contains("protocol"));
+    }
+
+    #[test]
+    fn matching_protocol_with_matching_metrics_is_a_match() {
+        // With the host on protocol 29, a protocol-29 network comparison is
+        // now a real comparison rather than a protocol mismatch.
+        let p = profile(29, true);
+        assert_eq!(p.status(), ProfileStatus::Complete);
+        let rec = compare(
+            "c",
+            "f",
+            &p,
+            local(29, 100_000, 50_000, true),
+            rpc(29, 100_000, 50_000, false),
+            0.01,
+            0.01,
+        );
+        assert_eq!(rec.classification, MismatchClass::Match);
     }
 }

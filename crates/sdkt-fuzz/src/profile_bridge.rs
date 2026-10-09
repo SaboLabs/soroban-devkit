@@ -117,14 +117,14 @@ mod tests {
     }
 
     #[test]
-    fn mainnet_capture_becomes_host_unsupported_profile() {
+    fn mainnet_capture_with_host_protocol_is_complete() {
         let p = profile_from_capture(capture(29));
         assert_eq!(
             p.network_id,
             crate::network_id_from_passphrase("Public Global Stellar Network ; September 2015")
         );
-        assert_eq!(p.status(), ProfileStatus::HostUnsupported);
-        assert!(!p.status().is_complete_execution_ready());
+        assert_eq!(p.status(), ProfileStatus::Complete);
+        assert!(p.status().is_complete_execution_ready());
         // The configuration itself is fully observed.
         assert!(p.has_complete_configuration());
         assert_eq!(p.config.cpu_limit.value, Some(400_000_000));
@@ -151,7 +151,13 @@ mod tests {
     }
 
     #[test]
-    fn host_supported_protocol_constant_is_28() {
-        assert_eq!(HOST_SUPPORTED_PROTOCOL, 28);
+    fn host_supported_protocol_tracks_the_pinned_host() {
+        // Derived from the host's own metadata, not hardcoded: with
+        // soroban-env-host 29.0.0 this is 29.
+        assert_eq!(HOST_SUPPORTED_PROTOCOL, 29);
+        assert_eq!(
+            HOST_SUPPORTED_PROTOCOL,
+            soroban_env_host::meta::INTERFACE_VERSION.protocol
+        );
     }
 }

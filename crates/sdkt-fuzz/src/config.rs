@@ -7,10 +7,15 @@
 
 use crate::error::FuzzError;
 
-/// Soroban protocol version pinned by the host dependency (`28.0.2`).
-/// Not configurable: it is a property of the execution engine, and a
-/// mismatch between the two is always an invalid setup, never a fuzz case.
-pub const PROTOCOL_VERSION: u32 = 28;
+/// Soroban protocol version pinned by the host dependency.
+///
+/// Derived from the host's own `meta::INTERFACE_VERSION.protocol` rather than
+/// hardcoded: `soroban-env-host` refuses a `LedgerInfo` whose
+/// `protocol_version` differs from that value (`check_ledger_protocol_supported`
+/// — "ledger protocol version too old/new for host"), so a mismatch is always
+/// an invalid setup, never a fuzz case. Bumping the host dependency moves this
+/// constant with it.
+pub const PROTOCOL_VERSION: u32 = soroban_env_host::meta::INTERFACE_VERSION.protocol;
 
 /// TTL window granted to each baseline ledger entry, in ledgers.
 pub(crate) const BASELINE_TTL_WINDOW: u32 = 1_000_000;

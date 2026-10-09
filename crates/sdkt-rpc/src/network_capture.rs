@@ -116,7 +116,8 @@ pub struct CapturedNetworkConfig {
 }
 
 impl CapturedNetworkConfig {
-    fn empty(passphrase: String, protocol_version: u32, ledger_sequence: u32) -> Self {
+    /// An empty capture for a network: every field unavailable.
+    pub fn empty(passphrase: String, protocol_version: u32, ledger_sequence: u32) -> Self {
         Self {
             passphrase,
             protocol_version,

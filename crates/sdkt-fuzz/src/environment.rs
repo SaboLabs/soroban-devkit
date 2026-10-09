@@ -497,40 +497,88 @@ mod tests {
     /// symbols rather than to the enum length alone.
     #[test]
     fn the_host_parse_cost_types_are_outside_the_initial_table() {
+        // The mapping must be validated against the *host's* enum, not against
+        // a hardcoded list: the pinned host is the authority on which
+        // ContractCostType variants exist and in what order.
+        let variants = soroban_env_host::xdr::ContractCostType::variants();
+        assert_eq!(
+            variants.len(),
+            86,
+            "the pinned host must know the 86 live cost types"
+        );
+        // The first 23 are the protocol-initial table, in order.
+        for (i, expected) in [
+            "WasmInsnExec",
+            "MemAlloc",
+            "MemCpy",
+            "MemCmp",
+            "DispatchHostFunction",
+            "VisitObject",
+            "ValSer",
+            "ValDeser",
+            "ComputeSha256Hash",
+            "ComputeEd25519PubKey",
+            "VerifyEd25519Sig",
+            "VmInstantiation",
+            "VmCachedInstantiation",
+            "InvokeVmFunction",
+            "ComputeKeccak256Hash",
+            "DecodeEcdsaCurve256Sig",
+            "RecoverEcdsaSecp256k1Key",
+            "Int256AddSub",
+            "Int256Mul",
+            "Int256Div",
+            "Int256Pow",
+            "Int256Shift",
+            "ChaCha20DrawBytes",
+        ]
+        .iter()
+        .enumerate()
+        {
+            assert_eq!(variants[i].name(), *expected, "index {i}");
+        }
+        // The live table's later entries are the V21+ additions, again matched
+        // by name against the host enum.
+        assert_eq!(variants[23].name(), "ParseWasmInstructions");
+        assert_eq!(variants[85].name(), "Bn254G1Msm");
+        // And every entry's index maps back to the same variant.
+        for (i, v) in variants.iter().enumerate() {
+            let back = soroban_env_host::xdr::ContractCostType::try_from(i as i32).unwrap();
+            assert_eq!(back.name(), v.name(), "index {i} must round-trip");
+        }
+        // Every one of them must be free under the protocol-initial variant
+        // and charged by the host default model — the exact asymmetry the
+        // docs describe.
         for ct in [
-            ContractCostType::ParseWasmInstructions,
-            ContractCostType::ParseWasmFunctions,
-            ContractCostType::ParseWasmGlobals,
-            ContractCostType::ParseWasmTableEntries,
-            ContractCostType::ParseWasmTypes,
-            ContractCostType::ParseWasmDataSegments,
-            ContractCostType::ParseWasmElemSegments,
-            ContractCostType::ParseWasmImports,
-            ContractCostType::ParseWasmExports,
-            ContractCostType::ParseWasmDataSegmentBytes,
-            ContractCostType::InstantiateWasmInstructions,
-            ContractCostType::InstantiateWasmFunctions,
-            ContractCostType::InstantiateWasmGlobals,
-            ContractCostType::InstantiateWasmTableEntries,
-            ContractCostType::InstantiateWasmTypes,
-            ContractCostType::InstantiateWasmDataSegments,
-            ContractCostType::InstantiateWasmElemSegments,
-            ContractCostType::InstantiateWasmImports,
-            ContractCostType::InstantiateWasmExports,
-            ContractCostType::InstantiateWasmDataSegmentBytes,
+            soroban_env_host::xdr::ContractCostType::ParseWasmInstructions,
+            soroban_env_host::xdr::ContractCostType::ParseWasmFunctions,
+            soroban_env_host::xdr::ContractCostType::ParseWasmGlobals,
+            soroban_env_host::xdr::ContractCostType::ParseWasmTableEntries,
+            soroban_env_host::xdr::ContractCostType::ParseWasmTypes,
+            soroban_env_host::xdr::ContractCostType::ParseWasmDataSegments,
+            soroban_env_host::xdr::ContractCostType::ParseWasmElemSegments,
+            soroban_env_host::xdr::ContractCostType::ParseWasmImports,
+            soroban_env_host::xdr::ContractCostType::ParseWasmExports,
+            soroban_env_host::xdr::ContractCostType::ParseWasmDataSegmentBytes,
+            soroban_env_host::xdr::ContractCostType::InstantiateWasmInstructions,
+            soroban_env_host::xdr::ContractCostType::InstantiateWasmFunctions,
+            soroban_env_host::xdr::ContractCostType::InstantiateWasmGlobals,
+            soroban_env_host::xdr::ContractCostType::InstantiateWasmTableEntries,
+            soroban_env_host::xdr::ContractCostType::InstantiateWasmTypes,
+            soroban_env_host::xdr::ContractCostType::InstantiateWasmDataSegments,
+            soroban_env_host::xdr::ContractCostType::InstantiateWasmElemSegments,
+            soroban_env_host::xdr::ContractCostType::InstantiateWasmImports,
+            soroban_env_host::xdr::ContractCostType::InstantiateWasmExports,
+            soroban_env_host::xdr::ContractCostType::InstantiateWasmDataSegmentBytes,
         ] {
             assert!(
                 (ct as usize) >= NETWORK_COST_ENTRY_COUNT,
                 "{ct:?} must sit outside the 23-entry protocol-initial table"
             );
-            // And each one must be free under the variant, charged under the
-            // host default — the exact asymmetry the docs describes. The
-            // input shape must match the model: `ParseWasm*`/`Instantiate*`
-            // are linear models (Some input); a const-only model rejects
-            // Some() with a Budget InternalError, so try both shapes and
-            // keep whichever the host accepts. `InstantiateWasmTypes` is
-            // (0, 0) in the host default too, so it is excluded from the
-            // "must be charged" half of the assertion.
+            // The input shape must match the model: linear models take Some,
+            // const-only models take None. Try both and keep whichever the
+            // host accepts. `InstantiateWasmTypes` is (0, 0) in the host
+            // default too, so it is excluded from the "must be charged" half.
             let plan = protocol_initial_budget();
             let host_default = Budget::default();
             [None, Some(64u64)]
@@ -544,10 +592,9 @@ mod tests {
                 0,
                 "{ct:?} must be free under ProtocolInitial"
             );
-            let host_cpu = host_default.get_tracker(ct).unwrap().cpu;
-            if ct != ContractCostType::InstantiateWasmTypes {
+            if ct != soroban_env_host::xdr::ContractCostType::InstantiateWasmTypes {
                 assert!(
-                    host_cpu > 0,
+                    host_default.get_tracker(ct).unwrap().cpu > 0,
                     "{ct:?} must be charged by the host default model"
                 );
             }

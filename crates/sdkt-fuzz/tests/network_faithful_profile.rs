@@ -68,7 +68,9 @@ fn snapshot_round_trips_through_a_file_with_identical_hash() {
     assert_eq!(loaded.content_hash(), p.content_hash());
     assert_eq!(loaded.content_hash_hex(), p.content_hash_hex());
     assert_eq!(loaded.status(), p.status());
-    assert_eq!(loaded.status(), ProfileStatus::HostUnsupported);
+    // The pinned host is protocol 29, so a fully-observed protocol-29
+    // mainnet profile is complete and its budget builds.
+    assert_eq!(loaded.status(), ProfileStatus::Complete);
     loaded.validate(None).unwrap();
 }
 
@@ -105,8 +107,10 @@ fn mainnet_and_testnet_profiles_never_compare_equal() {
 }
 
 #[test]
-fn protocol_mismatch_is_refused_by_budget_construction() {
-    let p = profile_from_capture(mainnet_capture(29));
+fn a_protocol_above_the_host_is_refused_by_budget_construction() {
+    // The guard still exists: a profile one protocol above the pinned host
+    // must be refused, not silently executed.
+    let p = profile_from_capture(mainnet_capture(HOST_SUPPORTED_PROTOCOL + 1));
     let plan = network_faithful_plan(p);
     let env = Environment {
         ledger: Default::default(),
@@ -117,6 +121,21 @@ fn protocol_mismatch_is_refused_by_budget_construction() {
         err.contains("HOST_UNSUPPORTED"),
         "refusal must name the coverage verdict: {err}"
     );
+}
+
+#[test]
+fn a_mainnet_protocol_29_profile_now_builds_a_budget() {
+    // The whole point of the host upgrade: the same live mainnet profile that
+    // was refused under host 28 now produces a budget.
+    let p = profile_from_capture(mainnet_capture(29));
+    assert_eq!(p.status(), ProfileStatus::Complete);
+    let env = Environment {
+        ledger: Default::default(),
+        budget: network_faithful_plan(p),
+    };
+    let budget = env.make_budget().unwrap();
+    assert_eq!(budget.get_cpu_insns_remaining().unwrap(), 400_000_000);
+    assert_eq!(budget.get_mem_bytes_remaining().unwrap(), 41_943_040);
 }
 
 // --- 3. Missing / stale data is not treated as a valid Mainnet config -----
@@ -144,10 +163,12 @@ fn missing_parameters_are_incomplete_not_zero() {
 }
 
 #[test]
-fn a_protocol_28_profile_with_full_config_is_complete() {
-    let p = profile_from_capture(mainnet_capture(28));
+fn a_protocol_29_profile_with_full_config_is_complete() {
+    // The pinned host is protocol 29: a fully-observed protocol-29 profile
+    // is complete and its budget builds with the live limits.
+    let p = profile_from_capture(mainnet_capture(29));
     assert_eq!(p.status(), ProfileStatus::Complete);
-    assert_eq!(HOST_SUPPORTED_PROTOCOL, 28);
+    assert_eq!(HOST_SUPPORTED_PROTOCOL, 29);
     let coverage = BudgetCoverage::for_profile(&p, sdkt_fuzz::environment::host_cost_type_count());
     assert!(coverage.complete);
     assert_eq!(coverage.as_str(), "COMPLETE");
@@ -333,7 +354,7 @@ fn snapshot_kind_records_the_profile_hash_and_coverage() {
     let json = serde_json::to_string(&snap).unwrap();
     assert!(json.contains(r#""kind":"network_faithful""#), "{json}");
     assert!(json.contains(&p.content_hash_hex()));
-    assert!(json.contains("HOST_UNSUPPORTED"));
+    assert!(json.contains("COMPLETE"));
 }
 
 #[test]
