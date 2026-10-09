@@ -185,22 +185,42 @@ fn select_zero_arg_function(spec: &sdkt_wasm::ContractSpec) -> String {
 
 /// One corpus scenario: the call, and what it produced.
 ///
-/// `succeeded` means the call reached the contract and returned a value or
-/// void. A `Contract` error is a *contract-level* outcome (the contract ran
-/// and rejected the call, e.g. missing auth) — that is a valid scenario
-/// result, not a setup failure. A `WasmVm`/`Context`/`Budget` error means the
-/// call never reached the contract properly.
+/// The three outcomes are kept separate on purpose:
+///
+/// - `returned` — the contract ran and produced a value or void. This is the
+///   only thing called "success" in the output.
+/// - `contract_error` — the contract ran and rejected the call (e.g. missing
+///   auth). This is a **contract-level rejection**, not a function success and
+///   not a host failure.
+/// - `host_error` — the host itself rejected the call (e.g. a function the
+///   contract does not export). This is a host error path, not a contract
+///   outcome.
 struct Scenario {
-    function: String,
-    /// The call reached the contract and returned (or voided).
+    /// The contract ran and returned a value or void.
     returned: bool,
-    /// The call failed with a contract-level error (the contract ran).
+    /// The contract ran and rejected the call with a `Contract` error.
     contract_error: bool,
-    /// The call failed with a host/setup error (never reached the contract).
+    /// The host rejected the call (e.g. unknown function — `WasmVm`).
     host_error: bool,
     cpu: u64,
     mem: u64,
     detail: String,
+}
+
+impl Scenario {
+    /// Human label for the outcome, so the output never calls a rejection a
+    /// success.
+    fn outcome_label(&self) -> &'static str {
+        if self.returned {
+            "returned"
+        } else if self.contract_error {
+            "contract-level rejection"
+        } else if self.host_error {
+            "host error"
+        } else {
+            "unknown"
+        }
+    }
 }
 
 fn run(profile: &sdkt_fuzz::NetworkProfile, function: &str) -> Scenario {
@@ -229,7 +249,6 @@ fn run(profile: &sdkt_fuzz::NetworkProfile, function: &str) -> Scenario {
         }
     };
     Scenario {
-        function: function.to_string(),
         returned,
         contract_error,
         host_error,
@@ -240,76 +259,76 @@ fn run(profile: &sdkt_fuzz::NetworkProfile, function: &str) -> Scenario {
 }
 
 #[tokio::test]
-async fn corpus_runs_a_success_and_a_failure_scenario_deterministically() {
+async fn corpus_runs_one_contract_two_scenarios_deterministically() {
     let profile = live_profile().await;
     assert_eq!(profile.status(), sdkt_fuzz::ProfileStatus::Complete);
 
-    // Resolve the success function from the contract's own spec so the
-    // corpus never invokes a function with the wrong arity.
+    // The first scenario invokes a real exported function, selected from the
+    // contract's own spec so it is never called with the wrong arity. The
+    // contract rejects it (missing auth), so this scenario is a
+    // **contract-level rejection**, not a function success.
     let wasm = sdkt_xdr::extract_wasm_bytecode_from_live_ledger_entry(TESTNET_CODE_ENTRY)
         .expect("fixture decodes");
     let spec = sdkt_wasm::parse_contract_spec(&wasm).expect("spec parses");
-    let success_function = select_zero_arg_function(&spec);
-    eprintln!("corpus success function selected from spec: {success_function}");
+    let exported_function = select_zero_arg_function(&spec);
+    eprintln!("corpus exported function selected from spec: {exported_function}");
 
-    let success = run(&profile, &success_function);
-    let failure = run(&profile, FAILURE_FUNCTION);
+    let first = run(&profile, &exported_function);
+    let second = run(&profile, FAILURE_FUNCTION);
 
-    // The success scenario must reach the contract: either it returns, or the
-    // contract itself rejects the call (e.g. missing auth — the contract ran
-    // and said no, which is a valid contract-level outcome). It must never be
-    // a host/setup error, which would mean the call never reached the contract.
+    // Scenario 1: the contract must actually run. Either it returns, or it
+    // rejects the call at the contract level. It must never be a host error,
+    // which would mean the call never reached the contract.
     assert!(
-        !success.host_error,
+        !first.host_error,
         "{} must reach the contract, got {}",
-        success_function, success.detail
+        exported_function, first.detail
     );
     assert!(
-        success.returned || success.contract_error,
+        first.returned || first.contract_error,
         "{} must be a contract-level outcome, got {}",
-        success_function,
-        success.detail
+        exported_function,
+        first.detail
     );
-    // The failure scenario must actually fail, and the failure must be an
-    // instrumented error (the host refuses a function the contract does not
-    // export — error type WasmVm), which is a valid scenario: it exercises the
-    // error path. What must never happen is an uninstrumented setup failure.
+    // Scenario 2: an unknown function is a host error (WasmVm). Asserting the
+    // exact split keeps the two error classes distinct.
     assert!(
-        !failure.returned,
+        !second.returned,
         "{} must fail, got {}",
-        FAILURE_FUNCTION, failure.detail
+        FAILURE_FUNCTION, second.detail
     );
     assert!(
-        failure.detail.contains("ContractError"),
-        "failure must be a contract/host error, got {}",
-        failure.detail
+        second.host_error,
+        "{} must be a host error, got {}",
+        FAILURE_FUNCTION, second.detail
     );
 
     // Determinism: the same scenario reproduces the same metrics.
-    let again = run(&profile, &success_function);
-    assert_eq!(again.cpu, success.cpu, "success scenario must reproduce");
-    assert_eq!(again.mem, success.mem, "success scenario must reproduce");
-    let again_f = run(&profile, FAILURE_FUNCTION);
-    assert_eq!(again_f.cpu, failure.cpu, "failure scenario must reproduce");
+    let again = run(&profile, &exported_function);
+    assert_eq!(again.cpu, first.cpu, "scenario 1 must reproduce");
+    assert_eq!(again.mem, first.mem, "scenario 1 must reproduce");
+    let again_s = run(&profile, FAILURE_FUNCTION);
+    assert_eq!(again_s.cpu, second.cpu, "scenario 2 must reproduce");
 
-    // Honest count: exactly two scenarios, one contract.
+    // Honest count: one contract, two scenarios. Not coverage.
     eprintln!(
-        "corpus: 1 contract, 2 scenarios ({} ok, {} rejected)",
-        success.function, failure.function
+        "corpus: 1 contract, 2 scenarios ({exported_function}: {}, {FAILURE_FUNCTION}: {})",
+        first.outcome_label(),
+        second.outcome_label()
     );
     eprintln!(
-        "  {}: cpu={} mem={}",
-        success.function, success.cpu, success.mem
+        "  {exported_function}: cpu={} mem={} ({})",
+        first.cpu, first.mem, first.detail
     );
     eprintln!(
-        "  {}: cpu={} mem={} ({})",
-        failure.function, failure.cpu, failure.mem, failure.detail
+        "  {FAILURE_FUNCTION}: cpu={} mem={} ({})",
+        second.cpu, second.mem, second.detail
     );
 
     // Both scenarios must consume real budget under the live limits.
-    assert!(success.cpu > 0 && failure.cpu > 0);
+    assert!(first.cpu > 0 && second.cpu > 0);
     assert!(
-        success.cpu < 400_000_000,
+        first.cpu < 400_000_000,
         "must stay under the live CPU limit"
     );
 }

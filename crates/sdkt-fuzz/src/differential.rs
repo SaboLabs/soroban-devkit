@@ -140,6 +140,66 @@ impl DifferentialRecord {
     }
 }
 
+/// The outcome of a differential run: either a real comparison, or an
+/// explicit blocker.
+///
+/// The two are separate **types**, not a classification value, so a blocked
+/// run can never be mistaken for a measured comparison. A `Blocked` outcome
+/// carries no metric comparison and can never yield `Match`, `ResourceDrift`,
+/// or `ExecutionDivergence`.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case", tag = "outcome")]
+pub enum DifferentialOutcome {
+    /// The RPC side returned real metrics and the comparison ran.
+    Compared {
+        #[serde(flatten)]
+        record: Box<DifferentialRecord>,
+    },
+    /// The RPC side could not be obtained. No metric comparison exists.
+    Blocked {
+        /// Why the RPC side was unavailable.
+        reason: String,
+        /// Profile the local side ran under.
+        profile_content_hash: String,
+        /// Network and protocol, for inspection.
+        network: String,
+        protocol_version: u32,
+        /// What the local execution actually measured.
+        local: LocalExecutionMetrics,
+        /// Function that was invoked locally.
+        function: String,
+    },
+}
+
+impl DifferentialOutcome {
+    /// The comparison record, when the run actually compared.
+    pub fn record(&self) -> Option<&DifferentialRecord> {
+        match self {
+            DifferentialOutcome::Compared { record } => Some(record),
+            DifferentialOutcome::Blocked { .. } => None,
+        }
+    }
+
+    /// True when the RPC side was unavailable. A blocked run is never a
+    /// parity claim.
+    pub fn is_blocked(&self) -> bool {
+        matches!(self, DifferentialOutcome::Blocked { .. })
+    }
+
+    /// The blocker reason, when blocked.
+    pub fn block_reason(&self) -> Option<&str> {
+        match self {
+            DifferentialOutcome::Blocked { reason, .. } => Some(reason),
+            DifferentialOutcome::Compared { .. } => None,
+        }
+    }
+
+    /// The classification, when a comparison actually ran.
+    pub fn classification(&self) -> Option<MismatchClass> {
+        self.record().map(|r| r.classification)
+    }
+}
+
 /// Compare a local execution against an RPC simulation.
 ///
 /// The comparison is ordered: protocol first (a protocol mismatch makes every
@@ -502,5 +562,75 @@ mod tests {
             0.01,
         );
         assert_eq!(rec.classification, MismatchClass::Match);
+    }
+
+    // --- DifferentialOutcome: a blocked run is never a parity claim --------
+
+    fn blocked_outcome() -> DifferentialOutcome {
+        let p = profile(29, true);
+        DifferentialOutcome::Blocked {
+            reason: "no funded identity".to_string(),
+            profile_content_hash: p.content_hash_hex(),
+            network: p.network_name.clone(),
+            protocol_version: p.protocol_version,
+            local: local(29, 554_025, 1_336_202, false),
+            function: "pause".to_string(),
+        }
+    }
+
+    #[test]
+    fn a_blocked_outcome_has_no_classification() {
+        let out = blocked_outcome();
+        assert!(out.is_blocked());
+        assert_eq!(out.record(), None);
+        assert_eq!(out.classification(), None);
+        assert_eq!(out.block_reason(), Some("no funded identity"));
+        // The critical property: a blocked run cannot be read as any
+        // comparison verdict.
+        assert!(!matches!(
+            out.classification(),
+            Some(MismatchClass::Match)
+                | Some(MismatchClass::ResourceDrift)
+                | Some(MismatchClass::ExecutionDivergence)
+        ));
+    }
+
+    #[test]
+    fn a_blocked_outcome_serializes_as_blocked_not_as_a_record() {
+        let out = blocked_outcome();
+        let json = serde_json::to_string(&out).unwrap();
+        assert!(json.contains(r#""outcome":"blocked""#), "{json}");
+        // It must not carry any comparison classification.
+        assert!(!json.contains("classification"), "{json}");
+        // It must carry the evidence needed to reproduce the local side.
+        assert!(json.contains("554025"), "{json}");
+        assert!(json.contains("profile_content_hash"), "{json}");
+        assert!(json.contains("no funded identity"), "{json}");
+        let back: DifferentialOutcome = serde_json::from_str(&json).unwrap();
+        assert_eq!(back, out);
+        assert!(back.is_blocked());
+    }
+
+    #[test]
+    fn a_compared_outcome_carries_its_classification() {
+        let p = profile(29, true);
+        let rec = compare(
+            "c",
+            "f",
+            &p,
+            local(29, 100_000, 50_000, true),
+            rpc(29, 100_000, 50_000, false),
+            0.01,
+            0.01,
+        );
+        let out = DifferentialOutcome::Compared {
+            record: Box::new(rec.clone()),
+        };
+        assert!(!out.is_blocked());
+        assert_eq!(out.classification(), Some(MismatchClass::Match));
+        assert_eq!(out.record(), Some(&rec));
+        let json = serde_json::to_string(&out).unwrap();
+        assert!(json.contains(r#""outcome":"compared""#), "{json}");
+        assert!(json.contains("classification"), "{json}");
     }
 }

@@ -21,8 +21,9 @@
 //!   differ and are classified as such rather than hidden.
 
 use sdkt_fuzz::{
-    compare_differential, network_faithful_plan, profile_from_capture, CaptureInput, Environment,
-    Executor, FunctionCall, LocalExecutionMetrics, NetworkProfile, RpcSimulationMetrics,
+    compare_differential, network_faithful_plan, profile_from_capture, CaptureInput,
+    DifferentialOutcome, Environment, Executor, FunctionCall, LocalExecutionMetrics,
+    NetworkProfile, RpcSimulationMetrics,
 };
 use sdkt_rpc::network_capture::{
     config_setting_key, decode_into, decode_ledger_entry_data_b64, CapturedNetworkConfig,
@@ -271,49 +272,48 @@ async fn live_differential_run_is_recorded_with_classification() {
     );
 
     // The RPC side needs a funded source account and a signed envelope. When
-    // that is unavailable the run must record the blocker, not fabricate a
-    // comparison — so the test asserts the blocker and the local metrics.
+    // that is unavailable the run records a blocker — a distinct outcome
+    // type, never a synthetic metric set passed to compare_differential.
     let rpc = match rpc_run().await {
         Ok(m) => m,
         Err(reason) => {
             // The blocker is a real, recorded outcome: the local execution
-            // ran, the RPC side could not, and the differential record says
-            // so. Asserting it keeps the gap visible.
-            let rec = compare_differential(
-                "differential-pause",
-                TARGET_FUNCTION,
-                &profile,
-                local.clone(),
-                RpcSimulationMetrics {
-                    ledger_sequence: profile.ledger_sequence,
-                    protocol_version: profile.protocol_version,
-                    cpu_insns: 0,
-                    mem_bytes: 0,
-                    error: false,
-                },
-                0.01,
-                0.01,
-            );
-            let json = serde_json::to_string_pretty(&rec).unwrap();
+            // ran, the RPC side could not, and no comparison exists.
+            // DifferentialOutcome::Blocked carries no classification, so it
+            // cannot produce MATCH / RESOURCE_DRIFT / EXECUTION_DIVERGENCE.
+            let out = DifferentialOutcome::Blocked {
+                reason: reason.clone(),
+                profile_content_hash: profile.content_hash_hex(),
+                network: profile.network_name.clone(),
+                protocol_version: profile.protocol_version,
+                local,
+                function: TARGET_FUNCTION.to_string(),
+            };
+            let json = serde_json::to_string_pretty(&out).unwrap();
+            // Evidence: it is blocked, it carries no classification, and it
+            // carries the local metrics plus the profile hash for reproduction.
+            assert!(json.contains(r#""outcome": "blocked""#), "{json}");
             assert!(
-                json.contains(&profile.content_hash_hex()),
-                "record must carry the profile hash: {json}"
+                !json.contains("classification"),
+                "blocked outcome must not carry a comparison classification: {json}"
             );
-            assert!(
-                json.contains("classification"),
-                "record must carry a classification: {json}"
-            );
-            // The local execution really ran under the live budget.
-            assert!(local.cpu_insns > 0, "local execution must consume CPU");
-            eprintln!("RPC differential blocker (recorded, not mocked): {reason}");
-            eprintln!(
-                "Local execution under live profile: cpu={} mem={}",
-                local.cpu_insns, local.mem_bytes
-            );
+            assert!(json.contains(&profile.content_hash_hex()), "{json}");
+            assert!(json.contains(&reason), "{json}");
+            assert!(out.is_blocked());
+            assert_eq!(out.classification(), None);
+            if let DifferentialOutcome::Blocked { local, .. } = &out {
+                assert!(local.cpu_insns > 0, "local execution must consume CPU");
+                eprintln!(
+                    "RPC differential blocked (recorded, not mocked): {reason}; \
+                     local cpu={} mem={}",
+                    local.cpu_insns, local.mem_bytes
+                );
+            }
             return;
         }
     };
 
+    // The RPC side returned real metrics, so a real comparison runs.
     let rec = compare_differential(
         "differential-pause",
         TARGET_FUNCTION,
@@ -323,21 +323,25 @@ async fn live_differential_run_is_recorded_with_classification() {
         0.01,
         0.01,
     );
-    let json = serde_json::to_string_pretty(&rec).unwrap();
+    let out = DifferentialOutcome::Compared {
+        record: Box::new(rec),
+    };
+    let json = serde_json::to_string_pretty(&out).unwrap();
+    assert!(json.contains(r#""outcome": "compared""#), "{json}");
     assert!(json.contains(&profile.content_hash_hex()));
     assert!(json.contains("classification"));
     // The classification must be one of the documented classes.
     assert!(
         matches!(
-            rec.classification,
-            sdkt_fuzz::MismatchClass::Match
-                | sdkt_fuzz::MismatchClass::ResourceDrift
-                | sdkt_fuzz::MismatchClass::ExecutionDivergence
-                | sdkt_fuzz::MismatchClass::StaleLedgerState
+            out.classification(),
+            Some(sdkt_fuzz::MismatchClass::Match)
+                | Some(sdkt_fuzz::MismatchClass::ResourceDrift)
+                | Some(sdkt_fuzz::MismatchClass::ExecutionDivergence)
+                | Some(sdkt_fuzz::MismatchClass::StaleLedgerState)
         ),
         "unexpected classification {:?}: {}",
-        rec.classification,
-        rec.reason
+        out.classification(),
+        out.record().map(|r| r.reason.as_str()).unwrap_or_default()
     );
 }
 
