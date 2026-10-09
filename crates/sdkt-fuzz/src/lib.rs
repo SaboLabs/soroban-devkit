@@ -72,6 +72,7 @@ pub mod finding;
 pub mod generator;
 pub mod minimizer;
 pub mod mutation;
+pub mod network_cost;
 mod observation;
 pub mod oracle;
 pub mod replay;
