@@ -238,14 +238,21 @@ fn existing_commands_work_without_profiles() {
 
 // ---------- `sdkt network check` (reachability) ----------
 
-/// Return an `http://127.0.0.1:<port>` URL that is guaranteed to refuse
-/// connections: the listener is bound to obtain a free port, then dropped so
-/// nothing is listening when the CLI probes it.
-fn refused_local_url() -> String {
+/// Return a local RPC URL whose listener accepts connections and closes them
+/// without an HTTP response. Keeping the port bound avoids a race where another
+/// parallel test can claim it after allocation and make the endpoint reachable.
+fn unreachable_local_url() -> String {
     let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("bind ephemeral port");
-    let port = listener.local_addr().unwrap().port();
-    drop(listener);
-    format!("http://127.0.0.1:{}", port)
+    let address = listener.local_addr().unwrap();
+    std::thread::spawn(move || {
+        for incoming in listener.incoming() {
+            match incoming {
+                Ok(stream) => drop(stream),
+                Err(_) => break,
+            }
+        }
+    });
+    format!("http://{}", address)
 }
 
 /// Read one HTTP/1.1 request (headers + body) from `stream`.
@@ -356,7 +363,7 @@ fn network_check_missing_profile_fails() {
 #[test]
 fn network_check_unreachable_profile_fails() {
     let dir = tempdir().unwrap();
-    let url = refused_local_url();
+    let url = unreachable_local_url();
 
     sdkt(dir.path())
         .args([
@@ -384,7 +391,7 @@ fn network_check_unreachable_profile_fails() {
 #[test]
 fn network_check_unreachable_json_shape() {
     let dir = tempdir().unwrap();
-    let url = refused_local_url();
+    let url = unreachable_local_url();
 
     sdkt(dir.path())
         .args([
@@ -569,7 +576,7 @@ fn network_check_get_network_error_does_not_hide_reachability() {
 #[test]
 fn network_check_does_not_mutate_stored_profile() {
     let dir = tempdir().unwrap();
-    let url = refused_local_url();
+    let url = unreachable_local_url();
 
     sdkt(dir.path())
         .args([

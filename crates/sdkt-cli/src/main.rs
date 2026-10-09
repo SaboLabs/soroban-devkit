@@ -19,8 +19,8 @@ use sdkt_wasm::spec::parse_contract_spec;
 use sdkt_xdr::abi_decode::decode_event_topics;
 use sdkt_xdr::decode;
 use sdkt_xdr::{
-    build_invoke_transaction, sign_transaction, Ed25519Signer, InvokeTransactionParams, Network,
-    SigningError, SigningOptions,
+    build_invoke_transaction, sign_transaction, wrap_fee_bump_transaction, Ed25519Signer,
+    InvokeTransactionParams, Network, SigningError, SigningOptions,
 };
 use sha2::{Digest, Sha256};
 use std::fs;
@@ -1032,6 +1032,26 @@ enum TxAction {
         /// Mutually exclusive with `--memo-text`.
         #[arg(long, value_name = "ID")]
         memo_id: Option<u64>,
+    },
+    /// Wrap a signed or unsigned V1 envelope in a fee-bump envelope.
+    Wrap {
+        /// Base64 XDR transaction envelope or path to a file containing it
+        #[arg(short, long)]
+        envelope: String,
+        /// Fee-source identity name or G... account address
+        #[arg(long)]
+        fee_source: String,
+        /// Total fee paid by the fee source, in stroops
+        #[arg(long)]
+        fee: i64,
+        /// Ledger base fee used for the protocol minimum-fee calculation
+        #[arg(long, default_value_t = 100)]
+        base_fee: i64,
+        /// Optional file path to write the output envelope XDR
+        #[arg(short, long)]
+        output: Option<String>,
+        #[arg(short, long, default_value = "pretty")]
+        format: String,
     },
     /// Sign a transaction envelope using a local identity ( / PR2)
     Sign {
@@ -5479,6 +5499,85 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
                     }
                     Err(e) => {
                         eprintln!("Error building transaction: {}", e);
+                        process::exit(1);
+                    }
+                }
+            }
+            TxAction::Wrap {
+                envelope,
+                fee_source,
+                fee,
+                base_fee,
+                output,
+                format,
+            } => {
+                let fmt = parse_format_str(&format);
+                let env_data = match resolve_tx_input(&envelope) {
+                    Ok(s) => s,
+                    Err(e) => {
+                        eprintln!("Error: {}", e);
+                        process::exit(1);
+                    }
+                };
+                let fee_source_key = if fee_source.trim_start().starts_with('G') {
+                    fee_source.trim().to_string()
+                } else {
+                    use sdkt_storage::IdentityStore;
+                    let store = match IdentityStore::new() {
+                        Ok(s) => s,
+                        Err(e) => {
+                            eprintln!("Error: cannot open identity store: {}", e);
+                            process::exit(1);
+                        }
+                    };
+                    let identity = match store.resolve_signing_identity(&fee_source) {
+                        Ok(identity) => identity,
+                        Err(e) => {
+                            eprintln!(
+                                "Error: cannot resolve fee-source identity '{}': {}",
+                                fee_source, e
+                            );
+                            process::exit(1);
+                        }
+                    };
+                    identity.public_key
+                };
+                match wrap_fee_bump_transaction(env_data.trim(), &fee_source_key, fee, base_fee) {
+                    Ok(result) => {
+                        if let Some(path) = &output {
+                            if let Err(e) = fs::write(path, &result.envelope) {
+                                eprintln!("Error writing to file: {}", e);
+                                process::exit(1);
+                            }
+                            if fmt != OutputFormat::Json {
+                                println!("Fee-bump envelope written to {}", path);
+                            }
+                        }
+                        if fmt == OutputFormat::Json {
+                            let value = serde_json::json!({
+                                "envelope": result.envelope,
+                                "feeSource": fee_source_key,
+                                "innerFee": result.inner_fee,
+                                "feeBumpFee": result.fee_bump_fee,
+                                "minimumFee": result.minimum_fee,
+                                "operationCount": result.operation_count,
+                            });
+                            println!("{}", serde_json::to_string(&value).unwrap());
+                        } else {
+                            println!("Fee-bump transaction:");
+                            println!("  Fee source:       {}", fee_source_key);
+                            println!("  Inner fee:        {} stroops", result.inner_fee);
+                            println!("  Fee-bump total:   {} stroops", result.fee_bump_fee);
+                            println!("  Minimum fee:      {} stroops", result.minimum_fee);
+                            println!("  Inner operations: {}", result.operation_count);
+                            if output.is_none() {
+                                println!("  Envelope (Base64):");
+                                println!("{}", result.envelope);
+                            }
+                        }
+                    }
+                    Err(e) => {
+                        eprintln!("Error wrapping transaction: {}", e);
                         process::exit(1);
                     }
                 }
