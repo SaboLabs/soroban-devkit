@@ -16,6 +16,12 @@ build-release:
 test:
 	cargo test --workspace
 
+## Live state-matched differential against public Testnet (ignored by default).
+## Needs network access to https://soroban-testnet.stellar.org; no keys, no
+## transactions submitted — read-only RPC calls against an ephemeral account.
+test-live:
+	cargo test -p sdkt-fuzz --test state_matched_live -- --ignored --nocapture
+
 ## Run tests including all features (plugins, wasm-plugins, provenance).
 test-all:
 	cargo test --workspace --all-features

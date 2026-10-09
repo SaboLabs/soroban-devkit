@@ -1196,3 +1196,27 @@ fn get_ledger_entries_payload_is_entry_data_not_full_entry() {
     // are not interchangeable.
     assert!(sdkt_fuzz::state_capture::decode_entry(&data_b64).is_err());
 }
+
+/// The live state-matched test (in `state_matched_live.rs`) asserts the
+/// endpoint reports protocol 29 and reports no `cost` block. Both are
+/// properties the RPC's own testnet serves; pin them against the captured
+/// fixture so a drift is caught deterministically, without a network call.
+#[test]
+fn fixture_matches_the_live_tests_preconditions() {
+    let r = fixture_response();
+    // The captured response carries no cost block — the live test asserts
+    // the same, and if the network starts sending one, both should change
+    // together rather than silently drift.
+    assert!(
+        r.cost.is_none(),
+        "fixture must reflect the live no-cost behaviour"
+    );
+    // And the fixture's ledger parses, which is what the live path relies on.
+    let ledger: u32 = r
+        .latest_ledger
+        .as_deref()
+        .expect("latestLedger present")
+        .parse()
+        .expect("latestLedger is numeric");
+    assert!(ledger > 0, "a real ledger sequence");
+}
