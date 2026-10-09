@@ -1,30 +1,37 @@
-//! Network-faithful Protocol 29 cost model for fuzz budgets.
+//! Protocol-initial cost model for fuzz budgets.
 //!
 //! The CPU and memory cost-parameter tables embedded here are the
-//! **network-faithful Protocol 29 cost model derived from stellar-core
-//! protocol configuration**: the initial per-protocol `ConfigSetting`
-//! ledger entries as defined by stellar-core's
-//! `NetworkConfig.cpp::initialCpuCostParamsEntryForV20()` and
-//! `initialMemCostParamsEntryForV20()`. Those 23-entry tables (one entry per
-//! cost type `WasmInsnExec` .. `ChaCha20DrawBytes`) are the values the
-//! network carried when Protocol 29 activated, and are the table this
-//! `BudgetPlan::NetworkFaithful` budget is built from.
+//! **protocol-initial** cost model: the values stellar-core writes into the
+//! per-protocol `ConfigSetting` ledger entries when Soroban was first
+//! enabled, as defined by `NetworkConfig.cpp::initialCpuCostParamsEntryForV20()`
+//! and `initialMemCostParamsEntryForV20()`.
 //!
-//! ## What this is and is not
+//! ## What this is — and what it is not
 //!
-//! - It is the **cost parameters** (per-cost-type linear models) plus the
-//!   **resource limits** (`txMaxInstructions`, `txMemoryLimit`) from
-//!   stellar-core's `InitialSorobanNetworkConfig`.
-//! - It is **not** a live Mainnet validator configuration. No RPC, no
-//!   network access, no fetched state — the values are a fixed, vendored
-//!   copy of the protocol configuration.
-//! - The **host version** (soroban-env-host 28.0.2), the **protocol
-//!   version** (28, pinned by the host), the **ledger TTL** fields, and the
-//!   **transaction fee** model are all separate concerns and are untouched
-//!   by this module.
+//! - It is the **initial** (V20) cost parameters plus the
+//!   `InitialSorobanNetworkConfig` resource limits. Those limits are also the
+//!   protocol **floor**: `MinimumSorobanNetworkConfig::TX_MAX_INSTRUCTIONS`
+//!   and `MEMORY_LIMIT` are the values an upgrade must not go below.
+//! - It is **not** a live Mainnet validator configuration, and it is **not**
+//!   the Protocol 29 cost model. stellar-core *does* mutate the V20 table on
+//!   later protocol upgrades — `updateCpuCostParamsEntryForV21` rewrites
+//!   `VmCachedInstantiation` from `(451626, 45405)` to `(41142, 634)` and
+//!   appends 21 new cost types, and V22/V25/V26 append more. So the 23-entry
+//!   table below describes the protocol-initial state, not the current one.
+//! - No RPC, no network access, no fetched state: the values are a fixed,
+//!   vendored copy of the protocol configuration. Anything that needs the
+//!   *current* network table must read it from a ledger, not from here.
+//!
+//! ## Separate concerns
+//!
+//! The **host version** (soroban-env-host 28.0.2), the **protocol version**
+//! (28, pinned by the host), the **cost parameters** (below), the
+//! **resource limits** (below), the **ledger TTL** fields, and the
+//! **transaction fee** model are all distinct. This module only carries the
+//! cost parameters and the resource limits; nothing else is touched.
 //!
 //! The tables are the single source of truth for the
-//! [`BudgetPlan::NetworkFaithful`](crate::environment::BudgetPlan::NetworkFaithful)
+//! [`BudgetPlan::ProtocolInitial`](crate::environment::BudgetPlan::ProtocolInitial)
 //! budget; they are not duplicated anywhere else.
 
 use soroban_env_host::xdr::{
@@ -32,20 +39,25 @@ use soroban_env_host::xdr::{
 };
 
 /// stellar-core `InitialSorobanNetworkConfig::TX_MAX_INSTRUCTIONS`:
-/// per-transaction CPU instruction ceiling.
+/// per-transaction CPU instruction ceiling. Also the
+/// `MinimumSorobanNetworkConfig::TX_MAX_INSTRUCTIONS` protocol floor.
 pub const NETWORK_CPU_LIMIT: u64 = 2_500_000;
 
 /// stellar-core `InitialSorobanNetworkConfig::MEMORY_LIMIT`:
-/// per-transaction memory byte ceiling.
+/// per-transaction memory byte ceiling. Also the
+/// `MinimumSorobanNetworkConfig::MEMORY_LIMIT` protocol floor.
 pub const NETWORK_MEM_LIMIT: u64 = 2_000_000;
 
-/// Number of cost types the Protocol 29 initial tables cover
+/// Number of cost types the protocol-initial tables cover
 /// (`WasmInsnExec` = 0 through `ChaCha20DrawBytes` = 22, inclusive).
 pub const NETWORK_COST_ENTRY_COUNT: usize = 23;
 
 /// stellar-core `NetworkConfig.cpp::initialCpuCostParamsEntryForV20()`
 /// values, `(const_term, linear_term)` per cost type in XDR enum order
 /// (index 0 = `WasmInsnExec` … index 22 = `ChaCha20DrawBytes`).
+///
+/// Note: `VmCachedInstantiation` (index 12) is the entry that V21 later
+/// rewrites to `(41142, 634)`; the value here is the protocol-initial one.
 const V20_CPU: [(u64, u64); NETWORK_COST_ENTRY_COUNT] = [
     (4, 0),
     (434, 16),
@@ -115,7 +127,7 @@ fn params_from_table(
             .map_err(|_| format!("cost type index {i} is not a valid ContractCostType"))?;
         // The table order must match the XDR enum order exactly. A mismatch
         // here means the vendored table drifted from stellar-core's
-        // `initialCpuCostParamsEntryForV20`/`initialMemCostParamsEntryForV20`
+        // initialCpuCostParamsEntryForV20/initialMemCostParamsEntryForV20
         // — fail loudly rather than charge the wrong cost type.
         let expected = match i {
             0 => "WasmInsnExec",
@@ -160,12 +172,12 @@ fn params_from_table(
     ContractCostParams::try_from(entries).map_err(|e| format!("cost params conversion: {e}"))
 }
 
-/// The network-faithful Protocol 29 CPU cost-parameter table.
+/// The protocol-initial CPU cost-parameter table.
 pub fn network_cpu_cost_params() -> Result<ContractCostParams, String> {
     params_from_table(&V20_CPU)
 }
 
-/// The network-faithful Protocol 29 memory cost-parameter table.
+/// The protocol-initial memory cost-parameter table.
 pub fn network_mem_cost_params() -> Result<ContractCostParams, String> {
     params_from_table(&V20_MEM)
 }
@@ -208,5 +220,26 @@ mod tests {
     fn limits_match_stellar_core_initial_network_config() {
         assert_eq!(NETWORK_CPU_LIMIT, 2_500_000);
         assert_eq!(NETWORK_MEM_LIMIT, 2_000_000);
+    }
+
+    /// The table is protocol-initial, not current: stellar-core's V21 update
+    /// rewrites `VmCachedInstantiation` and appends 21 cost types. Guard
+    /// against the table silently claiming to be the current model.
+    #[test]
+    fn table_is_protocol_initial_not_the_current_protocol_model() {
+        let params = network_cpu_cost_params().unwrap();
+        // The XDR enum carries far more cost types than the initial table.
+        assert!(
+            ContractCostType::variants().len() > NETWORK_COST_ENTRY_COUNT,
+            "newer cost types exist: the vendored table is protocol-initial, \
+             not the current protocol model"
+        );
+        // VmCachedInstantiation keeps its protocol-initial value here, which
+        // is the entry V21 rewrites to (41142, 634).
+        assert_eq!(
+            (params.0[12].const_term, params.0[12].linear_term),
+            (451626, 45405),
+            "VmCachedInstantiation must stay protocol-initial (V21 rewrites it)"
+        );
     }
 }

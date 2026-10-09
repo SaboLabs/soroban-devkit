@@ -33,15 +33,21 @@ pub enum BudgetPlan {
     /// fee computation. `resources.instructions` is left at its maximum:
     /// enforcement is by host budget, which is the deterministic boundary.
     Capped { cpu: u64, mem: u64 },
-    /// Fresh per-case budget built from the network-faithful Protocol 29
-    /// cost model derived from stellar-core protocol configuration
+    /// Fresh per-case budget built from the **protocol-initial** cost model
     /// ([`crate::network_cost`]): the 23-entry CPU and memory cost-parameter
-    /// tables plus the stellar-core `InitialSorobanNetworkConfig` resource
-    /// limits. Construction goes through the same public
-    /// `Budget::try_from_configs` path as [`BudgetPlan::Capped`] — only the
-    /// cost table and the limits differ. No RPC, no network access: the
-    /// tables are vendored, so the budget is deterministic offline.
-    NetworkFaithful,
+    /// tables from stellar-core's `initialCpuCostParamsEntryForV20()` /
+    /// `initialMemCostParamsEntryForV20()`, plus the
+    /// `InitialSorobanNetworkConfig` resource limits.
+    ///
+    /// Naming is deliberate: this is the protocol-initial configuration, not
+    /// a live Mainnet validator configuration and not the current Protocol 29
+    /// cost model — stellar-core mutates the V20 table on later upgrades
+    /// (V21 rewrites `VmCachedInstantiation` and appends 21 cost types).
+    /// Construction goes through the same public `Budget::try_from_configs`
+    /// path as [`BudgetPlan::Capped`] — only the cost table and the limits
+    /// differ. No RPC, no network access: the tables are vendored, so the
+    /// budget is deterministic offline.
+    ProtocolInitial,
 }
 
 /// Per-execution environment: ledger context + budget plan.
@@ -81,10 +87,10 @@ impl Environment {
     /// Build the fresh per-case budget. `Default` returns the host default
     /// budget (identical to Phase 1); `Capped` uses the public
     /// `try_from_configs` path with the minimal cost model documented above;
-    /// `NetworkFaithful` uses the same path with the vendored
-    /// network-faithful Protocol 29 cost tables and stellar-core resource
-    /// limits. A network-faithful construction failure is an explicit error,
-    /// never a silent fallback to the synthetic model.
+    /// `ProtocolInitial` uses the same path with the vendored protocol-initial
+    /// cost tables and stellar-core resource limits. A protocol-initial
+    /// construction failure is an explicit error, never a silent fallback to
+    /// the synthetic model.
     pub(crate) fn make_budget(&self) -> Result<Budget, FuzzError> {
         match &self.budget {
             BudgetPlan::Default => Ok(Budget::default()),
@@ -101,7 +107,7 @@ impl Environment {
                 Budget::try_from_configs(*cpu, *mem, params.clone(), params)
                     .map_err(|e| FuzzError::InvalidConfig(format!("budget: {e}")))
             }
-            BudgetPlan::NetworkFaithful => {
+            BudgetPlan::ProtocolInitial => {
                 let cpu_params = network_cpu_cost_params().map_err(|e| {
                     FuzzError::InvalidConfig(format!("network cpu cost params: {e}"))
                 })?;
@@ -114,7 +120,7 @@ impl Environment {
                     cpu_params,
                     mem_params,
                 )
-                .map_err(|e| FuzzError::InvalidConfig(format!("network-faithful budget: {e}")))
+                .map_err(|e| FuzzError::InvalidConfig(format!("protocol-initial budget: {e}")))
             }
         }
     }
@@ -146,25 +152,25 @@ mod tests {
     use super::*;
     use soroban_env_host::xdr::ContractCostType;
 
-    fn network_faithful_budget() -> Budget {
+    fn protocol_initial_budget() -> Budget {
         Environment {
             ledger: LedgerConfig::default(),
-            budget: BudgetPlan::NetworkFaithful,
+            budget: BudgetPlan::ProtocolInitial,
         }
         .make_budget()
         .unwrap()
     }
 
     #[test]
-    fn network_faithful_budget_carries_network_limits() {
-        let budget = network_faithful_budget();
+    fn protocol_initial_budget_carries_protocol_limits() {
+        let budget = protocol_initial_budget();
         assert_eq!(budget.get_cpu_insns_remaining().unwrap(), 2_500_000);
         assert_eq!(budget.get_mem_bytes_remaining().unwrap(), 2_000_000);
     }
 
     #[test]
-    fn network_faithful_budget_charges_the_stellar_core_table() {
-        let budget = network_faithful_budget();
+    fn protocol_initial_budget_charges_the_stellar_core_table() {
+        let budget = protocol_initial_budget();
         // CPU: WasmInsnExec const 4, linear 0.
         budget.charge(ContractCostType::WasmInsnExec, None).unwrap();
         assert_eq!(budget.get_cpu_insns_consumed().unwrap(), 4);
@@ -177,11 +183,75 @@ mod tests {
         assert_eq!(budget.get_mem_bytes_consumed().unwrap(), 16 + 128);
     }
 
+    /// Semantics, not constant-vs-constant: the budget must charge the
+    /// protocol-initial values that stellar-core's V21 upgrade later
+    /// rewrites (`VmCachedInstantiation` (451626, 45405) → (41142, 634)).
+    /// `get_tracker()` proves the charge was routed through the variant's
+    /// own cost model rather than the host default. The memory charge is
+    /// `Some(0)` because this cost type is a linear model on the memory
+    /// dimension (the tracker requires a consistent Some/None input).
+    #[test]
+    fn protocol_initial_charges_the_pre_v21_vm_cached_instantiation_model() {
+        let budget = protocol_initial_budget();
+        budget
+            .charge(ContractCostType::VmCachedInstantiation, Some(0))
+            .unwrap();
+        let tracker = budget
+            .get_tracker(ContractCostType::VmCachedInstantiation)
+            .unwrap();
+        assert_eq!(tracker.iterations, 1, "charge must hit this cost type");
+        assert_eq!(
+            tracker.cpu, 451_626,
+            "protocol-initial VmCachedInstantiation CPU cost (V21 rewrites to 41142)"
+        );
+    }
+
+    /// The variant is not the host default: `VmCachedInstantiation` in the
+    /// host default model costs 41142, not the protocol-initial 451626.
+    #[test]
+    fn protocol_initial_differs_from_the_host_default_model() {
+        let plan = protocol_initial_budget();
+        let host_default = Budget::default();
+        plan.charge(ContractCostType::VmCachedInstantiation, Some(0))
+            .unwrap();
+        host_default
+            .charge(ContractCostType::VmCachedInstantiation, Some(0))
+            .unwrap();
+        let plan_cpu = plan
+            .get_tracker(ContractCostType::VmCachedInstantiation)
+            .unwrap()
+            .cpu;
+        let host_cpu = host_default
+            .get_tracker(ContractCostType::VmCachedInstantiation)
+            .unwrap()
+            .cpu;
+        assert_eq!(plan_cpu, 451_626);
+        assert_eq!(host_cpu, 41_142);
+        assert_ne!(plan_cpu, host_cpu, "variant must not equal host default");
+    }
+
     #[test]
     fn default_budget_is_the_host_default() {
         let budget = Environment::default().make_budget().unwrap();
         assert_eq!(budget.get_cpu_insns_remaining().unwrap(), 100_000_000);
         assert_eq!(budget.get_mem_bytes_remaining().unwrap(), 41_943_040);
+    }
+
+    /// `Default` and `ProtocolInitial` are distinct plans with distinct
+    /// limits — regression guard for the variant dispatch.
+    #[test]
+    fn default_and_protocol_initial_are_distinct_plans() {
+        let default = Environment::default().make_budget().unwrap();
+        let initial = protocol_initial_budget();
+        assert_ne!(
+            default.get_cpu_insns_remaining().unwrap(),
+            initial.get_cpu_insns_remaining().unwrap()
+        );
+        assert_ne!(
+            default.get_mem_bytes_remaining().unwrap(),
+            initial.get_mem_bytes_remaining().unwrap()
+        );
+        assert!(!BudgetPlan::Default.eq(&BudgetPlan::ProtocolInitial));
     }
 
     #[test]
