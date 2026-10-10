@@ -125,3 +125,90 @@ fn other_rules_unaffected_by_auth_mode() {
         );
     }
 }
+
+// ---------------------------------------------------------------------------
+// Recorded-auth requirements and their signature boundary.
+//
+// A live `simulateTransaction` for an auth-requiring function records an
+// `Address` credential with a concrete nonce and a **Void** signature — the
+// network is telling the caller what authorization must be produced, not
+// providing it. Satisfying that requirement needs a signature from the
+// recorded address's key, which a caller without the key cannot produce.
+//
+// These tests pin the local side of that boundary with the local auth
+// fixture: a `SourceAccount` credential for the source account authenticates
+// (the host does not require a signature for the transaction source), while
+// an `Address` credential for a *different* address does not — so an
+// auth-requiring call cannot be made to succeed by fabricating an entry, and
+// a recorded requirement with no matching key is a legitimate blocker rather
+// than something to work around.
+// ---------------------------------------------------------------------------
+
+/// The fixture's `bump(who)` calls `who.require_auth()`: it is the
+/// auth-requiring counterpart to `set`.
+const BUMP: &str = "bump";
+
+fn bump_call() -> FunctionCall {
+    // `who` is the fixture's source address, so a SourceAccount credential
+    // for the transaction source satisfies the requirement.
+    FunctionCall::new(
+        BUMP,
+        vec![ScVal::Address(sdkt_fuzz::auth::source_address())],
+    )
+}
+
+#[test]
+fn auth_requiring_call_fails_without_credentials() {
+    let exec = sdkt_fuzz::Executor::new(AUTH_WASM, Default::default()).unwrap();
+    let env = Environment::default();
+    let call = bump_call();
+    let obs = exec
+        .execute_with_auth(&exec.case("m", call, Vec::new()), &env, &[])
+        .expect("execution produces an observation");
+    assert!(
+        !obs.is_success(),
+        "an auth-requiring call must not succeed with no credentials"
+    );
+}
+
+#[test]
+fn source_account_credential_satisfies_the_requirement() {
+    let exec = sdkt_fuzz::Executor::new(AUTH_WASM, Default::default()).unwrap();
+    let env = Environment::default();
+    let call = bump_call();
+    let case = exec.case("m", call.clone(), Vec::new());
+    let entries = sdkt_fuzz::auth::invoke_auth_entries(
+        AuthMode::CorrectAuth,
+        &case.contract_address(),
+        &call,
+    )
+    .expect("entries construct");
+    let obs = exec
+        .execute_with_auth(&case, &env, &entries)
+        .expect("execution produces an observation");
+    assert!(
+        obs.is_success(),
+        "a matching SourceAccount credential is a valid authorization"
+    );
+}
+
+#[test]
+fn address_credential_for_another_key_does_not_satisfy_the_requirement() {
+    let exec = sdkt_fuzz::Executor::new(AUTH_WASM, Default::default()).unwrap();
+    let env = Environment::default();
+    let call = bump_call();
+    let case = exec.case("m", call.clone(), Vec::new());
+    // WrongAuth is an Address credential for an address that is not the
+    // requirement's address, with an all-zero signature: the host must
+    // reject it rather than let it stand in for a real signature.
+    let entries =
+        sdkt_fuzz::auth::invoke_auth_entries(AuthMode::WrongAuth, &case.contract_address(), &call)
+            .expect("entries construct");
+    let obs = exec
+        .execute_with_auth(&case, &env, &entries)
+        .expect("execution produces an observation");
+    assert!(
+        !obs.is_success(),
+        "a foreign Address credential must not satisfy the requirement"
+    );
+}
