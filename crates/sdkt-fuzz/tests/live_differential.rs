@@ -1784,3 +1784,51 @@ fn apply_state_delta_skips_nonce_entries() {
         carried.data_entries
     );
 }
+
+/// Duplicate keys in `state_changes_into_sequence_state` are a protocol
+/// violation, but the function must remain deterministic: last-write-wins
+/// for Created/Updated, idempotent for Deleted. This test pins that behavior
+/// so a future change cannot silently introduce ambiguity.
+#[test]
+fn chaining_duplicate_keys_are_deterministic_last_write_wins() {
+    let storage_key = storage_key_xdr();
+    let first = sdkt_fuzz::state_capture::DecodedStateChange {
+        key_b64: sdkt_fuzz::state_capture::encode_key(&storage_key).expect("encodes"),
+        kind: sdkt_fuzz::state_capture::StateChangeKind::Created,
+        before: None,
+        after: Some(contract_data_entry(storage_key.clone(), 10)),
+    };
+    let second = sdkt_fuzz::state_capture::DecodedStateChange {
+        key_b64: sdkt_fuzz::state_capture::encode_key(&storage_key).expect("encodes"),
+        kind: sdkt_fuzz::state_capture::StateChangeKind::Updated,
+        before: Some(contract_data_entry(storage_key.clone(), 10)),
+        after: Some(contract_data_entry(storage_key.clone(), 20)),
+    };
+    let out = sdkt_fuzz::state_changes_into_sequence_state(&Default::default(), &[first, second])
+        .expect("duplicate keys chain deterministically");
+    assert_eq!(out.data_entries.len(), 1, "exactly one entry survives");
+    assert_eq!(
+        out.data_entries[0].last_modified_ledger_seq, 20,
+        "last write wins"
+    );
+}
+
+/// Duplicate Deleted rows are idempotent: the second delete is a no-op.
+#[test]
+fn chaining_duplicate_deleted_rows_are_idempotent() {
+    let storage_key = storage_key_xdr();
+    let base = sdkt_fuzz::SequenceState {
+        data_entries: vec![contract_data_entry(storage_key.clone(), 10)],
+        instance_storage: vec![],
+    };
+    let del1 = sdkt_fuzz::state_capture::DecodedStateChange {
+        key_b64: sdkt_fuzz::state_capture::encode_key(&storage_key).expect("encodes"),
+        kind: sdkt_fuzz::state_capture::StateChangeKind::Deleted,
+        before: Some(contract_data_entry(storage_key.clone(), 10)),
+        after: None,
+    };
+    let del2 = del1.clone();
+    let out = sdkt_fuzz::state_changes_into_sequence_state(&base, &[del1, del2])
+        .expect("duplicate deletes chain deterministically");
+    assert!(out.data_entries.is_empty(), "both deletes remove the entry");
+}
