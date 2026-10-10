@@ -42,7 +42,7 @@
 use std::collections::BTreeMap;
 
 use serde::{Deserialize, Serialize};
-use stellar_xdr::{LedgerEntry, LedgerKey, ReadXdr, WriteXdr};
+use stellar_xdr::{LedgerEntry, LedgerKey, ReadXdr, ScVal, WriteXdr};
 
 /// One captured ledger entry, with the provenance needed to audit it.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -442,6 +442,23 @@ pub fn verify_against_state_changes(
     outcome.clone()
 }
 
+/// Canonical byte XDR for a `LedgerKey` (the same encoding `encode_key`
+/// produces base64 of).
+pub fn key_bytes(key_b64: &str) -> Result<Vec<u8>, String> {
+    use base64::Engine;
+    base64::engine::general_purpose::STANDARD
+        .decode(key_b64.trim())
+        .map_err(|e| e.to_string())
+}
+
+/// Canonical byte XDR for a `LedgerEntry`.
+pub fn entry_bytes(entry: &LedgerEntry) -> Result<Vec<u8>, String> {
+    let mut buf = Vec::new();
+    let mut l = stellar_xdr::Limited::new(&mut buf, stellar_xdr::Limits::none());
+    entry.write_xdr(&mut l).map_err(|e| e.to_string())?;
+    Ok(buf)
+}
+
 /// Canonical base64 XDR for a `LedgerEntry`.
 pub fn encode_entry(entry: &LedgerEntry) -> Result<String, String> {
     use base64::Engine;
@@ -462,6 +479,28 @@ pub fn encode_entry_data(data: &stellar_xdr::LedgerEntryData) -> Result<String, 
     Ok(base64::engine::general_purpose::STANDARD.encode(&buf))
 }
 
+/// True when a ledger key is executor-owned rather than contract storage:
+/// the contract code (the host resolves the executable from it), the contract
+/// instance singleton (the executor writes the executable pointer into it),
+/// and per-invocation nonce entries (host-generated, temporary).
+///
+/// `sequence.rs::apply_state_delta` makes the same distinction when carrying
+/// state between steps, and [`crate::state_compare`] uses it to keep
+/// host-internal bookkeeping out of the storage comparison. It lives here so
+/// all three share one definition.
+pub fn is_executor_owned_key(key: &LedgerKey) -> bool {
+    match key {
+        LedgerKey::ContractCode(_) => true,
+        LedgerKey::ContractData(d)
+            if matches!(d.key, ScVal::LedgerKeyContractInstance)
+                || matches!(d.key, ScVal::LedgerKeyNonce(_)) =>
+        {
+            true
+        }
+        _ => false,
+    }
+}
+
 /// The footprint keys declared by a simulation's `SorobanTransactionData`,
 /// as canonical base64 XDR, in footprint order (read_only then read_write).
 pub fn footprint_keys_from_transaction_data(td_b64: &str) -> Result<Vec<String>, String> {
@@ -474,6 +513,154 @@ pub fn footprint_keys_from_transaction_data(td_b64: &str) -> Result<Vec<String>,
         keys.push(encode_key(k)?);
     }
     Ok(keys)
+}
+
+/// One decoded `stateChanges` row from a `simulateTransaction` response.
+///
+/// The RPC row shape is `{ key: base64(LedgerKey), type: created|updated|deleted,
+/// before: base64(LedgerEntry)|null, after: base64(LedgerEntry)|null }`.
+///
+/// Empirically (probed against the captured Testnet response):
+/// `before`/`after` are **full `LedgerEntry` XDR** — sequence + data + ext —
+/// not the `LedgerEntryData` union that `getLedgerEntries.xdr` carries.
+/// `decode_entry` is therefore the correct decoder for them; the two shapes
+/// must not be conflated (see the `get_ledger_entries_payload_is_entry_data`
+/// regression test in `live_differential.rs`).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct DecodedStateChange {
+    /// Canonical base64 XDR of the `LedgerKey` (as reported by the RPC).
+    pub key_b64: String,
+    /// The change kind the RPC reported.
+    pub kind: StateChangeKind,
+    /// The entry value before execution; `None` for `created` rows.
+    pub before: Option<LedgerEntry>,
+    /// The entry value after execution; `None` for `deleted` rows.
+    pub after: Option<LedgerEntry>,
+}
+
+/// The change kind a `stateChanges` row reports.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum StateChangeKind {
+    Created,
+    Updated,
+    Deleted,
+}
+
+/// Why a `stateChanges` row could not be decoded.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum StateChangeDecodeError {
+    /// The row is not an object with the expected fields.
+    MalformedRow { detail: String },
+    /// The `type` field is not one of `created` / `updated` / `deleted`.
+    UnknownKind { value: String },
+    /// A `LedgerKey` or `LedgerEntry` payload failed to decode.
+    BadXdr { field: &'static str, detail: String },
+    /// The decoded entry's own key does not match the row's reported key.
+    KeyMismatch {
+        row_key_b64: String,
+        entry_key_b64: String,
+    },
+}
+
+impl std::fmt::Display for StateChangeDecodeError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            StateChangeDecodeError::MalformedRow { detail } => {
+                write!(f, "stateChanges row is malformed: {detail}")
+            }
+            StateChangeDecodeError::UnknownKind { value } => {
+                write!(f, "unknown stateChanges kind: {value:?}")
+            }
+            StateChangeDecodeError::BadXdr { field, detail } => {
+                write!(f, "stateChanges {field} failed to decode: {detail}")
+            }
+            StateChangeDecodeError::KeyMismatch {
+                row_key_b64,
+                entry_key_b64,
+            } => write!(
+                f,
+                "stateChanges row key {row_key_b64} does not match decoded entry key {entry_key_b64}"
+            ),
+        }
+    }
+}
+
+/// Decode one `stateChanges` row.
+///
+/// `before_b64` / `after_b64` are the raw JSON values (string or null).
+/// Presence rules follow the RPC contract: `created` rows carry an `after`
+/// but no `before`; `deleted` rows carry a `before` but no `after`;
+/// `updated` rows carry both. A row that violates its kind's presence rule
+/// is an error, not a silent skip — otherwise the comparator would lose
+/// information about deletions or creations.
+pub fn decode_state_change(
+    key_b64: &str,
+    kind: &str,
+    before_b64: Option<&str>,
+    after_b64: Option<&str>,
+) -> Result<DecodedStateChange, StateChangeDecodeError> {
+    let kind = match kind {
+        "created" => StateChangeKind::Created,
+        "updated" => StateChangeKind::Updated,
+        "deleted" => StateChangeKind::Deleted,
+        other => {
+            return Err(StateChangeDecodeError::UnknownKind {
+                value: other.to_string(),
+            })
+        }
+    };
+
+    let decode = |field: &'static str, v: &str| -> Result<LedgerEntry, StateChangeDecodeError> {
+        decode_entry(v).map_err(|detail| StateChangeDecodeError::BadXdr { field, detail })
+    };
+
+    let before = match before_b64 {
+        Some(v) => Some(decode("before", v)?),
+        None => None,
+    };
+    let after = match after_b64 {
+        Some(v) => Some(decode("after", v)?),
+        None => None,
+    };
+
+    // Presence rules: the kind must match what is actually present.
+    let ok = match kind {
+        StateChangeKind::Created => before.is_none() && after.is_some(),
+        StateChangeKind::Updated => before.is_some() && after.is_some(),
+        StateChangeKind::Deleted => before.is_some() && after.is_none(),
+    };
+    if !ok {
+        return Err(StateChangeDecodeError::MalformedRow {
+            detail: format!(
+                "kind {kind:?} requires before/after presence that the row does not have \
+                 (before={}, after={})",
+                before.is_some(),
+                after.is_some()
+            ),
+        });
+    }
+
+    // Key consistency: the row's key must be the key of the decoded entries.
+    for entry in before.iter().chain(after.iter()) {
+        let entry_key =
+            encode_key(&entry.to_key()).map_err(|detail| StateChangeDecodeError::BadXdr {
+                field: "key",
+                detail,
+            })?;
+        if entry_key != key_b64 {
+            return Err(StateChangeDecodeError::KeyMismatch {
+                row_key_b64: key_b64.to_string(),
+                entry_key_b64: entry_key,
+            });
+        }
+    }
+
+    Ok(DecodedStateChange {
+        key_b64: key_b64.to_string(),
+        kind,
+        before,
+        after,
+    })
 }
 
 #[cfg(test)]

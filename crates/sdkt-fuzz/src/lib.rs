@@ -82,6 +82,7 @@ pub mod replay;
 pub mod runner;
 pub mod sequence;
 pub mod state_capture;
+pub mod state_compare;
 
 pub use artifact::{CampaignConfig, FindingArtifact, SCHEMA_VERSION};
 pub use auth::AuthMode;
@@ -118,6 +119,6 @@ pub use runner::{
     FuzzReport, FuzzRunOptions, ReplayOptions,
 };
 pub use sequence::{
-    apply_state_delta, execute_sequence, execute_sequence_auth, SequenceRun, SequenceState,
-    StepObservation,
+    apply_state_delta, execute_sequence, execute_sequence_auth, state_changes_into_sequence_state,
+    ChainError, SequenceRun, SequenceState, StepObservation,
 };

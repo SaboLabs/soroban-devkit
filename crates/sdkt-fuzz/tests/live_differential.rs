@@ -1220,3 +1220,567 @@ fn fixture_matches_the_live_tests_preconditions() {
         .expect("latestLedger is numeric");
     assert!(ledger > 0, "a real ledger sequence");
 }
+
+// ---------------------------------------------------------------------------
+// Step 1 — decoding `stateChanges` rows.
+//
+// The captured live response is the fixture: its `stateChanges` rows carry
+// full `LedgerEntry` XDR in `before`/`after` (probed empirically: the first
+// four bytes are the `lastModifiedLedgerSeq`, and the payload decodes as a
+// `LedgerEntry` but not as the `LedgerEntryData` union that
+// `getLedgerEntries.xdr` carries). These tests pin that distinction and the
+// presence rules, so a future RPC shape change is caught here rather than
+// silently producing a wrong baseline.
+// ---------------------------------------------------------------------------
+
+/// The captured response's `stateChanges` rows decode, and each row's kind
+/// matches the presence of its `before` / `after` values.
+#[test]
+fn fixture_state_changes_decode_with_consistent_presence() {
+    let rows = fixture_state_changes_full();
+    assert_eq!(rows.len(), 3, "fixture has three stateChanges rows");
+    for (key, kind, before, after) in &rows {
+        let decoded = sdkt_fuzz::state_capture::decode_state_change(
+            key,
+            kind,
+            before.as_deref(),
+            after.as_deref(),
+        )
+        .expect("row decodes");
+        // The decoded entry's own key must equal the row's reported key.
+        let entry_key = sdkt_fuzz::state_capture::encode_key(
+            &sdkt_fuzz::state_capture::decode_entry(
+                after.as_ref().or(before.as_ref()).expect("row has a value"),
+            )
+            .expect("entry decodes")
+            .to_key(),
+        )
+        .expect("key encodes");
+        assert_eq!(&decoded.key_b64, &entry_key);
+    }
+}
+
+/// A `created` row carries an `after` and no `before`; a `deleted` row is the
+/// mirror. The decoder must reject a row whose kind and presence disagree,
+/// because silently dropping a deletion would make the comparator lose
+/// information.
+#[test]
+fn state_change_presence_rules_are_enforced() {
+    // Row 1 is `updated`: it genuinely has both values, so it is the right
+    // row for a presence-rule violation test.
+    let rows = fixture_state_changes_full();
+    let (key, _, before, after) = &rows[1];
+    let before = before.as_ref().expect("updated row has a before");
+    let after = after.as_ref().expect("updated row has an after");
+
+    // created WITH a before value present is malformed.
+    let err =
+        sdkt_fuzz::state_capture::decode_state_change(key, "created", Some(before), Some(after));
+    assert!(err.is_err(), "created+before must be rejected: {err:?}");
+
+    // deleted WITH an after value present is malformed.
+    let err =
+        sdkt_fuzz::state_capture::decode_state_change(key, "deleted", Some(before), Some(after));
+    assert!(err.is_err(), "deleted+after must be rejected: {err:?}");
+
+    // The genuine kinds decode.
+    assert!(sdkt_fuzz::state_capture::decode_state_change(
+        key,
+        "updated",
+        Some(before),
+        Some(after)
+    )
+    .is_ok());
+
+    // Row 0 is `created`: before absent, after present.
+    let (key0, _, before0, after0) = &rows[0];
+    assert!(before0.is_none());
+    let decoded =
+        sdkt_fuzz::state_capture::decode_state_change(key0, "created", None, after0.as_deref())
+            .expect("genuine created row decodes");
+    assert_eq!(
+        decoded.kind,
+        sdkt_fuzz::state_capture::StateChangeKind::Created
+    );
+    assert!(decoded.before.is_none());
+    assert!(decoded.after.is_some());
+}
+
+/// An unknown `type` value is an error, not a silent skip.
+#[test]
+fn unknown_state_change_kind_is_an_error() {
+    let (key, _, before, after) = &fixture_state_changes_full()[0];
+    let err = sdkt_fuzz::state_capture::decode_state_change(
+        key,
+        "replaced",
+        before.as_deref(),
+        after.as_deref(),
+    );
+    assert!(err.is_err());
+    let msg = err.unwrap_err().to_string();
+    assert!(msg.contains("replaced"), "{msg}");
+}
+
+/// A malformed base64 payload is an error naming the field.
+#[test]
+fn malformed_state_change_payload_is_an_error() {
+    let (key, kind, _before, after) = &fixture_state_changes_full()[0];
+    let err = sdkt_fuzz::state_capture::decode_state_change(
+        key,
+        kind,
+        Some("!!!not-base64!!!"),
+        after.as_deref(),
+    );
+    assert!(err.is_err());
+    let msg = err.unwrap_err().to_string();
+    assert!(msg.contains("before"), "{msg}");
+}
+
+/// The `after` payload is a full `LedgerEntry`, not the `LedgerEntryData`
+/// union — the two shapes must not be conflated.
+#[test]
+fn state_change_after_is_a_full_ledger_entry() {
+    let (_, _, _, after) = &fixture_state_changes_full()[1];
+    let after = after.as_ref().expect("updated row has an after");
+    // Full entry decodes.
+    let entry = sdkt_fuzz::state_capture::decode_entry(after).expect("after decodes");
+    // And it carries a real lastModifiedLedgerSeq, which the data-only union
+    // does not have — that is the discriminator.
+    assert!(
+        entry.last_modified_ledger_seq > 0,
+        "full LedgerEntry carries lastModifiedLedgerSeq"
+    );
+    // The data-only encoding of the same entry is a different byte string.
+    let data_b64 = sdkt_fuzz::state_capture::encode_entry_data(&entry.data).expect("encodes");
+    assert_ne!(
+        after, &data_b64,
+        "after must not be the data-only union encoding"
+    );
+}
+
+/// The captured `stateChanges` rows are all executor-owned keys: the live
+/// read-only invocation touched only the host's own bookkeeping (a nonce, the
+/// instance singleton, the contract code), not contract storage. The
+/// comparator must report every one of them as `CannotVerify` with the
+/// `ExecutorOwnedKey` reason — never as a divergence, and never as a match
+/// that would read as storage agreement.
+///
+/// This is a finding from the live capture, not a synthetic case: it proves
+/// the executor-owned distinction is load-bearing on real RPC output.
+#[test]
+fn captured_state_changes_are_all_executor_owned() {
+    let rows = fixture_state_changes_full();
+    let decoded: Vec<sdkt_fuzz::state_capture::DecodedStateChange> = rows
+        .iter()
+        .map(|(k, t, b, a)| {
+            sdkt_fuzz::state_capture::decode_state_change(k, t, b.as_deref(), a.as_deref())
+                .expect("row decodes")
+        })
+        .collect();
+    let rpc: Vec<sdkt_fuzz::state_compare::RpcStateChange> = decoded
+        .iter()
+        .map(sdkt_fuzz::state_compare::RpcStateChange::from_decoded)
+        .collect::<Result<_, _>>()
+        .expect("rows convert");
+
+    // A local observation that reports the same keys (the host would report
+    // them too — they are in its footprint).
+    let local_state: Vec<sdkt_fuzz::StateEntry> = rpc
+        .iter()
+        .map(|c| sdkt_fuzz::StateEntry {
+            key_xdr: c.key_xdr.clone(),
+            value_xdr: c.after.clone(),
+            change: sdkt_fuzz::StateChange::Updated,
+        })
+        .collect();
+    let obs = sdkt_fuzz::Observation {
+        case_id: "fixture-executor-owned".into(),
+        function: "pause".into(),
+        status: sdkt_fuzz::ExecutionStatus::Void,
+        state: local_state,
+        events: vec![],
+        budget: Default::default(),
+    };
+
+    let (outcome, comparable) = sdkt_fuzz::state_compare::compare_state_counting(&obs, &rpc);
+    assert_eq!(comparable, 0, "no contract storage key is comparable");
+    match outcome {
+        sdkt_fuzz::state_compare::Outcome::CannotVerify(v) => {
+            assert_eq!(v.len(), 3, "all three rows are executor-owned");
+            for verdict in v {
+                assert_eq!(
+                    verdict,
+                    sdkt_fuzz::state_compare::KeyVerdict::CannotVerify(
+                        sdkt_fuzz::state_compare::CannotVerifyReason::ExecutorOwnedKey
+                    ),
+                    "every captured row must be executor-owned, not a mismatch"
+                );
+            }
+        }
+        other => panic!("expected CannotVerify, got {other:?}"),
+    }
+}
+
+/// The comparator's storage path works end to end on the same XDR shapes the
+/// RPC uses: decode a fixture row, re-point it at a plain storage key, and a
+/// matching local observation compares as a match with one comparable key.
+/// This is what a state-mutating invocation would exercise, without needing
+/// one to exist on Testnet yet.
+#[test]
+fn storage_comparison_matches_and_detects_a_divergence() {
+    // A plain contract-data storage key, encoded exactly as the RPC would.
+    let storage_key = {
+        use stellar_xdr::{
+            ContractDataDurability, ContractId, Hash, LedgerKey, LedgerKeyContractData, Limited,
+            Limits, ScAddress, ScSymbol, ScVal, StringM, WriteXdr,
+        };
+        let key = LedgerKey::ContractData(LedgerKeyContractData {
+            contract: ScAddress::Contract(ContractId(Hash([3; 32]))),
+            key: ScVal::Symbol(ScSymbol(StringM::try_from("Orders").unwrap())),
+            durability: ContractDataDurability::Persistent,
+        });
+        let mut buf = Vec::new();
+        let mut l = Limited::new(&mut buf, Limits::none());
+        key.write_xdr(&mut l).unwrap();
+        buf
+    };
+    let value = {
+        use stellar_xdr::{Limited, Limits, ScVal, WriteXdr};
+        let mut buf = Vec::new();
+        let mut l = Limited::new(&mut buf, Limits::none());
+        ScVal::U32(7).write_xdr(&mut l).unwrap();
+        buf
+    };
+    let rpc = vec![sdkt_fuzz::state_compare::RpcStateChange {
+        key_xdr: storage_key.clone(),
+        kind: sdkt_fuzz::state_capture::StateChangeKind::Updated,
+        after: Some(value.clone()),
+    }];
+    let obs = sdkt_fuzz::Observation {
+        case_id: "storage-compare".into(),
+        function: "bump".into(),
+        status: sdkt_fuzz::ExecutionStatus::Void,
+        state: vec![sdkt_fuzz::StateEntry {
+            key_xdr: storage_key.clone(),
+            value_xdr: Some(value.clone()),
+            change: sdkt_fuzz::StateChange::Updated,
+        }],
+        events: vec![],
+        budget: Default::default(),
+    };
+    let (outcome, comparable) = sdkt_fuzz::state_compare::compare_state_counting(&obs, &rpc);
+    assert!(outcome.is_match(), "{outcome:?}");
+    assert_eq!(comparable, 1);
+
+    // Perturb the local value: the same key must now report a mismatch.
+    let mut perturbed = obs.clone();
+    perturbed.state[0].value_xdr = Some(vec![0xAB; 8]);
+    let (outcome, _) = sdkt_fuzz::state_compare::compare_state_counting(&perturbed, &rpc);
+    match outcome {
+        sdkt_fuzz::state_compare::Outcome::Mismatch(v) => {
+            assert_eq!(v.len(), 1, "exactly one key should diverge");
+            match &v[0] {
+                sdkt_fuzz::state_compare::KeyVerdict::Mismatch { local, rpc: r } => {
+                    assert_eq!(
+                        local,
+                        &sdkt_fuzz::state_compare::Side::Present(vec![0xAB; 8])
+                    );
+                    assert_eq!(r, &sdkt_fuzz::state_compare::Side::Present(value));
+                }
+                other => panic!("expected a Mismatch verdict, got {other:?}"),
+            }
+        }
+        other => panic!("expected Mismatch, got {other:?}"),
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Chaining: RPC `stateChanges` become the next invocation's baseline.
+//
+// These tests exercise `state_changes_into_sequence_state` against the
+// captured live rows and synthetic rows in the same XDR shapes. The key
+// semantic: Created/Updated carry the RPC `after` value forward, Deleted
+// removes the key, and executor-owned rows (nonce, instance, code) are
+// skipped — never silently folded into contract storage.
+// ---------------------------------------------------------------------------
+
+/// Decode all captured rows once; the chaining tests build on this.
+fn decoded_fixture_rows() -> Vec<sdkt_fuzz::state_capture::DecodedStateChange> {
+    fixture_state_changes_full()
+        .iter()
+        .map(|(k, t, b, a)| {
+            sdkt_fuzz::state_capture::decode_state_change(k, t, b.as_deref(), a.as_deref())
+                .expect("row decodes")
+        })
+        .collect()
+}
+
+/// The fixture's three rows are all executor-owned (nonce, instance, code),
+/// so chaining them onto an empty baseline yields an empty baseline.
+/// Nothing is carried, and no error is raised.
+#[test]
+fn chaining_executor_owned_rows_yields_empty_baseline() {
+    let rows = decoded_fixture_rows();
+    let out = sdkt_fuzz::state_changes_into_sequence_state(&Default::default(), &rows)
+        .expect("executor-owned rows chain cleanly");
+    assert!(out.data_entries.is_empty());
+    assert!(out.instance_storage.is_empty());
+}
+
+/// Created → the `after` entry is in the next baseline.
+#[test]
+fn chaining_created_row_carries_the_after_entry() {
+    let rows = decoded_fixture_rows();
+    let created = rows
+        .iter()
+        .find(|r| r.kind == sdkt_fuzz::state_capture::StateChangeKind::Created)
+        .expect("fixture has a created row");
+    // Re-point the row at a plain storage key so it is chainable storage.
+    let mut row = created.clone();
+    let storage_key = storage_key_xdr();
+    row.key_b64 = sdkt_fuzz::state_capture::encode_key(&storage_key).expect("encodes");
+    let mut after = created.after.clone().expect("created has after");
+    let mut data = match &after.data {
+        stellar_xdr::LedgerEntryData::ContractData(d) => d.clone(),
+        _ => panic!("fixture created row is contract data"),
+    };
+    data.contract = contract_id();
+    after.data = stellar_xdr::LedgerEntryData::ContractData(data);
+    // Rebuild the after entry under the storage key.
+    let after = contract_data_entry(storage_key.clone(), after_last_modified(&after));
+    row.after = Some(after.clone());
+    let out = sdkt_fuzz::state_changes_into_sequence_state(&Default::default(), &[row])
+        .expect("created chains");
+    assert_eq!(out.data_entries.len(), 1);
+    assert_eq!(out.data_entries[0].to_key(), storage_key);
+}
+
+/// Updated → the baseline value is replaced by `after`.
+#[test]
+fn chaining_updated_row_replaces_the_baseline_value() {
+    let storage_key = storage_key_xdr();
+    let old = contract_data_entry(storage_key.clone(), 100);
+    let base = sdkt_fuzz::SequenceState {
+        data_entries: vec![old],
+        instance_storage: vec![],
+    };
+    let new_after = contract_data_entry(storage_key.clone(), 200);
+    let row = sdkt_fuzz::state_capture::DecodedStateChange {
+        key_b64: sdkt_fuzz::state_capture::encode_key(&storage_key).expect("encodes"),
+        kind: sdkt_fuzz::state_capture::StateChangeKind::Updated,
+        before: Some(contract_data_entry(storage_key.clone(), 100)),
+        after: Some(new_after.clone()),
+    };
+    let out = sdkt_fuzz::state_changes_into_sequence_state(&base, &[row]).expect("updated chains");
+    assert_eq!(out.data_entries.len(), 1);
+    assert_eq!(out.data_entries[0].last_modified_ledger_seq, 200);
+}
+
+/// Deleted → the key is removed from the baseline.
+#[test]
+fn chaining_deleted_row_removes_the_key() {
+    let storage_key = storage_key_xdr();
+    let base = sdkt_fuzz::SequenceState {
+        data_entries: vec![contract_data_entry(storage_key.clone(), 100)],
+        instance_storage: vec![],
+    };
+    let row = sdkt_fuzz::state_capture::DecodedStateChange {
+        key_b64: sdkt_fuzz::state_capture::encode_key(&storage_key).expect("encodes"),
+        kind: sdkt_fuzz::state_capture::StateChangeKind::Deleted,
+        before: Some(contract_data_entry(storage_key.clone(), 100)),
+        after: None,
+    };
+    let out = sdkt_fuzz::state_changes_into_sequence_state(&base, &[row]).expect("deleted chains");
+    assert!(out.data_entries.is_empty());
+}
+
+/// A non-ContractData row is an explicit error, never a silent skip.
+#[test]
+fn chaining_non_contract_data_row_is_an_error() {
+    let key = account_key_xdr();
+    let row = sdkt_fuzz::state_capture::DecodedStateChange {
+        key_b64: sdkt_fuzz::state_capture::encode_key(&key).expect("encodes"),
+        kind: sdkt_fuzz::state_capture::StateChangeKind::Updated,
+        before: Some(contract_data_entry(storage_key_xdr(), 1)),
+        after: Some(contract_data_entry(storage_key_xdr(), 2)),
+    };
+    let err = sdkt_fuzz::state_changes_into_sequence_state(&Default::default(), &[row])
+        .expect_err("non-contract-data key must fail");
+    assert!(matches!(err, sdkt_fuzz::ChainError::UnsupportedKey { .. }));
+}
+
+/// An `after` that decodes to a different key than the row reports is an
+/// explicit error.
+#[test]
+fn chaining_key_mismatch_is_an_error() {
+    let storage_key = storage_key_xdr();
+    let other_key = other_storage_key_xdr();
+    let row = sdkt_fuzz::state_capture::DecodedStateChange {
+        key_b64: sdkt_fuzz::state_capture::encode_key(&storage_key).expect("encodes"),
+        kind: sdkt_fuzz::state_capture::StateChangeKind::Updated,
+        before: Some(contract_data_entry(storage_key.clone(), 1)),
+        after: Some(contract_data_entry(other_key, 2)),
+    };
+    let err = sdkt_fuzz::state_changes_into_sequence_state(&Default::default(), &[row])
+        .expect_err("key mismatch must fail");
+    assert!(matches!(err, sdkt_fuzz::ChainError::KeyMismatch { .. }));
+}
+
+/// No TTL or ledger metadata is invented: the chained entry's value comes
+/// from the RPC `after`, and its `last_modified_ledger_seq` is the RPC's own
+/// sequence, not a synthetic marker.
+#[test]
+fn chaining_does_not_invent_ledger_metadata() {
+    let storage_key = storage_key_xdr();
+    let after = contract_data_entry(storage_key.clone(), 3964034);
+    let row = sdkt_fuzz::state_capture::DecodedStateChange {
+        key_b64: sdkt_fuzz::state_capture::encode_key(&storage_key).expect("encodes"),
+        kind: sdkt_fuzz::state_capture::StateChangeKind::Created,
+        before: None,
+        after: Some(after),
+    };
+    let out = sdkt_fuzz::state_changes_into_sequence_state(&Default::default(), &[row])
+        .expect("created chains");
+    assert_eq!(out.data_entries[0].last_modified_ledger_seq, 3964034);
+}
+
+/// Two sequential invocations: the second baseline is the first invocation's
+/// output, not the original state. Deterministic end to end.
+#[test]
+fn chaining_two_invocations_is_deterministic() {
+    let storage_key = storage_key_xdr();
+    let first = sdkt_fuzz::state_capture::DecodedStateChange {
+        key_b64: sdkt_fuzz::state_capture::encode_key(&storage_key).expect("encodes"),
+        kind: sdkt_fuzz::state_capture::StateChangeKind::Created,
+        before: None,
+        after: Some(contract_data_entry(storage_key.clone(), 10)),
+    };
+    let second = sdkt_fuzz::state_capture::DecodedStateChange {
+        key_b64: sdkt_fuzz::state_capture::encode_key(&storage_key).expect("encodes"),
+        kind: sdkt_fuzz::state_capture::StateChangeKind::Updated,
+        before: Some(contract_data_entry(storage_key.clone(), 10)),
+        after: Some(contract_data_entry(storage_key.clone(), 11)),
+    };
+    let s1 = sdkt_fuzz::state_changes_into_sequence_state(&Default::default(), &[first])
+        .expect("first chains");
+    assert_eq!(s1.data_entries[0].last_modified_ledger_seq, 10);
+    let s2 = sdkt_fuzz::state_changes_into_sequence_state(&s1, &[second]).expect("second chains");
+    assert_eq!(s2.data_entries.len(), 1);
+    assert_eq!(s2.data_entries[0].last_modified_ledger_seq, 11);
+}
+
+// --- helpers ---------------------------------------------------------------
+
+fn contract_id() -> stellar_xdr::ScAddress {
+    stellar_xdr::ScAddress::Contract(stellar_xdr::ContractId(stellar_xdr::Hash([3; 32])))
+}
+
+fn storage_key_xdr() -> stellar_xdr::LedgerKey {
+    stellar_xdr::LedgerKey::ContractData(stellar_xdr::LedgerKeyContractData {
+        contract: contract_id(),
+        key: stellar_xdr::ScVal::Symbol(stellar_xdr::ScSymbol(
+            stellar_xdr::StringM::try_from("Orders").unwrap(),
+        )),
+        durability: stellar_xdr::ContractDataDurability::Persistent,
+    })
+}
+
+fn other_storage_key_xdr() -> stellar_xdr::LedgerKey {
+    stellar_xdr::LedgerKey::ContractData(stellar_xdr::LedgerKeyContractData {
+        contract: contract_id(),
+        key: stellar_xdr::ScVal::Symbol(stellar_xdr::ScSymbol(
+            stellar_xdr::StringM::try_from("Other").unwrap(),
+        )),
+        durability: stellar_xdr::ContractDataDurability::Persistent,
+    })
+}
+
+fn account_key_xdr() -> stellar_xdr::LedgerKey {
+    stellar_xdr::LedgerKey::Account(stellar_xdr::LedgerKeyAccount {
+        account_id: stellar_xdr::AccountId(stellar_xdr::PublicKey::PublicKeyTypeEd25519(
+            stellar_xdr::Uint256([5; 32]),
+        )),
+    })
+}
+
+fn contract_data_entry(key: stellar_xdr::LedgerKey, seq: u32) -> stellar_xdr::LedgerEntry {
+    let cd = match &key {
+        stellar_xdr::LedgerKey::ContractData(d) => d.clone(),
+        _ => panic!("helper requires a ContractData key"),
+    };
+    stellar_xdr::LedgerEntry {
+        last_modified_ledger_seq: seq,
+        data: stellar_xdr::LedgerEntryData::ContractData(stellar_xdr::ContractDataEntry {
+            ext: stellar_xdr::ExtensionPoint::V0,
+            contract: cd.contract.clone(),
+            key: cd.key.clone(),
+            durability: cd.durability,
+            val: stellar_xdr::ScVal::U32(seq),
+        }),
+        ext: stellar_xdr::LedgerEntryExt::V0,
+    }
+}
+
+fn after_last_modified(e: &stellar_xdr::LedgerEntry) -> u32 {
+    e.last_modified_ledger_seq
+}
+
+/// Regression for the chaining audit: `apply_state_delta` used to fold nonce
+/// entries into `data_entries` as contract storage (the `ContractData(_)`
+/// catch-all arm). Nonce entries are host-generated temporaries — the same
+/// executor-owned class `is_executor_owned_key` defines — and must be
+/// skipped, or a nonce would poison the next step's baseline as fake storage.
+#[test]
+fn apply_state_delta_skips_nonce_entries() {
+    use stellar_xdr::{
+        ContractDataDurability, Hash, LedgerEntry, LedgerEntryData, LedgerKey,
+        LedgerKeyContractData, Limited, Limits, ScAddress, ScNonceKey, ScVal, WriteXdr,
+    };
+    let contract_id_addr = ScAddress::Contract(stellar_xdr::ContractId(Hash([3; 32])));
+    let nonce_key = LedgerKey::ContractData(LedgerKeyContractData {
+        contract: contract_id_addr.clone(),
+        key: ScVal::LedgerKeyNonce(ScNonceKey { nonce: 99 }),
+        durability: ContractDataDurability::Temporary,
+    });
+    let nonce_key_xdr = {
+        let mut buf = Vec::new();
+        let mut l = Limited::new(&mut buf, Limits::none());
+        nonce_key.write_xdr(&mut l).unwrap();
+        buf
+    };
+    let nonce_entry = LedgerEntry {
+        last_modified_ledger_seq: 500,
+        data: LedgerEntryData::ContractData(stellar_xdr::ContractDataEntry {
+            ext: stellar_xdr::ExtensionPoint::V0,
+            contract: contract_id_addr,
+            key: ScVal::LedgerKeyNonce(ScNonceKey { nonce: 99 }),
+            durability: ContractDataDurability::Temporary,
+            val: ScVal::Void,
+        }),
+        ext: stellar_xdr::LedgerEntryExt::V0,
+    };
+    let nonce_value_xdr = {
+        let mut buf = Vec::new();
+        let mut l = Limited::new(&mut buf, Limits::none());
+        nonce_entry.write_xdr(&mut l).unwrap();
+        buf
+    };
+    let obs = sdkt_fuzz::Observation {
+        case_id: "nonce-skip".into(),
+        function: "f".into(),
+        status: sdkt_fuzz::ExecutionStatus::Void,
+        state: vec![sdkt_fuzz::StateEntry {
+            key_xdr: nonce_key_xdr,
+            value_xdr: Some(nonce_value_xdr),
+            change: sdkt_fuzz::StateChange::Created,
+        }],
+        events: vec![],
+        budget: Default::default(),
+    };
+    let carried = sdkt_fuzz::apply_state_delta(Default::default(), &obs).expect("delta applies");
+    assert!(
+        carried.data_entries.is_empty(),
+        "a nonce must not enter contract storage: {:?}",
+        carried.data_entries
+    );
+}

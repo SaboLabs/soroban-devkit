@@ -193,9 +193,12 @@ pub fn execute_sequence_auth(
 
 /// Apply an observation's footprint diff onto carried state.
 ///
-/// Executor-owned entries (contract code, instance entry key) are folded
-/// specially: contract-data entries are replaced by value, and the instance
-/// entry's *storage map* is carried as [`SequenceState::instance_storage`].
+/// Executor-owned entries (contract code, instance entry key, nonce entries)
+/// are folded specially: contract-data entries are replaced by value, and
+/// the instance entry's *storage map* is carried as
+/// [`SequenceState::instance_storage`]. Nonce entries are host-generated
+/// temporaries and are never contract storage, so they are skipped — the same
+/// distinction [`crate::state_capture::is_executor_owned_key`] makes.
 pub fn apply_state_delta(
     state: SequenceState,
     obs: &Observation,
@@ -221,6 +224,9 @@ pub fn apply_state_delta(
                     out.instance_storage.clear();
                 }
             }
+            LedgerKey::ContractData(d) if matches!(d.key, ScVal::LedgerKeyNonce(_)) => {
+                continue; // executor-owned: host-generated temporary, never contract storage
+            }
             LedgerKey::ContractData(_) => {
                 out.data_entries.retain(|e| e.to_key() != key);
                 if let Some(value_xdr) = &entry.value_xdr {
@@ -236,4 +242,113 @@ pub fn apply_state_delta(
 fn decode_entry(bytes: &[u8]) -> Result<LedgerEntry, FuzzError> {
     LedgerEntry::from_xdr(bytes, Limits::none())
         .map_err(|e| FuzzError::Observation(format!("state value did not decode: {e}")))
+}
+
+/// Why RPC `stateChanges` could not become the next invocation's baseline.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum ChainError {
+    /// A decoded row's key is not a `ContractData` key the sequence model
+    /// can carry (e.g. an `Account` or `Ttl` key the RPC reported).
+    UnsupportedKey { key_b64: String },
+    /// A decoded row's entry is not `ContractData` (e.g. a `ContractCode`
+    /// entry the RPC reported as created).
+    UnsupportedEntry { key_b64: String },
+    /// The row's `after` value does not decode to the key the row reports.
+    KeyMismatch { key_b64: String },
+}
+
+impl std::fmt::Display for ChainError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            ChainError::UnsupportedKey { key_b64 } => write!(
+                f,
+                "stateChanges row key {key_b64} is not contract-data state the sequence can carry"
+            ),
+            ChainError::UnsupportedEntry { key_b64 } => write!(
+                f,
+                "stateChanges row {key_b64} is not a contract-data entry the sequence can carry"
+            ),
+            ChainError::KeyMismatch { key_b64 } => write!(
+                f,
+                "stateChanges row {key_b64} decodes to a different key than reported"
+            ),
+        }
+    }
+}
+
+/// Build the next invocation's [`SequenceState`] from decoded RPC
+/// `stateChanges` rows, applied onto an existing baseline.
+///
+/// This is the chaining primitive: the RPC's post-execution `after` values
+/// become the next invocation's pre-execution state.
+///
+/// Semantics, per row kind (for non-executor-owned `ContractData` rows):
+/// - `Created` / `Updated` — the `after` entry replaces any baseline entry
+///   with the same key;
+/// - `Deleted` — the key is removed from the baseline;
+/// - executor-owned rows (contract code, instance singleton, nonce) are
+///   **skipped**, consistently with [`crate::state_capture::is_executor_owned_key`]
+///   and [`crate::state_compare`]: a nonce is host bookkeeping, the
+///   instance singleton is executor-owned (its storage map is carried only
+///   from the local baseline via `with_instance_storage`, never from RPC
+///   rows), and code is resolved by the executor, not carried as storage.
+///   Skipping rather than folding is deliberate: an RPC `after` for the
+///   instance singleton would silently overwrite the local baseline's
+///   instance storage with network state, breaking the isolation the
+///   sequence model guarantees.
+///
+/// What is *not* carried (and why):
+/// - `lastModifiedLedgerSeq`, `liveUntilLedgerSeq`, TTL — the RPC's
+///   `stateChanges` rows do not report them. The executor seeds its own
+///   ledger metadata for local execution; that metadata is synthetic and is
+///   never presented as observed network state.
+/// - keys or entries that are not `ContractData` — returned as
+///   [`ChainError`], never silently dropped.
+///
+/// `Unchanged` rows carry no `after` and change nothing; they are accepted
+/// and ignored.
+pub fn state_changes_into_sequence_state(
+    baseline: &SequenceState,
+    changes: &[crate::state_capture::DecodedStateChange],
+) -> Result<SequenceState, ChainError> {
+    let mut out = baseline.clone();
+    for change in changes {
+        let key = crate::state_capture::decode_key(&change.key_b64).map_err(|_| {
+            ChainError::UnsupportedKey {
+                key_b64: change.key_b64.clone(),
+            }
+        })?;
+        if crate::state_capture::is_executor_owned_key(&key) {
+            continue;
+        }
+        let LedgerKey::ContractData(_) = &key else {
+            return Err(ChainError::UnsupportedKey {
+                key_b64: change.key_b64.clone(),
+            });
+        };
+        match change.kind {
+            crate::state_capture::StateChangeKind::Created
+            | crate::state_capture::StateChangeKind::Updated => {
+                let after = change.after.as_ref().ok_or(ChainError::UnsupportedEntry {
+                    key_b64: change.key_b64.clone(),
+                })?;
+                if after.to_key() != key {
+                    return Err(ChainError::KeyMismatch {
+                        key_b64: change.key_b64.clone(),
+                    });
+                }
+                let LedgerEntryData::ContractData(_) = &after.data else {
+                    return Err(ChainError::UnsupportedEntry {
+                        key_b64: change.key_b64.clone(),
+                    });
+                };
+                out.data_entries.retain(|e| e.to_key() != key);
+                out.data_entries.push(after.clone());
+            }
+            crate::state_capture::StateChangeKind::Deleted => {
+                out.data_entries.retain(|e| e.to_key() != key);
+            }
+        }
+    }
+    Ok(out)
 }
