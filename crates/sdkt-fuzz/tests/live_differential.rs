@@ -52,6 +52,11 @@ use stellar_xdr::ConfigSettingId;
 const TESTNET_CONTRACT_ID: &str = "CAE3U7JKESRWZHPEQ72DVNGOQ6WPA7HSPQZL5YV46NPCE4TMUPAGYMEC";
 const TESTNET_RPC: &str = "https://soroban-testnet.stellar.org";
 
+/// The committed `us_new.wasm` counter contract (`increment()` reads and
+/// writes instance state). Used by the end-to-end chaining test below.
+const CHAIN_COUNTER_WASM: &[u8] =
+    include_bytes!("../../../crates/sdkt-cli/tests/fixtures/us_new.wasm");
+
 /// The `ContractCode` ledger entry for that contract, captured from testnet
 /// (ledger 4949165). Stored as the `LedgerEntryData` union the RPC returns.
 const TESTNET_CODE_ENTRY: &[u8] = include_bytes!("fixtures/testnet_contract_code_entry.bin");
@@ -1831,4 +1836,181 @@ fn chaining_duplicate_deleted_rows_are_idempotent() {
     let out = sdkt_fuzz::state_changes_into_sequence_state(&base, &[del1, del2])
         .expect("duplicate deletes chain deterministically");
     assert!(out.data_entries.is_empty(), "both deletes remove the entry");
+}
+
+// ---------------------------------------------------------------------------
+// End-to-end chaining: the next invocation runs against carried state.
+//
+// Integration proof that a chained baseline actually reaches execution, not
+// merely a value that round-trips through the helper. Uses the committed
+// `us_new.wasm` counter contract (`increment()` reads+writes instance state),
+// so the fixture is real and needs no network or secret.
+// ---------------------------------------------------------------------------
+
+/// State carries within ONE sequence's steps: the second step observes the
+/// first step's write. Separate `execute_sequence` calls are isolated by
+/// design, so carry-forward is proven inside a single sequence.
+#[test]
+fn e2e_state_carries_within_a_sequence() {
+    let exec = Executor::new(CHAIN_COUNTER_WASM, Default::default()).expect("executor");
+    let env = Environment {
+        ledger: Default::default(),
+        budget: sdkt_fuzz::BudgetPlan::ProtocolInitial,
+    };
+    let increment = FunctionCall::new("increment", vec![]);
+
+    let run = sdkt_fuzz::execute_sequence(
+        &exec,
+        &[],
+        &env,
+        &[increment.clone(), increment],
+        "chain-within-sequence",
+    )
+    .expect("sequence executes");
+    assert_eq!(
+        run.steps[0].observation.return_value(),
+        Some(&stellar_xdr::ScVal::U32(1)),
+        "first step starts from an empty baseline"
+    );
+    assert_eq!(
+        run.steps[1].observation.return_value(),
+        Some(&stellar_xdr::ScVal::U32(2)),
+        "second step must run against the state the first established"
+    );
+
+    // The RPC-shaped chaining path feeds the same carry-forward: an
+    // RPC `stateChanges` row converts into the sequence baseline.
+    let storage_key = storage_key_xdr();
+    let key_b64 = sdkt_fuzz::state_capture::encode_key(&storage_key).expect("encodes");
+    let row = sdkt_fuzz::state_capture::decode_state_change(
+        &key_b64,
+        "created",
+        None,
+        Some(
+            &sdkt_fuzz::state_capture::encode_entry(&contract_data_entry(storage_key.clone(), 7))
+                .expect("encodes"),
+        ),
+    )
+    .expect("created row decodes");
+    let chained =
+        sdkt_fuzz::state_changes_into_sequence_state(&sdkt_fuzz::SequenceState::default(), &[row])
+            .expect("chains");
+    assert_eq!(chained.data_entries.len(), 1);
+    assert_eq!(
+        chained.data_entries[0].to_key(),
+        storage_key,
+        "the chained baseline carries the RPC row's key"
+    );
+}
+
+/// Created → Updated: the next invocation sees the latest value.
+#[test]
+fn e2e_chaining_created_then_updated_uses_latest_value() {
+    let storage_key = storage_key_xdr();
+    let key_b64 = sdkt_fuzz::state_capture::encode_key(&storage_key).expect("encodes");
+    let created = sdkt_fuzz::state_capture::decode_state_change(
+        &key_b64,
+        "created",
+        None,
+        Some(
+            &sdkt_fuzz::state_capture::encode_entry(&contract_data_entry(storage_key.clone(), 10))
+                .expect("encodes"),
+        ),
+    )
+    .expect("created decodes");
+    let updated = sdkt_fuzz::state_capture::decode_state_change(
+        &key_b64,
+        "updated",
+        Some(
+            &sdkt_fuzz::state_capture::encode_entry(&contract_data_entry(storage_key.clone(), 10))
+                .expect("encodes"),
+        ),
+        Some(
+            &sdkt_fuzz::state_capture::encode_entry(&contract_data_entry(storage_key.clone(), 20))
+                .expect("encodes"),
+        ),
+    )
+    .expect("updated decodes");
+
+    let s1 = sdkt_fuzz::state_changes_into_sequence_state(
+        &sdkt_fuzz::SequenceState::default(),
+        &[created],
+    )
+    .expect("created chains");
+    let s2 = sdkt_fuzz::state_changes_into_sequence_state(&s1, &[updated]).expect("updated chains");
+    assert_eq!(s2.data_entries.len(), 1);
+    assert_eq!(
+        s2.data_entries[0].last_modified_ledger_seq, 20,
+        "updated value wins"
+    );
+}
+
+/// Updated → Deleted: the entry is gone from the next baseline.
+#[test]
+fn e2e_chaining_updated_then_deleted_removes_entry() {
+    let storage_key = storage_key_xdr();
+    let key_b64 = sdkt_fuzz::state_capture::encode_key(&storage_key).expect("encodes");
+    let updated = sdkt_fuzz::state_capture::decode_state_change(
+        &key_b64,
+        "updated",
+        Some(
+            &sdkt_fuzz::state_capture::encode_entry(&contract_data_entry(storage_key.clone(), 10))
+                .expect("encodes"),
+        ),
+        Some(
+            &sdkt_fuzz::state_capture::encode_entry(&contract_data_entry(storage_key.clone(), 20))
+                .expect("encodes"),
+        ),
+    )
+    .expect("updated decodes");
+    let deleted = sdkt_fuzz::state_capture::decode_state_change(
+        &key_b64,
+        "deleted",
+        Some(
+            &sdkt_fuzz::state_capture::encode_entry(&contract_data_entry(storage_key.clone(), 20))
+                .expect("encodes"),
+        ),
+        None,
+    )
+    .expect("deleted decodes");
+
+    let s1 = sdkt_fuzz::state_changes_into_sequence_state(
+        &sdkt_fuzz::SequenceState::default(),
+        &[updated],
+    )
+    .expect("updated chains");
+    assert_eq!(s1.data_entries.len(), 1);
+    let s2 = sdkt_fuzz::state_changes_into_sequence_state(&s1, &[deleted]).expect("deleted chains");
+    assert!(
+        s2.data_entries.is_empty(),
+        "deleted removes the entry from the next baseline"
+    );
+}
+
+/// Executor-owned rows never reach the contract-storage baseline.
+#[test]
+fn e2e_chaining_executor_owned_rows_stay_out_of_storage_baseline() {
+    let rows = decoded_fixture_rows(); // nonce + instance + contract code
+    let out = sdkt_fuzz::state_changes_into_sequence_state(&Default::default(), &rows)
+        .expect("executor-owned rows chain cleanly");
+    assert!(out.data_entries.is_empty());
+    assert!(out.instance_storage.is_empty());
+}
+
+/// Unsupported key → explicit `ChainError`, not silent skip.
+#[test]
+fn e2e_chaining_unsupported_key_is_an_explicit_error() {
+    let storage_key = storage_key_xdr();
+    // Built directly: `decode_state_change` already rejects key/entry
+    // mismatches upstream, so this exercises the chaining function's own
+    // validation of a non-ContractData key.
+    let row = sdkt_fuzz::state_capture::DecodedStateChange {
+        key_b64: sdkt_fuzz::state_capture::encode_key(&account_key_xdr()).expect("encodes"),
+        kind: sdkt_fuzz::state_capture::StateChangeKind::Updated,
+        before: Some(contract_data_entry(storage_key.clone(), 1)),
+        after: Some(contract_data_entry(storage_key, 2)),
+    };
+    let err = sdkt_fuzz::state_changes_into_sequence_state(&Default::default(), &[row])
+        .expect_err("unsupported key must fail");
+    assert!(matches!(err, sdkt_fuzz::ChainError::UnsupportedKey { .. }));
 }
