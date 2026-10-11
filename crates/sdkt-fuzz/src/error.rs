@@ -47,4 +47,16 @@ pub enum SetupError {
     /// A baseline ledger entry could not be decoded.
     #[error("baseline ledger entry rejected: {0}")]
     BaselineEntry(String),
+
+    /// The caller supplied an `auth_per_step` slice whose length matches
+    /// neither `0` (all steps run with no auth) nor `steps.len()` (one entry
+    /// list per step).
+    ///
+    /// A partial slice would silently run the trailing steps with no auth,
+    /// and an over-long slice would silently ignore the extra entries.
+    /// Both are rejected rather than approximated.
+    #[error(
+        "auth_per_step length {auth_len} does not match {steps} steps (expected 0 or {steps})"
+    )]
+    AuthStepLengthMismatch { auth_len: usize, steps: usize },
 }

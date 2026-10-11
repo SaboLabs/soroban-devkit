@@ -57,6 +57,10 @@ const TESTNET_RPC: &str = "https://soroban-testnet.stellar.org";
 const CHAIN_COUNTER_WASM: &[u8] =
     include_bytes!("../../../crates/sdkt-cli/tests/fixtures/us_new.wasm");
 
+/// The `auth_probe.wasm` contract: `bump(who)` calls `who.require_auth()`.
+/// Used by the auth-forwarding hardening test below.
+const AUTH_PROBE_WASM: &[u8] = include_bytes!("fixtures/auth_probe.wasm");
+
 /// The `ContractCode` ledger entry for that contract, captured from testnet
 /// (ledger 4949165). Stored as the `LedgerEntryData` union the RPC returns.
 const TESTNET_CODE_ENTRY: &[u8] = include_bytes!("fixtures/testnet_contract_code_entry.bin");
@@ -2867,6 +2871,7 @@ fn wrapper_created_row_drives_second_invocation() {
             FunctionCall::new("increment", vec![]),
         ],
         "wrapper-created",
+        &[],
     )
     .expect("wrapper executes");
 
@@ -2912,6 +2917,7 @@ fn wrapper_updated_row_validates_before_and_applies_after() {
         &env,
         &[FunctionCall::new("increment", vec![])],
         "wrapper-updated",
+        &[],
     )
     .expect("updated row with matching baseline executes");
     assert_eq!(
@@ -2947,6 +2953,7 @@ fn wrapper_deleted_row_removes_entry() {
         &env,
         &[FunctionCall::new("increment", vec![])],
         "wrapper-deleted",
+        &[],
     )
     .expect("deleted row with matching baseline executes");
     assert_eq!(
@@ -3002,6 +3009,7 @@ fn wrapper_multi_key_changes_all_applied() {
         &env,
         &[FunctionCall::new("increment", vec![])],
         "wrapper-multi-key",
+        &[],
     )
     .expect("multi-key batch executes");
     assert_eq!(
@@ -3041,6 +3049,7 @@ fn wrapper_baseline_mismatch_aborts_before_execution() {
         &env,
         &[FunctionCall::new("increment", vec![])],
         "wrapper-mismatch",
+        &[],
     )
     .expect_err("baseline mismatch must abort");
     assert!(
@@ -3085,6 +3094,7 @@ fn wrapper_sponsorship_mismatch_v1_is_rejected() {
         &env,
         &[FunctionCall::new("increment", vec![])],
         "wrapper-sponsor",
+        &[],
     )
     .expect_err("sponsorship mismatch must abort");
     assert!(
@@ -3118,6 +3128,7 @@ fn wrapper_malformed_xdr_aborts_before_execution() {
         &env,
         &[FunctionCall::new("increment", vec![])],
         "wrapper-malformed",
+        &[],
     )
     .expect_err("malformed XDR must abort");
     assert!(
@@ -3151,6 +3162,7 @@ fn wrapper_key_mismatch_aborts_before_execution() {
         &env,
         &[FunctionCall::new("increment", vec![])],
         "wrapper-keymismatch",
+        &[],
     )
     .expect_err("key mismatch must abort");
     assert!(
@@ -3187,6 +3199,7 @@ fn wrapper_account_key_rejected_by_decoder() {
         &env,
         &[FunctionCall::new("increment", vec![])],
         "wrapper-account",
+        &[],
     )
     .expect_err("account key must be rejected by the decoder");
     assert!(
@@ -3214,10 +3227,296 @@ fn wrapper_non_object_row_aborts_before_execution() {
         &env,
         &[FunctionCall::new("increment", vec![])],
         "wrapper-nonobject",
+        &[],
     )
     .expect_err("non-object row must abort");
     assert!(
         matches!(err, sdkt_fuzz::FuzzError::Observation(_)),
         "got: {err:?}"
+    );
+}
+// ---------------------------------------------------------------------------
+// Hardening tests for execute_sequence_from_simulation
+// ---------------------------------------------------------------------------
+
+/// Instance storage non-empty in baseline is explicitly rejected.
+#[test]
+fn wrapper_instance_storage_non_empty_rejected() {
+    let exec = Executor::new(CHAIN_COUNTER_WASM, Default::default()).expect("executor");
+    let env = Environment {
+        ledger: Default::default(),
+        budget: sdkt_fuzz::BudgetPlan::ProtocolInitial,
+    };
+    let resp = sim_response("");
+
+    let baseline = sdkt_fuzz::SequenceState {
+        data_entries: vec![],
+        instance_storage: vec![(
+            stellar_xdr::ScVal::Symbol(stellar_xdr::ScSymbol(
+                stellar_xdr::StringM::try_from("key").unwrap(),
+            )),
+            stellar_xdr::ScVal::U32(1),
+        )],
+    };
+    let err = sdkt_fuzz::execute_sequence_from_simulation(
+        &exec,
+        &baseline,
+        &resp,
+        &env,
+        &[FunctionCall::new("increment", vec![])],
+        "harden-instance",
+        &[],
+    )
+    .expect_err("non-empty instance storage must be rejected");
+    assert!(
+        matches!(err, sdkt_fuzz::FuzzError::InvalidSetup(_)),
+        "got: {err:?}"
+    );
+}
+
+/// Empty instance storage is accepted (behavior unchanged).
+#[test]
+fn wrapper_instance_storage_empty_accepted() {
+    let exec = Executor::new(CHAIN_COUNTER_WASM, Default::default()).expect("executor");
+    let env = Environment {
+        ledger: Default::default(),
+        budget: sdkt_fuzz::BudgetPlan::ProtocolInitial,
+    };
+    let resp = sim_response("");
+
+    let baseline = sdkt_fuzz::SequenceState {
+        data_entries: vec![],
+        instance_storage: vec![],
+    };
+    let run = sdkt_fuzz::execute_sequence_from_simulation(
+        &exec,
+        &baseline,
+        &resp,
+        &env,
+        &[FunctionCall::new("increment", vec![])],
+        "harden-instance-empty",
+        &[],
+    )
+    .expect("empty instance storage accepted");
+    assert_eq!(
+        run.final_observation.return_value(),
+        Some(&stellar_xdr::ScVal::U32(1)),
+        "empty instance storage works"
+    );
+}
+
+/// Auth per step is forwarded to the host, not replaced with an empty set.
+///
+/// The auth probe's `bump(who)` calls `who.require_auth()`. Correct auth for
+/// step 0 must reach the host (the call succeeds); an empty auth list must
+/// leave the host to reject it (ContractError). If the wrapper dropped the
+/// caller's auth and always substituted an empty list, the first case would
+/// fail instead of returning 1.
+#[test]
+fn wrapper_auth_per_step_is_forwarded() {
+    let exec = Executor::new(AUTH_PROBE_WASM, Default::default()).expect("executor");
+    let env = Environment {
+        ledger: Default::default(),
+        budget: sdkt_fuzz::BudgetPlan::ProtocolInitial,
+    };
+    let who = stellar_xdr::ScVal::Address(sdkt_fuzz::auth::source_address());
+    let bump = FunctionCall::new("bump", vec![who.clone()]);
+    let resp = sim_response("");
+
+    // Auth entries bind to the contract address the executor derives.
+    let contract = exec
+        .case("auth-probe", bump.clone(), vec![])
+        .contract_address();
+    let correct =
+        sdkt_fuzz::auth::invoke_auth_entries(sdkt_fuzz::AuthMode::CorrectAuth, &contract, &bump)
+            .expect("correct auth entries build");
+
+    let with_auth = sdkt_fuzz::execute_sequence_from_simulation(
+        &exec,
+        &sdkt_fuzz::SequenceState::default(),
+        &resp,
+        &env,
+        std::slice::from_ref(&bump),
+        "harden-auth-ok",
+        &[correct],
+    )
+    .expect("sequence runs");
+    assert_eq!(
+        with_auth.final_observation.return_value(),
+        Some(&stellar_xdr::ScVal::U32(1)),
+        "caller-supplied auth must reach the host and satisfy require_auth"
+    );
+
+    let without_auth = sdkt_fuzz::execute_sequence_from_simulation(
+        &exec,
+        &sdkt_fuzz::SequenceState::default(),
+        &resp,
+        &env,
+        std::slice::from_ref(&bump),
+        "harden-auth-none",
+        &[],
+    )
+    .expect("sequence runs");
+    assert!(
+        !without_auth.final_observation.is_success(),
+        "without auth the host must reject the guarded call"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// Auth length contract for execute_sequence_from_simulation
+// ---------------------------------------------------------------------------
+
+/// Empty auth is accepted for a multi-step sequence: every step runs NoAuth.
+/// Proven by the observable result of the second step (state carried, 2).
+#[test]
+fn wrapper_auth_empty_accepted_for_multiple_steps() {
+    let exec = Executor::new(CHAIN_COUNTER_WASM, Default::default()).expect("executor");
+    let env = Environment {
+        ledger: Default::default(),
+        budget: sdkt_fuzz::BudgetPlan::ProtocolInitial,
+    };
+    let resp = sim_response("");
+
+    let run = sdkt_fuzz::execute_sequence_from_simulation(
+        &exec,
+        &sdkt_fuzz::SequenceState::default(),
+        &resp,
+        &env,
+        &[
+            FunctionCall::new("increment", vec![]),
+            FunctionCall::new("increment", vec![]),
+        ],
+        "auth-len-empty",
+        &[],
+    )
+    .expect("empty auth is a valid NoAuth contract");
+    assert_eq!(
+        run.final_observation.return_value(),
+        Some(&stellar_xdr::ScVal::U32(2)),
+        "second step observes state carried from the first"
+    );
+}
+
+/// A partial auth slice (0 < len < steps) is rejected with the specific
+/// variant, and the rejection happens before any host execution. The
+/// baseline row is deliberately malformed: if validation ran after decode,
+/// the error would be `FuzzError::Observation`, not the length variant.
+#[test]
+fn wrapper_auth_partial_length_rejected_before_decode() {
+    let exec = Executor::new(CHAIN_COUNTER_WASM, Default::default()).expect("executor");
+    let env = Environment {
+        ledger: Default::default(),
+        budget: sdkt_fuzz::BudgetPlan::ProtocolInitial,
+    };
+    let key = real_storage_key();
+    let key_b64 = sdkt_fuzz::state_capture::encode_key(&key).expect("encodes");
+    let resp = sim_response(&row_json(
+        &key_b64,
+        "updated",
+        Some("!!!bad!!!"),
+        Some("!!!bad!!!"),
+    ));
+
+    let steps = [
+        FunctionCall::new("increment", vec![]),
+        FunctionCall::new("increment", vec![]),
+        FunctionCall::new("increment", vec![]),
+    ];
+    let one_auth = vec![vec![vec![0u8]]];
+    let err = sdkt_fuzz::execute_sequence_from_simulation(
+        &exec,
+        &sdkt_fuzz::SequenceState::default(),
+        &resp,
+        &env,
+        &steps,
+        "auth-len-partial",
+        &one_auth,
+    )
+    .expect_err("partial auth slice must be rejected");
+    assert_eq!(
+        err,
+        sdkt_fuzz::FuzzError::InvalidSetup(sdkt_fuzz::SetupError::AuthStepLengthMismatch {
+            auth_len: 1,
+            steps: 3,
+        }),
+        "partial auth must fail with the length variant before decode"
+    );
+}
+
+/// An over-long auth slice (len > steps) is rejected with the specific variant.
+#[test]
+fn wrapper_auth_overlong_length_rejected() {
+    let exec = Executor::new(CHAIN_COUNTER_WASM, Default::default()).expect("executor");
+    let env = Environment {
+        ledger: Default::default(),
+        budget: sdkt_fuzz::BudgetPlan::ProtocolInitial,
+    };
+    let resp = sim_response("");
+
+    let auth = vec![vec![vec![0u8]], vec![vec![0u8]], vec![vec![0u8]]];
+    let err = sdkt_fuzz::execute_sequence_from_simulation(
+        &exec,
+        &sdkt_fuzz::SequenceState::default(),
+        &resp,
+        &env,
+        &[FunctionCall::new("increment", vec![])],
+        "auth-len-overlong",
+        &auth,
+    )
+    .expect_err("over-long auth slice must be rejected");
+    assert_eq!(
+        err,
+        sdkt_fuzz::FuzzError::InvalidSetup(sdkt_fuzz::SetupError::AuthStepLengthMismatch {
+            auth_len: 3,
+            steps: 1,
+        }),
+        "over-long auth must fail with the length variant"
+    );
+}
+
+/// A valid-length auth slice is forwarded in order: the correct auth for the
+/// guarded step reaches the host (see also `wrapper_auth_per_step_is_forwarded`).
+/// Uses two steps so the per-index mapping, not just presence, is exercised:
+/// step 0 gets correct auth, step 1 gets an empty list (NoAuth).
+#[test]
+fn wrapper_auth_valid_length_forwarded_per_index() {
+    let exec = Executor::new(AUTH_PROBE_WASM, Default::default()).expect("executor");
+    let env = Environment {
+        ledger: Default::default(),
+        budget: sdkt_fuzz::BudgetPlan::ProtocolInitial,
+    };
+    let who = stellar_xdr::ScVal::Address(sdkt_fuzz::auth::source_address());
+    let bump = FunctionCall::new("bump", vec![who.clone()]);
+    let resp = sim_response("");
+
+    let contract = exec
+        .case("auth-probe-idx", bump.clone(), vec![])
+        .contract_address();
+    let correct =
+        sdkt_fuzz::auth::invoke_auth_entries(sdkt_fuzz::AuthMode::CorrectAuth, &contract, &bump)
+            .expect("correct auth entries build");
+
+    // Step 0 authorised, step 1 not: step 0 succeeds (1), step 1 fails the
+    // host auth check. The final observation must be the failing step, which
+    // proves index 1 received the empty list rather than step 0's auth.
+    let run = sdkt_fuzz::execute_sequence_from_simulation(
+        &exec,
+        &sdkt_fuzz::SequenceState::default(),
+        &resp,
+        &env,
+        &[bump.clone(), bump.clone()],
+        "auth-len-index",
+        &[correct, vec![]],
+    )
+    .expect("sequence runs");
+    assert_eq!(
+        run.steps[0].observation.return_value(),
+        Some(&stellar_xdr::ScVal::U32(1)),
+        "step 0 with its own auth succeeds"
+    );
+    assert!(
+        !run.steps[1].observation.is_success(),
+        "step 1 with an empty list must not inherit step 0's auth"
     );
 }

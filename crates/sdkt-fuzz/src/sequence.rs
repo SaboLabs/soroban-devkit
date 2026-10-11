@@ -516,14 +516,35 @@ pub fn decode_simulate_state_changes(
 /// taken from. It is caller-supplied and never defaulted: passing an empty
 /// baseline is a caller decision, not an implicit fallback.
 ///
+/// `auth_per_step[i]` holds pre-encoded auth entries for step `i`, forwarded
+/// unchanged to [`execute_sequence_auth`]. The slice length must be either
+/// `0` (every step runs with no auth) or exactly `steps.len()` (one entry
+/// list per step, in order). Any other length is rejected: a partial slice
+/// would silently run the trailing steps without the auth the caller
+/// supplied for the leading ones, and an over-long slice would silently
+/// ignore the extra entries.
+///
 /// Every row is decoded and validated before the first host invocation, so a
 /// malformed or inconsistent `stateChanges` batch fails before any execution
 /// starts. Full entry equality (including `LedgerEntryExt` sponsorship) is
 /// enforced by [`state_changes_into_sequence_state`].
 ///
-/// What this does **not** claim: instance storage, TTL, CPU/memory parity.
-/// RPC `stateChanges` carries contract-data deltas only — instance entries
-/// are executor-owned and skipped, and TTL is not reported by the RPC.
+/// ## Instance storage
+///
+/// A `baseline` carrying non-empty [`SequenceState::instance_storage`] is
+/// **rejected**, not silently dropped. [`execute_sequence_auth`] takes a
+/// plain `&[LedgerEntry]` baseline and recovers the instance storage map by
+/// decoding a `ContractInstance` entry, so a caller's `instance_storage`
+/// cannot be threaded through without synthesising an instance entry whose
+/// contract identity this wrapper cannot verify. Seeding instance storage is
+/// therefore a caller-side responsibility (see the state-matched live test,
+/// which re-points captured entries at the executor's derived contract).
+///
+/// ## What this does not claim
+///
+/// Contract-data deltas only: TTL is not reported by the RPC, and neither
+/// CPU/memory parity nor live state-mutating differential behaviour is
+/// claimed by this function.
 pub fn execute_sequence_from_simulation(
     executor: &Executor,
     baseline: &SequenceState,
@@ -531,7 +552,34 @@ pub fn execute_sequence_from_simulation(
     environment: &Environment,
     steps: &[FunctionCall],
     case_id: &str,
+    auth_per_step: &[Vec<Vec<u8>>],
 ) -> Result<SequenceRun, FuzzError> {
+    if !baseline.instance_storage.is_empty() {
+        return Err(FuzzError::InvalidSetup(
+            crate::error::SetupError::BaselineEntry(format!(
+                "execute_sequence_from_simulation cannot seed instance storage: the \
+                 baseline carries {} instance-storage entries, but the sequence API \
+                 accepts a plain entry baseline and this wrapper will not silently \
+                 drop them",
+                baseline.instance_storage.len()
+            )),
+        ));
+    }
+
+    // Auth length contract: `0` (all steps NoAuth) or exactly `steps.len()`
+    // (one entry list per step, in order). Anything else is rejected before
+    // any decoding or host execution, so a partial slice can never silently
+    // run trailing steps without auth and an over-long slice can never
+    // silently drop entries.
+    if !auth_per_step.is_empty() && auth_per_step.len() != steps.len() {
+        return Err(FuzzError::InvalidSetup(
+            crate::error::SetupError::AuthStepLengthMismatch {
+                auth_len: auth_per_step.len(),
+                steps: steps.len(),
+            },
+        ));
+    }
+
     let changes = decode_simulate_state_changes(response)
         .map_err(|e| FuzzError::Observation(format!("stateChanges decode failed: {e}")))?;
     let chained = state_changes_into_sequence_state(baseline, &changes).map_err(|e| {
@@ -545,6 +593,6 @@ pub fn execute_sequence_from_simulation(
         environment,
         steps,
         case_id,
-        &[],
+        auth_per_step,
     )
 }
