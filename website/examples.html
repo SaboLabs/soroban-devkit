@@ -1,0 +1,247 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Examples — Soroban DevKit</title>
+<meta name="description" content="Real-world examples: inspect a contract WASM, audit contract source, diff an upgrade, run a deterministic fuzz campaign. Commands verified against the current CLI.">
+<meta name="theme-color" content="#0B0F19">
+<meta property="og:title" content="Examples — Soroban DevKit">
+<meta property="og:description" content="Inspect, audit, diff, and fuzz Soroban contracts — offline, deterministic, one CLI.">
+<meta property="og:type" content="website">
+<link rel="icon" type="image/svg+xml" href="logo.svg">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;700&display=swap" rel="stylesheet">
+<script src="https://cdn.tailwindcss.com"></script>
+<script>tailwind.config={theme:{extend:{colors:{ink:'#010713',panel:'#000815',accent:'#22D3EE',electric:'#3B82F6'},fontFamily:{sans:['Inter','ui-sans-serif','system-ui','sans-serif'],mono:['"JetBrains Mono"','ui-monospace','SFMono-Regular','monospace']},boxShadow:{glow:'0 0 60px -12px rgba(0,176,247,.45)'}}}}</script>
+</head>
+<body class="bg-ink font-sans text-slate-300 antialiased selection:bg-accent/30">
+<div class="pointer-events-none absolute top-0 left-0 h-[600px] w-full bg-[radial-gradient(ellipse_at_top,_var(--tw-gradient-stops))] from-cyan-800/25 via-ink/0 to-transparent -z-10" aria-hidden="true"></div>
+
+<a class="sr-only focus:not-sr-only focus:absolute focus:left-4 focus:top-4 focus:z-[60] focus:rounded-lg focus:bg-accent focus:px-4 focus:py-2 focus:text-[#04121F]" href="#main">Skip to content</a>
+
+<header class="sticky top-0 z-50 border-b border-[#060D16] bg-ink/80 backdrop-blur-xl">
+  <div class="mx-auto flex h-16 max-w-7xl flex-wrap items-center justify-between gap-x-6 gap-y-1 px-6">
+    <a href="index.html" class="flex items-center gap-2.5" aria-label="Soroban DevKit home">
+      <img src="logo.svg" alt="Soroban DevKit" class="h-9 w-9" aria-hidden="true">
+      <span class="font-semibold text-white">Soroban DevKit</span>
+    </a>
+    <nav class="flex flex-wrap items-center justify-end gap-x-6 gap-y-1 text-sm md:gap-x-7" aria-label="Primary">
+      <a href="index.html" class="text-slate-400 transition hover:text-white">Home</a>
+      <a href="features.html" class="text-slate-400 transition hover:text-white">Features</a>
+      <a href="docs.html" class="text-slate-400 transition hover:text-white">Docs</a>
+      <a href="examples.html" class="text-accent">Examples</a>
+      <a href="blog.html" class="text-slate-400 transition hover:text-white">Blog</a>
+      <a href="index.html#quickstart" class="rounded-lg bg-gradient-to-r from-accent to-electric px-4 py-2 font-semibold text-[#04121F] shadow-glow transition hover:brightness-110">Get Started</a>
+    </nav>
+  </div>
+</header>
+
+<main id="main" class="relative mx-auto max-w-7xl px-6 pb-24">
+  <!-- HERO -->
+  <section id="top" class="pt-12 lg:pt-16">
+    <p class="inline-flex items-center gap-2 rounded-full border border-accent/30 bg-accent/10 px-3 py-1 font-mono text-[11px] font-semibold uppercase tracking-[0.14em] text-accent">Examples</p>
+    <h1 class="mt-4 max-w-3xl text-4xl font-extrabold leading-[1.08] tracking-tight text-white md:text-5xl">Run sdkt against <span class="bg-gradient-to-r from-cyan-400 to-blue-500 bg-clip-text text-transparent">real fixtures.</span></h1>
+    <p class="mt-5 max-w-2xl text-lg text-slate-400">Every example below uses artifacts that ship in this repository. Commands are copy-pasteable; outputs are from real runs.</p>
+    <div class="mt-7 flex flex-wrap gap-3">
+      <a href="#fuzzing" class="rounded-lg bg-gradient-to-r from-accent to-electric px-5 py-2.5 font-semibold text-[#04121F] shadow-glow transition hover:brightness-110">Fuzzing <span aria-hidden="true">→</span></a>
+      <a href="https://github.com/SaboLabs/soroban-devkit/tree/main/examples" rel="noopener" class="rounded-lg border border-[#0A1A2E] bg-[#000815] px-5 py-2.5 font-medium text-white backdrop-blur-md transition hover:bg-[#001020]">examples/ on GitHub <span aria-hidden="true">→</span></a>
+    </div>
+  </section>
+
+  <!-- FILTER TABS (PDF: All/Fuzzing/Mutation/Execution/CI-CD) -->
+  <section class="mt-10">
+    <div class="flex flex-wrap gap-2" role="tablist" aria-label="Filter examples">
+      <button class="rounded-full border border-accent/30 bg-accent/10 px-4 py-1.5 font-mono text-xs font-semibold text-accent" role="tab" aria-selected="true">All</button>
+      <button class="rounded-full border border-[#0A1A2E] bg-[#000815] px-4 py-1.5 font-mono text-xs text-slate-400 transition hover:bg-[#001020]" role="tab" aria-selected="false">Fuzzing</button>
+      <button class="rounded-full border border-[#0A1A2E] bg-[#000815] px-4 py-1.5 font-mono text-xs text-slate-400 transition hover:bg-[#001020]" role="tab" aria-selected="false">Artifact</button>
+      <button class="rounded-full border border-[#0A1A2E] bg-[#000815] px-4 py-1.5 font-mono text-xs text-slate-400 transition hover:bg-[#001020]" role="tab" aria-selected="false">Upgrade</button>
+      <button class="rounded-full border border-[#0A1A2E] bg-[#000815] px-4 py-1.5 font-mono text-xs text-slate-400 transition hover:bg-[#001020]" role="tab" aria-selected="false">CI/CD</button>
+    </div>
+  </section>
+
+  <!-- EXAMPLE CARDS -->
+  <section id="fuzzing" class="mt-8">
+    <p class="text-sm text-slate-500">Fixtures used: <code class="text-accent">us_old.wasm</code> (198 B, transfer + mint), <code class="text-accent">us_new.wasm</code> (530 B, hello + increment), <code class="text-accent">examples/sample_token/src/lib.rs</code>.</p>
+
+    <div class="mt-6 grid gap-6 md:grid-cols-2">
+      <div class="rounded-2xl border border-[#0A1A2E] bg-[#000815] p-6 backdrop-blur-md transition-colors hover:bg-[#001020]">
+        <div class="flex items-start justify-between gap-3">
+          <h3 class="text-lg font-semibold text-white">Inspect a contract WASM</h3>
+          <div class="flex gap-2"><span class="rounded-full border border-accent/30 bg-accent/10 px-2.5 py-0.5 font-mono text-[10px] font-bold text-accent">Inspection</span><span class="rounded-full border border-[#0A1A2E] bg-[#000815] px-2.5 py-0.5 font-mono text-[10px] font-bold text-slate-400">beginner</span></div>
+        </div>
+        <p class="mt-2 text-sm text-slate-400">Read the compiled artifact: size, SHA-256, custom sections, exports, and the contract spec. No network, no account.</p>
+        <div class="mt-5 overflow-hidden rounded-xl border border-[#0A1A2E] bg-[#010916]">
+          <div class="border-b border-[#060D16] bg-[#010916] px-3 py-1.5 font-mono text-[10px] text-slate-500">wasm inspect — us_old.wasm</div>
+          <pre class="overflow-x-auto p-3.5 font-mono text-[11px] leading-6 text-slate-300"><code><span class="text-accent">$ sdkt wasm inspect us_old.wasm</span>
+Size: 198 bytes
+SHA-256: 05befa136e7f0829a5051d97b032f355a…
+Functions: 2
+  - fn transfer(1) -&gt; 0
+  - fn mint(1) -&gt; 0
+Events: 1</code></pre>
+        </div>
+      </div>
+
+      <div class="rounded-2xl border border-[#0A1A2E] bg-[#000815] p-6 backdrop-blur-md transition-colors hover:bg-[#001020]">
+        <div class="flex items-start justify-between gap-3">
+          <h3 class="text-lg font-semibold text-white">Audit contract source</h3>
+          <div class="flex gap-2"><span class="rounded-full border border-accent/30 bg-accent/10 px-2.5 py-0.5 font-mono text-[10px] font-bold text-accent">security</span><span class="rounded-full border border-[#0A1A2E] bg-[#000815] px-2.5 py-0.5 font-mono text-[10px] font-bold text-slate-400">beginner</span></div>
+        </div>
+        <p class="mt-2 text-sm text-slate-400">Static analysis of Soroban Rust source. The repo ships a contract with one deliberately unguarded entrypoint so the analyzer produces a deterministic finding.</p>
+        <div class="mt-5 overflow-hidden rounded-xl border border-[#0A1A2E] bg-[#010916]">
+          <div class="border-b border-[#060D16] bg-[#010916] px-3 py-1.5 font-mono text-[10px] text-slate-500">audit — sample_token</div>
+          <pre class="overflow-x-auto p-3.5 font-mono text-[11px] leading-6 text-slate-300"><code><span class="text-accent">$ sdkt audit examples/sample_token/src/lib.rs</span>
+Severity: 1 critical, 0 warning, 0 info
+
+  <span class="text-[#FB7185]">[critical]</span> AUTH-001  [SampleToken::admin_action]
+  Function `SampleToken::admin_action` looks privileged
+  but does not call require_auth()</code></pre>
+        </div>
+      </div>
+
+      <div class="rounded-2xl border border-[#0A1A2E] bg-[#000815] p-6 backdrop-blur-md transition-colors hover:bg-[#001020]">
+        <div class="flex items-start justify-between gap-3">
+          <h3 class="text-lg font-semibold text-white">Diff an upgrade</h3>
+          <div class="flex gap-2"><span class="rounded-full border border-accent/30 bg-accent/10 px-2.5 py-0.5 font-mono text-[10px] font-bold text-accent">upgrade safety</span><span class="rounded-full border border-[#0A1A2E] bg-[#000815] px-2.5 py-0.5 font-mono text-[10px] font-bold text-slate-400">beginner</span></div>
+        </div>
+        <p class="mt-2 text-sm text-slate-400">Compare two WASM artifacts and get a breaking-change verdict before you deploy. The repo ships an old and a new fixture pair.</p>
+        <div class="mt-5 overflow-hidden rounded-xl border border-[#0A1A2E] bg-[#010916]">
+          <div class="border-b border-[#060D16] bg-[#010916] px-3 py-1.5 font-mono text-[10px] text-slate-500">diff — us_old → us_new</div>
+          <pre class="overflow-x-auto p-3.5 font-mono text-[11px] leading-6 text-slate-300"><code><span class="text-accent">$ sdkt diff --old-wasm us_old.wasm --new-wasm us_new.wasm --upgrade-safety</span>
+Compatible: <span class="text-[#FB7185]">NO</span>
+
+Breaking:
+  - Removed function: mint()
+  - Removed function: transfer()
+  - Removed event: Transfer
+  - Removed type: Point
+
+Non-breaking:
+  - Added function: hello()
+  - Added function: increment()</code></pre>
+        </div>
+      </div>
+
+      <div class="rounded-2xl border border-[#0A1A2E] bg-[#000815] p-6 backdrop-blur-md transition-colors hover:bg-[#001020]">
+        <div class="flex items-start justify-between gap-3">
+          <h3 class="text-lg font-semibold text-white">Run a fuzz campaign</h3>
+          <div class="flex gap-2"><span class="rounded-full border border-accent/30 bg-accent/10 px-2.5 py-0.5 font-mono text-[10px] font-bold text-accent">fuzzing</span><span class="rounded-full border border-[#0A1A2E] bg-[#000815] px-2.5 py-0.5 font-mono text-[10px] font-bold text-slate-400">intermediate</span><span class="rounded-full border border-accent/30 bg-accent/10 px-2.5 py-0.5 font-mono text-[10px] font-bold text-accent">main only</span></div>
+        </div>
+        <p class="mt-2 text-sm text-slate-400">Declare an expectation, run the campaign, then replay the recorded artifact. Both commands are on <code class="text-accent">main</code> — build from source.</p>
+        <div class="mt-5 overflow-hidden rounded-xl border border-[#0A1A2E] bg-[#010916]">
+          <div class="border-b border-[#060D16] bg-[#010916] px-3 py-1.5 font-mono text-[10px] text-slate-500">fuzz campaign + replay</div>
+          <pre class="overflow-x-auto p-3.5 font-mono text-[11px] leading-6 text-slate-300"><code><span class="text-accent">$ sdkt fuzz campaign us_new.wasm --seed 42 --cases 4 \</span>
+<span class="text-accent">    --expect-error hello:Auth:6 --artifact-dir ./artifacts</span>
+executed=4 passed=2 expected_errors=0 <span class="text-[#F59E0B]">findings=2</span> skipped=0
+FINDING case0000 hello RETURN_MISMATCH (minimized_complexity=10)
+evidence: completed=true findings=2 minimized=2 <span class="text-[#34D399]">deterministic=true</span>
+
+<span class="text-accent">$ sdkt fuzz replay ./artifacts/finding-case0000-return_mismatch.json \</span>
+<span class="text-accent">    --wasm us_new.wasm</span>
+<span class="text-[#34D399]">REPRODUCED</span> reason=RETURN_MISMATCH</code></pre>
+        </div>
+      </div>
+    </div>
+
+    <p class="mt-6 max-w-3xl text-xs leading-relaxed text-slate-500">A finding is evidence of a declaration mismatch, not a vulnerability claim. The <code class="text-accent">--expect-error hello:Auth:6</code> flag declares that <code class="text-accent">hello</code> must fail with auth error code 6; the campaign reports a <code class="text-accent">RETURN_MISMATCH</code> because the observed result differs from that declaration. Pilot totals (45/45, 12/12, 11/11 REPRODUCED) come from three specific external contracts, not a universal guarantee — see <a class="text-accent hover:underline" href="https://github.com/SaboLabs/soroban-devkit/blob/main/docs/reference/fuzz-real-contract-evidence.md" rel="noopener">fuzz-real-contract-evidence.md</a>.</p>
+  </section>
+
+  <!-- REPO EXAMPLES -->
+  <section id="repo-examples" class="mt-20">
+    <div class="grid gap-8 lg:grid-cols-[1fr_1fr] lg:items-end">
+      <div>
+        <p class="font-mono text-[11px] uppercase tracking-[0.16em] text-accent">In the repository</p>
+        <h2 class="mt-2 text-3xl font-bold tracking-tight text-white">Files that back the docs.</h2>
+      </div>
+      <p class="text-slate-400">These ship in the repo and back the offline smoke test (<code class="text-accent">scripts/smoke_examples.sh</code>).</p>
+    </div>
+
+    <div class="mt-8 grid gap-6 md:grid-cols-2">
+      <div class="rounded-2xl border border-[#0A1A2E] bg-[#000815] p-6 backdrop-blur-md transition-colors hover:bg-[#001020]">
+        <div class="flex items-start justify-between gap-3">
+          <h3 class="text-lg font-semibold text-white">sample_token/src/lib.rs</h3>
+          <span class="rounded-full border border-accent/30 bg-accent/10 px-2.5 py-0.5 font-mono text-[10px] font-bold text-accent">audit</span>
+        </div>
+        <p class="mt-2 text-sm text-slate-400">A minimal Soroban contract. <code class="text-accent">transfer</code> is correctly guarded; <code class="text-accent">admin_action</code> is deliberately unguarded so <code class="text-accent">sdkt audit</code> produces a deterministic AUTH-001 finding. Analyzed as Rust source only — it does not need to be compiled.</p>
+        <div class="mt-5 rounded-xl border border-[#0A1A2E] bg-[#010916] px-3.5 py-2.5 font-mono text-[11px] text-slate-400">examples/sample_token/src/lib.rs</div>
+      </div>
+
+      <div class="rounded-2xl border border-[#0A1A2E] bg-[#000815] p-6 backdrop-blur-md transition-colors hover:bg-[#001020]">
+        <div class="flex items-start justify-between gap-3">
+          <h3 class="text-lg font-semibold text-white">sample_scval.b64</h3>
+          <span class="rounded-full border border-accent/30 bg-accent/10 px-2.5 py-0.5 font-mono text-[10px] font-bold text-accent">decode</span>
+        </div>
+        <p class="mt-2 text-sm text-slate-400">A single valid base64-encoded <code class="text-accent">ScVal</code> (<code class="text-accent">{"bool": false}</code>) for demonstrating <code class="text-accent">sdkt decode --type ScVal</code> without needing a network.</p>
+        <div class="mt-5 overflow-hidden rounded-xl border border-[#0A1A2E] bg-[#010916]">
+          <div class="border-b border-[#060D16] bg-[#010916] px-3 py-1.5 font-mono text-[10px] text-slate-500">decode — sample_scval.b64</div>
+          <pre class="overflow-x-auto p-3.5 font-mono text-[11px] leading-6 text-slate-300"><code><span class="text-accent">$ sdkt decode "$(cat examples/sample_scval.b64)" --type ScVal</span>
+{
+  "bool": false
+}</code></pre>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- CTA -->
+  <section class="mt-20">
+    <div class="rounded-3xl border border-[#0A1A2E] bg-gradient-to-br from-accent/10 via-transparent to-electric/5 p-10 text-center backdrop-blur-md">
+      <h2 class="text-3xl font-bold tracking-tight text-white">More examples live in the repository.</h2>
+      <p class="mx-auto mt-3 max-w-xl text-slate-400">The testnet walkthrough (identity → fund → deploy → invoke → events), CI/CD integration, and the compatibility matrix are all documented in <code class="text-accent">docs/</code>.</p>
+      <div class="mt-7 flex flex-wrap justify-center gap-3">
+        <a href="https://github.com/SaboLabs/soroban-devkit/tree/main/examples" rel="noopener" class="rounded-lg bg-gradient-to-r from-accent to-electric px-5 py-2.5 font-semibold text-[#04121F] shadow-glow transition hover:brightness-110">Browse examples/ <span aria-hidden="true">→</span></a>
+        <a href="https://github.com/SaboLabs/soroban-devkit/blob/main/docs/getting-started/testnet-walkthrough.md" rel="noopener" class="rounded-lg border border-[#0A1A2E] bg-[#000815] px-5 py-2.5 font-medium text-white transition hover:bg-[#001020]">Testnet walkthrough <span aria-hidden="true">→</span></a>
+        <a href="docs.html" class="rounded-lg border border-[#0A1A2E] bg-[#000815] px-5 py-2.5 font-medium text-white transition hover:bg-[#001020]">Documentation <span aria-hidden="true">→</span></a>
+      </div>
+    </div>
+  </section>
+</main>
+
+<footer class="border-t border-[#060D16] bg-[#010916]">
+  <div class="mx-auto max-w-7xl px-6 py-10">
+    <div class="grid gap-8 md:grid-cols-[1.5fr_1fr_1fr_1fr]">
+      <div>
+        <div class="flex items-center gap-2.5">
+          <img src="logo.svg" alt="Soroban DevKit" class="h-8 w-8" aria-hidden="true">
+          <span class="font-semibold text-white">Soroban DevKit</span>
+        </div>
+        <p class="mt-3 max-w-xs text-sm text-slate-500">Release assurance for Stellar Soroban smart contracts.</p>
+      </div>
+      <div>
+        <h4 class="font-mono text-[10px] uppercase tracking-[0.14em] text-slate-500">Project</h4>
+        <ul class="mt-3 space-y-2 text-sm">
+          <li><a href="https://github.com/SaboLabs/soroban-devkit" rel="noopener" class="text-slate-400 transition hover:text-accent">GitHub</a></li>
+          <li><a href="https://github.com/SaboLabs/soroban-devkit/releases" rel="noopener" class="text-slate-400 transition hover:text-accent">Releases</a></li>
+          <li><a href="https://github.com/SaboLabs/soroban-devkit/blob/main/CHANGELOG.md" rel="noopener" class="text-slate-400 transition hover:text-accent">Changelog</a></li>
+          <li><a href="https://github.com/SaboLabs/soroban-devkit/blob/main/LICENSE" rel="noopener" class="text-slate-400 transition hover:text-accent">License (MIT)</a></li>
+        </ul>
+      </div>
+      <div>
+        <h4 class="font-mono text-[10px] uppercase tracking-[0.14em] text-slate-500">Documentation</h4>
+        <ul class="mt-3 space-y-2 text-sm">
+          <li><a href="index.html" class="text-slate-400 transition hover:text-accent">Home</a></li>
+          <li><a href="features.html" class="text-slate-400 transition hover:text-accent">Features</a></li>
+          <li><a href="docs.html" class="text-slate-400 transition hover:text-accent">Docs</a></li>
+          <li><a href="blog.html" class="text-slate-400 transition hover:text-accent">Blog</a></li>
+          <li><a href="playground/" class="text-slate-400 transition hover:text-accent">Web Playground</a></li>
+        </ul>
+      </div>
+      <div>
+        <h4 class="font-mono text-[10px] uppercase tracking-[0.14em] text-slate-500">Community</h4>
+        <ul class="mt-3 space-y-2 text-sm">
+          <li><a href="https://github.com/SaboLabs/soroban-devkit/issues" rel="noopener" class="text-slate-400 transition hover:text-accent">Issues</a></li>
+          <li><a href="https://github.com/SaboLabs/soroban-devkit/blob/main/CONTRIBUTING.md" rel="noopener" class="text-slate-400 transition hover:text-accent">Contributing</a></li>
+          <li><a href="https://github.com/SaboLabs/soroban-devkit/blob/main/SECURITY.md" rel="noopener" class="text-slate-400 transition hover:text-accent">Security Policy</a></li>
+        </ul>
+      </div>
+    </div>
+    <div class="mt-10 flex flex-col gap-2 border-t border-[#060D16] pt-6 font-mono text-[11px] text-slate-600 md:flex-row md:items-center md:justify-between">
+      <span>Soroban DevKit v2.7.0 · MIT License</span>
+      <span>Not affiliated with the Stellar Development Foundation.</span>
+    </div>
+  </div>
+</footer>
+</body>
+</html>

@@ -1,0 +1,341 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Features — Soroban DevKit</title>
+<meta name="description" content="Advanced fuzzing, artifact security, upgrade safety, and release assurance — verified against the current sdkt CLI.">
+<meta name="theme-color" content="#0B0F19">
+<meta property="og:title" content="Features — Soroban DevKit">
+<meta property="og:description" content="Fuzz, audit, and verify Soroban contracts with real execution and reproducible findings.">
+<meta property="og:type" content="website">
+<link rel="icon" type="image/svg+xml" href="logo.svg">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;700&display=swap" rel="stylesheet">
+<script src="https://cdn.tailwindcss.com"></script>
+<script>tailwind.config={theme:{extend:{colors:{ink:'#010713',panel:'#000815',accent:'#22D3EE',electric:'#3B82F6'},fontFamily:{sans:['Inter','ui-sans-serif','system-ui','sans-serif'],mono:['"JetBrains Mono"','ui-monospace','SFMono-Regular','monospace']},boxShadow:{glow:'0 0 60px -12px rgba(0,176,247,.45)'}}}}</script>
+</head>
+<body class="bg-ink font-sans text-slate-300 antialiased selection:bg-accent/30">
+<div class="pointer-events-none absolute top-0 left-0 h-[600px] w-full bg-[radial-gradient(ellipse_at_top,_var(--tw-gradient-stops))] from-cyan-800/25 via-ink/0 to-transparent -z-10" aria-hidden="true"></div>
+
+<a class="sr-only focus:not-sr-only focus:absolute focus:left-4 focus:top-4 focus:z-[60] focus:rounded-lg focus:bg-accent focus:px-4 focus:py-2 focus:text-[#04121F]" href="#main">Skip to content</a>
+
+<header class="sticky top-0 z-50 border-b border-[#060D16] bg-ink/80 backdrop-blur-xl">
+  <div class="mx-auto flex h-16 max-w-7xl flex-wrap items-center justify-between gap-x-6 gap-y-1 px-6">
+    <a href="index.html" class="flex items-center gap-2.5" aria-label="Soroban DevKit home">
+      <img src="logo.svg" alt="Soroban DevKit" class="h-9 w-9" aria-hidden="true">
+      <span class="font-semibold text-white">Soroban DevKit</span>
+    </a>
+    <nav class="flex flex-wrap items-center justify-end gap-x-6 gap-y-1 text-sm md:gap-x-7" aria-label="Primary">
+      <a href="index.html" class="text-slate-400 transition hover:text-white">Home</a>
+      <a href="features.html" class="text-accent">Features</a>
+      <a href="docs.html" class="text-slate-400 transition hover:text-white">Docs</a>
+      <a href="examples.html" class="text-slate-400 transition hover:text-white">Examples</a>
+      <a href="blog.html" class="text-slate-400 transition hover:text-white">Blog</a>
+      <a href="index.html#quickstart" class="rounded-lg bg-gradient-to-r from-accent to-electric px-4 py-2 font-semibold text-[#04121F] shadow-glow transition hover:brightness-110">Get Started</a>
+    </nav>
+  </div>
+</header>
+
+<main id="main" class="relative mx-auto max-w-7xl px-6 pb-24">
+  <!-- HERO -->
+  <section id="top" class="pt-12 lg:pt-16">
+    <p class="inline-flex items-center gap-2 rounded-full border border-accent/30 bg-accent/10 px-3 py-1 font-mono text-[11px] font-semibold uppercase tracking-[0.14em] text-accent">Capabilities</p>
+    <h1 class="mt-4 max-w-3xl text-4xl font-extrabold leading-[1.08] tracking-tight text-white md:text-5xl">What sdkt does, <span class="bg-gradient-to-r from-cyan-400 to-blue-500 bg-clip-text text-transparent">command by command.</span></h1>
+    <p class="mt-5 max-w-2xl text-lg text-slate-400">Every capability below is verified against the current CLI. Two badges tell you what ships where:</p>
+    <ul class="mt-5 space-y-2" role="list">
+      <li class="flex items-center gap-3 text-sm text-slate-400"><span class="rounded-full border border-[#34D399]/40 bg-[#34D399]/10 px-2.5 py-0.5 font-mono text-[10px] font-bold text-[#34D399]">v2.7.0</span> in the published release and on crates.io.</li>
+      <li class="flex items-center gap-3 text-sm text-slate-400"><span class="rounded-full border border-accent/30 bg-accent/10 px-2.5 py-0.5 font-mono text-[10px] font-bold text-accent">main</span> merged after the tag — build from source.</li>
+    </ul>
+  </section>
+
+  <!-- FEATURE GRID (PDF: 6 cards) -->
+  <section id="fuzzing" class="mt-16">
+    <div class="grid gap-6 sm:grid-cols-2 lg:grid-cols-3">
+      <div class="rounded-2xl border border-[#0A1A2E] bg-[#000815] p-6 backdrop-blur-md transition-colors hover:bg-[#001020]">
+        <div class="flex items-start justify-between gap-3">
+          <svg class="h-6 w-6 text-accent" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polygon points="5 3 19 12 5 21 5 3"/></svg>
+          <span class="rounded-full border border-accent/30 bg-accent/10 px-2.5 py-0.5 font-mono text-[10px] font-bold text-accent">main</span>
+        </div>
+        <h3 class="mt-4 text-lg font-semibold text-white">Advanced Fuzzing</h3>
+        <p class="mt-2 text-sm text-slate-400">Generate diverse test cases with intelligent input mutation and edge-case discovery, driven by declared expectations. Deterministic per seed, minimized on failure.</p>
+        <div class="mt-4 rounded-lg border border-[#08131F] bg-[#000612] p-3 font-mono text-[11px] leading-6 shadow-[0_0_40px_rgba(6,182,212,0.1)]">
+          <div class="text-accent">$ sdkt fuzz campaign us_new.wasm --seed 42 --cases 4</div>
+          <div class="text-slate-400">executed=4 passed=2 findings=2 skipped=0</div>
+        </div>
+      </div>
+
+      <div class="rounded-2xl border border-[#0A1A2E] bg-[#000815] p-6 backdrop-blur-md transition-colors hover:bg-[#001020]">
+        <div class="flex items-start justify-between gap-3">
+          <svg class="h-6 w-6 text-accent" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3l8 3v6c0 5-3.4 8-8 9-4.6-1-8-4-8-9V5z"/><path d="M9 12l2.2 2.2L15.5 10"/></svg>
+          <span class="rounded-full border border-[#34D399]/40 bg-[#34D399]/10 px-2.5 py-0.5 font-mono text-[10px] font-bold text-[#34D399]">v2.7.0</span>
+        </div>
+        <h3 class="mt-4 text-lg font-semibold text-white">Artifact Security</h3>
+        <p class="mt-2 text-sm text-slate-400">Graded findings from the compiled WASM: spec surface, build provenance, memory safety, and upgrade compatibility. No source needed.</p>
+        <div class="mt-4 rounded-lg border border-[#08131F] bg-[#000612] p-3 font-mono text-[11px] leading-6 shadow-[0_0_40px_rgba(6,182,212,0.1)]">
+          <div class="text-accent">$ sdkt security us_old.wasm</div>
+          <div class="text-slate-400">Severity: 0 critical, 1 warning, 0 info</div>
+        </div>
+      </div>
+
+      <div class="rounded-2xl border border-[#0A1A2E] bg-[#000815] p-6 backdrop-blur-md transition-colors hover:bg-[#001020]">
+        <div class="flex items-start justify-between gap-3">
+          <svg class="h-6 w-6 text-accent" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 8h11a4 4 0 010 8H9"/><path d="M12 5l3 3-3 3"/><path d="M12 13l-3 3 3 3"/></svg>
+          <span class="rounded-full border border-[#34D399]/40 bg-[#34D399]/10 px-2.5 py-0.5 font-mono text-[10px] font-bold text-[#34D399]">v2.7.0</span>
+        </div>
+        <h3 class="mt-4 text-lg font-semibold text-white">Upgrade Safety</h3>
+        <p class="mt-2 text-sm text-slate-400">Offline WASM-to-WASM diff with a breaking-change verdict, plus operator-supplied size and growth policies. No Stellar network limit is hardcoded.</p>
+        <div class="mt-4 rounded-lg border border-[#08131F] bg-[#000612] p-3 font-mono text-[11px] leading-6 shadow-[0_0_40px_rgba(6,182,212,0.1)]">
+          <div class="text-accent">$ sdkt diff --upgrade-safety --old-wasm us_old.wasm --new-wasm us_new.wasm</div>
+          <div class="text-[#F59E0B]">Compatible: NO</div>
+        </div>
+      </div>
+
+      <div class="rounded-2xl border border-[#0A1A2E] bg-[#000815] p-6 backdrop-blur-md transition-colors hover:bg-[#001020]">
+        <div class="flex items-start justify-between gap-3">
+          <svg class="h-6 w-6 text-accent" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/><polyline points="3.27 6.96 12 12.01 20.73 6.96"/><line x1="12" y1="22.08" x2="12" y2="12"/></svg>
+          <span class="rounded-full border border-[#34D399]/40 bg-[#34D399]/10 px-2.5 py-0.5 font-mono text-[10px] font-bold text-[#34D399]">v2.7.0</span>
+        </div>
+        <h3 class="mt-4 text-lg font-semibold text-white">Release Assurance</h3>
+        <p class="mt-2 text-sm text-slate-400">Artifact, security audit, upgrade safety, deployed verification, and contract health aggregated into one read-only verdict. A skipped section is never flattened into PASS.</p>
+        <div class="mt-4 rounded-lg border border-[#08131F] bg-[#000612] p-3 font-mono text-[11px] leading-6 shadow-[0_0_40px_rgba(6,182,212,0.1)]">
+          <div class="text-accent">$ sdkt release-assurance --wasm us_old.wasm</div>
+          <div class="text-[#F59E0B]">RELEASE STATUS REVIEW</div>
+        </div>
+      </div>
+
+      <div class="rounded-2xl border border-[#0A1A2E] bg-[#000815] p-6 backdrop-blur-md transition-colors hover:bg-[#001020]">
+        <div class="flex items-start justify-between gap-3">
+          <svg class="h-6 w-6 text-accent" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="M20 20l-4.5-4.5"/></svg>
+          <span class="rounded-full border border-[#34D399]/40 bg-[#34D399]/10 px-2.5 py-0.5 font-mono text-[10px] font-bold text-[#34D399]">v2.7.0</span>
+        </div>
+        <h3 class="mt-4 text-lg font-semibold text-white">Static Security Audit</h3>
+        <p class="mt-2 text-sm text-slate-400">Seven built-in rules over Soroban Rust source: AUTH-001…004, MOVE-001, MATH-001, CEI-001. Extensible via sandboxed WASM or native plugins.</p>
+        <div class="mt-4 rounded-lg border border-[#08131F] bg-[#000612] p-3 font-mono text-[11px] leading-6 shadow-[0_0_40px_rgba(6,182,212,0.1)]">
+          <div class="text-accent">$ sdkt audit examples/sample_token/src/lib.rs</div>
+          <div class="text-[#FB7185]">[critical] AUTH-001 SampleToken::admin_action</div>
+        </div>
+      </div>
+
+      <div class="rounded-2xl border border-[#0A1A2E] bg-[#000815] p-6 backdrop-blur-md transition-colors hover:bg-[#001020]">
+        <div class="flex items-start justify-between gap-3">
+          <svg class="h-6 w-6 text-accent" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="2" y="4" width="20" height="16" rx="2"/><line x1="2" y1="10" x2="22" y2="10"/></svg>
+          <span class="rounded-full border border-[#34D399]/40 bg-[#34D399]/10 px-2.5 py-0.5 font-mono text-[10px] font-bold text-[#34D399]">v2.7.0</span>
+        </div>
+        <h3 class="mt-4 text-lg font-semibold text-white">CI/CD Integration</h3>
+        <p class="mt-2 text-sm text-slate-400">The same release-assurance engine ships as a reusable GitHub Action. It fails the step on FAIL or any non-zero CLI exit.</p>
+        <div class="mt-4 rounded-lg border border-[#08131F] bg-[#000612] p-3 font-mono text-[11px] leading-6 shadow-[0_0_40px_rgba(6,182,212,0.1)]">
+          <div class="text-accent">- uses: SaboLabs/soroban-devkit@main</div>
+          <div class="text-slate-400">with: command: release-assurance</div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ANNOTATED TERMINAL -->
+  <section id="security" class="mt-20">
+    <div class="grid gap-8 lg:grid-cols-[1fr_1fr] lg:items-end">
+      <div>
+        <p class="font-mono text-[11px] uppercase tracking-[0.16em] text-accent">Artifact security</p>
+        <h2 class="mt-2 text-3xl font-bold tracking-tight text-white">Graded findings from the WASM itself.</h2>
+      </div>
+      <p class="text-slate-400">No source required — the analyzer reads the compiled artifact, its spec, and its build metadata.</p>
+    </div>
+
+    <div class="mt-8 grid gap-6 lg:grid-cols-[1.4fr_1fr]">
+      <div class="overflow-hidden rounded-2xl border border-[#0A1A2E] bg-[#000815]">
+        <div class="flex items-center justify-between border-b border-[#060D16] bg-[#010916] px-4 py-2 font-mono text-[11px]"><span class="text-slate-300">sdkt security us_old.wasm</span><span class="rounded border border-[#0A1A2E] px-1.5 py-0.5 text-[9px] uppercase tracking-wider text-accent">offline</span></div>
+        <pre class="overflow-x-auto p-4 font-mono text-[11px] leading-7 text-slate-300"><code><span class="text-accent">$ sdkt security us_old.wasm</span>
+
+Artifact Security Report: us_old.wasm
+=====================================
+Size: 198 bytes
+SHA-256: 05befa136e7f0829a5051d97b032f355a…
+
+<span class="text-[#F59E0B]">[warning]</span> ART-002  Build provenance incomplete
+  <span class="text-slate-500">contractmetav0 is missing rssdkver and rsver</span>
+
+<span class="text-[#F59E0B]">[warning]</span> SURF-002  transfer takes an address
+  <span class="text-slate-500">verify it calls require_auth()</span>
+
+Severity: 0 critical, 2 warning, 0 info (2 total)</code></pre>
+      </div>
+
+      <div class="space-y-5">
+        <div class="rounded-2xl border border-[#0A1A2E] bg-[#000815] p-6 backdrop-blur-md">
+          <span class="inline-block rounded-full border border-[#F59E0B]/40 bg-[#F59E0B]/10 px-2.5 py-0.5 font-mono text-[10px] font-bold uppercase tracking-wider text-[#F59E0B]">Confirmed</span>
+          <h3 class="mt-3 font-semibold text-white">ART-002 — provenance gap</h3>
+          <p class="mt-2 text-sm text-slate-400">The <code class="text-accent">contractmetav0</code> section is present but lacks <code class="text-accent">rssdkver</code> and <code class="text-accent">rsver</code>. You cannot prove which toolchain produced this artifact.</p>
+        </div>
+        <div class="rounded-2xl border border-[#0A1A2E] bg-[#000815] p-6 backdrop-blur-md">
+          <span class="inline-block rounded-full border border-accent/30 bg-accent/10 px-2.5 py-0.5 font-mono text-[10px] font-bold uppercase tracking-wider text-accent">Observation</span>
+          <h3 class="mt-3 font-semibold text-white">SURF-002 — address parameter</h3>
+          <p class="mt-2 text-sm text-slate-400"><code class="text-accent">transfer</code> takes an address. The analyzer cannot see the body, so it flags the surface for manual review rather than asserting a vulnerability.</p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- AUDIT RULES TABLE -->
+  <section id="audit-diff" class="mt-20">
+    <div class="grid gap-8 lg:grid-cols-[1fr_1fr] lg:items-end">
+      <div>
+        <p class="font-mono text-[11px] uppercase tracking-[0.16em] text-accent">Audit rules</p>
+        <h2 class="mt-2 text-3xl font-bold tracking-tight text-white">Seven built-in rules.</h2>
+      </div>
+      <p class="text-slate-400">Run <code class="text-accent">sdkt audit --list-rules</code> to discover them from the CLI itself.</p>
+    </div>
+    <div class="mt-8 overflow-hidden rounded-2xl border border-[#0A1A2E] bg-[#000815]">
+      <div class="overflow-x-auto">
+        <table class="w-full min-w-[640px] text-left text-sm">
+          <thead>
+            <tr class="border-b border-[#060D16] font-mono text-[10px] uppercase tracking-[0.14em] text-slate-500">
+              <th class="px-6 py-3 font-medium">Rule</th>
+              <th class="px-6 py-3 font-medium">Severity</th>
+              <th class="px-6 py-3 font-medium">Detects</th>
+            </tr>
+          </thead>
+          <tbody class="divide-y divide-white/5">
+            <tr><td class="px-6 py-3 font-mono text-white">AUTH-001</td><td class="px-6 py-3"><span class="rounded-full border border-[#FB7185]/40 bg-[#FB7185]/10 px-2.5 py-0.5 font-mono text-[10px] font-bold text-[#FB7185]">critical</span></td><td class="px-6 py-3 text-slate-400">Privileged/admin function missing <code class="text-accent">require_auth()</code></td></tr>
+            <tr><td class="px-6 py-3 font-mono text-white">AUTH-002</td><td class="px-6 py-3"><span class="rounded-full border border-[#FB7185]/40 bg-[#FB7185]/10 px-2.5 py-0.5 font-mono text-[10px] font-bold text-[#FB7185]">critical</span></td><td class="px-6 py-3 text-slate-400"><code class="text-accent">invoke_contract()</code> without <code class="text-accent">require_auth()</code></td></tr>
+            <tr><td class="px-6 py-3 font-mono text-white">AUTH-003</td><td class="px-6 py-3"><span class="rounded-full border border-[#F59E0B]/40 bg-[#F59E0B]/10 px-2.5 py-0.5 font-mono text-[10px] font-bold text-[#F59E0B]">warning</span></td><td class="px-6 py-3 text-slate-400">Unguarded <code class="text-accent">initialize()</code> entrypoint</td></tr>
+            <tr><td class="px-6 py-3 font-mono text-white">AUTH-004</td><td class="px-6 py-3"><span class="rounded-full border border-[#FB7185]/40 bg-[#FB7185]/10 px-2.5 py-0.5 font-mono text-[10px] font-bold text-[#FB7185]">critical</span></td><td class="px-6 py-3 text-slate-400">Token transfer without <code class="text-accent">require_auth()</code></td></tr>
+            <tr><td class="px-6 py-3 font-mono text-white">MOVE-001</td><td class="px-6 py-3"><span class="rounded-full border border-[#F59E0B]/40 bg-[#F59E0B]/10 px-2.5 py-0.5 font-mono text-[10px] font-bold text-[#F59E0B]">warning</span></td><td class="px-6 py-3 text-slate-400">Suspicious move-after-use heuristic</td></tr>
+            <tr><td class="px-6 py-3 font-mono text-white">MATH-001</td><td class="px-6 py-3"><span class="rounded-full border border-[#F59E0B]/40 bg-[#F59E0B]/10 px-2.5 py-0.5 font-mono text-[10px] font-bold text-[#F59E0B]">warning</span></td><td class="px-6 py-3 text-slate-400">Division before multiplication can truncate precision</td></tr>
+            <tr><td class="px-6 py-3 font-mono text-white">CEI-001</td><td class="px-6 py-3"><span class="rounded-full border border-[#F59E0B]/40 bg-[#F59E0B]/10 px-2.5 py-0.5 font-mono text-[10px] font-bold text-[#F59E0B]">warning</span></td><td class="px-6 py-3 text-slate-400">External call precedes state write</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </section>
+
+  <!-- RELEASE ASSURANCE PANEL -->
+  <section id="release-assurance" class="mt-20">
+    <div class="grid gap-8 lg:grid-cols-[1fr_1fr] lg:items-end">
+      <div>
+        <p class="font-mono text-[11px] uppercase tracking-[0.16em] text-accent">Release assurance</p>
+        <h2 class="mt-2 text-3xl font-bold tracking-tight text-white">One read-only release decision.</h2>
+      </div>
+      <p class="text-slate-400">Five sections, aggregated deterministically. A skipped section is reported as SKIPPED — never flattened into PASS.</p>
+    </div>
+
+    <div class="mt-8 overflow-hidden rounded-2xl border border-[#0A1A2E] bg-[#000815]">
+      <div class="flex flex-wrap items-center justify-between gap-3 border-b border-[#060D16] px-6 py-4">
+        <span class="font-mono text-xs text-slate-400">sdkt release-assurance --wasm us_old.wasm</span>
+        <span class="rounded-full border border-[#F59E0B]/40 bg-[#F59E0B]/10 px-3 py-1 font-mono text-[11px] font-bold text-[#F59E0B]">REVIEW</span>
+      </div>
+      <div class="overflow-x-auto">
+        <table class="w-full min-w-[560px] text-left text-sm">
+          <thead>
+            <tr class="border-b border-[#060D16] font-mono text-[10px] uppercase tracking-[0.14em] text-slate-500">
+              <th class="px-6 py-3 font-medium">Section</th>
+              <th class="px-6 py-3 font-medium">Verdict</th>
+              <th class="px-6 py-3 font-medium">Detail</th>
+            </tr>
+          </thead>
+          <tbody class="divide-y divide-white/5">
+            <tr><td class="px-6 py-3 text-slate-300">Artifact</td><td class="px-6 py-3"><span class="rounded-full border border-[#34D399]/40 bg-[#34D399]/10 px-2.5 py-0.5 font-mono text-[10px] font-bold text-[#34D399]">PASS</span></td><td class="px-6 py-3 font-mono text-xs text-slate-500">198 B · spec present</td></tr>
+            <tr><td class="px-6 py-3 text-slate-300">Security</td><td class="px-6 py-3"><span class="rounded-full border border-slate-400/30 bg-slate-400/10 px-2.5 py-0.5 font-mono text-[10px] font-bold text-slate-400">SKIPPED</span></td><td class="px-6 py-3 font-mono text-xs text-slate-500">no source path supplied</td></tr>
+            <tr><td class="px-6 py-3 text-slate-300">Upgrade Safety</td><td class="px-6 py-3"><span class="rounded-full border border-slate-400/30 bg-slate-400/10 px-2.5 py-0.5 font-mono text-[10px] font-bold text-slate-400">SKIPPED</span></td><td class="px-6 py-3 font-mono text-xs text-slate-500">no --previous-wasm</td></tr>
+            <tr><td class="px-6 py-3 text-slate-300">Verification</td><td class="px-6 py-3"><span class="rounded-full border border-slate-400/30 bg-slate-400/10 px-2.5 py-0.5 font-mono text-[10px] font-bold text-slate-400">SKIPPED</span></td><td class="px-6 py-3 font-mono text-xs text-slate-500">no --contract</td></tr>
+            <tr><td class="px-6 py-3 text-slate-300">Contract Health</td><td class="px-6 py-3"><span class="rounded-full border border-slate-400/30 bg-slate-400/10 px-2.5 py-0.5 font-mono text-[10px] font-bold text-slate-400">SKIPPED</span></td><td class="px-6 py-3 font-mono text-xs text-slate-500">no --contract</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <p class="border-t border-[#060D16] px-6 py-4 text-xs text-slate-500">REVIEW, not PASS: four on-chain sections are SKIPPED because <code class="text-accent">--contract</code> was omitted. Pass <code class="text-accent">--contract</code> (read-only) to run deployed verification and health.</p>
+    </div>
+  </section>
+
+  <!-- BUILD / DEPLOY FLOW -->
+  <section id="build-deploy" class="mt-20">
+    <div class="grid gap-8 lg:grid-cols-[1fr_1fr] lg:items-end">
+      <div>
+        <p class="font-mono text-[11px] uppercase tracking-[0.16em] text-accent">Build · deploy · invoke</p>
+        <h2 class="mt-2 text-3xl font-bold tracking-tight text-white">From source to chain, one flow.</h2>
+      </div>
+      <p class="text-slate-400">Stages 01–02 run offline. Only deploy and invocation need an RPC endpoint.</p>
+    </div>
+    <ol class="mt-8 grid gap-4 sm:grid-cols-2 lg:grid-cols-4" role="list">
+      <li class="rounded-2xl border border-[#0A1A2E] bg-[#000815] p-6 backdrop-blur-md">
+        <span class="font-mono text-[10px] font-bold uppercase tracking-[0.14em] text-accent">build</span>
+        <code class="mt-2 block text-xs text-white">sdkt build</code>
+        <p class="mt-2 text-xs text-slate-500">Compile Rust contracts into WASM artifacts</p>
+      </li>
+      <li class="rounded-2xl border border-[#0A1A2E] bg-[#000815] p-6 backdrop-blur-md">
+        <span class="font-mono text-[10px] font-bold uppercase tracking-[0.14em] text-accent">deploy</span>
+        <code class="mt-2 block text-xs text-white">sdkt deploy --wasm &lt;file&gt; --deny-breaking</code>
+        <p class="mt-2 text-xs text-slate-500">Upload + instantiate; the guard blocks breaking upgrades</p>
+      </li>
+      <li class="rounded-2xl border border-[#0A1A2E] bg-[#000815] p-6 backdrop-blur-md">
+        <span class="font-mono text-[10px] font-bold uppercase tracking-[0.14em] text-accent">invoke</span>
+        <code class="mt-2 block text-xs text-white">sdkt invoke &lt;id&gt; &lt;fn&gt; -a u32:1 -I alice</code>
+        <p class="mt-2 text-xs text-slate-500">sequence → simulate → sign → submit → poll</p>
+      </li>
+      <li class="rounded-2xl border border-[#0A1A2E] bg-[#000815] p-6 backdrop-blur-md">
+        <span class="font-mono text-[10px] font-bold uppercase tracking-[0.14em] text-accent">call</span>
+        <code class="mt-2 block text-xs text-white">sdkt call &lt;id&gt; &lt;fn&gt; -a u32:1</code>
+        <p class="mt-2 text-xs text-slate-500">Read-only simulation, no signing, no submission</p>
+      </li>
+    </ol>
+  </section>
+
+  <!-- CTA -->
+  <section id="next" class="mt-20">
+    <div class="rounded-3xl border border-[#0A1A2E] bg-gradient-to-br from-accent/10 via-transparent to-electric/5 p-10 text-center backdrop-blur-md">
+      <h2 class="text-3xl font-bold tracking-tight text-white">Run your first check.</h2>
+      <p class="mx-auto mt-3 max-w-xl text-slate-400">Install the binary, inspect a fixture, run an audit — all offline, all under five minutes.</p>
+      <div class="mt-7 flex flex-wrap justify-center gap-3">
+        <a href="index.html#quickstart" class="rounded-lg bg-gradient-to-r from-accent to-electric px-5 py-2.5 font-semibold text-[#04121F] shadow-glow transition hover:brightness-110">Get Started <span aria-hidden="true">→</span></a>
+        <a href="https://github.com/SaboLabs/soroban-devkit/blob/main/docs/reference/cli.md" rel="noopener" class="rounded-lg border border-[#0A1A2E] bg-[#000815] px-5 py-2.5 font-medium text-white transition hover:bg-[#001020]">CLI Reference <span aria-hidden="true">→</span></a>
+      </div>
+    </div>
+  </section>
+</main>
+
+<footer class="border-t border-[#060D16] bg-[#010916]">
+  <div class="mx-auto max-w-7xl px-6 py-10">
+    <div class="grid gap-8 md:grid-cols-[1.5fr_1fr_1fr_1fr]">
+      <div>
+        <div class="flex items-center gap-2.5">
+          <img src="logo.svg" alt="Soroban DevKit" class="h-8 w-8" aria-hidden="true">
+          <span class="font-semibold text-white">Soroban DevKit</span>
+        </div>
+        <p class="mt-3 max-w-xs text-sm text-slate-500">Release assurance for Stellar Soroban smart contracts.</p>
+      </div>
+      <div>
+        <h4 class="font-mono text-[10px] uppercase tracking-[0.14em] text-slate-500">Project</h4>
+        <ul class="mt-3 space-y-2 text-sm">
+          <li><a href="https://github.com/SaboLabs/soroban-devkit" rel="noopener" class="text-slate-400 transition hover:text-accent">GitHub</a></li>
+          <li><a href="https://github.com/SaboLabs/soroban-devkit/releases" rel="noopener" class="text-slate-400 transition hover:text-accent">Releases</a></li>
+          <li><a href="https://github.com/SaboLabs/soroban-devkit/blob/main/CHANGELOG.md" rel="noopener" class="text-slate-400 transition hover:text-accent">Changelog</a></li>
+          <li><a href="https://github.com/SaboLabs/soroban-devkit/blob/main/LICENSE" rel="noopener" class="text-slate-400 transition hover:text-accent">License (MIT)</a></li>
+        </ul>
+      </div>
+      <div>
+        <h4 class="font-mono text-[10px] uppercase tracking-[0.14em] text-slate-500">Documentation</h4>
+        <ul class="mt-3 space-y-2 text-sm">
+          <li><a href="index.html" class="text-slate-400 transition hover:text-accent">Home</a></li>
+          <li><a href="docs.html" class="text-slate-400 transition hover:text-accent">Docs</a></li>
+          <li><a href="examples.html" class="text-slate-400 transition hover:text-accent">Examples</a></li>
+          <li><a href="blog.html" class="text-slate-400 transition hover:text-accent">Blog</a></li>
+          <li><a href="playground/" class="text-slate-400 transition hover:text-accent">Web Playground</a></li>
+        </ul>
+      </div>
+      <div>
+        <h4 class="font-mono text-[10px] uppercase tracking-[0.14em] text-slate-500">Community</h4>
+        <ul class="mt-3 space-y-2 text-sm">
+          <li><a href="https://github.com/SaboLabs/soroban-devkit/issues" rel="noopener" class="text-slate-400 transition hover:text-accent">Issues</a></li>
+          <li><a href="https://github.com/SaboLabs/soroban-devkit/blob/main/CONTRIBUTING.md" rel="noopener" class="text-slate-400 transition hover:text-accent">Contributing</a></li>
+          <li><a href="https://github.com/SaboLabs/soroban-devkit/blob/main/SECURITY.md" rel="noopener" class="text-slate-400 transition hover:text-accent">Security Policy</a></li>
+        </ul>
+      </div>
+    </div>
+    <div class="mt-10 flex flex-col gap-2 border-t border-[#060D16] pt-6 font-mono text-[11px] text-slate-600 md:flex-row md:items-center md:justify-between">
+      <span>Soroban DevKit v2.7.0 · MIT License</span>
+      <span>Not affiliated with the Stellar Development Foundation.</span>
+    </div>
+  </div>
+</footer>
+</body>
+</html>

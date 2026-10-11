@@ -3,571 +3,338 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Soroban DevKit — Release Assurance &amp; Verification Toolkit for Soroban</title>
-<meta name="description" content="Soroban DevKit (sdkt) is an open-source, Rust-powered release-assurance and operational verification toolkit for Soroban smart contracts. Inspect, verify, audit, compare upgrades, and validate deployed contracts from one CLI.">
-<meta name="theme-color" content="#0a0a0c">
-<meta property="og:title" content="Soroban DevKit — Developer Tooling for Stellar Soroban">
-<meta property="og:description" content="Release assurance and operational verification toolkit for Soroban smart contracts — inspect, verify, audit, compare upgrades, and validate deployed contracts.">
+<title>Soroban DevKit — Find failures before your contract ships</title>
+<meta name="description" content="Fuzz, audit, and verify Soroban contracts with real execution and reproducible findings — offline, deterministic, one CLI.">
+<meta name="theme-color" content="#0B0F19">
+<meta property="og:title" content="Soroban DevKit — Find failures before your contract ships">
+<meta property="og:description" content="Fuzz, audit, and verify Soroban contracts with real execution and reproducible findings — offline, deterministic, one CLI.">
 <meta property="og:type" content="website">
-<meta property="og:url" content="https://github.com/SaboLabs/soroban-devkit">
+<meta property="og:url" content="https://sabolabs.github.io/soroban-devkit/">
 <link rel="icon" type="image/svg+xml" href="logo.svg">
-<link rel="stylesheet" href="base.css">
-<link rel="stylesheet" href="sections.css">
-<link rel="stylesheet" href="layout.css">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;700&display=swap" rel="stylesheet">
+<script src="https://cdn.tailwindcss.com"></script>
+<script>tailwind.config={theme:{extend:{colors:{ink:'#010713',panel:'#000815',accent:'#22D3EE',electric:'#3B82F6'},fontFamily:{sans:['Inter','ui-sans-serif','system-ui','sans-serif'],mono:['"JetBrains Mono"','ui-monospace','SFMono-Regular','monospace']},boxShadow:{glow:'0 0 60px -12px rgba(0,176,247,.45)'}}}}</script>
 </head>
-<body>
-<a class="skip" href="#main">Skip to content</a>
+<body class="bg-ink font-sans text-slate-300 antialiased selection:bg-accent/30">
+<div class="pointer-events-none absolute top-0 left-0 h-[600px] w-full bg-[radial-gradient(ellipse_at_top,_var(--tw-gradient-stops))] from-cyan-800/25 via-ink/0 to-transparent -z-10" aria-hidden="true"></div>
 
-<header class="nav">
-  <div class="wrap nav-in">
-    <a class="brand" href="#top" aria-label="Soroban DevKit home">
-      <span class="mark" aria-hidden="true">sd</span>
-      <span>Soroban DevKit</span>
+<a class="sr-only focus:not-sr-only focus:absolute focus:left-4 focus:top-4 focus:z-[60] focus:rounded-lg focus:bg-accent focus:px-4 focus:py-2 focus:text-[#04121F]" href="#main">Skip to content</a>
+
+<header class="sticky top-0 z-50 border-b border-[#060D16] bg-ink/80 backdrop-blur-xl">
+  <div class="mx-auto flex h-16 max-w-7xl flex-wrap items-center justify-between gap-x-6 gap-y-1 px-6">
+    <a href="index.html" class="flex items-center gap-2.5" aria-label="Soroban DevKit home">
+      <img src="logo.svg" alt="Soroban DevKit" class="h-9 w-9" aria-hidden="true">
+      <span class="font-semibold text-white">Soroban DevKit</span>
     </a>
-    <nav class="nav-links" aria-label="Primary">
-      <a href="#features" class="hide-sm">Features</a>
-      <a href="#workflow" class="hide-sm">Workflow</a>
-      <a href="#why" class="hide-sm">Why sdkt</a>
-      <a href="#install">Install</a>
-      <a href="https://github.com/SaboLabs/soroban-devkit/blob/main/docs/reference/agent.md" rel="noopener">Agent</a>
-      <a href="playground/">Playground</a>
-      <a href="#community">Community</a>
-      <a class="nav-ver" href="https://github.com/SaboLabs/soroban-devkit/releases" rel="noopener">v2.7.0</a>
+    <nav class="flex flex-wrap items-center justify-end gap-x-6 gap-y-1 text-sm md:gap-x-7" aria-label="Primary">
+      <a href="index.html" class="text-slate-400 transition hover:text-white">Home</a>
+      <a href="features.html" class="text-slate-400 transition hover:text-white">Features</a>
+      <a href="docs.html" class="text-slate-400 transition hover:text-white">Docs</a>
+      <a href="examples.html" class="text-slate-400 transition hover:text-white">Examples</a>
+      <a href="blog.html" class="text-slate-400 transition hover:text-white">Blog</a>
+      <a href="#quickstart" class="rounded-lg bg-gradient-to-r from-accent to-electric px-4 py-2 font-semibold text-[#04121F] shadow-glow transition hover:brightness-110">Get Started</a>
     </nav>
   </div>
 </header>
 
-<main id="main">
-<!-- ================= HERO ================= -->
-<section class="hero" id="top">
-  <div class="wrap hero-grid">
-    <div>
-      <h1>Soroban DevKit</h1>
-      <p class="tagline">Release assurance &amp; verification for Soroban contracts.</p>
-      <p class="sub">Release assurance and operational verification for Soroban
-        contracts — inspect, verify, audit, compare upgrades, and validate
-        deployed contracts from one CLI.</p>
-      <div class="btns">
-        <a class="btn btn-primary" href="#install">Get Started</a>
-        <a class="btn btn-ghost" href="playground/" rel="noopener">Open Web Playground</a>
-        <a class="btn btn-ghost" href="https://github.com/SaboLabs/soroban-devkit" rel="noopener">View on GitHub</a>
-      </div>
-      <p class="hero-meta">
-        <span>v2.7.0</span><span class="sep">·</span>
-        <span>Open Source</span><span class="sep">·</span>
-        <span>Rust</span><span class="sep">·</span>
-        <span>MIT</span>
-      </p>
-    </div>
-
-    <div class="term-wrap">
-      <div class="term" role="img" aria-label="Terminal session showing sdkt version, an offline WASM inspection, and an upgrade-safety diff">
-        <div class="term-bar">
-          <span class="term-title">sdkt — soroban devkit</span>
-        </div>
-        <div class="term-body">
-<div class="t-cmd">sdkt --version</div>
-<div class="t-out">sdkt 2.7.0</div>
-<div class="t-out">&nbsp;</div>
-<div class="t-cmd">sdkt wasm inspect contract.wasm</div>
-<div class="t-out">WASM Inspection Report: contract.wasm
-========================================
-Size: 198 bytes
-SHA-256 Hash: 05befa136e7f0829a5051d97b032f355a…
-Version: 1
-
-Custom Sections (1):
-  - contractspecv0
-
-Contract Metadata (0):
-  (none)
-
-Contract Spec Available: Yes
-  Functions: 2
-    - fn transfer(1) -&gt; 0
-    - fn mint(1) -&gt; 0
-  Custom Types: 1
-  Events: 1</div>
-<div class="t-out">&nbsp;</div>
-<div class="t-rule">──────────────────────────</div>
-<div class="t-out">&nbsp;</div>
-<div class="t-cmd">sdkt diff --old-wasm old.wasm --new-wasm new.wasm --upgrade-safety</div>
-<div class="t-out">Upgrade Safety
-==============
-
-Compatible: <span class="t-bad">NO</span>
-
-<span class="t-bad">Breaking:</span>
-  - Removed function: mint()
-  - Removed function: transfer()
-  - Removed event: Transfer
-  - Removed type: Point
-
-<span class="t-v">Non-breaking:</span>
-  - Added function: hello()
-  - Added function: increment()</div>
-        </div>
-      </div>
-    </div>
-  </div>
-</section>
-<!-- ================= FEATURES ================= -->
-<section id="features">
-  <div class="wrap">
-    <div class="section-num">01</div><p class="eyebrow">Features</p>
-    <h2 class="h2">Everything a Soroban dev needs, in one CLI</h2>
-    <p class="lead">sdkt consolidates the release-assurance and verification
-      workflow — artifact inspection, static security auditing, upgrade-safety
-      diffing, deployed-contract verification, and contract health — into one
-      report, and the surrounding lifecycle into a single CLI.</p>
-    <div class="feature-grid">
-      <div class="card">
-        <h3><svg class="card-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 3h6l1 3h3v15H5V6h3z"/><path d="M9 12l2 2 4-4"/></svg> Release Assurance</h3>
-        <p>One read-only command answers the release question: candidate artifact, security audit, upgrade safety, deployed verification, and contract health, aggregated into a single <code>PASS</code>/<code>REVIEW</code>/<code>FAIL</code> decision. <code>sdkt release-assurance</code></p>
-      </div>
-      <div class="card">
-        <h3><svg class="card-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polygon points="5 3 19 12 5 21 5 3"/></svg> Contract Invocation</h3>
-        <p>State-changing execution in one command (sequence → simulate → sign → submit → poll) with <code>sdkt invoke</code>, or instant read-only simulation with <code>sdkt call</code>.</p>
-      </div>
-      <div class="card">
-        <h3><svg class="card-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="M20 20l-4.5-4.5"/></svg> Contract Inspection</h3>
-        <p>Read a contract's ABI, functions, events, and metadata from compiled WASM or live on-chain contracts. <code>sdkt wasm inspect</code> · <code>sdkt inspect</code></p>
-      </div>
-      <div class="card">
-        <h3><svg class="card-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><ellipse cx="12" cy="6" rx="8" ry="3"/><path d="M4 6v12c0 1.7 3.6 3 8 3s8-1.3 8-3V6"/><path d="M4 12c0 1.7 3.6 3 8 3s8-1.3 8-3"/></svg> Storage &amp; TTL Management</h3>
-        <p>Analyze storage rent and categorize entries (<code>sdkt storage analyze</code>), read typed entries (<code>sdkt storage read</code>), and extend footprint TTL (<code>sdkt storage extend</code>).</p>
-      </div>
-      <div class="card">
-        <h3><svg class="card-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z"/><polyline points="22,6 12,13 2,6"/></svg> Event Explorer</h3>
-        <p>Query, filter, and inspect contract events across ledger windows with on-chain or local ABI decoding. <code>sdkt events</code></p>
-      </div>
-      <div class="card">
-        <h3><svg class="card-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3l8 3v6c0 5-3.4 8-8 9-4.6-1-8-4-8-9V6z"/><path d="M9 12l2.2 2.2L15.5 10"/></svg> Static Security Audit</h3>
-        <p>Static analysis of contract source against AUTH-001/002/003/004 and
-          MOVE-001 rules — no network, no secrets. <code>sdkt audit</code></p>
-        <div class="rules-grid">
-          <div class="rule-card">
-            <div class="rule-id">AUTH-001</div>
-            <div class="rule-desc">Privileged/admin function missing require_auth()</div>
-          </div>
-          <div class="rule-card">
-            <div class="rule-id">AUTH-002</div>
-            <div class="rule-desc">Cross-contract invoke_contract() without require_auth()</div>
-          </div>
-          <div class="rule-card">
-            <div class="rule-id">AUTH-003</div>
-            <div class="rule-desc">Unguarded initialize() entrypoint</div>
-          </div>
-          <div class="rule-card">
-            <div class="rule-id">AUTH-004</div>
-            <div class="rule-desc">Token transfer without require_auth() on source or destination</div>
-          </div>
-          <div class="rule-card">
-            <div class="rule-id">MOVE-001</div>
-            <div class="rule-desc">Suspicious move-after-use heuristic (Warning)</div>
-          </div>
-        </div>
-      </div>
-      <div class="card">
-        <h3><svg class="card-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 8h11a4 4 0 010 8H9"/><path d="M12 5l3 3-3 3"/><path d="M12 13l-3 3 3 3"/></svg> Upgrade Safety Diff</h3>
-        <p>Diff two WASM files offline and get a breaking-change verdict before
-          deploying. <code>sdkt diff --upgrade-safety</code></p>
-      </div>
-      <div class="card">
-        <h3><svg class="card-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 2l9 5-9 5-9-5z"/><path d="M3 12l9 5 9-5"/><path d="M3 17l9 5 9-5"/></svg> Build &amp; Deploy</h3>
-        <p>Compile contracts into WASM and deploy with automated salt generation, constructor arguments, and a <code>--deny-breaking</code> upgrade guard. <code>sdkt deploy</code></p>
-      </div>
-      <div class="card">
-        <h3><svg class="card-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg> Identity &amp; Keystore</h3>
-        <p>Manage ED25519 local signing identities offline (<code>sdkt identity</code>) and fund testnet accounts with one click via Friendbot (<code>sdkt identity fund</code>).</p>
-      </div>
-      <div class="card">
-        <h3><svg class="card-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="2" y="4" width="20" height="16" rx="2"/><line x1="2" y1="10" x2="22" y2="10"/></svg> Account &amp; Fee Insights</h3>
-        <p>Inspect account balances, sequence numbers, and signers with <code>sdkt account</code>, and query dynamic base fee estimates with <code>sdkt fee estimate</code>.</p>
-      </div>
-      <div class="card">
-        <h3><svg class="card-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M8 6l-5 6 5 6"/><path d="M16 6l5 6-5 6"/></svg> XDR Encoding &amp; Decoding</h3>
-        <p>Decode base64 XDR to JSON for <code>ScVal</code>, envelopes, and events (<code>sdkt decode</code>), or encode typed values into XDR (<code>sdkt encode</code>).</p>
-      </div>
-      <div class="card">
-        <h3><svg class="card-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 7h13l-3-3"/><path d="M20 17H7l3 3"/></svg> Transaction Pipeline</h3>
-        <p>Granular manual control to build, validate, simulate, sign, and submit envelopes — with fully offline ED25519 signing. <code>sdkt tx *</code></p>
-      </div>
-      <div class="card">
-        <h3><svg class="card-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 3h6v6H9z"/><path d="M3 9h6v6H3z"/><path d="M15 9h6v6h-6z"/><path d="M9 15h6v6H9z"/><path d="M12 12h.01"/></svg> Plugin System</h3>
-        <p>Extend <code>sdkt audit</code> with custom rules. Pack, verify, install, and execute plugins automatically via <code>sdkt plugin</code>. Supports native and WASM plugins.</p>
-      </div>
-    </div>
-  </div>
-</section>
-
-<!-- ================= WORKFLOW ================= -->
-<section id="workflow">
-  <div class="wrap">
-    <div class="section-num">02</div><p class="eyebrow">Developer Workflow</p>
-    <h2 class="h2">From contract to chain, one flow</h2>
-    <p class="lead">Every stage maps to real sdkt commands. Stages 01–04 run
-      offline; only deployed-contract reads, deploy, and invocation need an RPC endpoint.</p>
-    <div class="flow">
-      <div class="flow-step">
-        <div class="flow-n">01</div>
-        <div class="flow-t">Inspect</div>
-        <div class="flow-c"><span>sdkt wasm inspect &lt;file&gt;</span><span>sdkt inspect &lt;contract-id&gt;</span></div>
-      </div>
-      <div class="flow-step">
-        <div class="flow-n">02</div>
-        <div class="flow-t">Analyze</div>
-        <div class="flow-c"><span>sdkt audit &lt;path.rs&gt;</span><span>sdkt storage analyze &lt;contract-id&gt;</span></div>
-      </div>
-      <div class="flow-step">
-        <div class="flow-n">03</div>
-        <div class="flow-t">Validate</div>
-        <div class="flow-c"><span>sdkt diff --upgrade-safety</span><span>sdkt storage check &lt;contract-id&gt;</span></div>
-      </div>
-      <div class="flow-step">
-        <div class="flow-n">04</div>
-        <div class="flow-t">Build &amp; Fund</div>
-        <div class="flow-c"><span>sdkt build</span><span>sdkt identity generate &lt;id&gt; &amp;&amp; sdkt identity fund &lt;id&gt;</span></div>
-      </div>
-      <div class="flow-step">
-        <div class="flow-n">05</div>
-        <div class="flow-t">Deploy</div>
-        <div class="flow-c"><span>sdkt deploy --wasm &lt;file&gt;</span><span>sdkt verify &lt;contract-id&gt;</span></div>
-      </div>
-      <div class="flow-step">
-        <div class="flow-n">06</div>
-        <div class="flow-t">Invoke</div>
-        <div class="flow-c"><span>sdkt invoke &lt;contract-id&gt; &lt;fn&gt; --args &lt;type:val&gt; --identity &lt;id&gt; (primary one-command flow)</span><span>sdkt call &lt;contract-id&gt; &lt;fn&gt; --args &lt;type:val&gt; (read-only simulation)</span><span>Advanced: sdkt tx build → tx simulate → tx sign → tx submit</span></div>
-      </div>
-      <div class="flow-step">
-        <div class="flow-n">07</div>
-        <div class="flow-t">Release</div>
-        <div class="flow-c"><span>sdkt release-assurance --wasm &lt;candidate&gt; --previous-wasm &lt;baseline&gt;</span><span>PASS / REVIEW / FAIL → release decision (read-only)</span></div>
-      </div>
-    </div>
-  </div>
-</section><!-- ================= TERMINAL DEMO ================= -->
-<section id="demo">
-  <div class="wrap">
-    <div class="section-num">03</div><p class="eyebrow">Terminal</p>
-    <h2 class="h2">Real commands, real output</h2>
-    <p class="lead">Every command and output block below is taken from the sdkt CLI
-      surface in this repository.</p>
-
-    <div class="install-grid" style="margin-top:2rem">
-      <div class="term">
-        <div class="term-bar">
-          <span class="term-title">contract invocation (invoke &amp; call)</span>
-        </div>
-        <div class="term-body">
-<div class="t-comment"># 1. state-changing: sequence → simulate → sign → submit → poll</div>
-<div class="t-cmd">sdkt invoke CA3D5KRYM6CB7OWQ6TWYRR3Z4T7ZQVNOOAX2TNQD2KDW35D2GFFQDBS5 increment \
-  --args u32:1 --identity alice --network-profile testnet</div>
-<div class="t-out">Invocation Result:
-  Contract: CA3D5KRYM6CB7OWQ6TWYRR3Z4T7ZQVNOOAX2TNQD2KDW35D2GFFQDBS5
-  Function: increment
-  Hash:     deadbeefcafe1234567890abcdef1234567890abcdef1234567890abcdef1234
-  Status:   <span class="t-v">SUCCESS</span>
-  Fee:      250 stroops
-  Result XDR: AAAAAgAAAAE=</div>
-<div class="t-out">&nbsp;</div>
-<div class="t-comment"># 2. read-only: simulate execution without fees or state change</div>
-<div class="t-cmd">sdkt call CA3D5KRYM6CB7OWQ6TWYRR3Z4T7ZQVNOOAX2TNQD2KDW35D2GFFQDBS5 get_count \
-  --network-profile testnet</div>
-<div class="t-out">Contract:  CA3D5KRYM6CB7OWQ6TWYRR3Z4T7ZQVNOOAX2TNQD2KDW35D2GFFQDBS5
-Function:  get_count
-Result:    42</div>
-        </div>
-      </div>
-
-      <div class="term">
-        <div class="term-bar">
-          <span class="term-title">static security audit</span>
-        </div>
-        <div class="term-body">
-<div class="t-cmd">sdkt audit contracts/token/src/lib.rs</div>
-<div class="t-out">Static Analysis Report: contracts/token/src/lib.rs
-Severity: 0 critical, 1 warning, 0 info (1 total)
-
-  [<span class="t-warn">warning</span>] MOVE-001  [Token::transfer:e]:
-  Local `e` in `Token::transfer` is used as a
-  call argument 4 times — possible move-after-use</div>
-<div class="t-out">&nbsp;</div>
-<div class="t-cmd">sdkt audit contracts/token/src/lib.rs --format json</div>
-<div class="t-out">{"findings":[{"rule_id":"<span class="t-k">MOVE-001</span>",
-"severity":"warning","message":"…",
-"location":"Token::transfer:e"}],
-"summary":{"critical":0,"warning":1,
-"info":0,"total":1}}</div>
-        </div>
-      </div>
-
-      <div class="term">
-        <div class="term-bar">
-          <span class="term-title">advanced transaction pipeline (step-by-step)</span>
-        </div>
-        <div class="term-body">
-<div class="t-comment"># 1. create a local signing identity (offline)</div>
-<div class="t-cmd">sdkt identity generate alice</div>
-<div class="t-comment"># 2. build an unsigned envelope (offline)</div>
-<div class="t-cmd">sdkt tx build \
-  --source &lt;SOURCE_ACCOUNT&gt; \
-  --sequence &lt;SEQ&gt; \
-  --contract &lt;CONTRACT_ID&gt; \
-  --function hello \
-  --output unsigned.xdr</div>
-<div class="t-comment"># 3. validate the envelope offline</div>
-<div class="t-cmd">sdkt tx validate --envelope unsigned.xdr</div>
-<div class="t-comment"># 4. simulate against the network (RPC)</div>
-<div class="t-cmd">sdkt tx simulate --envelope unsigned.xdr</div>
-<div class="t-comment"># 5. sign with the local identity (offline)</div>
-<div class="t-cmd">sdkt tx sign --input unsigned.xdr \
-  --output signed.xdr --identity alice \
-  --network testnet</div>
-<div class="t-comment"># 6. submit the signed envelope (RPC)</div>
-<div class="t-cmd">sdkt tx submit --envelope signed.xdr</div>
-        </div>
-      </div>
-
-      <div class="term">
-        <div class="term-bar">
-          <span class="term-title">account, events &amp; storage inspection</span>
-        </div>
-        <div class="term-body">
-<div class="t-comment"># fund an identity via testnet Friendbot faucet</div>
-<div class="t-cmd">sdkt identity fund alice --network-profile testnet</div>
-<div class="t-out">Funded identity 'alice' successfully.</div>
-<div class="t-out">&nbsp;</div>
-<div class="t-comment"># inspect account balances and signers</div>
-<div class="t-cmd">sdkt account GAAZI4TCR3TY5OJHCTJC2A4QSY6CJWJH5IAJTGKIN2ER7LBNVKOCCWN7 \
-  --network-profile testnet</div>
-<div class="t-out">Account:
-
-Address: GAAZI4TCR3TY5OJHCTJC2A4QSY6CJWJH5IAJTGKIN2ER7LBNVKOCCWN7
-Sequence: 123456789
-
-Balances:
-  Asset: native
-  Balance: 10000.0000000
-
-Signers:
-  Public Key: GAAZI4TCR3TY5OJHCTJC2A4QSY6CJWJH5IAJTGKIN2ER7LBNVKOCCWN7
-  Weight: 1</div>
-        </div>
-      </div>
-    </div>
-
-    <p class="note">Most commands accept <code>--format json</code> for scripting and CI
-      integration. Commands that need an RPC endpoint accept
-      <code>--rpc-url</code>, <code>--network-passphrase</code>, or a saved
-      <code>--network-profile</code>. For contract calls, <code>sdkt invoke</code> automates
-      the full transaction lifecycle, while the granular <code>sdkt tx *</code> commands
-      remain available for custom pipelines.</p>
-  </div>
-</section>
-
-<!-- ================= WHY ================= -->
-<section id="why">
-  <div class="wrap">
-    <div class="section-num">04</div><p class="eyebrow">Why Soroban DevKit</p>
-    <h2 class="h2">One CLI instead of a pile of scripts</h2>
-    <div class="two-col">
+<main id="main" class="relative mx-auto max-w-7xl px-6 pb-24">
+  <!-- HERO -->
+  <section id="top" class="pt-12 lg:pt-16">
+    <div class="grid gap-10 lg:grid-cols-[1fr_1.15fr] lg:items-start">
       <div>
-        <p>Soroban developers work across multiple development workflows including
-          contract inspection, invocation, XDR handling, storage and TTL management,
-          static security review, transaction simulation and signing, and deployment.</p>
-        <p>In practice that means context-switching across several CLI tools and
-          hand-written RPC scripts. Soroban DevKit brings the supported workflows
-          into a unified CLI with consistent flags, consistent
-          <code>--format json</code> output, and an offline-first default.</p>
-      </div>
-      <div>
-        <ul class="plain-list">
-          <li><strong>Offline-first.</strong> <code>decode</code>, <code>diff</code>,
-            <code>audit</code>, <code>wasm inspect</code>, and <code>tx sign</code>
-            need no RPC and no secrets leaving your machine.</li>
-          <li><strong>Upgrade safety as a gate.</strong> Breaking-change verdicts you
-            can run in CI before a contract upgrade ships.</li>
-          <li><strong>Scriptable.</strong> JSON output on most commands, plus shell
-            completions for bash, zsh, fish, powershell, and elvish.</li>
-          <li><strong>Extensible.</strong> The audit engine loads third-party rules as
-            sandboxed WASM plugins or native shared libraries.</li>
-        </ul>
-      </div>
-    </div>
-  </div>
-</section>
-
-<!-- ================= STELLAR / SOROBAN ================= -->
-<section id="stellar">
-  <div class="wrap">
-    <div class="section-num">05</div><p class="eyebrow">Stellar / Soroban</p>
-    <h2 class="h2">Built for the Soroban ecosystem</h2>
-    <div class="two-col">
-      <div>
-        <p>Soroban DevKit is built specifically for the Stellar Soroban developer
-          ecosystem. It speaks Stellar XDR natively, reads contract state through
-          the Soroban RPC interface, and enriches account data via Horizon.</p>
-        <p>Networks are addressed by named profile or explicit endpoint, with a
-          built-in testnet default and an explicit guard when targeting mainnet.</p>
-      </div>
-      <div>
-        <ul class="plain-list">
-          <li><strong>Soroban RPC.</strong> Contract inspection, storage and TTL
-            reads, events, contract invocation (invoke &amp; call), transaction
-            simulate/submit, fee statistics, and on-chain WASM metadata.</li>
-          <li><strong>Stellar XDR.</strong> <code>ScVal</code>,
-            <code>TransactionEnvelope</code>, and <code>ContractEvent</code> decoding,
-            plus typed envelope construction and ED25519 signing.</li>
-          <li><strong>Horizon.</strong> Account balances and signers via
-            <code>sdkt account</code>.</li>
-          <li><strong>Network profiles.</strong> Save an RPC URL, passphrase, and
-            Friendbot faucet once, reuse it from any RPC command.</li>
-        </ul>
-      </div>
-    </div>
-  </div>
-</section><!-- ================= INSTALL ================= -->
-<section id="install">
-  <div class="wrap">
-    <div class="section-num">06</div><p class="eyebrow">Installation</p>
-    <h2 class="h2">Running in under five minutes</h2>
-    <p class="lead">Pick an install method, verify, then run your first command.</p>
-
-    <div class="install-grid">
-      <div class="snip">
-        <div class="snip-head">
-          <span class="tag">curl · install.sh</span>
-          <button class="copy" data-copy="curl -fsSL https://raw.githubusercontent.com/SaboLabs/soroban-devkit/main/install.sh | bash">copy</button>
+        <p class="inline-flex items-center gap-2 rounded-full border border-accent/30 bg-accent/10 px-3 py-1 font-mono text-[11px] font-semibold uppercase tracking-[0.14em] text-accent">Open source · Built for Soroban</p>
+        <h1 class="mt-4 text-4xl font-extrabold leading-[1.08] tracking-tight text-white md:text-5xl">Build safer smart contracts, <span class="bg-gradient-to-r from-cyan-400 to-blue-500 bg-clip-text text-transparent">before they ship.</span></h1>
+        <p class="mt-5 max-w-lg text-slate-400">Fuzz, mutate, and verify your Soroban contracts on a real execution VM. Get minimal, reproducible findings built for developers who care about security.</p>
+        <div class="mt-7 flex flex-wrap gap-3">
+          <a href="#quickstart" class="rounded-lg bg-gradient-to-r from-accent to-electric px-5 py-2.5 font-semibold text-[#04121F] shadow-glow transition hover:brightness-110">Get Started <span aria-hidden="true">→</span></a>
+          <a href="docs.html" class="rounded-lg border border-[#0A1A2E] bg-[#000815] px-5 py-2.5 font-medium text-white backdrop-blur-md transition hover:bg-[#001020]">View Documentation <span aria-hidden="true">→</span></a>
         </div>
-        <pre><span class="c"># downloads the release binary for your OS/arch,
-# verifies its SHA-256 checksum, installs to ~/.local/bin</span>
+        <div class="mt-8 flex flex-wrap items-center gap-x-6 gap-y-2 border-t border-[#060D16] pt-6 font-mono text-xs text-slate-400">
+          <span class="inline-flex items-center gap-2"><svg class="h-3.5 w-3.5 text-accent" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 22s8-4 8-10V5a2 2 0 0 0-2-2H2a2 2 0 0 0-2 2v15c0 6 8 10 8 10z"/><path d="M9 12l2 2 4-4"/></svg>Open Source</span>
+          <span class="inline-flex items-center gap-2"><svg class="h-3.5 w-3.5 text-accent" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 12.79A9 9 0 1 1 14.21 3 9 9 0 0 0 21 12.79z"/></svg>Testnet Ready</span>
+          <span class="inline-flex items-center gap-2"><svg class="h-3.5 w-3.5 text-accent" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="16 18 22 12 16 6"/><polyline points="8 6 2 12 8 18"/></svg>Developer Focused</span>
+        </div>
+      </div>
+
+      <!-- dashboard mockup, PDF layout, real data -->
+      <div class="min-w-0">
+        <p class="mb-2 font-mono text-[10px] uppercase tracking-[0.14em] text-slate-500">Illustrative layout · real campaign output</p>
+        <div class="overflow-hidden rounded-2xl border border-[#0A1A2E] bg-[#000815] shadow-glow backdrop-blur-md">
+          <div class="flex items-center gap-3 border-b border-[#060D16] bg-[#010916] px-4 py-2.5">
+            <div class="flex gap-1.5" aria-hidden="true"><span class="h-2.5 w-2.5 rounded-full bg-[#ff5f57]"></span><span class="h-2.5 w-2.5 rounded-full bg-[#febc2e]"></span><span class="h-2.5 w-2.5 rounded-full bg-[#28ca42]"></span></div>
+            <span class="font-mono text-xs text-slate-500">Fuzzing Campaign</span>
+            <span class="ml-auto inline-flex items-center gap-1.5 rounded-full border border-[#34D399]/40 bg-[#34D399]/10 px-2 py-0.5 font-mono text-[10px] font-bold uppercase tracking-wider text-[#34D399]"><span class="h-1.5 w-1.5 rounded-full bg-[#34D399]"></span>Completed</span>
+          </div>
+
+          <div class="grid gap-0 sm:grid-cols-[150px_1fr]">
+            <aside class="border-b border-[#060D16] bg-[#000612] p-3 sm:border-b-0 sm:border-r" aria-hidden="true">
+              <p class="px-2 pb-2 font-mono text-[9px] uppercase tracking-[0.16em] text-slate-600">Campaign</p>
+              <a class="block rounded-md bg-accent/10 px-2 py-1.5 text-xs text-accent">Overview</a>
+              <a class="block rounded-md px-2 py-1.5 text-xs text-slate-400">Fuzzing</a>
+              <a class="block rounded-md px-2 py-1.5 text-xs text-slate-400">Mutations</a>
+              <a class="block rounded-md px-2 py-1.5 text-xs text-slate-400">Execution</a>
+              <a class="block rounded-md px-2 py-1.5 text-xs text-slate-400">Findings</a>
+              <a class="block rounded-md px-2 py-1.5 text-xs text-slate-400">Reports</a>
+              <p class="px-2 pb-2 pt-4 font-mono text-[9px] uppercase tracking-[0.16em] text-slate-600">Docs</p>
+              <a class="block rounded-md px-2 py-1.5 text-xs text-slate-400">CLI reference</a>
+              <a class="block rounded-md px-2 py-1.5 text-xs text-slate-400">Quickstart</a>
+            </aside>
+
+            <div class="min-w-0 space-y-3 p-4">
+              <div class="grid grid-cols-2 gap-2 sm:grid-cols-4">
+                <div class="rounded-lg border border-[#08131F] bg-[#010916] p-2.5"><p class="font-mono text-[9px] uppercase tracking-[0.12em] text-slate-500">Executed</p><p class="mt-0.5 font-mono text-xl font-bold tabular-nums text-white">4</p></div>
+                <div class="rounded-lg border border-[#08131F] bg-[#010916] p-2.5"><p class="font-mono text-[9px] uppercase tracking-[0.12em] text-slate-500">Passed</p><p class="mt-0.5 font-mono text-xl font-bold tabular-nums text-accent">2</p></div>
+                <div class="rounded-lg border border-[#08131F] bg-[#010916] p-2.5"><p class="font-mono text-[9px] uppercase tracking-[0.12em] text-slate-500">Findings</p><p class="mt-0.5 font-mono text-xl font-bold tabular-nums text-amber-400">2</p></div>
+                <div class="rounded-lg border border-[#08131F] bg-[#010916] p-2.5"><p class="font-mono text-[9px] uppercase tracking-[0.12em] text-slate-500">Minimized</p><p class="mt-0.5 font-mono text-xl font-bold tabular-nums text-[#34D399]">2</p></div>
+              </div>
+
+              <div class="flex flex-wrap items-center gap-1 rounded-lg border border-[#08131F] bg-[#010916] px-2.5 py-1.5 font-mono text-[10px]">
+                <b class="text-accent">Generate</b><span class="text-slate-600">→</span><b class="text-accent">Mutate</b><span class="text-slate-600">→</span><b class="text-accent">Execute</b><span class="text-slate-600">→</span><b class="text-accent">Detect</b><span class="text-slate-600">→</span><b class="text-accent">Minimize</b><span class="text-slate-600">→</span><b class="text-accent">Replay</b>
+              </div>
+
+              <div class="rounded-lg border border-[#08131F] bg-[#000612] p-3 font-mono text-[11px] leading-6 shadow-[0_0_40px_rgba(6,182,212,0.1)]">
+                <div class="text-accent">$ sdkt fuzz campaign us_new.wasm --seed 42 --cases 4 --expect-error hello:Auth:6</div>
+                <div class="text-slate-400">executed=4 passed=2 expected_errors=0 findings=2 skipped=0</div>
+                <div class="text-[#34D399]">evidence: completed=true minimized=2 deterministic=true</div>
+              </div>
+
+              <div>
+                <p class="pb-1.5 font-mono text-[9px] uppercase tracking-[0.12em] text-slate-500">Findings — declaration mismatches, not vulnerability claims</p>
+                <div class="space-y-1.5">
+                  <div class="flex items-center gap-2 rounded-lg border border-[#08131F] bg-[#010916] px-2.5 py-1.5 text-[11px]">
+                    <span class="font-mono text-slate-500">case0000</span>
+                    <span class="font-mono font-semibold text-white">RETURN_MISMATCH</span>
+                    <span class="font-mono text-slate-400">hello</span>
+                    <span class="ml-auto rounded-full border border-[#F59E0B]/40 bg-[#F59E0B]/10 px-2 py-0.5 font-mono text-[9px] font-bold text-[#F59E0B]">REPRODUCED</span>
+                  </div>
+                  <div class="flex items-center gap-2 rounded-lg border border-[#08131F] bg-[#010916] px-2.5 py-1.5 text-[11px]">
+                    <span class="font-mono text-slate-500">case0002</span>
+                    <span class="font-mono font-semibold text-white">RETURN_MISMATCH</span>
+                    <span class="font-mono text-slate-400">hello</span>
+                    <span class="ml-auto rounded-full border border-[#34D399]/40 bg-[#34D399]/10 px-2 py-0.5 font-mono text-[9px] font-bold text-[#34D399]">MINIMIZED×10</span>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+        <p class="mt-2 font-mono text-[10px] text-slate-500">Values from a real offline run against this repository's <code class="text-accent">us_new.wasm</code> fixture.</p>
+      </div>
+    </div>
+  </section>
+
+  <!-- FEATURE STRIP -->
+  <section id="features" class="mt-16 border-t border-[#060D16] pt-12">
+    <div class="grid gap-6 sm:grid-cols-2 lg:grid-cols-4">
+      <div class="rounded-2xl border border-[#0A1A2E] bg-[#000815] p-6 backdrop-blur-md transition-colors hover:bg-[#001020]">
+        <svg class="h-5 w-5 text-accent" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polygon points="5 3 19 12 5 21 5 3"/></svg>
+        <h3 class="mt-3 font-semibold text-white">Fuzz Testing</h3>
+        <p class="mt-1.5 text-sm text-slate-400">Find edge cases and unexpected behavior with deterministic campaigns in an isolated host.</p>
+      </div>
+      <div class="rounded-2xl border border-[#0A1A2E] bg-[#000815] p-6 backdrop-blur-md transition-colors hover:bg-[#001020]">
+        <svg class="h-5 w-5 text-accent" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3l8 3v6c0 5-3.4 8-8 9-4.6-1-8-4-8-9V5z"/><path d="M9 12l2.2 2.2L15.5 10"/></svg>
+        <h3 class="mt-3 font-semibold text-white">Artifact Security</h3>
+        <p class="mt-1.5 text-sm text-slate-400">Graded findings from the compiled WASM — spec surface, build provenance, upgrade compatibility.</p>
+      </div>
+      <div class="rounded-2xl border border-[#0A1A2E] bg-[#000815] p-6 backdrop-blur-md transition-colors hover:bg-[#001020]">
+        <svg class="h-5 w-5 text-accent" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 8h11a4 4 0 010 8H9"/><path d="M12 5l3 3-3 3"/><path d="M12 13l-3 3 3 3"/></svg>
+        <h3 class="mt-3 font-semibold text-white">Upgrade Safety</h3>
+        <p class="mt-1.5 text-sm text-slate-400">Offline WASM-to-WASM diff with a breaking-change verdict and operator-supplied size policies.</p>
+      </div>
+      <div class="rounded-2xl border border-[#0A1A2E] bg-[#000815] p-6 backdrop-blur-md transition-colors hover:bg-[#001020]">
+        <svg class="h-5 w-5 text-accent" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/><polyline points="3.27 6.96 12 12.01 20.73 6.96"/><line x1="12" y1="22.08" x2="12" y2="12"/></svg>
+        <h3 class="mt-3 font-semibold text-white">Release Assurance</h3>
+        <p class="mt-1.5 text-sm text-slate-400">Artifact, audit, upgrade, deployed verification, and health in one read-only verdict.</p>
+      </div>
+    </div>
+  </section>
+
+  <!-- WORKFLOW -->
+  <section id="workflow" class="mt-20">
+    <div class="grid gap-8 lg:grid-cols-[1fr_1fr] lg:items-end">
+      <div>
+        <p class="font-mono text-[11px] uppercase tracking-[0.16em] text-accent">The workflow</p>
+        <h2 class="mt-2 text-3xl font-bold tracking-tight text-white">From fuzz to confidence.</h2>
+      </div>
+      <p class="text-slate-400">Six stages, zero network. Runs entirely inside an in-memory Soroban host — your compiled WASM never leaves your machine.</p>
+    </div>
+
+    <ol class="mt-8 grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-6" role="list">
+      <li class="rounded-xl border border-[#0A1A2E] bg-[#000815] p-4 backdrop-blur-md"><span class="font-mono text-[10px] font-bold text-accent">01</span><p class="mt-1 text-sm font-semibold text-white">Generate</p><p class="mt-1 text-[11px] leading-snug text-slate-500">Typed vectors from the contract spec</p></li>
+      <li class="rounded-xl border border-[#0A1A2E] bg-[#000815] p-4 backdrop-blur-md"><span class="font-mono text-[10px] font-bold text-accent">02</span><p class="mt-1 text-sm font-semibold text-white">Mutate</p><p class="mt-1 text-[11px] leading-snug text-slate-500">Deterministic semantic mutation</p></li>
+      <li class="rounded-xl border border-[#0A1A2E] bg-[#000815] p-4 backdrop-blur-md"><span class="font-mono text-[10px] font-bold text-accent">03</span><p class="mt-1 text-sm font-semibold text-white">Execute</p><p class="mt-1 text-[11px] leading-snug text-slate-500">Real host, live budget counters</p></li>
+      <li class="rounded-xl border border-[#0A1A2E] bg-[#000815] p-4 backdrop-blur-md"><span class="font-mono text-[10px] font-bold text-accent">04</span><p class="mt-1 text-sm font-semibold text-white">Detect</p><p class="mt-1 text-[11px] leading-snug text-slate-500">Oracle vs declared expectations</p></li>
+      <li class="rounded-xl border border-[#0A1A2E] bg-[#000815] p-4 backdrop-blur-md"><span class="font-mono text-[10px] font-bold text-accent">05</span><p class="mt-1 text-sm font-semibold text-white">Minimize</p><p class="mt-1 text-[11px] leading-snug text-slate-500">Smallest reproducing sequence</p></li>
+      <li class="rounded-xl border border-[#0A1A2E] bg-[#000815] p-4 backdrop-blur-md"><span class="font-mono text-[10px] font-bold text-accent">06</span><p class="mt-1 text-sm font-semibold text-white">Replay</p><p class="mt-1 text-[11px] leading-snug text-slate-500">Byte-identical, separate process</p></li>
+    </ol>
+
+    <div class="mt-6 grid gap-6 lg:grid-cols-3">
+      <div class="overflow-hidden rounded-2xl border border-[#0A1A2E] bg-[#000815]">
+        <div class="flex items-center justify-between border-b border-[#060D16] bg-[#010916] px-4 py-2 font-mono text-[11px]"><span class="text-slate-300">us_new.wasm</span><span class="rounded border border-[#0A1A2E] px-1.5 py-0.5 text-[9px] uppercase tracking-wider text-accent">Soroban</span></div>
+        <pre class="overflow-x-auto p-4 font-mono text-[11px] leading-6 text-slate-300"><code><span class="text-accent">#[contract]</span>
+<span class="text-accent">pub</span> <span class="text-accent">struct</span> Counter;
+
+<span class="text-accent">#[contractimpl]</span>
+<span class="text-accent">impl</span> Counter {
+    <span class="text-accent">pub</span> <span class="text-accent">fn</span> increment(env: <span class="text-accent">Env</span>, id: <span class="text-accent">u32</span>) -&gt; <span class="text-accent">u32</span> {
+        <span class="text-slate-600">// a real export in the repo fixture</span>
+    }
+}</code></pre>
+      </div>
+
+      <div class="overflow-hidden rounded-2xl border border-[#0A1A2E] bg-[#000815]">
+        <div class="flex items-center justify-between border-b border-[#060D16] bg-[#010916] px-4 py-2 font-mono text-[11px]"><span class="text-slate-300">Fuzzing result</span><span class="rounded-full border border-[#34D399]/40 bg-[#34D399]/10 px-2 py-0.5 text-[9px] font-bold text-[#34D399]">deterministic=true</span></div>
+        <div class="p-4">
+          <p class="font-mono text-xs text-slate-400">4 cases · 2 passed · 2 findings · 0 crashes</p>
+          <ul class="mt-3 divide-y divide-white/5">
+            <li class="flex items-center justify-between py-2 text-xs"><span class="font-mono text-white">RETURN_MISMATCH</span><span class="rounded-full border border-[#F59E0B]/40 bg-[#F59E0B]/10 px-2 py-0.5 font-mono text-[9px] font-bold text-[#F59E0B]">warning</span></li>
+            <li class="flex items-center justify-between py-2 text-xs"><span class="font-mono text-white">REPRODUCED</span><span class="rounded-full border border-[#34D399]/40 bg-[#34D399]/10 px-2 py-0.5 font-mono text-[9px] font-bold text-[#34D399]">ok</span></li>
+          </ul>
+        </div>
+      </div>
+
+      <div class="overflow-hidden rounded-2xl border border-[#0A1A2E] bg-[#000815]">
+        <div class="flex items-center justify-between border-b border-[#060D16] bg-[#010916] px-4 py-2 font-mono text-[11px]"><span class="text-slate-300">Reproduce</span><span class="rounded border border-[#0A1A2E] px-1.5 py-0.5 text-[9px] uppercase tracking-wider text-accent">offline</span></div>
+        <pre class="overflow-x-auto p-4 font-mono text-[11px] leading-6 text-slate-300"><code><span class="text-accent">$ sdkt fuzz replay \</span>
+    artifacts/finding-case0000-return_mismatch.json \
+    --wasm us_new.wasm
+
+<span class="text-[#34D399]">REPRODUCED</span> reason=RETURN_MISMATCH
+canonical=819a2af1…37541</code></pre>
+      </div>
+    </div>
+
+    <p class="mt-5 max-w-3xl text-xs leading-relaxed text-slate-500">A finding is evidence of a declaration mismatch, not a vulnerability claim. Full method: <a class="text-accent hover:underline" href="https://github.com/SaboLabs/soroban-devkit/blob/main/docs/reference/fuzz-real-contract-evidence.md" rel="noopener">fuzz-real-contract-evidence.md</a>.</p>
+  </section>
+
+  <!-- EVIDENCE -->
+  <section id="evidence" class="mt-20">
+    <div class="grid gap-8 lg:grid-cols-[1fr_1fr] lg:items-end">
+      <div>
+        <p class="font-mono text-[11px] uppercase tracking-[0.16em] text-accent">Evidence</p>
+        <h2 class="mt-2 text-3xl font-bold tracking-tight text-white">Verifiable claims only.</h2>
+      </div>
+      <p class="text-slate-400">Every number and version on this page has a source you can check. Nothing here is estimated, projected, or illustrative unless it says so.</p>
+    </div>
+    <div class="mt-8 grid gap-6 sm:grid-cols-2 lg:grid-cols-4">
+      <div class="rounded-2xl border border-[#0A1A2E] bg-[#000815] p-6 backdrop-blur-md">
+        <p class="font-mono text-[10px] uppercase tracking-[0.12em] text-slate-500">CLI commands</p>
+        <p class="mt-1 font-mono text-3xl font-bold tabular-nums text-white">32</p>
+        <p class="mt-1 font-mono text-[11px] text-slate-500">decode → deploy → verify</p>
+      </div>
+      <div class="rounded-2xl border border-[#0A1A2E] bg-[#000815] p-6 backdrop-blur-md">
+        <p class="font-mono text-[10px] uppercase tracking-[0.12em] text-slate-500">Audit rules</p>
+        <p class="mt-1 font-mono text-3xl font-bold tabular-nums text-white">7</p>
+        <p class="mt-1 font-mono text-[11px] text-slate-500">AUTH-001…004 · MOVE · MATH · CEI</p>
+      </div>
+      <div class="rounded-2xl border border-[#0A1A2E] bg-[#000815] p-6 backdrop-blur-md">
+        <p class="font-mono text-[10px] uppercase tracking-[0.12em] text-slate-500">Fuzz replay</p>
+        <p class="mt-1 font-mono text-3xl font-bold tabular-nums text-white">68/68</p>
+        <p class="mt-1 font-mono text-[11px] text-slate-500">REPRODUCED · zero mismatches</p>
+      </div>
+      <div class="rounded-2xl border border-[#0A1A2E] bg-[#000815] p-6 backdrop-blur-md">
+        <p class="font-mono text-[10px] uppercase tracking-[0.12em] text-slate-500">Host engine</p>
+        <p class="mt-1 font-mono text-3xl font-bold tabular-nums text-white">28.0.2</p>
+        <p class="mt-1 font-mono text-[11px] text-slate-500">soroban-env-host · protocol 28</p>
+      </div>
+    </div>
+  </section>
+
+  <!-- QUICKSTART -->
+  <section id="quickstart" class="mt-20">
+    <div class="grid gap-8 lg:grid-cols-[1fr_1fr] lg:items-end">
+      <div>
+        <p class="font-mono text-[11px] uppercase tracking-[0.16em] text-accent">Quickstart</p>
+        <h2 class="mt-2 text-3xl font-bold tracking-tight text-white">First check in under five minutes.</h2>
+      </div>
+      <p class="text-slate-400">All four steps run offline. No RPC, no account, no network.</p>
+    </div>
+    <div class="mt-8 grid gap-6 lg:grid-cols-3">
+      <div class="overflow-hidden rounded-2xl border border-[#0A1A2E] bg-[#000815] lg:col-span-2">
+        <div class="flex items-center justify-between border-b border-[#060D16] bg-[#010916] px-4 py-2 font-mono text-[11px]"><span class="text-slate-300">install · inspect · audit · fuzz</span><span class="rounded border border-[#0A1A2E] px-1.5 py-0.5 text-[9px] uppercase tracking-wider text-accent">offline</span></div>
+        <pre class="overflow-x-auto p-4 font-mono text-[11px] leading-7 text-slate-300"><code><span class="text-slate-600"># 1. install (pick one)</span>
 curl -fsSL https://raw.githubusercontent.com/SaboLabs/soroban-devkit/main/install.sh | bash
-<span class="c"># verify</span>
-sdkt --version</pre>
+<span class="text-slate-600"># or: cargo install sdkt-cli</span>
+
+<span class="text-slate-600"># 2. inspect a contract WASM</span>
+sdkt wasm inspect crates/sdkt-cli/tests/fixtures/us_old.wasm
+
+<span class="text-slate-600"># 3. audit contract source</span>
+sdkt audit examples/sample_token/src/lib.rs
+<span class="text-slate-600"># -&gt; [critical] AUTH-001 [SampleToken::admin_action]</span>
+
+<span class="text-slate-600"># 4. first fuzz campaign</span>
+sdkt fuzz campaign crates/sdkt-cli/tests/fixtures/us_new.wasm --seed 42 --cases 4</code></pre>
       </div>
-      <div class="snip">
-        <div class="snip-head">
-          <span class="tag">crates.io · cargo install sdkt-cli</span>
-          <button class="copy" data-copy="cargo install sdkt-cli">copy</button>
-        </div>
-        <pre><span class="c"># requires Rust 1.88.0+</span>
-cargo install sdkt-cli
-
-<span class="c"># build from source</span>
-git clone https://github.com/SaboLabs/soroban-devkit
-cd soroban-devkit
-cargo install --path crates/sdkt-cli</pre>
-      </div>
-    </div>
-
-    <p class="note">Verify the install with <code>sdkt --version</code>, then explore
-      the full command set with <code>sdkt --help</code>. Shell completions for
-      bash, zsh, fish, powershell, and elvish are generated with
-      <code>sdkt completions</code>. The crates.io package is named
-      <code>sdkt-cli</code>; when its published version trails the GitHub release,
-      use <code>install.sh</code> or build from source to get v2.7.0.</p>
-  </div>
-</section>
-
-<!-- ================= OPEN SOURCE ================= -->
-<section id="opensource">
-  <div class="wrap">
-    <div class="section-num">07</div><p class="eyebrow">Open Source</p>
-    <h2 class="h2">Transparent by default</h2>
-    <p class="lead">A public repository, MIT license, an 8-crate Rust workspace,
-      documented milestones, and a CI pipeline that runs the full test suite on
-      every change. No telemetry, no account, no SaaS dependency — the CLI is a
-      standalone binary.</p>
-    <div class="opensource-meta">
-      <span><span class="label">lang</span>Rust · edition 2021 · MSRV 1.88</span>
-      <span class="sep">·</span>
-      <span><span class="label">ecosystem</span><a href="https://stellar.org" rel="noopener">Stellar</a> / <a href="https://soroban.stellar.org" rel="noopener">Soroban</a></span>
-      <span class="sep">·</span>
-      <span><span class="label">license</span><a href="https://github.com/SaboLabs/soroban-devkit/blob/main/LICENSE">MIT</a></span>
-      <span class="sep">·</span>
-      <span><span class="label">crates</span>8-crate workspace</span>
-      <span class="sep">·</span>
-      <span><span class="label">mode</span>offline-first CLI</span>
-    </div>
-  </div>
-</section>
-
-<!-- ================= COMMUNITY ================= -->
-<section id="community">
-  <div class="wrap">
-    <div class="cta">
-      <div class="section-num">08</div><p class="eyebrow" style="margin-bottom:0.4rem">Community &amp; Contribution</p>
-      <h3>Try sdkt. Break it. Tell us what you found.</h3>
-      <p>Real developer usage and feedback is exactly what this project needs right
-        now. Open an issue for a bug or a missing feature, submit feedback on the
-        workflows, and contribute — docs, tests, and small fixes all count.</p>
-      <div class="btns">
-        <a class="btn btn-primary" href="https://github.com/SaboLabs/soroban-devkit" rel="noopener">View the Repository</a>
-        <a class="btn btn-ghost" href="https://github.com/SaboLabs/soroban-devkit/issues" rel="noopener">Open an Issue</a>
-        <a class="btn btn-ghost" href="https://github.com/SaboLabs/soroban-devkit/blob/main/CONTRIBUTING.md" rel="noopener">CONTRIBUTING.md</a>
-      </div>
-    </div>
-  </div>
-</section></main>
-
-<footer>
-  <div class="wrap">
-    <div class="foot-in">
-      <div class="foot-brand">
-        <span class="foot-logo" aria-hidden="true"></span>
-        Soroban DevKit
-        <p>Open-source developer tooling for Stellar Soroban.</p>
-      </div>
-      <div class="foot-links">
-        <div class="foot-col">
-          <h4>Project</h4>
-          <a href="https://github.com/SaboLabs/soroban-devkit" rel="noopener">GitHub</a>
-          <a href="https://github.com/SaboLabs/soroban-devkit/releases" rel="noopener">Releases</a>
-          <a href="https://github.com/SaboLabs/soroban-devkit/blob/main/CHANGELOG.md" rel="noopener">Changelog</a>
-          <a href="https://github.com/SaboLabs/soroban-devkit/blob/main/LICENSE" rel="noopener">License (MIT)</a>
-        </div>
-        <div class="foot-col">
-          <h4>Documentation</h4>
-          <a href="https://github.com/SaboLabs/soroban-devkit/blob/main/docs/getting-started/quick-start.md" rel="noopener">Quick Start</a>
-          <a href="https://github.com/SaboLabs/soroban-devkit/blob/main/docs/getting-started/testnet-walkthrough.md" rel="noopener">Testnet Walkthrough</a>
-          <a href="https://github.com/SaboLabs/soroban-devkit/blob/main/docs/getting-started/installation.md" rel="noopener">Installation</a>
-          <a href="https://github.com/SaboLabs/soroban-devkit/blob/main/docs/reference/cli.md" rel="noopener">CLI Reference</a>
-          <a href="https://github.com/SaboLabs/soroban-devkit/blob/main/docs/reference/agent.md" rel="noopener">sdkt-agent Guide</a>
-          <a href="https://github.com/SaboLabs/soroban-devkit/blob/main/docs/getting-started/examples.md" rel="noopener">Examples</a>
-          <a href="https://github.com/SaboLabs/soroban-devkit/blob/main/docs/getting-started/quick-start.md" rel="noopener">Quick Start</a>
-          <a href="https://github.com/SaboLabs/soroban-devkit/blob/main/docs/getting-started/installation.md" rel="noopener">Installation</a>
-          <a href="https://github.com/SaboLabs/soroban-devkit/blob/main/docs/getting-started/getting-started.md" rel="noopener">Getting Started</a>
-          <a href="https://github.com/SaboLabs/soroban-devkit/blob/main/docs/getting-started/examples.md" rel="noopener">Examples</a>
-          <a href="https://github.com/SaboLabs/soroban-devkit/blob/main/docs/reference/cli.md" rel="noopener">CLI Reference</a>
-          <a href="https://github.com/SaboLabs/soroban-devkit/blob/main/docs/plugins/plugin-authoring.md" rel="noopener">Plugin Authoring</a>
-        </div>
-        <div class="foot-col">
-          <h4>Community</h4>
-          <a href="https://github.com/SaboLabs/soroban-devkit/issues" rel="noopener">Issues</a>
-          <a href="https://github.com/SaboLabs/soroban-devkit/blob/main/CONTRIBUTING.md" rel="noopener">Contributing</a>
-          <a href="https://github.com/SaboLabs/soroban-devkit/blob/main/SECURITY.md" rel="noopener">Security Policy</a>
-          <a href="https://github.com/SaboLabs/soroban-devkit/blob/main/CODE_OF_CONDUCT.md" rel="noopener">Code of Conduct</a>
+      <div class="flex flex-col justify-center rounded-2xl border border-[#0A1A2E] bg-[#000815] p-6 backdrop-blur-md">
+        <h3 class="font-semibold text-white">Need the full reference?</h3>
+        <p class="mt-2 text-sm text-slate-400">Installation paths, CLI tree, exit codes, audit rules, and CI/CD integration are all documented.</p>
+        <div class="mt-5 flex flex-wrap gap-3">
+          <a href="docs.html" class="rounded-lg bg-gradient-to-r from-accent to-electric px-4 py-2 text-sm font-semibold text-[#04121F] shadow-glow transition hover:brightness-110">Documentation <span aria-hidden="true">→</span></a>
+          <a href="examples.html" class="rounded-lg border border-[#0A1A2E] bg-[#000815] px-4 py-2 text-sm font-medium text-white transition hover:bg-[#001020]">Examples <span aria-hidden="true">→</span></a>
         </div>
       </div>
     </div>
-    <div class="foot-bot">
+  </section>
+
+  <!-- CTA -->
+  <section id="next" class="mt-20">
+    <div class="rounded-3xl border border-[#0A1A2E] bg-gradient-to-br from-accent/10 via-transparent to-electric/5 p-10 text-center backdrop-blur-md">
+      <h2 class="text-3xl font-bold tracking-tight text-white">Run your first check.</h2>
+      <p class="mx-auto mt-3 max-w-xl text-slate-400">Install the binary, inspect a fixture, run an audit — all offline, all under five minutes.</p>
+      <div class="mt-7 flex flex-wrap justify-center gap-3">
+        <a href="#quickstart" class="rounded-lg bg-gradient-to-r from-accent to-electric px-5 py-2.5 font-semibold text-[#04121F] shadow-glow transition hover:brightness-110">Get Started <span aria-hidden="true">→</span></a>
+        <a href="https://github.com/SaboLabs/soroban-devkit" rel="noopener" class="rounded-lg border border-[#0A1A2E] bg-[#000815] px-5 py-2.5 font-medium text-white transition hover:bg-[#001020]">View the Repository <span aria-hidden="true">→</span></a>
+      </div>
+    </div>
+  </section>
+</main>
+
+<footer class="border-t border-[#060D16] bg-[#010916]">
+  <div class="mx-auto max-w-7xl px-6 py-10">
+    <div class="grid gap-8 md:grid-cols-[1.5fr_1fr_1fr_1fr]">
+      <div>
+        <div class="flex items-center gap-2.5">
+          <img src="logo.svg" alt="Soroban DevKit" class="h-8 w-8" aria-hidden="true">
+          <span class="font-semibold text-white">Soroban DevKit</span>
+        </div>
+        <p class="mt-3 max-w-xs text-sm text-slate-500">Release assurance for Stellar Soroban smart contracts.</p>
+      </div>
+      <div>
+        <h4 class="font-mono text-[10px] uppercase tracking-[0.14em] text-slate-500">Project</h4>
+        <ul class="mt-3 space-y-2 text-sm">
+          <li><a href="https://github.com/SaboLabs/soroban-devkit" rel="noopener" class="text-slate-400 transition hover:text-accent">GitHub</a></li>
+          <li><a href="https://github.com/SaboLabs/soroban-devkit/releases" rel="noopener" class="text-slate-400 transition hover:text-accent">Releases</a></li>
+          <li><a href="https://github.com/SaboLabs/soroban-devkit/blob/main/CHANGELOG.md" rel="noopener" class="text-slate-400 transition hover:text-accent">Changelog</a></li>
+          <li><a href="https://github.com/SaboLabs/soroban-devkit/blob/main/LICENSE" rel="noopener" class="text-slate-400 transition hover:text-accent">License (MIT)</a></li>
+        </ul>
+      </div>
+      <div>
+        <h4 class="font-mono text-[10px] uppercase tracking-[0.14em] text-slate-500">Documentation</h4>
+        <ul class="mt-3 space-y-2 text-sm">
+          <li><a href="features.html" class="text-slate-400 transition hover:text-accent">Features</a></li>
+          <li><a href="docs.html" class="text-slate-400 transition hover:text-accent">Docs</a></li>
+          <li><a href="examples.html" class="text-slate-400 transition hover:text-accent">Examples</a></li>
+          <li><a href="blog.html" class="text-slate-400 transition hover:text-accent">Blog</a></li>
+          <li><a href="playground/" class="text-slate-400 transition hover:text-accent">Web Playground</a></li>
+        </ul>
+      </div>
+      <div>
+        <h4 class="font-mono text-[10px] uppercase tracking-[0.14em] text-slate-500">Community</h4>
+        <ul class="mt-3 space-y-2 text-sm">
+          <li><a href="https://github.com/SaboLabs/soroban-devkit/issues" rel="noopener" class="text-slate-400 transition hover:text-accent">Issues</a></li>
+          <li><a href="https://github.com/SaboLabs/soroban-devkit/blob/main/CONTRIBUTING.md" rel="noopener" class="text-slate-400 transition hover:text-accent">Contributing</a></li>
+          <li><a href="https://github.com/SaboLabs/soroban-devkit/blob/main/SECURITY.md" rel="noopener" class="text-slate-400 transition hover:text-accent">Security Policy</a></li>
+        </ul>
+      </div>
+    </div>
+    <div class="mt-10 flex flex-col gap-2 border-t border-[#060D16] pt-6 font-mono text-[11px] text-slate-600 md:flex-row md:items-center md:justify-between">
       <span>Soroban DevKit v2.7.0 · MIT License</span>
       <span>Not affiliated with the Stellar Development Foundation.</span>
     </div>
   </div>
 </footer>
-
-<script>
-document.addEventListener('click', function (e) {
-  var b = e.target.closest('.copy');
-  if (!b) return;
-  navigator.clipboard.writeText(b.dataset.copy).then(function () {
-    var t = b.textContent;
-    b.textContent = 'copied';
-    setTimeout(function () { b.textContent = t; }, 1200);
-  });
-});
-</script>
 </body>
 </html>
