@@ -2729,3 +2729,102 @@ fn gap_batch_multi_key_atomic_abort() {
     // Baseline was not modified (passed by ref).
     assert_eq!(baseline.data_entries[0].last_modified_ledger_seq, 10);
 }
+
+// ---------------------------------------------------------------------------
+// LedgerEntryExt::V1 investigation: is full equality a false positive?
+// ---------------------------------------------------------------------------
+
+/// Build a ContractData entry with `ext: V1(sponsoring_id)`.
+fn contract_data_entry_v1(
+    key: stellar_xdr::LedgerKey,
+    seq: u32,
+    sponsor: Option<stellar_xdr::AccountId>,
+) -> stellar_xdr::LedgerEntry {
+    let cd = match &key {
+        stellar_xdr::LedgerKey::ContractData(d) => d.clone(),
+        _ => panic!("helper requires a ContractData key"),
+    };
+    stellar_xdr::LedgerEntry {
+        last_modified_ledger_seq: seq,
+        data: stellar_xdr::LedgerEntryData::ContractData(stellar_xdr::ContractDataEntry {
+            ext: stellar_xdr::ExtensionPoint::V0,
+            contract: cd.contract.clone(),
+            key: cd.key.clone(),
+            durability: cd.durability,
+            val: stellar_xdr::ScVal::U32(seq),
+        }),
+        ext: stellar_xdr::LedgerEntryExt::V1(stellar_xdr::LedgerEntryExtensionV1 {
+            sponsoring_id: stellar_xdr::SponsorshipDescriptor(sponsor),
+            ext: stellar_xdr::LedgerEntryExtensionV1Ext::V0,
+        }),
+    }
+}
+
+/// Two entries with identical data but different sponsorship representation
+/// are NOT equal under full `PartialEq`. This documents the representation
+/// difference; it does NOT claim it is a false positive in the chaining flow.
+#[test]
+fn ext_v1_sponsorship_difference_is_not_equal_under_full_equality() {
+    let key = storage_key_xdr();
+    let sponsor_a = stellar_xdr::AccountId(stellar_xdr::PublicKey::PublicKeyTypeEd25519(
+        stellar_xdr::Uint256([1; 32]),
+    ));
+    let sponsor_b = stellar_xdr::AccountId(stellar_xdr::PublicKey::PublicKeyTypeEd25519(
+        stellar_xdr::Uint256([2; 32]),
+    ));
+
+    let v1_a = contract_data_entry_v1(key.clone(), 10, Some(sponsor_a));
+    let v1_b = contract_data_entry_v1(key.clone(), 10, Some(sponsor_b));
+    let v0 = contract_data_entry(key.clone(), 10);
+
+    // Full equality distinguishes them.
+    assert_ne!(v1_a, v1_b, "different sponsors are not equal");
+    assert_ne!(v1_a, v0, "V1 with sponsor is not equal to V0");
+    assert_ne!(v1_b, v0, "V1 with sponsor is not equal to V0");
+
+    // But the *logical contract state* (key + val) is identical.
+    assert_eq!(v1_a.to_key(), v1_b.to_key());
+    assert_eq!(v1_a.to_key(), v0.to_key());
+    assert_eq!(v1_a.data, v1_b.data);
+    assert_eq!(v1_a.data, v0.data);
+    assert_eq!(v1_a.last_modified_ledger_seq, v1_b.last_modified_ledger_seq);
+    assert_eq!(v1_a.last_modified_ledger_seq, v0.last_modified_ledger_seq);
+}
+
+/// The chaining function rejects an `Updated` row whose `before` carries a
+/// different sponsorship representation than the baseline entry. This is the
+/// behavior under investigation — documented, not asserted as correct.
+#[test]
+fn ext_v1_baseline_mismatch_is_rejected() {
+    let key = storage_key_xdr();
+    let sponsor_a = stellar_xdr::AccountId(stellar_xdr::PublicKey::PublicKeyTypeEd25519(
+        stellar_xdr::Uint256([1; 32]),
+    ));
+    let sponsor_b = stellar_xdr::AccountId(stellar_xdr::PublicKey::PublicKeyTypeEd25519(
+        stellar_xdr::Uint256([2; 32]),
+    ));
+
+    // Baseline holds V1 with sponsor_a; RPC row reports before = V1 with
+    // sponsor_b (same data, different sponsorship).
+    let baseline = sdkt_fuzz::SequenceState {
+        data_entries: vec![contract_data_entry_v1(key.clone(), 10, Some(sponsor_a))],
+        instance_storage: vec![],
+    };
+    let row = sdkt_fuzz::state_capture::DecodedStateChange {
+        key_b64: sdkt_fuzz::state_capture::encode_key(&key).expect("encodes"),
+        kind: sdkt_fuzz::state_capture::StateChangeKind::Updated,
+        before: Some(contract_data_entry_v1(
+            key.clone(),
+            10,
+            Some(sponsor_b.clone()),
+        )),
+        after: Some(contract_data_entry_v1(key, 20, Some(sponsor_b))),
+    };
+
+    let err = sdkt_fuzz::state_changes_into_sequence_state(&baseline, &[row])
+        .expect_err("sponsorship difference is rejected");
+    assert!(
+        matches!(err, sdkt_fuzz::ChainError::BaselineMismatch { .. }),
+        "got: {err:?}"
+    );
+}
