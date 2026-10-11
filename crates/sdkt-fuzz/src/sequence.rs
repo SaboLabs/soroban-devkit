@@ -255,6 +255,17 @@ pub enum ChainError {
     UnsupportedEntry { key_b64: String },
     /// The row's `after` value does not decode to the key the row reports.
     KeyMismatch { key_b64: String },
+    /// The row's `before` value does not match the entry the baseline holds
+    /// for that key, or the key is absent from / already present in the
+    /// baseline contrary to the row's kind.
+    ///
+    /// `kind` is the RPC-reported change kind (`created` / `updated` /
+    /// `deleted`); `detail` names the specific inconsistency.
+    BaselineMismatch {
+        key_b64: String,
+        kind: String,
+        detail: String,
+    },
 }
 
 impl std::fmt::Display for ChainError {
@@ -271,6 +282,14 @@ impl std::fmt::Display for ChainError {
             ChainError::KeyMismatch { key_b64 } => write!(
                 f,
                 "stateChanges row {key_b64} decodes to a different key than reported"
+            ),
+            ChainError::BaselineMismatch {
+                key_b64,
+                kind,
+                detail,
+            } => write!(
+                f,
+                "stateChanges {kind} row {key_b64} is inconsistent with the baseline: {detail}"
             ),
         }
     }
@@ -326,9 +345,61 @@ pub fn state_changes_into_sequence_state(
                 key_b64: change.key_b64.clone(),
             });
         };
+        let baseline_entry = out.data_entries.iter().find(|e| e.to_key() == key);
         match change.kind {
-            crate::state_capture::StateChangeKind::Created
-            | crate::state_capture::StateChangeKind::Updated => {
+            crate::state_capture::StateChangeKind::Created => {
+                if baseline_entry.is_some() {
+                    return Err(ChainError::BaselineMismatch {
+                        key_b64: change.key_b64.clone(),
+                        kind: "created".into(),
+                        detail: "key already exists in the baseline".into(),
+                    });
+                }
+                let after = change.after.as_ref().ok_or(ChainError::UnsupportedEntry {
+                    key_b64: change.key_b64.clone(),
+                })?;
+                if after.to_key() != key {
+                    return Err(ChainError::KeyMismatch {
+                        key_b64: change.key_b64.clone(),
+                    });
+                }
+                let LedgerEntryData::ContractData(_) = &after.data else {
+                    return Err(ChainError::UnsupportedEntry {
+                        key_b64: change.key_b64.clone(),
+                    });
+                };
+                out.data_entries.push(after.clone());
+            }
+            crate::state_capture::StateChangeKind::Updated => {
+                let baseline_entry =
+                    baseline_entry.ok_or_else(|| ChainError::BaselineMismatch {
+                        key_b64: change.key_b64.clone(),
+                        kind: "updated".into(),
+                        detail: "key does not exist in the baseline".into(),
+                    })?;
+                let before =
+                    change
+                        .before
+                        .as_ref()
+                        .ok_or_else(|| ChainError::BaselineMismatch {
+                            key_b64: change.key_b64.clone(),
+                            kind: "updated".into(),
+                            detail: "updated row carries no before value".into(),
+                        })?;
+                if before.to_key() != key {
+                    return Err(ChainError::BaselineMismatch {
+                        key_b64: change.key_b64.clone(),
+                        kind: "updated".into(),
+                        detail: "before value decodes to a different key than reported".into(),
+                    });
+                }
+                if before != baseline_entry {
+                    return Err(ChainError::BaselineMismatch {
+                        key_b64: change.key_b64.clone(),
+                        kind: "updated".into(),
+                        detail: "before value does not match the baseline entry".into(),
+                    });
+                }
                 let after = change.after.as_ref().ok_or(ChainError::UnsupportedEntry {
                     key_b64: change.key_b64.clone(),
                 })?;
@@ -346,6 +417,35 @@ pub fn state_changes_into_sequence_state(
                 out.data_entries.push(after.clone());
             }
             crate::state_capture::StateChangeKind::Deleted => {
+                let baseline_entry =
+                    baseline_entry.ok_or_else(|| ChainError::BaselineMismatch {
+                        key_b64: change.key_b64.clone(),
+                        kind: "deleted".into(),
+                        detail: "key does not exist in the baseline".into(),
+                    })?;
+                let before =
+                    change
+                        .before
+                        .as_ref()
+                        .ok_or_else(|| ChainError::BaselineMismatch {
+                            key_b64: change.key_b64.clone(),
+                            kind: "deleted".into(),
+                            detail: "deleted row carries no before value".into(),
+                        })?;
+                if before.to_key() != key {
+                    return Err(ChainError::BaselineMismatch {
+                        key_b64: change.key_b64.clone(),
+                        kind: "deleted".into(),
+                        detail: "before value decodes to a different key than reported".into(),
+                    });
+                }
+                if before != baseline_entry {
+                    return Err(ChainError::BaselineMismatch {
+                        key_b64: change.key_b64.clone(),
+                        kind: "deleted".into(),
+                        detail: "before value does not match the baseline entry".into(),
+                    });
+                }
                 out.data_entries.retain(|e| e.to_key() != key);
             }
         }

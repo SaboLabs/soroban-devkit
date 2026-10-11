@@ -1626,7 +1626,13 @@ fn chaining_key_mismatch_is_an_error() {
         before: Some(contract_data_entry(storage_key.clone(), 1)),
         after: Some(contract_data_entry(other_key, 2)),
     };
-    let err = sdkt_fuzz::state_changes_into_sequence_state(&Default::default(), &[row])
+    // Seed the baseline so the row passes the before-consistency check and
+    // reaches the after-key check, which is what this test targets.
+    let baseline = sdkt_fuzz::SequenceState {
+        data_entries: vec![contract_data_entry(storage_key, 1)],
+        instance_storage: vec![],
+    };
+    let err = sdkt_fuzz::state_changes_into_sequence_state(&baseline, &[row])
         .expect_err("key mismatch must fail");
     assert!(matches!(err, sdkt_fuzz::ChainError::KeyMismatch { .. }));
 }
@@ -1818,9 +1824,12 @@ fn chaining_duplicate_keys_are_deterministic_last_write_wins() {
     );
 }
 
-/// Duplicate Deleted rows are idempotent: the second delete is a no-op.
+/// Duplicate Deleted rows: the first delete removes the entry; the second
+/// delete fails because the key no longer exists in the baseline. This is
+/// the correct behavior — a second delete for the same key is a protocol
+/// violation, not a silent no-op.
 #[test]
-fn chaining_duplicate_deleted_rows_are_idempotent() {
+fn chaining_duplicate_deleted_rows_second_is_error() {
     let storage_key = storage_key_xdr();
     let base = sdkt_fuzz::SequenceState {
         data_entries: vec![contract_data_entry(storage_key.clone(), 10)],
@@ -1833,9 +1842,12 @@ fn chaining_duplicate_deleted_rows_are_idempotent() {
         after: None,
     };
     let del2 = del1.clone();
-    let out = sdkt_fuzz::state_changes_into_sequence_state(&base, &[del1, del2])
-        .expect("duplicate deletes chain deterministically");
-    assert!(out.data_entries.is_empty(), "both deletes remove the entry");
+    let err = sdkt_fuzz::state_changes_into_sequence_state(&base, &[del1, del2])
+        .expect_err("second delete must fail");
+    assert!(matches!(
+        err,
+        sdkt_fuzz::ChainError::BaselineMismatch { .. }
+    ));
 }
 
 // ---------------------------------------------------------------------------
@@ -1946,6 +1958,7 @@ fn e2e_chaining_created_then_updated_uses_latest_value() {
 }
 
 /// Updated → Deleted: the entry is gone from the next baseline.
+/// The Updated row chains onto a baseline seeded with the `before` value.
 #[test]
 fn e2e_chaining_updated_then_deleted_removes_entry() {
     let storage_key = storage_key_xdr();
@@ -1974,11 +1987,13 @@ fn e2e_chaining_updated_then_deleted_removes_entry() {
     )
     .expect("deleted decodes");
 
-    let s1 = sdkt_fuzz::state_changes_into_sequence_state(
-        &sdkt_fuzz::SequenceState::default(),
-        &[updated],
-    )
-    .expect("updated chains");
+    // Seed the baseline with the `before` value the Updated row reports.
+    let baseline = sdkt_fuzz::SequenceState {
+        data_entries: vec![contract_data_entry(storage_key, 10)],
+        instance_storage: vec![],
+    };
+    let s1 = sdkt_fuzz::state_changes_into_sequence_state(&baseline, &[updated])
+        .expect("updated chains");
     assert_eq!(s1.data_entries.len(), 1);
     let s2 = sdkt_fuzz::state_changes_into_sequence_state(&s1, &[deleted]).expect("deleted chains");
     assert!(
@@ -2013,4 +2028,704 @@ fn e2e_chaining_unsupported_key_is_an_explicit_error() {
     let err = sdkt_fuzz::state_changes_into_sequence_state(&Default::default(), &[row])
         .expect_err("unsupported key must fail");
     assert!(matches!(err, sdkt_fuzz::ChainError::UnsupportedKey { .. }));
+}
+
+// ---------------------------------------------------------------------------
+// Integration: SimulateResponse → decode stateChanges → chain →
+// execute_sequence
+//
+// Full pipeline, no live RPC. The counter contract's state lives in
+// instance_storage, so the pipeline test uses the executor's real derived
+// contract id for ContractData rows (which the executor accepts as
+// baseline entries) AND proves the chained baseline reaches the next
+// invocation via the within-sequence carry (increment → 1, then 2).
+// ---------------------------------------------------------------------------
+
+/// The contract id the executor derives for the campaign wasm under the
+/// default config. `Executor::case` builds cases via `from_deployer` with
+/// the campaign deployer/salt/network id; the derived id is what the
+/// executor validates baseline entries against.
+fn real_executor_contract_id() -> stellar_xdr::ScAddress {
+    let exec = Executor::new(CHAIN_COUNTER_WASM, Default::default()).expect("executor");
+    let case = exec.case("probe", FunctionCall::new("increment", vec![]), vec![]);
+    case.contract_address()
+}
+
+/// A ContractData key bound to the executor's real derived contract.
+fn real_storage_key() -> stellar_xdr::LedgerKey {
+    stellar_xdr::LedgerKey::ContractData(stellar_xdr::LedgerKeyContractData {
+        contract: real_executor_contract_id(),
+        key: stellar_xdr::ScVal::Symbol(stellar_xdr::ScSymbol(
+            stellar_xdr::StringM::try_from("Orders").unwrap(),
+        )),
+        durability: stellar_xdr::ContractDataDurability::Persistent,
+    })
+}
+
+/// Decode a SimulateResponse's `state_changes` JSON rows into
+/// `DecodedStateChange`, mirroring the RPC path.
+fn decode_sim_state_changes(
+    resp: &sdkt_rpc::SimulateResponse,
+) -> Result<Vec<sdkt_fuzz::state_capture::DecodedStateChange>, String> {
+    let mut out = Vec::new();
+    for (i, v) in resp.state_changes.iter().enumerate() {
+        let obj = v
+            .as_object()
+            .ok_or_else(|| format!("stateChanges[{i}] not an object"))?;
+        let key = obj
+            .get("key")
+            .and_then(|v| v.as_str())
+            .ok_or_else(|| format!("stateChanges[{i}].key missing"))?;
+        let kind = obj
+            .get("type")
+            .and_then(|v| v.as_str())
+            .ok_or_else(|| format!("stateChanges[{i}].type missing"))?;
+        let before = obj.get("before").and_then(|v| v.as_str());
+        let after = obj.get("after").and_then(|v| v.as_str());
+        let decoded = sdkt_fuzz::state_capture::decode_state_change(key, kind, before, after)
+            .map_err(|e| format!("stateChanges[{i}] decode: {e}"))?;
+        out.push(decoded);
+    }
+    Ok(out)
+}
+
+fn sim_response(rows_json: &str) -> sdkt_rpc::SimulateResponse {
+    let raw = format!(
+        r#"{{"transactionData":"","minResourceFee":"0","latestLedger":"1000","stateChanges":[{}],"results":[]}}"#,
+        rows_json
+    );
+    serde_json::from_str(&raw).expect("valid json")
+}
+
+fn row_json(
+    key_b64: &str,
+    kind: &str,
+    before_b64: Option<&str>,
+    after_b64: Option<&str>,
+) -> String {
+    let b = before_b64
+        .map(|s| format!(r#""{}""#, s))
+        .unwrap_or_else(|| "null".into());
+    let a = after_b64
+        .map(|s| format!(r#""{}""#, s))
+        .unwrap_or_else(|| "null".into());
+    format!(
+        r#"{{"key":"{}","type":"{}","before":{},"after":{}}}"#,
+        key_b64, kind, b, a
+    )
+}
+
+/// Full pipeline: decode an RPC-shaped SimulateResponse → chain → the
+/// chained baseline is accepted by the executor AND the next invocation
+/// observes carried state. The decode+chain half uses the executor's real
+/// contract id; the execute half proves state reaches the next invocation
+/// via the within-sequence carry (increment → 1, then 2).
+#[test]
+fn e2e_sim_decode_chain_execute() {
+    let exec = Executor::new(CHAIN_COUNTER_WASM, Default::default()).expect("executor");
+    let env = Environment {
+        ledger: Default::default(),
+        budget: sdkt_fuzz::BudgetPlan::ProtocolInitial,
+    };
+
+    // Decode half: an RPC-shaped SimulateResponse with a Created row bound
+    // to the executor's real contract id.
+    let key = real_storage_key();
+    let key_b64 = sdkt_fuzz::state_capture::encode_key(&key).expect("encodes");
+    let entry = contract_data_entry(key.clone(), 1);
+    let after_b64 = sdkt_fuzz::state_capture::encode_entry(&entry).expect("encodes");
+    let resp = sim_response(&row_json(&key_b64, "created", None, Some(&after_b64)));
+
+    let decoded = decode_sim_state_changes(&resp).expect("stateChanges decode");
+    assert_eq!(decoded.len(), 1, "one row decoded");
+    let chained = sdkt_fuzz::state_changes_into_sequence_state(
+        &sdkt_fuzz::SequenceState::default(),
+        &decoded,
+    )
+    .expect("chain succeeds");
+    assert_eq!(chained.data_entries.len(), 1, "Created entry chained");
+    assert_eq!(
+        chained.data_entries[0].to_key(),
+        key,
+        "chained key matches the RPC row"
+    );
+
+    // Execute half: the chained baseline is accepted by the executor, and
+    // the within-sequence carry proves state reaches the next invocation.
+    let run = sdkt_fuzz::execute_sequence(
+        &exec,
+        &chained.data_entries,
+        &env,
+        &[
+            FunctionCall::new("increment", vec![]),
+            FunctionCall::new("increment", vec![]),
+        ],
+        "sim-chain-exec",
+    )
+    .expect("sequence executes against the chained baseline");
+    assert_eq!(
+        run.steps[0].observation.return_value(),
+        Some(&stellar_xdr::ScVal::U32(1)),
+        "first step starts from the chained baseline"
+    );
+    assert_eq!(
+        run.steps[1].observation.return_value(),
+        Some(&stellar_xdr::ScVal::U32(2)),
+        "the next invocation must run against the state the first established"
+    );
+}
+
+/// Created → Updated on the real contract id: latest value wins.
+#[test]
+fn e2e_sim_created_then_updated() {
+    let key = real_storage_key();
+    let key_b64 = sdkt_fuzz::state_capture::encode_key(&key).expect("encodes");
+    let created = contract_data_entry(key.clone(), 10);
+    let updated = contract_data_entry(key.clone(), 20);
+    let cb64 = sdkt_fuzz::state_capture::encode_entry(&created).expect("encodes");
+    let ub64 = sdkt_fuzz::state_capture::encode_entry(&updated).expect("encodes");
+
+    let resp1 = sim_response(&row_json(&key_b64, "created", None, Some(&cb64)));
+    let resp2 = sim_response(&row_json(&key_b64, "updated", Some(&cb64), Some(&ub64)));
+
+    let d1 = decode_sim_state_changes(&resp1).expect("decode created");
+    let d2 = decode_sim_state_changes(&resp2).expect("decode updated");
+
+    let s1 =
+        sdkt_fuzz::state_changes_into_sequence_state(&Default::default(), &d1).expect("created");
+    let s2 = sdkt_fuzz::state_changes_into_sequence_state(&s1, &d2).expect("updated");
+    assert_eq!(s2.data_entries.len(), 1);
+    assert_eq!(
+        s2.data_entries[0].last_modified_ledger_seq, 20,
+        "latest value wins"
+    );
+}
+
+/// Updated → Deleted on the real contract id: entry removed.
+/// The Updated row chains onto a baseline seeded with the `before` value.
+#[test]
+fn e2e_sim_updated_then_deleted() {
+    let key = real_storage_key();
+    let key_b64 = sdkt_fuzz::state_capture::encode_key(&key).expect("encodes");
+    let before = contract_data_entry(key.clone(), 10);
+    let updated = contract_data_entry(key.clone(), 20);
+    let bb64 = sdkt_fuzz::state_capture::encode_entry(&before).expect("encodes");
+    let ub64 = sdkt_fuzz::state_capture::encode_entry(&updated).expect("encodes");
+
+    let resp1 = sim_response(&row_json(&key_b64, "updated", Some(&bb64), Some(&ub64)));
+    let resp2 = sim_response(&row_json(&key_b64, "deleted", Some(&ub64), None));
+
+    let d1 = decode_sim_state_changes(&resp1).expect("decode updated");
+    let d2 = decode_sim_state_changes(&resp2).expect("decode deleted");
+
+    // Seed the baseline with the `before` value the Updated row reports.
+    let baseline = sdkt_fuzz::SequenceState {
+        data_entries: vec![contract_data_entry(key, 10)],
+        instance_storage: vec![],
+    };
+    let s1 = sdkt_fuzz::state_changes_into_sequence_state(&baseline, &d1).expect("updated");
+    assert_eq!(s1.data_entries.len(), 1);
+    let s2 = sdkt_fuzz::state_changes_into_sequence_state(&s1, &d2).expect("deleted");
+    assert!(s2.data_entries.is_empty(), "deleted removes the entry");
+}
+
+/// Executor-owned rows are skipped, not treated as contract storage.
+#[test]
+fn e2e_sim_executor_owned_rows_skipped() {
+    let rows = decoded_fixture_rows(); // nonce + instance + contract code
+    let out = sdkt_fuzz::state_changes_into_sequence_state(&Default::default(), &rows)
+        .expect("executor-owned rows chain cleanly");
+    assert!(out.data_entries.is_empty());
+    assert!(out.instance_storage.is_empty());
+}
+
+/// Unsupported key (Account) → explicit ChainError, not silent skip.
+/// Built via the direct struct because the decoder correctly rejects
+/// key/entry mismatches upstream — this exercises the chaining function's
+/// own validation.
+#[test]
+fn e2e_sim_unsupported_key_error() {
+    let storage = real_storage_key();
+    let row = sdkt_fuzz::state_capture::DecodedStateChange {
+        key_b64: sdkt_fuzz::state_capture::encode_key(&account_key_xdr()).expect("encodes"),
+        kind: sdkt_fuzz::state_capture::StateChangeKind::Updated,
+        before: Some(contract_data_entry(storage.clone(), 1)),
+        after: Some(contract_data_entry(storage, 2)),
+    };
+    let err = sdkt_fuzz::state_changes_into_sequence_state(&Default::default(), &[row])
+        .expect_err("unsupported key must fail");
+    assert!(matches!(err, sdkt_fuzz::ChainError::UnsupportedKey { .. }));
+}
+
+/// Key mismatch (after decodes to a different key) → explicit error.
+#[test]
+fn e2e_sim_key_mismatch_error() {
+    let key = real_storage_key();
+    let key_b64 = sdkt_fuzz::state_capture::encode_key(&key).expect("encodes");
+    let other = other_storage_key_xdr();
+    let b = sdkt_fuzz::state_capture::encode_entry(&contract_data_entry(real_storage_key(), 1))
+        .expect("encodes");
+    let a =
+        sdkt_fuzz::state_capture::encode_entry(&contract_data_entry(other, 2)).expect("encodes");
+    let resp = sim_response(&row_json(&key_b64, "updated", Some(&b), Some(&a)));
+
+    let err = decode_sim_state_changes(&resp).expect_err("key mismatch must fail");
+    assert!(
+        err.contains("does not match decoded entry key"),
+        "got: {err}"
+    );
+}
+
+/// Malformed base64 → explicit error.
+#[test]
+fn e2e_sim_malformed_xdr_error() {
+    let key = real_storage_key();
+    let key_b64 = sdkt_fuzz::state_capture::encode_key(&key).expect("encodes");
+    let resp = sim_response(&row_json(
+        &key_b64,
+        "updated",
+        Some("!!!bad!!!"),
+        Some("!!!bad!!!"),
+    ));
+
+    let err = decode_sim_state_changes(&resp).expect_err("malformed xdr must fail");
+    assert!(err.contains("failed to decode"), "got: {err}");
+}
+
+/// CannotVerify from the comparator is never promoted to Match.
+/// Uses the fixture's executor-owned rows (nonce/instance/code): the
+/// comparator filters them out, so no key is comparable and the outcome is
+/// CannotVerify — never Match.
+#[test]
+fn e2e_sim_cannot_verify_not_promoted() {
+    let decoded = decoded_fixture_rows();
+    let rpc: Vec<sdkt_fuzz::state_compare::RpcStateChange> = decoded
+        .iter()
+        .map(sdkt_fuzz::state_compare::RpcStateChange::from_decoded)
+        .collect::<Result<_, _>>()
+        .expect("rows convert");
+    let local_state: Vec<sdkt_fuzz::StateEntry> = rpc
+        .iter()
+        .map(|c| sdkt_fuzz::StateEntry {
+            key_xdr: c.key_xdr.clone(),
+            value_xdr: c.after.clone(),
+            change: sdkt_fuzz::StateChange::Updated,
+        })
+        .collect();
+    let obs = sdkt_fuzz::Observation {
+        case_id: "sim-cv".into(),
+        function: "f".into(),
+        status: sdkt_fuzz::ExecutionStatus::Void,
+        state: local_state,
+        events: vec![],
+        budget: Default::default(),
+    };
+    let (outcome, comparable) = sdkt_fuzz::state_compare::compare_state_counting(&obs, &rpc);
+    assert!(
+        matches!(outcome, sdkt_fuzz::state_compare::Outcome::CannotVerify(_)),
+        "{outcome:?}"
+    );
+    assert_eq!(comparable, 0);
+}
+
+// ---------------------------------------------------------------------------
+// Baseline-consistency validation: `state_changes_into_sequence_state`
+// rejects rows whose `before` value or key presence contradicts the baseline.
+// ---------------------------------------------------------------------------
+
+/// `Created` on a key that already exists in the baseline is an error, not a
+/// silent overwrite.
+#[test]
+fn chaining_created_on_existing_key_is_an_error() {
+    let storage_key = storage_key_xdr();
+    let baseline = sdkt_fuzz::SequenceState {
+        data_entries: vec![contract_data_entry(storage_key.clone(), 10)],
+        instance_storage: vec![],
+    };
+    let row = sdkt_fuzz::state_capture::DecodedStateChange {
+        key_b64: sdkt_fuzz::state_capture::encode_key(&storage_key).expect("encodes"),
+        kind: sdkt_fuzz::state_capture::StateChangeKind::Created,
+        before: None,
+        after: Some(contract_data_entry(storage_key.clone(), 20)),
+    };
+    let err = sdkt_fuzz::state_changes_into_sequence_state(&baseline, &[row])
+        .expect_err("created on an existing key must fail");
+    assert!(
+        matches!(err, sdkt_fuzz::ChainError::BaselineMismatch { .. }),
+        "got: {err:?}"
+    );
+}
+
+/// `Updated` on a key absent from the baseline is an error, not a silent
+/// insertion.
+#[test]
+fn chaining_updated_on_absent_key_is_an_error() {
+    let storage_key = storage_key_xdr();
+    let row = sdkt_fuzz::state_capture::DecodedStateChange {
+        key_b64: sdkt_fuzz::state_capture::encode_key(&storage_key).expect("encodes"),
+        kind: sdkt_fuzz::state_capture::StateChangeKind::Updated,
+        before: Some(contract_data_entry(storage_key.clone(), 10)),
+        after: Some(contract_data_entry(storage_key.clone(), 20)),
+    };
+    let err = sdkt_fuzz::state_changes_into_sequence_state(&Default::default(), &[row])
+        .expect_err("updated on an absent key must fail");
+    assert!(
+        matches!(err, sdkt_fuzz::ChainError::BaselineMismatch { .. }),
+        "got: {err:?}"
+    );
+}
+
+/// `Updated` whose `before` value differs from the baseline entry is an
+/// error — the RPC row does not describe the transition we hold.
+#[test]
+fn chaining_updated_with_mismatched_before_is_an_error() {
+    let storage_key = storage_key_xdr();
+    let baseline = sdkt_fuzz::SequenceState {
+        data_entries: vec![contract_data_entry(storage_key.clone(), 10)],
+        instance_storage: vec![],
+    };
+    let row = sdkt_fuzz::state_capture::DecodedStateChange {
+        key_b64: sdkt_fuzz::state_capture::encode_key(&storage_key).expect("encodes"),
+        kind: sdkt_fuzz::state_capture::StateChangeKind::Updated,
+        // `before` reports 99, but the baseline holds 10.
+        before: Some(contract_data_entry(storage_key.clone(), 99)),
+        after: Some(contract_data_entry(storage_key.clone(), 20)),
+    };
+    let err = sdkt_fuzz::state_changes_into_sequence_state(&baseline, &[row])
+        .expect_err("updated with a mismatched before must fail");
+    assert!(
+        matches!(err, sdkt_fuzz::ChainError::BaselineMismatch { .. }),
+        "got: {err:?}"
+    );
+}
+
+/// `Deleted` on a key absent from the baseline is an error, not a silent
+/// no-op.
+#[test]
+fn chaining_deleted_on_absent_key_is_an_error() {
+    let storage_key = storage_key_xdr();
+    let row = sdkt_fuzz::state_capture::DecodedStateChange {
+        key_b64: sdkt_fuzz::state_capture::encode_key(&storage_key).expect("encodes"),
+        kind: sdkt_fuzz::state_capture::StateChangeKind::Deleted,
+        before: Some(contract_data_entry(storage_key.clone(), 10)),
+        after: None,
+    };
+    let err = sdkt_fuzz::state_changes_into_sequence_state(&Default::default(), &[row])
+        .expect_err("deleted on an absent key must fail");
+    assert!(
+        matches!(err, sdkt_fuzz::ChainError::BaselineMismatch { .. }),
+        "got: {err:?}"
+    );
+}
+
+/// `Deleted` whose `before` value differs from the baseline entry is an
+/// error.
+#[test]
+fn chaining_deleted_with_mismatched_before_is_an_error() {
+    let storage_key = storage_key_xdr();
+    let baseline = sdkt_fuzz::SequenceState {
+        data_entries: vec![contract_data_entry(storage_key.clone(), 10)],
+        instance_storage: vec![],
+    };
+    let row = sdkt_fuzz::state_capture::DecodedStateChange {
+        key_b64: sdkt_fuzz::state_capture::encode_key(&storage_key).expect("encodes"),
+        kind: sdkt_fuzz::state_capture::StateChangeKind::Deleted,
+        // `before` reports 99, but the baseline holds 10.
+        before: Some(contract_data_entry(storage_key.clone(), 99)),
+        after: None,
+    };
+    let err = sdkt_fuzz::state_changes_into_sequence_state(&baseline, &[row])
+        .expect_err("deleted with a mismatched before must fail");
+    assert!(
+        matches!(err, sdkt_fuzz::ChainError::BaselineMismatch { .. }),
+        "got: {err:?}"
+    );
+}
+
+/// The valid path still holds: Created → Updated → Deleted, each row
+/// consistent with the baseline it is applied to.
+#[test]
+fn chaining_created_updated_deleted_valid_sequence_still_passes() {
+    let storage_key = storage_key_xdr();
+    let key_b64 = sdkt_fuzz::state_capture::encode_key(&storage_key).expect("encodes");
+
+    let created = sdkt_fuzz::state_capture::decode_state_change(
+        &key_b64,
+        "created",
+        None,
+        Some(
+            &sdkt_fuzz::state_capture::encode_entry(&contract_data_entry(storage_key.clone(), 10))
+                .expect("encodes"),
+        ),
+    )
+    .expect("created decodes");
+    let updated = sdkt_fuzz::state_capture::decode_state_change(
+        &key_b64,
+        "updated",
+        Some(
+            &sdkt_fuzz::state_capture::encode_entry(&contract_data_entry(storage_key.clone(), 10))
+                .expect("encodes"),
+        ),
+        Some(
+            &sdkt_fuzz::state_capture::encode_entry(&contract_data_entry(storage_key.clone(), 20))
+                .expect("encodes"),
+        ),
+    )
+    .expect("updated decodes");
+    let deleted = sdkt_fuzz::state_capture::decode_state_change(
+        &key_b64,
+        "deleted",
+        Some(
+            &sdkt_fuzz::state_capture::encode_entry(&contract_data_entry(storage_key.clone(), 20))
+                .expect("encodes"),
+        ),
+        None,
+    )
+    .expect("deleted decodes");
+
+    let s0 = sdkt_fuzz::SequenceState::default();
+    let s1 = sdkt_fuzz::state_changes_into_sequence_state(&s0, &[created]).expect("created chains");
+    assert_eq!(s1.data_entries.len(), 1);
+    let s2 = sdkt_fuzz::state_changes_into_sequence_state(&s1, &[updated]).expect("updated chains");
+    assert_eq!(s2.data_entries.len(), 1);
+    assert_eq!(s2.data_entries[0].last_modified_ledger_seq, 20);
+    let s3 = sdkt_fuzz::state_changes_into_sequence_state(&s2, &[deleted]).expect("deleted chains");
+    assert!(s3.data_entries.is_empty(), "deleted removes the entry");
+}
+
+// ---------------------------------------------------------------------------
+// Semantic gap tests (targeted): pin concrete behaviors discovered during
+// the host v29 semantic review.
+// ---------------------------------------------------------------------------
+
+/// GAP 1 — Executor-owned instance entry is skipped by the chaining function.
+/// Its storage map is NOT folded into `SequenceState::instance_storage`.
+/// Contrast with local execution (`apply_state_delta`), which DOES fold it.
+/// This test pins the current behavior: RPC instance rows produce empty
+/// instance_storage. A future phase that folds RPC instance storage will
+/// deliberately update this test.
+#[test]
+fn gap_rpc_instance_entry_does_not_populate_instance_storage() {
+    let rows = fixture_state_changes_full();
+    let instance_row = rows
+        .iter()
+        .find(|(_, t, b, _)| t == "updated" && b.is_some())
+        .expect("fixture has an updated instance row");
+    let decoded = sdkt_fuzz::state_capture::decode_state_change(
+        &instance_row.0,
+        &instance_row.1,
+        instance_row.2.as_deref(),
+        instance_row.3.as_deref(),
+    )
+    .expect("instance row decodes");
+
+    let out = sdkt_fuzz::state_changes_into_sequence_state(&Default::default(), &[decoded])
+        .expect("instance row chains (by being skipped)");
+    // The key finding: instance_storage remains empty.
+    assert!(
+        out.instance_storage.is_empty(),
+        "state_changes_into_sequence_state skips instance entries entirely"
+    );
+    assert!(
+        out.data_entries.is_empty(),
+        "instance entries are never placed in data_entries"
+    );
+}
+
+/// GAP 2 — Multi-row batch order within one invocation:
+/// A sequence of operations on the SAME key within one batch succeeds when
+/// ordered consistently (Created → Updated → Deleted) and fails when ordered
+/// inconsistently (Updated on non-existent, Deleted before Created).
+#[test]
+fn gap_batch_intra_invocation_created_then_updated_in_single_call() {
+    let storage_key = storage_key_xdr();
+    let key_b64 = sdkt_fuzz::state_capture::encode_key(&storage_key).expect("encodes");
+
+    let created = sdkt_fuzz::state_capture::decode_state_change(
+        &key_b64,
+        "created",
+        None,
+        Some(
+            &sdkt_fuzz::state_capture::encode_entry(&contract_data_entry(storage_key.clone(), 10))
+                .expect("encodes"),
+        ),
+    )
+    .expect("created decodes");
+    let updated = sdkt_fuzz::state_capture::decode_state_change(
+        &key_b64,
+        "updated",
+        Some(
+            &sdkt_fuzz::state_capture::encode_entry(&contract_data_entry(storage_key.clone(), 10))
+                .expect("encodes"),
+        ),
+        Some(
+            &sdkt_fuzz::state_capture::encode_entry(&contract_data_entry(storage_key.clone(), 20))
+                .expect("encodes"),
+        ),
+    )
+    .expect("updated decodes");
+
+    // Both rows in a single batch applied to an empty baseline: the first row
+    // creates the entry, the second updates it. The accumulator state sees
+    // the first row before evaluating the second.
+    let out = sdkt_fuzz::state_changes_into_sequence_state(
+        &sdkt_fuzz::SequenceState::default(),
+        &[created, updated],
+    )
+    .expect("intra-batch Created then Updated succeeds");
+    assert_eq!(out.data_entries.len(), 1);
+    assert_eq!(out.data_entries[0].last_modified_ledger_seq, 20);
+}
+
+/// Reverse order within one batch fails: Updated before Created is rejected
+/// because the key is not in the baseline at the point of update.
+#[test]
+fn gap_batch_intra_invocation_updated_before_created_fails() {
+    let storage_key = storage_key_xdr();
+    let key_b64 = sdkt_fuzz::state_capture::encode_key(&storage_key).expect("encodes");
+
+    let created = sdkt_fuzz::state_capture::decode_state_change(
+        &key_b64,
+        "created",
+        None,
+        Some(
+            &sdkt_fuzz::state_capture::encode_entry(&contract_data_entry(storage_key.clone(), 10))
+                .expect("encodes"),
+        ),
+    )
+    .expect("created decodes");
+    let updated = sdkt_fuzz::state_capture::decode_state_change(
+        &key_b64,
+        "updated",
+        Some(
+            &sdkt_fuzz::state_capture::encode_entry(&contract_data_entry(storage_key.clone(), 10))
+                .expect("encodes"),
+        ),
+        Some(
+            &sdkt_fuzz::state_capture::encode_entry(&contract_data_entry(storage_key.clone(), 20))
+                .expect("encodes"),
+        ),
+    )
+    .expect("updated decodes");
+
+    let err = sdkt_fuzz::state_changes_into_sequence_state(
+        &sdkt_fuzz::SequenceState::default(),
+        &[updated, created],
+    )
+    .expect_err("Updated before Created must fail");
+    assert!(
+        matches!(err, sdkt_fuzz::ChainError::BaselineMismatch { .. }),
+        "got: {err:?}"
+    );
+}
+
+/// GAP 3 — Multiple distinct keys within one batch do not interfere:
+/// Key A Updated + Key B Created in the same batch both succeed when the
+/// baseline holds Key A and does not hold Key B.
+#[test]
+fn gap_batch_multi_key_independent_success() {
+    let key_a = storage_key_xdr();
+    let key_b = other_storage_key_xdr();
+    let a_b64 = sdkt_fuzz::state_capture::encode_key(&key_a).expect("encodes");
+    let b_b64 = sdkt_fuzz::state_capture::encode_key(&key_b).expect("encodes");
+
+    let update_a = sdkt_fuzz::state_capture::decode_state_change(
+        &a_b64,
+        "updated",
+        Some(
+            &sdkt_fuzz::state_capture::encode_entry(&contract_data_entry(key_a.clone(), 10))
+                .expect("encodes"),
+        ),
+        Some(
+            &sdkt_fuzz::state_capture::encode_entry(&contract_data_entry(key_a.clone(), 20))
+                .expect("encodes"),
+        ),
+    )
+    .expect("update_a decodes");
+    let create_b = sdkt_fuzz::state_capture::decode_state_change(
+        &b_b64,
+        "created",
+        None,
+        Some(
+            &sdkt_fuzz::state_capture::encode_entry(&contract_data_entry(key_b.clone(), 5))
+                .expect("encodes"),
+        ),
+    )
+    .expect("create_b decodes");
+
+    // Baseline has A=10, does not have B.
+    let baseline = sdkt_fuzz::SequenceState {
+        data_entries: vec![contract_data_entry(key_a.clone(), 10)],
+        instance_storage: vec![],
+    };
+
+    let out = sdkt_fuzz::state_changes_into_sequence_state(&baseline, &[update_a, create_b])
+        .expect("multi-key batch succeeds");
+    assert_eq!(out.data_entries.len(), 2, "both entries present");
+
+    let a_entry = out
+        .data_entries
+        .iter()
+        .find(|e| e.to_key() == key_a)
+        .expect("A present");
+    assert_eq!(a_entry.last_modified_ledger_seq, 20, "A was updated");
+    let b_entry = out
+        .data_entries
+        .iter()
+        .find(|e| e.to_key() == key_b)
+        .expect("B present");
+    assert_eq!(b_entry.last_modified_ledger_seq, 5, "B was created");
+}
+
+/// GAP 4 — Cross-check: an invalid row in a multi-key batch aborts the
+/// whole batch without partially applying the earlier rows.
+#[test]
+fn gap_batch_multi_key_atomic_abort() {
+    let key_a = storage_key_xdr();
+    let key_b = other_storage_key_xdr();
+    let a_b64 = sdkt_fuzz::state_capture::encode_key(&key_a).expect("encodes");
+    let b_b64 = sdkt_fuzz::state_capture::encode_key(&key_b).expect("encodes");
+
+    let update_a = sdkt_fuzz::state_capture::decode_state_change(
+        &a_b64,
+        "updated",
+        Some(
+            &sdkt_fuzz::state_capture::encode_entry(&contract_data_entry(key_a.clone(), 10))
+                .expect("encodes"),
+        ),
+        Some(
+            &sdkt_fuzz::state_capture::encode_entry(&contract_data_entry(key_a.clone(), 20))
+                .expect("encodes"),
+        ),
+    )
+    .expect("update_a decodes");
+    // Row for B has a mismatched before: reports 99, but B is not even in baseline.
+    let invalid_b = sdkt_fuzz::state_capture::decode_state_change(
+        &b_b64,
+        "updated",
+        Some(
+            &sdkt_fuzz::state_capture::encode_entry(&contract_data_entry(key_b.clone(), 99))
+                .expect("encodes"),
+        ),
+        Some(
+            &sdkt_fuzz::state_capture::encode_entry(&contract_data_entry(key_b.clone(), 5))
+                .expect("encodes"),
+        ),
+    )
+    .expect("invalid_b decodes");
+
+    let baseline = sdkt_fuzz::SequenceState {
+        data_entries: vec![contract_data_entry(key_a.clone(), 10)],
+        instance_storage: vec![],
+    };
+
+    // The entire call returns Err; caller's baseline is unchanged.
+    let err = sdkt_fuzz::state_changes_into_sequence_state(&baseline, &[update_a, invalid_b])
+        .expect_err("invalid row in batch must abort");
+    assert!(matches!(
+        err,
+        sdkt_fuzz::ChainError::BaselineMismatch { .. }
+    ));
+    // Baseline was not modified (passed by ref).
+    assert_eq!(baseline.data_entries[0].last_modified_ledger_seq, 10);
 }
