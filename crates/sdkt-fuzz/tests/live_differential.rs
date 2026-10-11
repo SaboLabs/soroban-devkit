@@ -3520,3 +3520,99 @@ fn wrapper_auth_valid_length_forwarded_per_index() {
         "step 1 with an empty list must not inherit step 0's auth"
     );
 }
+
+// ---------------------------------------------------------------------------
+// Persistent ContractData: the host must read the value carried by
+// `stateChanges`, not the baseline value.
+// ---------------------------------------------------------------------------
+
+/// The committed `persistent_probe.wasm` contract: `peek()` reads the
+/// persistent `COUNTER` entry (default 0). Built from
+/// `fixtures/persistent_probe.rs` with `stellar contract build`
+/// (soroban-sdk 28.0.0, wasm32v1-none, release).
+const PERSISTENT_PROBE_WASM: &[u8] = include_bytes!("fixtures/persistent_probe.wasm");
+
+/// The contract id the executor derives for the persistent probe under the
+/// default config.
+fn persistent_probe_contract_id() -> stellar_xdr::ScAddress {
+    let exec = Executor::new(PERSISTENT_PROBE_WASM, Default::default()).expect("executor");
+    let case = exec.case("probe", FunctionCall::new("peek", vec![]), vec![]);
+    case.contract_address()
+}
+
+/// The persistent `COUNTER` key bound to the probe's derived contract.
+fn persistent_counter_key() -> stellar_xdr::LedgerKey {
+    stellar_xdr::LedgerKey::ContractData(stellar_xdr::LedgerKeyContractData {
+        contract: persistent_probe_contract_id(),
+        key: stellar_xdr::ScVal::Symbol(stellar_xdr::ScSymbol(
+            stellar_xdr::StringM::try_from("COUNTER").unwrap(),
+        )),
+        durability: stellar_xdr::ContractDataDurability::Persistent,
+    })
+}
+
+/// A persistent `COUNTER` entry with the given value.
+fn persistent_counter_entry(value: u32) -> stellar_xdr::LedgerEntry {
+    let key = persistent_counter_key();
+    let cd = match &key {
+        stellar_xdr::LedgerKey::ContractData(d) => d.clone(),
+        _ => panic!("helper requires a ContractData key"),
+    };
+    stellar_xdr::LedgerEntry {
+        last_modified_ledger_seq: 100,
+        data: stellar_xdr::LedgerEntryData::ContractData(stellar_xdr::ContractDataEntry {
+            ext: stellar_xdr::ExtensionPoint::V0,
+            contract: cd.contract.clone(),
+            key: cd.key.clone(),
+            durability: cd.durability,
+            val: stellar_xdr::ScVal::U32(value),
+        }),
+        ext: stellar_xdr::LedgerEntryExt::V0,
+    }
+}
+
+/// The host must read the post-`stateChanges` persistent value (42), not the
+/// baseline value (41).
+///
+/// The baseline holds `COUNTER = 41` so the row's `before` passes baseline
+/// validation; the row's `after` is `COUNTER = 42`. If the wrapper dropped
+/// `data_entries` (or never threaded them into the host footprint), `peek`
+/// would return the baseline 41 and this assertion would fail.
+#[test]
+fn wrapper_persistent_contract_data_value_reaches_host() {
+    let exec = Executor::new(PERSISTENT_PROBE_WASM, Default::default()).expect("executor");
+    let env = Environment {
+        ledger: Default::default(),
+        budget: sdkt_fuzz::BudgetPlan::ProtocolInitial,
+    };
+
+    let key = persistent_counter_key();
+    let key_b64 = sdkt_fuzz::state_capture::encode_key(&key).expect("encodes");
+    let before = persistent_counter_entry(41);
+    let after = persistent_counter_entry(42);
+    let bb64 = sdkt_fuzz::state_capture::encode_entry(&before).expect("encodes");
+    let ab64 = sdkt_fuzz::state_capture::encode_entry(&after).expect("encodes");
+    let resp = sim_response(&row_json(&key_b64, "updated", Some(&bb64), Some(&ab64)));
+
+    // Baseline holds exactly the row's `before` value.
+    let baseline = sdkt_fuzz::SequenceState {
+        data_entries: vec![persistent_counter_entry(41)],
+        instance_storage: vec![],
+    };
+
+    let run = sdkt_fuzz::execute_sequence_from_simulation(
+        &exec,
+        &baseline,
+        &resp,
+        &env,
+        &[FunctionCall::new("peek", vec![])],
+        "persistent-value",
+        &[],
+    )
+    .expect("sequence runs");
+    assert_eq!(
+        run.final_observation.return_value(),
+        Some(&stellar_xdr::ScVal::U32(42)),
+        "host must read the post-stateChanges persistent value, not the baseline 41"
+    );
+}
