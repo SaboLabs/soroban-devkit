@@ -14,8 +14,8 @@
 </p>
 
 <p align="center">
-  <strong>Website:</strong> <a href="https://sabolabs.github.io/soroban-devkit/">sabolabs.github.io/soroban-devkit</a> — landing +
-  <a href="https://sabolabs.github.io/soroban-devkit/playground/">in-browser WASM inspector</a>
+  <strong>Website:</strong> <a href="https://soroban-devkit.xyz/">soroban-devkit.xyz</a> — landing +
+  <a href="https://soroban-devkit.xyz/playground/">in-browser WASM inspector</a>
   (contract bytes stay in the tab). Source: <a href="website/"><code>website/</code></a>.
 </p>
 
@@ -237,7 +237,7 @@ Supported shells: `bash`, `zsh`, `fish`, `powershell` (also `elvish`).
 ### 3. Your first command (offline)
 
 **No install:** drop a `.wasm` on the
-[Web Playground](https://sabolabs.github.io/soroban-devkit/playground/)
+[Web Playground](https://soroban-devkit.xyz/playground/)
 (ContractSpec / exports / hash; bytes never leave the browser).
 
 **CLI:** inspect a compiled contract WASM that ships with the repo:

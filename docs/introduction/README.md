@@ -66,5 +66,5 @@ workspace orchestration.
 ## Project
 
 - **Source:** [github.com/SaboLabs/soroban-devkit](https://github.com/SaboLabs/soroban-devkit)
-- **Website:** [sabolabs.github.io/soroban-devkit](https://sabolabs.github.io/soroban-devkit/) — landing page + in-browser WASM inspector (contract bytes stay in the tab)
+- **Website:** [soroban-devkit.xyz](https://soroban-devkit.xyz/) — landing page + in-browser WASM inspector (contract bytes stay in the tab)
 - **License:** MIT

@@ -2,7 +2,7 @@
 
 This guide takes a developer who has **never used `sdkt`** from zero to a working inspection, audit, and upgrade-safety comparison in under five minutes. Every command is copy-pasteable and runs **offline** (no RPC, no account, no network) unless stated otherwise.
 
-If you only want to inspect a WASM, skip install: [Web Playground](https://sabolabs.github.io/soroban-devkit/playground/).
+If you only want to inspect a WASM, skip install: [Web Playground](https://soroban-devkit.xyz/playground/).
 
 If you have not installed `sdkt` yet, follow [README § Quick Start](https://github.com/SaboLabs/soroban-devkit#quick-start) first. This document assumes `sdkt` is on your `PATH` and reports a version when you run `sdkt --version`.
 
@@ -256,7 +256,7 @@ The signed envelope in `signed.xdr` is ready to broadcast with `sdkt tx submit -
 You now know the three core offline workflows. Continue with:
 
 * [**Testnet walkthrough**](testnet-walkthrough.md) — **on-chain loop**: identity → Friendbot fund → network profile → build → deploy → invoke → call → events / storage.
-* [**Web Playground**](https://sabolabs.github.io/soroban-devkit/playground/) — inspect your own `.wasm` in the browser (no install).
+* [**Web Playground**](https://soroban-devkit.xyz/playground/) — inspect your own `.wasm` in the browser (no install).
 * [**examples.md**](examples.md) — copy-paste recipes for every subcommand (decode, storage, tx, deploy) and CI gating patterns.
 * [**docs/compatibility.md**](../compatibility/compatibility.md) — which real-world Soroban contracts `sdkt` is validated against, and the compatibility matrix.
 * [**docs/ci-cd.md**](../compatibility/ci-cd.md) — wire `sdkt audit` and `sdkt diff --upgrade-safety` into GitHub Actions to block bad PRs and unsafe releases.
