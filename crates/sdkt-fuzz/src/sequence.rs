@@ -452,3 +452,99 @@ pub fn state_changes_into_sequence_state(
     }
     Ok(out)
 }
+
+/// Decode one `stateChanges` JSON row from an RPC `SimulateResponse` into a
+/// [`DecodedStateChange`].
+///
+/// This is the RPC-shape adapter: it maps the wire format
+/// (`{"key": base64, "type": "created"|"updated"|"deleted",
+/// "before": base64|null, "after": base64|null}`) onto the typed decoder
+/// [`crate::state_capture::decode_state_change`], so callers never have to
+/// hand-extract fields from `serde_json::Value`.
+///
+/// Malformed rows, unknown kinds, bad base64/XDR and key inconsistencies are
+/// returned as [`StateChangeDecodeError`]; nothing is silently skipped.
+pub fn decode_state_change_row(
+    row: &serde_json::Value,
+) -> Result<crate::state_capture::DecodedStateChange, crate::state_capture::StateChangeDecodeError>
+{
+    let obj = row.as_object().ok_or_else(|| {
+        crate::state_capture::StateChangeDecodeError::MalformedRow {
+            detail: "row is not a JSON object".to_string(),
+        }
+    })?;
+    let key = obj.get("key").and_then(|v| v.as_str()).ok_or_else(|| {
+        crate::state_capture::StateChangeDecodeError::MalformedRow {
+            detail: "row has no string `key` field".to_string(),
+        }
+    })?;
+    let kind = obj.get("type").and_then(|v| v.as_str()).ok_or_else(|| {
+        crate::state_capture::StateChangeDecodeError::MalformedRow {
+            detail: "row has no string `type` field".to_string(),
+        }
+    })?;
+    let before = obj.get("before").and_then(|v| v.as_str());
+    let after = obj.get("after").and_then(|v| v.as_str());
+    crate::state_capture::decode_state_change(key, kind, before, after)
+}
+
+/// Decode every `stateChanges` row of an RPC [`SimulateResponse`].
+///
+/// Decoding is all-or-nothing: the first malformed row aborts the batch, so a
+/// caller never executes against a partially-decoded state.
+pub fn decode_simulate_state_changes(
+    response: &sdkt_rpc::SimulateResponse,
+) -> Result<
+    Vec<crate::state_capture::DecodedStateChange>,
+    crate::state_capture::StateChangeDecodeError,
+> {
+    response
+        .state_changes
+        .iter()
+        .map(decode_state_change_row)
+        .collect()
+}
+
+/// Execute a sequence whose first baseline comes from an RPC simulation's
+/// `stateChanges`.
+///
+/// Flow: `SimulateResponse.state_changes` → decode → validate against
+/// `baseline` → apply delta → [`execute_sequence_auth`].
+///
+/// `baseline` is the state that existed *before* the simulated invocation
+/// ran — the same pre-simulation snapshot the RPC's `before` values are
+/// taken from. It is caller-supplied and never defaulted: passing an empty
+/// baseline is a caller decision, not an implicit fallback.
+///
+/// Every row is decoded and validated before the first host invocation, so a
+/// malformed or inconsistent `stateChanges` batch fails before any execution
+/// starts. Full entry equality (including `LedgerEntryExt` sponsorship) is
+/// enforced by [`state_changes_into_sequence_state`].
+///
+/// What this does **not** claim: instance storage, TTL, CPU/memory parity.
+/// RPC `stateChanges` carries contract-data deltas only — instance entries
+/// are executor-owned and skipped, and TTL is not reported by the RPC.
+pub fn execute_sequence_from_simulation(
+    executor: &Executor,
+    baseline: &SequenceState,
+    response: &sdkt_rpc::SimulateResponse,
+    environment: &Environment,
+    steps: &[FunctionCall],
+    case_id: &str,
+) -> Result<SequenceRun, FuzzError> {
+    let changes = decode_simulate_state_changes(response)
+        .map_err(|e| FuzzError::Observation(format!("stateChanges decode failed: {e}")))?;
+    let chained = state_changes_into_sequence_state(baseline, &changes).map_err(|e| {
+        FuzzError::InvalidSetup(crate::error::SetupError::BaselineEntry(format!(
+            "stateChanges are inconsistent with the baseline: {e}"
+        )))
+    })?;
+    execute_sequence_auth(
+        executor,
+        &chained.data_entries,
+        environment,
+        steps,
+        case_id,
+        &[],
+    )
+}

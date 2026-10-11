@@ -119,6 +119,7 @@ pub use runner::{
     FuzzReport, FuzzRunOptions, ReplayOptions,
 };
 pub use sequence::{
-    apply_state_delta, execute_sequence, execute_sequence_auth, state_changes_into_sequence_state,
+    apply_state_delta, decode_simulate_state_changes, decode_state_change_row, execute_sequence,
+    execute_sequence_auth, execute_sequence_from_simulation, state_changes_into_sequence_state,
     ChainError, SequenceRun, SequenceState, StepObservation,
 };

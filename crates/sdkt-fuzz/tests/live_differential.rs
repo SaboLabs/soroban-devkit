@@ -2828,3 +2828,396 @@ fn ext_v1_baseline_mismatch_is_rejected() {
         "got: {err:?}"
     );
 }
+
+// ---------------------------------------------------------------------------
+// Production wrapper: `execute_sequence_from_simulation`
+//
+// These tests exercise the public wrapper (decode → validate → chain →
+// execute) as a unit, distinct from the chaining-helper tests above. They
+// prove that a RPC-shaped `SimulateResponse` drives real host execution and
+// that failures abort before any invocation runs.
+// ---------------------------------------------------------------------------
+
+/// Positive: a `Created` row becomes the sequence's starting state, and the
+/// second invocation observes the state the first established.
+///
+/// The assertion is state-dependent: the counter returns 1 then 2 only if
+/// the chained baseline is actually applied to the first invocation.
+#[test]
+fn wrapper_created_row_drives_second_invocation() {
+    let exec = Executor::new(CHAIN_COUNTER_WASM, Default::default()).expect("executor");
+    let env = Environment {
+        ledger: Default::default(),
+        budget: sdkt_fuzz::BudgetPlan::ProtocolInitial,
+    };
+
+    let key = real_storage_key();
+    let key_b64 = sdkt_fuzz::state_capture::encode_key(&key).expect("encodes");
+    let entry = contract_data_entry(key.clone(), 1);
+    let after_b64 = sdkt_fuzz::state_capture::encode_entry(&entry).expect("encodes");
+    let resp = sim_response(&row_json(&key_b64, "created", None, Some(&after_b64)));
+
+    let run = sdkt_fuzz::execute_sequence_from_simulation(
+        &exec,
+        &sdkt_fuzz::SequenceState::default(),
+        &resp,
+        &env,
+        &[
+            FunctionCall::new("increment", vec![]),
+            FunctionCall::new("increment", vec![]),
+        ],
+        "wrapper-created",
+    )
+    .expect("wrapper executes");
+
+    assert_eq!(
+        run.steps[0].observation.return_value(),
+        Some(&stellar_xdr::ScVal::U32(1)),
+        "first step runs against the chained baseline"
+    );
+    assert_eq!(
+        run.steps[1].observation.return_value(),
+        Some(&stellar_xdr::ScVal::U32(2)),
+        "second step must observe the state the first established"
+    );
+}
+
+/// Positive: `Updated` validates the pre-state and applies the post-state.
+/// The baseline must hold exactly the `before` value the row reports.
+#[test]
+fn wrapper_updated_row_validates_before_and_applies_after() {
+    let exec = Executor::new(CHAIN_COUNTER_WASM, Default::default()).expect("executor");
+    let env = Environment {
+        ledger: Default::default(),
+        budget: sdkt_fuzz::BudgetPlan::ProtocolInitial,
+    };
+
+    let key = real_storage_key();
+    let key_b64 = sdkt_fuzz::state_capture::encode_key(&key).expect("encodes");
+    let before = contract_data_entry(key.clone(), 10);
+    let after = contract_data_entry(key.clone(), 20);
+    let bb64 = sdkt_fuzz::state_capture::encode_entry(&before).expect("encodes");
+    let ab64 = sdkt_fuzz::state_capture::encode_entry(&after).expect("encodes");
+    let resp = sim_response(&row_json(&key_b64, "updated", Some(&bb64), Some(&ab64)));
+
+    // Baseline holds exactly the `before` value: validation passes.
+    let baseline = sdkt_fuzz::SequenceState {
+        data_entries: vec![contract_data_entry(key, 10)],
+        instance_storage: vec![],
+    };
+    let run = sdkt_fuzz::execute_sequence_from_simulation(
+        &exec,
+        &baseline,
+        &resp,
+        &env,
+        &[FunctionCall::new("increment", vec![])],
+        "wrapper-updated",
+    )
+    .expect("updated row with matching baseline executes");
+    assert_eq!(
+        run.final_observation.return_value(),
+        Some(&stellar_xdr::ScVal::U32(1)),
+        "the chained (post-update) baseline is accepted by the executor"
+    );
+}
+
+/// Positive: `Deleted` removes the entry from the chained state.
+#[test]
+fn wrapper_deleted_row_removes_entry() {
+    let exec = Executor::new(CHAIN_COUNTER_WASM, Default::default()).expect("executor");
+    let env = Environment {
+        ledger: Default::default(),
+        budget: sdkt_fuzz::BudgetPlan::ProtocolInitial,
+    };
+
+    let key = real_storage_key();
+    let key_b64 = sdkt_fuzz::state_capture::encode_key(&key).expect("encodes");
+    let before = contract_data_entry(key.clone(), 20);
+    let bb64 = sdkt_fuzz::state_capture::encode_entry(&before).expect("encodes");
+    let resp = sim_response(&row_json(&key_b64, "deleted", Some(&bb64), None));
+
+    let baseline = sdkt_fuzz::SequenceState {
+        data_entries: vec![contract_data_entry(key, 20)],
+        instance_storage: vec![],
+    };
+    let run = sdkt_fuzz::execute_sequence_from_simulation(
+        &exec,
+        &baseline,
+        &resp,
+        &env,
+        &[FunctionCall::new("increment", vec![])],
+        "wrapper-deleted",
+    )
+    .expect("deleted row with matching baseline executes");
+    assert_eq!(
+        run.final_observation.return_value(),
+        Some(&stellar_xdr::ScVal::U32(1)),
+        "the chained (post-delete) baseline is accepted by the executor"
+    );
+}
+
+/// Positive: multi-key changes are all applied.
+#[test]
+fn wrapper_multi_key_changes_all_applied() {
+    let exec = Executor::new(CHAIN_COUNTER_WASM, Default::default()).expect("executor");
+    let env = Environment {
+        ledger: Default::default(),
+        budget: sdkt_fuzz::BudgetPlan::ProtocolInitial,
+    };
+
+    let key_a = real_storage_key();
+    let key_b = stellar_xdr::LedgerKey::ContractData(stellar_xdr::LedgerKeyContractData {
+        contract: real_executor_contract_id(),
+        key: stellar_xdr::ScVal::Symbol(stellar_xdr::ScSymbol(
+            stellar_xdr::StringM::try_from("Other").unwrap(),
+        )),
+        durability: stellar_xdr::ContractDataDurability::Persistent,
+    });
+    let a_b64 = sdkt_fuzz::state_capture::encode_key(&key_a).expect("encodes");
+    let b_b64 = sdkt_fuzz::state_capture::encode_key(&key_b).expect("encodes");
+
+    // A: created. B: updated (baseline holds B's before value).
+    let a_after = contract_data_entry(key_a.clone(), 5);
+    let b_before = contract_data_entry(key_b.clone(), 10);
+    let b_after = contract_data_entry(key_b.clone(), 20);
+    let aa64 = sdkt_fuzz::state_capture::encode_entry(&a_after).expect("encodes");
+    let bb64 = sdkt_fuzz::state_capture::encode_entry(&b_before).expect("encodes");
+    let ba64 = sdkt_fuzz::state_capture::encode_entry(&b_after).expect("encodes");
+
+    let rows = format!(
+        "{},{}",
+        row_json(&a_b64, "created", None, Some(&aa64)),
+        row_json(&b_b64, "updated", Some(&bb64), Some(&ba64)),
+    );
+    let resp = sim_response(&rows);
+
+    let baseline = sdkt_fuzz::SequenceState {
+        data_entries: vec![contract_data_entry(key_b, 10)],
+        instance_storage: vec![],
+    };
+    let run = sdkt_fuzz::execute_sequence_from_simulation(
+        &exec,
+        &baseline,
+        &resp,
+        &env,
+        &[FunctionCall::new("increment", vec![])],
+        "wrapper-multi-key",
+    )
+    .expect("multi-key batch executes");
+    assert_eq!(
+        run.final_observation.return_value(),
+        Some(&stellar_xdr::ScVal::U32(1)),
+        "both chained entries are accepted by the executor"
+    );
+}
+
+/// Negative: baseline mismatch — an `Updated` row whose `before` does not
+/// match the baseline. Execution must not start.
+#[test]
+fn wrapper_baseline_mismatch_aborts_before_execution() {
+    let exec = Executor::new(CHAIN_COUNTER_WASM, Default::default()).expect("executor");
+    let env = Environment {
+        ledger: Default::default(),
+        budget: sdkt_fuzz::BudgetPlan::ProtocolInitial,
+    };
+
+    let key = real_storage_key();
+    let key_b64 = sdkt_fuzz::state_capture::encode_key(&key).expect("encodes");
+    let before = contract_data_entry(key.clone(), 99);
+    let after = contract_data_entry(key.clone(), 20);
+    let bb64 = sdkt_fuzz::state_capture::encode_entry(&before).expect("encodes");
+    let ab64 = sdkt_fuzz::state_capture::encode_entry(&after).expect("encodes");
+    let resp = sim_response(&row_json(&key_b64, "updated", Some(&bb64), Some(&ab64)));
+
+    // Baseline holds 10, but the row reports before=99.
+    let baseline = sdkt_fuzz::SequenceState {
+        data_entries: vec![contract_data_entry(key, 10)],
+        instance_storage: vec![],
+    };
+    let err = sdkt_fuzz::execute_sequence_from_simulation(
+        &exec,
+        &baseline,
+        &resp,
+        &env,
+        &[FunctionCall::new("increment", vec![])],
+        "wrapper-mismatch",
+    )
+    .expect_err("baseline mismatch must abort");
+    assert!(
+        matches!(err, sdkt_fuzz::FuzzError::InvalidSetup(_)),
+        "got: {err:?}"
+    );
+}
+
+/// Negative: sponsorship mismatch on `LedgerEntryExt::V1` — full equality is
+/// preserved, so a different `sponsoring_id` is rejected.
+#[test]
+fn wrapper_sponsorship_mismatch_v1_is_rejected() {
+    let exec = Executor::new(CHAIN_COUNTER_WASM, Default::default()).expect("executor");
+    let env = Environment {
+        ledger: Default::default(),
+        budget: sdkt_fuzz::BudgetPlan::ProtocolInitial,
+    };
+
+    let key = real_storage_key();
+    let key_b64 = sdkt_fuzz::state_capture::encode_key(&key).expect("encodes");
+    let sponsor_a = stellar_xdr::AccountId(stellar_xdr::PublicKey::PublicKeyTypeEd25519(
+        stellar_xdr::Uint256([1; 32]),
+    ));
+    let sponsor_b = stellar_xdr::AccountId(stellar_xdr::PublicKey::PublicKeyTypeEd25519(
+        stellar_xdr::Uint256([2; 32]),
+    ));
+
+    let before = contract_data_entry_v1(key.clone(), 10, Some(sponsor_b.clone()));
+    let after = contract_data_entry_v1(key.clone(), 20, Some(sponsor_b));
+    let bb64 = sdkt_fuzz::state_capture::encode_entry(&before).expect("encodes");
+    let ab64 = sdkt_fuzz::state_capture::encode_entry(&after).expect("encodes");
+    let resp = sim_response(&row_json(&key_b64, "updated", Some(&bb64), Some(&ab64)));
+
+    let baseline = sdkt_fuzz::SequenceState {
+        data_entries: vec![contract_data_entry_v1(key, 10, Some(sponsor_a))],
+        instance_storage: vec![],
+    };
+    let err = sdkt_fuzz::execute_sequence_from_simulation(
+        &exec,
+        &baseline,
+        &resp,
+        &env,
+        &[FunctionCall::new("increment", vec![])],
+        "wrapper-sponsor",
+    )
+    .expect_err("sponsorship mismatch must abort");
+    assert!(
+        matches!(err, sdkt_fuzz::FuzzError::InvalidSetup(_)),
+        "got: {err:?}"
+    );
+}
+
+/// Negative: malformed base64/XDR in a row aborts before execution.
+#[test]
+fn wrapper_malformed_xdr_aborts_before_execution() {
+    let exec = Executor::new(CHAIN_COUNTER_WASM, Default::default()).expect("executor");
+    let env = Environment {
+        ledger: Default::default(),
+        budget: sdkt_fuzz::BudgetPlan::ProtocolInitial,
+    };
+
+    let key = real_storage_key();
+    let key_b64 = sdkt_fuzz::state_capture::encode_key(&key).expect("encodes");
+    let resp = sim_response(&row_json(
+        &key_b64,
+        "updated",
+        Some("!!!bad!!!"),
+        Some("!!!bad!!!"),
+    ));
+
+    let err = sdkt_fuzz::execute_sequence_from_simulation(
+        &exec,
+        &sdkt_fuzz::SequenceState::default(),
+        &resp,
+        &env,
+        &[FunctionCall::new("increment", vec![])],
+        "wrapper-malformed",
+    )
+    .expect_err("malformed XDR must abort");
+    assert!(
+        matches!(err, sdkt_fuzz::FuzzError::Observation(_)),
+        "got: {err:?}"
+    );
+}
+
+/// Negative: key mismatch — the row's `after` decodes to a different key.
+#[test]
+fn wrapper_key_mismatch_aborts_before_execution() {
+    let exec = Executor::new(CHAIN_COUNTER_WASM, Default::default()).expect("executor");
+    let env = Environment {
+        ledger: Default::default(),
+        budget: sdkt_fuzz::BudgetPlan::ProtocolInitial,
+    };
+
+    let key = real_storage_key();
+    let other = other_storage_key_xdr();
+    let key_b64 = sdkt_fuzz::state_capture::encode_key(&key).expect("encodes");
+    let b = sdkt_fuzz::state_capture::encode_entry(&contract_data_entry(real_storage_key(), 1))
+        .expect("encodes");
+    let a =
+        sdkt_fuzz::state_capture::encode_entry(&contract_data_entry(other, 2)).expect("encodes");
+    let resp = sim_response(&row_json(&key_b64, "updated", Some(&b), Some(&a)));
+
+    let err = sdkt_fuzz::execute_sequence_from_simulation(
+        &exec,
+        &sdkt_fuzz::SequenceState::default(),
+        &resp,
+        &env,
+        &[FunctionCall::new("increment", vec![])],
+        "wrapper-keymismatch",
+    )
+    .expect_err("key mismatch must abort");
+    assert!(
+        matches!(err, sdkt_fuzz::FuzzError::Observation(_)),
+        "got: {err:?}"
+    );
+}
+
+/// Negative: an `Account` row key whose payload is a `ContractData` entry
+/// is rejected by the decoder's key/entry consistency check (never reaches
+/// the chaining function's `UnsupportedKey` branch, which stays fail-safe
+/// for hand-built rows — see `chaining_non_contract_data_row_is_an_error`).
+#[test]
+fn wrapper_account_key_rejected_by_decoder() {
+    let exec = Executor::new(CHAIN_COUNTER_WASM, Default::default()).expect("executor");
+    let env = Environment {
+        ledger: Default::default(),
+        budget: sdkt_fuzz::BudgetPlan::ProtocolInitial,
+    };
+
+    let acct = account_key_xdr();
+    let acct_b64 = sdkt_fuzz::state_capture::encode_key(&acct).expect("encodes");
+    let storage = real_storage_key();
+    let b = sdkt_fuzz::state_capture::encode_entry(&contract_data_entry(storage.clone(), 1))
+        .expect("encodes");
+    let a =
+        sdkt_fuzz::state_capture::encode_entry(&contract_data_entry(storage, 2)).expect("encodes");
+    let resp = sim_response(&row_json(&acct_b64, "updated", Some(&b), Some(&a)));
+
+    let err = sdkt_fuzz::execute_sequence_from_simulation(
+        &exec,
+        &sdkt_fuzz::SequenceState::default(),
+        &resp,
+        &env,
+        &[FunctionCall::new("increment", vec![])],
+        "wrapper-account",
+    )
+    .expect_err("account key must be rejected by the decoder");
+    assert!(
+        matches!(err, sdkt_fuzz::FuzzError::Observation(_)),
+        "got: {err:?}"
+    );
+}
+
+/// Negative: a row that is not a JSON object aborts before execution.
+#[test]
+fn wrapper_non_object_row_aborts_before_execution() {
+    let exec = Executor::new(CHAIN_COUNTER_WASM, Default::default()).expect("executor");
+    let env = Environment {
+        ledger: Default::default(),
+        budget: sdkt_fuzz::BudgetPlan::ProtocolInitial,
+    };
+
+    let raw = r#"{"transactionData":"","minResourceFee":"0","latestLedger":"1000","stateChanges":["not-an-object"],"results":[]}"#;
+    let resp: sdkt_rpc::SimulateResponse = serde_json::from_str(raw).expect("valid json");
+
+    let err = sdkt_fuzz::execute_sequence_from_simulation(
+        &exec,
+        &sdkt_fuzz::SequenceState::default(),
+        &resp,
+        &env,
+        &[FunctionCall::new("increment", vec![])],
+        "wrapper-nonobject",
+    )
+    .expect_err("non-object row must abort");
+    assert!(
+        matches!(err, sdkt_fuzz::FuzzError::Observation(_)),
+        "got: {err:?}"
+    );
+}

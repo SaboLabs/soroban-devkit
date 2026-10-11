@@ -37,6 +37,11 @@ sdkt-wasm = { version = "2.7.0", path = "../sdkt-wasm" }
 # a test-only one: the capture pipeline runs against real RPC responses.
 sdkt-xdr = { version = "2.7.0", path = "../sdkt-xdr" }
 
+# Production-path dependency: the simulation wrapper consumes RPC
+# `SimulateResponse` payloads directly, so callers never hand-extract
+# `serde_json::Value` rows from `simulateTransaction` responses.
+sdkt-rpc = { version = "2.7.0", path = "../sdkt-rpc" }
+
 sha2 = "0.11"
 thiserror = "2"
 
