@@ -2334,9 +2334,9 @@ dependencies = [
 
 [[package]]
 name = "jsonschema"
-version = "0.58.2"
+version = "0.58.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "657c6a38b0e00dda091d9c006cc1741957ba2377f00dccfd6e79df4c95619bb1"
+checksum = "f622c574a29fb3034a0a90645afee194dfedc75fc124228801b6e77041075bd1"
 dependencies = [
  "ahash",
  "bytecount",
@@ -2362,18 +2362,18 @@ dependencies = [
 
 [[package]]
 name = "jsonschema-regex"
-version = "0.58.3"
+version = "0.58.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "023cf6b6c38655c1e9cedf72b9c534fd361bd35d20ac06e074f2c93b7dd0836c"
+checksum = "a968fffd387b2ab005bf00c1851f5d26e90df05b6f7ad609ed0d620033cca5e7"
 dependencies = [
  "regex-syntax",
 ]
 
 [[package]]
 name = "jsonschema-value"
-version = "0.58.3"
+version = "0.58.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "43519639b8e32075ef90a9b6b19136e516a3236b7943c3fe6b1622dafdced8ea"
+checksum = "39b7670345e5ce87371339d13705dbb9276b7e3e934bbe1efa2c6734a1f65a96"
 dependencies = [
  "ahash",
  "bytecount",
@@ -3186,9 +3186,9 @@ dependencies = [
 
 [[package]]
 name = "referencing"
-version = "0.58.3"
+version = "0.58.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ead446bbb5527785ff232eb96625ac03daa627945470374c553db8f13090e30f"
+checksum = "558f3855529c0a7e78a48e409fa653456e55f1b167eab4109c16a255b7727e3f"
 dependencies = [
  "ahash",
  "fluent-uri",
@@ -3560,7 +3560,7 @@ dependencies = [
  "tar",
  "tempfile",
  "thiserror 2.0.21",
- "toml 1.1.6+spec-1.1.0",
+ "toml 1.1.7+spec-1.1.0",
 ]
 
 [[package]]
@@ -3595,8 +3595,8 @@ dependencies = [
  "serde",
  "serde_json",
  "sha2 0.11.0",
- "stellar-strkey 0.0.18",
- "stellar-xdr",
+ "stellar-strkey 1.0.0",
+ "stellar-xdr 30.0.0",
  "tempfile",
  "tokio",
 ]
@@ -3609,12 +3609,12 @@ dependencies = [
  "serde",
  "serde_json",
  "sha2 0.11.0",
- "stellar-strkey 0.0.18",
- "stellar-xdr",
+ "stellar-strkey 1.0.0",
+ "stellar-xdr 30.0.0",
  "tar",
  "tempfile",
  "thiserror 2.0.21",
- "toml 1.1.6+spec-1.1.0",
+ "toml 1.1.7+spec-1.1.0",
  "zstd 0.14.0",
 ]
 
@@ -3631,8 +3631,8 @@ dependencies = [
  "serde_json",
  "sha2 0.11.0",
  "soroban-env-host",
- "stellar-strkey 0.0.18",
- "stellar-xdr",
+ "stellar-strkey 1.0.0",
+ "stellar-xdr 30.0.0",
  "thiserror 2.0.21",
  "tokio",
 ]
@@ -3652,8 +3652,8 @@ dependencies = [
  "serde",
  "serde_json",
  "sha2 0.11.0",
- "stellar-strkey 0.0.18",
- "stellar-xdr",
+ "stellar-strkey 1.0.0",
+ "stellar-xdr 30.0.0",
  "thiserror 2.0.21",
  "tokio",
 ]
@@ -3671,8 +3671,8 @@ dependencies = [
  "sdkt-wasm",
  "serde",
  "serde_json",
- "stellar-strkey 0.0.18",
- "stellar-xdr",
+ "stellar-strkey 1.0.0",
+ "stellar-xdr 30.0.0",
  "tempfile",
  "thiserror 2.0.21",
  "tokio",
@@ -3685,9 +3685,9 @@ dependencies = [
  "hex",
  "serde",
  "sha2 0.11.0",
- "stellar-xdr",
+ "stellar-xdr 30.0.0",
  "thiserror 2.0.21",
- "wasmparser 0.259.0",
+ "wasmparser 0.261.0",
 ]
 
 [[package]]
@@ -3702,8 +3702,8 @@ dependencies = [
  "serde",
  "serde_json",
  "sha2 0.11.0",
- "stellar-strkey 0.0.18",
- "stellar-xdr",
+ "stellar-strkey 1.0.0",
+ "stellar-xdr 30.0.0",
  "thiserror 2.0.21",
 ]
 
@@ -3798,9 +3798,9 @@ dependencies = [
 
 [[package]]
 name = "serde_spanned"
-version = "1.1.1"
+version = "1.1.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "6662b5879511e06e8999a8a235d848113e942c9124f211511b16466ee2995f26"
+checksum = "4e7523beb55eece201a2356bee0bbca0d1ab466c14c07703b2e0ee6d42cb0c2c"
 dependencies = [
  "serde_core",
 ]
@@ -3999,7 +3999,7 @@ dependencies = [
  "soroban-env-macros",
  "soroban-wasmi",
  "static_assertions",
- "stellar-xdr",
+ "stellar-xdr 28.0.0",
  "wasmparser 0.116.1",
 ]
 
@@ -4051,7 +4051,7 @@ dependencies = [
  "quote",
  "serde",
  "serde_json",
- "stellar-xdr",
+ "stellar-xdr 28.0.0",
  "syn 2.0.119",
 ]
 
@@ -4108,9 +4108,9 @@ dependencies = [
 
 [[package]]
 name = "stellar-strkey"
-version = "0.0.18"
+version = "1.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "0f34ff61c0ca6f1c2b4169e8d1633417bd9225f58b6175e4e317204565d16277"
+checksum = "5038ed2bf4e11842210d118f65791d8ca4747622daddd222338b3d06b6051bc1"
 dependencies = [
  "crate-git-revision 0.0.9",
  "data-encoding",
@@ -4124,6 +4124,21 @@ version = "28.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f93d09ff8b9f919b084f664003c4c546ac66a76affd5429460dbe29f4b326f8e"
 dependencies = [
+ "base64 0.22.1",
+ "crate-git-revision 0.0.9",
+ "escape-bytes",
+ "ethnum",
+ "hex",
+ "sha2 0.10.9",
+ "stellar-strkey 0.0.13",
+]
+
+[[package]]
+name = "stellar-xdr"
+version = "30.0.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "56f2fb2008b42fc746c0f6b46e375600068dd91f07748e9f1737c6341a2255f2"
+dependencies = [
  "arbitrary",
  "base64 0.22.1",
  "cfg_eval",
@@ -4134,7 +4149,7 @@ dependencies = [
  "serde",
  "serde_with",
  "sha2 0.10.9",
- "stellar-strkey 0.0.13",
+ "stellar-strkey 1.0.0",
 ]
 
 [[package]]
@@ -4400,9 +4415,9 @@ checksum = "1f3ccbac311fea05f86f61904b462b55fb3df8837a366dfc601a0161d0532f20"
 
 [[package]]
 name = "tokio"
-version = "1.53.1"
+version = "1.53.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "202caea871b69668250d242070849eb495be178ed697a3e98aebce5bc81a0bed"
+checksum = "e95f91fcc7a621e8b030f6aa23c71fe9838ae2fb4d8118b75602a328f5144044"
 dependencies = [
  "bytes",
  "libc",
@@ -4465,14 +4480,14 @@ dependencies = [
 
 [[package]]
 name = "toml"
-version = "1.1.6+spec-1.1.0"
+version = "1.1.7+spec-1.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "920602543f0911ab71da12c50d59701da54c196d1a2bf5cb4b75667f137a406a"
+checksum = "7874cd34dd99040fc24e30923aa64a60a81ff3ddfe2b8129ccc84ba24949deed"
 dependencies = [
  "indexmap 2.14.0",
  "serde_core",
  "serde_spanned",
- "toml_datetime 1.1.1+spec-1.1.0",
+ "toml_datetime 1.1.2+spec-1.1.0",
  "toml_parser",
  "toml_writer",
  "winnow 1.0.4",
@@ -4489,9 +4504,9 @@ dependencies = [
 
 [[package]]
 name = "toml_datetime"
-version = "1.1.1+spec-1.1.0"
+version = "1.1.2+spec-1.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "3165f65f62e28e0115a00b2ebdd37eb6f3b641855f9d636d3cd4103767159ad7"
+checksum = "2b86d767906c6c42421dcba507eb9d203e779497710a47782a224bb871653053"
 dependencies = [
  "serde_core",
 ]
@@ -4503,25 +4518,25 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "6975367e4d2ef766d86af01ffad14b622fecc8d4357a998fbc4deb6e9bacaf9b"
 dependencies = [
  "indexmap 2.14.0",
- "toml_datetime 1.1.1+spec-1.1.0",
+ "toml_datetime 1.1.2+spec-1.1.0",
  "toml_parser",
  "winnow 1.0.4",
 ]
 
 [[package]]
 name = "toml_parser"
-version = "1.1.3+spec-1.1.0"
+version = "1.1.5+spec-1.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1d38ac1cf9b95face32296c0a3ede1fdc270627c9d9c02a7274dd6d960dc4d56"
+checksum = "baa693a8032d7e1cada7d0041e96126df243179ff061456783ac7f12bda4744c"
 dependencies = [
  "winnow 1.0.4",
 ]
 
 [[package]]
 name = "toml_writer"
-version = "1.1.2+spec-1.1.0"
+version = "1.1.3+spec-1.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7d56353a2a665ad0f41a421187180aab746c8c325620617ad883a99a1cbe66d2"
+checksum = "06bdbd8cfc056b8d2e2e85f29b56a3bdbecb527cef81eb39e3e7b98af4652770"
 
 [[package]]
 name = "tower"
@@ -4995,9 +5010,9 @@ dependencies = [
 
 [[package]]
 name = "wasmparser"
-version = "0.259.0"
+version = "0.261.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "0f7c12eac7bb587801590f6a67ff0bc84d0748513864b71108e4b311cc3df694"
+checksum = "4f20f20e44f7e8aeb6744823ea9d869ede51e51be4fdaedede2852282e54d2d8"
 dependencies = [
  "bitflags",
  "hashbrown 0.17.1",
