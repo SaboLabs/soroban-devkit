@@ -3616,3 +3616,294 @@ fn wrapper_persistent_contract_data_value_reaches_host() {
         "host must read the post-stateChanges persistent value, not the baseline 41"
     );
 }
+
+// ---------------------------------------------------------------------------
+// Live Testnet `stateChanges` — decoder / ingestion compatibility
+//
+// Repro: capture the RPC `stateChanges` array from a read-only
+// `simulateTransaction` of `apply_funding()` against the public testnet
+// contract, then pin the SDKT decoder's handling of those exact rows.
+//
+// This is a *decoder and ingestion* test. It is deliberately separate from
+// the sequence-chaining tests above: no invocation is executed here, so no
+// chaining claim is made.
+// ---------------------------------------------------------------------------
+
+/// The verbatim `stateChanges` array captured from the live simulation.
+/// Provenance is recorded in the fixture's `_provenance` block.
+const LIVE_APPLY_FUNDING_ROWS: &str =
+    include_str!("fixtures/testnet_apply_funding_state_changes.json");
+
+fn live_apply_funding_rows() -> Vec<serde_json::Value> {
+    let doc: serde_json::Value =
+        serde_json::from_str(LIVE_APPLY_FUNDING_ROWS).expect("fixture parses");
+    doc["stateChanges"]
+        .as_array()
+        .expect("stateChanges array")
+        .clone()
+}
+
+/// Every captured live row decodes, and the decoder reports the RPC's own
+/// change kind. This pins wire-format compatibility for real Testnet output.
+#[test]
+fn live_state_changes_rows_all_decode_with_reported_kind() {
+    let rows = live_apply_funding_rows();
+    assert_eq!(rows.len(), 6, "the captured simulation produced 6 rows");
+
+    for (i, row) in rows.iter().enumerate() {
+        let reported = row["type"].as_str().expect("type is a string");
+        let decoded = sdkt_fuzz::decode_state_change_row(row)
+            .unwrap_or_else(|e| panic!("row {i} must decode, got {e}"));
+        assert_eq!(
+            decoded.kind,
+            sdkt_fuzz::state_capture::StateChangeKind::Created,
+            "row {i} decodes to the kind the RPC reported (`{reported}`)"
+        );
+        assert!(
+            decoded.before.is_none(),
+            "row {i} carries no before value, as the RPC reported"
+        );
+        assert!(decoded.after.is_some(), "row {i} carries an after value");
+    }
+}
+
+/// The captured batch splits into exactly 5 contract-data entries and 1
+/// executor-owned entry, using the engine's own `is_executor_owned_key`
+/// policy rather than a hand-rolled rule.
+#[test]
+fn live_state_changes_split_contract_data_and_executor_owned() {
+    let rows = live_apply_funding_rows();
+    let mut contract_data = Vec::new();
+    let mut executor_owned = Vec::new();
+
+    for (i, row) in rows.iter().enumerate() {
+        let decoded = sdkt_fuzz::decode_state_change_row(row).expect("row decodes");
+        let entry = decoded.after.as_ref().expect("created row has after");
+        let key = entry.to_key();
+        if sdkt_fuzz::state_capture::is_executor_owned_key(&key) {
+            executor_owned.push(i);
+        } else {
+            contract_data.push(i);
+        }
+    }
+
+    assert_eq!(
+        contract_data.len(),
+        5,
+        "5 contract-data rows, got indices {contract_data:?}"
+    );
+    assert_eq!(
+        executor_owned.len(),
+        1,
+        "1 executor-owned row, got indices {executor_owned:?}"
+    );
+
+    // The executor-owned row is the ContractCode entry (the contract's own
+    // WASM), which is what `is_executor_owned_key` classifies as owned.
+    let code_index = executor_owned[0];
+    let code_entry = sdkt_fuzz::decode_state_change_row(&rows[code_index])
+        .expect("code row decodes")
+        .after
+        .expect("after present");
+    assert!(
+        matches!(
+            code_entry.data,
+            stellar_xdr::LedgerEntryData::ContractCode(_)
+        ),
+        "the executor-owned row must be the ContractCode entry"
+    );
+
+    for idx in &contract_data {
+        let entry = sdkt_fuzz::decode_state_change_row(&rows[*idx])
+            .expect("row decodes")
+            .after
+            .expect("after present");
+        assert!(
+            matches!(entry.data, stellar_xdr::LedgerEntryData::ContractData(_)),
+            "row {idx} must be a ContractData entry"
+        );
+    }
+}
+
+/// Chaining the captured rows onto an empty baseline is refused for the
+/// executor-owned `ContractCode` row: the chaining function skips it, so the
+/// resulting state carries the 5 contract-data entries only.
+///
+/// The empty baseline is the honest input here: every captured row is
+/// `created`, which the baseline validator accepts precisely when the key is
+/// absent — and the fixture records that all `before` values were null.
+#[test]
+fn live_state_changes_chain_onto_empty_baseline_skips_executor_owned() {
+    let rows = live_apply_funding_rows();
+    let decoded: Vec<_> = rows
+        .iter()
+        .map(|r| sdkt_fuzz::decode_state_change_row(r).expect("row decodes"))
+        .collect();
+
+    let chained = sdkt_fuzz::state_changes_into_sequence_state(
+        &sdkt_fuzz::SequenceState::default(),
+        &decoded,
+    )
+    .expect("created rows chain onto an empty baseline");
+
+    assert_eq!(
+        chained.data_entries.len(),
+        5,
+        "only the 5 contract-data rows are carried; the ContractCode row is skipped"
+    );
+    assert!(
+        chained.instance_storage.is_empty(),
+        "no instance entry is present in this capture"
+    );
+    for entry in &chained.data_entries {
+        assert!(
+            matches!(entry.data, stellar_xdr::LedgerEntryData::ContractData(_)),
+            "carried entries are contract-data only"
+        );
+    }
+}
+
+/// A non-empty baseline holding a key the capture reports as `created` is
+/// rejected — the same guard the offline regression tests pin, exercised with
+/// a real captured row.
+#[test]
+fn live_state_changes_created_row_rejected_on_populated_baseline() {
+    let rows = live_apply_funding_rows();
+    let first = sdkt_fuzz::decode_state_change_row(&rows[0]).expect("row decodes");
+    let entry = first.after.clone().expect("after present");
+
+    let baseline = sdkt_fuzz::SequenceState {
+        data_entries: vec![entry],
+        instance_storage: vec![],
+    };
+
+    let err = sdkt_fuzz::state_changes_into_sequence_state(&baseline, &[first])
+        .expect_err("`created` on an existing key must be rejected");
+    assert!(
+        matches!(err, sdkt_fuzz::ChainError::BaselineMismatch { .. }),
+        "got: {err:?}"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// Live `stateChanges` → host execution
+//
+// The captured rows come from a single read-only simulation, so this is NOT
+// live two-invocation chaining. What is tested here is whether the entries
+// the capture produces can be handed to the host-execution path at all.
+// ---------------------------------------------------------------------------
+
+/// The 5 contract-data entries the captured rows chain into, as the chaining
+/// helper produces them.
+fn live_chained_contract_data() -> Vec<stellar_xdr::LedgerEntry> {
+    let rows = live_apply_funding_rows();
+    let decoded: Vec<_> = rows
+        .iter()
+        .map(|r| sdkt_fuzz::decode_state_change_row(r).expect("row decodes"))
+        .collect();
+    let chained = sdkt_fuzz::state_changes_into_sequence_state(
+        &sdkt_fuzz::SequenceState::default(),
+        &decoded,
+    )
+    .expect("created rows chain onto an empty baseline");
+    chained.data_entries
+}
+
+/// The captured entries are bound to the live contract, while the executor
+/// derives its own contract address from `network_id + deployer + salt`.
+/// The host path must refuse them rather than silently execute against a
+/// different contract's state.
+///
+/// This pins the executor's existing ownership check: it is the reason a
+/// live capture cannot be dropped into a synthetic-executor sequence
+/// unchanged, and the reason the state-matched live test re-points captured
+/// entries at the executor's derived address instead.
+#[test]
+fn live_chained_entries_are_rejected_by_foreign_contract_address() {
+    let entries = live_chained_contract_data();
+    assert_eq!(entries.len(), 5, "5 contract-data entries chained");
+
+    // The live contract id, decoded from the entries themselves.
+    let live_contract = match &entries[0].data {
+        stellar_xdr::LedgerEntryData::ContractData(cd) => cd.contract.clone(),
+        other => panic!("expected ContractData, got {other:?}"),
+    };
+
+    // The executor derives its own address; it cannot equal the live one.
+    let exec = Executor::new(CHAIN_COUNTER_WASM, Default::default()).expect("executor");
+    let probe = exec.case("probe", FunctionCall::new("increment", vec![]), vec![]);
+    let derived = probe.contract_address();
+    assert_ne!(
+        live_contract, derived,
+        "the live capture must not accidentally bind to the executor's address"
+    );
+
+    let env = Environment {
+        ledger: Default::default(),
+        budget: sdkt_fuzz::BudgetPlan::ProtocolInitial,
+    };
+    let err = sdkt_fuzz::execute_sequence_auth(
+        &exec,
+        &entries,
+        &env,
+        &[FunctionCall::new("increment", vec![])],
+        "live-foreign",
+        &[],
+    )
+    .expect_err("entries bound to another contract must be refused");
+    assert!(
+        matches!(
+            err,
+            sdkt_fuzz::FuzzError::InvalidSetup(sdkt_fuzz::SetupError::BaselineEntry(_))
+        ),
+        "got: {err:?}"
+    );
+}
+
+/// Re-pointing the captured entries at the executor's derived address is the
+/// documented state-matched path. This test proves the entries become
+/// *acceptable* to the host path once the contract binding is corrected —
+/// i.e. the capture is structurally valid, only its contract identity was
+/// foreign.
+#[test]
+fn live_chained_entries_accepted_after_contract_rebinding() {
+    let entries = live_chained_contract_data();
+    let exec = Executor::new(CHAIN_COUNTER_WASM, Default::default()).expect("executor");
+    let derived = exec
+        .case("probe", FunctionCall::new("increment", vec![]), vec![])
+        .contract_address();
+
+    let rebound: Vec<stellar_xdr::LedgerEntry> = entries
+        .iter()
+        .map(|e| {
+            let mut e = e.clone();
+            if let stellar_xdr::LedgerEntryData::ContractData(cd) = &mut e.data {
+                cd.contract = derived.clone();
+            }
+            e
+        })
+        .collect();
+
+    let env = Environment {
+        ledger: Default::default(),
+        budget: sdkt_fuzz::BudgetPlan::ProtocolInitial,
+    };
+    // The host path accepts the rebound baseline (the call itself may fail
+    // for contract-specific reasons; what is asserted here is that the
+    // baseline is accepted, i.e. no BaselineEntry setup error).
+    let outcome = sdkt_fuzz::execute_sequence_auth(
+        &exec,
+        &rebound,
+        &env,
+        &[FunctionCall::new("increment", vec![])],
+        "live-rebound",
+        &[],
+    );
+    match outcome {
+        Ok(_) => {}
+        Err(sdkt_fuzz::FuzzError::InvalidSetup(sdkt_fuzz::SetupError::BaselineEntry(_))) => {
+            panic!("rebound live entries must not be refused as a baseline problem")
+        }
+        Err(other) => panic!("unexpected error kind: {other:?}"),
+    }
+}

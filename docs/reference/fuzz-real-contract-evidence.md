@@ -317,7 +317,141 @@ different value.
 > No vulnerability claim. Findings are behavioral/declaration/oracle mismatches
 > unless independently proven otherwise.
 
-## 9. Limitations
+## 9. Live Testnet — Read-Only State-Matched Differential
+
+One end-to-end run against the public Testnet, exercising the same pipeline
+the offline pilots do, but with the ledger state fetched from the network.
+
+| Item | Value |
+|---|---|
+| Command | `cargo test -p sdkt-fuzz --test state_matched_live -- --ignored --nocapture` |
+| Result | exit `0`; `1 passed; 0 failed` |
+| Run at | 2026-10-12T03:08:36Z |
+| RPC endpoint | `https://soroban-testnet.stellar.org` |
+| Contract | `CAE3U7JKESRWZHPEQ72DVNGOQ6WPA7HSPQZL5YV46NPCE4TMUPAGYMEC` |
+| Function | `get_all_order_ids` (read-only, no arguments) |
+| Protocol / passphrase | 29 / testnet — pre-flight passed |
+| Simulation ledger | `5150185` |
+| Fetched entries | 3 (fetch ledger == simulation ledger) |
+| Capture | `VERIFIED` |
+| `stateChanges` cross-check | verified (3 entries) |
+| Local execution | `Returned(Vec([U64(46), U64(50)]))` |
+| Outcome | `rpc_returned=true local_returned=true` |
+
+The run is read-only: `simulateTransaction` and `getLedgerEntries` only. No
+transaction was submitted, nothing was signed, and no funded identity was
+used — the source account is an ephemeral key generated in-process.
+
+### What this run proves
+
+- The footprint the simulation declares is extracted and used to fetch the
+  exact ledger state the simulation ran against.
+- The captured state passes the freshness, liveness, and stability guards,
+  and agrees with the simulation's own `before` values.
+- The local host resolves the network's own `ContractCode` and instance
+  entry, and returns the **same value** the RPC returned for this
+  invocation.
+
+### What this run does not prove
+
+- **Not live `stateChanges` chaining.** This invocation is read-only and
+  produced **0 state changes** (`STATE_CHANGES with before values: 0`), so
+  the `stateChanges` → baseline → next-invocation path was not exercised
+  against the network. That path is covered offline by the regression tests
+  only.
+- **TTL parity is not tested.** The RPC `stateChanges` payload does not
+  report TTL, and no comparison was made.
+- **CPU/memory parity is not tested.** The local run logged
+  `cpu=656812 mem=1196714`; these are **local host counters only** and were
+  not compared against any RPC figure.
+- **No real-contract WASM MATCH claim.** This run compares a return value,
+  not a deployed executable hash. WASM-identity claims are not made here.
+
+### State-changing simulation and WASM verification (same contract)
+
+A second read-only investigation targeted a state-changing function on the
+same contract, to see whether a real `stateChanges` payload could be carried
+through the SDKT chaining path.
+
+| Item | Value |
+|---|---|
+| Function | `apply_funding()` — no arguments, no `require_auth` |
+| Simulation ledger | `5150578` |
+| Simulation error | `None` |
+| `stateChanges` rows | **6**, all `type=created`, all `before=null` |
+| Decode via `decode_state_change_row` | **6/6 OK** |
+| Classification via `is_executor_owned_key` | **5 `ContractData` (Persistent) + 1 `ContractCode`** |
+| Chaining onto an empty baseline | 5 `data_entries` carried; the `ContractCode` row is skipped |
+
+The five contract-data keys and their decoded `after` values:
+
+| Key | `after` value |
+|---|---|
+| `CumulativeFundingRate` | `I128(lo=1897729)` |
+| `CurrentFundingRate` | `I128(lo=999)` |
+| `LastFundingTime` | `U64(1791776477)` |
+| `TotalLongSize` | `I128(lo=5470170000000)` |
+| `TotalShortSize` | `I128(lo=830000000)` |
+
+These rows are captured verbatim in
+`crates/sdkt-fuzz/tests/fixtures/testnet_apply_funding_state_changes.json`
+and pinned by regression tests in
+`crates/sdkt-fuzz/tests/live_differential.rs` (decode, classification,
+chaining onto an empty baseline, and rejection of a `created` row on a
+populated baseline).
+
+**`before=null` is not a statement about the committed ledger.** The
+simulation's `before` values are relative to the simulation's baseline, not
+to the current committed ledger. An independent `getLedgerEntries` read of
+the same six keys returned all six as present, which is consistent with
+this: the simulation baseline did not contain them, the committed ledger
+did. No claim is made that these rows represent state committed by the
+simulated invocation.
+
+### WASM retrieval and hash verification
+
+The contract's own `ContractCode` entry was fetched read-only and verified:
+
+| Item | Value |
+|---|---|
+| Contract hash (hex) | `09ba7d2a24a36c9de487f43ab4ce87acf07cf27c32bee2bcf35e22726ca3c06c` |
+| `wasm_hash` from live instance entry | `60cddae67f202c19ee7b000c894fd12aa8b44de09ab652f5e188bc0c63a6cf02` |
+| WASM size | **65,152 bytes** |
+| SHA-256 of fetched WASM | `60cddae67f202c19ee7b000c894fd12aa8b44de09ab652f5e188bc0c63a6cf02` |
+| SHA-256 == `wasm_hash` | **true** |
+| `ContractCodeEntry.hash` == `wasm_hash` | **true** |
+
+### Local executor load
+
+`Executor::new(&wasm, Default::default())` loads the fetched WASM locally
+and reports the same `wasm_hash`. The module parses and caches under the
+protocol-29 configuration the executor pins.
+
+**Loading the WASM locally does not prove full network parity.** It proves
+the module is accepted by the pinned host engine and that its identity
+matches the deployed executable. It does not prove that local execution
+reproduces network behaviour in general.
+
+### Host read-back: not proven
+
+The five funding keys are written by `apply_funding()`, but no public
+function exposes them. The read-only functions present in the contract spec
+are:
+
+`get_order`, `get_position`, `get_all_order_ids`, `get_all_position_ids`,
+`get_cross_margin_balance`, `get_cross_margin_positions`.
+
+`get_funding_rate` and `get_market_stats` are **not present** in the WASM
+(byte-level search returns zero occurrences), and no other public function
+is known to read the funding keys. The keys themselves are present in the
+module, so the contract does use them — it simply does not expose them.
+
+Consequently the decoded `after` values above are **not** read back through
+the host. This is a property of the contract's interface, not a limitation
+of the toolkit: there is no call that could perform the read. The values
+were verified by typed decoding only.
+
+## 10. Limitations
 
 - No vulnerability / security-discovery claim is made or implied.
 - No coverage or corpus metric exists; completeness is not claimed.
@@ -342,7 +476,7 @@ different value.
   security-audited.
 - All findings are declaration mismatches.
 
-## 10. Reproducibility
+## 11. Reproducibility
 
 | Item | Value |
 |---|---|
@@ -374,7 +508,7 @@ byte-identical across runs.
 Non-primary side-run artifacts were excluded from the deterministic evidence
 set.
 
-## 11. Safe Claim
+## 12. Safe Claim
 
 > The sdkt-fuzz v2.7.0 pipeline (PR #285) and its auth-classification fix
 > (PR #286) are externally validated on real Soroban contracts built from
