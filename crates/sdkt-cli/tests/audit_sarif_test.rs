@@ -128,8 +128,13 @@ fn sarif_each_finding_becomes_a_result() {
 
 #[test]
 fn sarif_critical_severity_maps_to_error_level() {
+    // A contract entrypoint that writes state without auth stays critical.
     let dir = TempDir::new().unwrap();
-    let path = write_fixture(&dir, "bad.rs", "pub fn mint(to: Address) { }\n");
+    let path = write_fixture(
+        &dir,
+        "bad.rs",
+        "#[contractimpl]\nimpl Token {\n    pub fn mint(env: Env, to: Address) { env.storage().instance().set(&K, &to); }\n}\n",
+    );
     let out = sdkt()
         .args(["audit", path.to_str().unwrap(), "--format", "sarif"])
         .assert()

@@ -599,3 +599,95 @@ fn audit_missing_path_fails_when_list_rules_not_specified() {
         .code(2)
         .stderr(predicates::str::contains("PATH"));
 }
+
+// ── Issue #311: severity follows behavior, not the name alone ──────────────
+
+/// A read-only accessor whose name matches a privileged substring must not be
+/// reported at `critical` (pre-change it was; that is the false positive).
+#[test]
+fn audit_read_only_accessor_is_not_critical() {
+    let dir = TempDir::new().unwrap();
+    let path = write_fixture(
+        &dir,
+        "getter.rs",
+        "pub fn admin_balance(env: Env) -> i128 { env.storage().instance().get(&K).unwrap() }\n",
+    );
+    sdkt()
+        .args(["audit", path.to_str().unwrap(), "--format", "json"])
+        .assert()
+        .success()
+        .stdout(predicates::str::contains("\"rule_id\":\"AUTH-001\""))
+        .stdout(predicates::str::contains("\"severity\":\"info\""))
+        .stdout(predicates::str::contains("\"critical\":0"));
+}
+
+/// An unguarded privileged setter on a contract entrypoint must be reported at
+/// `critical` (pre-change it was invisible; that is the false negative).
+#[test]
+fn audit_unguarded_privileged_setter_is_critical() {
+    let dir = TempDir::new().unwrap();
+    let path = write_fixture(
+        &dir,
+        "setter.rs",
+        "#[contractimpl]\nimpl Admin {\n    pub fn set_owner(env: Env, new_owner: Address) { env.storage().instance().set(&K, &new_owner); }\n}\n",
+    );
+    sdkt()
+        .args(["audit", path.to_str().unwrap(), "--format", "json"])
+        .assert()
+        .success()
+        .stdout(predicates::str::contains("\"rule_id\":\"AUTH-001\""))
+        .stdout(predicates::str::contains("\"severity\":\"critical\""));
+}
+
+/// A guarded privileged setter stays clean.
+#[test]
+fn audit_guarded_privileged_setter_is_clean() {
+    let dir = TempDir::new().unwrap();
+    let path = write_fixture(
+        &dir,
+        "guarded.rs",
+        "#[contractimpl]\nimpl Admin {\n    pub fn set_owner(env: Env, who: Address, new_owner: Address) { who.require_auth(); env.storage().instance().set(&K, &new_owner); }\n}\n",
+    );
+    sdkt()
+        .args(["audit", path.to_str().unwrap()])
+        .assert()
+        .success()
+        .stdout(predicates::str::contains("No issues found."));
+}
+
+/// A privileged-named internal helper (not a `#[contractimpl]` method) is not
+/// reachable by external callers, so it must not be reported at `critical`.
+#[test]
+fn audit_internal_helper_is_not_critical() {
+    let dir = TempDir::new().unwrap();
+    let path = write_fixture(
+        &dir,
+        "helper.rs",
+        "fn burn_shares(env: &Env, from: &Address, amount: i128) { env.storage().instance().set(&K, &amount); }\n",
+    );
+    sdkt()
+        .args(["audit", path.to_str().unwrap(), "--format", "json"])
+        .assert()
+        .success()
+        .stdout(predicates::str::contains("\"rule_id\":\"AUTH-001\""))
+        .stdout(predicates::str::contains("\"severity\":\"info\""))
+        .stdout(predicates::str::contains("\"critical\":0"));
+}
+
+/// SARIF output agrees with the pretty output for the demoted case: the
+/// read-only accessor lands at `note` level, not `error`.
+#[test]
+fn audit_read_only_accessor_sarif_is_note_not_error() {
+    let dir = TempDir::new().unwrap();
+    let path = write_fixture(
+        &dir,
+        "getter.rs",
+        "#[contractimpl]\nimpl Admin {\n    pub fn admin_balance(env: Env) -> i128 { 0 }\n}\n",
+    );
+    sdkt()
+        .args(["audit", path.to_str().unwrap(), "--format", "sarif"])
+        .assert()
+        .success()
+        .stdout(predicates::str::contains("\"level\":\"note\""))
+        .stdout(predicates::str::contains("AUTH-001"));
+}

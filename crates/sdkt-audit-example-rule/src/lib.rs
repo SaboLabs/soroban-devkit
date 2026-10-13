@@ -76,6 +76,9 @@ mod tests {
             usage: Default::default(),
             division_before_multiplication: false,
             external_call_before_state_write: false,
+            state_writes: 0,
+            is_entrypoint: true,
+            returns_value: false,
         }];
         let ctx = AuditContext { spec: None };
         let mut report = AuditReport::default();
@@ -94,6 +97,9 @@ mod tests {
             usage: Default::default(),
             division_before_multiplication: false,
             external_call_before_state_write: false,
+            state_writes: 0,
+            is_entrypoint: true,
+            returns_value: false,
         }];
         let ctx = AuditContext { spec: None };
         let mut report = AuditReport::default();

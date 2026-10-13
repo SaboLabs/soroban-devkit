@@ -878,6 +878,9 @@ fn rule_fires_on_trigger_function() {{
         usage: Default::default(),
         division_before_multiplication: false,
         external_call_before_state_write: false,
+        state_writes: 0,
+        is_entrypoint: true,
+        returns_value: false,
     }}];
     let ctx = AuditContext {{ spec: None }};
     let mut report = AuditReport::default();
@@ -901,6 +904,9 @@ fn rule_silent_on_normal_function() {{
         usage: Default::default(),
         division_before_multiplication: false,
         external_call_before_state_write: false,
+        state_writes: 0,
+        is_entrypoint: true,
+        returns_value: false,
     }}];
     let ctx = AuditContext {{ spec: None }};
     let mut report = AuditReport::default();

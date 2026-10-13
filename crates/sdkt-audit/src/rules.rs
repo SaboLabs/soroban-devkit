@@ -19,10 +19,13 @@ impl AuditRule for Auth001 {
     fn check(&self, scans: &[FnScan], _ctx: &AuditContext, report: &mut AuditReport) {
         for s in scans {
             if crate::audit::is_privileged(&s.fn_name) && s.require_auth == 0 {
+                // Severity comes from observed behavior, not the name alone:
+                // internal helpers and read-only accessors are reported at
+                // `info`, unguarded privileged writes stay `critical`.
                 report.add(Finding {
                     file: None,
                     rule_id: self.id().to_string(),
-                    severity: self.severity(),
+                    severity: s.privileged_match_severity(),
                     message: format!(
                         "Function `{}` looks privileged but does not call require_auth()",
                         s.fn_name
@@ -131,10 +134,12 @@ impl AuditRule for Auth004 {
                 "transfer" | "transfer_from" | "transferfrom" | "withdraw" | "burn"
             );
             if is_transfer && s.require_auth == 0 {
+                // The name alone is not evidence of a token transfer; severity
+                // follows the same behavior-based mapping as AUTH-001.
                 report.add(Finding {
                     file: None,
                     rule_id: self.id().to_string(),
-                    severity: self.severity(),
+                    severity: s.privileged_match_severity(),
                     message: format!(
                         "Transfer-style function `{}` does not call require_auth()",
                         s.fn_name
@@ -314,6 +319,9 @@ mod tests {
             usage: Default::default(),
             division_before_multiplication: false,
             external_call_before_state_write: false,
+            state_writes: 0,
+            is_entrypoint: true,
+            returns_value: false,
         }];
         let mut rep = AuditReport::default();
         Auth001.check(&scans, &crate::audit::AuditContext { spec: None }, &mut rep);
@@ -333,6 +341,9 @@ mod tests {
             usage: Default::default(),
             division_before_multiplication: false,
             external_call_before_state_write: false,
+            state_writes: 0,
+            is_entrypoint: true,
+            returns_value: false,
         }];
         let mut rep = AuditReport::default();
         Auth001.check(&scans, &crate::audit::AuditContext { spec: None }, &mut rep);
@@ -352,6 +363,9 @@ mod tests {
             usage: Default::default(),
             division_before_multiplication: false,
             external_call_before_state_write: false,
+            state_writes: 0,
+            is_entrypoint: true,
+            returns_value: false,
         }];
         let mut rep = AuditReport::default();
         Auth001.check(&scans, &crate::audit::AuditContext { spec: None }, &mut rep);
@@ -371,6 +385,9 @@ mod tests {
             usage: Default::default(),
             division_before_multiplication: false,
             external_call_before_state_write: false,
+            state_writes: 0,
+            is_entrypoint: true,
+            returns_value: false,
         }];
         let mut rep = AuditReport::default();
         Auth001.check(&scans, &crate::audit::AuditContext { spec: None }, &mut rep);
@@ -390,6 +407,9 @@ mod tests {
             usage: Default::default(),
             division_before_multiplication: false,
             external_call_before_state_write: false,
+            state_writes: 0,
+            is_entrypoint: true,
+            returns_value: false,
         }];
         let mut rep = AuditReport::default();
         Auth002.check(&scans, &crate::audit::AuditContext { spec: None }, &mut rep);
@@ -409,6 +429,9 @@ mod tests {
             usage: Default::default(),
             division_before_multiplication: false,
             external_call_before_state_write: false,
+            state_writes: 0,
+            is_entrypoint: true,
+            returns_value: false,
         }];
         let mut rep = AuditReport::default();
         Auth002.check(&scans, &crate::audit::AuditContext { spec: None }, &mut rep);
@@ -428,6 +451,9 @@ mod tests {
             usage: Default::default(),
             division_before_multiplication: false,
             external_call_before_state_write: false,
+            state_writes: 0,
+            is_entrypoint: true,
+            returns_value: false,
         }];
         let mut rep = AuditReport::default();
         Auth002.check(&scans, &crate::audit::AuditContext { spec: None }, &mut rep);
@@ -447,6 +473,9 @@ mod tests {
             usage: Default::default(),
             division_before_multiplication: false,
             external_call_before_state_write: false,
+            state_writes: 0,
+            is_entrypoint: true,
+            returns_value: false,
         }];
         let mut rep = AuditReport::default();
         Auth003.check(&scans, &crate::audit::AuditContext { spec: None }, &mut rep);
@@ -466,6 +495,9 @@ mod tests {
             usage: Default::default(),
             division_before_multiplication: false,
             external_call_before_state_write: false,
+            state_writes: 0,
+            is_entrypoint: true,
+            returns_value: false,
         }];
         let mut rep = AuditReport::default();
         Auth003.check(&scans, &crate::audit::AuditContext { spec: None }, &mut rep);
@@ -485,6 +517,9 @@ mod tests {
             usage: Default::default(),
             division_before_multiplication: false,
             external_call_before_state_write: false,
+            state_writes: 0,
+            is_entrypoint: true,
+            returns_value: false,
         }];
         let mut rep = AuditReport::default();
         Auth003.check(&scans, &crate::audit::AuditContext { spec: None }, &mut rep);
@@ -504,6 +539,9 @@ mod tests {
             usage: Default::default(),
             division_before_multiplication: false,
             external_call_before_state_write: false,
+            state_writes: 0,
+            is_entrypoint: true,
+            returns_value: false,
         }];
         let mut rep = AuditReport::default();
         Auth003.check(&scans, &crate::audit::AuditContext { spec: None }, &mut rep);
@@ -526,6 +564,9 @@ mod tests {
             usage,
             division_before_multiplication: false,
             external_call_before_state_write: false,
+            state_writes: 0,
+            is_entrypoint: true,
+            returns_value: false,
         }];
         let mut rep = AuditReport::default();
         Move001.check(&scans, &crate::audit::AuditContext { spec: None }, &mut rep);
@@ -548,6 +589,9 @@ mod tests {
             usage,
             division_before_multiplication: false,
             external_call_before_state_write: false,
+            state_writes: 0,
+            is_entrypoint: true,
+            returns_value: false,
         }];
         let mut rep = AuditReport::default();
         Move001.check(&scans, &crate::audit::AuditContext { spec: None }, &mut rep);
@@ -567,6 +611,9 @@ mod tests {
             usage: Default::default(),
             division_before_multiplication: false,
             external_call_before_state_write: false,
+            state_writes: 0,
+            is_entrypoint: true,
+            returns_value: false,
         }];
         let mut rep = AuditReport::default();
         Move001.check(&scans, &crate::audit::AuditContext { spec: None }, &mut rep);
@@ -585,6 +632,9 @@ mod tests {
             usage: Default::default(),
             division_before_multiplication: false,
             external_call_before_state_write: false,
+            state_writes: 0,
+            is_entrypoint: true,
+            returns_value: false,
         }];
         let mut rep = AuditReport::default();
         Auth004.check(&scans, &crate::audit::AuditContext { spec: None }, &mut rep);
@@ -604,6 +654,9 @@ mod tests {
             usage: Default::default(),
             division_before_multiplication: false,
             external_call_before_state_write: false,
+            state_writes: 0,
+            is_entrypoint: true,
+            returns_value: false,
         }];
         let mut rep = AuditReport::default();
         Auth004.check(&scans, &crate::audit::AuditContext { spec: None }, &mut rep);
@@ -623,6 +676,9 @@ mod tests {
             usage: Default::default(),
             division_before_multiplication: false,
             external_call_before_state_write: false,
+            state_writes: 0,
+            is_entrypoint: true,
+            returns_value: false,
         }];
         let mut rep = AuditReport::default();
         Auth004.check(&scans, &crate::audit::AuditContext { spec: None }, &mut rep);
@@ -644,6 +700,9 @@ mod tests {
             usage: Default::default(),
             division_before_multiplication: false,
             external_call_before_state_write: false,
+            state_writes: 0,
+            is_entrypoint: true,
+            returns_value: false,
         }];
         let mut rep = AuditReport::default();
         Auth004.check(&scans, &crate::audit::AuditContext { spec: None }, &mut rep);
@@ -663,6 +722,9 @@ mod tests {
             usage: Default::default(),
             division_before_multiplication: false,
             external_call_before_state_write: false,
+            state_writes: 0,
+            is_entrypoint: true,
+            returns_value: false,
         }];
         let mut rep = AuditReport::default();
         Auth004.check(&scans, &crate::audit::AuditContext { spec: None }, &mut rep);
@@ -682,6 +744,9 @@ mod tests {
             usage: Default::default(),
             division_before_multiplication: false,
             external_call_before_state_write: true,
+            state_writes: 1,
+            is_entrypoint: true,
+            returns_value: false,
         }];
         let mut rep = AuditReport::default();
         Cei001.check(&scans, &crate::audit::AuditContext { spec: None }, &mut rep);
@@ -701,6 +766,9 @@ mod tests {
             usage: Default::default(),
             division_before_multiplication: false,
             external_call_before_state_write: false,
+            state_writes: 0,
+            is_entrypoint: true,
+            returns_value: false,
         }];
         let mut rep = AuditReport::default();
         Cei001.check(&scans, &crate::audit::AuditContext { spec: None }, &mut rep);
@@ -720,6 +788,9 @@ mod tests {
             usage: Default::default(),
             division_before_multiplication: false,
             external_call_before_state_write: false,
+            state_writes: 0,
+            is_entrypoint: true,
+            returns_value: false,
         }];
         let mut rep = AuditReport::default();
         Cei001.check(&scans, &crate::audit::AuditContext { spec: None }, &mut rep);
@@ -739,6 +810,9 @@ mod tests {
             usage: Default::default(),
             division_before_multiplication: false,
             external_call_before_state_write: false,
+            state_writes: 0,
+            is_entrypoint: true,
+            returns_value: false,
         }];
         let mut rep = AuditReport::default();
         Cei001.check(&scans, &crate::audit::AuditContext { spec: None }, &mut rep);
@@ -746,5 +820,144 @@ mod tests {
             !has(&rep, "CEI-001"),
             "only state write should not trigger CEI-001"
         );
+    }
+
+    // ── Issue #311: severity follows observed behavior, not the name alone ──
+
+    /// Build an entrypoint scan (the default for contract methods) with an
+    /// explicit behavior profile.
+    fn scan(name: &str, writes: usize, entry: bool, returns: bool) -> FnScan {
+        FnScan {
+            fn_name: name.into(),
+            require_auth: 0,
+            invoke_contract: 0,
+            bound: Default::default(),
+            usage: Default::default(),
+            division_before_multiplication: false,
+            external_call_before_state_write: false,
+            state_writes: writes,
+            is_entrypoint: entry,
+            returns_value: returns,
+        }
+    }
+
+    fn severity_of(rep: &AuditReport, rule_id: &str) -> Option<Severity> {
+        rep.findings
+            .iter()
+            .find(|f| f.rule_id == rule_id)
+            .map(|f| f.severity)
+    }
+
+    #[test]
+    fn auth001_read_only_accessor_is_not_critical() {
+        // Issue #311 false positive: `admin_balance` returns a value and writes
+        // nothing, so it cannot be a missing-authorization defect.
+        for name in ["get_paused", "admin_balance", "burn_supply", "mint_supply"] {
+            let scans = vec![scan(name, 0, true, true)];
+            let mut rep = AuditReport::default();
+            Auth001.check(&scans, &crate::audit::AuditContext { spec: None }, &mut rep);
+            assert_eq!(
+                severity_of(&rep, "AUTH-001"),
+                Some(Severity::Info),
+                "{name} is a read-only accessor and must not be critical"
+            );
+        }
+    }
+
+    #[test]
+    fn auth004_read_only_transfer_is_not_critical() {
+        let scans = vec![scan("transfer", 0, true, true)];
+        let mut rep = AuditReport::default();
+        Auth004.check(&scans, &crate::audit::AuditContext { spec: None }, &mut rep);
+        assert_eq!(
+            severity_of(&rep, "AUTH-004"),
+            Some(Severity::Info),
+            "a value-returning `transfer` with no side effect must not be critical"
+        );
+    }
+
+    #[test]
+    fn auth001_unguarded_privileged_setter_is_critical() {
+        // Issue #311 false negative: admin setters are the shape that matters.
+        for name in [
+            "set_owner",
+            "set_fee",
+            "set_treasury",
+            "grant_role",
+            "revoke_role",
+            "drain",
+        ] {
+            let scans = vec![scan(name, 1, true, false)];
+            let mut rep = AuditReport::default();
+            Auth001.check(&scans, &crate::audit::AuditContext { spec: None }, &mut rep);
+            assert_eq!(
+                severity_of(&rep, "AUTH-001"),
+                Some(Severity::Critical),
+                "{name} writes state without auth and must stay critical"
+            );
+        }
+    }
+
+    #[test]
+    fn auth001_guarded_privileged_setter_is_not_reported() {
+        let mut s = scan("set_owner", 1, true, false);
+        s.require_auth = 1;
+        let scans = vec![s];
+        let mut rep = AuditReport::default();
+        Auth001.check(&scans, &crate::audit::AuditContext { spec: None }, &mut rep);
+        assert!(!has(&rep, "AUTH-001"), "guarded setter must stay clean");
+    }
+
+    #[test]
+    fn auth001_internal_helper_is_not_critical() {
+        // The liquidity_pool false positive: a private helper named
+        // `burn_shares` is not reachable by external callers; its entrypoint
+        // holds the auth responsibility.
+        let scans = vec![scan("burn_shares", 1, false, false)];
+        let mut rep = AuditReport::default();
+        Auth001.check(&scans, &crate::audit::AuditContext { spec: None }, &mut rep);
+        assert_eq!(
+            severity_of(&rep, "AUTH-001"),
+            Some(Severity::Info),
+            "an internal helper must not be reported as critical"
+        );
+    }
+
+    #[test]
+    fn auth001_unrecognized_write_setter_stays_critical() {
+        // Conservative direction: a setter whose write goes through an
+        // unrecognized helper has no side-effect signal, so it stays loud
+        // rather than being silently demoted.
+        let scans = vec![scan("set_owner", 0, true, false)];
+        let mut rep = AuditReport::default();
+        Auth001.check(&scans, &crate::audit::AuditContext { spec: None }, &mut rep);
+        assert_eq!(
+            severity_of(&rep, "AUTH-001"),
+            Some(Severity::Critical),
+            "a void-returning setter with no detected write must stay critical"
+        );
+    }
+
+    #[test]
+    fn auth001_preserved_controls_still_critical() {
+        // Regression: functions the pre-change implementation flagged must keep
+        // their rule id and severity.
+        for name in [
+            "mint",
+            "pause",
+            "set_admin",
+            "initialize",
+            "withdraw",
+            "burn",
+        ] {
+            let scans = vec![scan(name, 1, true, false)];
+            let mut rep = AuditReport::default();
+            Auth001.check(&scans, &crate::audit::AuditContext { spec: None }, &mut rep);
+            assert_eq!(
+                severity_of(&rep, "AUTH-001"),
+                Some(Severity::Critical),
+                "{name} must keep its critical AUTH-001 finding"
+            );
+        }
     }
 }
