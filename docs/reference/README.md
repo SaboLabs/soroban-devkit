@@ -6,6 +6,8 @@ The `sdkt-cli` crate uses `clap` (derive API) for command routing.
 
 - **[sdkt-agent — natural-language front end](agent.md)** — how to build it, what it can plan, and how it refuses ambiguous, unsupported, mutating, or production-network requests. Every command returns `Result<(), Box<dyn std::error::Error>>`; library errors (`RpcError`, `DecodeError`, `WasmError`) bubble up and are printed via `eprintln!` with a non-zero exit.
 
+- **[Environment Variables](environment.md)** — Detailed reference guide covering CLI runtime configuration overrides and internal test-harness settings.
+
 ## Command Tree
 
 ```text
