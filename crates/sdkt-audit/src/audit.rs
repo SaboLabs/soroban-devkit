@@ -497,8 +497,19 @@ pub fn scan_all_functions_str(src: &str) -> Option<Vec<FnScan>> {
     Some(scan_all_functions(&ast))
 }
 
-/// All built-in rules.
-pub fn all_rules() -> Vec<Box<dyn AuditRule>> {
+/// All built-in rules, in the same order [`crate::registry::RuleRegistry::register_builtin_rules`]
+/// registers them.
+///
+/// This is the single source of truth for the built-in rule set. The CLI uses
+/// it to describe the rule set (`--list-rules`) and to report how many rules
+/// ran. Keeping it in one place prevents the listing from drifting away from
+/// what the registry actually executes.
+///
+/// The rules are returned as `Send + Sync` boxes because the registry stores
+/// them in a process-wide `OnceLock<Mutex<_>>`; every built-in rule is
+/// `Send + Sync`, and callers that need plain `Box<dyn AuditRule>` can coerce
+/// each element.
+pub fn all_rules() -> Vec<Box<dyn AuditRule + Send + Sync>> {
     vec![
         Box::new(crate::rules::Auth001),
         Box::new(crate::rules::Auth002),
@@ -506,6 +517,7 @@ pub fn all_rules() -> Vec<Box<dyn AuditRule>> {
         Box::new(crate::rules::Auth004),
         Box::new(crate::rules::Move001),
         Box::new(crate::rules::Math001),
+        Box::new(crate::rules::Cei001),
     ]
 }
 

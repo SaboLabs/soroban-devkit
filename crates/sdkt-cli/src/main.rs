@@ -6347,6 +6347,9 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
             let mut aggregate = sdkt_audit::AuditReport::default();
             let mut per_file = Vec::new();
             let mut had_file_errors = false;
+            // Derived, never hard-coded: the header must agree with
+            // `--list-rules` and with what the registry executes.
+            let builtin_rule_count = sdkt_audit::all_rules().len();
             #[allow(unused_mut)]
             let mut loaded_plugins = 0usize;
 
@@ -6631,7 +6634,8 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
 
                     if loaded_plugins > 0 {
                         println!(
-                            "Rules loaded: 5 built-in, {} plugin{}",
+                            "Rules loaded: {} built-in, {} plugin{}",
+                            builtin_rule_count,
                             loaded_plugins,
                             if loaded_plugins == 1 { "" } else { "s" }
                         );
