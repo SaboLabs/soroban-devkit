@@ -654,3 +654,8 @@ Store root precedence (lowest → highest): `<cwd>/.sdkt/plugins`,
 1. All subcommands return `Result<(), Box<dyn std::error::Error>>`.
 2. Library-level errors (`RpcError`, `DecodeError`, `WasmError`) are bubbled up to the CLI.
 3. The CLI uses `eprintln!` to print human-readable errors and exits non-zero on fatal errors to ensure correct bash piping behavior.
+
+---
+
+### 🌐 Storage Configurations
+* To configure an alternative cache root directory or custom network profile storage space using runtime overrides, see the full [Environment Variables](environment.md) reference page.
