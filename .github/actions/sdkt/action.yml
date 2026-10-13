@@ -7,9 +7,13 @@ inputs:
     description: "Which check to run: 'audit', 'upgrade-safety', or 'release-assurance'."
     required: true
   sdkt-version:
-    description: "sdkt git tag to install (e.g. v2.7.0). Must be a published tag in SaboLabs/soroban-devkit."
+    description: "sdkt release tag to install (e.g. v2.7.0). Must be a published release in SaboLabs/soroban-devkit with a prebuilt asset for the runner platform."
     required: false
     default: "v2.7.0"
+  install-from-source:
+    description: "Build sdkt from source instead of downloading the release binary. Slower (~4-5 min) but works on platforms without a published asset. One of: 'false', 'true'. Default: false."
+    required: false
+    default: "false"
   target:
     description: "Source file (.rs) to audit (used with command=audit)."
     required: false
@@ -62,27 +66,133 @@ inputs:
 runs:
   using: "composite"
   steps:
-    - name: Install Rust toolchain
-      uses: dtolnay/rust-toolchain@stable
-
     - name: Install sdkt
       shell: bash
+      env:
+        SDKT_VERSION: ${{ inputs.sdkt-version }}
+        SDKT_FROM_SOURCE: ${{ inputs.install-from-source }}
+        SDKT_REPO: SaboLabs/soroban-devkit
       run: |
-        # When this Action runs inside the sdkt repository itself (e.g. during
-        # PR validation), the checked-out workspace already contains the CLI.
-        # Install from the local path instead of fetching a git tag — the tag
-        # may not exist on the remote yet. For external consumers, fall back to
-        # the published git tag. External behavior is unchanged.
+        set -euo pipefail
+        # Inside the sdkt repository itself (PR validation), the checked-out
+        # workspace is the source of truth: install from the local path so the
+        # Action is validated against the code under review, not a published
+        # tag that may not exist yet.
         if [ -f "crates/sdkt-cli/Cargo.toml" ]; then
           echo "Detected sdkt workspace checkout — installing from local path."
+          rustup toolchain install stable --profile minimal >/dev/null 2>&1 || true
           cargo install --path crates/sdkt-cli --locked
-        else
-          echo "External consumer — installing from git tag ${{ inputs.sdkt-version }}."
-          cargo install --git https://github.com/SaboLabs/soroban-devkit --tag "${{ inputs.sdkt-version }}" sdkt-cli --locked
+          INSTALL_DIR="${CARGO_HOME:-$HOME/.cargo}/bin"
+          echo "$INSTALL_DIR" >> "$GITHUB_PATH"
+          exit 0
         fi
 
-        INSTALL_DIR="${CARGO_HOME:-$HOME/.cargo}/bin"
+        if [ "$SDKT_FROM_SOURCE" = "true" ]; then
+          echo "install-from-source=true — building sdkt $SDKT_VERSION from the git tag."
+          rustup toolchain install stable --profile minimal >/dev/null 2>&1 || true
+          cargo install --git "https://github.com/$SDKT_REPO" --tag "$SDKT_VERSION" sdkt-cli --locked
+          INSTALL_DIR="${CARGO_HOME:-$HOME/.cargo}/bin"
+          echo "$INSTALL_DIR" >> "$GITHUB_PATH"
+          exit 0
+        fi
+
+        # Default path for external consumers: download the published release
+        # binary. `cargo install --git` compiles the whole workspace from
+        # source (~4-5 minutes of CI time per run); the release assets are the
+        # same code, already built and checksummed by release.yml.
+        case "$(uname -s)" in
+          Linux)  OS=linux ;;
+          Darwin) OS=macos ;;
+          MINGW*|MSYS*|CYGWIN*) OS=windows ;;
+          *) echo "::error::unsupported runner kernel: $(uname -s). Set install-from-source: true."; exit 1 ;;
+        esac
+        ARCH="$(uname -m)"
+        case "$OS/$ARCH" in
+          linux/x86_64)   TARGET=x86_64-unknown-linux-gnu ;;
+          linux/aarch64)  TARGET=aarch64-unknown-linux-gnu ;;
+          macos/x86_64)   TARGET=x86_64-apple-darwin ;;
+          macos/arm64)    TARGET=aarch64-apple-darwin ;;
+          windows/x86_64) TARGET=x86_64-pc-windows-msvc ;;
+          *) echo "::error::no prebuilt asset for $OS/$ARCH. Set install-from-source: true."; exit 1 ;;
+        esac
+
+        if [ "$OS" = windows ]; then
+          ASSET="sdkt-${TARGET}.zip"
+        else
+          ASSET="sdkt-${TARGET}.tar.gz"
+        fi
+        BASE="https://github.com/$SDKT_REPO/releases/download/$SDKT_VERSION"
+        TMP="$(mktemp -d)"
+        echo "Downloading $ASSET from $SDKT_VERSION ..."
+        curl -fsSL "$BASE/$ASSET" -o "$TMP/$ASSET" || {
+          echo "::error::release asset $ASSET not found for $SDKT_VERSION. Older tags predate some platforms; set install-from-source: true."
+          exit 1
+        }
+
+        # Extract first: the archive carries both the binary and its
+        # `sdkt.sha256`, and the checksum names the binary by its bare
+        # filename, so verification must run where both live.
+        if [ "$OS" = windows ]; then
+          unzip -o -q "$TMP/$ASSET" -d "$TMP" || { echo "::error::could not unpack $ASSET"; exit 1; }
+        else
+          tar -xzf "$TMP/$ASSET" -C "$TMP" || { echo "::error::could not unpack $ASSET"; exit 1; }
+        fi
+
+        # Verify the checksum before executing anything. A standalone
+        # `sdkt-<target>.sha256` asset wins when present; otherwise the copy
+        # embedded in the archive is used. Verification is never skipped: if no
+        # checksum can be obtained, the install fails.
+        if curl -fsSL "$BASE/sdkt-${TARGET}.sha256" -o "$TMP/sdkt.sha256" 2>/dev/null; then
+          echo "Using standalone checksum asset."
+        elif [ -f "$TMP/sdkt.sha256" ]; then
+          echo "Using checksum embedded in $ASSET."
+        else
+          echo "::error::no checksum available for $ASSET; refusing to install an unverified binary. Set install-from-source: true."
+          exit 1
+        fi
+
+        if command -v sha256sum >/dev/null 2>&1; then
+          (cd "$TMP" && sha256sum -c sdkt.sha256)
+        elif command -v shasum >/dev/null 2>&1; then
+          (cd "$TMP" && shasum -a 256 -c sdkt.sha256)
+        else
+          echo "::error::no sha256 tool available (sha256sum/shasum). Set install-from-source: true."
+          exit 1
+        fi
+
+        INSTALL_DIR="${RUNNER_TEMP:-$TMP}/sdkt-bin"
+        mkdir -p "$INSTALL_DIR"
+        if [ "$OS" = windows ]; then
+          cp "$TMP/sdkt.exe" "$INSTALL_DIR/sdkt.exe"
+        else
+          cp "$TMP/sdkt" "$INSTALL_DIR/sdkt"
+          chmod +x "$INSTALL_DIR/sdkt"
+        fi
         echo "$INSTALL_DIR" >> "$GITHUB_PATH"
+        "$INSTALL_DIR/sdkt" --version
+
+    - name: Ensure jq
+      shell: bash
+      run: |
+        set -euo pipefail
+        # The gate steps below parse sdkt's JSON output with jq. jq is
+        # preinstalled on ubuntu runners but NOT on macOS or Windows runners,
+        # so it is provisioned here rather than assumed.
+        if command -v jq >/dev/null 2>&1; then
+          echo "jq present: $(jq --version)"
+          exit 0
+        fi
+        if command -v apt-get >/dev/null 2>&1; then
+          sudo apt-get update -qq && sudo apt-get install -y -qq jq
+        elif command -v brew >/dev/null 2>&1; then
+          brew install jq
+        elif command -v choco >/dev/null 2>&1; then
+          choco install -y jq
+        else
+          echo "::error::jq is required by this Action but no supported package manager was found."
+          exit 1
+        fi
+        jq --version
 
     - name: Run sdkt audit
       if: ${{ inputs.command == 'audit' }}
