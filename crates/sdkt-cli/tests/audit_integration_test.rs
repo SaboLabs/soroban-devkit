@@ -691,3 +691,191 @@ fn audit_read_only_accessor_sarif_is_note_not_error() {
         .stdout(predicates::str::contains("\"level\":\"note\""))
         .stdout(predicates::str::contains("AUTH-001"));
 }
+// ── Issue #298: opt-in severity gate (--fail-on) ─────────────────────────
+
+const UNGUARDED_MINTER: &str = "#[contractimpl]\nimpl Token {\n    pub fn mint(env: Env, to: Address) { env.storage().instance().set(&K, &to); }\n}\n";
+const WARNING_ONLY: &str = "#[contractimpl]\nimpl Token {\n    pub fn do_swap(env: Env, a: i128, b: i128) -> i128 { let x = a / b; x * 2 }\n}\n";
+const INFO_ONLY: &str =
+    "#[contractimpl]\nimpl Admin {\n    pub fn admin_balance(env: Env) -> i128 { 0 }\n}\n";
+const CLEAN: &str = "#[contractimpl]\nimpl Token {\n    pub fn balance_of(env: Env, who: Address) -> i128 { who.require_auth(); 0 }\n}\n";
+
+/// Without --fail-on, findings exit 0: the default behavior is unchanged.
+#[test]
+fn audit_fail_on_absent_exits_zero_on_findings() {
+    let dir = TempDir::new().unwrap();
+    let path = write_fixture(&dir, "bad.rs", UNGUARDED_MINTER);
+    sdkt()
+        .args(["audit", path.to_str().unwrap()])
+        .assert()
+        .success();
+}
+
+/// --fail-on critical fails when a critical finding exists.
+#[test]
+fn audit_fail_on_critical_fails_on_critical() {
+    let dir = TempDir::new().unwrap();
+    let path = write_fixture(&dir, "bad.rs", UNGUARDED_MINTER);
+    sdkt()
+        .args(["audit", path.to_str().unwrap(), "--fail-on", "critical"])
+        .assert()
+        .failure()
+        .code(1);
+}
+
+/// --fail-on critical passes when only lower-severity findings exist.
+#[test]
+fn audit_fail_on_critical_passes_on_warnings_only() {
+    let dir = TempDir::new().unwrap();
+    let path = write_fixture(&dir, "warn.rs", WARNING_ONLY);
+    sdkt()
+        .args(["audit", path.to_str().unwrap(), "--fail-on", "critical"])
+        .assert()
+        .success();
+}
+
+/// --fail-on warning fails when a warning-level finding exists.
+#[test]
+fn audit_fail_on_warning_fails_on_warning() {
+    let dir = TempDir::new().unwrap();
+    let path = write_fixture(&dir, "warn.rs", WARNING_ONLY);
+    sdkt()
+        .args(["audit", path.to_str().unwrap(), "--fail-on", "warning"])
+        .assert()
+        .failure()
+        .code(1);
+}
+
+/// --fail-on info fails on any finding, including demoted accessors.
+#[test]
+fn audit_fail_on_info_fails_on_any_finding() {
+    let dir = TempDir::new().unwrap();
+    let path = write_fixture(&dir, "getter.rs", INFO_ONLY);
+    sdkt()
+        .args(["audit", path.to_str().unwrap(), "--fail-on", "info"])
+        .assert()
+        .failure()
+        .code(1);
+}
+
+/// --fail-on passes on a clean report.
+#[test]
+fn audit_fail_on_passes_on_clean_report() {
+    let dir = TempDir::new().unwrap();
+    let path = write_fixture(&dir, "ok.rs", CLEAN);
+    sdkt()
+        .args(["audit", path.to_str().unwrap(), "--fail-on", "info"])
+        .assert()
+        .success();
+}
+
+/// An invalid --fail-on level is a usage error (exit 2) validated before any
+/// analysis runs, so no report is printed.
+#[test]
+fn audit_fail_on_invalid_level_is_usage_error() {
+    let dir = TempDir::new().unwrap();
+    let path = write_fixture(&dir, "ok.rs", "pub fn f() {}\n");
+    sdkt()
+        .args(["audit", path.to_str().unwrap(), "--fail-on", "bogus"])
+        .assert()
+        .failure()
+        .code(2)
+        .stderr(predicates::str::contains("invalid --fail-on value"));
+}
+
+/// The level is matched case-insensitively.
+#[test]
+fn audit_fail_on_level_is_case_insensitive() {
+    let dir = TempDir::new().unwrap();
+    let path = write_fixture(&dir, "bad.rs", UNGUARDED_MINTER);
+    sdkt()
+        .args(["audit", path.to_str().unwrap(), "--fail-on", "CRITICAL"])
+        .assert()
+        .failure()
+        .code(1);
+}
+
+/// With --fail-on, the full pretty report is still emitted before the non-zero
+/// exit, so CI logs keep their evidence.
+#[test]
+fn audit_fail_on_emits_pretty_report_before_failing() {
+    let dir = TempDir::new().unwrap();
+    let path = write_fixture(&dir, "bad.rs", UNGUARDED_MINTER);
+    sdkt()
+        .args(["audit", path.to_str().unwrap(), "--fail-on", "critical"])
+        .assert()
+        .failure()
+        .code(1)
+        .stdout(predicates::str::contains("AUTH-001"))
+        .stdout(predicates::str::contains("critical"));
+}
+
+/// Same for JSON: a complete document on stdout before exit 1.
+#[test]
+fn audit_fail_on_emits_json_report_before_failing() {
+    let dir = TempDir::new().unwrap();
+    let path = write_fixture(&dir, "bad.rs", UNGUARDED_MINTER);
+    sdkt()
+        .args([
+            "audit",
+            path.to_str().unwrap(),
+            "--fail-on",
+            "critical",
+            "--format",
+            "json",
+        ])
+        .assert()
+        .failure()
+        .code(1)
+        .stdout(predicates::str::contains("\"rule_id\":\"AUTH-001\""))
+        .stdout(predicates::str::contains("\"summary\""));
+}
+
+/// Same for SARIF: a complete document on stdout before exit 1.
+#[test]
+fn audit_fail_on_emits_sarif_report_before_failing() {
+    let dir = TempDir::new().unwrap();
+    let path = write_fixture(&dir, "bad.rs", UNGUARDED_MINTER);
+    sdkt()
+        .args([
+            "audit",
+            path.to_str().unwrap(),
+            "--fail-on",
+            "critical",
+            "--format",
+            "sarif",
+        ])
+        .assert()
+        .failure()
+        .code(1)
+        .stdout(predicates::str::contains("\"version\":\"2.1.0\""))
+        .stdout(predicates::str::contains("AUTH-001"));
+}
+
+/// Directory inputs use the aggregate summary for the same mapping.
+#[test]
+fn audit_fail_on_directory_uses_aggregate_summary() {
+    let dir = TempDir::new().unwrap();
+    write_fixture(&dir, "bad.rs", UNGUARDED_MINTER);
+    sdkt()
+        .args([
+            "audit",
+            dir.path().to_str().unwrap(),
+            "--fail-on",
+            "critical",
+        ])
+        .assert()
+        .code(1)
+        .stdout(predicates::str::contains("AUTH-001"));
+    // A warnings-only directory passes a critical gate.
+    let clean_dir = TempDir::new().unwrap();
+    write_fixture(&clean_dir, "warn.rs", WARNING_ONLY);
+    sdkt()
+        .args([
+            "audit",
+            clean_dir.path().to_str().unwrap(),
+            "--fail-on",
+            "critical",
+        ])
+        .assert()
+        .success();
+}

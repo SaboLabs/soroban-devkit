@@ -380,6 +380,11 @@ enum Commands {
         /// Contract ID whose deployed WASM should provide the ABI.
         #[arg(long, value_name = "CONTRACT_ID")]
         abi_contract: Option<String>,
+        /// Opt-in CI gate: exit non-zero when findings at or above this
+        /// severity exist. Values: critical | warning | info (case-insensitive).
+        /// Without this flag sdkt audit always exits 0 on findings.
+        #[arg(long, value_name = "SEVERITY")]
+        fail_on: Option<String>,
         #[command(flatten)]
         net: NetworkArgs,
     },
@@ -2492,6 +2497,36 @@ fn unknown_event_topic_warning(spec: &sdkt_wasm::ContractSpec, symbol: &str) -> 
     }
     msg.push_str(". Querying anyway.");
     Some(msg)
+}
+
+/// Opt-in CI gate (issue #298). Returns `true` when a finding at or above
+/// `level` exists, meaning the audit must exit non-zero.
+fn audit_gate_trips(level: sdkt_audit::Severity, summary: &sdkt_audit::AuditSummary) -> bool {
+    match level {
+        sdkt_audit::Severity::Critical => summary.critical > 0,
+        sdkt_audit::Severity::Warning => summary.critical > 0 || summary.warning > 0,
+        sdkt_audit::Severity::Info => summary.total > 0,
+    }
+}
+
+/// Apply the gate: print the reason on stderr and exit 1 when it trips.
+/// Called at every exit path of `audit` so `--format sarif` cannot bypass it.
+fn apply_audit_gate(level: Option<sdkt_audit::Severity>, summary: &sdkt_audit::AuditSummary) {
+    let Some(level) = level else { return };
+    if !audit_gate_trips(level, summary) {
+        return;
+    }
+    let label = match level {
+        sdkt_audit::Severity::Critical => "critical",
+        sdkt_audit::Severity::Warning => "warning",
+        sdkt_audit::Severity::Info => "info",
+    };
+    eprintln!(
+        "audit: findings at or above '{label}' threshold \
+         ({} critical, {} warning, {} info) — failing as requested",
+        summary.critical, summary.warning, summary.info
+    );
+    process::exit(1);
 }
 
 fn parse_format_str(s: &str) -> OutputFormat {
@@ -6059,8 +6094,27 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
             no_plugins,
             abi,
             abi_contract,
+            fail_on,
             net,
         } => {
+            // Validate --fail-on before any analysis runs so an invalid level
+            // is a usage error (exit 2), not a silent fallback (issue #298).
+            let fail_on_level: Option<sdkt_audit::Severity> = match fail_on.as_deref() {
+                None => None,
+                Some(raw) => match raw.to_lowercase().as_str() {
+                    "critical" => Some(sdkt_audit::Severity::Critical),
+                    "warning" => Some(sdkt_audit::Severity::Warning),
+                    "info" => Some(sdkt_audit::Severity::Info),
+                    other => {
+                        eprintln!(
+                            "Error: invalid --fail-on value '{other}'. \
+                             Use 'critical', 'warning', or 'info'."
+                        );
+                        process::exit(2);
+                    }
+                },
+            };
+
             // Audit supports three output formats: pretty, json, sarif.
             // We parse the format here rather than through the shared
             // `parse_format_str` helper so we can extend it without changing
@@ -6586,6 +6640,7 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
                     .map_err(|e| e.to_string())?;
                     println!("{}", sarif_str);
                 }
+                apply_audit_gate(fail_on_level, &aggregate.summary);
                 return Ok(());
             }
 
@@ -6672,6 +6727,12 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
                     );
                 }
             }
+
+            // Opt-in CI gate (issue #298): without --fail-on the command
+            // always exits 0 on findings; file errors still exit 1 below.
+            // The gate runs at every exit path — including the SARIF
+            // early-return above — so no output format can bypass it.
+            apply_audit_gate(fail_on_level, &aggregate.summary);
             if had_file_errors {
                 process::exit(1);
             }
