@@ -98,9 +98,9 @@
           <span class="rounded-full border border-accent/30 bg-accent/10 px-2.5 py-0.5 font-mono text-[10px] font-bold uppercase tracking-wider text-accent">Release</span>
           <time class="font-mono text-xs text-slate-500" datetime="2026-08-08">2026-08-08</time>
         </header>
-        <h3 class="mt-3 text-lg font-semibold"><a class="text-white transition hover:text-accent" href="https://github.com/SaboLabs/soroban-devkit/releases/tag/v2.5.0" rel="noopener">v2.5.0 — Read-only release assurance, event filtering, envelope decode</a></h3>
+        <h3 class="mt-3 text-lg font-semibold"><a class="text-white transition hover:text-accent" href="https://github.com/SaboLabs/soroban-devkit/releases/tag/v2.5.0" rel="noopener">v2.5.0 — Release polish, mainnet safety, shell completions</a></h3>
         <div class="mt-3 text-sm leading-relaxed text-slate-400">
-          <p>Introduces <code class="text-accent">sdkt release-assurance</code> for aggregated release verdicts, <code class="text-accent">sdkt events --topic</code> for server-side filtering, <code class="text-accent">sdkt tx decode</code> for envelope inspection, and storage diff extension plans. Also adds constructor arguments to deploy, configurable event ranges, network-aware fee estimation, and plugin scaffolding.</p>
+          <p>Adds containerized distribution, a safety guard for mutating mainnet commands, <code class="text-accent">sdkt completions</code> for five shells, and opt-in version provenance. Also includes supply-chain auditing and hermetic CLI integration coverage.</p>
         </div>
         <footer class="mt-5 flex flex-wrap gap-3">
           <a class="rounded-lg border border-[#0A1A2E] bg-[#000815] px-4 py-2 text-xs font-medium text-white transition hover:bg-[#001020]" href="https://github.com/SaboLabs/soroban-devkit/releases/tag/v2.5.0" rel="noopener">View release <span aria-hidden="true">→</span></a>
@@ -113,13 +113,28 @@
           <span class="rounded-full border border-accent/30 bg-accent/10 px-2.5 py-0.5 font-mono text-[10px] font-bold uppercase tracking-wider text-accent">Release</span>
           <time class="font-mono text-xs text-slate-500" datetime="2026-08-07">2026-08-07</time>
         </header>
-        <h3 class="mt-3 text-lg font-semibold"><a class="text-white transition hover:text-accent" href="https://github.com/SaboLabs/soroban-devkit/releases/tag/v2.4.0" rel="noopener">v2.4.0 — Storage restore, build-only invoke, plugin doctor, 128-bit encoding</a></h3>
+        <h3 class="mt-3 text-lg font-semibold"><a class="text-white transition hover:text-accent" href="https://github.com/SaboLabs/soroban-devkit/releases/tag/v2.4.0" rel="noopener">v2.4.0 — Named network profiles for RPC commands</a></h3>
         <div class="mt-3 text-sm leading-relaxed text-slate-400">
-          <p>Adds <code class="text-accent">sdkt storage restore</code> for archived storage recovery, <code class="text-accent">sdkt invoke --build-only</code> for envelope inspection, <code class="text-accent">sdkt plugin doctor</code> for plugin self-checks, 128-bit integer and byte encoding, audit rule discovery, automatic plugin execution during audit, constructor arguments in deploy, configurable event ranges, and network-aware fee estimation.</p>
+          <p>Adds <code class="text-accent">sdkt network</code> profiles to save RPC URLs and network passphrases, with profile selection and explicit endpoint overrides across RPC commands.</p>
         </div>
         <footer class="mt-5 flex flex-wrap gap-3">
           <a class="rounded-lg border border-[#0A1A2E] bg-[#000815] px-4 py-2 text-xs font-medium text-white transition hover:bg-[#001020]" href="https://github.com/SaboLabs/soroban-devkit/releases/tag/v2.4.0" rel="noopener">View release <span aria-hidden="true">→</span></a>
           <a class="rounded-lg border border-[#0A1A2E] bg-[#000815] px-4 py-2 text-xs font-medium text-white transition hover:bg-[#001020]" href="https://github.com/SaboLabs/soroban-devkit/blob/main/CHANGELOG.md#v240---2026-08-07" rel="noopener">Changelog <span aria-hidden="true">→</span></a>
+        </footer>
+      </article>
+
+      <article class="rounded-2xl border border-[#0A1A2E] bg-[#000815] p-6 backdrop-blur-md transition-colors hover:bg-[#001020]">
+        <header class="flex flex-wrap items-center gap-3">
+          <span class="rounded-full border border-accent/30 bg-accent/10 px-2.5 py-0.5 font-mono text-[10px] font-bold uppercase tracking-wider text-accent">Release</span>
+          <time class="font-mono text-xs text-slate-500" datetime="2026-08-07">2026-08-07</time>
+        </header>
+        <h3 class="mt-3 text-lg font-semibold"><a class="text-white transition hover:text-accent" href="https://github.com/SaboLabs/soroban-devkit/releases/tag/v2.2.0" rel="noopener">v2.2.0 — Offline transaction signing</a></h3>
+        <div class="mt-3 text-sm leading-relaxed text-slate-400">
+          <p>Adds <code class="text-accent">sdkt tx sign</code> to sign transaction envelopes offline with a local ED25519 identity and completes the build, sign, and submit workflow.</p>
+        </div>
+        <footer class="mt-5 flex flex-wrap gap-3">
+          <a class="rounded-lg border border-[#0A1A2E] bg-[#000815] px-4 py-2 text-xs font-medium text-white transition hover:bg-[#001020]" href="https://github.com/SaboLabs/soroban-devkit/releases/tag/v2.2.0" rel="noopener">View release <span aria-hidden="true">→</span></a>
+          <a class="rounded-lg border border-[#0A1A2E] bg-[#000815] px-4 py-2 text-xs font-medium text-white transition hover:bg-[#001020]" href="https://github.com/SaboLabs/soroban-devkit/blob/main/CHANGELOG.md#v220---2026-08-07" rel="noopener">Changelog <span aria-hidden="true">→</span></a>
         </footer>
       </article>
 
@@ -143,9 +158,9 @@
           <span class="rounded-full border border-accent/30 bg-accent/10 px-2.5 py-0.5 font-mono text-[10px] font-bold uppercase tracking-wider text-accent">Release</span>
           <time class="font-mono text-xs text-slate-500" datetime="2026-08-06">2026-08-06</time>
         </header>
-        <h3 class="mt-3 text-lg font-semibold"><a class="text-white transition hover:text-accent" href="https://github.com/SaboLabs/soroban-devkit/releases/tag/v2.1.0" rel="noopener">v2.1.0 — Storage restore, build-only invoke, plugin init</a></h3>
+        <h3 class="mt-3 text-lg font-semibold"><a class="text-white transition hover:text-accent" href="https://github.com/SaboLabs/soroban-devkit/releases/tag/v2.1.0" rel="noopener">v2.1.0 — RPC simulation metadata and connection pooling</a></h3>
         <div class="mt-3 text-sm leading-relaxed text-slate-400">
-          <p>Adds <code class="text-accent">sdkt storage restore</code> for archived storage recovery, <code class="text-accent">sdkt invoke --build-only</code> for envelope inspection, <code class="text-accent">sdkt plugin init</code> for plugin scaffolding, 128-bit integer and byte encoding, audit rule discovery, automatic plugin execution during audit, constructor arguments in deploy, configurable event ranges, and network-aware fee estimation.</p>
+          <p>Improves <code class="text-accent">sdkt tx simulate</code> with restore preambles and state changes, pools RPC connections, and adds an offline benchmark suite and compatibility workflow for Soroban example contracts.</p>
         </div>
         <footer class="mt-5 flex flex-wrap gap-3">
           <a class="rounded-lg border border-[#0A1A2E] bg-[#000815] px-4 py-2 text-xs font-medium text-white transition hover:bg-[#001020]" href="https://github.com/SaboLabs/soroban-devkit/releases/tag/v2.1.0" rel="noopener">View release <span aria-hidden="true">→</span></a>
@@ -158,9 +173,9 @@
           <span class="rounded-full border border-accent/30 bg-accent/10 px-2.5 py-0.5 font-mono text-[10px] font-bold uppercase tracking-wider text-accent">Release</span>
           <time class="font-mono text-xs text-slate-500" datetime="2026-08-06">2026-08-06</time>
         </header>
-        <h3 class="mt-3 text-lg font-semibold"><a class="text-white transition hover:text-accent" href="https://github.com/SaboLabs/soroban-devkit/releases/tag/v2.0.0" rel="noopener">v2.0.0 — First stable release</a></h3>
+        <h3 class="mt-3 text-lg font-semibold"><a class="text-white transition hover:text-accent" href="https://github.com/SaboLabs/soroban-devkit/releases/tag/v2.0.0" rel="noopener">v2.0.0 — BREAKING: binary renamed from sdkt-cli to sdkt</a></h3>
         <div class="mt-3 text-sm leading-relaxed text-slate-400">
-          <p>First stable release of Soroban DevKit. Includes deterministic fuzzing, static audit, upgrade-safety diffing, deployment verification, and the full offline-first CLI toolkit for Soroban smart contracts.</p>
+          <p>This breaking release renames the executable to <code class="text-accent">sdkt</code> and adds native and sandboxed WASM audit plugin loading with the versioned plugin ABI.</p>
         </div>
         <footer class="mt-5 flex flex-wrap gap-3">
           <a class="rounded-lg border border-[#0A1A2E] bg-[#000815] px-4 py-2 text-xs font-medium text-white transition hover:bg-[#001020]" href="https://github.com/SaboLabs/soroban-devkit/releases/tag/v2.0.0" rel="noopener">View release <span aria-hidden="true">→</span></a>
@@ -175,7 +190,7 @@
         </header>
         <h3 class="mt-3 text-lg font-semibold"><a class="text-white transition hover:text-accent" href="https://github.com/SaboLabs/soroban-devkit/releases/tag/v1.0.0" rel="noopener">v1.0.0 — First stable release</a></h3>
         <div class="mt-3 text-sm leading-relaxed text-slate-400">
-          <p>First stable release of Soroban DevKit. Includes deterministic fuzzing, static audit, upgrade-safety diffing, deployment verification, and the full offline-first CLI toolkit for Soroban smart contracts.</p>
+          <p>Stabilizes the toolkit at semver 1.0.0, unifies crate versions, and makes the release pipeline green end to end; the existing CLI feature set is now covered by the stable release guarantee.</p>
         </div>
         <footer class="mt-5 flex flex-wrap gap-3">
           <a class="rounded-lg border border-[#0A1A2E] bg-[#000815] px-4 py-2 text-xs font-medium text-white transition hover:bg-[#001020]" href="https://github.com/SaboLabs/soroban-devkit/releases/tag/v1.0.0" rel="noopener">View release <span aria-hidden="true">→</span></a>

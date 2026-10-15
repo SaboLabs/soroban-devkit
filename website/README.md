@@ -31,6 +31,8 @@ repository:
   `sdkt audit` against `crates/sdkt-cli/tests/fixtures/*.wasm`.
 - The version shown is `2.7.0`, matching `[workspace.package] version` in
   the root `Cargo.toml`.
+- Release-card feature lists must come from the matching `CHANGELOG.md` section;
+  verify every listed command against that release tag's tree.
 - No adoption metrics, star counts, user counts, contributor counts,
   testimonials, partner logos, funding, or grant-approval claims appear
   anywhere on the page. Do not add them without verifiable evidence.
