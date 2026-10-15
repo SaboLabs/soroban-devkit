@@ -280,3 +280,30 @@ fn audit_raw_path_still_works_backward_compat() {
 
     let _ = fs::remove_dir_all(&store);
 }
+
+#[test]
+fn audit_rules_directory_warns_and_runs_builtin_rules() {
+    let temp = tempfile::TempDir::new().unwrap();
+    let source_dir = temp.path().join("rule-source");
+    fs::create_dir_all(&source_dir).unwrap();
+    let source = source_dir.join("contract.rs");
+    fs::write(&source, "pub fn initialize() {}\n").unwrap();
+
+    sdkt()
+        .args([
+            "audit",
+            source.to_str().unwrap(),
+            "--rules",
+            source_dir.to_str().unwrap(),
+        ])
+        .assert()
+        .success()
+        .stderr(predicate::str::contains(source_dir.to_str().unwrap()))
+        .stderr(predicate::str::contains(
+            "a directory is not a loadable plugin artifact",
+        ))
+        .stderr(predicate::str::contains(
+            "pass a .so, .dylib, .dll, or .wasm artifact, or an installed plugin ID",
+        ))
+        .stdout(predicate::str::contains("AUTH-003"));
+}

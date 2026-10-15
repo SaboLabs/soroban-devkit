@@ -153,7 +153,7 @@ sdkt
 │   ├── --list-rules          (list available audit rules and exit)
 │   ├── --format <json|pretty>
 │   ├── --disable <RULE_ID>   (repeatable)
-│   ├── --rules <PATH>        (repeatable; external rule paths)
+│   ├── --rules <PATH|ID>     (repeatable; compiled plugin artifact or installed plugin ID)
 │   └── --no-plugins          (skip loading installed plugins)
 ├── release-assurance
 │   ├── --wasm <WASM>         (candidate artifact; required)
@@ -613,8 +613,10 @@ sdkt plugin verify-bundle ./bundle.sdktplugin --public-key ./pubkey.key         
 sdkt audit contract.rs --rules <id>                # resolve id → stored artifact
 ```
 
-`sdkt audit --rules <id>` resolves a plugin `id` to its stored artifact and runs
-the existing loader; passing a filesystem path keeps the legacy behavior.
+`sdkt audit --rules <id>` resolves an installed plugin ID to its stored
+artifact; filesystem paths must point to compiled `.so`, `.dylib`, `.dll`, or
+`.wasm` plugin artifacts. Passing a directory prints a warning and the audit
+continues with the built-in rules.
 Installing a `native` plugin prints a warning: native plugins run **unsandboxed**
 (unmodified behavior). See `docs/plugins/plugin-authoring.md` for the `plugin.toml`
 schema and the install-validation rules.

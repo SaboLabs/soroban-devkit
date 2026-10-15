@@ -366,9 +366,8 @@ enum Commands {
         /// Disable a rule by id (repeatable), e.g. --disable MOVE-001
         #[arg(long, value_name = "RULE_ID", action = clap::ArgAction::Append)]
         disable: Vec<String>,
-        /// Path to an external rule crate or local rule source directory to load.
-        /// Repeatable. (Phase A: the rule must be compiled into the binary; this
-        /// flag validates the path and runs the registered rules.)
+        /// Compiled plugin artifact (.so/.dylib/.dll/.wasm) or installed plugin ID.
+        /// Repeatable; source directories are not loadable plugin artifacts.
         #[arg(long, value_name = "PATH", action = clap::ArgAction::Append)]
         rules: Vec<String>,
         /// Skip loading installed plugins automatically from the plugin store
@@ -6335,6 +6334,12 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
                     for r in &rules {
                         if let Some(meta) = sdkt_audit::plugin_store::show(r) {
                             if meta.abi_major != sdkt_audit::plugin_abi::SDKT_AUDIT_ABI_MAJOR {
+                                eprintln!(
+                                    "Warning: skipping plugin '{}': ABI mismatch (plugin v{}.x, host v{}.x)",
+                                    meta.id,
+                                    meta.abi_major,
+                                    sdkt_audit::plugin_abi::SDKT_AUDIT_ABI_MAJOR
+                                );
                                 continue;
                             }
                         }
@@ -6344,6 +6349,10 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
                         let path_r = resolved.as_path();
 
                         if path_r.is_dir() {
+                            eprintln!(
+                                "Warning: skipping rules '{}': a directory is not a loadable plugin artifact; pass a .so, .dylib, .dll, or .wasm artifact, or an installed plugin ID",
+                                path_r.display()
+                            );
                             continue;
                         }
 
