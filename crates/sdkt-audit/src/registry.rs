@@ -110,6 +110,29 @@ pub fn run_registered(
     reg.run_all(scans, ctx, disabled, report);
 }
 
+/// Snapshot of every rule in the process-wide registry, built-ins plus any
+/// registered plugins, in registration order.
+///
+/// [`crate::audit::all_rules`] returns only the built-in set, so callers that
+/// need to describe *what will actually execute* — `--list-rules`, the SARIF
+/// rule catalogue, `--disable` validation — must read the registry instead.
+/// The registry is populated lazily, so this ensures built-ins first.
+///
+/// Returns owned `RuleInfo` rather than rule references: `Box<dyn AuditRule>`
+/// is not `Clone`, and callers only need the descriptive fields.
+pub fn registered_rule_info() -> Vec<crate::types::RuleInfo> {
+    register_builtin_rules();
+    let reg = global().lock().expect("audit registry poisoned");
+    reg.registered_rules()
+        .iter()
+        .map(|r| crate::types::RuleInfo {
+            id: r.id().to_string(),
+            severity: r.severity(),
+            description: r.description().to_string(),
+        })
+        .collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
