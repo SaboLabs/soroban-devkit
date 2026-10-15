@@ -7,6 +7,8 @@
 //! Everything is offline: no RPC, no network. The diff operates purely on the
 //! declared ABI, so it is a safe pre-upgrade check (detect breaking changes
 //! before `sdkt deploy` of a new WASM).
+//! Documentation changes to functions, parameters, events, and types are not
+//! ABI changes and are ignored.
 
 use serde::{Deserialize, Serialize};
 
@@ -172,7 +174,7 @@ pub fn diff_specs(
         match old_fns.get(name) {
             None => diff.added_functions.push((**nf).clone()),
             Some(of) => {
-                if of.parameters != nf.parameters || of.outputs != nf.outputs {
+                if !function_signature_eq(of, nf) {
                     diff.changed_functions.push(FunctionSignatureChange {
                         name: (*name).to_string(),
                         old: (*of).clone(),
@@ -283,6 +285,17 @@ fn type_ref_eq(a: &ContractType, b: &ContractType) -> bool {
 /// Compare two member type lists by identity (name + kind), ignoring docs.
 fn member_types_eq(a: &[ContractType], b: &[ContractType]) -> bool {
     a.len() == b.len() && a.iter().zip(b.iter()).all(|(x, y)| type_ref_eq(x, y))
+}
+
+/// Compare two function signatures, ignoring doc comments (docs are not ABI).
+fn function_signature_eq(a: &ContractFunction, b: &ContractFunction) -> bool {
+    a.name == b.name
+        && a.parameters.len() == b.parameters.len()
+        && a.parameters
+            .iter()
+            .zip(b.parameters.iter())
+            .all(|(x, y)| x.name == y.name && type_ref_eq(&x.type_, &y.type_))
+        && member_types_eq(&a.outputs, &b.outputs)
 }
 
 /// Compare two event signatures, ignoring doc comments (docs are not ABI).
@@ -715,6 +728,126 @@ mod tests {
         assert_eq!(d.changed_functions[0].name, "f");
         assert_eq!(d.changed_functions[0].old.parameters[0].type_.name, "u32");
         assert_eq!(d.changed_functions[0].new.parameters[0].type_.name, "u64");
+    }
+
+    fn transfer_spec() -> ContractSpec {
+        use stellar_xdr::{ScSpecEntry, ScSpecTypeVec};
+
+        let mut entry = func_entry(
+            "transfer",
+            vec![
+                ("to".into(), ScSpecTypeDef::Address),
+                ("amount".into(), ScSpecTypeDef::I128),
+            ],
+        );
+        if let ScSpecEntry::FunctionV0(function) = &mut entry {
+            function.doc = "Transfer tokens".try_into().unwrap();
+            let mut inputs = function.inputs.to_vec();
+            inputs[0].doc = "destination".try_into().unwrap();
+            function.inputs = inputs.try_into().unwrap();
+            function.outputs = vec![ScSpecTypeDef::Vec(Box::new(ScSpecTypeVec {
+                element_type: Box::new(ScSpecTypeDef::U32),
+            }))]
+            .try_into()
+            .unwrap();
+        }
+        parse_contract_spec(&spec_section(&[entry])).unwrap()
+    }
+
+    fn assert_doc_only_change_is_compatible(old: &ContractSpec, new: &ContractSpec) {
+        // The stored docs and derived equality retain their existing behavior.
+        assert_ne!(old, new);
+        let diff = diff_specs(old, new, WasmSummary::default(), WasmSummary::default()).unwrap();
+        assert!(diff.changed_functions.is_empty());
+        assert!(diff.is_identical());
+        assert_eq!(diff.total_changes(), 0);
+        let verdict = upgrade_safety(old, new);
+        assert!(verdict.compatible);
+        assert!(verdict.breaking_changes.is_empty());
+        assert!(verdict.non_breaking_changes.is_empty());
+    }
+
+    #[test]
+    fn function_doc_only_change_is_not_an_abi_change() {
+        let old = transfer_spec();
+        let mut new = old.clone();
+        new.functions[0].doc = "Transfer tokens (updated)".into();
+        assert_doc_only_change_is_compatible(&old, &new);
+    }
+
+    #[test]
+    fn parameter_doc_only_change_is_not_an_abi_change() {
+        let old = transfer_spec();
+        let mut new = old.clone();
+        new.functions[0].parameters[0].doc = "destination address".into();
+        assert_doc_only_change_is_compatible(&old, &new);
+    }
+
+    #[test]
+    fn function_type_docs_are_not_abi_changes() {
+        let mut old = transfer_spec();
+        // Exercise compound types in both input and output positions.
+        old.functions[0].parameters[1].type_ = old.functions[0].outputs[0].clone();
+        let mut new = old.clone();
+        new.functions[0].parameters[1].type_.doc = "input vector".into();
+        let output = &mut new.functions[0].outputs[0];
+        output.doc = "output vector".into();
+        output.members[0].doc = "element".into();
+        output.members[0].types[0].doc = "element type".into();
+        output.type_args[0].doc = "type argument".into();
+        assert_doc_only_change_is_compatible(&old, &new);
+    }
+
+    #[test]
+    fn real_function_signature_changes_remain_breaking() {
+        let old = transfer_spec();
+        let function = &old.functions[0];
+        let mut variants = Vec::new();
+
+        let mut changed = function.clone();
+        changed.parameters[0].name = "recipient".into();
+        variants.push(("parameter name", changed));
+        let mut changed = function.clone();
+        changed.parameters[0].type_ = function.parameters[1].type_.clone();
+        variants.push(("parameter type", changed));
+        let mut changed = function.clone();
+        changed.parameters.swap(0, 1);
+        variants.push(("parameter order", changed));
+        let mut changed = function.clone();
+        changed.parameters.pop();
+        variants.push(("removed parameter", changed));
+        let mut changed = function.clone();
+        let mut extra = function.parameters[0].clone();
+        extra.name = "sender".into();
+        changed.parameters.push(extra);
+        variants.push(("added parameter", changed));
+        let mut changed = function.clone();
+        changed.outputs[0] = function.parameters[0].type_.clone();
+        variants.push(("output type", changed));
+        let mut changed = function.clone();
+        changed.outputs.pop();
+        variants.push(("removed output", changed));
+        let mut changed = function.clone();
+        changed.outputs.push(function.outputs[0].clone());
+        variants.push(("added output", changed));
+
+        for (case, changed) in variants {
+            let mut new = old.clone();
+            new.functions[0] = changed;
+            let diff =
+                diff_specs(&old, &new, WasmSummary::default(), WasmSummary::default()).unwrap();
+            assert_eq!(diff.changed_functions.len(), 1, "{case}");
+            assert_eq!(diff.changed_functions[0].name, "transfer", "{case}");
+            assert_eq!(diff.total_changes(), 1, "{case}");
+            let verdict = upgrade_safety(&old, &new);
+            assert!(!verdict.compatible, "{case}");
+            assert_eq!(verdict.breaking_changes.len(), 1, "{case}");
+            assert_eq!(
+                verdict.breaking_changes[0].kind,
+                ChangeKind::ChangedSignature,
+                "{case}"
+            );
+        }
     }
 
     #[test]
