@@ -23,6 +23,19 @@ pub const CONTRACT_ENV_META_V0: &str = "contractenvmetav0";
 /// Contract metadata section (arbitrary key/value `SCMetaEntry` pairs, SEP-46).
 pub const CONTRACT_META_V0: &str = "contractmetav0";
 
+/// Nesting cap for untrusted spec payloads.
+///
+/// `Limits::none()` sets `depth: u32::MAX`, so a crafted `contractspecv0`
+/// section nesting `ScSpecTypeDef` thousands of levels deep drives the
+/// recursive XDR decoder into the Rust stack limit and aborts with `SIGABRT`
+/// — an unrecoverable crash rather than a [`WasmError`]. stellar-xdr documents
+/// the depth limit as the defence against exactly that.
+///
+/// 500 matches the precedent already set on the transaction surface
+/// (`sdkt-xdr`'s `decode_envelope`), and is far above any real contract: the
+/// deepest spec types in the wild nest a handful of levels.
+pub const MAX_SPEC_XDR_DEPTH: u32 = 500;
+
 /// The full contract ABI, as declared in the compiled WASM.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct ContractSpec {
@@ -210,7 +223,13 @@ fn decode_spec_section(
     // time, so we loop over the buffer until no bytes remain (or an XDR error).
     while !items.is_empty() {
         let mut cursor = Cursor::new(items);
-        let mut limited = Limited::new(&mut cursor, Limits::none());
+        let mut limited = Limited::new(
+            &mut cursor,
+            Limits {
+                depth: MAX_SPEC_XDR_DEPTH,
+                len: items.len(),
+            },
+        );
         let entry = ScSpecEntry::read_xdr(&mut limited).map_err(WasmError::SpecXdr)?;
 
         match entry {
@@ -253,7 +272,13 @@ fn decode_env_meta_section(data: &[u8]) -> Result<EnvMetaSpec, WasmError> {
     ];
     // ReadXdr for Uint64 is big-endian like Stellar XDR.
     let mut cursor = Cursor::new(&raw[..]);
-    let mut limited = Limited::new(&mut cursor, Limits::none());
+    let mut limited = Limited::new(
+        &mut cursor,
+        Limits {
+            depth: MAX_SPEC_XDR_DEPTH,
+            len: raw.len(),
+        },
+    );
     let v = stellar_xdr::Uint64::read_xdr(&mut limited).map_err(WasmError::SpecXdr)?;
     Ok(EnvMetaSpec {
         interface_version: v,
@@ -276,7 +301,13 @@ pub fn decode_contract_meta(data: &[u8]) -> Result<Vec<ContractMetaEntry>, WasmE
     let mut items = data;
     while !items.is_empty() {
         let mut cursor = Cursor::new(items);
-        let mut limited = Limited::new(&mut cursor, Limits::none());
+        let mut limited = Limited::new(
+            &mut cursor,
+            Limits {
+                depth: MAX_SPEC_XDR_DEPTH,
+                len: items.len(),
+            },
+        );
         let entry = ScMetaEntry::read_xdr(&mut limited).map_err(WasmError::MetaXdr)?;
 
         match entry {
@@ -961,6 +992,74 @@ pub(crate) mod tests {
         let meta = crate::parse_metadata(VALID_WASM).unwrap();
         assert!(meta.contract_meta.is_empty());
         assert!(meta.custom_sections.is_empty());
+    }
+
+    /// A `contractspecv0` payload nesting `ScSpecTypeDef` past
+    /// [`MAX_SPEC_XDR_DEPTH`] must surface as a decode error, not a SIGABRT.
+    ///
+    /// `ScSpecTypeDef::Vec` is XDR arm 1 and carries one nested typedef, so
+    /// `depth` bytes of `0x00 0x00 0x00 0x01` build a chain that deep. With
+    /// `Limits::none()` the recursive decoder walks the whole chain and dies
+    /// on the Rust stack limit before returning.
+    #[test]
+    fn deeply_nested_spec_type_def_is_rejected_not_aborted() {
+        let mut payload = Vec::new();
+        let nesting = MAX_SPEC_XDR_DEPTH + 64;
+        for _ in 0..nesting {
+            payload.extend_from_slice(&[0x00, 0x00, 0x00, 0x01]);
+        }
+        let mut functions = Vec::new();
+        let mut custom_types = Vec::new();
+        let mut events = Vec::new();
+        let err = decode_spec_section(&payload, &mut functions, &mut custom_types, &mut events)
+            .expect_err("nesting past the depth cap must be a decode error");
+        assert!(
+            matches!(err, WasmError::SpecXdr(_)),
+            "depth-limit failure must map to SpecXdr, got {err:?}"
+        );
+    }
+
+    /// The `contractmetav0` decoder carries the same cap.
+    ///
+    /// `ScMetaEntry` is a flat union — one arm holding two XDR strings — so no
+    /// payload can actually recurse past the depth cap; the limit is applied
+    /// for consistency with the spec decoder and to bound `len`. What the cap
+    /// *does* guarantee is that a string claiming more bytes than the section
+    /// holds is rejected instead of being read out of bounds.
+    #[test]
+    fn meta_decoder_applies_bounded_limits() {
+        // A length prefix of 0x40 (64 bytes) with no payload following.
+        assert!(
+            matches!(
+                decode_contract_meta(&[0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x40])
+                    .unwrap_err(),
+                WasmError::MetaXdr(_)
+            ),
+            "a string longer than the section must be rejected"
+        );
+        // The cap must not reject well-formed entries.
+        let entries = decode_contract_meta(&[
+            0x00, 0x00, 0x00, 0x00, // ScMetaV0
+            0x00, 0x00, 0x00, 0x00, // key: ""
+            0x00, 0x00, 0x00, 0x00, // val: ""
+        ])
+        .expect("well-formed empty entry decodes");
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].key, "");
+        assert_eq!(entries[0].value, "");
+    }
+
+    /// A spec section that nests within the cap must decode exactly as before
+    /// — the limit must not reject legitimate contracts.
+    #[test]
+    fn shallow_spec_section_still_decodes() {
+        let mut functions = Vec::new();
+        let mut custom_types = Vec::new();
+        let mut events = Vec::new();
+        // Empty section is valid and yields nothing.
+        decode_spec_section(&[], &mut functions, &mut custom_types, &mut events)
+            .expect("empty spec section decodes");
+        assert!(functions.is_empty() && custom_types.is_empty() && events.is_empty());
     }
 
     #[test]
