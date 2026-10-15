@@ -344,7 +344,7 @@ sdkt audit contract.rs --no-plugins               # skip installed plugins, run 
 When running `sdkt audit <file>`, the engine automatically discovers and loads installed plugins from the plugin store:
 
 - **Automatic loading (default):** All installed plugins in the local store are loaded into the rule registry and executed alongside built-in rules without requiring `--rules`.
-- **Rules summary reporting:** When plugin rules are loaded, the audit report includes a rules summary line indicating the breakdown (`Rules loaded: 5 built-in, 1 plugin`). Individual findings continue to carry the plugin's `rule_id`.
+- **Rules summary reporting:** When plugin rules are loaded, each single-file or directory-file report includes a rules summary line indicating the breakdown (`Rules loaded: 5 built-in, 1 plugin`). Individual findings continue to carry the plugin's `rule_id`.
 - **Explicit selection (`--rules <id|path>`):** Passing `--rules` activates explicit subset selection. Only the specified rule IDs (resolved via the store) or raw filesystem paths are loaded; other installed plugins are not loaded.
 - **Opt-out (`--no-plugins`):** Passing `--no-plugins` bypasses the plugin store and runs only built-in rules.
 - **ABI compatibility:** If an installed plugin's `abi_major` does not match the host ABI version (`SDKT_AUDIT_ABI_MAJOR`), the plugin is skipped with a clear warning on `stderr` (`Warning: skipping plugin '<id>': ABI mismatch...`) and the audit completes without aborting.

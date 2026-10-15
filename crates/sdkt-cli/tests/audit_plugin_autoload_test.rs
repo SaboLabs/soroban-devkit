@@ -238,6 +238,28 @@ abi_minor = 0
         ))
         .stdout(predicate::str::contains("EXAMPLE-001"));
 
+    // Directory audits use a per-file registry too; each report must identify
+    // the plugin rules that ran for that file.
+    let source_dir = temp.path().join("contracts");
+    fs::create_dir_all(&source_dir).unwrap();
+    let directory_contract = write_contract_source(
+        &source_dir,
+        "pub fn sdkt_example_trigger_admin() { require_auth(); }\n",
+    );
+    sdkt()
+        .env("SDKT_PLUGIN_DIR", &store)
+        .env("SDKT_NETWORK_DIR", temp.path())
+        .args(["audit", source_dir.to_str().unwrap()])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains(
+            "Rules loaded: 7 built-in, 1 plugin",
+        ))
+        .stdout(predicate::str::contains("EXAMPLE-001"))
+        .stdout(predicate::str::contains(
+            directory_contract.to_str().unwrap(),
+        ));
+
     // 3. Audit with --no-plugins: skips auto-loading installed plugins!
     sdkt()
         .env("SDKT_PLUGIN_DIR", &store)

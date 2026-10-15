@@ -6404,8 +6404,6 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
             // Derived, never hard-coded: the header must agree with
             // `--list-rules` and with what the registry executes.
             let builtin_rule_count = sdkt_audit::all_rules().len();
-            #[allow(unused_mut)]
-            let mut loaded_plugins = 0usize;
 
             for source_path in &source_paths {
                 let source = match fs::read_to_string(source_path) {
@@ -6430,6 +6428,10 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
                     }
                 };
 
+                // Each file gets its own registry in a multi-file run, so
+                // keep this count scoped to the ruleset that produced its report.
+                #[allow(unused_mut)]
+                let mut loaded_plugins = 0usize;
                 let mut local_reg = sdkt_audit::RuleRegistry::new();
                 if multi_file {
                     local_reg.register_builtin_rules();
@@ -6455,9 +6457,7 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
 
                                 match result {
                                     Ok(()) => {
-                                        if single_file {
-                                            loaded_plugins += 1;
-                                        }
+                                        loaded_plugins += 1;
                                     }
                                     Err(e) => {
                                         if matches!(
@@ -6501,9 +6501,7 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
 
                                 match result {
                                     Ok(()) => {
-                                        if single_file {
-                                            loaded_plugins += 1;
-                                        }
+                                        loaded_plugins += 1;
                                     }
                                     Err(e) => {
                                         if matches!(
