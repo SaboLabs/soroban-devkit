@@ -7,6 +7,9 @@ use sdkt_core::NetworkConfig;
 use serde::{Deserialize, Serialize};
 use std::time::Duration;
 
+/// Maximum number of keys accepted by one Soroban `getLedgerEntries` request.
+pub const MAX_LEDGER_KEYS: usize = 200;
+
 /// Soroban RPC HTTP client.
 ///
 /// Holds the RPC endpoint URL and a reusable HTTP client.
@@ -140,12 +143,22 @@ impl SorobanRpcClient {
         self.request("getNetwork", ()).await
     }
 
-    /// Get contract storage entries.
+    /// Get contract storage entries in a single RPC request.
+    ///
+    /// More than [`MAX_LEDGER_KEYS`] keys returns [`RpcError::TooManyLedgerKeys`]
+    /// before any HTTP request. Use [`crate::storage::fetch_ledger_entries`] for
+    /// larger key sets, which are fetched in sequential batches.
     pub async fn get_contract_storage(
         &self,
         _contract_id: &str,
         keys: &[String],
     ) -> Result<StorageResponse, RpcError> {
+        if keys.len() > MAX_LEDGER_KEYS {
+            return Err(RpcError::TooManyLedgerKeys {
+                count: keys.len(),
+                max: MAX_LEDGER_KEYS,
+            });
+        }
         self.request("getLedgerEntries", serde_json::json!({ "keys": keys }))
             .await
     }
@@ -279,7 +292,7 @@ pub struct StorageResponse {
     pub latest_ledger: u32,
 }
 
-#[derive(Debug, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct LedgerEntryResult {
     pub key: String,

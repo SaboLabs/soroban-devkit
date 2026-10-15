@@ -3,6 +3,9 @@ use thiserror::Error;
 /// Core RPC error types for Soroban DevKit.
 #[derive(Debug, Error)]
 pub enum RpcError {
+    /// The caller supplied more keys than one `getLedgerEntries` request allows.
+    #[error("getLedgerEntries accepts at most {max} keys per request; received {count}. Use fetch_ledger_entries to read larger key sets in batches")]
+    TooManyLedgerKeys { count: usize, max: usize },
     /// An error originating from the JSON-RPC response (e.g. invalid arguments, internal error).
     #[error("RPC error: {0}")]
     Rpc(String),

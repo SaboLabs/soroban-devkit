@@ -1,7 +1,8 @@
-use crate::client::{SorobanRpcClient, StorageResponse};
+use crate::client::{SorobanRpcClient, StorageResponse, MAX_LEDGER_KEYS};
 use crate::error::RpcError;
 use base64::Engine;
 use serde::Serialize;
+use std::collections::HashMap;
 use stellar_xdr::{LedgerEntryData, ReadXdr, SorobanTransactionData};
 
 /// Storage TTL info for a contract.
@@ -59,7 +60,7 @@ pub async fn get_ttl_info_for_keys(
     let ledger_info = client.get_ledger().await?;
     let current_ledger = ledger_info.sequence;
 
-    let storage_resp = client.get_contract_storage(contract_id, &keys).await?;
+    let storage_resp = fetch_ledger_entries(client, &keys).await?;
 
     let mut entries = Vec::new();
     for entry in storage_resp.entries {
@@ -425,15 +426,51 @@ pub async fn read_ledger_entry(
 /// Fetch the current ledger entries for a set of keys, preserving per-entry
 /// provenance (`lastModifiedLedgerSeq`, `liveUntilLedgerSeq`).
 ///
+/// Sets of at most [`MAX_LEDGER_KEYS`] use one request with unchanged response
+/// semantics, including an empty set. Larger sets use sequential batches of at
+/// most that many keys, with found entries returned in the requested key order
+/// (including repeated keys); absent entries are omitted. A failed batch returns
+/// an error rather than partial results.
+///
 /// This is the state-capture primitive for a state-matched differential run.
 /// It reads **current** ledger state — the RPC has no ledger-pinning
 /// parameter — so callers must verify consistency against the simulation
-/// ledger themselves (see `sdkt_fuzz::state_capture`).
+/// ledger themselves (see `sdkt_fuzz::state_capture`). All batches must report
+/// the same `latestLedger`; otherwise this function fails rather than attributing
+/// entries from different ledgers to a single snapshot.
 pub async fn fetch_ledger_entries(
     client: &SorobanRpcClient,
     keys: &[String],
 ) -> Result<StorageResponse, RpcError> {
-    client.get_contract_storage("", keys).await
+    if keys.len() <= MAX_LEDGER_KEYS {
+        return client.get_contract_storage("", keys).await;
+    }
+
+    let (first_batch, remaining) = keys.split_at(MAX_LEDGER_KEYS);
+    let mut result = client.get_contract_storage("", first_batch).await?;
+    let mut entries = HashMap::new();
+    for entry in result.entries.drain(..) {
+        entries.insert(entry.key.clone(), entry);
+    }
+
+    for batch in remaining.chunks(MAX_LEDGER_KEYS) {
+        let response = client.get_contract_storage("", batch).await?;
+        if response.latest_ledger != result.latest_ledger {
+            return Err(RpcError::Rpc(format!(
+                "getLedgerEntries batches span different ledgers ({} and {}); retry the complete read",
+                result.latest_ledger, response.latest_ledger
+            )));
+        }
+        for entry in response.entries {
+            entries.insert(entry.key.clone(), entry);
+        }
+    }
+
+    result.entries = keys
+        .iter()
+        .filter_map(|key| entries.get(key).cloned())
+        .collect();
+    Ok(result)
 }
 
 async fn read_ledger_entry_with_ttl(

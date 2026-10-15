@@ -43,6 +43,14 @@ sdkt
 │   (base64 XDR or hex XDR) are merged and de-duplicated. This does NOT discover
 │   all contract storage and does NOT restore archived entries.
 │
+│   `analyze` (alias `snapshot`) accepts repeatable `--key-xdr` (alias `--key`). Each
+│   `getLedgerEntries` request is limited to 200 keys; larger read sets (including
+│   the automatically included instance key) are fetched in sequential batches.
+│   For batched reads, found entries retain request order and absent entries are
+│   omitted. A failed batch or a change of ledger between batches fails the
+│   complete read; retry if the ledger changes. This batching applies to reads,
+│   not to the transaction footprint limits of `extend` or `restore`.
+│
 │   `restore` simulates `--envelope` (the invocation that failed on archived
 │   state), adopts the `restorePreamble` footprint and minimum resource fee, and
 │   submits a `RestoreFootprint` transaction. It fails without submitting when
