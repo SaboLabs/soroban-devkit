@@ -657,6 +657,15 @@ Store root precedence (lowest → highest): `<cwd>/.sdkt/plugins`,
 - `sdkt wasm metadata --contract <id>` reports the same entries for the deployed contract, from the fetched (or cached) WASM bytes: pretty output gains the identical `Contract Metadata` block, and `--format json` gains an additive top-level `contract_meta` array alongside the existing inspection keys, which are unchanged. It is empty when the deployed WASM carries no `contractmetav0`.
 - **Mainnet safety.** Mutating commands (`tx submit`, `invoke`, `deploy`, `project deploy`) refuse to target mainnet unless you explicitly select the network — via `--network-profile`, `--rpc-url`, or `--network-passphrase`. A testnet-default passphrase pointed at a mainnet endpoint is rejected before any request is sent, protecting against signing for the wrong network.
 
+## Fuzz expectation declarations
+
+`sdkt fuzz campaign` accepts repeatable `--expect-success <FN>` and
+`--expect-error <FN:TYPE:CODE>` declarations. A function may have one
+expectation; declaring it with both flags is a usage error that exits 2 and
+names the conflicting function. A single valid declaration keeps its existing
+campaign behavior. Malformed `--expect-error` declarations also remain usage
+errors.
+
 ## Error Handling
 
 1. All subcommands return `Result<(), Box<dyn std::error::Error>>`.

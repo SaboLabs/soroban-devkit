@@ -147,6 +147,42 @@ fn cli_campaign_clean_exits_zero() {
     assert_eq!(findings, 0);
 }
 
+#[test]
+fn cli_campaign_rejects_conflicting_expectations_for_same_function() {
+    fuzz_campaign(&[
+        &fixture("us_new.wasm"),
+        "--cases",
+        "1",
+        "--expect-success",
+        "hello",
+        "--expect-error",
+        "hello:Contract:1",
+    ])
+    .assert()
+    .failure()
+    .code(2)
+    .stderr(predicate::str::contains(
+        "conflicting expectations for function 'hello'",
+    ));
+}
+
+#[test]
+fn cli_campaign_accepts_single_success_expectation() {
+    fuzz_campaign(&[
+        &fixture("us_new.wasm"),
+        "--cases",
+        "2",
+        "--function",
+        "hello",
+        "--expect-success",
+        "hello",
+    ])
+    .assert()
+    .success()
+    .code(0)
+    .stdout(predicate::str::contains("findings=0"));
+}
+
 // ---------------------------------------------------------------------------
 // 4. Replay of a real artifact: reproduced, exit 0
 // ---------------------------------------------------------------------------

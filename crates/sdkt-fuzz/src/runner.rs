@@ -318,6 +318,11 @@ fn build_expectations(options: &FuzzRunOptions) -> Result<BTreeMap<String, Expec
         let code: u32 = code.parse().map_err(|e| {
             FuzzError::InvalidConfig(format!("--expect-error `{decl}`: bad code: {e}"))
         })?;
+        if options.expect_success.iter().any(|name| name == function) {
+            return Err(FuzzError::InvalidConfig(format!(
+                "conflicting expectations for function '{function}': declared by both --expect-success and --expect-error"
+            )));
+        }
         map.insert(
             function.to_string(),
             Expected {
