@@ -461,13 +461,20 @@ fn map_insert_key_operator_is_deterministic_and_typed() {
         "map<u32, bool>".to_string(),
         vec![counter_type("u32"), counter_type("bool")],
     );
-    let baseline = vec![ScVal::Map(Some(ScMap(VecM::try_from(vec![]).unwrap())))];
+    // Multi-argument baseline: the map is argument 1, so arguments 0 and 2
+    // are non-target. The sentinel is a value no mutation can produce, so
+    // asserting it survives is a real check, not a coincidence.
+    let baseline = vec![
+        ScVal::U64(7),
+        ScVal::Map(Some(ScMap(VecM::try_from(vec![]).unwrap()))),
+        ScVal::Bool(true),
+    ];
     let seed = [13u8; 32];
 
     let a = sdkt_fuzz::mutation::mutate_arg(
         &map,
         &baseline,
-        0,
+        1,
         sdkt_fuzz::Operator::MapInsertKey,
         &seed,
         "m",
@@ -477,7 +484,7 @@ fn map_insert_key_operator_is_deterministic_and_typed() {
     let b = sdkt_fuzz::mutation::mutate_arg(
         &map,
         &baseline,
-        0,
+        1,
         sdkt_fuzz::Operator::MapInsertKey,
         &seed,
         "m",
@@ -497,14 +504,16 @@ fn map_insert_key_operator_is_deterministic_and_typed() {
         other => panic!("expected a map, got {other:?}"),
     }
 
-    // Non-target arguments are preserved.
+    // Non-target arguments are preserved exactly, not just in count.
     assert_eq!(a.args.len(), baseline.len());
+    assert_eq!(a.args[0], ScVal::U64(7));
+    assert_eq!(a.args[2], ScVal::Bool(true));
 
     // Operator does not apply to a non-map type.
     let err = sdkt_fuzz::mutation::mutate_arg(
         &counter_type("u32"),
         &baseline,
-        0,
+        1,
         sdkt_fuzz::Operator::MapInsertKey,
         &seed,
         "m",
