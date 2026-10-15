@@ -365,6 +365,20 @@
     metaSec.appendChild(metaTable);
     results.appendChild(metaSec);
 
+    // 1b. Contract metadata (contractmetav0). Rendered verbatim from the
+    // decoded `SCMetaV0` entries — the same `metadata.contract_meta` array the
+    // CLI prints as `Contract Metadata (n):`, in section order, duplicates and
+    // unknown keys preserved. No vocabulary is assumed in JS.
+    const contractMeta = (meta.contract_meta || []).slice();
+    const cmSec = section('Contract Metadata',
+      contractMeta.length + (contractMeta.length === 1 ? ' item' : ' items'));
+    if (contractMeta.length) {
+      cmSec.appendChild(kvTable(contractMeta.map((e) => [e.key, e.value])));
+    } else {
+      cmSec.appendChild(kvTable([['Entries', 'none']]));
+    }
+    results.appendChild(cmSec);
+
     // 2. Exports
     const exps = (meta.exports || []).slice();
     const expSec = section('Exports', exps.length + (exps.length === 1 ? ' item' : ' items'));
