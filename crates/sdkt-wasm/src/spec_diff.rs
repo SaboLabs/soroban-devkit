@@ -172,7 +172,7 @@ pub fn diff_specs(
         match old_fns.get(name) {
             None => diff.added_functions.push((**nf).clone()),
             Some(of) => {
-                if of.parameters != nf.parameters || of.outputs != nf.outputs {
+                if !function_signature_eq(of, nf) {
                     diff.changed_functions.push(FunctionSignatureChange {
                         name: (*name).to_string(),
                         old: (*of).clone(),
@@ -283,6 +283,48 @@ fn type_ref_eq(a: &ContractType, b: &ContractType) -> bool {
 /// Compare two member type lists by identity (name + kind), ignoring docs.
 fn member_types_eq(a: &[ContractType], b: &[ContractType]) -> bool {
     a.len() == b.len() && a.iter().zip(b.iter()).all(|(x, y)| type_ref_eq(x, y))
+}
+
+/// Compare two function signatures, ignoring doc comments (docs are not ABI).
+///
+/// Parameters are compared positionally by name and type, outputs by type.
+/// Every other field of the derived `PartialEq` still participates, so a
+/// renamed, retyped, reordered, added, or removed parameter or output is a
+/// signature change.
+fn function_signature_eq(a: &ContractFunction, b: &ContractFunction) -> bool {
+    a.parameters.len() == b.parameters.len()
+        && a.parameters
+            .iter()
+            .zip(b.parameters.iter())
+            .all(|(x, y)| x.name == y.name && type_eq_ignoring_docs(&x.type_, &y.type_))
+        && a.outputs.len() == b.outputs.len()
+        && a.outputs
+            .iter()
+            .zip(b.outputs.iter())
+            .all(|(x, y)| type_eq_ignoring_docs(x, y))
+}
+
+/// Structural [`ContractType`] equality with every `doc` field skipped,
+/// recursively. Equivalent to the derived `PartialEq` apart from docs.
+fn type_eq_ignoring_docs(a: &ContractType, b: &ContractType) -> bool {
+    a.name == b.name
+        && a.kind == b.kind
+        && a.bytes_n == b.bytes_n
+        && a.type_args.len() == b.type_args.len()
+        && a.type_args
+            .iter()
+            .zip(b.type_args.iter())
+            .all(|(x, y)| type_eq_ignoring_docs(x, y))
+        && a.members.len() == b.members.len()
+        && a.members.iter().zip(b.members.iter()).all(|(x, y)| {
+            x.name == y.name
+                && x.value == y.value
+                && x.types.len() == y.types.len()
+                && x.types
+                    .iter()
+                    .zip(y.types.iter())
+                    .all(|(p, q)| type_eq_ignoring_docs(p, q))
+        })
 }
 
 /// Compare two event signatures, ignoring doc comments (docs are not ABI).
@@ -1075,5 +1117,98 @@ mod tests {
         assert!(v.compatible);
         assert!(v.breaking_changes.is_empty());
         assert!(v.non_breaking_changes.is_empty());
+    }
+
+    // ---- doc comments are not ABI for functions either ----
+
+    fn prim(name: &str, doc: &str) -> ContractType {
+        ContractType {
+            name: name.into(),
+            kind: "primitive".into(),
+            doc: doc.into(),
+            members: vec![],
+            type_args: vec![],
+            bytes_n: None,
+        }
+    }
+
+    fn transfer_fn(fn_doc: &str, to_doc: &str, params: &[(&str, &str)]) -> ContractSpec {
+        ContractSpec {
+            env_meta: None,
+            functions: vec![ContractFunction {
+                name: "transfer".into(),
+                doc: fn_doc.into(),
+                parameters: params
+                    .iter()
+                    .map(|(name, ty)| crate::spec::ContractParameter {
+                        name: (*name).into(),
+                        doc: if *name == "to" {
+                            to_doc.into()
+                        } else {
+                            String::new()
+                        },
+                        type_: prim(ty, ""),
+                    })
+                    .collect(),
+                outputs: vec![],
+            }],
+            custom_types: vec![],
+            events: vec![],
+        }
+    }
+
+    fn diff_of(old: &ContractSpec, new: &ContractSpec) -> SpecDiff {
+        diff_specs(old, new, WasmSummary::default(), WasmSummary::default()).unwrap()
+    }
+
+    const TRANSFER: &[(&str, &str)] = &[("to", "address"), ("amount", "i128")];
+
+    #[test]
+    fn function_doc_only_change_is_not_a_signature_change() {
+        let old = transfer_fn("Transfer tokens", "", TRANSFER);
+        let new = transfer_fn("Transfer tokens (updated)", "", TRANSFER);
+        let d = diff_of(&old, &new);
+        assert!(d.changed_functions.is_empty());
+        assert!(d.is_identical());
+        assert!(upgrade_safety(&old, &new).compatible);
+    }
+
+    #[test]
+    fn parameter_doc_only_change_is_not_a_signature_change() {
+        let old = transfer_fn("", "destination", TRANSFER);
+        let new = transfer_fn("", "destination address", TRANSFER);
+        let d = diff_of(&old, &new);
+        assert!(d.changed_functions.is_empty());
+        assert!(upgrade_safety(&old, &new).compatible);
+    }
+
+    #[test]
+    fn output_type_doc_only_change_is_not_a_signature_change() {
+        let mut old = transfer_fn("", "", TRANSFER);
+        let mut new = old.clone();
+        old.functions[0].outputs = vec![prim("bool", "old doc")];
+        new.functions[0].outputs = vec![prim("bool", "new doc")];
+        assert!(diff_of(&old, &new).changed_functions.is_empty());
+    }
+
+    #[test]
+    fn function_signature_changes_still_detected_with_docs_ignored() {
+        let base = transfer_fn("doc", "doc", TRANSFER);
+        let cases: [&[(&str, &str)]; 4] = [
+            &[("to", "address"), ("amount", "u64")],    // type
+            &[("dest", "address"), ("amount", "i128")], // name
+            &[("amount", "i128"), ("to", "address")],   // order
+            &[("to", "address")],                       // arity
+        ];
+        for params in cases {
+            let changed = transfer_fn("other doc", "other doc", params);
+            let d = diff_of(&base, &changed);
+            assert_eq!(d.changed_functions.len(), 1, "params {params:?}");
+            assert!(!upgrade_safety(&base, &changed).compatible);
+        }
+
+        let mut out_changed = base.clone();
+        out_changed.functions[0].outputs = vec![prim("bool", "")];
+        assert_eq!(diff_of(&base, &out_changed).changed_functions.len(), 1);
     }
 }
