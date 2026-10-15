@@ -238,7 +238,10 @@ async fn batching_propagates_failure_without_requesting_remaining_batches() {
     let error = fetch_ledger_entries(&server.client(), &keys(401))
         .await
         .unwrap_err();
-    assert!(matches!(error, RpcError::Rpc(ref message) if message == "second batch failed"));
+    assert!(matches!(
+        error,
+        RpcError::JsonRpc { code: -32603, ref message, .. } if message == "second batch failed"
+    ));
     assert_eq!(server.requests().len(), 2);
 }
 
