@@ -87,6 +87,7 @@ impl FuzzReport {
                 f.reason_code.name(),
                 f.minimization.minimized_complexity
             ));
+            out.push_str(&format_reduction_trace(&f.minimization.reductions));
         }
         for (name, hash) in &self.artifacts {
             out.push_str(&format!("artifact {name} canonical_hash={hash}\n"));
@@ -136,6 +137,57 @@ impl FuzzReport {
         );
         out.push('\n');
         Ok(out)
+    }
+}
+
+fn format_reduction_trace(reductions: &[crate::minimizer::Reduction]) -> String {
+    reductions
+        .iter()
+        .map(|reduction| {
+            format!(
+                "  reduction kind={} complexity_after={} detail={}\n",
+                reduction.kind, reduction.complexity_after, reduction.detail
+            )
+        })
+        .collect()
+}
+
+#[cfg(test)]
+mod minimization_trace_tests {
+    use super::*;
+    use crate::minimizer::{Minimization, Reduction};
+
+    #[test]
+    fn renders_accepted_reductions() {
+        let minimization = Minimization {
+            attempted: true,
+            strategy: "deterministic",
+            original_complexity: 8,
+            minimized_complexity: 3,
+            preserved: true,
+            reductions: vec![Reduction {
+                kind: "arg".into(),
+                detail: "argument 0 → 0".into(),
+                complexity_after: 3,
+            }],
+        };
+        let rendered = format_reduction_trace(&minimization.reductions);
+        assert!(rendered.contains("reduction kind=arg complexity_after=3"));
+        assert!(rendered.contains("argument 0 → 0"));
+    }
+
+    #[test]
+    fn renders_nothing_when_no_reduction_was_accepted() {
+        let minimization = Minimization {
+            attempted: true,
+            strategy: "deterministic",
+            original_complexity: 3,
+            minimized_complexity: 3,
+            preserved: true,
+            reductions: vec![],
+        };
+        let rendered = format_reduction_trace(&minimization.reductions);
+        assert!(rendered.is_empty());
     }
 }
 

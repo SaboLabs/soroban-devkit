@@ -465,6 +465,28 @@ Exit codes:
 
 Warnings are never fatal. The JSON output contains no secret material.
 
+## Fuzz minimization traces
+
+`sdkt fuzz campaign` prints each accepted minimization step immediately after
+its finding in pretty output. Campaign `--format json` adds a `minimization`
+object to each finding, including `attempted`, `strategy`, original and
+minimized complexity, preservation status, and the `reductions` array.
+`sdkt fuzz replay` prints the same trace from the artifact in pretty output
+and includes its minimization object in JSON output. If no reduction was
+accepted, the trace is empty and no extra pretty-output lines are printed.
+
+Each reduction records:
+
+- `kind`: the reduction family (`step`, `arg`, or `env`).
+- `detail`: a stable description of the accepted change.
+- `complexity_after`: the resulting input complexity.
+
+```bash
+sdkt fuzz campaign contract.wasm --cases 4 --expect-error hello:Auth:6
+sdkt fuzz campaign contract.wasm --cases 4 --expect-error hello:Auth:6 --format json
+sdkt fuzz replay sdkt-fuzz-artifacts/finding-0-auth.json --wasm contract.wasm
+```
+
 ## Encode
 
 `sdkt encode` converts a typed value to its base64 XDR representation — the
