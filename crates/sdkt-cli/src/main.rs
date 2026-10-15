@@ -6153,32 +6153,103 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
                     );
                     process::exit(1);
                 }
-                let all = sdkt_audit::all_rules();
+                // External plugin rules must be loaded before listing, otherwise
+                // `--list-rules` silently omits them and `--disable <ID>` for an
+                // external rule looks like it targets nothing.
+                if !rules.is_empty() {
+                    for r in &rules {
+                        if let Some(meta) = sdkt_audit::plugin_store::show(r) {
+                            if meta.abi_major != sdkt_audit::plugin_abi::SDKT_AUDIT_ABI_MAJOR {
+                                eprintln!(
+                                    "Warning: skipping plugin '{}': ABI mismatch (plugin v{}.x, host v{}.x)",
+                                    r, meta.abi_major, sdkt_audit::plugin_abi::SDKT_AUDIT_ABI_MAJOR
+                                );
+                                continue;
+                            }
+                        }
+                        let resolved = sdkt_audit::plugin_store::resolve(r)
+                            .unwrap_or_else(|| std::path::PathBuf::from(r));
+                        let path = resolved.as_path();
+                        if path.is_dir() {
+                            continue;
+                        }
+                        let ext = path
+                            .extension()
+                            .and_then(|e| e.to_str())
+                            .map(|e| e.to_ascii_lowercase())
+                            .unwrap_or_default();
+                        match ext.as_str() {
+                            "so" | "dylib" | "dll" => {
+                                #[cfg(feature = "plugins")]
+                                {
+                                    match sdkt_audit::PluginRule::load(path, "") {
+                                        Ok(rule) => {
+                                            sdkt_audit::register_rule(Box::new(rule));
+                                        }
+                                        Err(e) => eprintln!(
+                                            "Warning: skipping native plugin '{}': {}",
+                                            r, e
+                                        ),
+                                    }
+                                }
+                                #[cfg(not(feature = "plugins"))]
+                                {
+                                    eprintln!(
+                                        "Error: '{}' is a native plugin artifact but this build was compiled \
+                                         without the `plugins` feature. Rebuild with --features plugins.",
+                                        r
+                                    );
+                                    process::exit(1);
+                                }
+                            }
+                            "wasm" => {
+                                #[cfg(feature = "wasm-plugins")]
+                                {
+                                    match sdkt_audit::WasmPluginRule::load(path, "") {
+                                        Ok(rule) => {
+                                            sdkt_audit::register_rule(Box::new(rule));
+                                        }
+                                        Err(e) => eprintln!(
+                                            "Warning: skipping WASM plugin '{}': {}",
+                                            r, e
+                                        ),
+                                    }
+                                }
+                                #[cfg(not(feature = "wasm-plugins"))]
+                                {
+                                    eprintln!(
+                                        "Error: '{}' is a WASM plugin artifact but this build was compiled \
+                                         without the `wasm-plugins` feature. Rebuild with --features wasm-plugins.",
+                                        r
+                                    );
+                                    process::exit(1);
+                                }
+                            }
+                            _ => {
+                                eprintln!(
+                                    "Warning: skipping plugin '{}': unsupported artifact format",
+                                    r
+                                );
+                            }
+                        }
+                    }
+                }
+                let all = sdkt_audit::registered_rule_info();
                 if fmt == OutputFormat::Json {
-                    let items: Vec<sdkt_audit::RuleInfo> = all
-                        .iter()
-                        .map(|r| sdkt_audit::RuleInfo {
-                            id: r.id().to_string(),
-                            severity: r.severity(),
-                            description: r.description().to_string(),
-                        })
-                        .collect();
-                    println!("{}", serde_json::to_string(&items)?);
+                    println!("{}", serde_json::to_string(&all)?);
                 } else {
                     println!("Available audit rules ({}):", all.len());
-                    let id_width = all.iter().map(|r| r.id().len()).max().unwrap_or(8).max(8);
+                    let id_width = all.iter().map(|r| r.id.len()).max().unwrap_or(8).max(8);
                     let sev_width = all
                         .iter()
-                        .map(|r| r.severity().to_string().len())
+                        .map(|r| r.severity.to_string().len())
                         .max()
                         .unwrap_or(8)
                         .max(8);
                     for r in &all {
                         println!(
                             "  {:<id_width$}  {:<sev_width$}  {}",
-                            r.id(),
-                            r.severity(),
-                            r.description()
+                            r.id, r.severity, r.description
                         );
                     }
                 }
@@ -6214,28 +6285,6 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
             } else {
                 None
             };
-
-            if !rules.is_empty() {
-                // Validate/resolve each --rules entry before reading source.
-                for r in &rules {
-                    if let Some(meta) = sdkt_audit::plugin_store::show(r) {
-                        if meta.abi_major != sdkt_audit::plugin_abi::SDKT_AUDIT_ABI_MAJOR {
-                            eprintln!(
-                                "Warning: skipping plugin '{}': ABI mismatch (plugin v{}.x, host v{}.x)",
-                                r, meta.abi_major, sdkt_audit::plugin_abi::SDKT_AUDIT_ABI_MAJOR
-                            );
-                            continue;
-                        }
-                    }
-
-                    let resolved = sdkt_audit::plugin_store::resolve(r)
-                        .unwrap_or_else(|| std::path::PathBuf::from(r));
-                    if !resolved.exists() {
-                        eprintln!("Error: rule path '{}' does not exist", r);
-                        process::exit(1);
-                    }
-                }
-            }
 
             let mut source_paths = Vec::new();
 
@@ -6362,6 +6411,18 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
                             .map(|e| e.to_ascii_lowercase())
                             .unwrap_or_default();
 
+                        // A `--rules` value that is neither a known plugin id
+                        // nor a loadable artifact is a typo or a stale
+                        // reference. Failing here beats silently auditing with
+                        // the built-in set only, which looks like a clean run.
+                        if ext.is_empty() && !path_r.exists() {
+                            eprintln!(
+                                "Error: --rules '{}' does not exist and matches no installed plugin",
+                                r
+                            );
+                            process::exit(1);
+                        }
+
                         match ext.as_str() {
                             "so" | "dylib" | "dll" => {
                                 #[cfg(feature = "plugins")]
@@ -6406,6 +6467,27 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
             };
 
             let disabled_refs: Vec<&str> = disable.iter().map(String::as_str).collect();
+
+            // A `--disable` id that matches no rule is a typo or a stale config,
+            // and silently disables nothing. Warn on stderr so CI logs surface
+            // it, but do not fail: an unknown id in a shared config must not
+            // break every run.
+            {
+                let known_ids: std::collections::HashSet<String> =
+                    sdkt_audit::registered_rule_info()
+                        .into_iter()
+                        .map(|r| r.id)
+                        .collect();
+                for id in &disabled_refs {
+                    if !known_ids.contains(*id) {
+                        eprintln!(
+                            "Warning: --disable '{}' does not match any loaded rule; \
+                             nothing was disabled for it",
+                            id
+                        );
+                    }
+                }
+            }
 
             let mut aggregate = sdkt_audit::AuditReport::default();
             let mut per_file = Vec::new();
@@ -6625,14 +6707,7 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
                 }
             }
             if audit_fmt == AuditFormat::Sarif {
-                let rules_info: Vec<sdkt_audit::RuleInfo> = sdkt_audit::all_rules()
-                    .iter()
-                    .map(|r| sdkt_audit::RuleInfo {
-                        id: r.id().to_string(),
-                        severity: r.severity(),
-                        description: r.description().to_string(),
-                    })
-                    .collect();
+                let rules_info: Vec<sdkt_audit::RuleInfo> = sdkt_audit::registered_rule_info();
                 if multi_file {
                     let sarif_str = sdkt_audit::sarif::report_to_sarif_string_multi_file(
                         &aggregate,

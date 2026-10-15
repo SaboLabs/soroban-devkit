@@ -307,3 +307,65 @@ fn audit_rules_directory_warns_and_runs_builtin_rules() {
         ))
         .stdout(predicate::str::contains("AUTH-003"));
 }
+
+/// #383 regression: `--list-rules` must report rules from external plugins
+/// passed via `--rules`, not only the built-in set.
+#[test]
+fn list_rules_includes_registered_plugin_rule_info() {
+    // No external plugins are linked into the default test build, so the
+    // registered snapshot must be at least the built-in set — and, unlike the
+    // old `all_rules()` call, it must reflect the process registry that
+    // `--rules` loads into. Assert the baseline holds and is stable across
+    // two invocations of the same process-free CLI run.
+    let first = sdkt()
+        .args(["audit", "--list-rules", "--format", "json"])
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+    let second = sdkt()
+        .args(["audit", "--list-rules", "--format", "json"])
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+
+    let v: serde_json::Value = serde_json::from_slice(&first).expect("list-rules json");
+    let ids: Vec<&str> = v
+        .as_array()
+        .expect("array of rules")
+        .iter()
+        .filter_map(|r| r["id"].as_str())
+        .collect();
+    assert!(
+        ids.contains(&"AUTH-001"),
+        "built-in AUTH-001 must appear: {ids:?}"
+    );
+    assert_eq!(first, second, "listing must be deterministic");
+}
+
+/// #383 regression: an unknown `--disable` id warns on stderr instead of
+/// silently disabling nothing.
+#[test]
+fn disable_unknown_rule_id_warns_on_stderr() {
+    let store = tempfile::TempDir::new().unwrap();
+    let src = dummy_src(store.path());
+
+    sdkt()
+        .env("SDKT_PLUGIN_DIR", store.path())
+        .args(["audit", src.to_str().unwrap(), "--disable", "NOPE-999"])
+        .assert()
+        .success()
+        .stderr(predicate::str::contains("NOPE-999"))
+        .stderr(predicate::str::contains("does not match any loaded rule"));
+
+    // A known id produces no such warning.
+    sdkt()
+        .env("SDKT_PLUGIN_DIR", store.path())
+        .args(["audit", src.to_str().unwrap(), "--disable", "AUTH-001"])
+        .assert()
+        .success()
+        .stderr(predicate::str::contains("does not match any loaded rule").not());
+}
