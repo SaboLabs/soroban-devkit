@@ -151,6 +151,8 @@ Looking for a place to start? Self-contained, low-risk tasks:
 
 - **Docs**: add a copy-paste recipe to `docs/examples.md`, or improve a section
   in `README.md` / `docs/`.
+- **Fuzz crate**: add a mutation operator or an oracle condition, following
+  `crates/sdkt-fuzz/README.md` (the extension guide).
 - **CLI polish**: improve `--help` text or error messages in
   `crates/sdkt-cli/src/main.rs` (no behavior change).
 - **Tests**: add an integration test under `crates/sdkt-cli/tests/` for an

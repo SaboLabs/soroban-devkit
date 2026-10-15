@@ -128,6 +128,7 @@ a reusable GitHub Action: see [docs/ci-cd.md](docs/compatibility/ci-cd.md).
 | Deploy (with `--deny-breaking` guard) | `sdkt deploy` |
 | Contract invocation (read-only) | `sdkt call` |
 | Contract invocation (state-changing, end-to-end) | `sdkt invoke` |
+| Native Rust property-based fuzzing (deterministic + replay) | `sdkt fuzz` — see the [sdkt-fuzz extension guide](crates/sdkt-fuzz/README.md) to add operators/oracles |
 
 ## Quick Start
 

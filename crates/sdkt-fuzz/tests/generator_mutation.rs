@@ -2,7 +2,7 @@
 
 use sdkt_fuzz::{GenerationCaps, GeneratorError, UnsupportedContractType};
 use sdkt_wasm::{parse_contract_spec, ContractSpec, ContractType};
-use soroban_env_host::xdr::ScVal;
+use soroban_env_host::xdr::{ScMap, ScVal, VecM};
 
 const COUNTER_WASM: &[u8] = include_bytes!("../../../crates/sdkt-cli/tests/fixtures/us_new.wasm");
 
@@ -453,4 +453,66 @@ fn mutation_deterministic_and_non_targets_preserved() {
         ScVal::Vec(Some(v)) => assert_eq!(v.0.len(), 1),
         other => panic!("expected a vec, got {other:?}"),
     }
+}
+
+#[test]
+fn map_insert_key_operator_is_deterministic_and_typed() {
+    let map = compound(
+        "map<u32, bool>".to_string(),
+        vec![counter_type("u32"), counter_type("bool")],
+    );
+    let baseline = vec![ScVal::Map(Some(ScMap(VecM::try_from(vec![]).unwrap())))];
+    let seed = [13u8; 32];
+
+    let a = sdkt_fuzz::mutation::mutate_arg(
+        &map,
+        &baseline,
+        0,
+        sdkt_fuzz::Operator::MapInsertKey,
+        &seed,
+        "m",
+        GenerationCaps::default(),
+    )
+    .unwrap();
+    let b = sdkt_fuzz::mutation::mutate_arg(
+        &map,
+        &baseline,
+        0,
+        sdkt_fuzz::Operator::MapInsertKey,
+        &seed,
+        "m",
+        GenerationCaps::default(),
+    )
+    .unwrap();
+
+    // Determinism: same identity → identical mutation.
+    assert_eq!(a, b);
+    assert_eq!(a.mutation_id, b.mutation_id);
+
+    // The result is still a well-typed map.
+    match &a.value {
+        ScVal::Map(Some(m)) => {
+            assert_eq!(m.0.len(), 1, "insert into empty map yields one entry");
+        }
+        other => panic!("expected a map, got {other:?}"),
+    }
+
+    // Non-target arguments are preserved.
+    assert_eq!(a.args.len(), baseline.len());
+
+    // Operator does not apply to a non-map type.
+    let err = sdkt_fuzz::mutation::mutate_arg(
+        &counter_type("u32"),
+        &baseline,
+        0,
+        sdkt_fuzz::Operator::MapInsertKey,
+        &seed,
+        "m",
+        GenerationCaps::default(),
+    )
+    .unwrap_err();
+    assert!(matches!(
+        err,
+        sdkt_fuzz::MutationError::OperatorNotApplicableForType { .. }
+    ));
 }

@@ -14,7 +14,7 @@
 
 use sha2::{Digest, Sha256};
 use soroban_env_host::xdr::{
-    Int128Parts, ScBytes, ScMap, ScString, ScVal, ScVec, UInt128Parts, VecM,
+    Int128Parts, ScBytes, ScMap, ScMapEntry, ScString, ScVal, ScVec, UInt128Parts, VecM,
 };
 
 use sdkt_wasm::ContractType;
@@ -53,6 +53,7 @@ pub enum Operator {
     // Map
     MapEmpty,
     MapRemoveOne,
+    MapInsertKey,
 }
 
 impl Operator {
@@ -77,6 +78,7 @@ impl Operator {
             Operator::OptionSomeMutated => "option_some_mutated",
             Operator::MapEmpty => "map_empty",
             Operator::MapRemoveOne => "map_remove_one",
+            Operator::MapInsertKey => "map_insert_key",
         }
     }
 
@@ -109,7 +111,11 @@ impl Operator {
                 Operator::OptionSomeMutated,
             ],
             ("compound", n) if n.starts_with("map<") => {
-                vec![Operator::MapEmpty, Operator::MapRemoveOne]
+                vec![
+                    Operator::MapEmpty,
+                    Operator::MapRemoveOne,
+                    Operator::MapInsertKey,
+                ]
             }
             _ => Vec::new(),
         }
@@ -392,6 +398,30 @@ fn apply_operator(
             }
             _ => return Err(no_mutation()),
         },
+        Operator::MapInsertKey => {
+            let kt = t.type_args.first().ok_or_else(no_mutation)?;
+            let vt = t.type_args.get(1).ok_or_else(no_mutation)?;
+            let key = rng.bytes(16);
+            let new_key = generate_value(kt, &key, 1, caps).map_err(|_| no_mutation())?;
+            let val = rng.bytes(16);
+            let new_val = generate_value(vt, &val, 1, caps).map_err(|_| no_mutation())?;
+            let mut entries = match current {
+                ScVal::Map(Some(m)) => m.0.to_vec(),
+                _ => Vec::new(),
+            };
+            entries.push(ScMapEntry {
+                key: new_key,
+                val: new_val,
+            });
+            entries.sort_by(|a, b| a.key.cmp(&b.key));
+            entries.dedup_by(|a, b| a.key == b.key);
+            if entries.len() > caps.max_map_entries.saturating_mul(2).max(1) {
+                return Err(no_mutation());
+            }
+            ScVal::Map(Some(ScMap(
+                VecM::try_from(entries).map_err(|_| no_mutation())?,
+            )))
+        }
     };
     Ok(out)
 }
