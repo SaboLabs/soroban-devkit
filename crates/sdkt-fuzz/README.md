@@ -2,8 +2,11 @@
 
 Contributor-facing guide for extending the fuzz crate: adding a mutation
 operator, adding an oracle condition, and changing campaign-level settings.
-It documents what is actually wired as of `origin/main` (`5f6e7c8b`); every
-symbol named here exists in the source tree at that revision.
+The baseline functionality it documents is wired as of `origin/main`
+(`5f6e7c8b`); every symbol named here exists in the source tree at that
+revision. The `MapInsertKey` operator in Section 4 is the one exception: it
+is introduced by this PR and is therefore only present on the branch that
+carries it.
 
 ## Where this guide lives
 
