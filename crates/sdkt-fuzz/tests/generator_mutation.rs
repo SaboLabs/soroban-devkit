@@ -2,7 +2,7 @@
 
 use sdkt_fuzz::{GenerationCaps, GeneratorError, UnsupportedContractType};
 use sdkt_wasm::{parse_contract_spec, ContractSpec, ContractType};
-use soroban_env_host::xdr::{ScMap, ScVal, VecM};
+use soroban_env_host::xdr::{ScMap, ScMapEntry, ScVal, VecM};
 
 const COUNTER_WASM: &[u8] = include_bytes!("../../../crates/sdkt-cli/tests/fixtures/us_new.wasm");
 
@@ -515,4 +515,108 @@ fn map_insert_key_operator_is_deterministic_and_typed() {
         err,
         sdkt_fuzz::MutationError::OperatorNotApplicableForType { .. }
     ));
+}
+
+#[test]
+fn map_insert_key_guarantees_new_entry_on_non_empty_map() {
+    // A non-empty map: the operator must add an entry, not replace one.
+    let map = compound(
+        "map<u32, bool>".to_string(),
+        vec![counter_type("u32"), counter_type("bool")],
+    );
+    let existing = ScMap(
+        VecM::try_from(vec![
+            ScMapEntry {
+                key: ScVal::U32(1),
+                val: ScVal::Bool(true),
+            },
+            ScMapEntry {
+                key: ScVal::U32(2),
+                val: ScVal::Bool(false),
+            },
+        ])
+        .unwrap(),
+    );
+    // Multi-argument baseline: the map is argument 1, so arguments 0 and 2
+    // are non-target and must survive untouched.
+    let baseline = vec![ScVal::U64(7), ScVal::Map(Some(existing)), ScVal::Bool(true)];
+    let seed = [29u8; 32];
+
+    let m = sdkt_fuzz::mutation::mutate_arg(
+        &map,
+        &baseline,
+        1,
+        sdkt_fuzz::Operator::MapInsertKey,
+        &seed,
+        "m",
+        GenerationCaps::default(),
+    )
+    .unwrap();
+
+    // Non-target arguments are preserved exactly, not just in count.
+    assert_eq!(m.args[0], ScVal::U64(7));
+    assert_eq!(m.args[2], ScVal::Bool(true));
+
+    let ScVal::Map(Some(after)) = &m.value else {
+        panic!("expected a map, got {:?}", m.value);
+    };
+    assert_eq!(after.0.len(), 3, "one entry must be added");
+
+    // The two pre-existing entries are still present, unchanged.
+    for (key, val) in [
+        (ScVal::U32(1), ScVal::Bool(true)),
+        (ScVal::U32(2), ScVal::Bool(false)),
+    ] {
+        assert!(
+            after.0.iter().any(|e| e.key == key && e.val == val),
+            "pre-existing entry {key:?} => {val:?} was lost"
+        );
+    }
+
+    // Keys stay unique (no silent overwrite).
+    let keys: Vec<_> = after.0.iter().map(|e| e.key.clone()).collect();
+    let mut sorted = keys.clone();
+    sorted.sort();
+    sorted.dedup();
+    assert_eq!(keys.len(), sorted.len(), "duplicate keys in mutated map");
+}
+
+#[test]
+fn map_insert_key_refuses_when_key_space_is_exhausted() {
+    // map<bool, bool> has exactly two possible keys. With both already
+    // present, no unique key can be produced, so the operator must refuse
+    // instead of overwriting.
+    let map = compound(
+        "map<bool, bool>".to_string(),
+        vec![counter_type("bool"), counter_type("bool")],
+    );
+    let full = ScMap(
+        VecM::try_from(vec![
+            ScMapEntry {
+                key: ScVal::Bool(false),
+                val: ScVal::Bool(true),
+            },
+            ScMapEntry {
+                key: ScVal::Bool(true),
+                val: ScVal::Bool(false),
+            },
+        ])
+        .unwrap(),
+    );
+    let baseline = vec![ScVal::Map(Some(full))];
+
+    let err = sdkt_fuzz::mutation::mutate_arg(
+        &map,
+        &baseline,
+        0,
+        sdkt_fuzz::Operator::MapInsertKey,
+        &[41u8; 32],
+        "m",
+        GenerationCaps::default(),
+    )
+    .unwrap_err();
+    assert!(
+        matches!(err, sdkt_fuzz::MutationError::NoApplicableMutation),
+        "expected NoApplicableMutation, got {err:?}"
+    );
 }

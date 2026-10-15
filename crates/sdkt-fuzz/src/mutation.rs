@@ -401,20 +401,31 @@ fn apply_operator(
         Operator::MapInsertKey => {
             let kt = t.type_args.first().ok_or_else(no_mutation)?;
             let vt = t.type_args.get(1).ok_or_else(no_mutation)?;
-            let key = rng.bytes(16);
-            let new_key = generate_value(kt, &key, 1, caps).map_err(|_| no_mutation())?;
-            let val = rng.bytes(16);
-            let new_val = generate_value(vt, &val, 1, caps).map_err(|_| no_mutation())?;
             let mut entries = match current {
                 ScVal::Map(Some(m)) => m.0.to_vec(),
                 _ => Vec::new(),
             };
+            // Retry up to 100 times to find a key that is unique relative
+            // to existing entries. If we cannot produce one, refuse rather
+            // than silently overwriting an existing key.
+            let max_attempts = 100;
+            let (new_key, new_val) = (0..max_attempts)
+                .find_map(|_| {
+                    let key_bytes = rng.bytes(16);
+                    let key = generate_value(kt, &key_bytes, 1, caps).ok()?;
+                    if entries.iter().any(|e| e.key == key) {
+                        return None; // collision → try again
+                    }
+                    let val_bytes = rng.bytes(16);
+                    let val = generate_value(vt, &val_bytes, 1, caps).ok()?;
+                    Some((key, val))
+                })
+                .ok_or_else(no_mutation)?;
             entries.push(ScMapEntry {
                 key: new_key,
                 val: new_val,
             });
             entries.sort_by(|a, b| a.key.cmp(&b.key));
-            entries.dedup_by(|a, b| a.key == b.key);
             if entries.len() > caps.max_map_entries.saturating_mul(2).max(1) {
                 return Err(no_mutation());
             }

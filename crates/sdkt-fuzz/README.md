@@ -58,7 +58,7 @@ so an ill-typed mutation can never be selected.
 | Other primitives | `primitive` / (anything else) | `Random` only |
 | Vec | `compound` / `vec<...>` | `VecEmpty`, `VecRemoveOne`, `VecDuplicate`, `VecAppend`, `VecMutateOne` |
 | Option | `compound` / `option<...>` | `OptionNone`, `OptionSome`, `OptionSomeMutated` |
-| Map | `compound` / `map<...>` | `MapEmpty`, `MapRemoveOne` |
+| Map | `compound` / `map<...>` | `MapEmpty`, `MapRemoveOne`, `MapInsertKey` |
 | All others | (unsupported) | none — `Vec::new()` |
 
 When adding a new operator, decide which row of this table it belongs to. If
@@ -247,17 +247,31 @@ In `apply_operator`:
         Operator::MapInsertKey => {
             let kt = t.type_args.first().ok_or_else(no_mutation)?;
             let vt = t.type_args.get(1).ok_or_else(no_mutation)?;
-            let key = rng.bytes(16);
-            let new_key = generate_value(kt, &key, 1, caps).map_err(|_| no_mutation())?;
-            let val = rng.bytes(16);
-            let new_val = generate_value(vt, &val, 1, caps).map_err(|_| no_mutation())?;
             let mut entries = match current {
                 ScVal::Map(Some(m)) => m.0.to_vec(),
                 _ => Vec::new(),
             };
-            entries.push(ScMapEntry { key: new_key, val: new_val });
+            // Retry up to 100 times to find a key that is unique relative
+            // to existing entries. If we cannot produce one, refuse rather
+            // than silently overwriting an existing key.
+            let max_attempts = 100;
+            let (new_key, new_val) = (0..max_attempts)
+                .find_map(|attempt| {
+                    let key_bytes = rng.bytes(16);
+                    let key = generate_value(kt, &key_bytes, 1, caps).ok()?;
+                    if entries.iter().any(|e| e.key == key) {
+                        return None; // collision → try again
+                    }
+                    let val_bytes = rng.bytes(16);
+                    let val = generate_value(vt, &val_bytes, 1, caps).ok()?;
+                    Some((key, val))
+                })
+                .ok_or_else(no_mutation)?;
+            entries.push(ScMapEntry {
+                key: new_key,
+                val: new_val,
+            });
             entries.sort_by(|a, b| a.key.cmp(&b.key));
-            entries.dedup_by(|a, b| a.key == b.key);
             if entries.len() > caps.max_map_entries.saturating_mul(2).max(1) {
                 return Err(no_mutation());
             }
@@ -266,6 +280,13 @@ In `apply_operator`:
             )))
         }
 ```
+
+The uniqueness retry is the point of the example: a `map<K, V>` insertion that
+collides with an existing key would silently *replace* that entry, so the
+operator refuses (`NoApplicableMutation`) rather than produce a mutation that
+does not do what its name claims. Note there is no `dedup_by` — dedup after a
+push is what makes the guarantee unprovable, because the pushed entry is the
+one that gets dropped.
 
 Add `ScMapEntry` to the imports at the top of `mutation.rs`:
 
