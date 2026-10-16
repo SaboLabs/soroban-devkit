@@ -322,13 +322,10 @@ fn project_deploy_forwards_constructor_args() {
         body => panic!("expected InvokeHostFunction operation, got: {:?}", body),
     };
     match vault_host_fn {
-        HostFunction::CreateContractV2(args) => {
-            assert!(
-                args.constructor_args.is_empty(),
-                "vault has no ctor_args, so its create must carry no constructor arguments"
-            );
-        }
         HostFunction::CreateContract(_) => {}
+        HostFunction::CreateContractV2(_) => panic!(
+            "vault has no ctor_args and must deploy via CreateContract (V1), not CreateContractV2"
+        ),
         other => panic!("expected CreateContract operation, got: {:?}", other),
     }
 }
@@ -407,13 +404,10 @@ fn project_deploy_no_args_unchanged_behavior() {
         body => panic!("expected InvokeHostFunction operation, got: {:?}", body),
     };
     match host_fn {
-        HostFunction::CreateContractV2(args) => {
-            assert!(
-                args.constructor_args.is_empty(),
-                "contract without ctor_args must receive no constructor arguments"
-            );
-        }
         HostFunction::CreateContract(_) => {}
+        HostFunction::CreateContractV2(_) => panic!(
+            "contract without ctor_args must deploy via CreateContract (V1), not CreateContractV2"
+        ),
         other => panic!("expected CreateContract operation, got: {:?}", other),
     }
 }
