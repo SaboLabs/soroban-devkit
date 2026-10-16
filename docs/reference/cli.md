@@ -43,6 +43,14 @@ sdkt
 │   (base64 XDR or hex XDR) are merged and de-duplicated. This does NOT discover
 │   all contract storage and does NOT restore archived entries.
 │
+│   `analyze` (alias `snapshot`) accepts repeatable `--key-xdr` (alias `--key`). Each
+│   `getLedgerEntries` request is limited to 200 keys; larger read sets (including
+│   the automatically included instance key) are fetched in sequential batches.
+│   For batched reads, found entries retain request order and absent entries are
+│   omitted. A failed batch or a change of ledger between batches fails the
+│   complete read; retry if the ledger changes. This batching applies to reads,
+│   not to the transaction footprint limits of `extend` or `restore`.
+│
 │   `restore` simulates `--envelope` (the invocation that failed on archived
 │   state), adopts the `restorePreamble` footprint and minimum resource fee, and
 │   submits a `RestoreFootprint` transaction. It fails without submitting when
@@ -153,8 +161,9 @@ sdkt
 │   ├── --list-rules          (list available audit rules and exit)
 │   ├── --format <json|pretty>
 │   ├── --disable <RULE_ID>   (repeatable)
-│   ├── --rules <PATH>        (repeatable; external rule paths)
+│   ├── --rules <PATH|ID>     (repeatable; compiled plugin artifact or installed plugin ID)
 │   └── --no-plugins          (skip loading installed plugins)
+│                               (nested `mod` blocks are scanned recursively)
 ├── release-assurance
 │   ├── --wasm <WASM>         (candidate artifact; required)
 │   ├── --previous-wasm <WASM> (baseline for the offline upgrade diff)
@@ -613,8 +622,10 @@ sdkt plugin verify-bundle ./bundle.sdktplugin --public-key ./pubkey.key         
 sdkt audit contract.rs --rules <id>                # resolve id → stored artifact
 ```
 
-`sdkt audit --rules <id>` resolves a plugin `id` to its stored artifact and runs
-the existing loader; passing a filesystem path keeps the legacy behavior.
+`sdkt audit --rules <id>` resolves an installed plugin ID to its stored
+artifact; filesystem paths must point to compiled `.so`, `.dylib`, `.dll`, or
+`.wasm` plugin artifacts. Passing a directory prints a warning and the audit
+continues with the built-in rules.
 Installing a `native` plugin prints a warning: native plugins run **unsandboxed**
 (unmodified behavior). See `docs/plugins/plugin-authoring.md` for the `plugin.toml`
 schema and the install-validation rules.
@@ -639,7 +650,16 @@ Store root precedence (lowest → highest): `<cwd>/.sdkt/plugins`,
       --max-growth-pct 10 --max-size-bytes 131072
   ```
 
-- `audit` implements the static-analysis rules (AUTH-001/002/003/004, MOVE-001).
+- `audit` implements the static-analysis rules (AUTH-001/002/003/004, MOVE-001, MATH-001, CEI-001).
+- `audit` scans functions declared inside nested `mod` blocks (including mod-in-mod and `impl` blocks within modules); findings report qualified names such as `inner::initialize`.
+- **AUTH-001/AUTH-004 severity follows observed behavior, not the name.** Both rules start from a privileged-name heuristic (`initialize`/`init`, `set_*`/`grant_*`/`revoke_*` prefixes, and the substrings `admin`, `mint`, `burn`, `pause`, `unpause`, `upgrade`, `withdraw`, `configure`, `freeze`, `ban`, `drain`, `set_admin`, `owner_set`, `transfer_ownership`, `change_owner`, `set_auth`), then decide severity from what the function actually does:
+  - a method of a `#[contractimpl]` block that performs a recognized state write or an external call and never calls `require_auth()` → **critical** (the unguarded-privilege case);
+  - a function that is **not** a `#[contractimpl]` method (a plain `fn` or a method of an un-annotated impl) → **info**: external callers cannot reach it, so authorization is the responsibility of the entrypoint that calls it;
+  - a `#[contractimpl]` method that returns a value with no recognized state write or external call → **info**: positive evidence of a read-only accessor (`admin_balance`, `get_paused`), which cannot be a missing-authorization defect;
+  - a `#[contractimpl]` method that returns nothing with no *recognized* side effect → **critical**: the write may go through a helper the scanner does not recognize, so the finding stays loud.
+
+  Nothing is deleted — a demotion is a severity change, always visible in the report (pretty, `--format json`, and `--format sarif` agree). `--fail-on`/CI gates keyed to `critical` therefore stop triaging getter noise, while `info` findings remain auditable.
+- **`--fail-on <severity>` (opt-in CI gate).** `sdkt audit` exits `0` on findings by default. With `--fail-on critical|warning|info` (case-insensitive) the already-computed severity summary is mapped to the process exit code: exit `1` when any finding is at or above the threshold, after the full report has been printed unchanged — in pretty, JSON, and SARIF output alike. An invalid level is a usage error (exit `2`) raised before any analysis runs. The flag is independent of `--disable`: disabled rules produce no findings and therefore never trip the gate.
 - `audit --list-rules` discovers all registered built-in rules (with id, severity, and description). Supports `--format json` and does not require a source path argument.
 - **Health verdict exit codes.** `sdkt health` exits non-zero when the verdict is `critical` (for example, the deployed WASM does not match the file passed with `--wasm`), so a mismatched artifact cannot pass CI or an agent check that only reads the exit code. `at_risk` remains non-blocking (exit 0), matching how `release-assurance` treats it.
 - **`sdkt-agent`.** A separate binary that turns a plain-language request into a validated, read-only `sdkt` invocation: `sdkt-agent "check health of contract C… on testnet"`. It resolves the capability from the registry, pins an explicit testnet endpoint for network-touching checks, refuses mutating capabilities and mainnet targets outright, and never guesses on an ambiguous request. `--format json` emits a versioned result document; the default output is a six-line summary. Full guide — build, capability surface, ambiguity and refusal codes, artifact roles, mutation boundary, network policy, result semantics, troubleshooting: [sdkt-agent](agent.md).
@@ -648,6 +668,15 @@ Store root precedence (lowest → highest): `<cwd>/.sdkt/plugins`,
 - **Contract metadata (`contractmetav0`).** `sdkt wasm inspect <file.wasm>` decodes the `contractmetav0` custom section and prints a `Contract Metadata` block of `key = value` entries (for example the `rsver`, `rssdkver`, and `cliver` provenance keys) in section order, with duplicate keys preserved. A WASM without the section prints `Contract Metadata (0):` followed by `(none)`. With `--format json` the entries appear as the additive `metadata.contract_meta` array of `{ "key": ..., "value": ... }` objects — an empty array when the section is absent — alongside the existing `metadata` keys, which are unchanged. A malformed `contractmetav0` payload is reported as a classified error rather than a panic.
 - `sdkt wasm metadata --contract <id>` reports the same entries for the deployed contract, from the fetched (or cached) WASM bytes: pretty output gains the identical `Contract Metadata` block, and `--format json` gains an additive top-level `contract_meta` array alongside the existing inspection keys, which are unchanged. It is empty when the deployed WASM carries no `contractmetav0`.
 - **Mainnet safety.** Mutating commands (`tx submit`, `invoke`, `deploy`, `project deploy`) refuse to target mainnet unless you explicitly select the network — via `--network-profile`, `--rpc-url`, or `--network-passphrase`. A testnet-default passphrase pointed at a mainnet endpoint is rejected before any request is sent, protecting against signing for the wrong network.
+
+## Fuzz expectation declarations
+
+`sdkt fuzz campaign` accepts repeatable `--expect-success <FN>` and
+`--expect-error <FN:TYPE:CODE>` declarations. A function may have one
+expectation; declaring it with both flags is a usage error that exits 2 and
+names the conflicting function. A single valid declaration keeps its existing
+campaign behavior. Malformed `--expect-error` declarations also remain usage
+errors.
 
 ## Error Handling
 
