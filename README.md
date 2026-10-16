@@ -168,7 +168,7 @@ Install to a custom directory (for example in CI, or where `~/.local/bin` is
 not on your `PATH`):
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/SaboLabs/soroban-devkit/main/install.sh | SDKT_INSTALL_DIR=/usr/local/bin bash
+curl -fsSL https://raw.githubusercontent.com/SaboLabs/soroban-devkit/main/install.sh | SDKT_INSTALL_DIR="$HOME/bin" bash
 ```
 
 Make sure the chosen directory is on your `PATH`. Both variables can be

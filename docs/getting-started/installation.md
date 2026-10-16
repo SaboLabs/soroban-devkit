@@ -33,7 +33,7 @@ Custom install directory:
 ```bash
 curl -fsSL \
   https://raw.githubusercontent.com/SaboLabs/soroban-devkit/main/install.sh \
-  | SDKT_INSTALL_DIR=/usr/local/bin bash
+  | SDKT_INSTALL_DIR="$HOME/bin" bash
 ```
 
 Pin a specific version:
