@@ -293,6 +293,97 @@ mod storage_check_json_schema {
     }
 }
 
+mod lock_json_schema {
+    use super::*;
+
+    const LOCK_WITH_DEP: &str = r#"version = 1
+deploy_order = ["demo"]
+contracts = [{ alias = "demo", path = ".", artifact = "target/wasm32v1-none/release/demo.wasm", sha256 = "aa", order = 0 }]
+[[dependencies]]
+name = "ghost"
+source = "local"
+ref = "libs/ghost"
+integrity = ""
+"#;
+
+    const LOCK_WITHOUT_DEP: &str = r#"version = 1
+deploy_order = ["demo"]
+contracts = [{ alias = "demo", path = ".", artifact = "target/wasm32v1-none/release/demo.wasm", sha256 = "aa", order = 0 }]
+"#;
+
+    fn run_lock_show(dir: &TempDir) -> Value {
+        let output = sdkt()
+            .current_dir(dir.path())
+            .args(["lock", "show", "--format", "json"])
+            .assert()
+            .success()
+            .get_output()
+            .stdout
+            .clone();
+        assert_valid_json(&String::from_utf8_lossy(&output))
+    }
+
+    fn run_lock_generate(dir: &TempDir) -> Value {
+        let output = sdkt()
+            .current_dir(dir.path())
+            .args(["lock", "generate", "--format", "json"])
+            .assert()
+            .success()
+            .get_output()
+            .stdout
+            .clone();
+        assert_valid_json(&String::from_utf8_lossy(&output))
+    }
+
+    fn assert_lock_json_matches(json: &Value, lock_toml: &str) {
+        let parsed: toml::Value = toml::from_str(lock_toml).unwrap();
+        assert_eq!(json["version"], parsed["version"]);
+        assert_eq!(json["deploy_order"], parsed["deploy_order"]);
+        assert_eq!(json["contracts"], parsed["contracts"]);
+        let expected_deps = parsed
+            .get("dependencies")
+            .cloned()
+            .unwrap_or_else(|| toml::Value::Array(Vec::new()));
+        assert_eq!(json["dependencies"], expected_deps);
+    }
+
+    #[test]
+    fn show_json_includes_dependencies() {
+        let dir = TempDir::new().unwrap();
+        write_fixture(&dir, "sdkt.lock", LOCK_WITH_DEP);
+        let json = run_lock_show(&dir);
+        assert_lock_json_matches(&json, LOCK_WITH_DEP);
+        assert_eq!(json["dependencies"].as_array().unwrap().len(), 1);
+    }
+
+    #[test]
+    fn show_json_emits_empty_dependencies_array() {
+        let dir = TempDir::new().unwrap();
+        write_fixture(&dir, "sdkt.lock", LOCK_WITHOUT_DEP);
+        let json = run_lock_show(&dir);
+        assert_lock_json_matches(&json, LOCK_WITHOUT_DEP);
+        assert_eq!(json["dependencies"].as_array().unwrap().len(), 0);
+    }
+
+    #[test]
+    fn generate_json_includes_dependencies() {
+        let dir = TempDir::new().unwrap();
+        write_fixture(&dir, "sdkt.lock", LOCK_WITH_DEP);
+        let json = run_lock_generate(&dir);
+        assert_lock_json_matches(&json, LOCK_WITH_DEP);
+        assert_eq!(json["dependencies"].as_array().unwrap().len(), 1);
+    }
+
+    #[test]
+    fn generate_json_emits_empty_dependencies_array() {
+        let dir = TempDir::new().unwrap();
+        write_fixture(&dir, "sdkt.lock", LOCK_WITHOUT_DEP);
+        let json = run_lock_generate(&dir);
+        assert_lock_json_matches(&json, LOCK_WITHOUT_DEP);
+        assert_eq!(json["dependencies"].as_array().unwrap().len(), 0);
+    }
+}
+
 mod inspect_json_schema {
     use super::*;
 
