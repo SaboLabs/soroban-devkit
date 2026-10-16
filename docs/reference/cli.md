@@ -347,9 +347,6 @@ or git logic is duplicated; the same `compute_dependency_integrity` /
 │   `--skip-deployed` resumes an interrupted deploy: aliases whose recorded
 │   contract ID is verified to still exist on-chain (via `getLedgerEntries`) are
 │   skipped without re-deploying (and re-paying for) them, printed as
-│   `--skip-deployed` resumes an interrupted deploy: aliases whose recorded
-│   contract ID is verified to still exist on-chain (via `getLedgerEntries`) are
-│   skipped without re-deploying (and re-paying for) them, printed as
 │   `✓ '<alias>' already deployed at <contract_id>`. A record whose contract no
 │   longer exists on-chain is NOT trusted — sdkt warns
 │   `⚠ Recorded contract for '<alias>' is no longer on-chain; re-deploying.` and
