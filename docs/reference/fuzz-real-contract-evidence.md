@@ -39,12 +39,12 @@ verdict, or a byte-identical rerun.
 Four official example contracts were compiled with the Stellar CLI and fuzzed
 through the public CLI and library API.
 
-| Target | WASM SHA-256 |
+| Target |WASM SHA-256 |
 |---|---|
-| `increment` | `36bc3b311c3780c847e5724d9dc0d5f160af22d476535a2881ea9155d2049dce` |
+| `increment` | `36bc3b311c3780c847e5724d9dc0d5f160af22d4765352a2881ea9155d2049dce` |
 | `custom_types` | `2f6f5657cb8ec38227ba636de221aed75ac31ac6db9614b710f73ae5686ebd40` |
 | `events` | `33084e80e278a22703f6bd4f70cc3e70d4bd3718468ab5401202c36f36a0ef7c` |
-| `errors` | `c958ec5683d4998d5e3edfcfb3e07a2d33978579197bceb0394bf3d8e0ef99a8` |
+| `errors` | `c958ec5683d4e98d5e3edfcfb3e07a2d33978579197bceb0394bf3d8e0ef99a8` |
 
 Each WASM is byte-identical to the corresponding
 `stellar/soroban-examples/<dir>/target/wasm32v1-none/release/*.wasm` build
@@ -66,7 +66,7 @@ output.
   `get_state → count=12, last_incr=7`, `carried_instance_storage_entries=1`.
 - **ExpectedError classification** (`errors` contract, `MAX=5`): steps 0–4
   `Returned(U32(1..5))` → `Finding(ReturnMismatch)`; steps 5–6
-  `ContractError{Contract,1}` → `ExpectedError` (exactly at `MAX+1`).
+  `ContractError{Contract,1}` → `ExpectedError` (exactly at `MAX + 1`).
 - **Minimization** — 45/45 `preserved=true`; complexity `11..43 → 11`.
 - **Replay** — 45/45 `REPRODUCED`.
 - **Deterministic rerun** — `campaign-increment.json` == rerun
@@ -170,8 +170,7 @@ Reading the `CorrectAuth` row (D5): `join` → `ContractError{Storage,5}`
 then reached a persistent `Member(source)` read that was not present in that
 step's footprint/baseline — this is footprint/state setup behavior, **not** an
 auth failure. `contribute` → `ContractError{Contract,9}` is the contract's own
-`NotActive` business error. NoAuth/WrongAuth produce `ContractError{Auth,6}`
-as expected. This is behavioral observation, not a protocol issue.
+`NotActive` business error. NoAuth/WrongAuth produce `ContractError{Auth,6}` as expected. This is behavioral observation, not a protocol issue.
 
 ### State-machine boundary (6 distinct `GroupError` codes, real execution)
 
@@ -214,7 +213,7 @@ Soroban context: contract-data access is footprint-bounded by protocol
 semantics (an invocation reads/writes the `CONTRACT_DATA` entries declared in
 its footprint). The engine builds each step's footprint from the carried state
 and baseline entries; a read of a key absent from that footprint surfaces as
-`Storage,5` (`ExceededLimit`). That is setup behavior, not a state-loss bug —
+pStorage,5` (`ExceededLimit`). That is setup behavior, not a state-loss bug —
 the carry proof above shows writes propagating between steps.
 
 ### Token dependency
@@ -269,257 +268,4 @@ on a real `require_auth` contract:
 
 - **Deterministic cross-run verification** — probe output byte-identical
   across processes; CLI campaign evidence byte-identical; artifact stream
-  hash `d30bd3cee95f8e93…` identical.
-- **Test suite** — `cargo test -p sdkt-fuzz` on a clean worktree at
-  `c39352bf`: **57 passed, 0 failed**. #286-specific suites:
-  `multistep_replay_auth` 1/1, `auth_oracle_matrix` 5/5,
-  `auth_campaign_matrix` 4/4.
-
-## 7. Negative Control
-
-Unguarded external contract `increment` (WASM SHA-256
-`36bc3b311c3780c847e5724d9dc0d5f160af22d476535a2881ea9155d2049dce`),
-declared `auth_required = true` on an authorized (`CorrectAuth`) success:
-
-| Lineage | Classification |
-|---|---|
-| #286 | `Pass` — no false bypass |
-| pre-#286 | `Finding(AuthorizationBypass)` — false positive |
-
-This demonstrates the specific oracle regression fixed by #286: before the
-fix, an authorized success was reported as a bypass.
-
-## 8. Findings
-
-All pilot findings are **declaration mismatches**:
-
-- `RETURN_MISMATCH` — a declared error expectation met a successful return.
-- `UNEXPECTED_ERROR` — a declared success expectation met a host error.
-
-They are evidence that the oracle, minimizer, artifact, and replay machinery
-behave as designed. **They are not vulnerabilities**, and the audited example
-contracts are not claimed to be defective.
-
-### Replay totals
-
-- Pilot #1: 45/45 `REPRODUCED`.
-- Pilot #2: 12/12 single-step + 3/3 multi-step `REPRODUCED`.
-- Pilot #3: 6/6 CLI campaign artifacts + 3/3 multi-step artifacts + 2/2
-  seeded-sequence artifacts = **11/11 `REPRODUCED`, 0 mismatch**.
-
-Canonical artifact hashes quoted on this page are the `artifact_hash` fields
-inside the artifact JSON (SHA-256 of the canonical JSON bytes) — never the
-SHA-256 of the file on disk, which includes a trailing newline and is a
-different value.
-
-### Security claim
-
-> No vulnerability claim. Findings are behavioral/declaration/oracle mismatches
-> unless independently proven otherwise.
-
-## 9. Live Testnet — Read-Only State-Matched Differential
-
-One end-to-end run against the public Testnet, exercising the same pipeline
-the offline pilots do, but with the ledger state fetched from the network.
-
-| Item | Value |
-|---|---|
-| Command | `cargo test -p sdkt-fuzz --test state_matched_live -- --ignored --nocapture` |
-| Result | exit `0`; `1 passed; 0 failed` |
-| Run at | 2026-10-12T03:08:36Z |
-| RPC endpoint | `https://soroban-testnet.stellar.org` |
-| Contract | `CAE3U7JKESRWZHPEQ72DVNGOQ6WPA7HSPQZL5YV46NPCE4TMUPAGYMEC` |
-| Function | `get_all_order_ids` (read-only, no arguments) |
-| Protocol / passphrase | 29 / testnet — pre-flight passed |
-| Simulation ledger | `5150185` |
-| Fetched entries | 3 (fetch ledger == simulation ledger) |
-| Capture | `VERIFIED` |
-| `stateChanges` cross-check | verified (3 entries) |
-| Local execution | `Returned(Vec([U64(46), U64(50)]))` |
-| Outcome | `rpc_returned=true local_returned=true` |
-
-The run is read-only: `simulateTransaction` and `getLedgerEntries` only. No
-transaction was submitted, nothing was signed, and no funded identity was
-used — the source account is an ephemeral key generated in-process.
-
-### What this run proves
-
-- The footprint the simulation declares is extracted and used to fetch the
-  exact ledger state the simulation ran against.
-- The captured state passes the freshness, liveness, and stability guards,
-  and agrees with the simulation's own `before` values.
-- The local host resolves the network's own `ContractCode` and instance
-  entry, and returns the **same value** the RPC returned for this
-  invocation.
-
-### What this run does not prove
-
-- **Not live `stateChanges` chaining.** This invocation is read-only and
-  produced **0 state changes** (`STATE_CHANGES with before values: 0`), so
-  the `stateChanges` → baseline → next-invocation path was not exercised
-  against the network. That path is covered offline by the regression tests
-  only.
-- **TTL parity is not tested.** The RPC `stateChanges` payload does not
-  report TTL, and no comparison was made.
-- **CPU/memory parity is not tested.** The local run logged
-  `cpu=656812 mem=1196714`; these are **local host counters only** and were
-  not compared against any RPC figure.
-- **No real-contract WASM MATCH claim.** This run compares a return value,
-  not a deployed executable hash. WASM-identity claims are not made here.
-
-### State-changing simulation and WASM verification (same contract)
-
-A second read-only investigation targeted a state-changing function on the
-same contract, to see whether a real `stateChanges` payload could be carried
-through the SDKT chaining path.
-
-| Item | Value |
-|---|---|
-| Function | `apply_funding()` — no arguments, no `require_auth` |
-| Simulation ledger | `5150578` |
-| Simulation error | `None` |
-| `stateChanges` rows | **6**, all `type=created`, all `before=null` |
-| Decode via `decode_state_change_row` | **6/6 OK** |
-| Classification via `is_executor_owned_key` | **5 `ContractData` (Persistent) + 1 `ContractCode`** |
-| Chaining onto an empty baseline | 5 `data_entries` carried; the `ContractCode` row is skipped |
-
-The five contract-data keys and their decoded `after` values:
-
-| Key | `after` value |
-|---|---|
-| `CumulativeFundingRate` | `I128(lo=1897729)` |
-| `CurrentFundingRate` | `I128(lo=999)` |
-| `LastFundingTime` | `U64(1791776477)` |
-| `TotalLongSize` | `I128(lo=5470170000000)` |
-| `TotalShortSize` | `I128(lo=830000000)` |
-
-These rows are captured verbatim in
-`crates/sdkt-fuzz/tests/fixtures/testnet_apply_funding_state_changes.json`
-and pinned by regression tests in
-`crates/sdkt-fuzz/tests/live_differential.rs` (decode, classification,
-chaining onto an empty baseline, and rejection of a `created` row on a
-populated baseline).
-
-**`before=null` is not a statement about the committed ledger.** The
-simulation's `before` values are relative to the simulation's baseline, not
-to the current committed ledger. An independent `getLedgerEntries` read of
-the same six keys returned all six as present, which is consistent with
-this: the simulation baseline did not contain them, the committed ledger
-did. No claim is made that these rows represent state committed by the
-simulated invocation.
-
-### WASM retrieval and hash verification
-
-The contract's own `ContractCode` entry was fetched read-only and verified:
-
-| Item | Value |
-|---|---|
-| Contract hash (hex) | `09ba7d2a24a36c9de487f43ab4ce87acf07cf27c32bee2bcf35e22726ca3c06c` |
-| `wasm_hash` from live instance entry | `60cddae67f202c19ee7b000c894fd12aa8b44de09ab652f5e188bc0c63a6cf02` |
-| WASM size | **65,152 bytes** |
-| SHA-256 of fetched WASM | `60cddae67f202c19ee7b000c894fd12aa8b44de09ab652f5e188bc0c63a6cf02` |
-| SHA-256 == `wasm_hash` | **true** |
-| `ContractCodeEntry.hash` == `wasm_hash` | **true** |
-
-### Local executor load
-
-`Executor::new(&wasm, Default::default())` loads the fetched WASM locally
-and reports the same `wasm_hash`. The module parses and caches under the
-protocol-29 configuration the executor pins.
-
-**Loading the WASM locally does not prove full network parity.** It proves
-the module is accepted by the pinned host engine and that its identity
-matches the deployed executable. It does not prove that local execution
-reproduces network behaviour in general.
-
-### Host read-back: not proven
-
-The five funding keys are written by `apply_funding()`, but no public
-function exposes them. The read-only functions present in the contract spec
-are:
-
-`get_order`, `get_position`, `get_all_order_ids`, `get_all_position_ids`,
-`get_cross_margin_balance`, `get_cross_margin_positions`.
-
-`get_funding_rate` and `get_market_stats` are **not present** in the WASM
-(byte-level search returns zero occurrences), and no other public function
-is known to read the funding keys. The keys themselves are present in the
-module, so the contract does use them — it simply does not expose them.
-
-Consequently the decoded `after` values above are **not** read back through
-the host. This is a property of the contract's interface, not a limitation
-of the toolkit: there is no call that could perform the read. The values
-were verified by typed decoding only.
-
-## 10. Limitations
-
-- No vulnerability / security-discovery claim is made or implied.
-- No coverage or corpus metric exists; completeness is not claimed.
-- Execution is offline in-memory `soroban-env-host` only; no network, no
-  ledger, no transactions.
-- CLI v2.7.0 lacks `--sequence`; sequence evidence uses the public library
-  API (path-dependency probe, zero source modification).
-- Auth evidence is single-signer source-account scope (`SourceAccount` vs
-  `AddressV2`).
-- No multi-signer or auth-tree semantics are exercised or claimed.
-- The host does not expose an authorization trace; expectations are declared
-  oracle outcomes only.
-- The campaign minimizer can collapse a sequence to one step; the multi-step
-  auth artifact was explicitly constructed via the public API.
-- `CorrectAuth` in this host setup authorizes the source account; foreign
-  address authorization correctly fails (`Auth,6`) — single-credential scope,
-  not a protocol issue.
-- The full happy-path `contribute`/`payout` on `susu_group` is not reachable
-  without a token contract in the local baseline (external-contract
-  dependency, not an engine limitation).
-- `stellar/soroban-examples` and `SUSU-LABS/susu-contracts` are not being
-  security-audited.
-- All findings are declaration mismatches.
-
-## 11. Reproducibility
-
-| Item | Value |
-|---|---|
-| External source | `stellar/soroban-examples` @ `03d42aa6b973dcf3a453a99d0c6a6e8d25a196e2` |
-| Build | `stellar contract build` 28.1.0, `wasm32v1-none` |
-| Pilot #1 seeds | `42` (RUN A, 50 cases/contract), `7` (RUN B, 50 cases), `42` (RUN C1, 40 cases, `sequence_length=3`, `sequence_every=2`) |
-| Pilot #2 seeds | `42` (12-case campaigns), `7` (E2 multi-step artifact) |
-| Pilot #3 source | `SUSU-LABS/susu-contracts` @ `4e3f745530728062303c445430cfad9d17e81227` (`contracts/group`) |
-| Pilot #3 WASM SHA-256 | `e5048723f3383c13ae57a3f3a5d78d070f1525bbc2ae4476df9ad16d8b51bcf2` |
-| Pilot #3 seeds | `42` (12-case campaigns × 3 auth modes), `7` (multi-step artifacts) |
-| Clean verification worktree | `c39352bfcacf12912e1a6103848e6c0c978a0db6` |
-| Canonical artifact hash (Pilot #1 sample) | `0ffdcd2395106c3c5a379cd6d482dbefc941efad95263f9fb57e3cf99c36c761` |
-| Canonical artifact hash (Pilot #2 E2) | `a16041e410b4bef28d959f06ed827a20047ecffcc2a31a51be8c6c713e72e36a` |
-| Campaign evidence SHA-256 (Pilot #1 increment) | `54a5c9b86d4c582d4f0cce7d257d6889afbfdd9a6165d5b95538e0d05137c918` |
-
-### Pilot #3 determinism (stream hash)
-
-Method: SHA-256 of the concatenated `case_id:canonical_artifact_hash` string
-per artifact (files sorted by name, entries joined with `|`):
-
-```
-39d02e2463418642b6e69fb0c1f32d4ea0b8ccb300480bfd9068e7cda8d5439b
-```
-
-run1 == run2. Campaign evidence JSON is byte-identical across correct-auth
-reruns; canonical artifact hashes are identical per rerun; probe4 output is
-byte-identical across runs.
-
-Non-primary side-run artifacts were excluded from the deterministic evidence
-set.
-
-## 12. Safe Claim
-
-> The sdkt-fuzz v2.7.0 pipeline (PR #285) and its auth-classification fix
-> (PR #286) are externally validated on real Soroban contracts built from
-> stellar/soroban-examples (HEAD 03d42aa6) and SUSU-LABS/susu-contracts
-> (4e3f7455): ContractSpec parsing, typed generation and mutation, real
-> in-memory host execution, oracle classification, minimization, canonical
-> artifacts, and deterministic replay all reproduce byte-identically across
-> processes. PR #286's auth path is externally validated on contracts that
-> genuinely enforce require_auth: NoAuth and WrongAuth produce
-> ContractError{Auth,6}, CorrectAuth succeeds with state carry, an authorized
-> success is not classified as AuthorizationBypass, and multi-step replay
-> preserves per-step auth entries (the pre-#286 lineage mismatches the same
-> artifact). All findings are declaration mismatches — evidence that the
-> engine works, not vulnerability discovery.
+  hash `d30bd3cee
