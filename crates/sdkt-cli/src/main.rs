@@ -6178,6 +6178,18 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
                             .and_then(|e| e.to_str())
                             .map(|e| e.to_ascii_lowercase())
                             .unwrap_or_default();
+                        // Same missing-artifact rule as the `--rules` audit
+                        // path: a recognized extension with no file on disk is
+                        // a typo or stale reference, not a loader error.
+                        let recognized_ext =
+                            matches!(ext.as_str(), "so" | "dylib" | "dll" | "wasm");
+                        if !path.exists() && (ext.is_empty() || recognized_ext) {
+                            eprintln!(
+                                "Error: --rules '{}' does not exist and matches no installed plugin",
+                                r
+                            );
+                            process::exit(1);
+                        }
                         match ext.as_str() {
                             "so" | "dylib" | "dll" => {
                                 #[cfg(feature = "plugins")]
@@ -6415,7 +6427,13 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
                         // nor a loadable artifact is a typo or a stale
                         // reference. Failing here beats silently auditing with
                         // the built-in set only, which looks like a clean run.
-                        if ext.is_empty() && !path_r.exists() {
+                        // A recognized plugin extension with a missing file is
+                        // the same class of mistake, so it fails here too
+                        // instead of surfacing later as a confusing
+                        // "missing build feature" message from the loader.
+                        let recognized_ext =
+                            matches!(ext.as_str(), "so" | "dylib" | "dll" | "wasm");
+                        if !path_r.exists() && (ext.is_empty() || recognized_ext) {
                             eprintln!(
                                 "Error: --rules '{}' does not exist and matches no installed plugin",
                                 r

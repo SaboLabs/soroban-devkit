@@ -129,6 +129,24 @@ fn plugin_install_list_show_remove_lifecycle() {
     let _ = fs::remove_dir_all(&store);
 }
 
+/// #403 review fix: a `--rules` value with a recognized plugin extension
+/// (`wasm`/`so`/`dylib`/`dll`) but a missing file must fail with the
+/// unresolved-path error, not fall through to the "unsupported artifact
+/// format" warning or a confusing "missing build feature" loader error.
+#[test]
+fn rules_missing_recognized_extension_fails_cleanly() {
+    let src = dummy_src(&std::env::temp_dir());
+    for name in ["missing.wasm", "missing.so", "missing.dylib", "missing.dll"] {
+        sdkt()
+            .args(["audit", src.to_str().unwrap(), "--rules", name])
+            .assert()
+            .failure()
+            .stderr(predicate::str::contains(
+                "does not exist and matches no installed plugin",
+            ));
+    }
+}
+
 #[test]
 fn plugin_install_with_id_override_uses_effective_identity() {
     let store = tempfile::TempDir::new().unwrap();
