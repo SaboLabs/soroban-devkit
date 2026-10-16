@@ -4,6 +4,7 @@ The `sdkt-cli` crate uses `clap` (derive API) for command routing.
 
 ## Related
 
+- **[`.sdkt.toml` configuration reference](configuration.md)** — every section and field `sdkt` reads from the workspace config file (`[network]`, `[decode]`, `[storage]`, `[contracts]`, `[package]`, `[dependencies]`), with type, default, and effect.
 - **[sdkt-agent — natural-language front end](agent.md)** — how to build it, what it can plan, and how it refuses ambiguous, unsupported, mutating, or production-network requests. Every command returns `Result<(), Box<dyn std::error::Error>>`; library errors (`RpcError`, `DecodeError`, `WasmError`) bubble up and are printed via `eprintln!` with a non-zero exit.
 
 ## Command Tree
@@ -283,6 +284,8 @@ explicit --rpc-url / --network-passphrase
                 > .sdkt.toml [network]
                         > NetworkConfig::default()   (testnet)
 ```
+
+This precedence chain is also documented in the [`.sdkt.toml` configuration reference](configuration.md#network).
 
 `tx sign` is excluded — it is offline signing and takes only `--network` for the
 signature hash. Commands invoked without these flags behave exactly as before.
