@@ -14,6 +14,7 @@ use predicates::prelude::*;
 use std::io::{Read, Write};
 use std::net::TcpListener;
 use std::path::Path;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 use std::thread;
 use stellar_xdr::{Limited, Limits, ReadXdr, TransactionEnvelope};
@@ -41,6 +42,7 @@ fn sdkt(dir: &Path) -> Command {
 struct MockServer {
     url: String,
     submitted_envelopes: Arc<std::sync::Mutex<Vec<String>>>,
+    rpc_calls: Arc<AtomicUsize>,
 }
 
 impl MockServer {
@@ -51,6 +53,8 @@ impl MockServer {
 
         let submitted = Arc::new(std::sync::Mutex::new(Vec::new()));
         let submitted_thread = submitted.clone();
+        let rpc_calls = Arc::new(AtomicUsize::new(0));
+        let rpc_calls_thread = rpc_calls.clone();
 
         thread::spawn(move || {
             for conn in listener.incoming() {
@@ -63,6 +67,7 @@ impl MockServer {
                 if n == 0 {
                     continue;
                 }
+                rpc_calls_thread.fetch_add(1, Ordering::SeqCst);
                 let req = String::from_utf8_lossy(&buf[..n]).to_string();
                 let method = extract_jsonrpc_method(&req);
 
@@ -110,11 +115,17 @@ impl MockServer {
         Self {
             url,
             submitted_envelopes: submitted,
+            rpc_calls,
         }
     }
 
     fn envelopes(&self) -> Vec<String> {
         self.submitted_envelopes.lock().unwrap().clone()
+    }
+
+    /// Total number of JSON-RPC requests received (any method).
+    fn rpc_calls(&self) -> usize {
+        self.rpc_calls.load(Ordering::SeqCst)
     }
 }
 
@@ -340,21 +351,61 @@ fn project_deploy_invalid_args_fail_fast_before_upload() {
     generate_default_identity(project_dir);
 
     let mock = MockServer::start();
-    sdkt(project_dir)
+    let assert = sdkt(project_dir)
         .current_dir(project_dir)
         .args(deploy_args(&mock))
         .assert()
-        .failure()
-        .stderr(predicate::str::contains("Invalid constructor argument"))
-        .stderr(predicate::str::contains("token"))
-        .stderr(predicate::str::contains("invalid u32 value"));
+        .failure();
 
-    // No transactions should be sent (failure before upload).
+    // The complete, user-facing error must name the contract and carry the
+    // exact same parse error as the single-contract `sdkt deploy --arg` path.
+    let stderr = String::from_utf8_lossy(&assert.get_output().stderr).to_string();
+    assert!(
+        stderr
+            .contains("Invalid constructor argument for 'token': invalid u32 value: not_a_number"),
+        "unexpected project deploy error:\n{stderr}"
+    );
+
+    // Cross-check that the underlying message is byte-for-byte what
+    // `sdkt deploy --arg u32:not_a_number` reports (offline; parsing happens
+    // before any WASM read, identity lookup, or network I/O).
+    let single_dir = TempDir::new().unwrap();
+    let wasm_file = single_dir.path().join("test.wasm");
+    std::fs::write(&wasm_file, CONTRACT_WASM).unwrap();
+    let single = sdkt(single_dir.path())
+        .args([
+            "deploy",
+            "--wasm",
+            wasm_file.to_str().unwrap(),
+            "--identity",
+            "default",
+            "--arg",
+            "u32:not_a_number",
+        ])
+        .assert()
+        .failure();
+    let single_stderr = String::from_utf8_lossy(&single.get_output().stderr).to_string();
+    assert!(
+        single_stderr.contains("invalid u32 value: not_a_number"),
+        "sdkt deploy --arg must report the same parse error:\n{single_stderr}"
+    );
+    assert!(
+        stderr.contains("invalid u32 value: not_a_number"),
+        "project deploy must reuse the sdkt deploy --arg parse error"
+    );
+
+    // Fail-fast: validation must short-circuit before upload or submission, so
+    // the mock RPC server must never be contacted at all.
     let envelopes = mock.envelopes();
     assert_eq!(
         envelopes.len(),
         0,
         "no transactions should be sent when args are invalid"
+    );
+    assert_eq!(
+        mock.rpc_calls(),
+        0,
+        "no RPC call (upload, simulate, or submit) may occur when args are invalid"
     );
 }
 
@@ -410,6 +461,88 @@ fn project_deploy_no_args_unchanged_behavior() {
         ),
         other => panic!("expected CreateContract operation, got: {:?}", other),
     }
+}
+
+/// Backward-compatibility regression: the project deploy path now routes
+/// through `deploy_contract_with_args` even for contracts with no configured
+/// `ctor_args`. With an empty argument vector it must produce byte-for-byte the
+/// same upload and create transactions as the pre-feature single-contract
+/// `sdkt deploy` path (which also skips the constructor-args machinery).
+///
+/// Both commands are run against isolated mock RPC servers with the same fixed
+/// salt, identity, network passphrase, and WASM, so any divergence in the
+/// emitted transaction XDR fails the equality assertions below.
+#[test]
+fn project_deploy_empty_args_matches_single_deploy_byte_for_byte() {
+    let project = TempDir::new().unwrap();
+    let project_dir = project.path();
+    setup_project_no_args(project_dir);
+    generate_default_identity(project_dir);
+
+    let wasm_path = project_dir
+        .join("contracts/token/target")
+        .join(sdkt_core::build::WASM_BUILD_TARGET)
+        .join("release/token.wasm");
+    let salt = "42".repeat(20);
+
+    // Path 1: single-contract `sdkt deploy` with no `--arg` (legacy behavior).
+    let single_mock = MockServer::start();
+    sdkt(project_dir)
+        .current_dir(project_dir)
+        .args([
+            "deploy",
+            "--wasm",
+            wasm_path.to_str().unwrap(),
+            "--identity",
+            "alice",
+            "--salt",
+            &salt,
+            "--rpc-url",
+            &single_mock.url,
+            "--network-passphrase",
+            "Test SDF Network ; September 2015",
+        ])
+        .assert()
+        .success();
+
+    // Path 2: `sdkt project deploy` with an empty `ctor_args` vector.
+    let project_mock = MockServer::start();
+    sdkt(project_dir)
+        .current_dir(project_dir)
+        .args([
+            "project",
+            "--rpc-url",
+            &project_mock.url,
+            "--network-passphrase",
+            "Test SDF Network ; September 2015",
+            "deploy",
+            "--identity",
+            "alice",
+            "--salt",
+            &salt,
+        ])
+        .assert()
+        .success();
+
+    let single = single_mock.envelopes();
+    let project_envs = project_mock.envelopes();
+    assert_eq!(single.len(), 2, "single deploy must upload + create");
+    assert_eq!(
+        project_envs.len(),
+        2,
+        "project deploy must upload + create for a no-args contract"
+    );
+
+    // Upload (index 0) and create (index 1) envelopes must be identical:
+    // adding per-contract ctor_args support must not perturb the empty path.
+    assert_eq!(
+        single[0], project_envs[0],
+        "empty-args upload transaction must match the single deploy path"
+    );
+    assert_eq!(
+        single[1], project_envs[1],
+        "empty-args create transaction must match the single deploy path"
+    );
 }
 
 /// Config parsing: ctor_args field is parsed as Vec<String>.
