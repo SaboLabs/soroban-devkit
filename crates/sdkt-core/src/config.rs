@@ -326,7 +326,7 @@ mod tests {
         assert_eq!(token.ctor_args.len(), 2);
         assert_eq!(token.ctor_args[0], "address:GABC123");
         assert_eq!(token.ctor_args[1], "u32:100");
-        
+
         let vault = parsed.contracts.get("vault").unwrap();
         assert!(vault.ctor_args.is_empty());
     }

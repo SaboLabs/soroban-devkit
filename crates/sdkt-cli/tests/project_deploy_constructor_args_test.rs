@@ -12,16 +12,11 @@ use base64::engine::general_purpose::STANDARD;
 use base64::Engine;
 use predicates::prelude::*;
 use std::io::{Read, Write};
-use std::net::{TcpListener, TcpStream};
+use std::net::TcpListener;
 use std::path::Path;
-use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 use std::thread;
-use stellar_xdr::{
-    ContractDataDurability, ContractDataEntry, ContractExecutable, ContractId, ExtensionPoint,
-    Hash, LedgerEntry, LedgerEntryData, LedgerEntryExt, Limited, Limits, ReadXdr, ScAddress,
-    ScContractInstance, ScVal, TransactionEnvelope, WriteXdr,
-};
+use stellar_xdr::{Limited, Limits, ReadXdr, TransactionEnvelope};
 use tempfile::TempDir;
 
 /// A real contractspecv0 WASM fixture.
@@ -260,10 +255,9 @@ fn project_deploy_forwards_constructor_args() {
         "token create envelope must have at least one operation"
     );
 
-    // The operation should be InvokeHostFunction with CreateContract
-    use stellar_xdr::{
-        HostFunction, InvokeContractArgs, Operation, OperationBody, ScVal, VecM,
-    };
+    // The operation should be InvokeHostFunction with CreateContractV2
+    use sdkt_xdr::IntoScVal;
+    use stellar_xdr::{HostFunction, OperationBody, ScVal};
 
     let op_body = &ops[0].body;
     let host_fn = match op_body {
@@ -271,14 +265,32 @@ fn project_deploy_forwards_constructor_args() {
         _ => panic!("expected InvokeHostFunction operation, got: {:?}", op_body),
     };
 
-    // For CreateContractV2, the HostFunction contains the args
-    // We verify that the operation exists and is structurally valid
-    // (deep inspection would require parsing CreateContractV2Args from
-    // HostFunction::CreateContractV2, which varies by stellar-xdr version)
     match host_fn {
-        HostFunction::CreateContractV2(_) => {
-            // Constructor args are present in CreateContractV2
-            // This is sufficient to verify args were forwarded
+        HostFunction::CreateContractV2(args) => {
+            assert_eq!(
+                args.constructor_args.len(),
+                2,
+                "token create must carry exactly the two configured ctor_args"
+            );
+
+            // ctor_args = ["address:GAAAA...WHF", "u32:1000000"] — the address
+            // is the all-zero account (32 zero bytes).
+            let expected_address = {
+                let addr = sdkt_xdr::Address::from_strkey(
+                    "GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF",
+                )
+                .expect("valid account strkey");
+                addr.into_scval().expect("address to ScVal")
+            };
+            assert_eq!(
+                args.constructor_args[0], expected_address,
+                "first constructor arg must be the configured address"
+            );
+            assert_eq!(
+                args.constructor_args[1],
+                ScVal::U32(1_000_000),
+                "second constructor arg must be the configured u32:1000000"
+            );
         }
         HostFunction::CreateContract(_) => {
             panic!("expected CreateContractV2 (with args), got CreateContract (no args)")
@@ -286,7 +298,8 @@ fn project_deploy_forwards_constructor_args() {
         _ => panic!("expected CreateContract operation, got: {:?}", host_fn),
     }
 
-    // vault (4th envelope) has no ctor_args, so it can use either V1 or V2 with empty args
+    // vault (4th envelope) has no ctor_args, so it deploys via the V1
+    // CreateContract path with no constructor arguments at all.
     let vault_create_xdr = &envelopes[3];
     let raw = STANDARD.decode(vault_create_xdr).unwrap();
     let mut cursor = std::io::Cursor::new(&raw);
@@ -303,6 +316,21 @@ fn project_deploy_forwards_constructor_args() {
         !vault_ops.is_empty(),
         "vault create envelope must have at least one operation"
     );
+
+    let vault_host_fn = match &vault_ops[0].body {
+        OperationBody::InvokeHostFunction(invoke) => &invoke.host_function,
+        body => panic!("expected InvokeHostFunction operation, got: {:?}", body),
+    };
+    match vault_host_fn {
+        HostFunction::CreateContractV2(args) => {
+            assert!(
+                args.constructor_args.is_empty(),
+                "vault has no ctor_args, so its create must carry no constructor arguments"
+            );
+        }
+        HostFunction::CreateContract(_) => {}
+        other => panic!("expected CreateContract operation, got: {:?}", other),
+    }
 }
 
 /// Invalid constructor arguments must fail before WASM upload, with the same
@@ -357,6 +385,37 @@ fn project_deploy_no_args_unchanged_behavior() {
         2,
         "expected 2 transactions (upload+create)"
     );
+
+    // The create transaction must carry no constructor arguments: contracts
+    // without configured ctor_args deploy via the V1 CreateContract path.
+    let create_xdr = &envelopes[1];
+    let raw = STANDARD.decode(create_xdr).unwrap();
+    let mut cursor = std::io::Cursor::new(&raw);
+    let mut limited = Limited::new(&mut cursor, Limits::none());
+    let envelope = TransactionEnvelope::read_xdr(&mut limited).unwrap();
+
+    let ops = match &envelope {
+        TransactionEnvelope::Tx(tx) => &tx.tx.operations,
+        TransactionEnvelope::TxV0(tx) => &tx.tx.operations,
+        TransactionEnvelope::TxFeeBump(_) => panic!("unexpected fee bump envelope"),
+    };
+    assert!(!ops.is_empty(), "create envelope must have an operation");
+
+    use stellar_xdr::{HostFunction, OperationBody};
+    let host_fn = match &ops[0].body {
+        OperationBody::InvokeHostFunction(invoke) => &invoke.host_function,
+        body => panic!("expected InvokeHostFunction operation, got: {:?}", body),
+    };
+    match host_fn {
+        HostFunction::CreateContractV2(args) => {
+            assert!(
+                args.constructor_args.is_empty(),
+                "contract without ctor_args must receive no constructor arguments"
+            );
+        }
+        HostFunction::CreateContract(_) => {}
+        other => panic!("expected CreateContract operation, got: {:?}", other),
+    }
 }
 
 /// Config parsing: ctor_args field is parsed as Vec<String>.
@@ -367,7 +426,7 @@ fn config_parses_ctor_args_field() {
 path = "contracts/token"
 ctor_args = ["address:G...", "u32:100"]
 "#;
-    let config: sdkt_core::DevKitConfig = toml::from_str(toml_data).unwrap();
+    let config = sdkt_core::DevKitConfig::from_toml(toml_data).unwrap();
     let token = config.contracts.get("token").unwrap();
     assert_eq!(token.ctor_args.len(), 2);
     assert_eq!(token.ctor_args[0], "address:G...");
@@ -381,7 +440,7 @@ fn config_ctor_args_defaults_to_empty() {
 [contracts.token]
 path = "contracts/token"
 "#;
-    let config: sdkt_core::DevKitConfig = toml::from_str(toml_data).unwrap();
+    let config = sdkt_core::DevKitConfig::from_toml(toml_data).unwrap();
     let token = config.contracts.get("token").unwrap();
     assert!(token.ctor_args.is_empty());
 }
