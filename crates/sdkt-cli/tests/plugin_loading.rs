@@ -177,24 +177,77 @@ fn dynamic_plugin_coexists_with_builtins() {
 
 #[cfg(feature = "plugins")]
 #[test]
-fn native_plugin_invalid_so_errors() {
-    let mut cmd = Command::cargo_bin("sdkt").unwrap();
-    let tmp = tempfile::Builder::new().suffix(".so").tempfile().unwrap();
-    std::fs::write(tmp.path(), b"not an so file").unwrap();
+fn broken_plugin_is_skipped_while_good_plugin_runs() {
+    let good_plugin = build_example_plugin();
+    let broken_plugin = tempfile::Builder::new().suffix(".so").tempfile().unwrap();
+    std::fs::write(broken_plugin.path(), b"not an so file").unwrap();
 
-    let src = "pub fn foo() {}";
     let src_tmp = tempfile::Builder::new().suffix(".rs").tempfile().unwrap();
-    std::fs::write(src_tmp.path(), src).unwrap();
+    std::fs::write(src_tmp.path(), "pub fn sdkt_example_trigger_admin() {}").unwrap();
 
+    let mut cmd = Command::cargo_bin("sdkt").unwrap();
     cmd.args([
         "audit",
         src_tmp.path().to_str().unwrap(),
         "--rules",
-        tmp.path().to_str().unwrap(),
-    ])
-    .assert()
-    .failure()
-    .stderr(predicates::str::contains("failed to load plugin"));
+        good_plugin.to_str().unwrap(),
+        "--rules",
+        broken_plugin.path().to_str().unwrap(),
+    ]);
+    cmd.assert()
+        .success()
+        .stdout(predicate::str::contains("EXAMPLE-001"))
+        .stdout(predicate::str::contains("1 skipped"))
+        .stderr(predicate::str::contains("skipping native plugin"))
+        .stderr(predicate::str::contains(
+            broken_plugin.path().to_str().unwrap(),
+        ))
+        .stderr(predicate::str::contains("audit continues without it"));
+}
+
+#[cfg(feature = "plugins")]
+#[test]
+fn only_broken_plugin_still_runs_built_in_audit() {
+    let broken_plugin = tempfile::Builder::new().suffix(".so").tempfile().unwrap();
+    std::fs::write(broken_plugin.path(), b"not an so file").unwrap();
+    let src_tmp = tempfile::Builder::new().suffix(".rs").tempfile().unwrap();
+    std::fs::write(src_tmp.path(), "pub fn harmless() {}").unwrap();
+
+    let mut cmd = Command::cargo_bin("sdkt").unwrap();
+    cmd.args([
+        "audit",
+        src_tmp.path().to_str().unwrap(),
+        "--rules",
+        broken_plugin.path().to_str().unwrap(),
+    ]);
+    cmd.assert()
+        .success()
+        .stdout(predicate::str::contains("No issues found."))
+        .stdout(predicate::str::contains("0 plugins; 1 skipped"))
+        .stderr(predicate::str::contains("audit continues without it"));
+}
+
+#[cfg(feature = "plugins")]
+#[test]
+fn findings_still_control_exit_code_when_plugin_is_skipped() {
+    let broken_plugin = tempfile::Builder::new().suffix(".so").tempfile().unwrap();
+    std::fs::write(broken_plugin.path(), b"not an so file").unwrap();
+    let src_tmp = tempfile::Builder::new().suffix(".rs").tempfile().unwrap();
+    std::fs::write(src_tmp.path(), "pub fn mint_token(to: Address) {}").unwrap();
+
+    let mut cmd = Command::cargo_bin("sdkt").unwrap();
+    cmd.args([
+        "audit",
+        src_tmp.path().to_str().unwrap(),
+        "--rules",
+        broken_plugin.path().to_str().unwrap(),
+        "--fail-on",
+        "warning",
+    ]);
+    cmd.assert()
+        .failure()
+        .stdout(predicate::str::contains("AUTH-001"))
+        .stderr(predicate::str::contains("audit continues without it"));
 }
 
 #[cfg(feature = "wasm-plugins")]

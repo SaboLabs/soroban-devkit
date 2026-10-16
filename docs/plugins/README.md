@@ -166,7 +166,17 @@ sdkt audit contracts/token/src/lib.rs --rules target/debug/libmy_rule.so
 
 > **Security:** dynamic plugins run in-process. Only load plugins you trust or
 > built yourself. A plugin whose ABI major version differs from the host is
-> rejected with a clear error.
+> skipped with a warning; the rest of the audit continues.
+
+### Plugin load failures during audit
+
+`sdkt audit` treats a plugin load error as a per-plugin warning. The warning
+names the plugin and the loader error, then the audit continues with built-in
+rules and any other plugins that loaded successfully. The text report includes
+the number of loaded and skipped plugins. An ABI mismatch keeps its existing
+warn-and-skip behavior. Plugin load failures do not set the command's exit
+code; file errors still fail, and `--fail-on` still gates the exit code on
+findings.
 
 ## WebAssembly Plugins (Phase C)
 

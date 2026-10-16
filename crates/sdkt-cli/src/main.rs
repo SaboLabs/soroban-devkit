@@ -6496,7 +6496,9 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
             // `--list-rules` and with what the registry executes.
             let builtin_rule_count = sdkt_audit::all_rules().len();
             #[allow(unused_mut)]
-            let mut loaded_plugins = 0usize;
+            let mut loaded_plugin_ids: Vec<String> = Vec::new();
+            #[allow(unused_mut)]
+            let mut skipped_plugin_ids: Vec<String> = Vec::new();
 
             for source_path in &source_paths {
                 let source = match fs::read_to_string(source_path) {
@@ -6546,8 +6548,8 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
 
                                 match result {
                                     Ok(()) => {
-                                        if single_file {
-                                            loaded_plugins += 1;
+                                        if !loaded_plugin_ids.contains(plugin_id) {
+                                            loaded_plugin_ids.push(plugin_id.clone());
                                         }
                                     }
                                     Err(e) => {
@@ -6555,17 +6557,22 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
                                             e,
                                             sdkt_audit::PluginLoadError::AbiMismatch { .. }
                                         ) {
+                                            if !skipped_plugin_ids.contains(plugin_id) {
+                                                skipped_plugin_ids.push(plugin_id.clone());
+                                            }
                                             eprintln!(
                                                 "Warning: skipping native plugin '{}': {}",
                                                 plugin_id, e
                                             );
                                             continue;
                                         }
+                                        if !skipped_plugin_ids.contains(plugin_id) {
+                                            skipped_plugin_ids.push(plugin_id.clone());
+                                        }
                                         eprintln!(
-                                            "Error loading native plugin '{}': {}",
+                                            "Warning: skipping native plugin '{}': {}; audit continues without it",
                                             plugin_id, e
                                         );
-                                        process::exit(1);
                                     }
                                 }
                             }
@@ -6592,8 +6599,8 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
 
                                 match result {
                                     Ok(()) => {
-                                        if single_file {
-                                            loaded_plugins += 1;
+                                        if !loaded_plugin_ids.contains(plugin_id) {
+                                            loaded_plugin_ids.push(plugin_id.clone());
                                         }
                                     }
                                     Err(e) => {
@@ -6601,17 +6608,22 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
                                             e,
                                             sdkt_audit::WasmPluginLoadError::AbiMismatch { .. }
                                         ) {
+                                            if !skipped_plugin_ids.contains(plugin_id) {
+                                                skipped_plugin_ids.push(plugin_id.clone());
+                                            }
                                             eprintln!(
                                                 "Warning: skipping WASM plugin '{}': {}",
                                                 plugin_id, e
                                             );
                                             continue;
                                         }
+                                        if !skipped_plugin_ids.contains(plugin_id) {
+                                            skipped_plugin_ids.push(plugin_id.clone());
+                                        }
                                         eprintln!(
-                                            "Error loading WASM plugin '{}': {}",
+                                            "Warning: skipping WASM plugin '{}': {}; audit continues without it",
                                             plugin_id, e
                                         );
-                                        process::exit(1);
                                     }
                                 }
                             }
@@ -6826,12 +6838,17 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
                         println!("  Spec-correlated analysis: enabled");
                     }
 
-                    if loaded_plugins > 0 {
+                    if !loaded_plugin_ids.is_empty() || !skipped_plugin_ids.is_empty() {
                         println!(
-                            "Rules loaded: {} built-in, {} plugin{}",
+                            "Rules loaded: {} built-in, {} plugin{}; {} skipped",
                             builtin_rule_count,
-                            loaded_plugins,
-                            if loaded_plugins == 1 { "" } else { "s" }
+                            loaded_plugin_ids.len(),
+                            if loaded_plugin_ids.len() == 1 {
+                                ""
+                            } else {
+                                "s"
+                            },
+                            skipped_plugin_ids.len()
                         );
                     }
 

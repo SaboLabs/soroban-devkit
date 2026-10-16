@@ -348,6 +348,8 @@ When running `sdkt audit <file>`, the engine automatically discovers and loads i
 - **Explicit selection (`--rules <id|path>`):** Passing `--rules` activates explicit subset selection. Only the specified rule IDs (resolved via the store) or raw filesystem paths are loaded; other installed plugins are not loaded.
 - **Opt-out (`--no-plugins`):** Passing `--no-plugins` bypasses the plugin store and runs only built-in rules.
 - **ABI compatibility:** If an installed plugin's `abi_major` does not match the host ABI version (`SDKT_AUDIT_ABI_MAJOR`), the plugin is skipped with a clear warning on `stderr` (`Warning: skipping plugin '<id>': ABI mismatch...`) and the audit completes without aborting.
+- **Other load failures:** Missing symbols, unreadable artifacts, and plugin initialization errors also produce a warning naming the plugin and the error. The audit continues with built-in rules and other successfully loaded plugins; its text summary reports loaded and skipped plugin counts.
+- **Exit status:** A plugin load failure alone does not fail the audit. Source-file errors still fail, and the opt-in `--fail-on` flag continues to derive the exit status from findings.
 - **Zero-plugins baseline:** When no plugins are installed (or `--no-plugins` is passed), audit output is identical to built-in execution with no extra lines.
 
 ### Install validation (applied before the plugin is committed to the store)
