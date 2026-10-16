@@ -23,6 +23,49 @@ fn help_for(command: &[&str]) -> Option<String> {
     Some(String::from_utf8_lossy(&out.stdout).into_owned())
 }
 
+fn subcommands(help: &str) -> Vec<String> {
+    let mut in_commands = false;
+    let mut commands = Vec::new();
+    for line in help.lines() {
+        let trimmed = line.trim();
+        if trimmed == "Commands:" {
+            in_commands = true;
+            continue;
+        }
+        if in_commands && matches!(trimmed, "Options:" | "Arguments:") {
+            break;
+        }
+        if in_commands && !trimmed.is_empty() {
+            if let Some(command) = trimmed.split_whitespace().next() {
+                // Clap's generic `help` subcommand is infrastructure, not a
+                // product capability that belongs in the registry.
+                if command != "help" {
+                    commands.push(command.to_string());
+                }
+            }
+        }
+    }
+    commands
+}
+
+fn leaf_commands(path: &[&str]) -> Vec<Vec<String>> {
+    let Some(help) = help_for(path) else {
+        return Vec::new();
+    };
+    let children = subcommands(&help);
+    if children.is_empty() {
+        return vec![path.iter().map(|part| (*part).to_string()).collect()];
+    }
+    children
+        .iter()
+        .flat_map(|child| {
+            let mut nested = path.to_vec();
+            nested.push(child);
+            leaf_commands(&nested)
+        })
+        .collect()
+}
+
 #[test]
 fn every_registered_command_path_exists() {
     for c in capabilities() {
@@ -35,6 +78,35 @@ fn every_registered_command_path_exists() {
             c.argv()
         );
     }
+}
+
+#[test]
+fn every_subcommand_in_the_registry_families_is_registered() {
+    // These family trees are exposed as agent-discoverable capability
+    // metadata. Walk nested help (not just the top-level command names) so a
+    // future CLI command cannot silently disappear from the registry.
+    let families = [
+        "plugin", "storage", "tx", "wasm", "lock", "package", "identity",
+    ];
+    let mut missing = Vec::new();
+    for family in families {
+        for command in leaf_commands(&[family]) {
+            if !capabilities().iter().any(|c| {
+                c.command
+                    .iter()
+                    .map(|part| (*part).to_string())
+                    .collect::<Vec<_>>()
+                    == command
+            }) {
+                missing.push(command.join(" "));
+            }
+        }
+    }
+    assert!(
+        missing.is_empty(),
+        "CLI subcommands missing registry entries: {}",
+        missing.join(", ")
+    );
 }
 
 /// Every flag the registry lists for a capability must actually be accepted
