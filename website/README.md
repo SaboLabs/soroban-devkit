@@ -4,6 +4,12 @@ Static landing page for `sdkt`. No framework, no build step, no backend, no
 dependencies — three CSS files, one HTML file, ~40 lines of inline JS for the
 "copy" buttons.
 
+## In-browser playground
+
+The WASM playground in `website/playground/` inspects contracts locally in a
+Web Worker. It accepts files up to 64 MiB each; larger files are rejected
+before their contents are read or sent to the worker.
+
 ## Run locally
 
 ```bash
