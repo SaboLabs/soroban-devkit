@@ -148,6 +148,29 @@ fn c_upgrade_safety_plans_old_and_new() {
     assert!(v["evidence"]["command_executed"].as_bool().unwrap());
 }
 
+#[test]
+fn c_plugin_doctor_routes_to_plugin_doctor() {
+    let tmp = tempfile::tempdir().unwrap();
+    let fx = FakeCli {
+        stdout: "{\"status\":\"ok\"}\n".into(),
+        ..FakeCli::ok()
+    }
+    .write(tmp.path());
+
+    let out = agent(&fx, "run plugin doctor", true);
+    let v = parse_json(&out);
+    assert_eq!(v["capability_id"], "plugin.doctor");
+    let joined = v["argv"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|a| a.as_str().unwrap())
+        .collect::<Vec<_>>()
+        .join(" ");
+    assert_eq!(joined, "plugin doctor --format json");
+    assert!(v["evidence"]["command_executed"].as_bool().unwrap());
+}
+
 // ---------------------------------------------------------------- case D ---
 #[test]
 fn d_ambiguous_request_is_clarified_and_never_executed() {

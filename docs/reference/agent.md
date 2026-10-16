@@ -117,7 +117,29 @@ instead of calling the request "unrecognised".
 | Read-only calls | `call` | contract + function; typed args passed through |
 | Network & project | `network.list`, `network.check`, `project.status` | profile/endpoint rules below |
 | Fee & transactions | `fee.estimate`, `tx.simulate` | source/envelope required |
-| Diagnostics | `doctor` | environment only |
+| Diagnostics | `doctor`, `plugin.doctor` | environment (`doctor`) and plugin self-check (`plugin.doctor`) |
+
+**Intentionally unreachable from prose (read-only / non-mutating)**
+
+These capabilities exist in the registry and are runnable directly through `sdkt`, but are intentionally excluded from the agent's natural-language prose surface because their inputs or semantics require explicit CLI control or programmatic workflow management. Requests attempting to invoke them report `unrecognised_request`:
+
+* `lock.verify`: lockfile verification is typically driven by build systems/CI rather than interactive natural language.
+* `lock.generate`: local-write lockfile generation requires an existing build and precise artifact tracking.
+* `network.diagnose`: comprehensive multi-endpoint agreement diagnostics require explicit endpoint/network targeting.
+* `network.show`: inspects a single saved profile by exact profile name.
+* `deployment.verify`: strict binary-level deployed contract verification is specialized for CI/CD gates.
+* `tx.decode`: envelope decoding requires verbatim XDR/file arguments best passed directly via CLI flags.
+* `tx.validate`: offline envelope validation requires exact transaction file/XDR handling.
+* `tx.build`: transaction assembly produces raw transaction envelopes requiring explicit parameters and downstream signing intent.
+* `identity.list`: listing local keystore identity names and public keys is a local keystore management utility.
+* `identity.default`: reading or setting the default identity is keystore configuration state.
+* `package.validate`: package manifest validation is driven by package authoring tooling.
+* `plugin.list`: querying installed plugin artifacts is plugin management rather than contract/network orchestration.
+* `plugin.verify_bundle`: bundle digest and signature verification requires bundle file and public key paths.
+* `audit.list_rules`: rule enumeration is reference metadata for rule configuration.
+* `generate.client`: code generation writes client Rust code to disk/stdout.
+* `build`: workspace contract compilation involves local build state and compiler toolchains.
+* `account`: account balance and signer inspection requires an explicit account address.
 
 **Refused (mutating)** — `deploy`, `invoke`, `tx.submit`, `tx.sign`,
 `storage.extend`, `storage.restore`, `project.deploy`, `identity.fund`.
@@ -125,7 +147,7 @@ instead of calling the request "unrecognised".
 Requests that are recognised but under-specified return
 `needs_clarification` rather than running a partial command. Registry-only
 capabilities that the parser cannot map from prose (for example `network.add`,
-`package.*`, `plugin.*`, `identity.generate`) are simply not reachable and
+`package.*`, `plugin.*`, `identity.generate`, or any listed in the intentionally unreachable set above) are simply not reachable from natural language and
 report `unrecognised_request`; use `sdkt` directly for those. The authoritative
 surface is the registry itself — see
 [CLI Command Reference](cli.md) and the

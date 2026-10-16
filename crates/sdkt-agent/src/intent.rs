@@ -269,6 +269,10 @@ const INTENT_KEYWORDS: &[(&str, &[&[&str]])] = &[
         &[&["network", "check"], &["network", "status"]],
     ),
     ("network.list", &[&["networks"], &["network", "list"]]),
+    (
+        "plugin.doctor",
+        &[&["plugin", "doctor"], &["plugin", "self-check"]],
+    ),
     ("doctor", &[&["doctor"], &["environment", "check"]]),
     ("wasm.metadata", &[&["metadata"]]),
     (
@@ -992,6 +996,10 @@ mod tests {
         );
         assert_eq!(parse("audit src/lib.rs").unwrap().capability_id, "audit");
         assert_eq!(parse("run doctor").unwrap().capability_id, "doctor");
+        assert_eq!(
+            parse("run plugin doctor").unwrap().capability_id,
+            "plugin.doctor"
+        );
         assert!(matches!(
             parse("check network status"),
             Err(ParseError::MissingArgument { capability_id, .. })
