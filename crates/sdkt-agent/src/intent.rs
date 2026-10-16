@@ -316,13 +316,22 @@ pub fn parse(request: &str) -> Result<Intent, ParseError> {
         .split(|c: char| !c.is_ascii_alphanumeric() && c != '.' && c != '/' && c != '-')
         .filter(|w| !w.is_empty())
         .collect();
+    // Keyword matching additionally splits `-` so a hyphenated command
+    // spelling (`wasm-inspect`) contributes both `wasm` and `inspect`.
+    // Argument extraction below still uses the raw whitespace token stream,
+    // so paths like `us-new.wasm` stay intact.
+    let keyword_words: Vec<&str> = words
+        .iter()
+        .flat_map(|w| w.split('-'))
+        .filter(|w| !w.is_empty())
+        .collect();
     let args = extract_args(request);
 
     // Collect every intent whose keyword set is fully present.
     let mut matched: Vec<(&'static str, Vec<String>)> = Vec::new();
     for (id, sets) in INTENT_KEYWORDS {
         for set in *sets {
-            if set.iter().all(|kw| words.contains(kw)) {
+            if set.iter().all(|kw| keyword_words.contains(kw)) {
                 let keywords = set.iter().map(|s| (*s).to_string()).collect();
                 if !matched.iter().any(|(m, _)| m == id) {
                     matched.push((id, keywords));
@@ -1359,5 +1368,47 @@ mod tests {
             }
             other => panic!("expected MissingArgument, got {other:?}"),
         }
+    }
+
+    // ------------------------------------------------------------ P2-4 ---
+
+    #[test]
+    fn hyphenated_command_names_resolve() {
+        let i = parse("wasm-inspect us_new.wasm").unwrap();
+        assert_eq!(i.capability_id, "wasm.inspect");
+        assert_eq!(i.args.wasm.as_deref(), Some("us_new.wasm"));
+
+        let i = parse("release-assurance us_new.wasm").unwrap();
+        assert_eq!(i.capability_id, "release_assurance");
+        assert_eq!(i.args.wasm.as_deref(), Some("us_new.wasm"));
+
+        let i = parse("upgrade-safety a.wasm b.wasm").unwrap();
+        assert_eq!(i.capability_id, "diff.upgrade_safety");
+
+        let i = parse("network-check").unwrap_err();
+        match i {
+            ParseError::MissingArgument { capability_id, .. } => {
+                assert_eq!(capability_id, "network.check")
+            }
+            other => panic!("expected MissingArgument, got {other:?}"),
+        }
+
+        let i = parse("network-list").unwrap();
+        assert_eq!(i.capability_id, "network.list");
+    }
+
+    #[test]
+    fn hyphenated_file_name_alone_still_refuses() {
+        // A path alone must not be split into keywords that route an intent.
+        let e = parse("us-old.wasm").unwrap_err();
+        assert_eq!(e.code(), "unrecognised_request");
+    }
+
+    #[test]
+    fn path_extraction_keeps_hyphenated_paths_intact() {
+        let i = parse("inspect wasm us-old.wasm").unwrap();
+        assert_eq!(i.capability_id, "wasm.inspect");
+        assert_eq!(i.args.wasm.as_deref(), Some("us-old.wasm"));
+        assert_eq!(i.args.artifact_paths, vec!["us-old.wasm".to_string()]);
     }
 }
