@@ -74,7 +74,7 @@ impl SorobanRpcClient {
         &self.http_client
     }
 
-    /// Helper for making JSON-RPC calls with basic timeout retry logic.
+    /// Helper for making JSON-RPC calls with basic timeout and HTTP-status retry logic.
     pub async fn request<T: serde::de::DeserializeOwned>(
         &self,
         method: &str,
@@ -100,12 +100,50 @@ impl SorobanRpcClient {
                 .await
             {
                 Ok(res) => {
-                    let rpc_res: JsonRpcResponse<T> = match res.json().await {
-                        Ok(json) => json,
+                    let status = res.status();
+
+                    // Read the body once so we can report the status even when
+                    // the body is not valid JSON.
+                    let body = match res.text().await {
+                        Ok(text) => text,
                         Err(e) => return Err(RpcError::Reqwest(e)),
                     };
 
+                    let rpc_res: JsonRpcResponse<T> = match serde_json::from_str(&body) {
+                        Ok(json) => json,
+                        Err(e) => {
+                            if is_retryable_status(status) {
+                                last_err = Some(RpcError::Rpc(format!(
+                                    "HTTP {} from RPC endpoint: {}",
+                                    status.as_u16(),
+                                    body.chars().take(200).collect::<String>()
+                                )));
+                                attempt += 1;
+                                tokio::time::sleep(Duration::from_millis(500)).await;
+                                continue;
+                            }
+                            if !status.is_success() {
+                                return Err(RpcError::Rpc(format!(
+                                    "HTTP {} from RPC endpoint: {}",
+                                    status.as_u16(),
+                                    body.chars().take(200).collect::<String>()
+                                )));
+                            }
+                            return Err(RpcError::Reqwest(e));
+                        }
+                    };
+
                     if let Some(error) = rpc_res.error {
+                        if is_retryable_status(status) {
+                            last_err = Some(RpcError::Rpc(format!(
+                                "HTTP {} from RPC endpoint: {}",
+                                status.as_u16(),
+                                error.message
+                            )));
+                            attempt += 1;
+                            tokio::time::sleep(Duration::from_millis(500)).await;
+                            continue;
+                        }
                         // JSON-RPC 2.0 requires `code`; a node that omits it
                         // still gets its message surfaced as before.
                         return Err(match error.code {
@@ -116,6 +154,13 @@ impl SorobanRpcClient {
                             },
                             None => RpcError::Rpc(error.message),
                         });
+                    }
+
+                    if !status.is_success() {
+                        return Err(RpcError::Rpc(format!(
+                            "HTTP {} from RPC endpoint",
+                            status.as_u16()
+                        )));
                     }
 
                     return rpc_res.result.ok_or_else(|| {
@@ -134,13 +179,23 @@ impl SorobanRpcClient {
             }
         }
 
-        Err(RpcError::Reqwest(last_err.unwrap()))
+        Err(last_err.unwrap())
     }
 
     /// Check the health of the Soroban RPC node.
     pub async fn get_health(&self) -> Result<HealthCheck, RpcError> {
         self.request("getHealth", ()).await
     }
+
+/// Whether an HTTP status code should be retried by [`SorobanRpcClient::request`].
+///
+/// `429 Too Many Requests` and any `5xx` server error are treated as
+/// transient: the server is reachable but cannot serve the request right
+/// now, so retrying within the existing budget is worthwhile. All other
+/// statuses are terminal.
+fn is_retryable_status(status: reqwest::StatusCode) -> bool {
+    status == reqwest::StatusCode::TOO_MANY_REQUESTS || status.is_server_error()
+}
 
     /// Get the latest ledger info from the Soroban RPC node.
     pub async fn get_ledger(&self) -> Result<LedgerInfo, RpcError> {
