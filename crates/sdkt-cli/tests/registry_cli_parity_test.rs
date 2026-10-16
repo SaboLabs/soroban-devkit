@@ -11,6 +11,16 @@
 use assert_cmd::Command;
 use sdkt_core::registry::{capabilities, Safety};
 
+/// Long flags documented by `--help` that are deliberately *not* part of a
+/// capability's argument contract, keyed by capability id. Each exclusion
+/// must carry a reason; the bidirectional check below fails on any long flag
+/// that is neither listed in the registry nor excluded here.
+const EXCLUDED_FLAGS: &[(&str, &str, &str)] = &[
+    // clap's own help/version switches are not capability arguments.
+    ("*", "--help", "clap built-in"),
+    ("*", "--version", "clap built-in"),
+];
+
 /// `sdkt <cmd..> --help` stdout, or `None` when the command does not exist
 /// (unknown subcommand → clap usage error).
 fn help_for(command: &[&str]) -> Option<String> {
@@ -83,6 +93,57 @@ fn declared_flags_exist_in_the_real_cli() {
     );
 }
 
+/// The reverse direction: every long flag `--help` documents for a capability
+/// must be listed in the registry, unless it is explicitly excluded above with
+/// a reason. Without this, an omission (a capability the agent cannot see) is
+/// invisible — exactly the drift that let `audit` lose `--abi` and friends.
+#[test]
+fn documented_flags_exist_in_the_registry() {
+    let mut missing = Vec::new();
+    for c in capabilities() {
+        let Some(help) = help_for(c.command) else {
+            missing.push(format!("{}: command path not resolvable", c.id));
+            continue;
+        };
+        let documented: std::collections::HashSet<&str> = help
+            .lines()
+            .flat_map(|l| l.split_whitespace())
+            .map(|tok| tok.trim_end_matches(','))
+            .filter(|tok| tok.starts_with("--"))
+            .collect();
+
+        let listed: std::collections::HashSet<&str> = c
+            .required_args
+            .iter()
+            .chain(c.optional_args)
+            .filter_map(|arg| arg.split_whitespace().next())
+            .filter(|tok| tok.starts_with("--"))
+            .collect();
+
+        for flag in documented {
+            if listed.contains(flag) {
+                continue;
+            }
+            let excluded = EXCLUDED_FLAGS.iter().any(|(id, f, _)| {
+                (id == &"*" || *id == c.id) && *f == flag
+            });
+            if !excluded {
+                missing.push(format!(
+                    "{}: `{} --help` documents {flag}, but the registry omits it",
+                    c.id,
+                    c.argv()
+                ));
+            }
+        }
+    }
+    assert!(
+        missing.is_empty(),
+        "registry omits flags the CLI documents ({} entries):\n{}",
+        missing.len(),
+        missing.join("\n")
+    );
+}
+
 #[test]
 fn json_format_claims_match_the_real_cli() {
     let mut mismatches = Vec::new();
@@ -115,6 +176,62 @@ fn json_format_claims_match_the_real_cli() {
         mismatches.len(),
         mismatches.join("\n")
     );
+}
+
+/// A capability that accepts `--format` must advertise every format the CLI
+/// actually ships. `audit` accepts `pretty`, `json`, and `sarif`; a consumer
+/// that trusts `formats` must be able to discover SARIF. `audit.list_rules`
+/// rejects SARIF, so the two entries must stay distinguishable.
+#[test]
+fn audit_advertises_sarif() {
+    let audit = capabilities()
+        .iter()
+        .find(|c| c.id == "audit")
+        .expect("audit capability present");
+    assert!(
+        audit.formats.sarif,
+        "audit ships `--format sarif`; the registry must advertise it"
+    );
+
+    let list_rules = capabilities()
+        .iter()
+        .find(|c| c.id == "audit.list_rules")
+        .expect("audit.list_rules capability present");
+    assert!(
+        !list_rules.formats.sarif,
+        "audit.list_rules rejects sarif; it must not advertise it"
+    );
+}
+
+/// The `audit` entry and `sdkt audit --help` must agree on the argument set,
+/// spelled exactly as the CLI prints it.
+#[test]
+fn audit_entry_matches_help_arguments() {
+    let audit = capabilities()
+        .iter()
+        .find(|c| c.id == "audit")
+        .expect("audit capability present");
+    let help = help_for(audit.command).expect("`sdkt audit --help` resolves");
+
+    for flag in [
+        "--abi",
+        "--abi-contract",
+        "--network-profile",
+        "--rpc-url",
+        "--network-passphrase",
+    ] {
+        assert!(
+            help.contains(flag),
+            "`sdkt audit --help` should document {flag}"
+        );
+        assert!(
+            audit
+                .optional_args
+                .iter()
+                .any(|a| a.split_whitespace().next() == Some(flag)),
+            "audit entry must list {flag} exactly as `--help` prints it"
+        );
+    }
 }
 
 #[test]

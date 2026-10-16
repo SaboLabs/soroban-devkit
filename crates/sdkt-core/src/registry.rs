@@ -129,15 +129,24 @@ pub struct OutputFormats {
     pub pretty: bool,
     /// `--format json` produces a parseable document on stdout alone.
     pub json: bool,
+    /// `--format sarif` produces a SARIF 2.1.0 document on stdout alone.
+    pub sarif: bool,
 }
 
 const PRETTY: OutputFormats = OutputFormats {
     pretty: true,
     json: false,
+    sarif: false,
 };
 const PRETTY_JSON: OutputFormats = OutputFormats {
     pretty: true,
     json: true,
+    sarif: false,
+};
+const PRETTY_JSON_SARIF: OutputFormats = OutputFormats {
+    pretty: true,
+    json: true,
+    sarif: true,
 };
 
 /// How well this entry's claims are backed by observed execution.
@@ -302,8 +311,8 @@ const CAPABILITIES: [Capability; CAP_COUNT] = [
         command: &["audit"],
         summary: "Heuristic static security analysis of Soroban Rust sources (AUTH/MATH/CEI/MOVE rules).",
         required_args: &["<paths..>"],
-        optional_args: &["--format", "--disable", "--rules", "--no-plugins", "--list-rules"],
-        formats: PRETTY_JSON,
+        optional_args: &["--format", "--disable", "--rules", "--no-plugins", "--list-rules", "--abi", "--abi-contract", "--network-profile", "--rpc-url", "--network-passphrase"],
+        formats: PRETTY_JSON_SARIF,
         evidence: Evidence::VerifiedLocal,
         notes: Some(
             "Findings are advisory signals, never proofs of exploitability; the audit exit code does not encode finding severity (use the GitHub Action's severity-threshold).",
