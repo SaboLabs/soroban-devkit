@@ -487,6 +487,15 @@ use soroban_env_host::xdr::StringM;
 /// Deterministically pick the next mutation for a function's arguments:
 /// cycles `(arg_index, operator)` in a stable order derived from the seed
 /// and case id.
+///
+/// For a given `(seed, case_id)`, consecutive steps select distinct
+/// `(arg_index, operator)` pairs whenever the candidate set has more than one
+/// entry — a deterministic permutation walk cycling through candidates
+/// starting from an offset derived from the seed and case id.
+///
+/// When the candidate set has exactly one entry (e.g. single-candidate types
+/// with only one available operator), repeated steps are unavoidable and
+/// subsequent steps will continue to return that single entry.
 pub fn plan_mutation(
     param_types: &[&ContractType],
     seed: &[u8; 32],
@@ -502,8 +511,7 @@ pub fn plan_mutation(
     if candidates.is_empty() {
         return None;
     }
-    let mut rng =
-        SplitMix64::keyed(&[derive_key_child(seed, case_id), step.to_le_bytes().to_vec()].concat());
+    let mut rng = SplitMix64::keyed(&derive_key_child(seed, case_id));
     // Deterministic order: sample a permutation start then walk forward.
     let start = rng.below(candidates.len() as u64) as usize;
     Some(candidates[(start + step) % candidates.len()])
