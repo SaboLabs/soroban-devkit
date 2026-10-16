@@ -9,7 +9,7 @@
 
 use sdkt_audit::plugin_abi::SDKT_AUDIT_ABI_MAJOR;
 use sdkt_audit::plugin_store::{
-    install, list_in, parse_meta, remove, resolve, InstallOpts, StoreError,
+    install, list_in, parse_meta, remove, resolve, update, InstallOpts, StoreError,
 };
 use std::path::Path;
 use std::sync::Mutex;
@@ -97,6 +97,45 @@ fn install_list_show_resolve_remove_lifecycle() {
 }
 
 #[test]
+fn install_with_id_override_preserves_identity_across_lifecycle() {
+    let _g = ENV_LOCK.lock().unwrap();
+    let tmp = tempfile::tempdir().unwrap();
+    set_store_root(tmp.path());
+
+    let src = tmp.path().join("ex.wasm");
+    std::fs::write(&src, b"dummy-wasm-bytes").unwrap();
+    std::fs::write(
+        tmp.path().join("plugin.toml"),
+        meta_toml("wasm", SDKT_AUDIT_ABI_MAJOR, "ex.wasm"),
+    )
+    .unwrap();
+
+    let meta = install(
+        &src,
+        &InstallOpts {
+            id: Some("override-name".into()),
+            force: false,
+        },
+    )
+    .expect("install with override");
+    assert_eq!(meta.id, "override-name");
+
+    let installed_manifest = tmp.path().join("override-name").join("plugin.toml");
+    let stored = std::fs::read_to_string(installed_manifest).unwrap();
+    assert_eq!(parse_meta(&stored).unwrap().id, "override-name");
+    assert_eq!(list_in(tmp.path())[0].id, "override-name");
+    assert_eq!(
+        sdkt_audit::plugin_store::show("override-name").unwrap().id,
+        "override-name"
+    );
+    assert!(resolve("override-name").is_some());
+
+    remove("override-name").unwrap();
+    assert!(!tmp.path().join("override-name").exists());
+    assert!(resolve("override-name").is_none());
+}
+
+#[test]
 fn kind_extension_mismatch_rejected() {
     let _g = ENV_LOCK.lock().unwrap();
     let tmp = tempfile::tempdir().unwrap();
@@ -140,4 +179,160 @@ fn store_root_fallback_without_env() {
         !path_str.is_empty(),
         "Fallback store root should not be empty"
     );
+}
+
+/// Regression: updating a plugin whose manifest renames the artifact must
+/// remove the previously-managed artifact file, leaving only the new one.
+#[test]
+fn update_with_renamed_artifact_removes_stale_file() {
+    let _g = ENV_LOCK.lock().unwrap();
+    let tmp = tempfile::tempdir().unwrap();
+    set_store_root(tmp.path());
+
+    // v1: artifact-a.wasm
+    let v1_dir = tmp.path().join("v1");
+    std::fs::create_dir_all(&v1_dir).unwrap();
+    let v1_artifact = v1_dir.join("artifact-a.wasm");
+    std::fs::write(&v1_artifact, b"v1-bytes").unwrap();
+    std::fs::write(
+        v1_dir.join("plugin.toml"),
+        meta_toml("wasm", SDKT_AUDIT_ABI_MAJOR, "artifact-a.wasm"),
+    )
+    .unwrap();
+    install(&v1_artifact, &InstallOpts::default()).expect("install v1");
+
+    let plugin_dir = tmp.path().join("example-rule");
+    assert!(plugin_dir.join("artifact-a.wasm").exists());
+
+    // v2: artifact-b.wasm
+    let v2_dir = tmp.path().join("v2");
+    std::fs::create_dir_all(&v2_dir).unwrap();
+    let v2_artifact = v2_dir.join("artifact-b.wasm");
+    std::fs::write(&v2_artifact, b"v2-bytes").unwrap();
+    std::fs::write(
+        v2_dir.join("plugin.toml"),
+        meta_toml("wasm", SDKT_AUDIT_ABI_MAJOR, "artifact-b.wasm"),
+    )
+    .unwrap();
+
+    let meta = update("example-rule", &v2_artifact).expect("update");
+    assert_eq!(meta.artifact, "artifact-b.wasm");
+
+    // New artifact present and usable; old artifact gone.
+    assert!(plugin_dir.join("artifact-b.wasm").exists());
+    assert!(
+        !plugin_dir.join("artifact-a.wasm").exists(),
+        "stale artifact-a.wasm should have been removed"
+    );
+    assert_eq!(
+        std::fs::read(plugin_dir.join("artifact-b.wasm")).unwrap(),
+        b"v2-bytes"
+    );
+
+    // Metadata points at the new artifact and resolve() finds it.
+    let installed = parse_meta(&std::fs::read_to_string(plugin_dir.join("plugin.toml")).unwrap())
+        .expect("parse installed meta");
+    assert_eq!(installed.artifact, "artifact-b.wasm");
+    let resolved = resolve("example-rule").expect("resolve");
+    assert_eq!(resolved, plugin_dir.join("artifact-b.wasm"));
+
+    // Only the new artifact remains in the plugin directory.
+    let mut names: Vec<String> = std::fs::read_dir(&plugin_dir)
+        .unwrap()
+        .flatten()
+        .map(|e| e.file_name().to_string_lossy().into_owned())
+        .collect();
+    names.sort();
+    assert_eq!(names, vec!["artifact-b.wasm", "plugin.toml"]);
+}
+
+/// Updating with an unchanged artifact filename must keep working and must not
+/// delete the (still-referenced) artifact.
+#[test]
+fn update_with_unchanged_artifact_keeps_file() {
+    let _g = ENV_LOCK.lock().unwrap();
+    let tmp = tempfile::tempdir().unwrap();
+    set_store_root(tmp.path());
+
+    let v1_dir = tmp.path().join("same-v1");
+    std::fs::create_dir_all(&v1_dir).unwrap();
+    let v1_artifact = v1_dir.join("rule.wasm");
+    std::fs::write(&v1_artifact, b"v1-bytes").unwrap();
+    std::fs::write(
+        v1_dir.join("plugin.toml"),
+        meta_toml("wasm", SDKT_AUDIT_ABI_MAJOR, "rule.wasm"),
+    )
+    .unwrap();
+    install(&v1_artifact, &InstallOpts::default()).expect("install v1");
+
+    let v2_dir = tmp.path().join("same-v2");
+    std::fs::create_dir_all(&v2_dir).unwrap();
+    let v2_artifact = v2_dir.join("rule.wasm");
+    std::fs::write(&v2_artifact, b"v2-bytes").unwrap();
+    std::fs::write(
+        v2_dir.join("plugin.toml"),
+        meta_toml("wasm", SDKT_AUDIT_ABI_MAJOR, "rule.wasm"),
+    )
+    .unwrap();
+
+    let meta = update("example-rule", &v2_artifact).expect("update");
+    assert_eq!(meta.artifact, "rule.wasm");
+
+    let plugin_dir = tmp.path().join("example-rule");
+    assert!(plugin_dir.join("rule.wasm").exists());
+    assert_eq!(
+        std::fs::read(plugin_dir.join("rule.wasm")).unwrap(),
+        b"v2-bytes"
+    );
+    assert!(resolve("example-rule").is_some());
+}
+
+/// Two distinct plugin ids that sanitize to the same store directory must not
+/// silently collide: installing the second must fail with `IdCollision` that
+/// names both the incoming id and the id of the plugin already occupying the
+/// directory.
+#[test]
+fn id_collision_rejected_with_both_ids() {
+    let _g = ENV_LOCK.lock().unwrap();
+    let tmp = tempfile::tempdir().unwrap();
+    set_store_root(tmp.path());
+
+    // First plugin: id "acme/rule" sanitizes to "acme_rule".
+    let a_dir = tmp.path().join("id_slash");
+    std::fs::create_dir_all(&a_dir).unwrap();
+    let a_artifact = a_dir.join("libacme.wasm");
+    std::fs::write(&a_artifact, b"a-bytes").unwrap();
+    std::fs::write(
+        a_dir.join("plugin.toml"),
+        meta_toml("wasm", SDKT_AUDIT_ABI_MAJOR, "libacme.wasm").replace(
+            r#"id = "example-rule""#,
+            r#"id = "acme/rule""#,
+        ),
+    )
+    .unwrap();
+    install(&a_artifact, &InstallOpts::default()).expect("install acme/rule");
+    assert!(tmp.path().join("acme_rule").exists());
+
+    // Second plugin: id "acme_rule" sanitizes to the same directory.
+    let b_dir = tmp.path().join("id_under");
+    std::fs::create_dir_all(&b_dir).unwrap();
+    let b_artifact = b_dir.join("librule.wasm");
+    std::fs::write(&b_artifact, b"b-bytes").unwrap();
+    std::fs::write(
+        b_dir.join("plugin.toml"),
+        meta_toml("wasm", SDKT_AUDIT_ABI_MAJOR, "librule.wasm").replace(
+            r#"id = "example-rule""#,
+            r#"id = "acme_rule""#,
+        ),
+    )
+    .unwrap();
+
+    let err = install(&b_artifact, &InstallOpts::default()).unwrap_err();
+    match err {
+        StoreError::IdCollision { incoming, existing } => {
+            assert_eq!(incoming, "acme_rule");
+            assert_eq!(existing, "acme/rule");
+        }
+        other => panic!("expected IdCollision, got {other:?}"),
+    }
 }

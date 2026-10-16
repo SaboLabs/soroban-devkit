@@ -39,6 +39,10 @@ use std::collections::BTreeMap;
 use std::io::Read;
 
 use crate::plugin_abi::SDKT_AUDIT_ABI_MAJOR;
+pub use crate::plugin_doctor::{
+    doctor, doctor_installed, doctor_installed_with_root, doctor_with_root, DoctorReport,
+    DoctorStage, DoctorStageStatus,
+};
 
 /// Metadata stored in each plugin's `plugin.toml`.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -64,9 +68,8 @@ pub struct PluginMeta {
 }
 
 impl PluginMeta {
-    /// Validate the metadata invariants that do not require touching the
-    /// artifact: id non-empty, kind recognized, abi_major matches the host.
-    pub fn validate(&self) -> Result<(), StoreError> {
+    /// Validate structural metadata invariants without checking ABI compatibility against the current host.
+    pub fn validate_basic(&self) -> Result<(), StoreError> {
         if self.id.trim().is_empty() {
             return Err(StoreError::InvalidMetadata("id must not be empty".into()));
         }
@@ -94,6 +97,13 @@ impl PluginMeta {
                 "artifact uses a reserved bundle path".into(),
             ));
         }
+        Ok(())
+    }
+
+    /// Validate the metadata invariants that do not require touching the
+    /// artifact: id non-empty, kind recognized, abi_major matches the host.
+    pub fn validate(&self) -> Result<(), StoreError> {
+        self.validate_basic()?;
         if self.abi_major != SDKT_AUDIT_ABI_MAJOR {
             return Err(StoreError::AbiMismatch {
                 plugin_major: self.abi_major,
@@ -130,6 +140,8 @@ pub enum StoreError {
     NotInstalled(String),
     #[error("plugin '{0}' already installed (use --force to overwrite)")]
     AlreadyInstalled(String),
+    #[error("plugin id '{incoming}' collides with installed plugin '{existing}' (both map to the same store directory)")]
+    IdCollision { incoming: String, existing: String },
     #[error("dry-run load of plugin failed: {0}")]
     DryRunLoad(String),
     #[error("remote sources are not supported in M40 (local paths only)")]
@@ -148,20 +160,23 @@ pub struct BundleVerification {
     pub signed: bool,
 }
 
-fn is_safe_relative_path(path: &Path) -> bool {
+/// Validate that a relative path does not escape the parent directory (no path traversal).
+pub(crate) fn is_safe_relative_path(path: &Path) -> bool {
     !path.is_absolute()
         && path
             .components()
             .all(|c| matches!(c, std::path::Component::Normal(_)))
 }
 
-fn digest_hex(bytes: &[u8]) -> String {
+/// Compute hex-encoded SHA-256 digest of bytes.
+pub fn digest_hex(bytes: &[u8]) -> String {
     Sha256::digest(bytes)
         .iter()
         .map(|byte| format!("{byte:02x}"))
         .collect()
 }
 
+/// Create a stable TAR header with deterministic metadata.
 fn stable_header(size: u64) -> tar::Header {
     let mut h = tar::Header::new_gnu();
     h.set_size(size);
@@ -344,6 +359,17 @@ pub fn verify_bundle(
 /// store. Unsigned bundles are accepted for local use, but the returned
 /// metadata lets callers report that the bundle was unsigned.
 pub fn install_bundle(bundle: &Path, opts: &InstallOpts) -> Result<BundleVerification, StoreError> {
+    install_bundle_with_key(bundle, opts, None)
+}
+
+/// Like [`install_bundle`], but when `verifying_key` is given the bundle must be
+/// signed by that key: an unsigned bundle, or a signed bundle whose embedded key
+/// differs, is rejected before anything is installed.
+pub fn install_bundle_with_key(
+    bundle: &Path,
+    opts: &InstallOpts,
+    verifying_key: Option<&VerifyingKey>,
+) -> Result<BundleVerification, StoreError> {
     let staging = std::env::temp_dir().join(format!(
         "sdkt-plugin-{}-{}",
         std::process::id(),
@@ -353,9 +379,15 @@ pub fn install_bundle(bundle: &Path, opts: &InstallOpts) -> Result<BundleVerific
             .as_nanos()
     ));
     let result = (|| {
-        let verified = verify_bundle(bundle, &staging, None)?;
+        let mut verified = verify_bundle(bundle, &staging, verifying_key)?;
+        // A stripped signature must not bypass a key the caller asked for.
+        if verifying_key.is_some() && !verified.signed {
+            return Err(StoreError::InvalidBundle(
+                "bundle is not signed but a public key was provided; refusing to install".into(),
+            ));
+        }
         let source = staging.join(&verified.metadata.artifact);
-        install(&source, opts)?;
+        verified.metadata = install(&source, opts)?;
         Ok(verified)
     })();
     let _ = std::fs::remove_dir_all(&staging);
@@ -387,12 +419,12 @@ pub fn resolve_store_root() -> PathBuf {
 }
 
 /// Directory for a specific plugin id under the store root.
-fn plugin_dir(root: &Path, id: &str) -> PathBuf {
+pub(crate) fn plugin_dir(root: &Path, id: &str) -> PathBuf {
     root.join(sanitize_id(id))
 }
 
 /// Prevent path traversal in plugin ids (they become directory names).
-fn sanitize_id(id: &str) -> String {
+pub(crate) fn sanitize_id(id: &str) -> String {
     id.chars()
         .map(|c| match c {
             '/' | '\\' | '.' | ':' | ' ' => '_',
@@ -402,11 +434,17 @@ fn sanitize_id(id: &str) -> String {
 }
 
 /// Read and validate a plugin's metadata from its directory.
+///
+/// Validates basic structural invariants without rejecting incompatible
+/// ABI major versions so callers can inspect `meta.abi_major` and produce
+/// appropriate compatibility warnings rather than dropping the plugin.
 pub fn read_meta(root: &Path, id: &str) -> Result<PluginMeta, StoreError> {
     let toml_path = plugin_dir(root, id).join("plugin.toml");
     let raw =
         std::fs::read_to_string(&toml_path).map_err(|_| StoreError::NotInstalled(id.into()))?;
-    parse_meta(&raw)
+    let meta: PluginMeta = toml::from_str(&raw).map_err(|e| StoreError::Toml(e.to_string()))?;
+    meta.validate_basic()?;
+    Ok(meta)
 }
 
 /// Parse `plugin.toml` content (exposed for unit testing).
@@ -439,7 +477,32 @@ pub fn list_in(root: &Path) -> Vec<PluginMeta> {
             out.push(meta);
         }
     }
-    out.sort_by(|a, b| a.id.cmp(&b.id));
+    // Keep listing deterministic even if a malformed legacy store contains
+    // multiple entries with the same manifest id.
+    out.sort_by(|a, b| {
+        (
+            &a.id,
+            &a.version,
+            &a.name,
+            &a.author,
+            &a.description,
+            &a.kind,
+            &a.artifact,
+            a.abi_major,
+            a.abi_minor,
+        )
+            .cmp(&(
+                &b.id,
+                &b.version,
+                &b.name,
+                &b.author,
+                &b.description,
+                &b.kind,
+                &b.artifact,
+                b.abi_major,
+                b.abi_minor,
+            ))
+    });
     out
 }
 
@@ -463,7 +526,7 @@ pub fn resolve(id: &str) -> Option<PathBuf> {
 }
 
 /// Validate that the artifact extension matches the declared kind.
-fn validate_kind_ext(meta: &PluginMeta, artifact_path: &Path) -> Result<(), StoreError> {
+pub(crate) fn validate_kind_ext(meta: &PluginMeta, artifact_path: &Path) -> Result<(), StoreError> {
     let ext = artifact_path
         .extension()
         .and_then(|e| e.to_str())
@@ -515,13 +578,27 @@ pub fn install(local_source: &Path, opts: &InstallOpts) -> Result<PluginMeta, St
     let raw = std::fs::read_to_string(&toml_path).map_err(|_| {
         StoreError::InvalidMetadata("plugin.toml not found next to the artifact".into())
     })?;
-    let meta = parse_meta(&raw)?;
+    let mut meta = parse_meta(&raw)?;
+    if let Some(id) = &opts.id {
+        meta.id = id.clone();
+        meta.validate()?;
+    }
 
-    let id = opts.id.clone().unwrap_or_else(|| meta.id.clone());
+    let id = meta.id.clone();
     validate_kind_ext(&meta, local_source)?;
 
     let root = resolve_store_root();
     let dir = plugin_dir(&root, &id);
+    if dir.exists() && !opts.force {
+        if let Ok(existing) = read_meta(&root, &id) {
+            if existing.id != id {
+                return Err(StoreError::IdCollision {
+                    incoming: id,
+                    existing: existing.id,
+                });
+            }
+        }
+    }
     if dir.exists() && !opts.force {
         return Err(StoreError::AlreadyInstalled(id));
     }
@@ -539,11 +616,31 @@ pub fn install(local_source: &Path, opts: &InstallOpts) -> Result<PluginMeta, St
             .map_err(|e| StoreError::DryRunLoad(e.to_string()))?;
     }
 
-    // Commit: create dir, copy artifact + manifest.
+    // Capture the previously-managed artifact (if any) before committing, so a
+    // rename of the artifact filename during an update does not orphan the old
+    // file. Only the artifact referenced by this plugin's own metadata is ever
+    // considered; unrelated files are left untouched.
+    let previous_artifact = read_meta(&root, &id).ok().map(|old| old.artifact);
+
+    // Commit: create dir, copy artifact + the effective metadata. Persisting
+    // the override keeps list/show/remove/discovery aligned with the directory.
     std::fs::create_dir_all(&dir)?;
     let dest_artifact = dir.join(&meta.artifact);
     std::fs::copy(local_source, &dest_artifact)?;
-    std::fs::write(dir.join("plugin.toml"), raw)?;
+    let stored_meta = toml::to_string(&meta).map_err(|e| StoreError::Toml(e.to_string()))?;
+    std::fs::write(dir.join("plugin.toml"), stored_meta)?;
+
+    // Remove the stale artifact only after the new one is committed, and only
+    // when the filename actually changed. Guard against path traversal so we
+    // never delete outside the plugin directory.
+    if let Some(old_artifact) = previous_artifact {
+        if old_artifact != meta.artifact {
+            let old_path = dir.join(&old_artifact);
+            if old_path.is_file() && is_safe_relative_path(Path::new(&old_artifact)) {
+                std::fs::remove_file(&old_path)?;
+            }
+        }
+    }
     Ok(meta)
 }
 
@@ -572,6 +669,88 @@ pub fn update(id: &str, local_source: &Path) -> Result<PluginMeta, StoreError> {
         force: true,
     };
     install(local_source, &opts)
+}
+
+#[cfg(test)]
+mod list_tests {
+    use super::*;
+    use std::fs;
+
+    fn write_entry(root: &Path, dir: &str, id: &str, version: &str) {
+        let d = root.join(dir);
+        fs::create_dir_all(&d).unwrap();
+        fs::write(
+            d.join("plugin.toml"),
+            format!(
+                "id = \"{id}\"\nname = \"Rule\"\nversion = \"{version}\"\nauthor = \"Test\"\n\
+                 description = \"d\"\nkind = \"wasm\"\nartifact = \"rule.wasm\"\n\
+                 abi_major = {SDKT_AUDIT_ABI_MAJOR}\nabi_minor = 0\n"
+            ),
+        )
+        .unwrap();
+    }
+
+    #[test]
+    fn list_is_deterministic_when_ids_collide() {
+        let root = tempfile::tempdir().unwrap();
+        // A corrupted legacy store can contain duplicate manifest ids. The
+        // directory names run against version order, so directory order alone
+        // cannot produce the expected listing.
+        write_entry(root.path(), "a-alias", "same", "2.0.0");
+        write_entry(root.path(), "b-alias", "same", "1.0.0");
+        write_entry(root.path(), "0-first", "zeta", "1.0.0");
+
+        let listed: Vec<(String, String)> = list_in(root.path())
+            .into_iter()
+            .map(|m| (m.id, m.version))
+            .collect();
+        assert_eq!(
+            listed,
+            [("same", "1.0.0"), ("same", "2.0.0"), ("zeta", "1.0.0")]
+                .map(|(i, v)| (i.to_string(), v.to_string()))
+        );
+    }
+}
+
+#[cfg(test)]
+mod collision_tests {
+    use super::*;
+    use std::fs;
+
+    fn write_source(dir: &Path, id: &str, artifact: &str) {
+        fs::create_dir_all(dir).unwrap();
+        fs::write(
+            dir.join("plugin.toml"),
+            format!(
+                "id = \"{id}\"\nname = \"Rule\"\nversion = \"0.1.0\"\nauthor = \"Test\"\n\
+                 description = \"d\"\nkind = \"wasm\"\nartifact = \"{artifact}\"\n\
+                 abi_major = {SDKT_AUDIT_ABI_MAJOR}\nabi_minor = 0\n"
+            ),
+        )
+        .unwrap();
+        fs::write(dir.join(artifact), b"wasm").unwrap();
+    }
+
+    #[test]
+    fn sanitize_collision_reports_both_ids() {
+        let store = tempfile::tempdir().unwrap();
+        std::env::set_var("SDKT_PLUGIN_DIR", store.path());
+
+        let a = tempfile::tempdir().unwrap();
+        write_source(a.path(), "acme/rule", "rule.wasm");
+        install(&a.path().join("rule.wasm"), &InstallOpts::default()).unwrap();
+
+        let b = tempfile::tempdir().unwrap();
+        write_source(b.path(), "acme_rule", "rule.wasm");
+        let err = install(&b.path().join("rule.wasm"), &InstallOpts::default()).unwrap_err();
+        match err {
+            StoreError::IdCollision { incoming, existing } => {
+                assert_eq!(incoming, "acme_rule");
+                assert_eq!(existing, "acme/rule");
+            }
+            other => panic!("expected IdCollision, got {other:?}"),
+        }
+    }
 }
 
 #[cfg(test)]
@@ -651,5 +830,38 @@ mod bundle_tests {
             ),
             Err(StoreError::InvalidSignature)
         ));
+    }
+
+    #[test]
+    fn install_bundle_with_wrong_key_fails_before_install() {
+        let dir = tempfile::tempdir().unwrap();
+        let artifact = dir.path().join("rule.wasm");
+        fs::write(&artifact, b"wasm").unwrap();
+        let key = SigningKey::from_bytes(&[7u8; 32]);
+        let bundle = dir.path().join("plugin.sdktplugin");
+        pack_bundle(&bundle, &meta(), &artifact, Some(&key)).unwrap();
+        let wrong = SigningKey::from_bytes(&[8u8; 32]);
+        assert!(matches!(
+            install_bundle_with_key(
+                &bundle,
+                &InstallOpts::default(),
+                Some(&wrong.verifying_key())
+            ),
+            Err(StoreError::InvalidSignature)
+        ));
+    }
+
+    #[test]
+    fn install_bundle_with_key_rejects_unsigned_bundle() {
+        let dir = tempfile::tempdir().unwrap();
+        let artifact = dir.path().join("rule.wasm");
+        fs::write(&artifact, b"wasm").unwrap();
+        let bundle = dir.path().join("plugin.sdktplugin");
+        pack_bundle(&bundle, &meta(), &artifact, None).unwrap();
+        let key = SigningKey::from_bytes(&[7u8; 32]);
+        let err =
+            install_bundle_with_key(&bundle, &InstallOpts::default(), Some(&key.verifying_key()))
+                .unwrap_err();
+        assert!(err.to_string().contains("bundle is not signed"), "{err}");
     }
 }
