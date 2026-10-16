@@ -23,6 +23,14 @@
 //! - No RPC mutation methods are called in this module.
 //! - An empty diff (no removed or expiring entries) produces an [`ExtendPlan`]
 //!   with an empty key list and exits cleanly.
+//!
+//! # Duplicate keys
+//! A snapshot must not contain two entries with the same ledger key.  When a
+//! duplicate is detected, [`StorageSnapshot::from_report`] and
+//! [`diff_snapshots`] reject it with a [`StorageError::Parse`] naming the
+//! duplicated key and the snapshot's contract id.  This is a deliberate
+//! "detect and reject" policy: silently dropping one of the entries would make
+//! the diff (and any extend plan derived from it) report incomplete data.
 
 use crate::error::StorageError;
 use crate::types::StorageReport;
@@ -71,12 +79,25 @@ impl StorageSnapshot {
     ///
     /// Returns an error if `report.total_entries > 0` but `report.entries` is empty,
     /// indicating a legacy or summary-only report without per-entry detail.
+    ///
+    /// Also returns an error if two entries share the same ledger key, since a
+    /// snapshot with duplicate keys cannot be diffed unambiguously.
     pub fn from_report(report: &StorageReport) -> Result<Self, StorageError> {
         if report.total_entries > 0 && report.entries.is_empty() {
             return Err(StorageError::Parse(format!(
                 "Snapshot report for contract '{}' has total_entries ({}) > 0 but entries array is empty (legacy or summary-only report without per-entry detail)",
                 report.contract_id, report.total_entries
             )));
+        }
+        let mut seen: std::collections::HashSet<&str> = std::collections::HashSet::new();
+        for e in &report.entries {
+            if !seen.insert(e.key.as_str()) {
+                return Err(StorageError::Parse(format!(
+                    "Snapshot report for contract '{}' contains duplicate ledger key '{}'; \
+                     each key may appear at most once",
+                    report.contract_id, e.key
+                )));
+            }
         }
         Ok(Self {
             contract_id: report.contract_id.clone(),
@@ -174,6 +195,12 @@ impl SnapshotDiff {
 /// [`DiffStatus::Unchanged`] (or `ExpiringSoon` if their TTL is low).  There is
 /// intentionally no `Added` status because the diff is used exclusively to drive
 /// remediation of *at-risk* entries.
+///
+/// # Duplicate keys
+/// If either snapshot contains two entries with the same ledger key, this
+/// function returns a [`StorageError::Parse`] naming the duplicated key and the
+/// snapshot it came from.  Duplicates are rejected rather than silently
+/// de-duplicated so that callers never receive a diff that dropped data.
 pub fn diff_snapshots(
     old: &StorageSnapshot,
     new: &StorageSnapshot,
@@ -186,6 +213,21 @@ pub fn diff_snapshots(
     }
 
     use std::collections::HashMap;
+
+    // Reject duplicate keys in either snapshot before building the maps, so a
+    // duplicate cannot be silently collapsed by the HashMap below.
+    for (side, snapshot) in [("old", old), ("new", new)] {
+        let mut seen: std::collections::HashSet<&str> = std::collections::HashSet::new();
+        for e in &snapshot.entries {
+            if !seen.insert(e.key.as_str()) {
+                return Err(StorageError::Parse(format!(
+                    "Snapshot '{}' for contract '{}' contains duplicate ledger key '{}'; \
+                     each key may appear at most once",
+                    side, snapshot.contract_id, e.key
+                )));
+            }
+        }
+    }
 
     let old_map: HashMap<&str, &SnapshotEntry> =
         old.entries.iter().map(|e| (e.key.as_str(), e)).collect();
@@ -703,5 +745,79 @@ mod tests {
         };
         let err = StorageSnapshot::from_report(&report).unwrap_err();
         assert!(matches!(err, StorageError::Parse(msg) if msg.contains("total_entries (3) > 0")));
+    }
+
+    // -----------------------------------------------------------------------
+    // duplicate keys
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn diff_duplicate_key_in_old_snapshot_returns_error() {
+        let old = snap(vec![("keyA", 50_000), ("keyA", 40_000)]);
+        let new = snap(vec![("keyA", 50_000)]);
+        let err = diff_snapshots(&old, &new).unwrap_err();
+        assert!(
+            matches!(err, StorageError::Parse(msg)
+                if msg.contains("duplicate ledger key 'keyA'") && msg.contains("'old'")),
+            "unexpected error: {err:?}"
+        );
+    }
+
+    #[test]
+    fn diff_duplicate_key_in_new_snapshot_returns_error() {
+        let old = snap(vec![("keyA", 50_000)]);
+        let new = snap(vec![("keyA", 50_000), ("keyA", 40_000)]);
+        let err = diff_snapshots(&old, &new).unwrap_err();
+        assert!(
+            matches!(err, StorageError::Parse(msg)
+                if msg.contains("duplicate ledger key 'keyA'") && msg.contains("'new'")),
+            "unexpected error: {err:?}"
+        );
+    }
+
+    #[test]
+    fn from_report_rejects_duplicate_keys() {
+        use crate::types::{StorageClass, StorageEntry, StorageReport};
+        let entry = |key: &str, ttl: u32| StorageEntry {
+            key: key.to_string(),
+            label: None,
+            class: StorageClass::Persistent,
+            current_ttl: ttl,
+            days_remaining: 0,
+            extension_cost_stroops: 0,
+        };
+        let report = StorageReport {
+            contract_id: CONTRACT.to_string(),
+            total_entries: 2,
+            entries: vec![entry("dup", 10_000), entry("dup", 5_000)],
+            ..Default::default()
+        };
+        let err = StorageSnapshot::from_report(&report).unwrap_err();
+        assert!(
+            matches!(err, StorageError::Parse(msg)
+                if msg.contains("duplicate ledger key 'dup'") && msg.contains(CONTRACT)),
+            "unexpected error: {err:?}"
+        );
+    }
+
+    #[test]
+    fn from_report_accepts_distinct_keys() {
+        use crate::types::{StorageClass, StorageEntry, StorageReport};
+        let entry = |key: &str, ttl: u32| StorageEntry {
+            key: key.to_string(),
+            label: None,
+            class: StorageClass::Persistent,
+            current_ttl: ttl,
+            days_remaining: 0,
+            extension_cost_stroops: 0,
+        };
+        let report = StorageReport {
+            contract_id: CONTRACT.to_string(),
+            total_entries: 2,
+            entries: vec![entry("a", 10_000), entry("b", 5_000)],
+            ..Default::default()
+        };
+        let snap = StorageSnapshot::from_report(&report).unwrap();
+        assert_eq!(snap.entries.len(), 2);
     }
 }
