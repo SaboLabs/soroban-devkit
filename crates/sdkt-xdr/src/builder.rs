@@ -18,6 +18,7 @@ use stellar_xdr::{
     SorobanTransactionData, SorobanTransactionDataExt, Transaction, TransactionEnvelope,
     TransactionExt, TransactionV1Envelope, Uint256, VecM, WriteXdr,
 };
+use stellar_xdr::{FeeBumpTransaction, FeeBumpTransactionEnvelope, FeeBumpTransactionExt, TransactionEnvelope as TxEnvelope};
 
 /// Parameters for building a basic contract invocation transaction.
 #[derive(Debug, Clone)]
