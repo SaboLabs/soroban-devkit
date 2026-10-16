@@ -33,7 +33,7 @@ fn test_cli_fee_estimate_mainnet_json() {
         .arg("json");
 
     cmd.assert().success().stdout(predicate::str::contains(
-        r#"{"stroops":125,"xlm":"0.0000125"}"#,
+        r#{"stroops":125,"xlm":"0.0000125"}#,
     ));
 }
 

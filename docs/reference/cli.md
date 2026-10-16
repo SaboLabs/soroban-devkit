@@ -119,6 +119,11 @@ sdkt
 ├── fee
 │   └── estimate              (manual value entry, type-prefixed)
 │
+│   `estimate` prints the `transactionCount` and `ledgerCount` sample sizes
+│   reported by `getFeeStats` for both `sorobanInclusionFee` and
+│   `inclusionFee`, so a fee estimate derived from a thin distribution is
+│   visible. The estimator's arithmetic is unchanged.
+│
 ├── wasm
 │   ├── inspect <file.wasm>  Offline inspection of a local WASM file (sections, exports, spec)
 │   ├── metadata --contract <contract>  [--network testnet] [--refresh] [--format]
