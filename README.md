@@ -148,6 +148,32 @@ curl -fsSL https://raw.githubusercontent.com/SaboLabs/soroban-devkit/main/instal
 The script detects your OS/arch, downloads the matching release binary,
 verifies its SHA-256 checksum, and installs `sdkt` to `~/.local/bin/sdkt`.
 
+##### Environment variables
+
+`install.sh` reads two optional environment variables:
+
+| Variable | Default | Effect |
+|---|---|---|
+| `SDKT_VERSION` | latest stable release | Install this exact release tag instead of resolving the latest. Use the tag as published on the Releases page (e.g. `v2.7.0`). |
+| `SDKT_INSTALL_DIR` | `~/.local/bin` | Directory to install `sdkt` into. It is created if it does not exist. |
+
+Pin a release, for reproducible installs or when the newest release does not
+ship a binary for your platform:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/SaboLabs/soroban-devkit/main/install.sh | SDKT_VERSION=v2.7.0 bash
+```
+
+Install to a custom directory (for example in CI, or where `~/.local/bin` is
+not on your `PATH`):
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/SaboLabs/soroban-devkit/main/install.sh | SDKT_INSTALL_DIR=/usr/local/bin bash
+```
+
+Make sure the chosen directory is on your `PATH`. Both variables can be
+combined.
+
 #### Alternative — Manual GitHub Release download
 
 1. Open the [Releases](https://github.com/SaboLabs/soroban-devkit/releases)

@@ -11,6 +11,12 @@
 # SDKT_INSTALL_DIR=/usr/local/bin ./install.sh # custom destination
 # bash install.sh --selftest # offline regression test (no network)
 #
+# Environment variables (both optional):
+#   SDKT_VERSION       Release tag to install, exactly as published (e.g. v2.7.0).
+#                      Default: the latest stable release.
+#   SDKT_INSTALL_DIR   Directory to install sdkt into; created if missing.
+#                      Default: $HOME/.local/bin
+#
 # Security:
 # - set -euo pipefail (strict mode)
 # - the downloaded binary is NEVER executed before its checksum is verified

@@ -31,15 +31,17 @@ aborts.
 Custom install directory:
 
 ```bash
-SDKT_INSTALL_DIR=/usr/local/bin curl -fsSL \
-  https://raw.githubusercontent.com/SaboLabs/soroban-devkit/main/install.sh | bash
+curl -fsSL \
+  https://raw.githubusercontent.com/SaboLabs/soroban-devkit/main/install.sh \
+  | SDKT_INSTALL_DIR=/usr/local/bin bash
 ```
 
 Pin a specific version:
 
 ```bash
-SDKT_VERSION=v2.7.0 curl -fsSL \\
-  https://raw.githubusercontent.com/SaboLabs/soroban-devkit/main/install.sh | bash
+curl -fsSL \
+  https://raw.githubusercontent.com/SaboLabs/soroban-devkit/main/install.sh \
+  | SDKT_VERSION=v2.7.0 bash
 ```
 
 ## Option A — Manual GitHub Release download
