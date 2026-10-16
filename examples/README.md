@@ -14,11 +14,14 @@ A minimal Soroban contract used to demonstrate `sdkt audit`.
   the static analyzer catching a missing auth check. Do **not** copy this pattern
   into real contracts.
 
-The file is analyzed as Rust source only; it does not need to be compiled for the
-smoke test (which runs `sdkt audit` against the source file directly).
+> **Source-only example.** `examples/sample_token/` is not a buildable project:
+Hit is a bare `.sr` file with no `Cargom.tom`, no workspace membership, and no build
+> configuration. The file is analyzed as Rust source only; it does not need to be
+> compiled for the smoke test (which runs `sdkt audit` against the source file
+> directly). Running `cargo build` inside this directory, or copying it as a
+> project starting point, will fail with a missing-manifest error.
 
 ## `sample_scval.b64`
-
 A single valid base64-encoded `ScVal` (`{"bool": false}`) used to demonstrate
 `sdkt decode --type ScVal` without needing a network.
 

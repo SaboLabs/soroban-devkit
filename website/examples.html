@@ -91,7 +91,7 @@ Events: 1</code></pre>
           <h3 class="text-lg font-semibold text-white">Audit contract source</h3>
           <div class="flex gap-2"><span class="rounded-full border border-accent/30 bg-accent/10 px-2.5 py-0.5 font-mono text-[10px] font-bold text-accent">security</span><span class="rounded-full border border-[#0A1A2E] bg-[#000815] px-2.5 py-0.5 font-mono text-[10px] font-bold text-slate-400">beginner</span></div>
         </div>
-        <p class="mt-2 text-sm text-slate-400">Static analysis of Soroban Rust source. The repo ships a contract with one deliberately unguarded entrypoint so the analyzer produces a deterministic finding.</p>
+        <p class="mt-2 text-sm text-slate-400">Static analysis of Soroban Rust source. The repo ships a contract with one deliberately unguarded entrypoint so the analyzer produces a deterministic finding. The example is analyzed as source only — it is not a buildable project (no <code class="text-accent">Cargo.toml</code>), so no compilation is required.</p>
         <div class="mt-5 overflow-hidden rounded-xl border border-[#0A1A2E] bg-[#010916]">
           <div class="border-b border-[#060D16] bg-[#010916] px-3 py-1.5 font-mono text-[10px] text-slate-500">audit — sample_token</div>
           <pre class="overflow-x-auto p-3.5 font-mono text-[11px] leading-6 text-slate-300"><code><span class="text-accent">$ sdkt audit examples/sample_token/src/lib.rs</span>
