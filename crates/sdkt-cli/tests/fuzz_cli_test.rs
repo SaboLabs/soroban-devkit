@@ -110,6 +110,8 @@ fn cli_campaign_finding_exits_one_and_writes_artifacts() {
     let text = std::fs::read_to_string(&evidence).expect("evidence written");
     let value: Value = serde_json::from_str(&text).expect("evidence is JSON");
     assert_eq!(value["campaign_completed"], true);
+    assert_eq!(value["schema_version"], 1);
+    assert_eq!(value["version"], env!("CARGO_PKG_VERSION"));
     assert!(value["findings"].as_array().is_some_and(|f| !f.is_empty()));
     assert_eq!(value["deterministic"], true);
 }

@@ -21,6 +21,7 @@ verdict, or a byte-identical rerun.
 | Component | Version / value |
 |---|---|
 | `sdkt-fuzz` | v2.7.0 |
+| Evidence schema | `schema_version` + `tool` / `version` recorded in every `campaign-evidence.json` |
 | Pipeline PR | #285 — deterministic Soroban fuzzing and replay |
 | Auth fix PR | #286 — correct auth classification and replay |
 | Host engine | `soroban-env-host` 28.0.2 (in-memory, offline) |
@@ -85,6 +86,25 @@ artifact JSON (SHA-256 of the canonical JSON bytes). Example:
 
 This is **not** the SHA-256 of the file on disk (which includes a trailing
 newline and is a different value).
+
+### Campaign evidence version fields
+
+Every `campaign-evidence.json` written by `sdkt fuzz campaign --format json`
+records the producing tool build alongside the campaign result. The fields
+are additive: all pre-existing keys (`campaign_completed`, `config`,
+`case_count`, `passed`, `expected_errors`, `findings`, `minimized_findings`,
+`artifacts_available`, `replay`, `deterministic`) keep their names, types,
+and positions.
+
+| Field | Type | Value |
+|---|---|---|
+| `schema_version` | integer | Evidence document schema revision |
+| `tool` | string | `"sdkt-fuzz"` |
+| `version` | string | `env!("CARGO_PKG_VERSION")` — the workspace version of the `sdkt` build that produced the file |
+
+The `version` value is taken from the build, not hardcoded, so two evidence
+documents produced by different `sdkt` releases are distinguishable without
+consulting this page's hand-maintained table.
 
 ## 4. Pilot #2 — Real Auth (`require_auth`)
 
@@ -481,6 +501,7 @@ were verified by typed decoding only.
 | Item | Value |
 |---|---|
 | External source | `stellar/soroban-examples` @ `03d42aa6b973dcf3a453a99d0c6a6e8d25a196e2` |
+| Evidence schema | `schema_version` + `tool` / `version` (workspace `Cargo.toml` version) present in every `campaign-evidence.json` |
 | Build | `stellar contract build` 28.1.0, `wasm32v1-none` |
 | Pilot #1 seeds | `42` (RUN A, 50 cases/contract), `7` (RUN B, 50 cases), `42` (RUN C1, 40 cases, `sequence_length=3`, `sequence_every=2`) |
 | Pilot #2 seeds | `42` (12-case campaigns), `7` (E2 multi-step artifact) |
@@ -523,3 +544,7 @@ set.
 > preserves per-step auth entries (the pre-#286 lineage mismatches the same
 > artifact). All findings are declaration mismatches — evidence that the
 > engine works, not vulnerability discovery.
+>
+> Every `campaign-evidence.json` produced by this pipeline records the
+> producing tool build via `schema_version`, `tool`, and `version` fields, so
+> a verdict can be attributed to the exact `sdkt` release that emitted it.

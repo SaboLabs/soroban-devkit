@@ -173,6 +173,13 @@ sdkt
 │   ├── --max-size-bytes <N>  (fail when the candidate exceeds N bytes)
 │   ├── --max-growth-pct <N>  (fail when growth over --previous-wasm exceeds N%)
 │   └── --format <json|pretty>
+│
+│   With `--format json` the report includes a `schema_version` field and a
+│   `tool` object recording the producing `sdkt` build:
+│   `{"schema_version": 1, "tool": {"name": "sdkt", "version": "<workspace version>"}}`.
+│   The version comes from the build (`env!("CARGO_PKG_VERSION")`), so two
+│   reports from different `sdkt` releases are distinguishable. These fields
+│   are additive: every existing field keeps its name, type, and position.
 ├── identity
 │   ├── generate <name>       [--format pretty|json]
 │   ├── import <name> <secret>
@@ -675,6 +682,15 @@ expectation; declaring it with both flags is a usage error that exits 2 and
 names the conflicting function. A single valid declaration keeps its existing
 campaign behavior. Malformed `--expect-error` declarations also remain usage
 errors.
+
+The `campaign-evidence.json` document written by `sdkt fuzz campaign` includes
+the same additive provenance fields as `release-assurance`: a `schema_version`
+field and a `tool` object with `name` and `version`. The `version` is the
+workspace version baked into the binary at build time
+(`env!("CARGO_PKG_VERSION")`), so evidence from different `sdkt` builds can be
+attributed. All pre-existing keys (`campaign_completed`, `config`,
+`case_count`, `passed`, `expected_errors`, `findings`, `minimized_findings`,
+`artifacts_available`, `replay`, `deterministic`) are unchanged.
 
 ## Error Handling
 

@@ -38,6 +38,10 @@ pub enum ReplayStatus {
 /// under its declared rules, not a guarantee about the contract.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct CampaignEvidence {
+    /// Schema version of this evidence document.
+    pub schema_version: String,
+    /// Version of the tool that produced this evidence.
+    pub tool_version: String,
     /// True when the campaign ran to completion.
     pub campaign_completed: bool,
     /// Campaign configuration snapshot (deterministic inputs).
@@ -113,6 +117,8 @@ impl CampaignEvidence {
             .collect();
 
         Self {
+            schema_version: "1".to_string(),
+            tool_version: env!("CARGO_PKG_VERSION").to_string(),
             campaign_completed: true,
             config,
             case_count: result.executed,

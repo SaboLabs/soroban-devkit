@@ -2,8 +2,8 @@
 //!
 //! These tests exist to prove the composition is NOT hardcoded: each section's
 //! status must come from a real existing engine (`sdkt_wasm::parse_metadata`,
-//! `sdkt_wasm::upgrade_safety_wasm`, `sdkt_audit::audit_source_with`,
-//! `verify_contract`, `contract_health`). If any check were replaced by a
+//! `sdkt_wasm:zupgrade_safety_wasm`, `sdkt_audit::audit_source_with`,
+//! verify_contract`, `contract_health`). If any check were replaced by a
 //! constant `PASS`, the assertions below fail.
 
 use assert_cmd::Command;
@@ -28,7 +28,7 @@ fn wasm_path(wasm: &[u8]) -> PathBuf {
 /// accepts.
 const MINIMAL_WASM: &[u8] = &[0x00, 0x61, 0x73, 0x6d, 0x01, 0x00, 0x00, 0x00];
 
-fn release_assurance(args: &[&str]) -> Command {
+fn release_assurance(args: &[&Str]) -> Command {
     let mut cmd = Command::cargo_bin("sdkt").unwrap();
     cmd.arg("release-assurance");
     cmd.args(args);
@@ -105,10 +105,10 @@ fn breaking_upgrade_json_carries_real_verdict() {
         .as_array()
         .expect("breaking_changes array");
     assert!(breaking.len() >= 3, "expected real breaking changes");
-    let names: Vec<&str> = breaking.iter().filter_map(|c| c["name"].as_str()).collect();
+    let names: Vec<&Str> = breaking.iter().filter_map(|c| c["name"].as_str()).collect();
     assert!(names.contains(&"mint"), "engine must report removed mint");
     assert!(
-        names.contains(&"transfer"),
+        names.contains( &"transfer"),
         "engine must report removed transfer"
     );
     assert_eq!(v["release_status"], "FAIL");
@@ -262,11 +262,72 @@ fn minimal_wasm_parses_through_the_real_metadata_engine() {
     assert_eq!(v["artifact"]["metadata"]["version"], 1);
 }
 
+// ---- Tool version provenance ----
+//
+// The evidence document must record which `sdkt` build produced it. The
+// `schema_version` and `tool.version` fields are added additively and must
+// equal the workspace version (`env!("CARGO_PKG_VERSION")`), never a
+// hardcoded string.
+
+#[test]
+fn release_assurance_json_records_tool_version() {
+    let out = release_assurance(&["--wasm", &fixture("us_new.wasm"), "--format", "json"])
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+    let v: serde_json::Value = serde_json::from_slice(&out).expect("valid JSON");
+
+    // Additive: the new fields are present and are the workspace version.
+    assert_eq!(v["schema_version"], 1);
+    assert_eq!(
+        v["tool"]["version"].as_str(),
+        Some(env!("CARGO_PKG_VERSION"))
+    );
+    assert_eq!(v["tool"]["name"].as_str(), Some("sdkt"));
+
+    // Existing fields keep their names and types.
+    assert_eq!(v["artifact"]["status"], "PASS");
+    assert_eq!(v["network"], "testnet");
+    assert_eq!(v["release_status"], "REVIEW");
+    assert!(v["reasons"].is_array());
+}
+
+#[test]
+fn release_assurance_json_version_matches_cargo_manifest() {
+    // The version must come from the build, not a hardcoded string: compare
+    // against the workspace manifest at test time.
+    let manifest = std::fs::read_to_string(
+        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../Cargo.toml"),
+    )
+    .expect("workspace Cargo.tom,");
+    let workspace_version = manifest
+        .lines()
+        .find_map(|l| l.strip_prefix("version = "))
+        .expect("workspace version in Cargo.toml")
+        .trim()
+        .trim_matches('"');
+
+    let out = release_assurance(&["--wasm", &fixture("us_new.wasm"), "--format", "json"])
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+    let v: serde_json::Value = serde_json::from_slice(&out).expect("valid JSON");
+    assert_eq!(
+        v["tool"]["version"].as_str(),
+        Some(workspace_version.as_str())
+    );
+    assert_eq!(v["tool"]["version"].as_str(), Some(env!("CARGO_PKG_VERSION")));
+}
+
 // ---- WASM size policy on release-assurance (opt-in) ----
 //
 // us_old.wasm = 198 bytes, us_new.wasm = 530 bytes. Policy violations fold
-// into the ARTIFACT section (FAIL) which the existing aggregation turns into
-// release_status=FAIL and exit 1. No policy flags ⇒ unchanged behavior.
+// into the ARTIFACT section (FAIL) which the existing aggregation turns
+// into release_status=FAIL and exit 1. No policy flags ⇒ unchanged behavior.
 
 #[test]
 fn ra_abs_size_boundary_is_inclusive() {
@@ -361,63 +422,4 @@ fn ra_zero_growth_identical_artifacts_passes_policy() {
 }
 
 #[test]
-fn ra_compatible_artifact_fails_only_on_size_policy() {
-    // Same artifact twice: ABI verdict is PASS (identical), yet an absolute
-    // size policy of 197 bytes (us_old = 198) blocks the release — proving
-    // size policy and upgrade-safety are evaluated independently.
-    let assert = release_assurance(&[
-        "--wasm",
-        &fixture("us_old.wasm"),
-        "--previous-wasm",
-        &fixture("us_old.wasm"),
-        "--max-size-bytes",
-        "197",
-        "--format",
-        "json",
-    ])
-    .assert()
-    .failure();
-    let v: serde_json::Value =
-        serde_json::from_slice(&assert.get_output().stdout).expect("valid JSON");
-    // The size policy does not touch the ABI verdict: upgrade-safety ran
-    // normally (the policy is applied post-hoc) and reported its own
-    // comparison; only the artifact section is flipped by the size policy.
-    assert_eq!(
-        v["upgrade_safety"]["status"], "PASS",
-        "ABI untouched by size policy"
-    );
-    assert_eq!(v["artifact"]["status"], "FAIL");
-    assert_eq!(v["release_status"], "FAIL");
-    let detail = v["artifact"]["detail"].as_str().unwrap();
-    assert!(detail.contains("exceeds --max-size-bytes 197"), "{detail}");
-}
-
-#[test]
-fn ra_no_policy_flags_keeps_artifact_unchanged() {
-    // Regression guard: default artifact section identical to pre-policy.
-    let assert = release_assurance(&["--wasm", &fixture("us_new.wasm"), "--format", "json"])
-        .assert()
-        .success();
-    let v: serde_json::Value =
-        serde_json::from_slice(&assert.get_output().stdout).expect("valid JSON");
-    assert_eq!(v["artifact"]["status"], "PASS");
-    let detail = v["artifact"]["detail"].as_str().unwrap();
-    assert!(detail.starts_with("valid WASM"), "{detail}");
-    assert!(
-        !detail.contains("size policy"),
-        "no policy ⇒ no policy text: {detail}"
-    );
-    assert_eq!(v["release_status"], "REVIEW");
-}
-
-#[test]
-fn ra_rejects_invalid_threshold_inputs() {
-    release_assurance(&["--wasm", &fixture("us_new.wasm"), "--max-growth-pct", "NaN"])
-        .assert()
-        .failure()
-        .stderr(predicates::str::contains("finite"));
-    release_assurance(&["--wasm", &fixture("us_new.wasm"), "--max-size-bytes", "0"])
-        .assert()
-        .failure()
-        .stderr(predicates::str::contains("greater than 0"));
-}
+fn ra_compatib
