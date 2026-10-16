@@ -8,7 +8,7 @@
 use sdkt_wasm::ContractSpec;
 
 use crate::auth::AuthMode;
-use crate::case::FuzzCase;
+use crate::case::{FunctionCall, FuzzCase};
 use crate::environment::Environment;
 use crate::minimizer::Minimization;
 use crate::mutation::Mutation;
@@ -41,21 +41,34 @@ pub struct Finding {
     /// Deterministic case identity.
     pub identity: CaseIdentity,
     /// The case exactly as executed (post-minimization when minimized).
+    ///
+    /// For single-step findings this is the canonical input. For multi-step
+    /// sequence findings `case` carries the first step (contract identity and
+    /// case_id); use [`Finding::steps`] to obtain the full executed sequence.
     pub case: FuzzCase,
+    /// Full executed step sequence (post-minimization when minimized).
+    ///
+    /// Always non-empty. For single-step findings this is `vec![case.call]`.
+    /// For sequence findings this is every step in execution order; the oracle
+    /// classified the **final** step's observation, which is recorded in
+    /// [`Finding::observation`].
+    pub steps: Vec<FunctionCall>,
     /// The mutation that produced the case, if any.
     pub mutation: Option<Mutation>,
     /// Environment the case ran under.
     pub environment: Environment,
     /// Declared expectation that was violated.
     pub expected: Expected,
-    /// What actually happened.
+    /// What actually happened (final step's observation for sequences).
     pub observation: Observation,
     /// Minimization result (identity when nothing was reduced).
     pub minimization: Minimization,
 }
 
 impl Finding {
-    /// Build an (unminimized) finding from a classified observation.
+    /// Build an (unminimized) single-step finding from a classified
+    /// observation. For sequence findings, build via struct literal in the
+    /// campaign so the full step list is available.
     #[allow(clippy::too_many_arguments)]
     pub fn new(
         reason_code: ReasonCode,
@@ -75,11 +88,13 @@ impl Finding {
             operator: mutation.as_ref().map(|m| m.operator.name().to_string()),
             auth_mode: auth_mode.name().to_string(),
         };
-        let minimization = Minimization::not_attempted(&case);
+        let steps = vec![case.call.clone()];
+        let minimization = Minimization::not_attempted_for_steps(&steps);
         Self {
             reason_code,
             identity,
             case,
+            steps,
             mutation,
             environment,
             expected,

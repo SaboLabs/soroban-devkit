@@ -58,8 +58,12 @@ pub struct Minimization {
 
 impl Minimization {
     /// Identity result for cases where minimization was not run.
-    pub fn not_attempted(case: &crate::case::FuzzCase) -> Self {
-        let steps = std::slice::from_ref(&case.call);
+    ///
+    /// Complexity is computed over `steps` so that multi-step sequence
+    /// findings report the correct (full-sequence) complexity rather than
+    /// the single-call weight. Single-step callers pass a one-element slice;
+    /// the result is unchanged from the previous behaviour.
+    pub fn not_attempted_for_steps(steps: &[FunctionCall]) -> Self {
         Self {
             attempted: false,
             strategy: "deterministically minimized under the configured strategy",
@@ -68,6 +72,13 @@ impl Minimization {
             preserved: false,
             reductions: Vec::new(),
         }
+    }
+
+    /// Identity result for a single-step case where minimization was not run.
+    ///
+    /// Convenience wrapper over [`Minimization::not_attempted_for_steps`].
+    pub fn not_attempted(case: &crate::case::FuzzCase) -> Self {
+        Self::not_attempted_for_steps(std::slice::from_ref(&case.call))
     }
 }
 

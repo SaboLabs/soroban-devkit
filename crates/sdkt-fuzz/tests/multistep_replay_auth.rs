@@ -68,7 +68,7 @@ fn artifact_for(mode: AuthMode, expected_return: u32) -> FindingArtifact {
         other => panic!("expected a finding under {mode:?}, got {other:?}"),
     };
     let case = exec.case("seq", steps[0].clone(), Vec::new());
-    let finding = Finding::new(
+    let mut finding = Finding::new(
         reason,
         case,
         None,
@@ -78,7 +78,10 @@ fn artifact_for(mode: AuthMode, expected_return: u32) -> FindingArtifact {
         exec.wasm_hash(),
         mode,
     );
-    FindingArtifact::from_finding(&finding, campaign_config(), &steps, AUTH_WASM)
+    // Override steps with the full sequence so Finding.steps is consistent
+    // with Finding.observation (the final-step observation).
+    finding.steps = steps.clone();
+    FindingArtifact::from_finding(&finding, campaign_config(), &finding.steps, AUTH_WASM)
 }
 
 use sdkt_fuzz::Classification;

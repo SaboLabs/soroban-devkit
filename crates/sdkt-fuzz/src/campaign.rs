@@ -369,6 +369,7 @@ fn run_campaign_inner(
                     reason_code: reason,
                     identity,
                     case: executor.case(&case_id, steps[0].clone(), Vec::new()),
+                    steps: steps.clone(),
                     mutation: mutation_record,
                     environment: input.environment.clone(),
                     expected,
@@ -378,7 +379,7 @@ fn run_campaign_inner(
                 artifacts.push(FindingArtifact::from_finding(
                     &finding,
                     artifact_config.clone(),
-                    &steps,
+                    &finding.steps,
                     &input.wasm,
                 ));
                 result.findings.push(finding);

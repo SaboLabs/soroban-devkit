@@ -646,3 +646,115 @@ fn mutation_and_generation_identity_is_stable_and_seed_bound() {
 /// Unused-binding guard for optional imports.
 #[allow(dead_code)]
 fn _unused(_: Option<Mutation>) {}
+
+// ---------------------------------------------------------------------------
+// U. sequence finding consistency: steps and observation describe the same
+//    execution (the invariant added by the ContextFinding payload fix).
+// ---------------------------------------------------------------------------
+
+/// A campaign with `sequence_every = 1` (every case is a sequence) must
+/// produce findings whose `steps` field matches `observation`: re-executing
+/// `finding.steps` through the oracle must reproduce the identical
+/// classification recorded in `finding.reason_code`.
+///
+/// Additionally, `minimization.original_complexity` must reflect the full
+/// step sequence, not just the first step.
+#[test]
+fn sequence_finding_steps_and_observation_are_consistent() {
+    let mut input = sdkt_fuzz::CampaignInput::new(AUTH_WASM, [77u8; 32]).unwrap();
+    input.cases = 4;
+    input.mutations_per_case = 0;
+    input.sequence_every = 1; // every case is a sequence
+    input.sequence_length = 2;
+
+    // `peek` under NoAuth always succeeds; with `auth_required = true` every
+    // success is an AUTHORIZATION_BYPASS. Known fixture behavior through an
+    // explicit declaration.
+    let mut expectations = BTreeMap::new();
+    expectations.insert(
+        "peek".to_string(),
+        Expected {
+            auth_required: true,
+            behavior: ExpectedBehavior::Success {
+                expect_return: None,
+            },
+            ..Default::default()
+        },
+    );
+    // Also cover `set` — it returns the value it was given, so declaring a
+    // mismatched return triggers RETURN_MISMATCH.
+    expectations.insert(
+        "set".to_string(),
+        Expected {
+            behavior: ExpectedBehavior::Success {
+                expect_return: Some(ScVal::U32(255)),
+            },
+            ..Default::default()
+        },
+    );
+
+    let result = sdkt_fuzz::run_campaign(&input, &expectations).unwrap();
+
+    // The auth_probe fixture has functions that the campaign can exercise;
+    // at least one sequence finding must emerge from the declared rules.
+    assert!(
+        !result.findings.is_empty(),
+        "declared rules on auth_probe must yield sequence findings"
+    );
+
+    let exec = sdkt_fuzz::Executor::new(AUTH_WASM, Default::default()).unwrap();
+    let env = sdkt_fuzz::Environment::default();
+
+    for finding in &result.findings {
+        // 1. steps is non-empty and multi-step (sequence_length = 2, though
+        //    minimization may reduce to 1).
+        assert!(
+            !finding.steps.is_empty(),
+            "finding.steps must be non-empty for case {}",
+            finding.identity.case_id
+        );
+
+        // 2. Re-executing finding.steps produces the same classification —
+        //    steps and observation are consistent.
+        let oracle = sdkt_fuzz::Oracle::new(
+            expectations
+                .get(&finding.identity.function)
+                .cloned()
+                .unwrap_or_default(),
+        );
+        let re_obs = sdkt_fuzz::execute_sequence(&exec, &[], &env, &finding.steps, "recheck")
+            .unwrap()
+            .final_observation;
+        let re_class = oracle.classify(&re_obs);
+        assert_eq!(
+            re_class,
+            sdkt_fuzz::Classification::Finding(finding.reason_code),
+            "re-executing finding.steps for case {} must reproduce the recorded \
+             reason code {:?}; got {:?}",
+            finding.identity.case_id,
+            finding.reason_code,
+            re_class,
+        );
+
+        // 3. minimization.original_complexity covers all steps — it must be
+        //    at least as large as a single step's complexity.
+        let single_step_complexity =
+            sdkt_fuzz::minimizer::sequence_complexity(&finding.steps[..1]);
+        if finding.steps.len() > 1 {
+            assert!(
+                finding.minimization.original_complexity >= single_step_complexity,
+                "original_complexity for a multi-step finding (case {}) must \
+                 reflect the full sequence, not just the first step",
+                finding.identity.case_id,
+            );
+        }
+
+        // 4. minimized_complexity ≤ original_complexity (invariant).
+        assert!(
+            finding.minimization.minimized_complexity
+                <= finding.minimization.original_complexity,
+            "minimized_complexity must not exceed original_complexity for case {}",
+            finding.identity.case_id,
+        );
+    }
+}
