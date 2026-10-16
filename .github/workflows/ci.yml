@@ -105,6 +105,8 @@ jobs:
         fi
     - name: Offline self-test (checksum standalone plus embedded fallback)
       run: bash install.sh --selftest
+    - name: Windows detection self-test (no network)
+      run: bash install.sh --selftest --windows-detect
 
   # ARM64 Linux is a supported release target (see release.yml matrix), so the
   # installer must work on that architecture and the two must not drift apart.
@@ -117,6 +119,8 @@ jobs:
       run: bash -n install.sh
     - name: Offline self-test on aarch64
       run: bash install.sh --selftest
+    - name: Windows detection self-test on aarch64
+      run: bash install.sh --selftest --windows-detect
     - name: Release matrix and installer agree on aarch64 target
       run: |
         TARGET="aarch64-unknown-linux-gnu"

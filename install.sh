@@ -10,6 +10,7 @@
 # ./install.sh # or run locally
 # SDKT_INSTALL_DIR=/usr/local/bin ./install.sh # custom destination
 # bash install.sh --selftest # offline regression test (no network)
+# bash install.sh --selftest-windows # offline Windows detection test (no network)
 #
 # Environment variables (both optional):
 #   SDKT_VERSION       Release tag to install, exactly as published (e.g. v2.7.0).
@@ -52,6 +53,37 @@ resolve_checksum_to() {
     && [[ -s "$out" ]] \
     && return 0
   return 1
+}
+
+# detect_target <os> <arch>
+# Pure OS/arch -> release target mapping. Prints the target triple on stdout
+# and returns 0 on success, or returns non-zero for unsupported combinations.
+# Kept pure so the Windows detection logic can be exercised offline.
+detect_target() {
+  local os="$1" arch="$2"
+  case "$os" in
+    Linux)
+      case "$arch" in
+        x86_64)  echo "x86_64-unknown-linux-gnu" ;;
+        aarch64) echo "aarch64-unknown-linux-gnu" ;;
+        *) return 1 ;;
+      esac
+      ;;
+    Darwin)
+      case "$arch" in
+        x86_64) echo "x86_64-apple-darwin" ;;
+        arm64)  echo "aarch64-apple-darwin" ;;
+        *) return 1 ;;
+      esac
+      ;;
+    MINGW*|MSYS*|CYGWIN*|Windows_NT)
+      case "$arch" in
+        x86_64|amd64) echo "x86_64-pc-windows-msvc" ;;
+        *) return 1 ;;
+      esac
+      ;;
+    *) return 1 ;;
+  esac
 }
 
 # verify_binary <tarball> <sha256_path>
@@ -98,6 +130,31 @@ selftest() {
   exit 0
 }
 
+# ---------------------------------------------------------------------------
+# Offline Windows-detection self-test (no network, no real install)
+# ---------------------------------------------------------------------------
+selftest_windows() {
+  local cases=(
+    "MINGW64_NT-10.0-19045 x86_64 x86_64-pc-windows-msvc"
+    "MSYS_NT-10.0-19045 x86_64 x86_64-pc-windows-msvc"
+    "CYGWIN_NT-10.0-19045 x86_64 x86_64-pc-windows-msvc"
+    "Windows_NT x86_64 x86_64-pc-windows-msvc"
+    "Windows_NT amd64 x86_64-pc-windows-msvc"
+  )
+  local c os arch want got
+  for c in "${cases[@]}"; do
+    read -r os arch want <<<"$c"
+    got="$(detect_target "$os" "$arch")" \
+      || err "SELFTEST WINDOWS: detect_target '$os' '$arch' returned non-zero"
+    if [[ "$got" != "$want" ]]; then
+      err "SELFTEST WINDOWS: detect_target '$os' '$arch' = '$got', want '$want'"
+    fi
+  done
+  info "SELFTEST WINDOWS (Git Bash / MSYS / Cygwin / Windows_NT detection) PASS"
+  info "ALL SELFTESTS PASS"
+  exit 0
+}
+
 if [[ "${1:-}" == "--selftest" ]]; then
  # Pick a checksum tool for the offline test before any network logic.
   if command -v sha256sum >/dev/null 2>&1; then
@@ -110,41 +167,47 @@ if [[ "${1:-}" == "--selftest" ]]; then
   selftest
 fi
 
+if [[ "${1:-}" == "--selftest-windows" ]]; then
+  selftest_windows
+fi
+
 # ---------------------------------------------------------------------------
 # 1. Detect platform (OS + architecture)
 # ---------------------------------------------------------------------------
 OS="$(uname -s)"
 ARCH="$(uname -m)"
 
-TARGET=""
+TARGET="$(detect_target "$OS" "$ARCH")" || {
+  case "$OS" in
+    Linux)  err "unsupported architecture '$ARCH' on Linux. Supported: x86_64, aarch64." ;;
+    Darwin) err "unsupported architecture '$ARCH' on macOS. Supported: x86_64, arm64 (aarch64)." ;;
+    MINGW*|MSYS*|CYGWIN*|Windows_NT)
+      err "unsupported architecture '$ARCH' on Windows. Supported: x86_64, amd64." ;;
+    *) err "unsupported operating system '$OS'. Supported: Linux, macOS, Windows (Git Bash / MSYS / Cygwin)." ;;
+  esac
+}
+
+IS_WINDOWS=0
 case "$OS" in
-  Linux)
-    case "$ARCH" in
-      x86_64)  TARGET="x86_64-unknown-linux-gnu" ;;
-      aarch64) TARGET="aarch64-unknown-linux-gnu" ;;
-      *) err "unsupported architecture '$ARCH' on Linux. Supported: x86_64, aarch64." ;;
-    esac
-    ;;
-  Darwin)
-    case "$ARCH" in
-      x86_64)  TARGET="x86_64-apple-darwin" ;;
-      arm64)   TARGET="aarch64-apple-darwin" ;;
-      *) err "unsupported architecture '$ARCH' on macOS. Supported: x86_64, arm64 (aarch64)." ;;
-    esac
-    ;;
-  *) err "unsupported operating system '$OS'. Supported: Linux, macOS." ;;
+  MINGW*|MSYS*|CYGWIN*|Windows_NT) IS_WINDOWS=1 ;;
 esac
 
-TARBALL="sdkt-${TARGET}.tar.gz"
+if [[ "$IS_WINDOWS" -eq 1 ]]; then
+  ARCHIVE="sdkt-${TARGET}.zip"
+else
+  ARCHIVE="sdkt-${TARGET}.tar.gz"
+fi
 CHECKSUM="sdkt-${TARGET}.sha256"
 
-info "detected platform: $OS / $ARCH  ->  asset $TARBALL"
+info "detected platform: $OS / $ARCH  ->  asset $ARCHIVE"
 
 # ---------------------------------------------------------------------------
 # 2. Resolve the latest stable release tag
 # ---------------------------------------------------------------------------
 command -v curl >/dev/null 2>&1 || err "curl is required but not found in PATH."
-command -v tar  >/dev/null 2>&1 || err "tar is required but not found in PATH."
+if [[ "$IS_WINDOWS" -eq 0 ]]; then
+  command -v tar  >/dev/null 2>&1 || err "tar is required but not found in PATH."
+fi
 if command -v sha256sum >/dev/null 2>&1; then
   SHASUM="sha256sum"
 elif command -v shasum >/dev/null 2>&1; then
@@ -177,22 +240,22 @@ BASE="https://github.com/${REPO}/releases/download/${VERSION}"
 TMP="$(mktemp -d)"
 trap 'rm -rf "$TMP"' EXIT
 
-info "downloading $TARBALL ..."
+info "downloading $ARCHIVE ..."
 # Distinguish "this release has no asset for your platform" from a transport
 # failure. Older tags predate a platform's release asset, and a bare curl 404
 # reads as a broken installer rather than a missing (but supported) target.
-if ! curl -fsSL "$BASE/$TARBALL" -o "$TMP/$TARBALL"; then
+if ! curl -fsSL "$BASE/$ARCHIVE" -o "$TMP/$ARCHIVE"; then
   if curl -fsSL -o /dev/null \
     "https://api.github.com/repos/${REPO}/releases/tags/${VERSION}" 2>/dev/null \
-    && ! curl -fsSL -o /dev/null -I "$BASE/$TARBALL" 2>/dev/null; then
-    err "release ${VERSION} has no ${TARBALL} asset for this platform.
+    && ! curl -fsSL -o /dev/null -I "$BASE/$ARCHIVE" 2>/dev/null; then
+    err "release ${VERSION} has no ${ARCHIVE} asset for this platform.
        Build from source instead:
          git clone https://github.com/${REPO}
          cd soroban-devkit && cargo install --path crates/sdkt-cli
        Or install an older/newer release that ships this target:
          SDKT_VERSION=<tag> bash install.sh"
   fi
-  err "failed to download $TARBALL"
+  err "failed to download $ARCHIVE"
 fi
 
 # Prefer the standalone release checksum asset; fall back to the embedded
@@ -200,10 +263,17 @@ fi
 # some releases only ship the archive). Verification is never skipped.
 if curl -fsSL "$BASE/$CHECKSUM" -o "$TMP/$CHECKSUM" 2>/dev/null; then
   info "using standalone checksum asset: $CHECKSUM"
-  resolve_checksum_to "$TMP/$TARBALL" "$TMP/$CHECKSUM" "$TMP/sdkt.sha256"
+  if [[ "$IS_WINDOWS" -eq 1 ]]; then
+    cp "$TMP/$CHECKSUM" "$TMP/sdkt.sha256"
+  else
+    resolve_checksum_to "$TMP/$ARCHIVE" "$TMP/$CHECKSUM" "$TMP/sdkt.sha256"
+  fi
 else
+  if [[ "$IS_WINDOWS" -eq 1 ]]; then
+    err "no $CHECKSUM asset — cannot verify the Windows ZIP without a checksum"
+  fi
   info "standalone $CHECKSUM not found; using embedded sdkt.sha256 from tarball"
-  resolve_checksum_to "$TMP/$TARBALL" "$TMP/missing.sha256" "$TMP/sdkt.sha256" \
+  resolve_checksum_to "$TMP/$ARCHIVE" "$TMP/missing.sha256" "$TMP/sdkt.sha256" \
     || err "no $CHECKSUM asset and tarball has no embedded sdkt.sha256 — cannot verify"
 fi
 
@@ -211,15 +281,41 @@ fi
 # 4. Verify checksum BEFORE touching the installed binary
 # ---------------------------------------------------------------------------
 info "verifying checksum ($SHASUM)..."
-verify_binary "$TMP/$TARBALL" "$TMP/sdkt.sha256" \
-  || err "checksum verification FAILED — aborting install."
+if [[ "$IS_WINDOWS" -eq 1 ]]; then
+  ( cd "$TMP"
+    # Extract just sdkt.exe from the ZIP, then verify it against sdkt.sha256.
+    if command -v unzip >/dev/null 2>&1; then
+      unzip -q "$ARCHIVE" sdkt.exe
+    elif command -v powershell.exe >/dev/null 2>&1; then
+      powershell.exe -NoProfile -Command \
+        "Expand-Archive -Force -LiteralPath '$(cygpath -w "$TMP/$ARCHIVE" 2>/dev/null || echo "$TMP/$ARCHIVE")' -DestinationPath '$(cygpath -w "$TMP" 2>/dev/null || echo "$TMP")'" \
+        >/dev/null
+    elif command -v pwsh >/dev/null 2>&1; then
+      pwsh -NoProfile -Command \
+        "Expand-Archive -Force -LiteralPath '$TMP/$ARCHIVE' -DestinationPath '$TMP'" \
+        >/dev/null
+    else
+      err "neither unzip nor PowerShell (powershell.exe/pwsh) is available to extract the Windows ZIP."
+    fi
+    # The release checksum file references 'sdkt.exe'; verify in-place.
+    $SHASUM -c "$(basename "$TMP/sdkt.sha256")" ) \
+    || err "checksum verification FAILED — aborting install."
+else
+  verify_binary "$TMP/$ARCHIVE" "$TMP/sdkt.sha256" \
+    || err "checksum verification FAILED — aborting install."
+fi
 
 # ---------------------------------------------------------------------------
 # 5. Install
 # ---------------------------------------------------------------------------
 mkdir -p "$INSTALL_DIR"
-install -m 0755 "$TMP/sdkt" "$INSTALL_DIR/$BINARY_NAME"
-info "installed $BINARY_NAME to $INSTALL_DIR/$BINARY_NAME"
+if [[ "$IS_WINDOWS" -eq 1 ]]; then
+  install -m 0755 "$TMP/sdkt.exe" "$INSTALL_DIR/${BINARY_NAME}.exe"
+  info "installed ${BINARY_NAME}.exe to $INSTALL_DIR/${BINARY_NAME}.exe"
+else
+  install -m 0755 "$TMP/sdkt" "$INSTALL_DIR/$BINARY_NAME"
+  info "installed $BINARY_NAME to $INSTALL_DIR/$BINARY_NAME"
+fi
 
 # ---------------------------------------------------------------------------
 # 6. PATH guidance
