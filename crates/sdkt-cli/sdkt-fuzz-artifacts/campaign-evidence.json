@@ -1,0 +1,36 @@
+{
+  "campaign_completed": true,
+  "config": {
+    "wasm_sha256": "551c5a9c7fd4c4a71e57e9c8a0ece1e7bd506ea065993c63db2dc35516406775",
+    "seed_hex": "0000000000000000000000000000000000000000000000000000000000000000",
+    "cases": 2,
+    "function": "hello",
+    "sequence_length": 2,
+    "sequence_every": 0,
+    "mutations_per_case": 2,
+    "generation": {
+      "max_depth": 3,
+      "max_vec_len": 4,
+      "max_byte_len": 32,
+      "max_map_entries": 4
+    },
+    "environment": {
+      "sequence_number": 1000000,
+      "timestamp": 0,
+      "budget": {
+        "kind": "default"
+      }
+    },
+    "auth_modes": [
+      "no_auth"
+    ]
+  },
+  "case_count": 2,
+  "passed": 2,
+  "expected_errors": 0,
+  "findings": [],
+  "minimized_findings": 0,
+  "artifacts_available": false,
+  "replay": {},
+  "deterministic": true
+}

@@ -171,7 +171,7 @@ fn storage_diff_cli_shell_quoting_regression_test() {
     let injection_key = format!("BKEYB==; touch {pwn_file} space $(id)");
 
     create_snapshot_file(&old_path, CONTRACT, &[(&injection_key, 50_000)]);
-    create_snapshot_file(&new_path, CONTRACT, &[]);
+    create_snapshot_file(&new_path, CONTRACT, &[(&injection_key, 3_000)]);
 
     let mut cmd = sdkt();
     cmd.arg("storage")
@@ -260,4 +260,55 @@ fn storage_diff_cli_alias_diff_works() {
     let stdout = String::from_utf8(assert.get_output().stdout.clone()).unwrap();
 
     assert!(stdout.contains("Extension Plan"));
+}
+
+fn run_extend_plan(old: &[(&str, u32)], new: &[(&str, u32)]) -> String {
+    let dir = tempdir().unwrap();
+    let old_path = dir.path().join("old.json");
+    let new_path = dir.path().join("new.json");
+    create_snapshot_file(&old_path, CONTRACT, old);
+    create_snapshot_file(&new_path, CONTRACT, new);
+    let assert = sdkt()
+        .args(["storage", "storage-diff", "--old"])
+        .arg(&old_path)
+        .arg("--new")
+        .arg(&new_path)
+        .arg("--extend-plan")
+        .assert()
+        .success();
+    String::from_utf8(assert.get_output().stdout.clone()).unwrap()
+}
+
+#[test]
+fn extend_plan_removed_only_emits_no_extend_command() {
+    let out = run_extend_plan(&[("keyA==", 50_000)], &[]);
+    assert!(!out.contains("sdkt storage extend"), "{out}");
+    assert!(!out.contains("Ready-to-run:"), "{out}");
+    assert!(out.contains("sdkt storage restore"), "{out}");
+    assert!(out.contains("envelope"), "{out}");
+}
+
+#[test]
+fn extend_plan_mixed_separates_classes() {
+    let out = run_extend_plan(
+        &[("keyGone==", 50_000), ("keySoon==", 50_000)],
+        &[("keySoon==", 3_000)],
+    );
+    let cmd = out
+        .lines()
+        .find(|l| l.contains("sdkt storage extend"))
+        .expect("extend command for expiring key");
+    assert!(cmd.contains("--key 'keySoon=='"), "{cmd}");
+    assert!(!cmd.contains("keyGone"), "{cmd}");
+    assert!(out.contains("Restore keys (1):"), "{out}");
+    assert!(out.contains("sdkt storage restore"), "{out}");
+}
+
+#[test]
+fn extend_plan_expiring_only_output_is_unchanged() {
+    let out = run_extend_plan(&[("keyA==", 50_000)], &[("keyA==", 3_000)]);
+    assert!(out.contains("  Keys (1):\n    #1 keyA==\n"), "{out}");
+    assert!(out.contains("Ready-to-run:"), "{out}");
+    assert!(!out.contains("restore"), "{out}");
+    assert!(!out.contains("Restore"), "{out}");
 }

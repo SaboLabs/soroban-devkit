@@ -267,6 +267,16 @@ pub struct ExtendPlan {
     /// Ledger keys (base64 XDR) that should be included in the extend footprint.
     /// Empty when there is nothing to remediate.
     pub keys: Vec<String>,
+    /// Subset of `keys` that are `ExpiringSoon`: still live, so
+    /// `sdkt storage extend` can remediate them.
+    #[serde(default)]
+    pub extend_keys: Vec<String>,
+    /// Subset of `keys` that are `Removed` (expired or archived).
+    /// `ExtendFootprintTtl` cannot bring these back; they need
+    /// `sdkt storage restore` with the invocation envelope that failed on
+    /// archived state.
+    #[serde(default)]
+    pub restore_keys: Vec<String>,
     /// Suggested value for `--ledgers` (relative TTL extension).
     ///
     /// When there are actionable entries the suggestion is
@@ -308,6 +318,8 @@ pub fn derive_extend_plan(diff: &SnapshotDiff) -> ExtendPlan {
         return ExtendPlan {
             contract_id: diff.contract_id.clone(),
             keys: vec![],
+            extend_keys: vec![],
+            restore_keys: vec![],
             suggested_ledgers: DEFAULT_SUGGESTED_LEDGERS,
             suggested_ledgers_reason: "No actionable entries; nothing to extend.".into(),
         };
@@ -315,6 +327,16 @@ pub fn derive_extend_plan(diff: &SnapshotDiff) -> ExtendPlan {
 
     // Collect the keys for the plan.
     let keys: Vec<String> = actionable.iter().map(|e| e.key.clone()).collect();
+    let extend_keys: Vec<String> = actionable
+        .iter()
+        .filter(|e| e.status == DiffStatus::ExpiringSoon)
+        .map(|e| e.key.clone())
+        .collect();
+    let restore_keys: Vec<String> = actionable
+        .iter()
+        .filter(|e| e.status == DiffStatus::Removed)
+        .map(|e| e.key.clone())
+        .collect();
 
     // Derive suggested ledgers from the minimum remaining TTL of expiring-soon
     // entries.  Removed entries have no remaining TTL and are excluded.
@@ -329,7 +351,7 @@ pub fn derive_extend_plan(diff: &SnapshotDiff) -> ExtendPlan {
         })
         .min();
 
-    let (suggested_ledgers, suggested_ledgers_reason) = match min_remaining {
+    let (suggested_ledgers, mut suggested_ledgers_reason) = match min_remaining {
         Some(min_ttl) => {
             let suggested = min_ttl.saturating_add(DEFAULT_SUGGESTED_LEDGERS);
             (
@@ -345,15 +367,29 @@ pub fn derive_extend_plan(diff: &SnapshotDiff) -> ExtendPlan {
             DEFAULT_SUGGESTED_LEDGERS,
             format!(
                 "All actionable entries are removed (no remaining TTL); \
-                 defaulting to {} ledgers (~30 days).",
+                 defaulting to {} ledgers (~30 days). Removed entries cannot be \
+                 extended: restore them with `sdkt storage restore`.",
                 DEFAULT_SUGGESTED_LEDGERS
             ),
         ),
     };
+    if min_remaining.is_some() && !restore_keys.is_empty() {
+        suggested_ledgers_reason.push_str(&format!(
+            " {} removed entr{} excluded from extend: restore with `sdkt storage restore`.",
+            restore_keys.len(),
+            if restore_keys.len() == 1 {
+                "y is"
+            } else {
+                "ies are"
+            }
+        ));
+    }
 
     ExtendPlan {
         contract_id: diff.contract_id.clone(),
         keys,
+        extend_keys,
+        restore_keys,
         suggested_ledgers,
         suggested_ledgers_reason,
     }
@@ -638,11 +674,77 @@ mod tests {
         assert_eq!(plan.keys, vec!["expiring"]);
     }
 
+    fn plan_entry(key: &str, status: DiffStatus, new_ttl: Option<u32>) -> DiffEntry {
+        DiffEntry {
+            key: key.to_string(),
+            label: None,
+            status,
+            old_ttl: Some(50_000),
+            new_ttl,
+        }
+    }
+
+    fn plan_for(entries: Vec<DiffEntry>) -> ExtendPlan {
+        derive_extend_plan(&SnapshotDiff {
+            contract_id: CONTRACT.to_string(),
+            entries,
+        })
+    }
+
+    #[test]
+    fn plan_removed_only_has_no_extend_keys() {
+        let plan = plan_for(vec![plan_entry("gone", DiffStatus::Removed, None)]);
+        assert_eq!(plan.keys, vec!["gone"]);
+        assert!(plan.extend_keys.is_empty());
+        assert_eq!(plan.restore_keys, vec!["gone"]);
+        assert_eq!(plan.suggested_ledgers, DEFAULT_SUGGESTED_LEDGERS);
+        assert!(plan
+            .suggested_ledgers_reason
+            .contains("sdkt storage restore"));
+    }
+
+    #[test]
+    fn plan_mixed_separates_classes() {
+        let plan = plan_for(vec![
+            plan_entry("gone", DiffStatus::Removed, None),
+            plan_entry("soon", DiffStatus::ExpiringSoon, Some(5_000)),
+        ]);
+        assert_eq!(plan.keys, vec!["gone", "soon"]);
+        assert_eq!(plan.extend_keys, vec!["soon"]);
+        assert_eq!(plan.restore_keys, vec!["gone"]);
+        assert_eq!(plan.suggested_ledgers, 5_000 + DEFAULT_SUGGESTED_LEDGERS);
+        assert!(plan
+            .suggested_ledgers_reason
+            .contains("sdkt storage restore"));
+    }
+
+    #[test]
+    fn plan_expiring_only_is_unchanged() {
+        let plan = plan_for(vec![plan_entry(
+            "soon",
+            DiffStatus::ExpiringSoon,
+            Some(5_000),
+        )]);
+        assert_eq!(plan.keys, plan.extend_keys);
+        assert!(plan.restore_keys.is_empty());
+        assert_eq!(
+            plan.suggested_ledgers_reason,
+            format!(
+                "Minimum remaining TTL of expiring entries is 5000 ledgers; \
+                 suggested {} (min_ttl + {} default horizon).",
+                5_000 + DEFAULT_SUGGESTED_LEDGERS,
+                DEFAULT_SUGGESTED_LEDGERS
+            )
+        );
+    }
+
     #[test]
     fn plan_json_has_stable_field_names() {
         let plan = ExtendPlan {
             contract_id: CONTRACT.to_string(),
             keys: vec!["k1".to_string(), "k2".to_string()],
+            extend_keys: vec!["k1".to_string()],
+            restore_keys: vec!["k2".to_string()],
             suggested_ledgers: 518_400,
             suggested_ledgers_reason: "test".to_string(),
         };

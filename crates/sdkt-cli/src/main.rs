@@ -4082,17 +4082,31 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
                         println!();
                         println!("Extension Plan");
                         println!("  Contract:            {}", plan.contract_id);
+                        let mixed = !plan.restore_keys.is_empty();
                         if plan.keys.is_empty() {
                             println!("  Keys:                (none — nothing to remediate)");
-                        } else {
+                        } else if !mixed {
                             println!("  Keys ({}):", plan.keys.len());
                             for (i, k) in plan.keys.iter().enumerate() {
                                 println!("    #{} {}", i + 1, k);
                             }
+                        } else {
+                            if !plan.extend_keys.is_empty() {
+                                println!("  Extend keys ({}):", plan.extend_keys.len());
+                                for (i, k) in plan.extend_keys.iter().enumerate() {
+                                    println!("    #{} {}", i + 1, k);
+                                }
+                            }
+                            println!("  Restore keys ({}):", plan.restore_keys.len());
+                            for (i, k) in plan.restore_keys.iter().enumerate() {
+                                println!("    #{} {}", i + 1, k);
+                            }
                         }
-                        println!("  Suggested --ledgers: {}", plan.suggested_ledgers);
+                        if !mixed || !plan.extend_keys.is_empty() {
+                            println!("  Suggested --ledgers: {}", plan.suggested_ledgers);
+                        }
                         println!("  Reason:              {}", plan.suggested_ledgers_reason);
-                        if !plan.keys.is_empty() {
+                        if !plan.extend_keys.is_empty() {
                             println!();
                             println!("  Ready-to-run:");
                             let mut net_args = String::new();
@@ -4111,7 +4125,7 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
                             }
 
                             let key_args: String = plan
-                                .keys
+                                .extend_keys
                                 .iter()
                                 .map(|k| format!(" --key {}", shell_quote(k)))
                                 .collect::<Vec<_>>()
@@ -4122,6 +4136,19 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
                                 plan.suggested_ledgers,
                                 net_args,
                                 key_args
+                            );
+                        }
+                        if mixed {
+                            println!();
+                            println!("  Restore required (not extendable):");
+                            println!(
+                                "    Removed entries are expired or archived; a TTL extension cannot revive them."
+                            );
+                            println!(
+                                "    Run `sdkt storage restore --envelope <envelope>` with the invocation envelope"
+                            );
+                            println!(
+                                "    that failed on archived state, then re-run the invocation."
                             );
                         }
                     }

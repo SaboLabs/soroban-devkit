@@ -226,6 +226,8 @@ fn extend_plan_json_has_stable_field_names() {
     let plan = ExtendPlan {
         contract_id: CONTRACT.to_string(),
         keys: vec!["k1".to_string(), "k2".to_string()],
+        extend_keys: vec!["k1".to_string()],
+        restore_keys: vec!["k2".to_string()],
         suggested_ledgers: DEFAULT_SUGGESTED_LEDGERS,
         suggested_ledgers_reason: "test".to_string(),
     };
