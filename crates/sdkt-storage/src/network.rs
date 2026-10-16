@@ -41,6 +41,12 @@ pub struct NetworkProfile {
     pub friendbot_url: Option<String>,
     /// Optional: description or notes
     pub description: Option<String>,
+    /// Optional: RPC request timeout in seconds (default: 15)
+    #[serde(default)]
+    pub timeout_secs: Option<u64>,
+    /// Optional: maximum concurrent connections in the pool (default: 100)
+    #[serde(default)]
+    pub pool_max_idle_per_host: Option<usize>,
 }
 
 impl NetworkProfile {
@@ -56,6 +62,8 @@ impl NetworkProfile {
             network_passphrase: network_passphrase.into(),
             friendbot_url: None,
             description: None,
+            timeout_secs: None,
+            pool_max_idle_per_host: None,
         }
     }
 
@@ -68,6 +76,18 @@ impl NetworkProfile {
     /// Set the description.
     pub fn with_description(mut self, desc: impl Into<String>) -> Self {
         self.description = Some(desc.into());
+        self
+    }
+
+    /// Set the RPC request timeout in seconds.
+    pub fn with_timeout(mut self, secs: u64) -> Self {
+        self.timeout_secs = Some(secs);
+        self
+    }
+
+    /// Set the maximum concurrent connections in the pool.
+    pub fn with_pool_max_idle(mut self, max: usize) -> Self {
+        self.pool_max_idle_per_host = Some(max);
         self
     }
 

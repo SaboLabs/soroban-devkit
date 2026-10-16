@@ -185,7 +185,7 @@ sdkt
 ├── init <name>              [--minimal] [--force] [--format]
 
 ├── network
-│   ├── add <name>           [--rpc-url <URL>] [--passphrase <PASS>] [--friendbot <URL>] [--description <TEXT>]
+│   ├── add <name>           [--rpc-url <URL>] [--passphrase <PASS>] [--friendbot <URL>] [--description <TEXT>] [--timeout-secs <SECS>] [--pool-max-idle <N>]
 │   ├── list
 │   ├── show <name>          [--format json|pretty]
 │   ├── check <name>         [--format json|pretty]
@@ -389,6 +389,62 @@ require the local WASM bytes.
 
 ## Network Profiles
 
+A saved network profile carries its RPC endpoint, network passphrase, and optional
+connection policy (`--timeout-secs`, `--pool-max-idle`) alongside the endpoint.
+
+### Creating a profile
+
+`sdkt network add <name> --rpc-url <URL> --passphrase <PASS>` saves a profile.
+The optional `--timeout-secs <SECS>` and `--pool-max-idle <N>` flags record
+per-endpoint connection policy:
+
+| Flag | Meaning | Default |
+|------|---------|---------|
+| `--timeout-secs <SECS>` | RPC request timeout in seconds | 15 |
+| `--pool-max-idle <N>` | Maximum concurrent idle connections per host | 100 |
+
+These are stored in the profile JSON and applied whenever the profile is used
+by any network-aware command.
+
+### Showing a profile
+
+`sdkt network show <name>` prints the saved values, including timeout and pool
+settings when they were set:
+
+```
+Network profile: slow
+  RPC URL:         https://slow.example.invalid
+  Passphrase:      Slow Testnet
+  Timeout (secs):  60
+  Pool max idle:   50
+```
+
+With `--format json` the fields `timeout_secs` and `pool_max_idle_per_host`
+are included (nullable when unset).
+
+### Backward compatibility
+
+Profiles written before this change (without `timeout_secs` / `pool_max_idle_per_host`)
+load without error and behave exactly as before — missing fields resolve to
+the built-in defaults (15 s timeout, 100 connections).
+
+### Resolution precedence
+
+Every RPC command accepts `--network-profile <NAME>`, `--rpc-url <URL>`, and
+`--network-passphrase <PASSPHRASE>`. Connection-policy values follow the same
+chain:
+
+```
+explicit --timeout-secs / --pool-max-idle
+        > --network-profile <NAME> (timeout_secs / pool_max_idle_per_host)
+                > .sdkt.toml [network] (timeout_secs / pool_max_idle_per_host)
+                        > NetworkConfig::default()   (15 s, 100 connections)
+```
+
+Explicit CLI flags always override a profile's values, and a profile always
+overrides `.sdkt.toml`. Commands invoked without these flags behave exactly
+as before.
+
 ### Checking an RPC profile
 
 `sdkt network check <name> [--format json]` performs read-only RPC checks against
@@ -417,15 +473,6 @@ flags for selecting / overriding the network endpoint:
 | `--network-profile <NAME>` | Use a saved profile (see `sdkt network`). Loads its RPC URL + passphrase. |
 | `--rpc-url <URL>` | Explicit RPC endpoint; overrides the profile and `.sdkt.toml`. |
 | `--network-passphrase <PASSPHRASE>` | Explicit network passphrase; overrides the profile and `.sdkt.toml`. |
-
-**Resolution precedence (highest wins):**
-
-```
-explicit --rpc-url / --network-passphrase
-        > --network-profile <NAME>
-                > .sdkt.toml [network]
-                        > NetworkConfig::default()   (testnet)
-```
 
 `tx sign` is excluded — it is offline signing and takes only `--network` for the
 signature hash. Commands invoked without these flags behave exactly as before.

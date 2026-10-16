@@ -34,6 +34,12 @@ pub(crate) enum NetworkAction {
         /// Optional human-readable description
         #[arg(short, long)]
         description: Option<String>,
+        /// Optional RPC request timeout in seconds (default: 15)
+        #[arg(long, value_name = "SECS")]
+        timeout_secs: Option<u64>,
+        /// Optional maximum concurrent connections in the pool (default: 100)
+        #[arg(long, value_name = "N")]
+        pool_max_idle: Option<usize>,
         /// Output format (pretty or json)
         #[arg(short, long, default_value = "pretty")]
         format: String,
@@ -115,6 +121,12 @@ pub(crate) fn apply_profile_overrides(
     if let Some(p) = profile {
         cfg.rpc_url = p.rpc_url;
         cfg.passphrase = p.network_passphrase;
+        if let Some(timeout) = p.timeout_secs {
+            cfg.timeout_secs = Some(timeout);
+        }
+        if let Some(pool) = p.pool_max_idle_per_host {
+            cfg.pool_max_idle_per_host = Some(pool);
+        }
     }
 
     if let Some(url) = rpc_url {
@@ -493,6 +505,8 @@ pub(crate) async fn run_network_action(
             passphrase,
             friendbot,
             description,
+            timeout_secs,
+            pool_max_idle,
             format,
         } => {
             let fmt = crate::parse_format_str(&format);
@@ -502,6 +516,12 @@ pub(crate) async fn run_network_action(
             }
             if let Some(desc) = description {
                 profile = profile.with_description(desc);
+            }
+            if let Some(secs) = timeout_secs {
+                profile = profile.with_timeout(secs);
+            }
+            if let Some(max) = pool_max_idle {
+                profile = profile.with_pool_max_idle(max);
             }
             store.add(profile)?;
             if fmt == OutputFormat::Json {
@@ -538,6 +558,12 @@ pub(crate) async fn run_network_action(
                 }
                 if let Some(desc) = &profile.description {
                     println!("  Description:     {}", desc);
+                }
+                if let Some(timeout) = profile.timeout_secs {
+                    println!("  Timeout (secs):  {}", timeout);
+                }
+                if let Some(pool) = profile.pool_max_idle_per_host {
+                    println!("  Pool max idle:   {}", pool);
                 }
             }
         }
@@ -642,6 +668,18 @@ mod tests {
         NetworkProfile::new(name, url, pass)
     }
 
+    fn profile_with_timeout_pool(
+        name: &str,
+        url: &str,
+        pass: &str,
+        timeout: u64,
+        pool: usize,
+    ) -> NetworkProfile {
+        NetworkProfile::new(name, url, pass)
+            .with_timeout(timeout)
+            .with_pool_max_idle(pool)
+    }
+
     #[test]
     fn built_in_default_when_nothing_set() {
         let cfg = apply_profile_overrides(base_testnet(), None, None, None);
@@ -655,6 +693,24 @@ mod tests {
         let cfg = apply_profile_overrides(base_testnet(), Some(p), None, None);
         assert_eq!(cfg.rpc_url, "http://127.0.0.1:8000");
         assert_eq!(cfg.passphrase, "Standalone");
+    }
+
+    #[test]
+    fn profile_with_timeout_pool_overrides_defaults() {
+        let p = profile_with_timeout_pool("slow", "http://slow.example", "Slow Net", 60, 50);
+        let cfg = apply_profile_overrides(base_testnet(), Some(p), None, None);
+        assert_eq!(cfg.rpc_url, "http://slow.example");
+        assert_eq!(cfg.passphrase, "Slow Net");
+        assert_eq!(cfg.timeout_secs, Some(60));
+        assert_eq!(cfg.pool_max_idle_per_host, Some(50));
+    }
+
+    #[test]
+    fn profile_without_timeout_pool_keeps_defaults() {
+        let p = profile("noopts", "http://noopts.example", "No Opts");
+        let cfg = apply_profile_overrides(base_testnet(), Some(p), None, None);
+        assert_eq!(cfg.timeout_secs, Some(15));
+        assert_eq!(cfg.pool_max_idle_per_host, Some(100));
     }
 
     #[test]
