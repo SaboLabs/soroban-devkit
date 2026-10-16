@@ -103,7 +103,16 @@ impl SorobanRpcClient {
                     };
 
                     if let Some(error) = rpc_res.error {
-                        return Err(RpcError::Rpc(error.message));
+                        // JSON-RPC 2.0 requires `code`; a node that omits it
+                        // still gets its message surfaced as before.
+                        return Err(match error.code {
+                            Some(code) => RpcError::JsonRpc {
+                                code,
+                                message: error.message,
+                                data: error.data,
+                            },
+                            None => RpcError::Rpc(error.message),
+                        });
                     }
 
                     return rpc_res.result.ok_or_else(|| {
@@ -233,7 +242,11 @@ struct JsonRpcResponse<T> {
 
 #[derive(Debug, Deserialize)]
 struct JsonRpcError {
+    #[serde(default)]
+    code: Option<i64>,
     message: String,
+    #[serde(default)]
+    data: Option<serde_json::Value>,
 }
 
 /// Health check response from the node.
@@ -599,5 +612,109 @@ mod tests {
         assert!(err.to_string().contains("400"));
 
         server.await.unwrap();
+    }
+
+    /// Serve one canned JSON-RPC body on a local socket and return its URL.
+    async fn serve_once(body: &'static str) -> (String, tokio::task::JoinHandle<()>) {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        use tokio::net::TcpListener;
+
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let server = tokio::spawn(async move {
+            let (mut sock, _) = listener.accept().await.unwrap();
+            let mut buf = [0u8; 8192];
+            let _n = sock.read(&mut buf).await.unwrap();
+            let response = format!(
+                "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+                body.len(),
+                body
+            );
+            sock.write_all(response.as_bytes()).await.unwrap();
+        });
+        (format!("http://{addr}"), server)
+    }
+
+    #[tokio::test]
+    async fn request_preserves_jsonrpc_error_code_without_data() {
+        let (url, server) = serve_once(
+            r#"{"jsonrpc":"2.0","id":1,"error":{"code":-32602,"message":"unexpected hash length (2)"}}"#,
+        )
+        .await;
+
+        let err = SorobanRpcClient::new(&url)
+            .request::<HealthCheck>("getTransaction", ())
+            .await
+            .unwrap_err();
+
+        assert_eq!(err.code(), Some(-32602));
+        assert_eq!(err.data(), None);
+        match &err {
+            RpcError::JsonRpc {
+                code,
+                message,
+                data,
+            } => {
+                assert_eq!(*code, -32602);
+                assert_eq!(message, "unexpected hash length (2)");
+                assert!(data.is_none());
+            }
+            other => panic!("expected RpcError::JsonRpc, got {other:?}"),
+        }
+        assert_eq!(
+            err.to_string(),
+            "RPC error: unexpected hash length (2) (code -32602)"
+        );
+        server.await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn request_preserves_jsonrpc_error_code_and_data() {
+        let (url, server) = serve_once(
+            r#"{"jsonrpc":"2.0","id":1,"error":{"code":-32600,"message":"startLedger must be within the ledger range: 5033608 - 5154567","data":{"oldest":5033608,"latest":5154567}}}"#,
+        )
+        .await;
+
+        let err = SorobanRpcClient::new(&url)
+            .request::<HealthCheck>("getEvents", ())
+            .await
+            .unwrap_err();
+
+        assert_eq!(err.code(), Some(-32600));
+        assert_eq!(
+            err.data(),
+            Some(&serde_json::json!({"oldest": 5033608, "latest": 5154567}))
+        );
+        let text = err.to_string();
+        assert!(
+            text.contains("startLedger must be within the ledger range: 5033608 - 5154567"),
+            "{text}"
+        );
+        assert!(text.contains("-32600"), "{text}");
+        server.await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn request_without_jsonrpc_error_code_keeps_message() {
+        let (url, server) =
+            serve_once(r#"{"jsonrpc":"2.0","id":1,"error":{"message":"no code here"}}"#).await;
+
+        let err = SorobanRpcClient::new(&url)
+            .request::<HealthCheck>("getHealth", ())
+            .await
+            .unwrap_err();
+
+        assert_eq!(err.code(), None);
+        assert!(matches!(&err, RpcError::Rpc(msg) if msg == "no code here"));
+        assert_eq!(err.to_string(), "RPC error: no code here");
+        server.await.unwrap();
+    }
+
+    #[test]
+    fn non_jsonrpc_errors_have_no_code() {
+        let err = RpcError::Rpc("local validation".into());
+        assert_eq!(err.code(), None);
+        assert_eq!(err.data(), None);
+        assert_eq!(RpcError::ContractNotFound.code(), None);
     }
 }
