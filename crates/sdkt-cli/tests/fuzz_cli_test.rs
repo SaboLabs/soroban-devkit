@@ -148,6 +148,40 @@ fn cli_campaign_clean_exits_zero() {
 }
 
 #[test]
+fn cli_campaign_zero_cases_is_not_clean_evidence() {
+    let out = temp_dir("zerocases");
+    fuzz_campaign(&[
+        &fixture("us_new.wasm"),
+        "--cases",
+        "0",
+        "--artifact-dir",
+        out.to_str().unwrap(),
+    ])
+    .assert()
+    .failure()
+    .code(2)
+    .stderr(predicate::str::contains("cases"));
+}
+
+#[test]
+fn cli_campaign_function_filter_matching_nothing_is_not_clean() {
+    let out = temp_dir("nofunc");
+    fuzz_campaign(&[
+        &fixture("us_new.wasm"),
+        "--cases",
+        "4",
+        "--function",
+        "nope",
+        "--artifact-dir",
+        out.to_str().unwrap(),
+    ])
+    .assert()
+    .failure()
+    .code(2)
+    .stderr(predicate::str::contains("nope"));
+}
+
+#[test]
 fn cli_campaign_rejects_conflicting_expectations_for_same_function() {
     fuzz_campaign(&[
         &fixture("us_new.wasm"),
