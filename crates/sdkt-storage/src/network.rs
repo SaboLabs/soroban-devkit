@@ -399,4 +399,26 @@ mod tests {
         let result = store.remove("ghost");
         assert!(matches!(result, Err(StorageError::NotFound(_))));
     }
+
+    #[test]
+    fn test_loads_legacy_profile_without_pool_settings() {
+        let temp_dir = tempdir().unwrap();
+        let store = NetworkStore::with_dir(temp_dir.path()).unwrap();
+
+        let legacy_json = r#"{
+            "name": "legacy",
+            "rpc_url": "https://legacy.example",
+            "network_passphrase": "Legacy",
+            "friendbot_url": null,
+            "description": null
+        }"#;
+        fs::write(store.profile_path("legacy"), legacy_json).unwrap();
+
+        let profile = store.get("legacy").unwrap();
+        assert_eq!(profile.name, "legacy");
+        assert_eq!(profile.rpc_url, "https://legacy.example");
+        assert_eq!(profile.network_passphrase, "Legacy");
+        assert_eq!(profile.timeout_secs, None);
+        assert_eq!(profile.pool_max_idle_per_host, None);
+    }
 }

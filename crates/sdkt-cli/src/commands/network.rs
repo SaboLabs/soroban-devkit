@@ -34,8 +34,8 @@ pub(crate) enum NetworkAction {
         /// Optional human-readable description
         #[arg(short, long)]
         description: Option<String>,
-        /// Optional RPC request timeout in seconds (default: 15)
-        #[arg(long, value_name = "SECS")]
+        /// Optional RPC request timeout in seconds (default: 15, must be > 0)
+        #[arg(long, value_name = "SECS", value_parser = clap::value_parser!(u64).range(1..))]
         timeout_secs: Option<u64>,
         /// Optional maximum concurrent connections in the pool (default: 100)
         #[arg(long, value_name = "N")]
