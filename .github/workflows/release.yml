@@ -217,6 +217,48 @@ jobs:
         env:
           TARGET: ${{ matrix.target }}
 
+      - name: Verify extracted Windows binary (smoke test)
+        if: matrix.os == 'windows-latest'
+        shell: powershell
+        run: |
+          # Prove the *packaged* artifact works: extract the zip to a clean
+          # directory and run the binary from there, so we exercise exactly
+          # what a user downloads rather than the build tree.
+          $extract = Join-Path $env:RUNNER_TEMP "sdkt-extract"
+          if (Test-Path $extract) { Remove-Item -Recurse -Force $extract }
+          New-Item -ItemType Directory -Path $extract | Out-Null
+          Expand-Archive -Path "sdkt-${{ env.TARGET }}.zip" -DestinationPath $extract -Force
+
+          $bin = Join-Path $extract "sdkt.exe"
+          if (-not (Test-Path $bin)) { Write-Error "FAIL: sdkt.exe missing after extraction"; exit 1 }
+
+          # Verify the published SHA-256 checksum against the extracted binary.
+          $expected = (Get-Content (Join-Path $extract "sdkt.sha256") -Raw).Split(" ")[0].Trim().ToLower()
+          $actual = (Get-FileHash -Algorithm SHA256 -Path $bin).Hash.ToLower()
+          if ($expected -ne $actual) {
+            Write-Error "FAIL: checksum mismatch (expected $expected, got $actual)"
+            exit 1
+          }
+          Write-Host "OK: extracted sdkt.exe checksum matches sdkt.sha256"
+
+          $version = & $bin --version
+          Write-Host "Extracted binary reports: $version"
+          $tagVer = "${{ github.ref_name }}".TrimStart("v")
+          $binVer = ($version -split "\s+")[1]
+          if ($binVer -ne $tagVer) {
+            Write-Error "FAIL: extracted binary version '$binVer' != release tag '$tagVer'"
+            exit 1
+          }
+          Write-Host "OK: extracted binary version $binVer matches tag $tagVer"
+
+          & $bin help
+          if ($LASTEXITCODE -ne 0) { Write-Error "FAIL: 'sdkt help' failed"; exit 1 }
+          & $bin wasm inspect crates/sdkt-cli/tests/fixtures/us_old.wasm
+          if ($LASTEXITCODE -ne 0) { Write-Error "FAIL: offline fixture command failed"; exit 1 }
+          Write-Host "OK: extracted Windows binary passed smoke test"
+        env:
+          TARGET: ${{ matrix.target }}
+
       - name: Upload artifact
         uses: actions/upload-artifact@v7
         with:
