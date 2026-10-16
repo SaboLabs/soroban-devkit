@@ -6486,30 +6486,12 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
 
             let disabled_refs: Vec<&str> = disable.iter().map(String::as_str).collect();
 
-            // A `--disable` id that matches no rule is a typo or a stale config,
-            // and silently disables nothing. Warn on stderr so CI logs surface
-            // it, but do not fail: an unknown id in a shared config must not
-            // break every run.
-            {
-                let known_ids: std::collections::HashSet<String> =
-                    sdkt_audit::registered_rule_info()
-                        .into_iter()
-                        .map(|r| r.id)
-                        .collect();
-                for id in &disabled_refs {
-                    if !known_ids.contains(*id) {
-                        eprintln!(
-                            "Warning: --disable '{}' does not match any loaded rule; \
-                             nothing was disabled for it",
-                            id
-                        );
-                    }
-                }
-            }
-
             let mut aggregate = sdkt_audit::AuditReport::default();
             let mut per_file = Vec::new();
             let mut had_file_errors = false;
+            // Accumulate per-file local registry rule infos so SARIF output
+            // can include plugin rules (global registry only has built-ins).
+            let mut multi_file_local_rule_infos: Vec<Vec<sdkt_audit::RuleInfo>> = Vec::new();
             // Derived, never hard-coded: the header must agree with
             // `--list-rules` and with what the registry executes.
             let builtin_rule_count = sdkt_audit::all_rules().len();
@@ -6652,6 +6634,16 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
                     }
                 }
 
+                // Capture SARIF rule info AFTER plugins are loaded into
+                // local_reg (covers plugin rules in multi-file mode; global
+                // registry only has built-ins). Do NOT capture for single-file
+                // mode — plugins there are registered into the global registry.
+                if multi_file {
+                    let local_rule_info: Vec<sdkt_audit::RuleInfo> =
+                        local_reg.registered_rule_info();
+                    multi_file_local_rule_infos.push(local_rule_info);
+                }
+
                 if single_file {
                     // Load dynamic rules first so registry ID deduplication
                     // preserves the original single-file behavior.
@@ -6724,8 +6716,53 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
                     }
                 }
             }
+
+            // Validate `--disable` ids AFTER plugins are loaded so that
+            // plugin rule IDs (registered into local_reg in multi-file mode,
+            // or into the global registry in single-file mode) are included.
+            // A `--disable` id that matches no rule is a typo or a stale config,
+            // and silently disables nothing. Warn on stderr so CI logs surface
+            // it, but do not fail: an unknown id in a shared config must not
+            // break every run.
+            {
+                let mut known_ids: std::collections::HashSet<String> =
+                    sdkt_audit::registered_rule_info()
+                        .into_iter()
+                        .map(|r| r.id)
+                        .collect();
+                // In multi-file mode, merge plugin rule IDs from local_reg
+                // (global registry only has built-ins).
+                for local_infos in &multi_file_local_rule_infos {
+                    for info in local_infos {
+                        known_ids.insert(info.id.clone());
+                    }
+                }
+                for id in &disabled_refs {
+                    if !known_ids.contains(*id) {
+                        eprintln!(
+                            "Warning: --disable '{}' does not match any loaded rule; \
+                             nothing was disabled for it",
+                            id
+                        );
+                    }
+                }
+            }
+
             if audit_fmt == AuditFormat::Sarif {
-                let rules_info: Vec<sdkt_audit::RuleInfo> = sdkt_audit::registered_rule_info();
+                let mut rules_info: Vec<sdkt_audit::RuleInfo> = sdkt_audit::registered_rule_info();
+                if multi_file {
+                    // Merge per-file local registry rule infos (covers plugin
+                    // rules; global registry only has built-ins). Dedup by rule ID.
+                    let mut seen: std::collections::HashSet<String> =
+                        rules_info.iter().map(|r| r.id.clone()).collect();
+                    for local_infos in &multi_file_local_rule_infos {
+                        for info in local_infos {
+                            if seen.insert(info.id.clone()) {
+                                rules_info.push(info.clone());
+                            }
+                        }
+                    }
+                }
                 if multi_file {
                     let sarif_str = sdkt_audit::sarif::report_to_sarif_string_multi_file(
                         &aggregate,

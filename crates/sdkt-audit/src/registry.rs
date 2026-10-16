@@ -56,6 +56,21 @@ impl RuleRegistry {
         &self.rules
     }
 
+    /// Snapshot of `RuleInfo` for all registered rules in this registry.
+    ///
+    /// Used by the CLI to build SARIF rule metadata and validate `--disable`
+    /// IDs against the exact rule set that will execute.
+    pub fn registered_rule_info(&self) -> Vec<crate::types::RuleInfo> {
+        self.rules
+            .iter()
+            .map(|r| crate::types::RuleInfo {
+                id: r.id().to_string(),
+                severity: r.severity(),
+                description: r.description().to_string(),
+            })
+            .collect()
+    }
+
     /// Run every registered rule that is not disabled, appending findings to
     /// `report`. Rules execute in registration order so output is deterministic.
     pub fn run_all(
