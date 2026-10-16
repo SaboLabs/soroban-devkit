@@ -347,11 +347,28 @@ or git logic is duplicated; the same `compute_dependency_integrity` /
 │   `--skip-deployed` resumes an interrupted deploy: aliases whose recorded
 │   contract ID is verified to still exist on-chain (via `getLedgerEntries`) are
 │   skipped without re-deploying (and re-paying for) them, printed as
+│   `--skip-deployed` resumes an interrupted deploy: aliases whose recorded
+│   contract ID is verified to still exist on-chain (via `getLedgerEntries`) are
+│   skipped without re-deploying (and re-paying for) them, printed as
 │   `✓ '<alias>' already deployed at <contract_id>`. A record whose contract no
 │   longer exists on-chain is NOT trusted — sdkt warns
 │   `⚠ Recorded contract for '<alias>' is no longer on-chain; re-deploying.` and
 │   deploys it fresh, replacing the stale record. The default identity (see
 │   `sdkt identity`) is used to sign all deployments.
+│
+│   **Constructor arguments**: contracts requiring initialization parameters at
+│   create time declare them in `.sdkt.toml` via the `ctor_args` field:
+│
+│     [contracts.token]
+│     path = "contracts/token"
+│     ctor_args = ["address:G...", "u32:1000000"]
+│
+│   Each string is a TYPE:VALUE pair (same format as `sdkt deploy --arg`: `u32:100`,
+│   `address:G...`, `string:hello`, `bool:true`, `bytes:deadbeef`, etc.) or a
+│   base64-encoded ScVal. Invalid arguments fail before WASM upload (fail-fast
+│   validation) with the same error messages as the single-contract deploy path.
+│   Contracts without `ctor_args` deploy with empty constructor arguments (no
+│   change from pre-feature behavior).
 │
 ├── call
 │   ├── <CONTRACT_ID>

@@ -8766,13 +8766,24 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
                                 }
                             };
 
-                            match sdkt_rpc::deploy_contract(
+                            // Validate constructor arguments before upload (fail fast).
+                            if let Err(e) = sdkt_xdr::parse_scval_args(&contract.ctor_args) {
+                                failure = Some(format!(
+                                    "Invalid constructor argument for '{}': {}",
+                                    contract.alias, e
+                                ));
+                                eprintln!("    ✗ {}", failure.as_ref().unwrap());
+                                break;
+                            }
+
+                            match sdkt_rpc::deploy_contract_with_args(
                                 &client,
                                 &wasm_bytes,
                                 &source_account,
                                 &signer,
                                 network.clone(),
                                 salt_bytes,
+                                contract.ctor_args.clone(),
                             )
                             .await
                             {

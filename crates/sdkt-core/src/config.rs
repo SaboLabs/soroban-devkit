@@ -48,6 +48,11 @@ pub struct ContractConfig {
     /// `deploy_after`; listed here for explicit package-dependency graphs.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub depends_on: Vec<String>,
+    /// Constructor arguments passed to the contract at create time.
+    /// Each string is a TYPE:VALUE pair (e.g. "u32:100", "address:G...",
+    /// "string:hello") or a base64-encoded ScVal. Same format as `sdkt deploy --arg`.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub ctor_args: Vec<String>,
 }
 
 /// Package manifest metadata ().
@@ -303,5 +308,38 @@ mod tests {
             .unwrap()
             .deploy_after
             .is_empty());
+    }
+
+    #[test]
+    fn test_ctor_args_field_parses() {
+        let toml_data = r#"
+            [contracts.token]
+            path = "contracts/token"
+            ctor_args = ["address:GABC123", "u32:100"]
+
+            [contracts.vault]
+            path = "contracts/vault"
+            depends_on = ["token"]
+        "#;
+        let parsed = DevKitConfig::from_toml(toml_data).unwrap();
+        let token = parsed.contracts.get("token").unwrap();
+        assert_eq!(token.ctor_args.len(), 2);
+        assert_eq!(token.ctor_args[0], "address:GABC123");
+        assert_eq!(token.ctor_args[1], "u32:100");
+        
+        let vault = parsed.contracts.get("vault").unwrap();
+        assert!(vault.ctor_args.is_empty());
+    }
+
+    #[test]
+    fn test_empty_ctor_args_omitted_from_serialization() {
+        let config = ContractConfig {
+            path: "contracts/test".into(),
+            deploy_after: vec![],
+            depends_on: vec![],
+            ctor_args: vec![],
+        };
+        let serialized = toml::to_string(&config).unwrap();
+        assert!(!serialized.contains("ctor_args"));
     }
 }
