@@ -22,7 +22,7 @@ pub use account::{
     get_next_sequence, inspect_account, AccountBalance, AccountInspection, AccountSigner,
 };
 pub use client::{fund_account, FundResult};
-pub use client::{NetworkInfo, SorobanRpcClient};
+pub use client::{NetworkInfo, SorobanRpcClient, MAX_LEDGER_ENTRY_KEYS};
 pub use deploy::{
     create_contract, deploy_contract, deploy_contract_from_hash, deploy_contract_with_args,
     format_json, format_pretty, CreateContractArgs, DeployOutcome, DeployResult,

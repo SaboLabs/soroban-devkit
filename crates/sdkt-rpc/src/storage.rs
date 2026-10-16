@@ -1,4 +1,4 @@
-use crate::client::{SorobanRpcClient, StorageResponse};
+use crate::client::{SorobanRpcClient, StorageResponse, MAX_LEDGER_ENTRY_KEYS};
 use crate::error::RpcError;
 use base64::Engine;
 use serde::Serialize;
@@ -429,11 +429,40 @@ pub async fn read_ledger_entry(
 /// It reads **current** ledger state — the RPC has no ledger-pinning
 /// parameter — so callers must verify consistency against the simulation
 /// ledger themselves (see `sdkt_fuzz::state_capture`).
+///
+/// A key set above [`MAX_LEDGER_ENTRY_KEYS`] is fetched in sequential batches
+/// of at most that many keys. The returned entries follow the order of `keys`,
+/// and `latest_ledger` is the lowest value any batch reported, so a
+/// `latest_ledger >= simulation ledger` consistency check holds for every
+/// batch. A key set at or below the limit is a single request, as before.
 pub async fn fetch_ledger_entries(
     client: &SorobanRpcClient,
     keys: &[String],
 ) -> Result<StorageResponse, RpcError> {
-    client.get_contract_storage("", keys).await
+    if keys.len() <= MAX_LEDGER_ENTRY_KEYS {
+        return client.get_contract_storage("", keys).await;
+    }
+
+    let mut entries = Vec::new();
+    let mut latest_ledger = u32::MAX;
+    for batch in keys.chunks(MAX_LEDGER_ENTRY_KEYS) {
+        let response = client.get_contract_storage("", batch).await?;
+        latest_ledger = latest_ledger.min(response.latest_ledger);
+        entries.extend(response.entries);
+    }
+
+    // The node may return a batch's entries in any order; restore the
+    // caller's key order across the concatenated batches.
+    let mut position = std::collections::HashMap::with_capacity(keys.len());
+    for (i, key) in keys.iter().enumerate() {
+        position.entry(key.as_str()).or_insert(i);
+    }
+    entries.sort_by_key(|e| position.get(e.key.as_str()).copied().unwrap_or(usize::MAX));
+
+    Ok(StorageResponse {
+        entries,
+        latest_ledger,
+    })
 }
 
 async fn read_ledger_entry_with_ttl(
@@ -906,5 +935,183 @@ mod restore_tests {
         let expected = base64::engine::general_purpose::STANDARD
             .encode(instance_key().to_xdr(Limits::none()).unwrap());
         assert_eq!(keys, vec![expected]);
+    }
+
+    /// Mock `getLedgerEntries` server that records the key count of every
+    /// request it receives. Each response echoes the requested keys as entries
+    /// in reverse order, with `latestLedger` = 100 + request index.
+    async fn ledger_entries_mock() -> (String, std::sync::Arc<std::sync::Mutex<Vec<usize>>>) {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        use tokio::net::TcpListener;
+
+        let seen = std::sync::Arc::new(std::sync::Mutex::new(Vec::<usize>::new()));
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let log = seen.clone();
+        tokio::spawn(async move {
+            loop {
+                let Ok((mut sock, _)) = listener.accept().await else {
+                    break;
+                };
+                // Read the full request: headers, then Content-Length bytes.
+                let mut buf = Vec::new();
+                let mut chunk = [0u8; 8192];
+                let body = loop {
+                    let n = sock.read(&mut chunk).await.unwrap();
+                    if n == 0 {
+                        break None;
+                    }
+                    buf.extend_from_slice(&chunk[..n]);
+                    let text = String::from_utf8_lossy(&buf).to_string();
+                    let Some(split) = text.find("\r\n\r\n") else {
+                        continue;
+                    };
+                    let len = text[..split]
+                        .lines()
+                        .find_map(|l| {
+                            let (k, v) = l.split_once(':')?;
+                            k.eq_ignore_ascii_case("content-length")
+                                .then(|| v.trim().parse::<usize>().ok())?
+                        })
+                        .unwrap_or(0);
+                    if buf.len() >= split + 4 + len {
+                        break Some(buf[split + 4..split + 4 + len].to_vec());
+                    }
+                };
+                let Some(body) = body else { continue };
+                let req: serde_json::Value = serde_json::from_slice(&body).unwrap();
+                let keys: Vec<String> = req["params"]["keys"]
+                    .as_array()
+                    .unwrap()
+                    .iter()
+                    .map(|k| k.as_str().unwrap().to_string())
+                    .collect();
+                let index = {
+                    let mut log = log.lock().unwrap();
+                    log.push(keys.len());
+                    log.len() - 1
+                };
+                let entries: Vec<serde_json::Value> = keys
+                    .iter()
+                    .rev()
+                    .map(|k| serde_json::json!({"key": k, "xdr": "AAAA", "lastModifiedLedgerSeq": 1}))
+                    .collect();
+                let body = serde_json::json!({
+                    "jsonrpc": "2.0",
+                    "id": 1,
+                    "result": {"entries": entries, "latestLedger": 100 + index},
+                })
+                .to_string();
+                let resp = format!(
+                    "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+                    body.len(),
+                    body
+                );
+                let _ = sock.write_all(resp.as_bytes()).await;
+            }
+        });
+        (format!("http://{addr}"), seen)
+    }
+
+    fn numbered_keys(n: usize) -> Vec<String> {
+        (0..n).map(|i| format!("key-{i:04}")).collect()
+    }
+
+    #[tokio::test]
+    async fn get_contract_storage_rejects_201_keys_without_a_request() {
+        let (url, seen) = ledger_entries_mock().await;
+        let client = SorobanRpcClient::new(&url);
+
+        let err = client
+            .get_contract_storage("", &numbered_keys(201))
+            .await
+            .unwrap_err();
+
+        assert!(
+            matches!(
+                err,
+                RpcError::TooManyLedgerKeys {
+                    count: 201,
+                    max: 200
+                }
+            ),
+            "{err:?}"
+        );
+        assert_eq!(
+            err.to_string(),
+            "getLedgerEntries accepts at most 200 ledger keys per request (protocol maximum), \
+             got 201; split the keys into batches of 200 or fewer"
+        );
+        assert!(
+            seen.lock().unwrap().is_empty(),
+            "no HTTP request may be sent"
+        );
+    }
+
+    #[tokio::test]
+    async fn get_contract_storage_sends_200_keys_in_one_request() {
+        let (url, seen) = ledger_entries_mock().await;
+        let client = SorobanRpcClient::new(&url);
+        let keys = numbered_keys(MAX_LEDGER_ENTRY_KEYS);
+
+        let resp = client.get_contract_storage("", &keys).await.unwrap();
+
+        assert_eq!(*seen.lock().unwrap(), vec![200]);
+        assert_eq!(resp.entries.len(), 200);
+        assert_eq!(resp.latest_ledger, 100);
+    }
+
+    #[tokio::test]
+    async fn fetch_ledger_entries_at_limit_is_a_single_unchanged_request() {
+        let (url, seen) = ledger_entries_mock().await;
+        let client = SorobanRpcClient::new(&url);
+        let keys = numbered_keys(MAX_LEDGER_ENTRY_KEYS);
+
+        let resp = fetch_ledger_entries(&client, &keys).await.unwrap();
+
+        assert_eq!(*seen.lock().unwrap(), vec![200]);
+        // Single request: the node's own entry order is passed through as-is.
+        let got: Vec<&str> = resp.entries.iter().map(|e| e.key.as_str()).collect();
+        let node_order: Vec<&str> = keys.iter().rev().map(String::as_str).collect();
+        assert_eq!(got, node_order);
+    }
+
+    #[tokio::test]
+    async fn fetch_ledger_entries_batches_201_keys_in_request_order() {
+        let (url, seen) = ledger_entries_mock().await;
+        let client = SorobanRpcClient::new(&url);
+        let keys = numbered_keys(201);
+
+        let resp = fetch_ledger_entries(&client, &keys).await.unwrap();
+
+        assert_eq!(
+            *seen.lock().unwrap(),
+            vec![200, 1],
+            "two sequential requests"
+        );
+        let got: Vec<&str> = resp.entries.iter().map(|e| e.key.as_str()).collect();
+        let want: Vec<&str> = keys.iter().map(String::as_str).collect();
+        assert_eq!(got, want, "entries follow the requested key order");
+        assert_eq!(
+            resp.latest_ledger, 100,
+            "lowest latestLedger across batches"
+        );
+    }
+
+    #[tokio::test]
+    async fn fetch_ledger_entries_batches_450_keys_into_three_requests() {
+        let (url, seen) = ledger_entries_mock().await;
+        let client = SorobanRpcClient::new(&url);
+        let keys = numbered_keys(450);
+
+        let resp = fetch_ledger_entries(&client, &keys).await.unwrap();
+
+        assert_eq!(*seen.lock().unwrap(), vec![200, 200, 50]);
+        assert_eq!(resp.entries.len(), 450);
+        assert!(resp
+            .entries
+            .iter()
+            .zip(keys.iter())
+            .all(|(e, k)| &e.key == k));
     }
 }

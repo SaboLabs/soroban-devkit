@@ -7,6 +7,11 @@ use sdkt_core::NetworkConfig;
 use serde::{Deserialize, Serialize};
 use std::time::Duration;
 
+/// Protocol maximum number of ledger keys in one `getLedgerEntries` request.
+///
+/// See <https://developers.stellar.org/docs/data/apis/rpc/api-reference/methods/getLedgerEntries>.
+pub const MAX_LEDGER_ENTRY_KEYS: usize = 200;
+
 /// Soroban RPC HTTP client.
 ///
 /// Holds the RPC endpoint URL and a reusable HTTP client.
@@ -141,11 +146,21 @@ impl SorobanRpcClient {
     }
 
     /// Get contract storage entries.
+    ///
+    /// Returns [`RpcError::TooManyLedgerKeys`] without sending a request when
+    /// `keys` exceeds [`MAX_LEDGER_ENTRY_KEYS`]; use
+    /// [`crate::fetch_ledger_entries`] to fetch a larger key set in batches.
     pub async fn get_contract_storage(
         &self,
         _contract_id: &str,
         keys: &[String],
     ) -> Result<StorageResponse, RpcError> {
+        if keys.len() > MAX_LEDGER_ENTRY_KEYS {
+            return Err(RpcError::TooManyLedgerKeys {
+                count: keys.len(),
+                max: MAX_LEDGER_ENTRY_KEYS,
+            });
+        }
         self.request("getLedgerEntries", serde_json::json!({ "keys": keys }))
             .await
     }

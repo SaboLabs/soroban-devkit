@@ -41,7 +41,10 @@ sdkt
 │   `extend` submits an `ExtendFootprintTtl` transaction. The contract instance
 │   key is always included in the read-only footprint. Additional `--key` values
 │   (base64 XDR or hex XDR) are merged and de-duplicated. This does NOT discover
-│   all contract storage and does NOT restore archived entries.
+│   all contract storage and does NOT restore archived entries. The merged set
+│   (instance key included) is read with one `getLedgerEntries` request, so it
+│   is limited to the protocol maximum of 200 keys; a larger set is rejected
+│   before any request is sent.
 │
 │   `restore` simulates `--envelope` (the invocation that failed on archived
 │   state), adopts the `restorePreamble` footprint and minimum resource fee, and
