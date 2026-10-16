@@ -2602,6 +2602,23 @@ fn print_diff_pretty(diff: &sdkt_storage::SnapshotDiff) {
     use sdkt_storage::DiffStatus;
 
     println!("Storage Diff for Contract: {}", diff.contract_id);
+    match (diff.old_ledger, diff.new_ledger, diff.ledger_delta) {
+        (Some(old_l), Some(new_l), Some(delta)) => {
+            println!(
+                "Capture context: old ledger {}, new ledger {} (ledger delta: {:+})",
+                old_l, new_l, delta
+            );
+            if let Some(ref net) = diff.network {
+                println!("Network:         {}", net);
+            }
+        }
+        _ => {
+            println!("Capture context: unknown");
+            if let Some(ref net) = diff.network {
+                println!("Network:         {}", net);
+            }
+        }
+    }
     println!("Total entries: {}", diff.entries.len());
 
     let removed: Vec<_> = diff
@@ -2643,12 +2660,16 @@ fn print_diff_pretty(diff: &sdkt_storage::SnapshotDiff) {
     if !expiring.is_empty() {
         println!("\nExpiring soon ({}):", expiring.len());
         for e in &expiring {
+            let norm_str = e
+                .normalized_old_ttl
+                .map_or(String::new(), |n| format!(" normalized_old_ttl={n}"));
             println!(
-                "  [expiring] key={}{} (ttl={})",
+                "  [expiring] key={}{}{} (ttl={})",
                 e.key,
                 e.label
                     .as_ref()
                     .map_or(String::new(), |l| format!(" label={l}")),
+                norm_str,
                 e.new_ttl.map_or("?".to_string(), |t| t.to_string())
             );
         }
@@ -2656,12 +2677,16 @@ fn print_diff_pretty(diff: &sdkt_storage::SnapshotDiff) {
     if unchanged.iter().any(|e| e.label.is_some()) {
         println!("\nUnchanged entries ({}):", unchanged.len());
         for e in &unchanged {
+            let norm_str = e
+                .normalized_old_ttl
+                .map_or(String::new(), |n| format!(" normalized_old_ttl={n}"));
             println!(
-                "  [unchanged] key={}{} (ttl={})",
+                "  [unchanged] key={}{}{} (ttl={})",
                 e.key,
                 e.label
                     .as_ref()
                     .map_or(String::new(), |l| format!(" label={l}")),
+                norm_str,
                 e.new_ttl.map_or("?".to_string(), |t| t.to_string())
             );
         }
@@ -4251,12 +4276,22 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
                     let fmt = parse_format_str(&format);
                     let extra_keys = analyze_extra_keys.expect("resolved for Analyze");
 
-                    let client = resolve_rpc_client(
-                        net.rpc_url.clone(),
-                        net.network_passphrase.clone(),
-                        net.network_profile.clone(),
-                    );
-                    let analyzer = sdkt_storage::StorageAnalyzer::new(client);
+                    let target_net = commands::network::resolve_target_network(None, &net).ok();
+                    let (client, network_name) = match target_net {
+                        Some(tn) => (tn.client, Some(tn.network_name)),
+                        None => (
+                            resolve_rpc_client(
+                                net.rpc_url.clone(),
+                                net.network_passphrase.clone(),
+                                net.network_profile.clone(),
+                            ),
+                            None,
+                        ),
+                    };
+                    let mut analyzer = sdkt_storage::StorageAnalyzer::new(client);
+                    if let Some(net_name) = network_name {
+                        analyzer = analyzer.with_network(net_name);
+                    }
 
                     match analyzer
                         .inspect_contract_storage_keys(&contract_id, &extra_keys)
@@ -4272,6 +4307,12 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
                                 println!("{}", serde_json::to_string(&report)?);
                             } else {
                                 println!("Storage Analysis for Contract: {}", report.contract_id);
+                                if let Some(ledger) = report.latest_ledger {
+                                    println!("Latest Ledger: {}", ledger);
+                                }
+                                if let Some(ref net) = report.network {
+                                    println!("Network:       {}", net);
+                                }
                                 println!("Total Entries: {}", report.total_entries);
                                 println!("  Instance:    {}", report.instance_entries);
                                 println!("  Persistent: {}", report.persistent_entries);

@@ -10,6 +10,8 @@ use stellar_xdr::{LedgerEntryData, ReadXdr, SorobanTransactionData};
 pub struct TtlInfo {
     pub contract_id: String,
     pub entries: Vec<TtlEntry>,
+    #[serde(skip)]
+    pub latest_ledger: Option<u32>,
 }
 
 /// A single storage entry with human-readable TTL information.
@@ -86,6 +88,7 @@ pub async fn get_ttl_info_for_keys(
     Ok(TtlInfo {
         contract_id: contract_id.to_string(),
         entries,
+        latest_ledger: Some(storage_resp.latest_ledger),
     })
 }
 

@@ -42,11 +42,24 @@ pub fn classify_key(base64_key: &str) -> StorageClass {
 
 pub struct StorageAnalyzer {
     client: SorobanRpcClient,
+    network: Option<String>,
 }
 
 impl StorageAnalyzer {
     pub fn new(client: SorobanRpcClient) -> Self {
-        Self { client }
+        Self {
+            client,
+            network: None,
+        }
+    }
+
+    pub fn with_network(mut self, network: impl Into<String>) -> Self {
+        self.network = Some(network.into());
+        self
+    }
+
+    pub fn network(&self) -> Option<&str> {
+        self.network.as_deref()
     }
 
     pub async fn inspect_contract_storage(
@@ -73,6 +86,8 @@ impl StorageAnalyzer {
         if ttl_info.entries.is_empty() {
             return Ok(StorageReport {
                 contract_id: contract_id.to_string(),
+                latest_ledger: ttl_info.latest_ledger,
+                network: self.network.clone(),
                 ..Default::default()
             });
         }
@@ -151,6 +166,8 @@ impl StorageAnalyzer {
             total_size_bytes: None,
             ttl_summary,
             entries: detailed,
+            latest_ledger: ttl_info.latest_ledger,
+            network: self.network.clone(),
         })
     }
 }

@@ -34,6 +34,20 @@ sdkt
 │   entries. With `--extend-plan`, it derives a non-mutating remediation plan (target contract,
 │   affected keys, and suggested ledger horizon) for operator extension.
 │
+│   Snapshots recorded by `sdkt storage analyze --format json` include capture context:
+│   - `latest_ledger`: the ledger sequence at capture time.
+│   - `network`: the network identity (passphrase or network name) against which capture was performed.
+│
+│   When diffing snapshots:
+│   - If both snapshots record a network and they differ, the diff is refused with an error
+│     naming both networks (preventing cross-network skew from reading as state drift).
+│   - If both snapshots record a ledger, TTLs are compared on a common basis by normalising
+│     the old snapshot's TTLs by the ledger delta (`new_ledger - old_ledger`), ensuring normal
+│     time passage between snapshots does not falsely classify entries as expiring soon.
+│     The ledger delta is surfaced in both pretty and JSON output.
+│   - Backward compatibility: legacy snapshot files omitting capture context remain fully
+│     supported; their capture context is reported as "unknown".
+│
 │   `read` fetches a single ledger entry by its complete `LedgerKey` (base64 XDR).
 │   The instance key is NOT included automatically — supply the full key via --key-xdr.
 │   ABI formatting is optional and applies only to the returned value.
