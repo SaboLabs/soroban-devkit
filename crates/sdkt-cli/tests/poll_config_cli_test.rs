@@ -33,11 +33,12 @@ const WASM: &str = "crates/sdkt-cli/tests/fixtures/us_new.wasm";
 #[test]
 fn deploy_rejects_interval_zero_before_network() {
     // `--interval 0` must be rejected by validate_poll_pair before any
-    // network/identity resolution.
+    // network/identity resolution. Usage errors exit with code 2, matching
+    // `invoke` / `deploy` conventions.
     sdkt()
         .args(["deploy", "--wasm", WASM, "--interval", "0"])
         .assert()
-        .failure()
+        .code(2)
         .stderr(predicate::str::contains("interval must be greater than 0"));
 }
 
@@ -73,7 +74,7 @@ fn storage_restore_rejects_interval_zero() {
             "0",
         ])
         .assert()
-        .failure()
+        .code(2)
         .stderr(predicate::str::contains("interval must be greater than 0"));
 }
 
@@ -98,6 +99,24 @@ fn project_deploy_rejects_interval_zero_before_lock_check() {
         .assert()
         .failure()
         .stderr(predicate::str::contains("interval must be greater than 0"));
+}
+
+#[test]
+fn invoke_rejects_invalid_poll_pair_with_usage_exit_code() {
+    // The `invoke` arm must also use exit code 2 for invalid polling pairs.
+    sdkt()
+        .args([
+            "invoke",
+            "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAD2KM",
+            "hello",
+            "--timeout",
+            "1",
+            "--interval",
+            "10",
+        ])
+        .assert()
+        .code(2)
+        .stderr(predicate::str::contains("must be at least one --interval"));
 }
 
 /// Documented defaults: with no `--timeout`/`--interval` the command must NOT

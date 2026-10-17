@@ -4537,7 +4537,7 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
                     let fmt = parse_format_str(&format);
                     if let Err(msg) = validate_poll_pair(timeout, interval) {
                         eprintln!("Error: {msg}");
-                        process::exit(1);
+                        process::exit(2);
                     }
 
                     if contract.trim().is_empty() {
@@ -4652,7 +4652,7 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
                     let fmt = parse_format_str(&format);
                     if let Err(msg) = validate_poll_pair(timeout, interval) {
                         eprintln!("Error: {msg}");
-                        process::exit(1);
+                        process::exit(2);
                     }
 
                     if contract.trim().is_empty() {
@@ -8898,7 +8898,7 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
                 // (fail fast): `--interval 0` must be rejected before deployment.
                 if let Err(msg) = validate_poll_pair(timeout, interval) {
                     eprintln!("Error: {msg}");
-                    process::exit(1);
+                    process::exit(2);
                 }
                 // Validate the salt before any network or identity work (fail fast).
                 let salt_bytes = salt.as_deref().map(parse_salt_hex).transpose()?;
