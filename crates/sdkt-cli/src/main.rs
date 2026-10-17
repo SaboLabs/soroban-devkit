@@ -4082,7 +4082,8 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
                         println!();
                         println!("Extension Plan");
                         println!("  Contract:            {}", plan.contract_id);
-                        let mixed = !plan.restore_keys.is_empty();
+                        let mixed =
+                            !plan.unverified_keys.is_empty() || !plan.expired_keys.is_empty();
                         if plan.keys.is_empty() {
                             println!("  Keys:                (none — nothing to remediate)");
                         } else if !mixed {
@@ -4097,9 +4098,23 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
                                     println!("    #{} {}", i + 1, k);
                                 }
                             }
-                            println!("  Restore keys ({}):", plan.restore_keys.len());
-                            for (i, k) in plan.restore_keys.iter().enumerate() {
-                                println!("    #{} {}", i + 1, k);
+                            if !plan.unverified_keys.is_empty() {
+                                println!(
+                                    "  Removed, restore unverified ({}):",
+                                    plan.unverified_keys.len()
+                                );
+                                for (i, k) in plan.unverified_keys.iter().enumerate() {
+                                    println!("    #{} {}", i + 1, k);
+                                }
+                            }
+                            if !plan.expired_keys.is_empty() {
+                                println!(
+                                    "  Expired temporary, not restorable ({}):",
+                                    plan.expired_keys.len()
+                                );
+                                for (i, k) in plan.expired_keys.iter().enumerate() {
+                                    println!("    #{} {}", i + 1, k);
+                                }
                             }
                         }
                         if !mixed || !plan.extend_keys.is_empty() {
@@ -4140,16 +4155,30 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
                         }
                         if mixed {
                             println!();
-                            println!("  Restore required (not extendable):");
+                            println!("  Removed entries (not extendable):");
                             println!(
-                                "    Removed entries are expired or archived; a TTL extension cannot revive them."
+                                "    A snapshot diff cannot show whether a removed entry was archived,"
                             );
                             println!(
-                                "    Run `sdkt storage restore --envelope <envelope>` with the invocation envelope"
+                                "    omitted from the new analysis, or deleted; a TTL extension cannot revive it."
                             );
-                            println!(
-                                "    that failed on archived state, then re-run the invocation."
-                            );
+                            if !plan.unverified_keys.is_empty() {
+                                println!(
+                                    "    Confirm archival first (e.g. simulate the failing invocation and look for a"
+                                );
+                                println!(
+                                    "    restore preamble); only then run, with the envelope that failed:"
+                                );
+                                println!(
+                                    "      sdkt storage restore --contract {} --envelope <envelope>",
+                                    shell_quote(&plan.contract_id)
+                                );
+                            }
+                            if !plan.expired_keys.is_empty() {
+                                println!(
+                                    "    Expired temporary entries are deleted, not archived; restore does not apply."
+                                );
+                            }
                         }
                     }
                 } else if fmt == OutputFormat::Json {

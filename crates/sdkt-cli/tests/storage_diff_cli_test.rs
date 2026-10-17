@@ -262,12 +262,29 @@ fn storage_diff_cli_alias_diff_works() {
     assert!(stdout.contains("Extension Plan"));
 }
 
-fn run_extend_plan(old: &[(&str, u32)], new: &[(&str, u32)]) -> String {
+fn run_extend_plan_classes(old: &[(&str, &str, u32)], new: &[(&str, &str, u32)]) -> String {
     let dir = tempdir().unwrap();
+    let write = |path: &Path, entries: &[(&str, &str, u32)]| {
+        let objs: Vec<serde_json::Value> = entries
+            .iter()
+            .map(|(k, class, ttl)| {
+                serde_json::json!({
+                    "key": k, "class": class, "current_ttl": ttl,
+                    "days_remaining": ttl / 17280, "extension_cost_stroops": 0,
+                })
+            })
+            .collect();
+        let report = serde_json::json!({
+            "contract_id": CONTRACT, "total_entries": entries.len(),
+            "instance_entries": 0, "persistent_entries": 0,
+            "temporary_entries": 0, "other_entries": 0, "entries": objs,
+        });
+        fs::write(path, serde_json::to_string_pretty(&report).unwrap()).unwrap();
+    };
     let old_path = dir.path().join("old.json");
     let new_path = dir.path().join("new.json");
-    create_snapshot_file(&old_path, CONTRACT, old);
-    create_snapshot_file(&new_path, CONTRACT, new);
+    write(&old_path, old);
+    write(&new_path, new);
     let assert = sdkt()
         .args(["storage", "storage-diff", "--old"])
         .arg(&old_path)
@@ -279,13 +296,44 @@ fn run_extend_plan(old: &[(&str, u32)], new: &[(&str, u32)]) -> String {
     String::from_utf8(assert.get_output().stdout.clone()).unwrap()
 }
 
+fn run_extend_plan(old: &[(&str, u32)], new: &[(&str, u32)]) -> String {
+    let o: Vec<_> = old.iter().map(|(k, t)| (*k, "persistent", *t)).collect();
+    let n: Vec<_> = new.iter().map(|(k, t)| (*k, "persistent", *t)).collect();
+    run_extend_plan_classes(&o, &n)
+}
+
 #[test]
-fn extend_plan_removed_only_emits_no_extend_command() {
+fn extend_plan_removed_only_is_unverified_and_has_no_extend_command() {
     let out = run_extend_plan(&[("keyA==", 50_000)], &[]);
     assert!(!out.contains("sdkt storage extend"), "{out}");
     assert!(!out.contains("Ready-to-run:"), "{out}");
-    assert!(out.contains("sdkt storage restore"), "{out}");
-    assert!(out.contains("envelope"), "{out}");
+    assert!(out.contains("restore unverified (1)"), "{out}");
+    assert!(!out.contains("Restore keys"), "{out}");
+    assert!(out.contains("Confirm archival first"), "{out}");
+}
+
+#[test]
+fn extend_plan_restore_guidance_includes_contract_argument() {
+    let out = run_extend_plan(&[("keyA==", 50_000)], &[]);
+    let line = out
+        .lines()
+        .find(|l| l.contains("sdkt storage restore"))
+        .expect("restore guidance line");
+    assert!(
+        line.contains(&format!("--contract '{CONTRACT}'")) && line.contains("--envelope"),
+        "{line}"
+    );
+}
+
+#[test]
+fn extend_plan_expired_temporary_is_not_restorable() {
+    let out = run_extend_plan_classes(&[("tmpKey==", "temporary", 50_000)], &[]);
+    assert!(
+        out.contains("Expired temporary, not restorable (1)"),
+        "{out}"
+    );
+    assert!(!out.contains("sdkt storage restore"), "{out}");
+    assert!(!out.contains("sdkt storage extend"), "{out}");
 }
 
 #[test]
@@ -300,8 +348,7 @@ fn extend_plan_mixed_separates_classes() {
         .expect("extend command for expiring key");
     assert!(cmd.contains("--key 'keySoon=='"), "{cmd}");
     assert!(!cmd.contains("keyGone"), "{cmd}");
-    assert!(out.contains("Restore keys (1):"), "{out}");
-    assert!(out.contains("sdkt storage restore"), "{out}");
+    assert!(out.contains("restore unverified (1)"), "{out}");
 }
 
 #[test]

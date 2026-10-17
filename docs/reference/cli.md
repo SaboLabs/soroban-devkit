@@ -33,11 +33,12 @@ sdkt
 │   `sdkt storage analyze --format json`) and identifies removed, expiring, and unchanged
 │   entries. With `--extend-plan`, it derives a non-mutating remediation plan (target contract,
 │   affected keys, and suggested ledger horizon) for operator extension. Only `ExpiringSoon`
-│   entries are placed in the ready-to-run `sdkt storage extend` command. `Removed` entries are
-│   expired or archived and cannot be revived by `extend`; the plan lists them as restore keys
-│   and points to `sdkt storage restore`, which needs the invocation envelope that failed on
-│   archived state. JSON `extend_plan` keeps `keys` (all actionable) and adds `extend_keys` and
-│   `restore_keys`.
+│   entries are placed in the ready-to-run `sdkt storage extend` command. `Removed` entries cannot be revived by `extend`, and a snapshot diff cannot prove they were
+│   archived (they may be omitted from the new analysis or deleted), so they are reported as
+│   restore-unverified (`unverified_keys`); removed `temporary` entries are expired and not
+│   restorable (`expired_keys`). Confirm archival, then use
+│   `sdkt storage restore --contract <id> --envelope <envelope>`. JSON `extend_plan` keeps `keys`
+│   (all actionable) and adds `extend_keys`, `unverified_keys` and `expired_keys`.
 │
 │   `read` fetches a single ledger entry by its complete `LedgerKey` (base64 XDR).
 │   The instance key is NOT included automatically — supply the full key via --key-xdr.
