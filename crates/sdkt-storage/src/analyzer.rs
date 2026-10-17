@@ -1,5 +1,4 @@
 use crate::error::StorageError;
-use crate::snapshot::EXPIRING_SOON_LEDGERS;
 use crate::types::{StorageClass, StorageEntry, StorageReport, TtlInfoSummary};
 use base64::Engine;
 use sdkt_rpc::SorobanRpcClient;
@@ -42,11 +41,44 @@ pub fn classify_key(base64_key: &str) -> StorageClass {
 
 pub struct StorageAnalyzer {
     client: SorobanRpcClient,
+    network: Option<String>,
+    max_entries: usize,
+    expiring_soon_ledgers: u32,
 }
 
 impl StorageAnalyzer {
     pub fn new(client: SorobanRpcClient) -> Self {
-        Self { client }
+        Self {
+            client,
+            network: None,
+            max_entries: 200,
+            expiring_soon_ledgers: crate::snapshot::EXPIRING_SOON_LEDGERS,
+        }
+    }
+
+    pub fn with_network(mut self, network: impl Into<String>) -> Self {
+        self.network = Some(network.into());
+        self
+    }
+
+    pub fn network(&self) -> Option<&str> {
+        self.network.as_deref()
+    }
+
+    pub fn with_config(
+        client: SorobanRpcClient,
+        max_entries: usize,
+        ttl_warning_days: u32,
+    ) -> Self {
+        Self {
+            client,
+            network: None,
+            max_entries,
+            // Saturating: a pathologically large configured window must not
+            // overflow (which would wrap to a tiny threshold and invert the
+            // warning). 17_280 ledgers/day = 86_400 s ÷ 5 s per ledger.
+            expiring_soon_ledgers: ttl_warning_days.saturating_mul(17_280),
+        }
     }
 
     pub async fn inspect_contract_storage(
@@ -67,12 +99,20 @@ impl StorageAnalyzer {
             ));
         }
 
-        let ttl_info =
-            sdkt_rpc::get_ttl_info_for_keys(&self.client, contract_id, extra_keys).await?;
+        let ttl_info = sdkt_rpc::get_ttl_info_for_keys(
+            &self.client,
+            contract_id,
+            extra_keys,
+            self.max_entries,
+            self.expiring_soon_ledgers,
+        )
+        .await?;
 
         if ttl_info.entries.is_empty() {
             return Ok(StorageReport {
                 contract_id: contract_id.to_string(),
+                latest_ledger: ttl_info.latest_ledger,
+                network: self.network.clone(),
                 ..Default::default()
             });
         }
@@ -109,7 +149,7 @@ impl StorageAnalyzer {
                 }
                 total_ttl += ttl as u64;
 
-                if ttl < EXPIRING_SOON_LEDGERS {
+                if ttl < self.expiring_soon_ledgers {
                     expiring_soon += 1;
                 }
                 total_cost += entry.extension_cost_stroops;
@@ -151,6 +191,8 @@ impl StorageAnalyzer {
             total_size_bytes: None,
             ttl_summary,
             entries: detailed,
+            latest_ledger: ttl_info.latest_ledger,
+            network: self.network.clone(),
         })
     }
 }
@@ -239,6 +281,52 @@ mod tests {
         let analyzer = StorageAnalyzer::new(client);
         let err = analyzer.inspect_contract_storage("").await.unwrap_err();
         assert!(matches!(err, StorageError::InvalidContractId(_)));
+    }
+
+    #[tokio::test]
+    async fn test_with_config_ttl_warning_days_converts_to_ledgers() {
+        // Issue #375: ttl_warning_days must move the expiring-soon boundary
+        // using the same 5 s/ledger assumption as the existing threshold.
+        let client = SorobanRpcClient::new("http://127.0.0.1:1");
+        // 7 days -> 7 * 17_280 ledgers.
+        let analyzer = StorageAnalyzer::with_config(client, 50, 7);
+        assert_eq!(analyzer.expiring_soon_ledgers, 7 * 17_280);
+        assert_eq!(analyzer.max_entries, 50);
+
+        let default_analyzer = StorageAnalyzer::new(SorobanRpcClient::new("http://127.0.0.1:1"));
+        assert_eq!(
+            default_analyzer.expiring_soon_ledgers,
+            crate::snapshot::EXPIRING_SOON_LEDGERS
+        );
+        assert_eq!(default_analyzer.max_entries, 200);
+    }
+
+    #[test]
+    fn test_with_config_ttl_warning_days_saturates_without_overflow() {
+        // Issue #375: a pathological configured window must saturate at
+        // u32::MAX, not wrap into a tiny threshold that would invert the
+        // expiring-soon warning.
+        let analyzer = StorageAnalyzer::with_config(
+            SorobanRpcClient::new("http://127.0.0.1:1"),
+            200,
+            u32::MAX,
+        );
+        assert_eq!(analyzer.expiring_soon_ledgers, u32::MAX);
+    }
+
+    #[test]
+    fn test_default_ttl_warning_threshold_is_thirty_days() {
+        // Regression (review round 3): wiring [storage] into the analyzer must
+        // not silently change the default warning threshold. 30 days is the
+        // documented default (see sdkt_core::StorageConfig::default) and must
+        // convert to 30 * 17_280 = 518_400 ledgers.
+        let analyzer =
+            StorageAnalyzer::with_config(SorobanRpcClient::new("http://127.0.0.1:1"), 200, 30);
+        assert_eq!(
+            analyzer.expiring_soon_ledgers,
+            30 * 17_280,
+            "30-day default must convert to 518_400 ledgers"
+        );
     }
 
     #[tokio::test]

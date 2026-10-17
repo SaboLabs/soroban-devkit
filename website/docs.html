@@ -106,7 +106,7 @@ cargo build --release
           </div>
         </div>
 
-        <p class="mt-5 rounded-xl border border-accent/20 bg-accent/[0.06] px-4 py-3 text-sm text-slate-400">Fuzzing (<code class="text-accent">sdkt fuzz</code>) and artifact security (<code class="text-accent">sdkt security</code>) are on <code class="text-accent">main</code> and are not in the v2.7.0 release binary or on crates.io. Use path C to run them.</p>
+        <p class="mt-5 rounded-xl border border-accent/20 bg-accent/[0.06] px-4 py-3 text-sm text-slate-400">Fuzzing (<code class="text-accent">sdkt fuzz</code>) and client generation (<code class="text-accent">sdkt generate</code>) are on <code class="text-accent">main</code> and are not in the v2.7.0 release binary or on crates.io. Use path C to run them.</p>
       </section>
 
       <!-- QUICKSTART -->
@@ -217,7 +217,7 @@ sdkt wasm inspect crates/sdkt-cli/tests/fixtures/us_old.wasm
       <!-- CLI TREE -->
       <section id="cli-tree" class="scroll-mt-24">
         <h2 class="text-2xl font-bold tracking-tight text-white">CLI tree</h2>
-        <p class="mt-3 text-slate-400">32 top-level commands. The full tree with every flag lives in <a class="text-accent hover:underline" href="https://github.com/SaboLabs/soroban-devkit/blob/main/docs/reference/cli.md" rel="noopener">docs/reference/cli.md</a>, kept in step with the clap definitions.</p>
+        <p class="mt-3 text-slate-400">30 top-level commands. The full tree with every flag lives in <a class="text-accent hover:underline" href="https://github.com/SaboLabs/soroban-devkit/blob/main/docs/reference/cli.md" rel="noopener">docs/reference/cli.md</a>, kept in step with the clap definitions.</p>
         <div class="mt-6 overflow-hidden rounded-2xl border border-[#0A1A2E] bg-[#000815]">
           <div class="flex items-center justify-between border-b border-[#060D16] bg-[#010916] px-4 py-2 font-mono text-[11px]"><span class="text-slate-300">sdkt — top-level commands</span><span class="rounded border border-[#0A1A2E] px-1.5 py-0.5 text-[9px] uppercase tracking-wider text-slate-400">v2.7.0 + main</span></div>
           <pre class="overflow-x-auto p-4 font-mono text-[11px] leading-7 text-slate-300"><code>decode  encode  storage  inspect  verify  health  tx  events
@@ -226,7 +226,7 @@ init  deploy  build  call  invoke  lock  package  project  plugin
 release-assurance  completions  doctor
 
 <span class="text-slate-600"># on main only:</span>
-security  fuzz  generate</code></pre>
+fuzz  generate</code></pre>
         </div>
       </section>
 

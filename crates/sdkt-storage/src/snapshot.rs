@@ -50,6 +50,12 @@ pub const DEFAULT_SUGGESTED_LEDGERS: u32 = 518_400;
 pub struct StorageSnapshot {
     /// The on-chain contract identifier (C… StrKey or hex).
     pub contract_id: String,
+    /// Ledger sequence at which this snapshot was captured.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub latest_ledger: Option<u32>,
+    /// Network identity against which this snapshot was captured.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub network: Option<String>,
     /// Entries captured at the time this snapshot was taken.
     pub entries: Vec<SnapshotEntry>,
 }
@@ -83,6 +89,8 @@ impl StorageSnapshot {
         }
         Ok(Self {
             contract_id: report.contract_id.clone(),
+            latest_ledger: report.latest_ledger,
+            network: report.network.clone(),
             entries: report
                 .entries
                 .iter()
@@ -101,8 +109,21 @@ impl StorageSnapshot {
     pub fn from_entries(contract_id: impl Into<String>, entries: Vec<SnapshotEntry>) -> Self {
         Self {
             contract_id: contract_id.into(),
+            latest_ledger: None,
+            network: None,
             entries,
         }
+    }
+
+    /// Attach capture context (ledger sequence and network identity) to the snapshot.
+    pub fn with_context(
+        mut self,
+        latest_ledger: Option<u32>,
+        network: Option<impl Into<String>>,
+    ) -> Self {
+        self.latest_ledger = latest_ledger;
+        self.network = network.map(|n| n.into());
+        self
     }
 }
 
@@ -142,6 +163,10 @@ pub struct DiffEntry {
     pub old_ttl: Option<u32>,
     /// TTL in the new snapshot (`None` for `Removed` entries).
     pub new_ttl: Option<u32>,
+    /// Expected old TTL normalized to the new snapshot's ledger horizon
+    /// (`old_ttl - ledger_delta`), if ledger context is known.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub normalized_old_ttl: Option<u32>,
 }
 
 /// The complete result of diffing two [`StorageSnapshot`]s.
@@ -149,6 +174,21 @@ pub struct DiffEntry {
 pub struct SnapshotDiff {
     /// Contract these snapshots describe.
     pub contract_id: String,
+    /// Ledger sequence of the old snapshot, if recorded.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub old_ledger: Option<u32>,
+    /// Ledger sequence of the new snapshot, if recorded.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub new_ledger: Option<u32>,
+    /// Ledger difference (new_ledger - old_ledger), if both are recorded.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ledger_delta: Option<i64>,
+    /// Network identity of the snapshots, if recorded.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub network: Option<String>,
+    /// Capture context status ("unknown" if ledger or network context is missing).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub capture_context: Option<String>,
     /// All entries across both snapshots.
     pub entries: Vec<DiffEntry>,
 }
@@ -172,15 +212,14 @@ impl SnapshotDiff {
 /// follows:
 ///
 /// 1. Every key in the old snapshot that is absent in the new snapshot →
-///    [`DiffStatus::Removed`].
-/// 2. Every key in the new snapshot whose TTL < [`EXPIRING_SOON_LEDGERS`] →
-///    [`DiffStatus::ExpiringSoon`].
-/// 3. All other keys present in the new snapshot → [`DiffStatus::Unchanged`].
+/// 2. If capture ledgers are recorded in both snapshots, old TTLs are normalized
+///    by the ledger delta for side-by-side comparison.
+/// 3. Every live entry in the new snapshot whose remaining TTL is below
+///    [`EXPIRING_SOON_LEDGERS`] → [`DiffStatus::ExpiringSoon`].
+/// 4. All other live entries present in the new snapshot → [`DiffStatus::Unchanged`].
 ///
-/// Keys that appear only in the new snapshot (added entries) are reported as
-/// [`DiffStatus::Unchanged`] (or `ExpiringSoon` if their TTL is low).  There is
-/// intentionally no `Added` status because the diff is used exclusively to drive
-/// remediation of *at-risk* entries.
+/// If differing networks are recorded in the snapshots, the diff is rejected
+/// with [`StorageError::NetworkMismatch`].
 pub fn diff_snapshots(
     old: &StorageSnapshot,
     new: &StorageSnapshot,
@@ -191,6 +230,40 @@ pub fn diff_snapshots(
             new: new.contract_id.clone(),
         });
     }
+
+    if let (Some(ref old_net), Some(ref new_net)) = (&old.network, &new.network) {
+        if old_net != new_net {
+            return Err(StorageError::NetworkMismatch {
+                old: old_net.clone(),
+                new: new_net.clone(),
+            });
+        }
+    }
+
+    let (old_ledger, new_ledger, ledger_delta) = match (old.latest_ledger, new.latest_ledger) {
+        (Some(old_l), Some(new_l)) => {
+            let delta = new_l as i64 - old_l as i64;
+            (Some(old_l), Some(new_l), Some(delta))
+        }
+        _ => (old.latest_ledger, new.latest_ledger, None),
+    };
+
+    let capture_context = if old.latest_ledger.is_none()
+        || new.latest_ledger.is_none()
+        || old.network.is_none()
+        || new.network.is_none()
+    {
+        Some("unknown".to_string())
+    } else {
+        None
+    };
+
+    let network = match (&old.network, &new.network) {
+        (Some(o), Some(n)) if o == n => Some(o.clone()),
+        (Some(o), None) => Some(o.clone()),
+        (None, Some(n)) => Some(n.clone()),
+        _ => None,
+    };
 
     use std::collections::HashMap;
 
@@ -207,11 +280,23 @@ pub fn diff_snapshots(
         let old_ttl = old_entry.current_ttl;
         if let Some(&new_entry) = new_map.get(key) {
             let new_ttl = new_entry.current_ttl;
+            let normalized_old_ttl = ledger_delta.map(|delta| {
+                if delta >= 0 {
+                    old_ttl.saturating_sub(delta as u32)
+                } else {
+                    old_ttl.saturating_add(delta.unsigned_abs() as u32)
+                }
+            });
+
+            // Any live entry with new_ttl < EXPIRING_SOON_LEDGERS must remain
+            // classified as ExpiringSoon, even when its TTL is greater than the
+            // normalized old TTL.
             let status = if new_ttl < EXPIRING_SOON_LEDGERS {
                 DiffStatus::ExpiringSoon
             } else {
                 DiffStatus::Unchanged
             };
+
             entries.push(DiffEntry {
                 key: key.to_string(),
                 label: new_entry.label.clone().or_else(|| old_entry.label.clone()),
@@ -219,6 +304,7 @@ pub fn diff_snapshots(
                 class: new_entry.class.or(old_entry.class),
                 old_ttl: Some(old_ttl),
                 new_ttl: Some(new_ttl),
+                normalized_old_ttl,
             });
         } else {
             entries.push(DiffEntry {
@@ -228,6 +314,7 @@ pub fn diff_snapshots(
                 class: old_entry.class,
                 old_ttl: Some(old_ttl),
                 new_ttl: None,
+                normalized_old_ttl: None,
             });
         }
     }
@@ -248,6 +335,7 @@ pub fn diff_snapshots(
                 class: new_entry.class,
                 old_ttl: None,
                 new_ttl: Some(new_ttl),
+                normalized_old_ttl: None,
             });
         }
     }
@@ -257,6 +345,11 @@ pub fn diff_snapshots(
 
     Ok(SnapshotDiff {
         contract_id: old.contract_id.clone(),
+        old_ledger,
+        new_ledger,
+        ledger_delta,
+        network,
+        capture_context,
         entries,
     })
 }
@@ -449,10 +542,12 @@ mod tests {
         let old = StorageSnapshot {
             contract_id: "CCONTRACTA".to_string(),
             entries: vec![],
+            ..Default::default()
         };
         let new = StorageSnapshot {
             contract_id: "CCONTRACTB".to_string(),
             entries: vec![],
+            ..Default::default()
         };
         let err = diff_snapshots(&old, &new).unwrap_err();
         assert!(matches!(
@@ -586,6 +681,7 @@ mod tests {
         let diff = SnapshotDiff {
             contract_id: CONTRACT.to_string(),
             entries: vec![],
+            ..Default::default()
         };
         let plan = derive_extend_plan(&diff);
         assert!(plan.keys.is_empty());
@@ -604,7 +700,9 @@ mod tests {
                 status: DiffStatus::Removed,
                 old_ttl: Some(50_000),
                 new_ttl: None,
+                normalized_old_ttl: None,
             }],
+            ..Default::default()
         };
         let plan = derive_extend_plan(&diff);
         assert_eq!(plan.keys, vec!["k1"]);
@@ -625,7 +723,9 @@ mod tests {
                 status: DiffStatus::ExpiringSoon,
                 old_ttl: Some(50_000),
                 new_ttl: Some(remaining),
+                normalized_old_ttl: None,
             }],
+            ..Default::default()
         };
         let plan = derive_extend_plan(&diff);
         assert_eq!(plan.keys, vec!["k1"]);
@@ -650,6 +750,7 @@ mod tests {
                     status: DiffStatus::ExpiringSoon,
                     old_ttl: Some(50_000),
                     new_ttl: Some(10_000),
+                    normalized_old_ttl: None,
                 },
                 DiffEntry {
                     key: "k2".to_string(),
@@ -658,6 +759,7 @@ mod tests {
                     status: DiffStatus::ExpiringSoon,
                     old_ttl: Some(50_000),
                     new_ttl: Some(1_000), // minimum
+                    normalized_old_ttl: None,
                 },
                 DiffEntry {
                     key: "k3".to_string(),
@@ -666,8 +768,10 @@ mod tests {
                     status: DiffStatus::Removed,
                     old_ttl: Some(50_000),
                     new_ttl: None,
+                    normalized_old_ttl: None,
                 },
             ],
+            ..Default::default()
         };
         let plan = derive_extend_plan(&diff);
         assert_eq!(plan.keys.len(), 3);
@@ -687,6 +791,7 @@ mod tests {
                     status: DiffStatus::Unchanged,
                     old_ttl: Some(100_000),
                     new_ttl: Some(99_000),
+                    normalized_old_ttl: None,
                 },
                 DiffEntry {
                     key: "expiring".to_string(),
@@ -695,8 +800,10 @@ mod tests {
                     status: DiffStatus::ExpiringSoon,
                     old_ttl: Some(20_000),
                     new_ttl: Some(5_000),
+                    normalized_old_ttl: None,
                 },
             ],
+            ..Default::default()
         };
         let plan = derive_extend_plan(&diff);
         assert_eq!(plan.keys, vec!["expiring"]);
@@ -714,6 +821,7 @@ mod tests {
             class,
             status,
             old_ttl: Some(50_000),
+            normalized_old_ttl: None,
             new_ttl,
         }
     }
@@ -722,6 +830,7 @@ mod tests {
         derive_extend_plan(&SnapshotDiff {
             contract_id: CONTRACT.to_string(),
             entries,
+            ..Default::default()
         })
     }
 
@@ -857,9 +966,13 @@ mod tests {
                     extension_cost_stroops: 0,
                 },
             ],
+            latest_ledger: Some(1_000_000),
+            network: Some("testnet".to_string()),
         };
         let snap = StorageSnapshot::from_report(&report).unwrap();
         assert_eq!(snap.contract_id, CONTRACT);
+        assert_eq!(snap.latest_ledger, Some(1_000_000));
+        assert_eq!(snap.network.as_deref(), Some("testnet"));
         assert_eq!(snap.entries.len(), 2);
         assert_eq!(snap.entries[0].key, "key1");
         assert_eq!(snap.entries[0].current_ttl, 10_000);
@@ -875,5 +988,169 @@ mod tests {
         };
         let err = StorageSnapshot::from_report(&report).unwrap_err();
         assert!(matches!(err, StorageError::Parse(msg) if msg.contains("total_entries (3) > 0")));
+    }
+
+    // -----------------------------------------------------------------------
+    // Capture context & TTL normalisation tests (#382)
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn diff_legacy_snapshots_without_capture_context_state_unknown() {
+        let old = snap(vec![("k1", 50_000)]);
+        let new = snap(vec![("k1", 49_000)]);
+        let diff = diff_snapshots(&old, &new).unwrap();
+
+        assert_eq!(diff.capture_context.as_deref(), Some("unknown"));
+        assert!(diff.old_ledger.is_none());
+        assert!(diff.new_ledger.is_none());
+        assert!(diff.ledger_delta.is_none());
+        assert_eq!(diff.entries[0].status, DiffStatus::Unchanged);
+        assert!(diff.entries[0].normalized_old_ttl.is_none());
+    }
+
+    #[test]
+    fn diff_network_mismatch_refused_with_actionable_error() {
+        let old = snap(vec![("k1", 50_000)]).with_context(Some(1_000_000), Some("testnet"));
+        let new = snap(vec![("k1", 50_000)]).with_context(Some(1_000_000), Some("mainnet"));
+
+        let err = diff_snapshots(&old, &new).unwrap_err();
+        match err {
+            StorageError::NetworkMismatch { old, new } => {
+                assert_eq!(old, "testnet");
+                assert_eq!(new, "mainnet");
+            }
+            other => panic!("expected NetworkMismatch, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn diff_matching_networks_accepted() {
+        let old = snap(vec![("k1", 50_000)]).with_context(Some(1_000_000), Some("testnet"));
+        let new = snap(vec![("k1", 49_000)]).with_context(Some(1_001_000), Some("testnet"));
+
+        let diff = diff_snapshots(&old, &new).unwrap();
+        assert_eq!(diff.network.as_deref(), Some("testnet"));
+        assert_eq!(diff.ledger_delta, Some(1_000));
+        assert!(diff.capture_context.is_none());
+    }
+
+    #[test]
+    fn diff_one_recorded_network_one_unrecorded_accepted() {
+        let old = snap(vec![("k1", 50_000)]).with_context(Some(1_000_000), Some("testnet"));
+        let new = snap(vec![("k1", 49_000)]).with_context(Some(1_001_000), None::<String>);
+
+        let diff = diff_snapshots(&old, &new).unwrap();
+        assert_eq!(diff.network.as_deref(), Some("testnet"));
+        assert_eq!(diff.capture_context.as_deref(), Some("unknown"));
+    }
+
+    #[test]
+    fn diff_both_networks_missing_sets_capture_context_unknown_even_with_ledgers() {
+        let old = snap(vec![("k1", 50_000)]).with_context(Some(1_000_000), None::<String>);
+        let new = snap(vec![("k1", 49_000)]).with_context(Some(1_001_000), None::<String>);
+
+        let diff = diff_snapshots(&old, &new).unwrap();
+        assert_eq!(diff.ledger_delta, Some(1_000));
+        assert!(diff.network.is_none());
+        assert_eq!(diff.capture_context.as_deref(), Some("unknown"));
+    }
+
+    #[test]
+    fn diff_missing_ledger_with_network_sets_capture_context_unknown() {
+        let old = snap(vec![("k1", 50_000)]).with_context(Some(1_000_000), Some("testnet"));
+        let new = snap(vec![("k1", 49_000)]).with_context(None::<u32>, Some("testnet"));
+
+        let diff = diff_snapshots(&old, &new).unwrap();
+        assert!(diff.ledger_delta.is_none());
+        assert_eq!(diff.network.as_deref(), Some("testnet"));
+        assert_eq!(diff.capture_context.as_deref(), Some("unknown"));
+    }
+
+    #[test]
+    fn diff_absolute_expiry_threshold_preserved_below_threshold_even_with_natural_skew() {
+        // Capture A at ledger 1,000,000 with TTL = 18,000.
+        // Capture B at ledger 1,017,281 (delta = 17,281).
+        // Untouched on chain: remaining TTL in B is 18,000 - 17,281 = 719.
+        // Even though drop matches time skew (new_ttl == normalized_old_ttl),
+        // the remaining TTL 719 is < 17,280, so the absolute expiry threshold
+        // is preserved and it must be classified as ExpiringSoon.
+        let old = snap(vec![("k1", 18_000)]).with_context(Some(1_000_000), Some("testnet"));
+        let new = snap(vec![("k1", 719)]).with_context(Some(1_017_281), Some("testnet"));
+
+        let diff = diff_snapshots(&old, &new).unwrap();
+        assert_eq!(diff.ledger_delta, Some(17_281));
+        assert_eq!(diff.entries.len(), 1);
+        assert_eq!(diff.entries[0].status, DiffStatus::ExpiringSoon);
+        assert_eq!(diff.entries[0].old_ttl, Some(18_000));
+        assert_eq!(diff.entries[0].new_ttl, Some(719));
+        assert_eq!(diff.entries[0].normalized_old_ttl, Some(719));
+        assert_eq!(diff.actionable().count(), 1);
+    }
+
+    #[test]
+    fn diff_absolute_expiry_threshold_preserved_when_ttl_greater_than_normalized_old() {
+        // Capture A at ledger 1,000,000 with TTL = 10,000 (< 17,280).
+        // Capture B at ledger 1,005,000 (delta = 5,000). Expected normalized old TTL = 5,000.
+        // On chain, TTL was extended slightly to 8,000 (> normalized_old_ttl of 5,000).
+        // Any live entry with new_ttl < EXPIRING_SOON_LEDGERS must remain classified as
+        // ExpiringSoon, even when its TTL is greater than the normalized old TTL.
+        let old = snap(vec![("k1", 10_000)]).with_context(Some(1_000_000), Some("testnet"));
+        let new = snap(vec![("k1", 8_000)]).with_context(Some(1_005_000), Some("testnet"));
+
+        let diff = diff_snapshots(&old, &new).unwrap();
+        assert_eq!(diff.ledger_delta, Some(5_000));
+        assert_eq!(diff.entries[0].status, DiffStatus::ExpiringSoon);
+        assert_eq!(diff.entries[0].old_ttl, Some(10_000));
+        assert_eq!(diff.entries[0].new_ttl, Some(8_000));
+        assert_eq!(diff.entries[0].normalized_old_ttl, Some(5_000));
+        assert_eq!(diff.actionable().count(), 1);
+    }
+
+    #[test]
+    fn diff_unchanged_when_new_ttl_at_or_above_threshold() {
+        // Capture A at ledger 1,000,000 with TTL = 50,000.
+        // Capture B at ledger 1,010,000 (delta = 10,000). Expected normalized old TTL = 40,000.
+        // Observed new TTL is 40,000, which is >= EXPIRING_SOON_LEDGERS (17,280).
+        // This is classified as Unchanged.
+        let old = snap(vec![("k1", 50_000)]).with_context(Some(1_000_000), Some("testnet"));
+        let new = snap(vec![("k1", 40_000)]).with_context(Some(1_010_000), Some("testnet"));
+
+        let diff = diff_snapshots(&old, &new).unwrap();
+        assert_eq!(diff.ledger_delta, Some(10_000));
+        assert_eq!(diff.entries[0].status, DiffStatus::Unchanged);
+        assert_eq!(diff.entries[0].old_ttl, Some(50_000));
+        assert_eq!(diff.entries[0].new_ttl, Some(40_000));
+        assert_eq!(diff.entries[0].normalized_old_ttl, Some(40_000));
+        assert_eq!(diff.actionable().count(), 0);
+    }
+
+    #[test]
+    fn diff_ledger_delta_reports_expiring_soon_on_real_drift() {
+        // Capture A at ledger 1,000,000 with TTL = 50,000.
+        // Capture B at ledger 1,001,000 (delta = 1,000).
+        // Expected TTL at B is 49,000. But observed TTL is 5,000 (< threshold 17,280).
+        // Because 5,000 < 49,000 (real negative drift), it is correctly ExpiringSoon.
+        let old = snap(vec![("k1", 50_000)]).with_context(Some(1_000_000), Some("testnet"));
+        let new = snap(vec![("k1", 5_000)]).with_context(Some(1_001_000), Some("testnet"));
+
+        let diff = diff_snapshots(&old, &new).unwrap();
+        assert_eq!(diff.ledger_delta, Some(1_000));
+        assert_eq!(diff.entries[0].status, DiffStatus::ExpiringSoon);
+        assert_eq!(diff.entries[0].normalized_old_ttl, Some(49_000));
+        assert_eq!(diff.actionable().count(), 1);
+    }
+
+    #[test]
+    fn diff_ledger_delta_reports_expiring_soon_when_already_expiring() {
+        // Capture A had TTL = 10,000 (< 17,280, already expiring).
+        // Capture B at delta = 1,000 has TTL = 9,000.
+        // It was already expiring in baseline, so it must remain ExpiringSoon.
+        let old = snap(vec![("k1", 10_000)]).with_context(Some(1_000_000), Some("testnet"));
+        let new = snap(vec![("k1", 9_000)]).with_context(Some(1_001_000), Some("testnet"));
+
+        let diff = diff_snapshots(&old, &new).unwrap();
+        assert_eq!(diff.entries[0].status, DiffStatus::ExpiringSoon);
+        assert_eq!(diff.entries[0].normalized_old_ttl, Some(9_000));
+        assert_eq!(diff.actionable().count(), 1);
     }
 }

@@ -116,6 +116,46 @@ fn create_snapshot_file(path: &Path, contract_id: &str, entries: &[(&str, u32)])
     fs::write(path, serde_json::to_string_pretty(&report).unwrap()).unwrap();
 }
 
+fn create_snapshot_file_with_context(
+    path: &Path,
+    contract_id: &str,
+    entries: &[(&str, u32)],
+    latest_ledger: Option<u32>,
+    network: Option<&str>,
+) {
+    let entry_objs: Vec<serde_json::Value> = entries
+        .iter()
+        .map(|(k, ttl)| {
+            serde_json::json!({
+                "key": k,
+                "class": "persistent",
+                "current_ttl": ttl,
+                "days_remaining": ttl / 17280,
+                "extension_cost_stroops": 0,
+            })
+        })
+        .collect();
+
+    let mut report = serde_json::json!({
+        "contract_id": contract_id,
+        "total_entries": entries.len(),
+        "instance_entries": 0,
+        "persistent_entries": entries.len(),
+        "temporary_entries": 0,
+        "other_entries": 0,
+        "entries": entry_objs,
+    });
+
+    if let Some(ledger) = latest_ledger {
+        report["latest_ledger"] = serde_json::json!(ledger);
+    }
+    if let Some(net) = network {
+        report["network"] = serde_json::json!(net);
+    }
+
+    fs::write(path, serde_json::to_string_pretty(&report).unwrap()).unwrap();
+}
+
 #[test]
 fn extend_plan_cli_never_contacts_rpc_and_carries_network_flag() {
     let listener = TcpListener::bind("127.0.0.1:0").expect("bind ephemeral port");
@@ -359,6 +399,7 @@ fn extend_plan_expiring_only_output_is_unchanged() {
     let expected = format!(
         "\
 Storage Diff for Contract: {CONTRACT}
+Capture context: unknown
 Total entries: 1
   Removed:       0 | Expiring Soon: 1 | Unchanged: 0
 
@@ -377,4 +418,250 @@ Extension Plan
 "
     );
     assert_eq!(out, expected);
+}
+
+#[test]
+fn storage_diff_cli_ledger_delta_normalized_in_json_and_absolute_threshold_preserved() {
+    let dir = tempdir().unwrap();
+    let old_path = dir.path().join("old.json");
+    let new_path = dir.path().join("new.json");
+
+    // keyA: 50,000 -> 40,000 with delta 10,000 (new_ttl >= 17,280 -> unchanged)
+    // keyB: 18,000 -> 719 with delta 10,000 (new_ttl < 17,280 -> expiring_soon)
+    create_snapshot_file_with_context(
+        &old_path,
+        CONTRACT,
+        &[("keyA==", 50_000), ("keyB==", 18_000)],
+        Some(1_000_000),
+        Some("testnet"),
+    );
+    create_snapshot_file_with_context(
+        &new_path,
+        CONTRACT,
+        &[("keyA==", 40_000), ("keyB==", 719)],
+        Some(1_010_000),
+        Some("testnet"),
+    );
+
+    let mut cmd = sdkt();
+    cmd.args(["storage", "diff", "--old"])
+        .arg(&old_path)
+        .arg("--new")
+        .arg(&new_path)
+        .args(["--format", "json"]);
+
+    let output = cmd.assert().success().get_output().stdout.clone();
+    let val: serde_json::Value = serde_json::from_slice(&output).unwrap();
+
+    assert_eq!(val["old_ledger"], 1_000_000);
+    assert_eq!(val["new_ledger"], 1_010_000);
+    assert_eq!(val["ledger_delta"], 10_000);
+    assert_eq!(val["network"], "testnet");
+
+    let entries = val["entries"].as_array().unwrap();
+    assert_eq!(entries.len(), 2);
+
+    let entry_a = entries.iter().find(|e| e["key"] == "keyA==").unwrap();
+    assert_eq!(entry_a["status"], "unchanged");
+    assert_eq!(entry_a["old_ttl"], 50_000);
+    assert_eq!(entry_a["new_ttl"], 40_000);
+    assert_eq!(entry_a["normalized_old_ttl"], 40_000);
+
+    let entry_b = entries.iter().find(|e| e["key"] == "keyB==").unwrap();
+    // Absolute threshold preserved: 719 < 17,280 must remain expiring_soon.
+    assert_eq!(entry_b["status"], "expiring_soon");
+    assert_eq!(entry_b["old_ttl"], 18_000);
+    assert_eq!(entry_b["new_ttl"], 719);
+    assert_eq!(entry_b["normalized_old_ttl"], 8_000);
+}
+
+#[test]
+fn storage_diff_cli_network_mismatch_refused() {
+    let dir = tempdir().unwrap();
+    let old_path = dir.path().join("testnet.json");
+    let new_path = dir.path().join("mainnet.json");
+
+    create_snapshot_file_with_context(
+        &old_path,
+        CONTRACT,
+        &[("keyA==", 50_000)],
+        Some(1_000_000),
+        Some("testnet"),
+    );
+    create_snapshot_file_with_context(
+        &new_path,
+        CONTRACT,
+        &[("keyA==", 50_000)],
+        Some(1_000_000),
+        Some("mainnet"),
+    );
+
+    let mut cmd = sdkt();
+    cmd.args(["storage", "diff", "--old"])
+        .arg(&old_path)
+        .arg("--new")
+        .arg(&new_path);
+
+    let assert = cmd.assert().failure();
+    let stderr = String::from_utf8(assert.get_output().stderr.clone()).unwrap();
+
+    assert!(stderr.contains("Snapshot network mismatch: old 'testnet' vs new 'mainnet'"));
+}
+
+#[test]
+fn storage_diff_cli_legacy_snapshot_still_diffs_and_states_unknown() {
+    let dir = tempdir().unwrap();
+    let old_path = dir.path().join("legacy_old.json");
+    let new_path = dir.path().join("legacy_new.json");
+
+    // Plain snapshot without latest_ledger and network.
+    create_snapshot_file(&old_path, CONTRACT, &[("keyA==", 50_000)]);
+    create_snapshot_file(&new_path, CONTRACT, &[("keyA==", 49_000)]);
+
+    // Check pretty output
+    let mut pretty_cmd = sdkt();
+    pretty_cmd
+        .args(["storage", "diff", "--old"])
+        .arg(&old_path)
+        .arg("--new")
+        .arg(&new_path);
+
+    let pretty_out = pretty_cmd.assert().success().get_output().stdout.clone();
+    let pretty_str = String::from_utf8(pretty_out).unwrap();
+    assert!(pretty_str.contains("Capture context: unknown"));
+
+    // Check JSON output
+    let mut json_cmd = sdkt();
+    json_cmd
+        .args(["storage", "diff", "--old"])
+        .arg(&old_path)
+        .arg("--new")
+        .arg(&new_path)
+        .args(["--format", "json"]);
+
+    let json_out = json_cmd.assert().success().get_output().stdout.clone();
+    let val: serde_json::Value = serde_json::from_slice(&json_out).unwrap();
+    assert_eq!(val["capture_context"], "unknown");
+    assert!(val.get("ledger_delta").is_none() || val["ledger_delta"].is_null());
+}
+
+#[test]
+fn storage_diff_cli_pretty_output_displays_ledger_delta_and_network() {
+    let dir = tempdir().unwrap();
+    let old_path = dir.path().join("old.json");
+    let new_path = dir.path().join("new.json");
+
+    create_snapshot_file_with_context(
+        &old_path,
+        CONTRACT,
+        &[("keyA==", 50_000), ("keyB==", 50_000)],
+        Some(1_000_000),
+        Some("testnet"),
+    );
+    create_snapshot_file_with_context(
+        &new_path,
+        CONTRACT,
+        &[("keyA==", 32_719), ("keyB==", 5_000)],
+        Some(1_017_281),
+        Some("testnet"),
+    );
+
+    let mut cmd = sdkt();
+    cmd.args(["storage", "diff", "--old"])
+        .arg(&old_path)
+        .arg("--new")
+        .arg(&new_path);
+
+    let output = cmd.assert().success().get_output().stdout.clone();
+    let stdout = String::from_utf8(output).unwrap();
+
+    assert!(stdout.contains(
+        "Capture context: old ledger 1000000, new ledger 1017281 (ledger delta: +17281)"
+    ));
+    assert!(stdout.contains("Network:         testnet"));
+    assert!(stdout.contains("Removed:       0 | Expiring Soon: 1 | Unchanged: 1"));
+    assert!(stdout.contains("[expiring] key=keyB=="));
+    assert!(stdout.contains("normalized_old_ttl=32719"));
+    // Unlabeled unchanged entry is also printed
+    assert!(stdout.contains("Unchanged entries (1):"));
+    assert!(stdout.contains("[unchanged] key=keyA=="));
+}
+
+#[test]
+fn storage_diff_cli_partial_context_missing_network_states_unknown() {
+    let dir = tempdir().unwrap();
+    let old_path = dir.path().join("old.json");
+    let new_path = dir.path().join("new.json");
+
+    create_snapshot_file_with_context(
+        &old_path,
+        CONTRACT,
+        &[("keyA==", 18_000)],
+        Some(1_000_000),
+        Some("testnet"),
+    );
+    create_snapshot_file_with_context(
+        &new_path,
+        CONTRACT,
+        &[("keyA==", 17_000)],
+        Some(1_001_000),
+        None,
+    );
+
+    // Pretty output must consistently state unknown capture context
+    let mut pretty_cmd = sdkt();
+    pretty_cmd
+        .args(["storage", "diff", "--old"])
+        .arg(&old_path)
+        .arg("--new")
+        .arg(&new_path);
+
+    let pretty_out = pretty_cmd.assert().success().get_output().stdout.clone();
+    let pretty_str = String::from_utf8(pretty_out).unwrap();
+    assert!(pretty_str.contains("Capture context: unknown"));
+
+    let mut json_cmd = sdkt();
+    json_cmd
+        .args(["storage", "diff", "--old"])
+        .arg(&old_path)
+        .arg("--new")
+        .arg(&new_path)
+        .args(["--format", "json"]);
+
+    let json_out = json_cmd.assert().success().get_output().stdout.clone();
+    let val: serde_json::Value = serde_json::from_slice(&json_out).unwrap();
+    assert_eq!(val["capture_context"], "unknown");
+    assert_eq!(val["ledger_delta"], 1_000);
+}
+
+#[test]
+fn storage_diff_cli_pretty_output_prints_unlabeled_unchanged_entries() {
+    let dir = tempdir().unwrap();
+    let old_path = dir.path().join("old.json");
+    let new_path = dir.path().join("new.json");
+
+    // Both entries have no labels and both remain unchanged (> 17,280)
+    create_snapshot_file(
+        &old_path,
+        CONTRACT,
+        &[("unlabeledKey1==", 50_000), ("unlabeledKey2==", 60_000)],
+    );
+    create_snapshot_file(
+        &new_path,
+        CONTRACT,
+        &[("unlabeledKey1==", 49_000), ("unlabeledKey2==", 59_000)],
+    );
+
+    let mut cmd = sdkt();
+    cmd.args(["storage", "diff", "--old"])
+        .arg(&old_path)
+        .arg("--new")
+        .arg(&new_path);
+
+    let output = cmd.assert().success().get_output().stdout.clone();
+    let stdout = String::from_utf8(output).unwrap();
+
+    assert!(stdout.contains("Unchanged entries (2):"));
+    assert!(stdout.contains("[unchanged] key=unlabeledKey1=="));
+    assert!(stdout.contains("[unchanged] key=unlabeledKey2=="));
 }
