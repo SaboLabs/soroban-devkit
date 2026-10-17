@@ -250,12 +250,18 @@ fn extend_plan_json_has_stable_field_names() {
 fn snapshot_diff_json_has_stable_field_names() {
     let diff = SnapshotDiff {
         contract_id: CONTRACT.to_string(),
+        old_ledger: Some(1_000_000),
+        new_ledger: Some(1_001_000),
+        ledger_delta: Some(1_000),
+        network: Some("testnet".to_string()),
+        capture_context: None,
         entries: vec![DiffEntry {
             key: "k1".to_string(),
             label: None,
             status: DiffStatus::ExpiringSoon,
             old_ttl: Some(50_000),
             new_ttl: Some(1_000),
+            normalized_old_ttl: Some(49_000),
         }],
     };
 
@@ -263,6 +269,10 @@ fn snapshot_diff_json_has_stable_field_names() {
     let v: serde_json::Value = serde_json::from_str(&json).unwrap();
 
     assert_eq!(v["contract_id"], CONTRACT, "contract_id field");
+    assert_eq!(v["old_ledger"], 1_000_000, "old_ledger field");
+    assert_eq!(v["new_ledger"], 1_001_000, "new_ledger field");
+    assert_eq!(v["ledger_delta"], 1_000, "ledger_delta field");
+    assert_eq!(v["network"], "testnet", "network field");
     let entries = v["entries"].as_array().unwrap();
     assert_eq!(entries.len(), 1);
     assert_eq!(entries[0]["key"], "k1", "key field");
@@ -270,6 +280,10 @@ fn snapshot_diff_json_has_stable_field_names() {
     assert_eq!(entries[0]["status"], "expiring_soon", "status snake_case");
     assert_eq!(entries[0]["old_ttl"], 50_000, "old_ttl field");
     assert_eq!(entries[0]["new_ttl"], 1_000, "new_ttl field");
+    assert_eq!(
+        entries[0]["normalized_old_ttl"], 49_000,
+        "normalized_old_ttl field"
+    );
 }
 
 #[test]
@@ -282,7 +296,9 @@ fn removed_entry_json_new_ttl_is_null() {
             status: DiffStatus::Removed,
             old_ttl: Some(50_000),
             new_ttl: None,
+            normalized_old_ttl: None,
         }],
+        ..Default::default()
     };
 
     let json = serde_json::to_string(&diff).unwrap();

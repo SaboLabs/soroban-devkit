@@ -10,6 +10,8 @@ use stellar_xdr::{LedgerEntryData, ReadXdr, SorobanTransactionData};
 pub struct TtlInfo {
     pub contract_id: String,
     pub entries: Vec<TtlEntry>,
+    #[serde(skip)]
+    pub latest_ledger: Option<u32>,
 }
 
 /// A single storage entry with human-readable TTL information.
@@ -63,15 +65,13 @@ pub async fn get_ttl_info_for_keys(
     // Validate contract ID and all keys before contacting RPC.
     let keys = collect_extend_keys(contract_id, extra_keys)?;
 
-    let ledger_info = client.get_ledger().await?;
-    let current_ledger = ledger_info.sequence;
-
     let storage_resp = fetch_ledger_entries(client, &keys, max_entries).await?;
+    let capture_ledger = storage_resp.latest_ledger;
 
     let mut entries = Vec::new();
     for entry in storage_resp.entries {
         let current_ttl = if let Some(live_until) = entry.live_until_ledger_seq {
-            live_until.saturating_sub(current_ledger)
+            live_until.saturating_sub(capture_ledger)
         } else {
             0
         };
@@ -97,6 +97,7 @@ pub async fn get_ttl_info_for_keys(
     Ok(TtlInfo {
         contract_id: contract_id.to_string(),
         entries,
+        latest_ledger: Some(capture_ledger),
     })
 }
 

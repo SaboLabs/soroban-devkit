@@ -41,6 +41,7 @@ pub fn classify_key(base64_key: &str) -> StorageClass {
 
 pub struct StorageAnalyzer {
     client: SorobanRpcClient,
+    network: Option<String>,
     max_entries: usize,
     expiring_soon_ledgers: u32,
 }
@@ -49,9 +50,19 @@ impl StorageAnalyzer {
     pub fn new(client: SorobanRpcClient) -> Self {
         Self {
             client,
+            network: None,
             max_entries: 200,
             expiring_soon_ledgers: crate::snapshot::EXPIRING_SOON_LEDGERS,
         }
+    }
+
+    pub fn with_network(mut self, network: impl Into<String>) -> Self {
+        self.network = Some(network.into());
+        self
+    }
+
+    pub fn network(&self) -> Option<&str> {
+        self.network.as_deref()
     }
 
     pub fn with_config(
@@ -61,6 +72,7 @@ impl StorageAnalyzer {
     ) -> Self {
         Self {
             client,
+            network: None,
             max_entries,
             // Saturating: a pathologically large configured window must not
             // overflow (which would wrap to a tiny threshold and invert the
@@ -99,6 +111,8 @@ impl StorageAnalyzer {
         if ttl_info.entries.is_empty() {
             return Ok(StorageReport {
                 contract_id: contract_id.to_string(),
+                latest_ledger: ttl_info.latest_ledger,
+                network: self.network.clone(),
                 ..Default::default()
             });
         }
@@ -177,6 +191,8 @@ impl StorageAnalyzer {
             total_size_bytes: None,
             ttl_summary,
             entries: detailed,
+            latest_ledger: ttl_info.latest_ledger,
+            network: self.network.clone(),
         })
     }
 }
