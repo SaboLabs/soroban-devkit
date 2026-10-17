@@ -302,7 +302,16 @@ const CAPABILITIES: [Capability; CAP_COUNT] = [
         command: &["audit"],
         summary: "Heuristic static security analysis of Soroban Rust sources (AUTH/MATH/CEI/MOVE rules).",
         required_args: &["<paths..>"],
-        optional_args: &["--format", "--disable", "--rules", "--no-plugins", "--list-rules"],
+        optional_args: &[
+            "--format",
+            "--disable",
+            "--rules",
+            "--no-plugins",
+            "--list-rules",
+            "--fail-on",
+            "--save-baseline",
+            "--baseline",
+        ],
         formats: PRETTY_JSON,
         evidence: Evidence::VerifiedLocal,
         notes: Some(

@@ -11,6 +11,7 @@
 //! through the same [`RuleRegistry`]. See `docs/plugin-authoring.md`.
 
 pub mod audit;
+pub mod baseline;
 pub mod error;
 pub mod plugin_abi;
 pub mod plugin_doctor;
@@ -31,6 +32,9 @@ pub mod plugin_loader_wasm;
 pub use audit::{
     all_rules, audit_source, audit_source_with, audit_source_with_registry, audit_source_with_spec,
     scan_all_functions, scan_all_functions_str, AuditContext, AuditRule, FnScan,
+};
+pub use baseline::{
+    compare_baseline, AuditBaseline, BaselineComparison, BaselineError, FindingKey,
 };
 pub use error::AuditError;
 pub use plugin_doctor::{
