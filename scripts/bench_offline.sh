@@ -10,8 +10,17 @@
 # Methodology to avoid flaky numbers:
 # * A release build of sdkt is used (debug builds are not representative).
 # * Each command is run WARMUP (1, discarded) + RUNS (default 7) times.
-# * Wall-clock measured with nanosecond `date`; peak RSS via /usr/bin/time -v.
+# * Wall-clock measured with nanosecond `date`; peak RSS via GNU time -v
+#   when available, otherwise a portable fallback (see below).
 # * Reports min / median / average wall time and median peak RSS per command.
+#
+# RSS portability:
+# * If GNU time (/usr/bin/time -v) is present, its "Maximum resident set size"
+#   is used.
+# * Otherwise, on Linux we poll /proc/<pid>/status VmHWM while the command runs.
+# * Otherwise, on macOS we use `wait4` rusage via a tiny helper (see below).
+# * If no portable probe exists (e.g. Windows), RSS is reported as
+#   `unavailable` — never as an empty value or zero.
 # * Single-thread pinning via `taskset 0x1` when available to reduce
 # scheduler noise.
 #
@@ -27,8 +36,10 @@
 set -uo pipefail
 
 SDKT="${SDKT:-$(pwd)/target/release/sdkt}"
-WASM_DIR="${WASM_DIR:-/tmp/m33/wasm}"
-AUDIT_SRC="${AUDIT_SRC:-/tmp/m33/examples/token/src/lib.rs}"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+WASM_DIR="${WASM_DIR:-$REPO_ROOT/scripts/fixtures/wasm}"
+AUDIT_SRC="${AUDIT_SRC:-$REPO_ROOT/scripts/fixtures/token/src/lib.rs}"
 RUNS="${RUNS:-7}"
 WARMUP=1
 
@@ -43,22 +54,73 @@ if command -v taskset >/dev/null 2>&1; then
   PIN="taskset 0x1"
 fi
 
+# Detect GNU time (/usr/bin/time -v).
+GNU_TIME=""
+if [[ -x /usr/bin/time ]] && /usr/bin/time -v true >/dev/null 2>&1; then
+  GNU_TIME="/usr/bin/time"
+fi
+
+# Portable RSS probe selection.
+RSS_MODE="unavailable"
+if [[ -n "$GNU_TIME" ]]; then
+  RSS_MODE="gnu-time"
+elif [[ -r /proc/self/status ]]; then
+  RSS_MODE="proc"
+elif command -v python3 >/dev/null 2>&1 && [[ "$(uname -s)" == "Darwin" ]]; then
+  RSS_MODE="rusage"
+fi
+
+# Run a command and print peak RSS in kB (or "unavailable").
+# Usage: measure_rss <cmd...>
+measure_rss() {
+  case "$RSS_MODE" in
+    gnu-time)
+      local out
+      out=$($PIN "$GNU_TIME" -v "$@" 2>&1 >/dev/null)
+      echo "$out" | awk -F': ' '/Maximum resident set size \(kbytes\)/{gsub(/ /,"",$2); print $2}'
+      ;;
+    proc)
+      $PIN "$@" >/dev/null 2>&1 &
+      local pid=$! peak=0
+      while kill -0 "$pid" 2>/dev/null; do
+        local v
+        v=$(awk '/VmHWM/{print $2}' "/proc/$pid/status" 2>/dev/null)
+        [[ -n "$v" && "$v" -gt "$peak" ]] && peak=$v
+        sleep 0.01
+      done
+      wait "$pid" 2>/dev/null || true
+      echo "$peak"
+      ;;
+    rusage)
+      python3 - "$@" <<'PY'
+import resource, subprocess, sys
+p = subprocess.run(sys.argv[1:], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+r = resource.getrusage(resource.RUSAGE_CHILDREN)
+print(r.ru_maxrss)  # bytes on macOS
+PY
+      ;;
+    *)
+      $PIN "$@" >/dev/null 2>&1 || true
+      echo "unavailable"
+      ;;
+  esac
+}
+
 # Collect N wall times (seconds, float) into an array via stdout capture.
 bench_time() {
  # $1 = label, rest = command
   local label="$1"; shift
-  local times=() rss=() i out wall rss_kb
+  local times=() rss=() i wall rss_kb
  # warmup
   $PIN "$@" >/dev/null 2>&1 || true
   for ((i=0;i<RUNS;i++)); do
     local t0 t1
     t0=$(date +%s.%N)
-    out=$($PIN /usr/bin/time -v "$@" 2>&1 >/dev/null)
+    rss_kb=$(measure_rss "$@")
     t1=$(date +%s.%N)
     wall=$(awk "BEGIN{printf \"%.4f\", $t1-$t0}")
-    rss_kb=$(echo "$out" | awk -F': ' '/Maximum resident set size \(kbytes\)/{gsub(/ /,"",$2); print $2}')
     times+=("$wall")
-    rss+=("${rss_kb:-0}")
+    rss+=("${rss_kb:-unavailable}")
   done
  # stats: sort, median, avg
   local sorted
@@ -69,14 +131,18 @@ bench_time() {
   sum=$(echo "${times[@]}" | tr ' ' '\n' | awk '{s+=$1} END{printf "%.4f", s}')
   avg=$(awk "BEGIN{printf \"%.4f\", $sum/$RUNS}")
   local rss_med
-  rss_med=$(printf '%s\n' "${rss[@]}" | sort -n | awk '{a[NR]=$1} END{print (NR%2)? a[(NR+1)/2] : (a[NR/2]+a[NR/2+1])/2}')
+  if [[ "${rss[0]}" == "unavailable" ]]; then
+    rss_med="unavailable"
+  else
+    rss_med=$(printf '%s\n' "${rss[@]}" | sort -n | awk '{a[NR]=$1} END{print (NR%2)? a[(NR+1)/2] : (a[NR/2]+a[NR/2+1])/2}')
+  fi
   printf '%-28s wall min=%.4fs med=%.4fs avg=%.4fs | peakRSS med=%s kB\n' \
          "$label" "$min" "$med" "$avg" "$rss_med"
 }
 
 echo "=== Offline benchmark :: sdkt=$( "$SDKT" --version 2>/dev/null || echo unknown ) ==="
 echo "RUNS=$RUNS  WASM_DIR=$WASM_DIR  AUDIT_SRC=$AUDIT_SRC"
-echo "pin=${PIN:-none}"
+echo "pin=${PIN:-none}  rss=${RSS_MODE}"
 echo
 
 TOKEN="$WASM_DIR/token.wasm"
