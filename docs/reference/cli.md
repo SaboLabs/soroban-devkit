@@ -297,6 +297,13 @@ Flags:
   `<out>/<name>-<version>.tar.zst`; `dir` writes a directory tree
   `<out>/<name>-<version>/`. Any other value is rejected with a clear error.
 
+**Pack preconditions:** every git dependency declared in the manifest must
+have a cached checkout under `.sdkt-cache/git/<cache_key>`. If a declared
+dependency's checkout is missing, `sdkt package pack` exits non-zero with a
+`git dependency '<name>' is declared but its checkout is not cached ...` error
+and writes no descriptor — the bundle never claims a dependency it does not
+contain.
+
 `sdkt package publish --dry-run` validates **publish readiness** using the
 existing manifest/lock/cache/integrity infrastructure. It detects missing cache,
 lock drift, integrity mismatch, commit mismatch, reference change, and invalid
