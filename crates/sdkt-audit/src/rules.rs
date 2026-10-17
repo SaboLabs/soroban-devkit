@@ -1,6 +1,6 @@
 //! Built-in audit rules. Each implements [`crate::audit::AuditRule`].
 
-use crate::audit::{AuditContext, AuditRule, FnScan};
+use crate::audit::{unqualified, AuditContext, AuditRule, FnScan};
 use crate::types::{AuditReport, Finding, Severity};
 
 /// AUTH-001 — Missing `require_auth()` on a privileged/admin function.
@@ -18,7 +18,7 @@ impl AuditRule for Auth001 {
     }
     fn check(&self, scans: &[FnScan], _ctx: &AuditContext, report: &mut AuditReport) {
         for s in scans {
-            if crate::audit::is_privileged(crate::audit::unqualified(&s.fn_name)) && s.require_auth == 0 {
+            if crate::audit::is_privileged(unqualified(&s.fn_name)) && s.require_auth == 0 {
                 // Severity comes from observed behavior, not the name alone:
                 // internal helpers and read-only accessors are reported at
                 // `info`, unguarded privileged writes stay `critical`.
@@ -83,7 +83,7 @@ impl AuditRule for Auth003 {
     }
     fn check(&self, scans: &[FnScan], ctx: &AuditContext, report: &mut AuditReport) {
         for s in scans {
-            let is_init = crate::audit::is_initialize(crate::audit::unqualified(&s.fn_name));
+            let is_init = crate::audit::is_initialize(unqualified(&s.fn_name));
             if !is_init || s.require_auth > 0 {
                 continue;
             }
@@ -128,7 +128,7 @@ impl AuditRule for Auth004 {
     }
     fn check(&self, scans: &[FnScan], _ctx: &AuditContext, report: &mut AuditReport) {
         for s in scans {
-            let name = crate::audit::unqualified(&s.fn_name).to_lowercase();
+            let name = unqualified(&s.fn_name).to_lowercase();
             let is_transfer = matches!(
                 name.as_str(),
                 "transfer" | "transfer_from" | "transferfrom" | "withdraw" | "burn"
@@ -959,5 +959,83 @@ mod tests {
                 "{name} must keep its critical AUTH-001 finding"
             );
         }
+    }
+
+    // ── Issue: nested-module qualified names must still be matched ──
+
+    #[test]
+    fn auth001_flags_privileged_fn_with_qualified_name() {
+        // A function inside `pub mod inner` is scanned with a qualified name
+        // (`inner::mint_token`); the rule must match on the unqualified tail
+        // while keeping the qualified name in the finding location.
+        let scans = vec![scan("inner::mint_token", 1, true, false)];
+        let mut rep = AuditReport::default();
+        Auth001.check(&scans, &crate::audit::AuditContext { spec: None }, &mut rep);
+        let finding = rep
+            .findings
+            .iter()
+            .find(|f| f.rule_id == "AUTH-001")
+            .expect("qualified privileged fn must trigger AUTH-001");
+        assert_eq!(finding.severity, Severity::Critical);
+        assert_eq!(finding.location.as_deref(), Some("inner::mint_token"));
+    }
+
+    #[test]
+    fn auth003_flags_initialize_with_qualified_name() {
+        let scans = vec![scan("inner::initialize", 0, true, false)];
+        let mut rep = AuditReport::default();
+        Auth003.check(&scans, &crate::audit::AuditContext { spec: None }, &mut rep);
+        let finding = rep
+            .findings
+            .iter()
+            .find(|f| f.rule_id == "AUTH-003")
+            .expect("qualified initialize must trigger AUTH-003");
+        assert_eq!(finding.location.as_deref(), Some("inner::initialize"));
+    }
+
+    #[test]
+    fn auth004_flags_transfer_with_qualified_name() {
+        let scans = vec![scan("token::transfer", 1, true, false)];
+        let mut rep = AuditReport::default();
+        Auth004.check(&scans, &crate::audit::AuditContext { spec: None }, &mut rep);
+        let finding = rep
+            .findings
+            .iter()
+            .find(|f| f.rule_id == "AUTH-004")
+            .expect("qualified transfer must trigger AUTH-004");
+        assert_eq!(finding.location.as_deref(), Some("token::transfer"));
+    }
+
+    #[test]
+    fn auth001_does_not_flag_non_privileged_qualified_name() {
+        let scans = vec![scan("inner::balance_of", 0, true, true)];
+        let mut rep = AuditReport::default();
+        Auth001.check(&scans, &crate::audit::AuditContext { spec: None }, &mut rep);
+        assert!(
+            !has(&rep, "AUTH-001"),
+            "qualified non-privileged fn must not trigger AUTH-001"
+        );
+    }
+
+    #[test]
+    fn auth003_does_not_flag_non_initialize_qualified_name() {
+        let scans = vec![scan("inner::transfer", 0, true, false)];
+        let mut rep = AuditReport::default();
+        Auth003.check(&scans, &crate::audit::AuditContext { spec: None }, &mut rep);
+        assert!(
+            !has(&rep, "AUTH-003"),
+            "qualified non-initialize fn must not trigger AUTH-003"
+        );
+    }
+
+    #[test]
+    fn auth004_does_not_flag_transfer_ownership_qualified_name() {
+        let scans = vec![scan("admin::transfer_ownership", 0, true, false)];
+        let mut rep = AuditReport::default();
+        Auth004.check(&scans, &crate::audit::AuditContext { spec: None }, &mut rep);
+        assert!(
+            !has(&rep, "AUTH-004"),
+            "qualified transfer_ownership must not trigger AUTH-004"
+        );
     }
 }
