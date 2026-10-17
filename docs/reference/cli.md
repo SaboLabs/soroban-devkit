@@ -11,8 +11,8 @@ sdkt
 │   ├── --format <json|pretty>
 │   └── --file <path>
 │
-├── encode <TYPE:VALUE>...
-│   │   (fully offline: encode typed values to base64 XDR)
+├── encode <TYPE:VALUE>
+│   │   (fully offline: encode a single typed value to base64 XDR)
 │   │   Supports: u32, i32, u64, i64, timepoint, duration, u128, i128, bool,
 │   │   string, symbol, bytes, address. Also json:<JSON> for composite values.
 │
@@ -119,8 +119,8 @@ sdkt
 │   ├── --start-ledger <START_LEDGER> (start ledger sequence number for event search)
 │   ├── --end-ledger <END_LEDGER>     (end ledger sequence number for event search)
 │   ├── --topic <SYMBOL>              (filter by first topic/event name; server-side filtering)
-│   ├── --abi <wasm>                  (ABI-aware decode from a local WASM)
-│   ├── --abi-contract <id>           (ABI-aware decode using deployed contract's on-chain WASM)
+│   ├── --abi <wasm>                  (ABI-aware decode from a local WASM; mutually exclusive with --abi-contract)
+│   ├── --abi-contract <id>           (ABI-aware decode using deployed contract's on-chain WASM; mutually exclusive with --abi)
 │   └── --network-profile <NAME> / --rpc-url <URL> / --network-passphrase <P>
 │
 ├── account <address>         [--format]
@@ -182,12 +182,12 @@ sdkt
 │   ├── --audit <PATH>...     (Rust source path(s)/dir(s); same engine as `audit`)
 │   ├── --disable <RULE_ID>   (repeatable)
 │   ├── --contract <ID>       (deployed contract for on-chain checks; skipped if omitted)
-│   ├── --network <testnet|mainnet|futurenet> (network for the on-chain checks; with --contract)
+│   ├── --network <testnet|mainnet|futurenet> (network for on-chain checks; mutually exclusive with --network-profile, --rpc-url, --network-passphrase)
 │   ├── --fuzz-evidence <EVIDENCE_JSON> (attach JSON evidence from sdkt fuzz campaign)
 │   ├── --max-size-bytes <N>  (fail when the candidate exceeds N bytes)
 │   ├── --max-growth-pct <N>  (fail when growth over --previous-wasm exceeds N%)
 │   ├── --format <json|pretty>
-│   └── --network-profile <NAME> / --rpc-url <URL> / --network-passphrase <PASS>
+│   └── --network-profile <NAME> / --rpc-url <URL> / --network-passphrase <PASS> (mutually exclusive with --network)
 ├── identity
 │   ├── generate <name>       [--format pretty|json]
 │   ├── import <name> <secret>
@@ -413,7 +413,8 @@ require the local WASM bytes.
 │   └── doctor [<target|--all>] [--format]  End-to-end diagnostics on a plugin
 │
 ├── doctor                    Run diagnostic checks on sdkt environment and project
-│   ├── --format <json|pretty|--json>  Output format (pretty is default)
+│   ├── --format <json|pretty> (output format; default: pretty)
+│   ├── --json                 (shorthand for --format json; conflicts with --format)
 │   └── (offline: no network access required)
 │
 ├── completions <shell>       Generate shell completion scripts
