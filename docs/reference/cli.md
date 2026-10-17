@@ -28,8 +28,8 @@ sdkt
 │   ├── estimate <wasm-path>  [--ledgers <N>] [--format <pretty|json>]
 │   ├── storage-diff --old <snapshot-a.json> --new <snapshot-b.json> [--extend-plan] [--format <pretty|json>]
 │   ├── read --contract <contract-id> --key-xdr <BASE64_XDR> [--abi <wasm>] [--format]
-│   ├── extend --contract <contract-id> --ledgers <N> [--key <xdr>]... [--identity <name>] [--format]
-│   └── restore --contract <contract-id> --envelope <xdr> [--dry-run] [--identity <name>] [--format]
+│   ├── extend --contract <contract-id> --ledgers <N> [--key <xdr>]... [--identity <name>] [--timeout <s>] [--interval <s>] [--format]
+│   └── restore --contract <contract-id> --envelope <xdr> [--dry-run] [--identity <name>] [--timeout <s>] [--interval <s>] [--format]
 │
 │   `estimate` performs an offline calculation of storage rent over a specified
 │   ledger horizon (default 17,280 ledgers, ~1 day) using the contract spec ABI.
@@ -73,9 +73,16 @@ sdkt
 │   ├── --args <TYPE:VALUE>...    (same typed-args as `call` / `tx build`;
 │   │                            strict: unknown types are rejected)
 │   ├── --identity <name>        (signs and pays; default: "default")
- main
+│   ├── --timeout <SECONDS>      (wait-for-settlement timeout; default 60)
+│   ├── --interval <SECONDS>     (poll interval while waiting; default 1)
 │   ├── --format <json|pretty>
 │   └── --network-profile <NAME> / --rpc-url <URL> / --network-passphrase <P>
+│
+│   Polling rules (shared by every command that waits for a transaction):
+│   `--interval` must be greater than 0 and `--timeout` must be greater than
+│   or equal to `--interval`; invalid pairs are rejected before any network
+│   or identity work begins. `--no-wait` returns the transaction hash right
+│   after submission and ignores both flags.
 │
 │   State-changing end-to-end flow in one command:
 │     fetch account sequence → simulate → build final envelope (authoritative
@@ -336,6 +343,10 @@ or git logic is duplicated; the same `compute_dependency_integrity` /
 │   └── deploy                Deploy all contracts defined in the workspace (.sdkt.toml),
 │                             applying topological dependency sorting
 │
+│   `--timeout <SECONDS>` (default 60) and `--interval <SECONDS>` (default 1)
+│   control how long each contract deployment waits for settlement and how
+│   often it polls; both are validated before any network or identity work.
+│
 │   Contracts declare dependencies via `depends_on` (canonical) or the
 │   legacy `deploy_after` field in `[contracts.<alias>]`; both are merged. Build,
 │   deploy, and `sdkt lock generate` share one resolver, so order is deterministic.
@@ -415,6 +426,9 @@ or git logic is duplicated; the same `compute_dependency_integrity` /
     ├── --deny-breaking        (abort if not backwards-compatible; requires --wasm)
     ├── --old-wasm <deployed>  (baseline, required by --deny-breaking)
     ├── --identity <name>      (signing identity; defaults to `default`)
+    ├── --timeout <SECONDS>    (wait-for-settlement timeout for the upload and
+    │                           create transactions; default 60)
+    ├── --interval <SECONDS>   (poll interval while waiting; default 1)
     ├── --arg <TYPE:VALUE>...  (constructor arguments)
     └── --network-profile <NAME> / --rpc-url <URL> / --network-passphrase <P>
 

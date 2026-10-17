@@ -4728,7 +4728,7 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
                     match restore_footprint(
                         &client,
                         &contract,
-                        &envelope,
+                        envelope.trim(),
                         &source_account,
                         &signer,
                         network,
@@ -8894,6 +8894,12 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
                 format,
             } => {
                 let fmt = parse_format_str(&format);
+                // Validate the polling pair before any network or identity work
+                // (fail fast): `--interval 0` must be rejected before deployment.
+                if let Err(msg) = validate_poll_pair(timeout, interval) {
+                    eprintln!("Error: {msg}");
+                    process::exit(1);
+                }
                 // Validate the salt before any network or identity work (fail fast).
                 let salt_bytes = salt.as_deref().map(parse_salt_hex).transpose()?;
                 let config = load_config();
