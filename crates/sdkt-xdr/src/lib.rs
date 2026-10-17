@@ -62,6 +62,10 @@ use stellar_xdr::{
 };
 use thiserror::Error;
 
+/// Maximum nesting accepted when parsing untrusted XDR input. This matches
+/// the Soroban host limit and is shared with the transaction envelope decoder.
+pub(crate) const MAX_XDR_DEPTH: u32 = 500;
+
 /// Errors returned by the decoder.
 #[derive(Error, Debug)]
 pub enum DecodeError {
@@ -558,10 +562,9 @@ pub fn decode(
 
 /// Decode with explicit config values (wired from `.sdkt.toml` `[decode]`).
 ///
-/// `max_depth` bounds nested XDR parsing depth. `0` means **unlimited** — the
-/// XDR layer runs with `Limits::none` — and `DevKitConfig::validate` accepts
-/// `0` for exactly the same reason, so a `.sdkt.toml` that sets `0` and one
-/// that omits the section behave identically.
+/// `max_depth` bounds nested XDR parsing depth. `0` uses the safe default
+/// limit of 500, and values above 500 are capped there to prevent deeply
+/// nested untrusted input from exhausting the stack.
 /// `allow_fallback_hex` gates the hex fallback when base64 detection fails.
 pub fn decode_with_config(
     payload: &str,
@@ -649,14 +652,7 @@ fn decode_single<T: ReadXdr + serde::Serialize>(
     max_depth: u32,
 ) -> Result<Value, DecodeError> {
     let mut cursor = std::io::Cursor::new(raw);
-    let limits = if max_depth == 0 {
-        Limits::none()
-    } else {
-        Limits {
-            depth: max_depth,
-            len: raw.len(),
-        }
-    };
+    let limits = decode_limits(raw, max_depth);
     let mut l = Limited::new(&mut cursor, limits);
     T::read_xdr(&mut l)
         .map_err(|e| DecodeError::XdrParse(name.to_string(), e))
@@ -669,18 +665,22 @@ fn decode_single_strict<T: ReadXdr + serde::Serialize>(
     max_depth: u32,
 ) -> Result<Value, DecodeError> {
     let mut cursor = std::io::Cursor::new(raw);
-    let limits = if max_depth == 0 {
-        Limits::none()
-    } else {
-        Limits {
-            depth: max_depth,
-            len: raw.len(),
-        }
-    };
+    let limits = decode_limits(raw, max_depth);
     let mut l = Limited::new(&mut cursor, limits);
     T::read_xdr_to_end(&mut l)
         .map_err(|e| DecodeError::XdrParse(name.to_string(), e))
         .and_then(|v| serde_json::to_value(&v).map_err(DecodeError::Json))
+}
+
+fn decode_limits(raw: &[u8], max_depth: u32) -> Limits {
+    Limits {
+        depth: if max_depth == 0 {
+            MAX_XDR_DEPTH
+        } else {
+            max_depth.min(MAX_XDR_DEPTH)
+        },
+        len: raw.len(),
+    }
 }
 
 fn auto_detect(raw: &[u8], max_depth: u32) -> Result<Value, DecodeError> {
@@ -1282,14 +1282,41 @@ mod tests {
         deep.write_xdr(&mut l).unwrap();
         let b64 = STANDARD.encode(&buf);
 
-        // Depth 2 must reject; depth 0 (unlimited) must accept.
+        // Depth 2 must reject; depth 0 selects the safe default of 500.
         let shallow = decode_with_config(&b64, Some("scval"), OutputFormat::Json, 2, true);
         assert!(
             shallow.is_err(),
             "max_depth = 2 must reject a depth-4 ScVal"
         );
-        let unlimited = decode_with_config(&b64, Some("scval"), OutputFormat::Json, 0, true);
-        assert!(unlimited.is_ok(), "max_depth = 0 (unlimited) must accept");
+        let default_limit = decode_with_config(&b64, Some("scval"), OutputFormat::Json, 0, true);
+        assert!(
+            default_limit.is_ok(),
+            "shallow XDR must pass the default limit"
+        );
+    }
+
+    #[test]
+    fn generic_decode_rejects_deep_xdr_even_when_depth_is_zero() {
+        let mut nested = ScVal::U32(7);
+        for _ in 0..(MAX_XDR_DEPTH + 10) {
+            nested = ScVal::Vec(Some(ScVec::try_from(vec![nested]).unwrap()));
+        }
+
+        let mut raw = Vec::new();
+        let mut limited = Limited::new(&mut raw, Limits::none());
+        nested.write_xdr(&mut limited).unwrap();
+
+        let hinted = decode_bytes_with_config(&raw, Some("scval"), 0);
+        assert!(matches!(
+            hinted,
+            Err(DecodeError::XdrParse(name, _)) if name == "ScVal"
+        ));
+
+        let auto = decode_bytes_with_config(&raw, None, 0);
+        assert!(
+            auto.is_err(),
+            "auto-detection must enforce the same depth cap"
+        );
     }
 
     #[test]
