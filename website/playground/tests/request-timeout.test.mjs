@@ -3,8 +3,12 @@
 // Issue #378: Playground worker requests that never respond should timeout
 // gracefully instead of leaving the UI spinning forever. This test exercises
 // the timeout mechanism with the real post() implementation using a stubbed
+<<<<<<< HEAD
 // worker and verifies cleanup, UI recovery, late response handling, and retry.
 // Run with:
+=======
+// worker and verifies cleanup and error handling. Run with:
+>>>>>>> 378ece175c284f27ebabc8bef5259098e08d525e
 //
 //   node website/playground/tests/request-timeout.test.mjs
 //
@@ -177,23 +181,39 @@ await tick();
 
 const worker = workers[0];
 
+<<<<<<< HEAD
 console.log('Running request-timeout regression tests...\n');
 
+=======
+>>>>>>> 378ece175c284f27ebabc8bef5259098e08d525e
 // ============================================================================
 // Case A: Worker never responds to inspect request — timeout should reject
 // ============================================================================
 
+<<<<<<< HEAD
 console.log('Case A: Timeout when worker never responds...');
+=======
+console.log('Testing Case A: Request timeout when worker never responds...');
+>>>>>>> 378ece175c284f27ebabc8bef5259098e08d525e
 
 dropFile('never-answers.wasm');
 await tick(5);
 
+<<<<<<< HEAD
 // Before timeout:
+=======
+// At this point:
+// - One inspect request has been queued
+// - The worker stub will NOT answer it
+// - Status should show "inspecting..."
+
+>>>>>>> 378ece175c284f27ebabc8bef5259098e08d525e
 assert.ok(statusText().includes('inspecting') || statusText().includes('loading'),
   'status should show loading while inspection is pending');
 assert.equal(els.get('errorBox').hidden, true, 'error box should be hidden before timeout');
 assert.equal(els.get('fname').textContent, 'never-answers.wasm', 'file name should be set');
 
+<<<<<<< HEAD
 const inspectCountBefore = worker.inspects.length;
 const timedOutId = worker.inspects[inspectCountBefore - 1].id;
 
@@ -244,6 +264,33 @@ console.log('✓ Case B: Late response safely ignored\n');
 // ============================================================================
 
 console.log('Case C: Normal response clears timeout...');
+=======
+// Advance time to trigger the timeout (scaled from 30000 ms to 10 ms)
+await advanceTime(20);
+
+// After timeout fires:
+// - Status should show "inspection timed out"
+// - Error box should be visible
+// - File name should still be set
+// - Error message should be actionable
+
+assert.ok(statusText().includes('inspection timed out'),
+  'status should indicate timeout (actual: ' + statusText() + ')');
+assert.equal(els.get('errorBox').hidden, false, 'error box should be visible after timeout');
+assert.equal(els.get('fname').textContent, 'never-answers.wasm', 'file name should remain set after timeout');
+const errorMsg = errorText();
+assert.ok(errorMsg.includes('timed out'), 'error message should mention timeout');
+assert.ok(errorMsg.includes('too large') || errorMsg.includes('complex'), 'error should suggest file complexity');
+assert.ok(errorMsg.includes('reload') || errorMsg.includes('try again'), 'error should suggest recovery action');
+
+console.log('✓ Case A passed: Timeout rejection, UI recovery, file name preserved');
+
+// ============================================================================
+// Case B: Worker responds normally before timeout — promise resolves, timeout cleared
+// ============================================================================
+
+console.log('Testing Case B: Normal response before timeout...');
+>>>>>>> 378ece175c284f27ebabc8bef5259098e08d525e
 
 // Reset for next test
 currentTime = 0;
@@ -252,6 +299,7 @@ pendingTimeouts.clear();
 dropFile('responds-quickly.wasm');
 await tick(5);
 
+<<<<<<< HEAD
 const quickRespondCount = worker.inspects.length;
 worker.answer(quickRespondCount - 1, payloadFor(null));
 await tick(5);
@@ -278,11 +326,39 @@ console.log('✓ Case C: Normal response clears timeout\n');
 // ============================================================================
 
 console.log('Case D: Retry after timeout succeeds...');
+=======
+const inspectCount = worker.inspects.length;
+assert.ok(inspectCount > 0, 'at least one inspect request should have been queued');
+
+// Answer immediately (before timeout would fire)
+worker.answer(inspectCount - 1, payloadFor(null));
+await tick(5);
+
+// Status should show completion, not timeout
+assert.ok(statusText().includes('inspection complete'), 'status should show completion');
+assert.ok(!statusText().includes('timed out'), 'status should not indicate timeout');
+assert.ok(els.get('results').classList.contains('hidden') === false, 'results should be visible');
+
+// Advance time past where timeout would have fired
+await advanceTime(20);
+
+// Nothing should change — the timeout was already cleared
+assert.ok(statusText().includes('inspection complete'), 'status should still show completion (timeout was cleared)');
+
+console.log('✓ Case B passed: Normal response, timeout cleared, no spurious timeout');
+
+// ============================================================================
+// Case A2: Late response after timeout should be ignored (stale-generation guard)
+// ============================================================================
+
+console.log('Testing Case A2: Late response after timeout is ignored...');
+>>>>>>> 378ece175c284f27ebabc8bef5259098e08d525e
 
 // Reset for next test
 currentTime = 0;
 pendingTimeouts.clear();
 
+<<<<<<< HEAD
 dropFile('retry.wasm');
 await tick(5);
 
@@ -329,3 +405,58 @@ console.log('  ✓ File name remains set for retry');
 console.log('  ✓ Late responses after timeout are safely ignored by message handler');
 console.log('  ✓ Normal responses before timeout clear the timeout');
 console.log('  ✓ Retry after timeout succeeds with new request');
+=======
+dropFile('late-responder.wasm');
+await tick(5);
+
+const lateInspectCount = worker.inspects.length;
+const lateId = worker.inspects[lateInspectCount - 1].id;
+
+// Let timeout fire (don't answer the request)
+await advanceTime(20);
+
+// Verify timeout happened
+assert.ok(statusText().includes('inspection timed out'), 'timeout should have fired');
+const errorAfterTimeout = errorText();
+
+// Now the worker responds late (stale response)
+worker.answer(lateInspectCount - 1, payloadFor(null));
+await tick(5);
+
+// Status and error should NOT change — late response should be ignored
+assert.ok(statusText().includes('inspection timed out'), 'status should still show timeout (late response ignored)');
+assert.equal(errorText(), errorAfterTimeout, 'error message should not change (late response ignored)');
+
+console.log('✓ Case A2 passed: Late response ignored after timeout');
+
+// ============================================================================
+// Case C: Verify error message format
+// ============================================================================
+
+console.log('Testing Case C: Error message format verification...');
+
+const timeoutMsg = 'inspect timed out after 30000 ms';
+const otherMsg = 'inspect failed: invalid wasm';
+
+assert.ok(timeoutMsg.includes('timed out'), 'timeout message should contain "timed out"');
+assert.ok(!otherMsg.includes('timed out'), 'other error should not contain "timed out"');
+
+// Verify the error handling code would correctly distinguish them
+const isTimeoutError = (msg) => msg.includes('timed out');
+assert.ok(isTimeoutError(timeoutMsg), 'timeout detector should identify timeout message');
+assert.ok(!isTimeoutError(otherMsg), 'timeout detector should reject non-timeout message');
+
+console.log('✓ Case C passed: Error message format correctly detected');
+
+console.log('');
+console.log('request-timeout tests: OK');
+console.log('');
+console.log('Verified:');
+console.log('  - Timeout fires and rejects request when worker does not respond');
+console.log('  - UI recovers: spinner stops, error box shows with actionable message');
+console.log('  - File name remains set for retry');
+console.log('  - Normal responses clear timeouts before they fire');
+console.log('  - Late responses after timeout are safely ignored');
+console.log('  - Error handling correctly detects timeout vs. other errors');
+
+>>>>>>> 378ece175c284f27ebabc8bef5259098e08d525e

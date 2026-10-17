@@ -390,7 +390,7 @@ See [`docs/plugin-authoring.md`](docs/plugins/plugin-authoring.md) for how to bu
 | `sdkt wasm metadata --contract <contract>` | WASM metadata for a deployed contract (cached). |
 | `sdkt wasm cache` | Manage the WASM cache (`info` / `remove` / `clear`). |
 || `sdkt audit <path.rs>` | Static security analysis (AUTH-001/002/003/004, MOVE-001, MATH-001, CEI-001). `--disable <RULE_ID>` to skip a rule. `--rules <path|id>` (repeatable) to load external rule paths or resolve installed plugin IDs. |
-| `sdkt identity <generate\|import\|list\|show\|delete\|default>` | ED25519 keystore management. |
+| `sdkt identity <generate\|import\|list\|show\|delete\|default>` | ED25519 keystore management. `import <name> <secret>` requires a secret; pass `-` to read it from stdin (recommended — argv secrets are deprecated, issue #64). |
 | `sdkt identity fund <name> --network-profile <NAME>` | Fund an identity via Stellar Testnet Friendbot. |
 | `sdkt network <add\|list\|show\|remove>` | Named network profiles (RPC URL + passphrase). Combine with `--network-profile <NAME>` on any RPC command to avoid repeating endpoints; `--rpc-url` / `--network-passphrase` override. |
 | `sdkt network diagnose [--network <testnet>]` | Read-only network identity / protocol / resource-limit diagnosis. Reports passphrase identity, protocol agreement, and ledger limits. Never signs or mutates. |

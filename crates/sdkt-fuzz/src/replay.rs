@@ -8,8 +8,10 @@
 //! Failure taxonomy (kept strictly separate):
 //!
 //! - **Invalid input** → [`ReplayError`]: unknown schema version, malformed
-//!   artifact, or a WASM whose SHA-256 does not match the artifact. These are
-//!   *never* a [`crate::Classification::Finding`] and never a contract result.
+//!   (or unreadable) artifact, a WASM file that cannot be read
+//!   ([`ReplayError::WasmRead`]), or a WASM whose SHA-256 does not match the
+//!   artifact. These are *never* a [`crate::Classification::Finding`] and
+//!   never a contract result.
 //! - **Reproduced** → [`ReplayOutcome::Reproduced`]: the re-execution's
 //!   observation still classifies the same way, with the same reason code.
 //! - **Mismatch** → [`ReplayOutcome::Mismatch`]: the artifact is well-formed
@@ -35,6 +37,8 @@ use crate::sequence::execute_sequence_auth;
 pub enum ReplayError {
     #[error("artifact JSON could not be parsed: {0}")]
     Malformed(String),
+    #[error("WASM file could not be read: {path}: {message}")]
+    WasmRead { path: String, message: String },
     #[error("unsupported artifact schema_version {found} (this build knows {expected})")]
     UnsupportedSchema { found: u32, expected: u32 },
     #[error("artifact did not round-trip: {0}")]

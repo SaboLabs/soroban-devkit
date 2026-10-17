@@ -148,6 +148,154 @@ fn c_upgrade_safety_plans_old_and_new() {
     assert!(v["evidence"]["command_executed"].as_bool().unwrap());
 }
 
+#[test]
+fn c_diff_base_route_plans_diff_separately_from_upgrade_safety() {
+    let tmp = tempfile::tempdir().unwrap();
+    let fx = FakeCli {
+        stdout: "{\"status\":\"ok\"}\n".into(),
+        ..FakeCli::ok()
+    }
+    .write(tmp.path());
+
+    let out = agent(&fx, "diff baseline old.wasm candidate new.wasm", true);
+    let v = parse_json(&out);
+    assert_eq!(v["capability_id"], "diff");
+    let joined = v["argv"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|a| a.as_str().unwrap())
+        .collect::<Vec<_>>()
+        .join(" ");
+    assert_eq!(
+        joined,
+        "diff --old-wasm old.wasm --new-wasm new.wasm --format json"
+    );
+    assert!(v["evidence"]["command_executed"].as_bool().unwrap());
+}
+
+#[test]
+fn c_wasm_metadata_routes_to_wasm_metadata() {
+    let tmp = tempfile::tempdir().unwrap();
+    let fx = FakeCli {
+        stdout: "{\"metadata\":{}}\n".into(),
+        ..FakeCli::ok()
+    }
+    .write(tmp.path());
+
+    let out = agent(
+        &fx,
+        &format!("show wasm metadata for contract {CID} on testnet"),
+        true,
+    );
+    let v = parse_json(&out);
+    assert_eq!(v["capability_id"], "wasm.metadata");
+    let joined = v["argv"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|a| a.as_str().unwrap())
+        .collect::<Vec<_>>()
+        .join(" ");
+    assert!(joined.starts_with("wasm metadata "), "{joined}");
+    assert!(joined.contains(&format!("--contract {CID}")), "{joined}");
+    assert!(
+        joined.contains("--rpc-url https://soroban-testnet.stellar.org"),
+        "{joined}"
+    );
+    assert!(joined.contains("--format json"), "{joined}");
+    assert!(v["evidence"]["command_executed"].as_bool().unwrap());
+}
+
+#[test]
+fn c_storage_analyze_routes_to_storage_analyze() {
+    let tmp = tempfile::tempdir().unwrap();
+    let fx = FakeCli {
+        stdout: "{\"storage\":{}}\n".into(),
+        ..FakeCli::ok()
+    }
+    .write(tmp.path());
+
+    let out = agent(
+        &fx,
+        &format!("storage analyze for contract {CID} on testnet"),
+        true,
+    );
+    let v = parse_json(&out);
+    assert_eq!(v["capability_id"], "storage.analyze");
+    let joined = v["argv"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|a| a.as_str().unwrap())
+        .collect::<Vec<_>>()
+        .join(" ");
+    assert!(joined.starts_with("storage analyze "), "{joined}");
+    assert!(joined.contains(CID), "{joined}");
+    assert!(
+        joined.contains("--rpc-url https://soroban-testnet.stellar.org"),
+        "{joined}"
+    );
+    assert!(joined.contains("--format json"), "{joined}");
+    assert!(v["evidence"]["command_executed"].as_bool().unwrap());
+}
+
+#[test]
+fn c_events_routes_to_events() {
+    let tmp = tempfile::tempdir().unwrap();
+    let fx = FakeCli {
+        stdout: "{\"events\":[]}\n".into(),
+        ..FakeCli::ok()
+    }
+    .write(tmp.path());
+
+    let out = agent(
+        &fx,
+        &format!("fetch events for contract {CID} on testnet"),
+        true,
+    );
+    let v = parse_json(&out);
+    assert_eq!(v["capability_id"], "events");
+    let joined = v["argv"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|a| a.as_str().unwrap())
+        .collect::<Vec<_>>()
+        .join(" ");
+    assert!(joined.starts_with("events "), "{joined}");
+    assert!(joined.contains(CID), "{joined}");
+    assert!(
+        joined.contains("--rpc-url https://soroban-testnet.stellar.org"),
+        "{joined}"
+    );
+    assert!(joined.contains("--format json"), "{joined}");
+    assert!(v["evidence"]["command_executed"].as_bool().unwrap());
+}
+
+#[test]
+fn c_plugin_doctor_routes_to_plugin_doctor() {
+    let tmp = tempfile::tempdir().unwrap();
+    let fx = FakeCli {
+        stdout: "{\"status\":\"ok\"}\n".into(),
+        ..FakeCli::ok()
+    }
+    .write(tmp.path());
+
+    let out = agent(&fx, "run plugin doctor", true);
+    let v = parse_json(&out);
+    assert_eq!(v["capability_id"], "plugin.doctor");
+    let joined = v["argv"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|a| a.as_str().unwrap())
+        .collect::<Vec<_>>()
+        .join(" ");
+    assert_eq!(joined, "plugin doctor --format json");
+    assert!(v["evidence"]["command_executed"].as_bool().unwrap());
+}
+
 // ---------------------------------------------------------------- case D ---
 #[test]
 fn d_ambiguous_request_is_clarified_and_never_executed() {
