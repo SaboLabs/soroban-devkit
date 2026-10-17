@@ -112,15 +112,17 @@ pub struct PluginRule {
     #[allow(dead_code)]
     source: String,
     check: CheckFn,
-    free: FreeFn,
+    free: Option<FreeFn>,
 }
 
 impl Drop for PluginRule {
     fn drop(&mut self) {
         // SAFETY: FFI call into plugin to release internal resources.
         // `_lib` guarantees the symbol is still valid.
-        unsafe {
-            (self.free)();
+        if let Some(free) = self.free {
+            unsafe {
+                free();
+            }
         }
 
         // Rust cdylibs may retain runtime or static state whose teardown is
@@ -168,10 +170,11 @@ impl PluginRule {
             lib.get(b"sdkt_plugin_check\0")
                 .map_err(|e| PluginLoadError::SymbolMissing(e.to_string()))?
         };
-        let free_fn: Symbol<FreeFn> = unsafe {
-            lib.get(b"sdkt_plugin_free\0")
-                .map_err(|e| PluginLoadError::SymbolMissing(e.to_string()))?
-        };
+        // `sdkt_plugin_free` is documented as optional cleanup: resolve it with
+        // `.ok()` and drop the plugin without calling it when absent. The docs
+        // are the contract a plugin author reads first, so the loader follows
+        // them rather than the reverse.
+        let free_fn: Option<Symbol<FreeFn>> = unsafe { lib.get(b"sdkt_plugin_free\0").ok() };
 
         let version = unsafe { abi_fn() };
         let plugin_major = abi_major(version);
@@ -201,7 +204,7 @@ impl PluginRule {
         }
 
         let check: CheckFn = *check_fn;
-        let free: FreeFn = *free_fn;
+        let free: Option<FreeFn> = free_fn.map(|s| *s);
 
         Ok(Self {
             _lib: lib,
@@ -235,6 +238,21 @@ impl AuditRule for PluginRule {
         // internally. We only catch normal return values.
         let code = unsafe { (self.check)(&mut buf) };
         if code != 0 {
+            // A non-zero return is a plugin failure, not an empty result set.
+            // Surface it as a Warning finding naming the plugin and the code so
+            // a crashed plugin cannot pass as a clean run — the same fidelity
+            // the WASM loader already provides.
+            report.add(Finding {
+                file: None,
+                rule_id: format!("{}-RUNTIME", self.id),
+                severity: Severity::Warning,
+                message: format!(
+                    "plugin '{}' returned non-zero exit code {} from sdkt_plugin_check; \
+                     its findings were not collected",
+                    self.id, code
+                ),
+                location: None,
+            });
             return;
         }
 

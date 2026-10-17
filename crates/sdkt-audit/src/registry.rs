@@ -56,6 +56,21 @@ impl RuleRegistry {
         &self.rules
     }
 
+    /// Snapshot of `RuleInfo` for all registered rules in this registry.
+    ///
+    /// Used by the CLI to build SARIF rule metadata and validate `--disable`
+    /// IDs against the exact rule set that will execute.
+    pub fn registered_rule_info(&self) -> Vec<crate::types::RuleInfo> {
+        self.rules
+            .iter()
+            .map(|r| crate::types::RuleInfo {
+                id: r.id().to_string(),
+                severity: r.severity(),
+                description: r.description().to_string(),
+            })
+            .collect()
+    }
+
     /// Run every registered rule that is not disabled, appending findings to
     /// `report`. Rules execute in registration order so output is deterministic.
     pub fn run_all(
@@ -108,6 +123,29 @@ pub fn run_registered(
     register_builtin_rules();
     let reg = global().lock().expect("audit registry poisoned");
     reg.run_all(scans, ctx, disabled, report);
+}
+
+/// Snapshot of every rule in the process-wide registry, built-ins plus any
+/// registered plugins, in registration order.
+///
+/// [`crate::audit::all_rules`] returns only the built-in set, so callers that
+/// need to describe *what will actually execute* — `--list-rules`, the SARIF
+/// rule catalogue, `--disable` validation — must read the registry instead.
+/// The registry is populated lazily, so this ensures built-ins first.
+///
+/// Returns owned `RuleInfo` rather than rule references: `Box<dyn AuditRule>`
+/// is not `Clone`, and callers only need the descriptive fields.
+pub fn registered_rule_info() -> Vec<crate::types::RuleInfo> {
+    register_builtin_rules();
+    let reg = global().lock().expect("audit registry poisoned");
+    reg.registered_rules()
+        .iter()
+        .map(|r| crate::types::RuleInfo {
+            id: r.id().to_string(),
+            severity: r.severity(),
+            description: r.description().to_string(),
+        })
+        .collect()
 }
 
 #[cfg(test)]

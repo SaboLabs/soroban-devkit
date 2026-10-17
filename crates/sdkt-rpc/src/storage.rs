@@ -22,6 +22,10 @@ pub struct TtlEntry {
     pub expiration_time: String,
     pub days_remaining: u32,
     pub extension_cost_stroops: u64,
+    /// `true` when `current_ttl` is below `expiring_soon_ledgers` (passed to
+    /// [`get_ttl_info_for_keys`]); used to surface TTL warnings consistently
+    /// across `StorageAnalyzer` and `sdkt storage read`. (Issue #375.)
+    pub expiring_soon: bool,
 }
 
 /// Calculates extension cost using a simple placeholder formula
@@ -55,6 +59,8 @@ pub async fn get_ttl_info_for_keys(
     client: &SorobanRpcClient,
     contract_id: &str,
     extra_keys: &[String],
+    max_entries: usize,
+    expiring_soon_ledgers: u32,
 ) -> Result<TtlInfo, RpcError> {
     // Validate contract ID and all keys before contacting RPC.
     let keys = collect_extend_keys(contract_id, extra_keys)?;
@@ -62,7 +68,7 @@ pub async fn get_ttl_info_for_keys(
     let ledger_info = client.get_ledger().await?;
     let current_ledger = ledger_info.sequence;
 
-    let storage_resp = fetch_ledger_entries(client, &keys).await?;
+    let storage_resp = fetch_ledger_entries(client, &keys, max_entries).await?;
 
     let mut entries = Vec::new();
     for entry in storage_resp.entries {
@@ -82,6 +88,11 @@ pub async fn get_ttl_info_for_keys(
             expiration_time: format!("~{} days", days_remaining),
             days_remaining,
             extension_cost_stroops,
+            // The expiring-soon threshold is applied here, at the point the
+            // TTL is known, so every consumer (StorageAnalyzer, `sdkt storage
+            // read`, `sdkt ttl`) sees the same flag for the same config value.
+            // (Issue #375: wired from [storage].ttl_warning_days.)
+            expiring_soon: current_ttl < expiring_soon_ledgers,
         });
     }
 
@@ -97,7 +108,7 @@ pub async fn get_ttl_info(
     client: &SorobanRpcClient,
     contract_id: &str,
 ) -> Result<TtlInfo, RpcError> {
-    get_ttl_info_for_keys(client, contract_id, &[]).await
+    get_ttl_info_for_keys(client, contract_id, &[], 200, 17_280).await
 }
 
 /// Result of a successful `ExtendFootprintTtl` submission.
@@ -429,11 +440,14 @@ pub async fn read_ledger_entry(
 /// Fetch the current ledger entries for a set of keys, preserving per-entry
 /// provenance (`lastModifiedLedgerSeq`, `liveUntilLedgerSeq`).
 ///
-/// Sets of at most [`MAX_LEDGER_KEYS`] use one request with unchanged response
-/// semantics, including an empty set. Larger sets use sequential batches of at
-/// most that many keys, with found entries returned in the requested key order
-/// (including repeated keys); absent entries are omitted. A failed batch returns
-/// an error rather than partial results.
+/// `max_entries` is the effective per-request batch size. It is clamped to
+/// `1..=MAX_LEDGER_KEYS` (the node's hard cap) and applied to **every**
+/// request, including follow-up batches — a value of `0` means
+/// [`MAX_LEDGER_KEYS`]. Sets of at most `max_entries` keys use one request with
+/// unchanged response semantics, including an empty set. Larger sets use
+/// sequential batches of at most that many keys, with found entries returned in
+/// the requested key order (including repeated keys); absent entries are
+/// omitted. A failed batch returns an error rather than partial results.
 ///
 /// This is the state-capture primitive for a state-matched differential run.
 /// It reads **current** ledger state — the RPC has no ledger-pinning
@@ -444,19 +458,28 @@ pub async fn read_ledger_entry(
 pub async fn fetch_ledger_entries(
     client: &SorobanRpcClient,
     keys: &[String],
+    max_entries: usize,
 ) -> Result<StorageResponse, RpcError> {
-    if keys.len() <= MAX_LEDGER_KEYS {
+    // Clamp once, up front: a configured batch larger than the node cap would
+    // make the first request fail with TooManyLedgerKeys, and a zero value
+    // would make `chunks` panic.
+    let batch_size = if max_entries == 0 {
+        MAX_LEDGER_KEYS
+    } else {
+        max_entries.min(MAX_LEDGER_KEYS)
+    };
+    if keys.len() <= batch_size {
         return client.get_contract_storage("", keys).await;
     }
 
-    let (first_batch, remaining) = keys.split_at(MAX_LEDGER_KEYS);
+    let (first_batch, remaining) = keys.split_at(batch_size);
     let mut result = client.get_contract_storage("", first_batch).await?;
     let mut entries = HashMap::new();
     for entry in result.entries.drain(..) {
         entries.insert(entry.key.clone(), entry);
     }
 
-    for batch in remaining.chunks(MAX_LEDGER_KEYS) {
+    for batch in remaining.chunks(batch_size) {
         let response = client.get_contract_storage("", batch).await?;
         if response.latest_ledger != result.latest_ledger {
             return Err(RpcError::Rpc(format!(
@@ -721,6 +744,8 @@ mod tests {
             &client,
             "CAE3U7JKESRWZHPEQ72DVNGOQ6WPA7HSPQZL5YV46NPCE4TMUPAGYMEC",
             &["not-a-valid-key".to_string()],
+            200,
+            17_280,
         )
         .await;
         assert!(result.is_err());

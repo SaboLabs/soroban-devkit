@@ -629,3 +629,145 @@ fn map_insert_key_refuses_when_key_space_is_exhausted() {
         "expected NoApplicableMutation, got {err:?}"
     );
 }
+
+// ---------------------------------------------------------------------------
+// H. Mutation planner tests (plan_mutation distinct steps & cycling)
+// ---------------------------------------------------------------------------
+
+#[test]
+fn plan_mutation_consecutive_steps_differ_for_bool_and_u64() {
+    let t_bool = counter_type("bool");
+    let t_u64 = counter_type("u64");
+    let seed = *b"sdkt-fuzz-phase1-default-seed!!!";
+
+    // 200-case sweep asserting steps 0 and 1 select different operators in 100% of cases
+    for (t, op_count) in [(&t_bool, 2), (&t_u64, 5)] {
+        assert_eq!(sdkt_fuzz::mutation::operators_for(t).len(), op_count);
+        let param_types = [t];
+        let mut duplicates = 0;
+        let cases = 200;
+        for c in 0..cases {
+            let case_id = format!("case{c:04}");
+            let step0 = sdkt_fuzz::mutation::plan_mutation(&param_types, &seed, &case_id, 0)
+                .expect("mutation plan exists");
+            let step1 = sdkt_fuzz::mutation::plan_mutation(&param_types, &seed, &case_id, 1)
+                .expect("mutation plan exists");
+            assert_ne!(
+                step0, step1,
+                "step 0 and step 1 must differ for case {case_id} on type {}",
+                t.name
+            );
+            if step0 == step1 {
+                duplicates += 1;
+            }
+        }
+        assert_eq!(
+            duplicates, 0,
+            "100% of sampled cases must select different operators between consecutive steps"
+        );
+    }
+}
+
+#[test]
+fn plan_mutation_reaches_full_candidate_set_in_len_steps() {
+    let t_bool = counter_type("bool");
+    let t_u64 = counter_type("u64");
+    let seed = *b"sdkt-fuzz-phase1-default-seed!!!";
+
+    let test_cases: Vec<Vec<&ContractType>> =
+        vec![vec![&t_bool], vec![&t_u64], vec![&t_bool, &t_u64]];
+
+    for param_types in test_cases {
+        let mut expected_candidates: Vec<(usize, sdkt_fuzz::Operator)> = Vec::new();
+        for (i, t) in param_types.iter().enumerate() {
+            for op in sdkt_fuzz::mutation::operators_for(t) {
+                expected_candidates.push((i, op));
+            }
+        }
+        let total = expected_candidates.len();
+
+        for c in 0..50 {
+            let case_id = format!("case{c:04}");
+            let mut visited = std::collections::BTreeSet::new();
+            for step in 0..total {
+                let choice =
+                    sdkt_fuzz::mutation::plan_mutation(&param_types, &seed, &case_id, step)
+                        .expect("mutation plan exists");
+                assert!(
+                    visited.insert(choice),
+                    "duplicate candidate {:?} visited at step {} for case {}",
+                    choice,
+                    step,
+                    case_id
+                );
+            }
+            assert_eq!(
+                visited.len(),
+                total,
+                "across candidates.len() steps, every candidate must be selected exactly once"
+            );
+        }
+    }
+}
+
+#[test]
+fn plan_mutation_determinism_across_repeated_calls() {
+    let t_u64 = counter_type("u64");
+    let param_types = [&t_u64];
+    let seed = *b"sdkt-fuzz-phase1-default-seed!!!";
+
+    for c in 0..20 {
+        let case_id = format!("case{c:04}");
+        for step in 0..10 {
+            let call1 = sdkt_fuzz::mutation::plan_mutation(&param_types, &seed, &case_id, step);
+            let call2 = sdkt_fuzz::mutation::plan_mutation(&param_types, &seed, &case_id, step);
+            assert_eq!(
+                call1, call2,
+                "plan_mutation must be deterministic across calls"
+            );
+        }
+    }
+}
+
+#[test]
+fn plan_mutation_single_candidate_repeats() {
+    // A primitive type with a single fallback operator (Operator::Random)
+    let t_single = counter_type("custom_opaque");
+    assert_eq!(
+        sdkt_fuzz::mutation::operators_for(&t_single),
+        vec![sdkt_fuzz::Operator::Random]
+    );
+    let param_types = [&t_single];
+    let seed = *b"sdkt-fuzz-phase1-default-seed!!!";
+
+    for c in 0..10 {
+        let case_id = format!("case{c:04}");
+        let step0 = sdkt_fuzz::mutation::plan_mutation(&param_types, &seed, &case_id, 0);
+        let step1 = sdkt_fuzz::mutation::plan_mutation(&param_types, &seed, &case_id, 1);
+        assert_eq!(
+            step0,
+            Some((0, sdkt_fuzz::Operator::Random)),
+            "single candidate must return Operator::Random"
+        );
+        assert_eq!(
+            step0, step1,
+            "single-candidate type is documented to repeat across consecutive steps"
+        );
+    }
+}
+
+#[test]
+fn campaign_summary_reports_counts() {
+    let result = sdkt_fuzz::CampaignResult {
+        executed: 4,
+        passed: vec!["case0000".into(), "case0001".into()],
+        expected_errors: vec![],
+        findings: vec![],
+        skipped_functions: vec![],
+    };
+    let summary = sdkt_fuzz::campaign::summarize(&result);
+    assert_eq!(
+        summary,
+        "executed=4 passed=2 expected_errors=0 findings=0 skipped=0"
+    );
+}

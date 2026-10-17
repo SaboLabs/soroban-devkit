@@ -236,19 +236,23 @@ pub fn diff_snapshots(
         }
     }
 
-    let (old_ledger, new_ledger, ledger_delta, capture_context) =
-        match (old.latest_ledger, new.latest_ledger) {
-            (Some(old_l), Some(new_l)) => {
-                let delta = new_l as i64 - old_l as i64;
-                (Some(old_l), Some(new_l), Some(delta), None)
-            }
-            _ => (
-                old.latest_ledger,
-                new.latest_ledger,
-                None,
-                Some("unknown".to_string()),
-            ),
-        };
+    let (old_ledger, new_ledger, ledger_delta) = match (old.latest_ledger, new.latest_ledger) {
+        (Some(old_l), Some(new_l)) => {
+            let delta = new_l as i64 - old_l as i64;
+            (Some(old_l), Some(new_l), Some(delta))
+        }
+        _ => (old.latest_ledger, new.latest_ledger, None),
+    };
+
+    let capture_context = if old.latest_ledger.is_none()
+        || new.latest_ledger.is_none()
+        || old.network.is_none()
+        || new.network.is_none()
+    {
+        Some("unknown".to_string())
+    } else {
+        None
+    };
 
     let network = match (&old.network, &new.network) {
         (Some(o), Some(n)) if o == n => Some(o.clone()),
@@ -867,6 +871,7 @@ mod tests {
         let diff = diff_snapshots(&old, &new).unwrap();
         assert_eq!(diff.network.as_deref(), Some("testnet"));
         assert_eq!(diff.ledger_delta, Some(1_000));
+        assert!(diff.capture_context.is_none());
     }
 
     #[test]
@@ -876,6 +881,29 @@ mod tests {
 
         let diff = diff_snapshots(&old, &new).unwrap();
         assert_eq!(diff.network.as_deref(), Some("testnet"));
+        assert_eq!(diff.capture_context.as_deref(), Some("unknown"));
+    }
+
+    #[test]
+    fn diff_both_networks_missing_sets_capture_context_unknown_even_with_ledgers() {
+        let old = snap(vec![("k1", 50_000)]).with_context(Some(1_000_000), None::<String>);
+        let new = snap(vec![("k1", 49_000)]).with_context(Some(1_001_000), None::<String>);
+
+        let diff = diff_snapshots(&old, &new).unwrap();
+        assert_eq!(diff.ledger_delta, Some(1_000));
+        assert!(diff.network.is_none());
+        assert_eq!(diff.capture_context.as_deref(), Some("unknown"));
+    }
+
+    #[test]
+    fn diff_missing_ledger_with_network_sets_capture_context_unknown() {
+        let old = snap(vec![("k1", 50_000)]).with_context(Some(1_000_000), Some("testnet"));
+        let new = snap(vec![("k1", 49_000)]).with_context(None::<u32>, Some("testnet"));
+
+        let diff = diff_snapshots(&old, &new).unwrap();
+        assert!(diff.ledger_delta.is_none());
+        assert_eq!(diff.network.as_deref(), Some("testnet"));
+        assert_eq!(diff.capture_context.as_deref(), Some("unknown"));
     }
 
     #[test]

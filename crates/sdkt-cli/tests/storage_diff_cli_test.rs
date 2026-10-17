@@ -458,3 +458,38 @@ fn storage_diff_cli_pretty_output_displays_ledger_delta_and_network() {
     assert!(stdout.contains("[expiring] key=keyB=="));
     assert!(stdout.contains("normalized_old_ttl=32719"));
 }
+
+#[test]
+fn storage_diff_cli_partial_context_missing_network_states_unknown() {
+    let dir = tempdir().unwrap();
+    let old_path = dir.path().join("old.json");
+    let new_path = dir.path().join("new.json");
+
+    create_snapshot_file_with_context(
+        &old_path,
+        CONTRACT,
+        &[("keyA==", 18_000)],
+        Some(1_000_000),
+        Some("testnet"),
+    );
+    create_snapshot_file_with_context(
+        &new_path,
+        CONTRACT,
+        &[("keyA==", 17_000)],
+        Some(1_001_000),
+        None,
+    );
+
+    let mut json_cmd = sdkt();
+    json_cmd
+        .args(["storage", "diff", "--old"])
+        .arg(&old_path)
+        .arg("--new")
+        .arg(&new_path)
+        .args(["--format", "json"]);
+
+    let json_out = json_cmd.assert().success().get_output().stdout.clone();
+    let val: serde_json::Value = serde_json::from_slice(&json_out).unwrap();
+    assert_eq!(val["capture_context"], "unknown");
+    assert_eq!(val["ledger_delta"], 1_000);
+}

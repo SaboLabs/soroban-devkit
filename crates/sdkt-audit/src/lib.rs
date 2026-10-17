@@ -42,7 +42,8 @@ pub use plugin_store::{
     InstallOpts, PluginMeta, StoreError,
 };
 pub use registry::{
-    register_builtin_rules, register_rule, run_registered, BoxedRule, RuleRegistry,
+    register_builtin_rules, register_rule, registered_rule_info, run_registered, BoxedRule,
+    RuleRegistry,
 };
 pub use rules::{Auth001, Auth002, Auth003, Auth004, Move001};
 pub use sarif::{

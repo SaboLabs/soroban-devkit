@@ -129,6 +129,55 @@ fn network_remove_deletes_profile() {
 }
 
 #[test]
+fn network_remove_existing_profile_disappears_from_list() {
+    let dir = tempdir().unwrap();
+
+    sdkt(dir.path())
+        .args([
+            "network",
+            "add",
+            "removable",
+            "--rpc-url",
+            "https://removable.example",
+            "--passphrase",
+            "Removable Network",
+        ])
+        .assert()
+        .success();
+
+    sdkt(dir.path())
+        .args(["network", "list"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("removable"));
+
+    sdkt(dir.path())
+        .args(["network", "remove", "removable"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains(
+            "Network profile 'removable' removed.",
+        ));
+
+    sdkt(dir.path())
+        .args(["network", "list"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("removable").not());
+}
+
+#[test]
+fn network_remove_missing_profile_fails() {
+    let dir = tempdir().unwrap();
+
+    sdkt(dir.path())
+        .args(["network", "remove", "ghost"])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("not found"));
+}
+
+#[test]
 fn network_add_overwrites_existing() {
     let dir = tempdir().unwrap();
 

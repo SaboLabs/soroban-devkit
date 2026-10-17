@@ -189,7 +189,9 @@ sdkt
 │   └── --format <json|pretty>
 ├── identity
 │   ├── generate <name>       [--format pretty|json]
-│   ├── import <name> <secret>
+│   ├── import <name> <secret>   (required)
+│   │   stdin form (recommended): import <name> -
+│   │   ⚠ argv secrets are deprecated (issue #64): pass `-` instead
 │   ├── list                  [--format pretty|json]
 │   ├── show <name>           [--format pretty|json]
 │   ├── delete <name>
@@ -309,6 +311,13 @@ Flags:
   `<out>/<name>-<version>.tar.zst`; `dir` writes a directory tree
   `<out>/<name>-<version>/`. Any other value is rejected with a clear error.
 
+**Pack preconditions:** every git dependency declared in the manifest must
+have a cached checkout under `.sdkt-cache/git/<cache_key>`. If a declared
+dependency's checkout is missing, `sdkt package pack` exits non-zero with a
+`git dependency '<name>' is declared but its checkout is not cached ...` error
+and writes no descriptor — the bundle never claims a dependency it does not
+contain.
+
 `sdkt package publish --dry-run` validates **publish readiness** using the
 existing manifest/lock/cache/integrity infrastructure. It detects missing cache,
 lock drift, integrity mismatch, commit mismatch, reference change, and invalid
@@ -366,6 +375,20 @@ or git logic is duplicated; the same `compute_dependency_integrity` /
 │   `⚠ Recorded contract for '<alias>' is no longer on-chain; re-deploying.` and
 │   deploys it fresh, replacing the stale record. The default identity (see
 │   `sdkt identity`) is used to sign all deployments.
+│
+│   **Constructor arguments**: contracts requiring initialization parameters at
+│   create time declare them in `.sdkt.toml` via the `ctor_args` field:
+│
+│     [contracts.token]
+│     path = "contracts/token"
+│     ctor_args = ["address:G...", "u32:1000000"]
+│
+│   Each string is a TYPE:VALUE pair (same format as `sdkt deploy --arg`: `u32:100`,
+│   `address:G...`, `string:hello`, `bool:true`, `bytes:deadbeef`, etc.) or a
+│   base64-encoded ScVal. Invalid arguments fail before WASM upload (fail-fast
+│   validation) with the same error messages as the single-contract deploy path.
+│   Contracts without `ctor_args` deploy with empty constructor arguments (no
+│   change from pre-feature behavior).
 │
 ├── call
 │   ├── <CONTRACT_ID>
