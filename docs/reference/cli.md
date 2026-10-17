@@ -2,13 +2,6 @@
 
 The `sdkt-cli` crate uses `clap` (derive API) for command routing. Every command returns `Result<(), Box<dyn std::error::Error>>`; library errors (`RpcError`, `DecodeError`, `WasmError`) bubble up and are printed via `eprintln!` with a non-zero exit.
 
-> **Audit source coverage.** `sdkt audit` scans the entire module tree declared in the
-> scanned file — top-level `fn` items, methods inside `impl` blocks, and functions/methods
-> nested inside `mod` blocks (including mod-in-mod), with findings located by their
-> qualified module path (for example `inner::initialize`). Only modules declared in the
-> scanned file are visited; `use` declarations and `mod foo;` file references are not
-> followed into other files.
-
 ## Command Tree
 
 ```text
@@ -749,6 +742,7 @@ Store root precedence (lowest → highest): `<cwd>/.sdkt/plugins`,
   ```
 
 - `audit` implements the static-analysis rules (AUTH-001/002/003/004, MOVE-001, MATH-001, CEI-001).
+- `audit` scans the whole module tree declared in the file: functions and `impl` methods inside nested `mod` blocks (including mod-in-mod) are analyzed, and findings are reported with qualified names such as `inner::initialize`. Modules declared as `mod foo;` in other files are not followed.
 - **AUTH-001/AUTH-004 severity follows observed behavior, not the name.** Both rules start from a privileged-name heuristic (`initialize`/`init`, `set_*`/`grant_*`/`revoke_*` prefixes, and the substrings `admin`, `mint`, `burn`, `pause`, `unpause`, `upgrade`, `withdraw`, `configure`, `freeze`, `ban`, `drain`, `set_admin`, `owner_set`, `transfer_ownership`, `change_owner`, `set_auth`), then decide severity from what the function actually does:
   - a method of a `#[contractimpl]` block that performs a recognized state write or an external call and never calls `require_auth()` → **critical** (the unguarded-privilege case);
   - a function that is **not** a `#[contractimpl]` method (a plain `fn` or a method of an un-annotated impl) → **info**: external callers cannot reach it, so authorization is the responsibility of the entrypoint that calls it;

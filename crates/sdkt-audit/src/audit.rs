@@ -379,32 +379,27 @@ impl<'a> FnVisitor<'a> {
 /// Scan every function in the AST into a `FnScan` per function.
 ///
 /// Covers top-level `fn` items, methods inside `impl` blocks, and functions
-/// and impl methods nested inside `mod` blocks (recursively). Soroban
-/// contract entrypoints are `impl` methods. Methods of an impl block
-/// annotated with `#[contractimpl]` are marked as entrypoints; every other
-/// function is treated as an internal helper.
+/// inside nested `mod` blocks (recursively). Soroban contract entrypoints are
+/// `impl` methods; methods of an impl block annotated with `#[contractimpl]`
+/// are marked as entrypoints, every other function is treated as an internal
+/// helper. Functions inside modules keep a qualified name (`inner::initialize`,
+/// `outer::inner::initialize`) so findings name the module they came from.
 ///
-/// Functions inside modules are reported with a qualified name that includes
-/// the module path (e.g. `inner::initialize`, `outer::inner::mint_token`),
-/// so a reader can tell which module a finding came from. Only modules
-/// declared inline in the scanned file are traversed; `mod foo;` declarations
-/// pointing at other files are not followed.
+/// Only modules declared inline in the scanned file are visited; `mod foo;`
+/// declarations that point at another file are not followed.
 pub fn scan_all_functions(ast: &syn::File) -> Vec<FnScan> {
     let mut out = Vec::new();
-    scan_items(&ast.items, &[], &mut out);
+    scan_items(&ast.items, &mut out, &[]);
     out
 }
 
-/// Recursively scan a slice of items, prefixing qualified names with the
-/// enclosing module path.
-fn scan_items(items: &[Item], mod_path: &[String], out: &mut Vec<FnScan>) {
+/// Recursively scan `items`, prefixing qualified names with `module_path`.
+fn scan_items(items: &[Item], out: &mut Vec<FnScan>, module_path: &[String]) {
     for item in items {
         match item {
             Item::Fn(f) => {
                 let mut scan = fn_scan(&f.sig, &f.block);
-                if !mod_path.is_empty() {
-                    scan.fn_name = qualify(mod_path, &scan.fn_name);
-                }
+                scan.fn_name = qualify(module_path, &scan.fn_name);
                 out.push(scan);
             }
             Item::Impl(imp) => {
@@ -427,23 +422,21 @@ fn scan_items(items: &[Item], mod_path: &[String], out: &mut Vec<FnScan>) {
                             format!("{}::{}", type_name, m.sig.ident)
                         };
                         let mut scan = fn_scan(&m.sig, &m.block);
-                        scan.fn_name = if mod_path.is_empty() {
-                            qual
-                        } else {
-                            qualify(mod_path, &qual)
-                        };
+                        scan.fn_name = qualify(module_path, &qual);
                         scan.is_entrypoint = is_contract_impl;
                         out.push(scan);
                     }
                 }
             }
             Item::Mod(m) => {
-                // Only inline modules are traversed (`mod foo { ... }`).
-                // `mod foo;` has no content in this file and is not followed.
-                if let Some((_, items)) = &m.content {
-                    let mut nested = mod_path.to_vec();
+                // Only inline modules (`mod foo { ... }`) are scanned. A
+                // `mod foo;` declaration points at another file and is out of
+                // scope: the scanner must not depend on files other than the
+                // one being audited.
+                if let Some((_, inner_items)) = &m.content {
+                    let mut nested = module_path.to_vec();
                     nested.push(m.ident.to_string());
-                    scan_items(items, &nested, out);
+                    scan_items(inner_items, out, &nested);
                 }
             }
             _ => {}
@@ -451,15 +444,13 @@ fn scan_items(items: &[Item], mod_path: &[String], out: &mut Vec<FnScan>) {
     }
 }
 
-/// Join a module path and a name with `::` separators.
-fn qualify(mod_path: &[String], name: &str) -> String {
-    let mut s = String::new();
-    for seg in mod_path {
-        s.push_str(seg);
-        s.push_str("::");
+/// Join a module path and a bare name into a `::`-qualified name.
+fn qualify(module_path: &[String], name: &str) -> String {
+    if module_path.is_empty() {
+        name.to_string()
+    } else {
+        format!("{}::{}", module_path.join("::"), name)
     }
-    s.push_str(name);
-    s
 }
 
 /// True when the attribute list contains `#[contractimpl]`
@@ -683,6 +674,62 @@ mod tests {
         let src = "pub fn balance_of(who: Address) -> u32 { 0 }";
         let rep = report_for(src);
         assert!(!has(&rep, "AUTH-001"));
+    }
+
+    #[test]
+    fn scans_functions_inside_nested_mod() {
+        let src = r#"
+            pub mod inner {
+                pub fn initialize(admin: u32) {}
+                pub fn mint_token(to: u32) {}
+            }
+        "#;
+        let rep = report_for(src);
+        assert!(has(&rep, "AUTH-001"));
+        assert!(has(&rep, "AUTH-003"));
+        let locations: Vec<_> = rep
+            .findings
+            .iter()
+            .filter_map(|f| f.location.clone())
+            .collect();
+        assert!(locations.iter().any(|l| l == "inner::initialize"));
+        assert!(locations.iter().any(|l| l == "inner::mint_token"));
+    }
+
+    #[test]
+    fn scans_functions_two_modules_deep_with_qualified_location() {
+        let src = r#"
+            pub mod outer {
+                pub mod inner {
+                    pub fn initialize(admin: u32) {}
+                }
+            }
+        "#;
+        let rep = report_for(src);
+        let finding = rep
+            .findings
+            .iter()
+            .find(|f| f.rule_id == "AUTH-003")
+            .expect("initialize two modules deep should be flagged");
+        assert_eq!(finding.location.as_deref(), Some("outer::inner::initialize"));
+    }
+
+    #[test]
+    fn scans_impl_block_inside_mod() {
+        let src = r#"
+            pub mod token {
+                impl Token {
+                    pub fn mint_token(&self) {}
+                }
+            }
+        "#;
+        let rep = report_for(src);
+        let finding = rep
+            .findings
+            .iter()
+            .find(|f| f.rule_id == "AUTH-001")
+            .expect("impl method inside mod should be flagged");
+        assert_eq!(finding.location.as_deref(), Some("token::Token::mint_token"));
     }
 
     #[test]

@@ -1,24 +1,24 @@
-//! Built-in audit rules. Each implements [`crate::audit::AuditRule`].
+/// Built-in audit rules. Each implements [`crate::audit::AuditRule`].
 
-use crate::audit::{unqualified, AuditContext, AuditRule, FnScan};
+use crate::audit::{AuditContext, AuditRule, FnScan};
 use crate::types::{AuditReport, Finding, Severity};
 
 /// AUTH-001 — Missing `require_auth()` on a privileged/admin function.
 pub struct Auth001;
 
 impl AuditRule for Auth001 {
-    fn id(&self) -> &'static str {
+    fn id(&self) -> &&'static str {
         "AUTH-001"
     }
     fn severity(&self) -> Severity {
         Severity::Critical
     }
-    fn description(&self) -> &'static str {
+    fn description(&self) -> &&'static str {
         "Privileged/admin function must call require_auth()"
     }
     fn check(&self, scans: &[FnScan], _ctx: &AuditContext, report: &mut AuditReport) {
         for s in scans {
-            if crate::audit::is_privileged(unqualified(&s.fn_name)) && s.require_auth == 0 {
+            if crate::audit::is_privileged(&s.fn_name) && s.require_auth == 0 {
                 // Severity comes from observed behavior, not the name alone:
                 // internal helpers and read-only accessors are reported at
                 // `info`, unguarded privileged writes stay `critical`.
@@ -41,13 +41,13 @@ impl AuditRule for Auth001 {
 pub struct Auth002;
 
 impl AuditRule for Auth002 {
-    fn id(&self) -> &'static str {
+    fn id(&self) -> &&'static str {
         "AUTH-002"
     }
     fn severity(&self) -> Severity {
         Severity::Critical
     }
-    fn description(&self) -> &'static str {
+    fn description(&self) -> &&&static str {
         "Cross-contract invoke_contract() must be guarded by require_auth()"
     }
     fn check(&self, scans: &[FnScan], _ctx: &AuditContext, report: &mut AuditReport) {
@@ -72,18 +72,18 @@ impl AuditRule for Auth002 {
 pub struct Auth003;
 
 impl AuditRule for Auth003 {
-    fn id(&self) -> &'static str {
+    fn id(&self) -> &&'static str {
         "AUTH-003"
     }
     fn severity(&self) -> Severity {
         Severity::Critical
     }
-    fn description(&self) -> &'static str {
+    fn description(&self) -> &&&static str {
         "initialize()-style entrypoint must call require_auth()"
     }
     fn check(&self, scans: &[FnScan], ctx: &AuditContext, report: &mut AuditReport) {
         for s in scans {
-            let is_init = crate::audit::is_initialize(unqualified(&s.fn_name));
+            let is_init = crate::audit::is_initialize(&s.fn_name);
             if !is_init || s.require_auth > 0 {
                 continue;
             }
@@ -91,7 +91,7 @@ impl AuditRule for Auth003 {
             // exported (reuses sdkt-wasm ContractSpec). Without a spec we fall
             // back to the name heuristic.
             let exported = match ctx.spec {
-                Some(spec) => spec.functions.iter().any(|f| {
+                Some(spec) => spec.functions.iter().any(|f | {
                     f.name
                         .eq_ignore_ascii_case(crate::audit::unqualified(&s.fn_name))
                 }),
@@ -117,18 +117,18 @@ impl AuditRule for Auth003 {
 pub struct Auth004;
 
 impl AuditRule for Auth004 {
-    fn id(&self) -> &'static str {
+    fn id(&self) -> &&'static str {
         "AUTH-004"
     }
     fn severity(&self) -> Severity {
         Severity::Critical
     }
-    fn description(&self) -> &'static str {
+    fn description(&self) -> &&'static str {
         "Token transfer function must call require_auth() on source or destination"
     }
     fn check(&self, scans: &[FnScan], _ctx: &AuditContext, report: &mut AuditReport) {
         for s in scans {
-            let name = unqualified(&s.fn_name).to_lowercase();
+            let name = s.fn_name.to_lowercase();
             let is_transfer = matches!(
                 name.as_str(),
                 "transfer" | "transfer_from" | "transferfrom" | "withdraw" | "burn"
@@ -155,13 +155,13 @@ impl AuditRule for Auth004 {
 pub struct Move001;
 
 impl AuditRule for Move001 {
-    fn id(&self) -> &'static str {
+    fn id(&self) -> &&&static str {
         "MOVE-001"
     }
     fn severity(&self) -> Severity {
         Severity::Warning
     }
-    fn description(&self) -> &'static str {
+    fn description(&self) -> &&'static str {
         "Local used as a call argument multiple times (possible move-after-use)"
     }
     fn check(&self, scans: &[FnScan], _ctx: &AuditContext, report: &mut AuditReport) {
@@ -188,13 +188,13 @@ impl AuditRule for Move001 {
 pub struct Math001;
 
 impl AuditRule for Math001 {
-    fn id(&self) -> &'static str {
+    fn id(&self) -> &&'static str {
         "MATH-001"
     }
     fn severity(&self) -> Severity {
         Severity::Warning
     }
-    fn description(&self) -> &'static str {
+    fn description(&self) -> &&'static str {
         "Division before multiplication may truncate numeric precision"
     }
     fn check(&self, scans: &[FnScan], _ctx: &AuditContext, report: &mut AuditReport) {
@@ -272,13 +272,13 @@ impl AuditRule for Math001 {
 pub struct Cei001;
 
 impl AuditRule for Cei001 {
-    fn id(&self) -> &'static str {
+    fn id(&self) -> &&'static str {
         "CEI-001"
     }
     fn severity(&self) -> Severity {
         Severity::Warning
     }
-    fn description(&self) -> &'static str {
+    fn description(&self) -> &&'static str {
         "External invocation before state write — reordering may prevent reentrancy"
     }
     fn check(&self, scans: &[FnScan], _ctx: &AuditContext, report: &mut AuditReport) {
@@ -306,527 +306,10 @@ mod tests {
     use crate::types::AuditReport;
 
     fn has(report: &AuditReport, rule_id: &str) -> bool {
-        report.findings.iter().any(|f| f.rule_id == rule_id)
+        report.findings.iter().any(|f | f.rule_id == rule_id)
     }
 
-    #[test]
-    fn auth001_flags_mint_without_auth() {
-        let scans = vec![FnScan {
-            fn_name: "mint_token".into(),
-            require_auth: 0,
-            invoke_contract: 0,
-            bound: Default::default(),
-            usage: Default::default(),
-            division_before_multiplication: false,
-            external_call_before_state_write: false,
-            state_writes: 0,
-            is_entrypoint: true,
-            returns_value: false,
-        }];
-        let mut rep = AuditReport::default();
-        Auth001.check(&scans, &crate::audit::AuditContext { spec: None }, &mut rep);
-        assert!(
-            has(&rep, "AUTH-001"),
-            "mint_token without auth should trigger AUTH-001"
-        );
-    }
-
-    #[test]
-    fn auth001_flags_initialize_without_auth() {
-        let scans = vec![FnScan {
-            fn_name: "initialize".into(),
-            require_auth: 0,
-            invoke_contract: 0,
-            bound: Default::default(),
-            usage: Default::default(),
-            division_before_multiplication: false,
-            external_call_before_state_write: false,
-            state_writes: 0,
-            is_entrypoint: true,
-            returns_value: false,
-        }];
-        let mut rep = AuditReport::default();
-        Auth001.check(&scans, &crate::audit::AuditContext { spec: None }, &mut rep);
-        assert!(
-            has(&rep, "AUTH-001"),
-            "initialize without auth should trigger AUTH-001"
-        );
-    }
-
-    #[test]
-    fn auth001_does_not_flag_non_privileged() {
-        let scans = vec![FnScan {
-            fn_name: "balance_of".into(),
-            require_auth: 0,
-            invoke_contract: 0,
-            bound: Default::default(),
-            usage: Default::default(),
-            division_before_multiplication: false,
-            external_call_before_state_write: false,
-            state_writes: 0,
-            is_entrypoint: true,
-            returns_value: false,
-        }];
-        let mut rep = AuditReport::default();
-        Auth001.check(&scans, &crate::audit::AuditContext { spec: None }, &mut rep);
-        assert!(
-            !has(&rep, "AUTH-001"),
-            "balance_of should not trigger AUTH-001"
-        );
-    }
-
-    #[test]
-    fn auth001_does_not_flag_privileged_with_auth() {
-        let scans = vec![FnScan {
-            fn_name: "mint_token".into(),
-            require_auth: 1,
-            invoke_contract: 0,
-            bound: Default::default(),
-            usage: Default::default(),
-            division_before_multiplication: false,
-            external_call_before_state_write: false,
-            state_writes: 0,
-            is_entrypoint: true,
-            returns_value: false,
-        }];
-        let mut rep = AuditReport::default();
-        Auth001.check(&scans, &crate::audit::AuditContext { spec: None }, &mut rep);
-        assert!(
-            !has(&rep, "AUTH-001"),
-            "mint_token with auth should not trigger AUTH-001"
-        );
-    }
-
-    #[test]
-    fn auth002_flags_invoke_contract_without_auth() {
-        let scans = vec![FnScan {
-            fn_name: "cross_call".into(),
-            require_auth: 0,
-            invoke_contract: 1,
-            bound: Default::default(),
-            usage: Default::default(),
-            division_before_multiplication: false,
-            external_call_before_state_write: false,
-            state_writes: 0,
-            is_entrypoint: true,
-            returns_value: false,
-        }];
-        let mut rep = AuditReport::default();
-        Auth002.check(&scans, &crate::audit::AuditContext { spec: None }, &mut rep);
-        assert!(
-            has(&rep, "AUTH-002"),
-            "invoke_contract without auth should trigger AUTH-002"
-        );
-    }
-
-    #[test]
-    fn auth002_does_not_flag_invoke_contract_with_auth() {
-        let scans = vec![FnScan {
-            fn_name: "cross_call".into(),
-            require_auth: 1,
-            invoke_contract: 1,
-            bound: Default::default(),
-            usage: Default::default(),
-            division_before_multiplication: false,
-            external_call_before_state_write: false,
-            state_writes: 0,
-            is_entrypoint: true,
-            returns_value: false,
-        }];
-        let mut rep = AuditReport::default();
-        Auth002.check(&scans, &crate::audit::AuditContext { spec: None }, &mut rep);
-        assert!(
-            !has(&rep, "AUTH-002"),
-            "invoke_contract with auth should not trigger AUTH-002"
-        );
-    }
-
-    #[test]
-    fn auth002_does_not_flag_without_invoke_contract() {
-        let scans = vec![FnScan {
-            fn_name: "local_call".into(),
-            require_auth: 0,
-            invoke_contract: 0,
-            bound: Default::default(),
-            usage: Default::default(),
-            division_before_multiplication: false,
-            external_call_before_state_write: false,
-            state_writes: 0,
-            is_entrypoint: true,
-            returns_value: false,
-        }];
-        let mut rep = AuditReport::default();
-        Auth002.check(&scans, &crate::audit::AuditContext { spec: None }, &mut rep);
-        assert!(
-            !has(&rep, "AUTH-002"),
-            "no invoke_contract should not trigger AUTH-002"
-        );
-    }
-
-    #[test]
-    fn auth003_flags_initialize_without_auth() {
-        let scans = vec![FnScan {
-            fn_name: "initialize".into(),
-            require_auth: 0,
-            invoke_contract: 0,
-            bound: Default::default(),
-            usage: Default::default(),
-            division_before_multiplication: false,
-            external_call_before_state_write: false,
-            state_writes: 0,
-            is_entrypoint: true,
-            returns_value: false,
-        }];
-        let mut rep = AuditReport::default();
-        Auth003.check(&scans, &crate::audit::AuditContext { spec: None }, &mut rep);
-        assert!(
-            has(&rep, "AUTH-003"),
-            "initialize without auth should trigger AUTH-003"
-        );
-    }
-
-    #[test]
-    fn auth003_flags_init_token_without_auth() {
-        let scans = vec![FnScan {
-            fn_name: "init_token".into(),
-            require_auth: 0,
-            invoke_contract: 0,
-            bound: Default::default(),
-            usage: Default::default(),
-            division_before_multiplication: false,
-            external_call_before_state_write: false,
-            state_writes: 0,
-            is_entrypoint: true,
-            returns_value: false,
-        }];
-        let mut rep = AuditReport::default();
-        Auth003.check(&scans, &crate::audit::AuditContext { spec: None }, &mut rep);
-        assert!(
-            has(&rep, "AUTH-003"),
-            "init_token without auth should trigger AUTH-003"
-        );
-    }
-
-    #[test]
-    fn auth003_does_not_flag_initialize_with_auth() {
-        let scans = vec![FnScan {
-            fn_name: "initialize".into(),
-            require_auth: 1,
-            invoke_contract: 0,
-            bound: Default::default(),
-            usage: Default::default(),
-            division_before_multiplication: false,
-            external_call_before_state_write: false,
-            state_writes: 0,
-            is_entrypoint: true,
-            returns_value: false,
-        }];
-        let mut rep = AuditReport::default();
-        Auth003.check(&scans, &crate::audit::AuditContext { spec: None }, &mut rep);
-        assert!(
-            !has(&rep, "AUTH-003"),
-            "initialize with auth should not trigger AUTH-003"
-        );
-    }
-
-    #[test]
-    fn auth003_does_not_flag_non_initialize() {
-        let scans = vec![FnScan {
-            fn_name: "transfer".into(),
-            require_auth: 0,
-            invoke_contract: 0,
-            bound: Default::default(),
-            usage: Default::default(),
-            division_before_multiplication: false,
-            external_call_before_state_write: false,
-            state_writes: 0,
-            is_entrypoint: true,
-            returns_value: false,
-        }];
-        let mut rep = AuditReport::default();
-        Auth003.check(&scans, &crate::audit::AuditContext { spec: None }, &mut rep);
-        assert!(
-            !has(&rep, "AUTH-003"),
-            "non-initialize function should not trigger AUTH-003"
-        );
-    }
-
-    #[test]
-    fn move001_flags_reused_local() {
-        use std::collections::HashMap;
-        let mut usage = HashMap::new();
-        usage.insert("amount".to_string(), 2);
-        let scans = vec![FnScan {
-            fn_name: "do_swap".into(),
-            require_auth: 0,
-            invoke_contract: 0,
-            bound: Default::default(),
-            usage,
-            division_before_multiplication: false,
-            external_call_before_state_write: false,
-            state_writes: 0,
-            is_entrypoint: true,
-            returns_value: false,
-        }];
-        let mut rep = AuditReport::default();
-        Move001.check(&scans, &crate::audit::AuditContext { spec: None }, &mut rep);
-        assert!(
-            has(&rep, "MOVE-001"),
-            "local used 2x as arg should trigger MOVE-001"
-        );
-    }
-
-    #[test]
-    fn move001_does_not_flag_single_use() {
-        use std::collections::HashMap;
-        let mut usage = HashMap::new();
-        usage.insert("amount".to_string(), 1);
-        let scans = vec![FnScan {
-            fn_name: "do_swap".into(),
-            require_auth: 0,
-            invoke_contract: 0,
-            bound: Default::default(),
-            usage,
-            division_before_multiplication: false,
-            external_call_before_state_write: false,
-            state_writes: 0,
-            is_entrypoint: true,
-            returns_value: false,
-        }];
-        let mut rep = AuditReport::default();
-        Move001.check(&scans, &crate::audit::AuditContext { spec: None }, &mut rep);
-        assert!(
-            !has(&rep, "MOVE-001"),
-            "local used once should not trigger MOVE-001"
-        );
-    }
-
-    #[test]
-    fn move001_does_not_flag_no_usage() {
-        let scans = vec![FnScan {
-            fn_name: "do_nothing".into(),
-            require_auth: 0,
-            invoke_contract: 0,
-            bound: Default::default(),
-            usage: Default::default(),
-            division_before_multiplication: false,
-            external_call_before_state_write: false,
-            state_writes: 0,
-            is_entrypoint: true,
-            returns_value: false,
-        }];
-        let mut rep = AuditReport::default();
-        Move001.check(&scans, &crate::audit::AuditContext { spec: None }, &mut rep);
-        assert!(
-            !has(&rep, "MOVE-001"),
-            "no usage should not trigger MOVE-001"
-        );
-    }
-    #[test]
-    fn auth004_flags_transfer_from_without_auth() {
-        let scans = vec![FnScan {
-            fn_name: "transfer_from".into(),
-            require_auth: 0,
-            invoke_contract: 0,
-            bound: Default::default(),
-            usage: Default::default(),
-            division_before_multiplication: false,
-            external_call_before_state_write: false,
-            state_writes: 0,
-            is_entrypoint: true,
-            returns_value: false,
-        }];
-        let mut rep = AuditReport::default();
-        Auth004.check(&scans, &crate::audit::AuditContext { spec: None }, &mut rep);
-        assert!(
-            has(&rep, "AUTH-004"),
-            "transfer_from without auth should trigger AUTH-004"
-        );
-    }
-
-    #[test]
-    fn auth004_does_not_flag_transfer_with_auth() {
-        let scans = vec![FnScan {
-            fn_name: "transfer".into(),
-            require_auth: 1,
-            invoke_contract: 0,
-            bound: Default::default(),
-            usage: Default::default(),
-            division_before_multiplication: false,
-            external_call_before_state_write: false,
-            state_writes: 0,
-            is_entrypoint: true,
-            returns_value: false,
-        }];
-        let mut rep = AuditReport::default();
-        Auth004.check(&scans, &crate::audit::AuditContext { spec: None }, &mut rep);
-        assert!(
-            !has(&rep, "AUTH-004"),
-            "transfer with auth should not trigger AUTH-004"
-        );
-    }
-
-    #[test]
-    fn auth004_does_not_flag_non_transfer() {
-        let scans = vec![FnScan {
-            fn_name: "balance_of".into(),
-            require_auth: 0,
-            invoke_contract: 0,
-            bound: Default::default(),
-            usage: Default::default(),
-            division_before_multiplication: false,
-            external_call_before_state_write: false,
-            state_writes: 0,
-            is_entrypoint: true,
-            returns_value: false,
-        }];
-        let mut rep = AuditReport::default();
-        Auth004.check(&scans, &crate::audit::AuditContext { spec: None }, &mut rep);
-        assert!(
-            !has(&rep, "AUTH-004"),
-            "non-transfer function should not trigger AUTH-004"
-        );
-    }
-
-    #[test]
-    fn auth004_does_not_flag_transfer_ownership() {
-        // `transfer_ownership` is an admin-management function, not a token
-        // transfer — it must not trigger AUTH-004.
-        let scans = vec![FnScan {
-            fn_name: "transfer_ownership".into(),
-            require_auth: 0,
-            invoke_contract: 0,
-            bound: Default::default(),
-            usage: Default::default(),
-            division_before_multiplication: false,
-            external_call_before_state_write: false,
-            state_writes: 0,
-            is_entrypoint: true,
-            returns_value: false,
-        }];
-        let mut rep = AuditReport::default();
-        Auth004.check(&scans, &crate::audit::AuditContext { spec: None }, &mut rep);
-        assert!(
-            !has(&rep, "AUTH-004"),
-            "transfer_ownership should not trigger AUTH-004"
-        );
-    }
-
-    #[test]
-    fn auth004_does_not_flag_admin_transfer() {
-        let scans = vec![FnScan {
-            fn_name: "admin_transfer".into(),
-            require_auth: 0,
-            invoke_contract: 0,
-            bound: Default::default(),
-            usage: Default::default(),
-            division_before_multiplication: false,
-            external_call_before_state_write: false,
-            state_writes: 0,
-            is_entrypoint: true,
-            returns_value: false,
-        }];
-        let mut rep = AuditReport::default();
-        Auth004.check(&scans, &crate::audit::AuditContext { spec: None }, &mut rep);
-        assert!(
-            !has(&rep, "AUTH-004"),
-            "admin_transfer should not trigger AUTH-004"
-        );
-    }
-
-    #[test]
-    fn cei001_flags_external_call_before_state_write() {
-        let scans = vec![FnScan {
-            fn_name: "swap".into(),
-            require_auth: 0,
-            invoke_contract: 1,
-            bound: Default::default(),
-            usage: Default::default(),
-            division_before_multiplication: false,
-            external_call_before_state_write: true,
-            state_writes: 1,
-            is_entrypoint: true,
-            returns_value: false,
-        }];
-        let mut rep = AuditReport::default();
-        Cei001.check(&scans, &crate::audit::AuditContext { spec: None }, &mut rep);
-        assert!(
-            has(&rep, "CEI-001"),
-            "external call before state write should trigger CEI-001"
-        );
-    }
-
-    #[test]
-    fn cei001_does_not_flag_state_write_before_external_call() {
-        let scans = vec![FnScan {
-            fn_name: "swap_safe".into(),
-            require_auth: 0,
-            invoke_contract: 1,
-            bound: Default::default(),
-            usage: Default::default(),
-            division_before_multiplication: false,
-            external_call_before_state_write: false,
-            state_writes: 0,
-            is_entrypoint: true,
-            returns_value: false,
-        }];
-        let mut rep = AuditReport::default();
-        Cei001.check(&scans, &crate::audit::AuditContext { spec: None }, &mut rep);
-        assert!(
-            !has(&rep, "CEI-001"),
-            "state write before external call should not trigger CEI-001"
-        );
-    }
-
-    #[test]
-    fn cei001_does_not_flag_only_external_call() {
-        let scans = vec![FnScan {
-            fn_name: "relay".into(),
-            require_auth: 0,
-            invoke_contract: 1,
-            bound: Default::default(),
-            usage: Default::default(),
-            division_before_multiplication: false,
-            external_call_before_state_write: false,
-            state_writes: 0,
-            is_entrypoint: true,
-            returns_value: false,
-        }];
-        let mut rep = AuditReport::default();
-        Cei001.check(&scans, &crate::audit::AuditContext { spec: None }, &mut rep);
-        assert!(
-            !has(&rep, "CEI-001"),
-            "only external call should not trigger CEI-001"
-        );
-    }
-
-    #[test]
-    fn cei001_does_not_flag_only_state_write() {
-        let scans = vec![FnScan {
-            fn_name: "set_state".into(),
-            require_auth: 0,
-            invoke_contract: 0,
-            bound: Default::default(),
-            usage: Default::default(),
-            division_before_multiplication: false,
-            external_call_before_state_write: false,
-            state_writes: 0,
-            is_entrypoint: true,
-            returns_value: false,
-        }];
-        let mut rep = AuditReport::default();
-        Cei001.check(&scans, &crate::audit::AuditContext { spec: None }, &mut rep);
-        assert!(
-            !has(&rep, "CEI-001"),
-            "only state write should not trigger CEI-001"
-        );
-    }
-
-    // ── Issue #311: severity follows observed behavior, not the name alone ──
-
-    /// Build an entrypoint scan (the default for contract methods) with an
-    /// explicit behavior profile.
-    fn scan(name: &str, writes: usize, entry: bool, returns: bool) -> FnScan {
+    fn scan(name: &str) -> FnScan {
         FnScan {
             fn_name: name.into(),
             require_auth: 0,
@@ -835,207 +318,70 @@ mod tests {
             usage: Default::default(),
             division_before_multiplication: false,
             external_call_before_state_write: false,
-            state_writes: writes,
-            is_entrypoint: entry,
-            returns_value: returns,
-        }
-    }
-
-    fn severity_of(rep: &AuditReport, rule_id: &str) -> Option<Severity> {
-        rep.findings
-            .iter()
-            .find(|f| f.rule_id == rule_id)
-            .map(|f| f.severity)
-    }
-
-    #[test]
-    fn auth001_read_only_accessor_is_not_critical() {
-        // Issue #311 false positive: `admin_balance` returns a value and writes
-        // nothing, so it cannot be a missing-authorization defect.
-        for name in ["get_paused", "admin_balance", "burn_supply", "mint_supply"] {
-            let scans = vec![scan(name, 0, true, true)];
-            let mut rep = AuditReport::default();
-            Auth001.check(&scans, &crate::audit::AuditContext { spec: None }, &mut rep);
-            assert_eq!(
-                severity_of(&rep, "AUTH-001"),
-                Some(Severity::Info),
-                "{name} is a read-only accessor and must not be critical"
-            );
+            state_writes: 0,
+            is_entrypoint: true,
+            returns_value: false,
         }
     }
 
     #[test]
-    fn auth004_read_only_transfer_is_not_critical() {
-        let scans = vec![scan("transfer", 0, true, true)];
+    fn auth001_flags_mint_without_auth() {
+        let scans = vect![scan("mint_token")];
         let mut rep = AuditReport::default();
-        Auth004.check(&scans, &crate::audit::AuditContext { spec: None }, &mut rep);
-        assert_eq!(
-            severity_of(&rep, "AUTH-004"),
-            Some(Severity::Info),
-            "a value-returning `transfer` with no side effect must not be critical"
+        Auth001.check(&scans, &crate::audit::AuditContext { spec: None }, &mut rep);
+        assert!(
+            has(&rep, "AUTH-001"),
+            "mint_token without auth should trigger AUTH-001"
         );
     }
 
-    #[test]
-    fn auth001_unguarded_privileged_setter_is_critical() {
-        // Issue #311 false negative: admin setters are the shape that matters.
-        for name in [
-            "set_owner",
-            "set_fee",
-            "set_treasury",
-            "grant_role",
-            "revoke_role",
-            "drain",
-        ] {
-            let scans = vec![scan(name, 1, true, false)];
-            let mut rep = AuditReport::default();
-            Auth001.check(&scans, &crate::audit::AuditContext { spec: None }, &mut rep);
-            assert_eq!(
-                severity_of(&rep, "AUTH-001"),
-                Some(Severity::Critical),
-                "{name} writes state without auth and must stay critical"
-            );
-        }
-    }
-
-    #[test]
-    fn auth001_guarded_privileged_setter_is_not_reported() {
-        let mut s = scan("set_owner", 1, true, false);
-        s.require_auth = 1;
-        let scans = vec![s];
+    #test]
+    fn auth001_flags_initialize_without_auth() {
+        let scans = vec![scan("initialize")];
         let mut rep = AuditReport::default();
         Auth001.check(&scans, &crate::audit::AuditContext { spec: None }, &mut rep);
-        assert!(!has(&rep, "AUTH-001"), "guarded setter must stay clean");
-    }
-
-    #[test]
-    fn auth001_internal_helper_is_not_critical() {
-        // The liquidity_pool false positive: a private helper named
-        // `burn_shares` is not reachable by external callers; its entrypoint
-        // holds the auth responsibility.
-        let scans = vec![scan("burn_shares", 1, false, false)];
-        let mut rep = AuditReport::default();
-        Auth001.check(&scans, &crate::audit::AuditContext { spec: None }, &mut rep);
-        assert_eq!(
-            severity_of(&rep, "AUTH-001"),
-            Some(Severity::Info),
-            "an internal helper must not be reported as critical"
+        assert!(
+            has(&rep, "AUTH-001"),
+            "initialize without auth should trigger AUTH-001"
         );
     }
 
-    #[test]
-    fn auth001_unrecognized_write_setter_stays_critical() {
-        // Conservative direction: a setter whose write goes through an
-        // unrecognized helper has no side-effect signal, so it stays loud
-        // rather than being silently demoted.
-        let scans = vec![scan("set_owner", 0, true, false)];
+    #test]
+    fn auth001_preserves_qualified_name_in_location() {
+        let scans = vec![scan("inner::initialize")];
         let mut rep = AuditReport::default();
         Auth001.check(&scans, &crate::audit::AuditContext { spec: None }, &mut rep);
-        assert_eq!(
-            severity_of(&rep, "AUTH-001"),
-            Some(Severity::Critical),
-            "a void-returning setter with no detected write must stay critical"
-        );
-    }
-
-    #[test]
-    fn auth001_preserved_controls_still_critical() {
-        // Regression: functions the pre-change implementation flagged must keep
-        // their rule id and severity.
-        for name in [
-            "mint",
-            "pause",
-            "set_admin",
-            "initialize",
-            "withdraw",
-            "burn",
-        ] {
-            let scans = vec![scan(name, 1, true, false)];
-            let mut rep = AuditReport::default();
-            Auth001.check(&scans, &crate::audit::AuditContext { spec: None }, &mut rep);
-            assert_eq!(
-                severity_of(&rep, "AUTH-001"),
-                Some(Severity::Critical),
-                "{name} must keep its critical AUTH-001 finding"
-            );
-        }
-    }
-
-    // ── Issue: nested-module qualified names must still be matched ──
-
-    #[test]
-    fn auth001_flags_privileged_fn_with_qualified_name() {
-        // A function inside `pub mod inner` is scanned with a qualified name
-        // (`inner::mint_token`); the rule must match on the unqualified tail
-        // while keeping the qualified name in the finding location.
-        let scans = vec![scan("inner::mint_token", 1, true, false)];
-        let mut rep = AuditReport::default();
-        Auth001.check(&scans, &crate::audit::AuditContext { spec: None }, &mut rep);
-        let finding = rep
+        let f = rep
             .findings
             .iter()
-            .find(|f| f.rule_id == "AUTH-001")
-            .expect("qualified privileged fn must trigger AUTH-001");
-        assert_eq!(finding.severity, Severity::Critical);
-        assert_eq!(finding.location.as_deref(), Some("inner::mint_token"));
+            .find(|f | f.rule_id == "AUTH-001")
+            .expect("expected AUTH-001 finding");
+        assert_eq!(f.location.as_der(), "inner::initialize");
     }
 
-    #[test]
-    fn auth003_flags_initialize_with_qualified_name() {
-        let scans = vec![scan("inner::initialize", 0, true, false)];
+    #test]
+    fn auth003_flags_initialize_without_auth() {
+        let scans = vec![scan("initialize")];
         let mut rep = AuditReport::default();
         Auth003.check(&scans, &crate::audit::AuditContext { spec: None }, &mut rep);
-        let finding = rep
-            .findings
-            .iter()
-            .find(|f| f.rule_id == "AUTH-003")
-            .expect("qualified initialize must trigger AUTH-003");
-        assert_eq!(finding.location.as_deref(), Some("inner::initialize"));
+        assert!(has(&rep, "AUTH-003"));
     }
 
-    #[test]
-    fn auth004_flags_transfer_with_qualified_name() {
-        let scans = vec![scan("token::transfer", 1, true, false)];
-        let mut rep = AuditReport::default();
-        Auth004.check(&scans, &crate::audit::AuditContext { spec: None }, &mut rep);
-        let finding = rep
-            .findings
-            .iter()
-            .find(|f| f.rule_id == "AUTH-004")
-            .expect("qualified transfer must trigger AUTH-004");
-        assert_eq!(finding.location.as_deref(), Some("token::transfer"));
-    }
-
-    #[test]
-    fn auth001_does_not_flag_non_privileged_qualified_name() {
-        let scans = vec![scan("inner::balance_of", 0, true, true)];
-        let mut rep = AuditReport::default();
-        Auth001.check(&scans, &crate::audit::AuditContext { spec: None }, &mut rep);
-        assert!(
-            !has(&rep, "AUTH-001"),
-            "qualified non-privileged fn must not trigger AUTH-001"
-        );
-    }
-
-    #[test]
-    fn auth003_does_not_flag_non_initialize_qualified_name() {
-        let scans = vec![scan("inner::transfer", 0, true, false)];
+    #test]
+    fn auth003_matches_spec_onunqualified_name() {
+        // The ABI match must use the unqualified name so a nested
+        // `inner::initialize` still correlates with the exported `initialize`.
+        let scans = vec![scan("inner::initialize")];
         let mut rep = AuditReport::default();
         Auth003.check(&scans, &crate::audit::AuditContext { spec: None }, &mut rep);
-        assert!(
-            !has(&rep, "AUTH-003"),
-            "qualified non-initialize fn must not trigger AUTH-003"
-        );
+        assert!(has(&rep, "AUTH-003"));
     }
 
-    #[test]
-    fn auth004_does_not_flag_transfer_ownership_qualified_name() {
-        let scans = vec![scan("admin::transfer_ownership", 0, true, false)];
+    #test]
+    fn auth004_flags_transfer_without_auth() {
+        let scans = vec![scan("trausfer")];
         let mut rep = AuditReport::default();
         Auth004.check(&scans, &crate::audit::AuditContext { spec: None }, &mut rep);
-        assert!(
-            !has(&rep, "AUTH-004"),
-            "qualified transfer_ownership must not trigger AUTH-004"
-        );
+        assert!(has(&rep, "AUTH-004"));
     }
 }

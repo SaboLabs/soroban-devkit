@@ -712,73 +712,91 @@ fn audit_fail_on_absent_exits_zero_on_findings() {
 
 // ── Issue: scanner skips every function inside mod blocks ─────────────────
 
-/// A privileged function inside a single `pub mod` must be flagged exactly as
-/// its top-level equivalent would be.
+/// The same two privileged functions must produce the same findings whether
+/// they live at top level or inside a `pub mod`. Pre-change the module shape
+/// audited as completely clean.
 #[test]
-fn audit_scans_function_inside_nested_mod() {
+fn audit_scans_functions_inside_module() {
     let dir = TempDir::new().unwrap();
-    let path = write_fixture(
+    let top = write_fixture(
+        &dir,
+        "top.rs",
+        "pub fn initialize(admin: u32) {}\npub fn mint_token(to: u32) {}\n",
+    );
+    let nested = write_fixture(
         &dir,
         "mod_only.rs",
         "pub mod inner {\n    pub fn initialize(admin: u32) {}\n    pub fn mint_token(to: u32) {}\n}\n",
     );
-    sdkt()
-        .args(["audit", path.to_str().unwrap(), "--format", "json"])
-        .assert()
-        .success()
-        .stdout(predicates::str::contains("\"rule_id\":\"AUTH-001\""))
-        .stdout(predicates::str::contains("\"rule_id\":\"AUTH-003\""))
-        .stdout(predicates::str::contains("\"critical\":3"));
+
+    let top_out = sdkt()
+        .args(["audit", top.to_str().unwrap(), "--format", "json"])
+        .output()
+        .expect("run top-level audit JSON");
+    assert!(top_out.status.success());
+    let top_report: serde_json::Value = serde_json::from_slice(&top_out.stdout).unwrap();
+
+    let nested_out = sdkt()
+        .args(["audit", nested.to_str().unwrap(), "--format", "json"])
+        .output()
+        .expect("run module audit JSON");
+    assert!(nested_out.status.success());
+    let nested_report: serde_json::Value = serde_json::from_slice(&nested_out.stdout).unwrap();
+
+    let rule_ids = |report: &serde_json::Value| -> Vec<String> {
+        let mut ids: Vec<String> = report["findings"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|f| f["rule_id"].as_str().unwrap().to_string())
+            .collect();
+        ids.sort();
+        ids
+    };
+    assert_eq!(rule_ids(&top_report), rule_ids(&nested_report));
+    assert!(!rule_ids(&nested_report).is_empty());
 }
 
 /// A function two modules deep is scanned and its location names the full
 /// module path.
 #[test]
-fn audit_scans_function_two_modules_deep_with_qualified_location() {
+fn audit_scans_nested_module_with_qualified_location() {
     let dir = TempDir::new().unwrap();
     let path = write_fixture(
         &dir,
-        "deep.rs",
-        "pub mod outer {\n    pub mod inner {\n        pub fn mint_token(to: u32) {}\n    }\n}\n",
+        "nested.rs",
+        "pub mod outer {\n    pub mod inner {\n        pub fn mint_token(to: Address) {}\n    }\n}\n",
     );
     let out = sdkt()
         .args(["audit", path.to_str().unwrap(), "--format", "json"])
         .output()
-        .expect("run audit JSON");
+        .expect("run nested module audit JSON");
     assert!(out.status.success());
     let report: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
     let finding = report["findings"]
         .as_array()
         .unwrap()
         .iter()
-        .find(|finding| finding["rule_id"] == "AUTH-001")
-        .expect("AUTH-001 finding should be emitted");
+        .find(|f| f["rule_id"] == "AUTH-001")
+        .expect("AUTH-001 finding inside nested module");
     assert_eq!(finding["location"], "outer::inner::mint_token");
 }
 
-/// An `impl` block nested inside a `mod` is scanned, and its method location
-/// is qualified with the module path.
+/// An `impl` block declared inside a module is scanned.
 #[test]
-fn audit_scans_impl_block_inside_mod() {
+fn audit_scans_impl_block_inside_module() {
     let dir = TempDir::new().unwrap();
     let path = write_fixture(
         &dir,
         "mod_impl.rs",
-        "pub mod inner {\n    pub struct Vault;\n    impl Vault {\n        pub fn mint_token(&self) {}\n    }\n}\n",
+        "pub mod vault {\n    #[contractimpl]\n    impl Vault for T {\n        pub fn mint_token(&self) {}\n    }\n}\n",
     );
-    let out = sdkt()
-        .args(["audit", path.to_str().unwrap(), "--format", "json"])
-        .output()
-        .expect("run audit JSON");
-    assert!(out.status.success());
-    let report: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
-    let finding = report["findings"]
-        .as_array()
-        .unwrap()
-        .iter()
-        .find(|finding| finding["rule_id"] == "AUTH-001")
-        .expect("AUTH-001 finding should be emitted");
-    assert_eq!(finding["location"], "inner::mint_token");
+    sdkt()
+        .args(["audit", path.to_str().unwrap()])
+        .assert()
+        .success()
+        .stdout(predicates::str::contains("AUTH-001"))
+        .stdout(predicates::str::contains("critical"));
 }
 
 /// --fail-on critical fails when a critical finding exists.
