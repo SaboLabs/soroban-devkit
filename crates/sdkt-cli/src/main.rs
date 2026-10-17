@@ -2539,6 +2539,21 @@ fn parse_format_str(s: &str) -> OutputFormat {
     }
 }
 
+/// Terminate with a machine-parseable error envelope when `--format json` is
+/// active, otherwise keep the human-readable stderr contract.
+///
+/// JSON consumers pipe `sdkt <cmd> --format json` into `jq`; a prose line on
+/// stderr with empty stdout is a parse failure for them. In JSON mode the
+/// error goes to stdout as `{"error": "<msg>"}` and stderr stays empty.
+fn fail_cli(msg: impl AsRef<str>, json_mode: bool) -> ! {
+    if json_mode {
+        println!("{}", serde_json::json!({ "error": msg.as_ref() }));
+    } else {
+        eprintln!("{}", msg.as_ref());
+    }
+    process::exit(1);
+}
+
 /// Pretty-print a decoded transaction envelope for `tx decode`.
 fn print_envelope_pretty(view: &sdkt_xdr::EnvelopeView) {
     println!("Transaction Envelope ({}):", view.envelope_type);
@@ -3898,16 +3913,22 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
             format,
             file,
         } => {
+            let json_mode = parse_format_str(&format) == OutputFormat::Json;
             let input = match (file, payload) {
-                (Some(path), _) => fs::read_to_string(&path)?,
+                (Some(path), _) => fs::read_to_string(&path)
+                    .unwrap_or_else(|e| fail_cli(format!("No such file: {}", e), json_mode)),
                 (None, Some(p)) => p,
-                (None, None) => {
-                    return Err("no input provided: pass XDR as an argument or use --file".into());
-                }
+                (None, None) => fail_cli(
+                    "no input provided: pass XDR as an argument or use --file",
+                    json_mode,
+                ),
             };
 
             let fmt = parse_format_str(&format);
-            let json = decode(&input, r#type.as_deref(), fmt)?;
+            let json = match decode(&input, r#type.as_deref(), fmt) {
+                Ok(j) => j,
+                Err(e) => fail_cli(e.to_string(), json_mode),
+            };
             println!("{}", json);
         }
         Commands::Encode { values } => match run_encode(&values) {
@@ -5947,6 +5968,7 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
             max_size_bytes,
         } => {
             let fmt = parse_format_str(&format);
+            let json_mode = fmt == OutputFormat::Json;
             // Size policy is evaluated only in diff output mode: mixing it
             // into --upgrade-safety would conflate size budget with ABI
             // compatibility, so the combination is rejected explicitly.
@@ -5965,10 +5987,18 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
                 eprintln!("Error: {e}");
                 return Err(e.into());
             }
-            let old_bytes = fs::read(&old_wasm)
-                .map_err(|e| format!("Failed to read OLD WASM '{}': {}", old_wasm, e))?;
-            let new_bytes = fs::read(&new_wasm)
-                .map_err(|e| format!("Failed to read NEW WASM '{}': {}", new_wasm, e))?;
+            let old_bytes = fs::read(&old_wasm).unwrap_or_else(|e| {
+                fail_cli(
+                    format!("Failed to read OLD WASM '{}': {}", old_wasm, e),
+                    json_mode,
+                )
+            });
+            let new_bytes = fs::read(&new_wasm).unwrap_or_else(|e| {
+                fail_cli(
+                    format!("Failed to read NEW WASM '{}': {}", new_wasm, e),
+                    json_mode,
+                )
+            });
 
             match sdkt_wasm::diff_wasm(&old_bytes, &new_bytes) {
                 Ok(report) => {
@@ -6079,8 +6109,7 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
                     }
                 }
                 Err(e) => {
-                    eprintln!("Error diffing WASM: {}", e);
-                    process::exit(1);
+                    fail_cli(format!("Error diffing WASM: {}", e), json_mode);
                 }
             }
         }
@@ -6302,13 +6331,20 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
 
             for input in &paths {
                 let input_path = std::path::Path::new(input);
-                let discovered = collect_rust_sources(input_path).map_err(|e| {
+                let json_mode = audit_fmt == AuditFormat::Json;
+                let discovered = collect_rust_sources(input_path).unwrap_or_else(|e| {
                     if paths.len() == 1 && input_path.extension().is_some_and(|ext| ext == "rs") {
-                        format!("Failed to read source '{}': {}", input, e)
+                        fail_cli(
+                            format!("Failed to read source '{}': {}", input, e),
+                            json_mode,
+                        )
                     } else {
-                        format!("Failed to discover Rust sources '{}': {}", input, e)
+                        fail_cli(
+                            format!("Failed to discover Rust sources '{}': {}", input, e),
+                            json_mode,
+                        )
                     }
-                })?;
+                });
 
                 source_paths.extend(discovered);
             }
@@ -6317,7 +6353,10 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
             source_paths.dedup();
 
             if source_paths.is_empty() {
-                return Err("No Rust source files (.rs) found in the supplied paths".into());
+                fail_cli(
+                    "No Rust source files (.rs) found in the supplied paths",
+                    audit_fmt == AuditFormat::Json,
+                );
             }
 
             let single_file = paths.len() == 1
@@ -6883,15 +6922,17 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
         Commands::Wasm { action, net } => match action {
             WasmAction::Inspect { file, format } => {
                 let fmt = parse_format_str(&format);
+                let json_mode = fmt == OutputFormat::Json;
 
                 let wasm_bytes = fs::read(&file).unwrap_or_else(|e| {
-                    eprintln!("Error reading WASM file {}: {}", file, e);
-                    process::exit(1);
+                    fail_cli(
+                        format!("Error reading WASM file {}: {}", file, e),
+                        json_mode,
+                    )
                 });
 
                 let metadata = sdkt_wasm::parse_metadata(&wasm_bytes).unwrap_or_else(|e| {
-                    eprintln!("Error parsing WASM metadata: {}", e);
-                    process::exit(1);
+                    fail_cli(format!("Error parsing WASM metadata: {}", e), json_mode)
                 });
 
                 // Attempt to parse contract spec, but it's optional
