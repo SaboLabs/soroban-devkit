@@ -4727,7 +4727,7 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
 
                     match restore_footprint(
                         &client,
-                        &contract,
+                        contract.trim(),
                         envelope.trim(),
                         &source_account,
                         &signer,
