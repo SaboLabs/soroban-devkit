@@ -117,9 +117,9 @@ sdkt
 │   └── --no-plugins          (skip loading installed plugins)
 ├── identity
 │   ├── generate <name>
-│   ├── import <name> <secret|->  (required; `-` reads the secret from stdin —
-│   │                              recommended: `sdkt identity import <name> -`;
-│   │                              a literal secret on argv is deprecated, issue #64)
+│   ├── import <name> <secret>   (required)
+│   │   stdin form (recommended): import <name> -
+│   │   ⚠ argv secrets are deprecated (issue #64): pass `-` instead
 │   ├── list
 │   ├── show <name>
 │   ├── delete <name>

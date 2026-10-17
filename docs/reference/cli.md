@@ -175,9 +175,9 @@ sdkt
 │   └── --format <json|pretty>
 ├── identity
 │   ├── generate <name>       [--format pretty|json]
-│   ├── import <name> <secret|->  (required; `-` reads the secret from stdin —
-│   │                              recommended: `sdkt identity import <name> -`;
-│   │                              a literal secret on argv is deprecated, issue #64)
+│   ├── import <name> <secret>   (required)
+│   │   stdin form (recommended): import <name> -
+│   │   ⚠ argv secrets are deprecated (issue #64): pass `-` instead
 │   ├── list                  [--format pretty|json]
 │   ├── show <name>           [--format pretty|json]
 │   ├── delete <name>
