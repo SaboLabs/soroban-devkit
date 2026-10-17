@@ -915,6 +915,26 @@ names the conflicting function. A single valid declaration keeps its existing
 campaign behavior. Malformed `--expect-error` declarations also remain usage
 errors.
 
+## Fuzz campaign execution
+
+`sdkt fuzz campaign` distinguishes a campaign that executed cases from one that
+executed nothing. A zero-execution campaign is never recorded as a completed
+clean campaign:
+
+- `--cases 0` is a usage error: the command prints a message to stderr and
+  exits `2` without writing `campaign-evidence.json`.
+- A `--function <FN>` filter that matches no runnable function is likewise a
+  usage error (exit `2`) rather than a completed campaign with `executed=0`.
+- Any other path that yields `executed = 0` with an `Ok` result records
+  `campaign_completed = false` in `campaign-evidence.json`, so the run is not
+  scored as a pass.
+
+`sdkt release-assurance --fuzz-evidence <FILE>` does not score such evidence as
+`Pass`: evidence with `campaign_completed = false` maps to a non-passing fuzz
+section, and evidence that is missing the field or otherwise invalid is refused
+as invalid input. Campaigns that executed at least one case keep their current
+exit codes (`0` clean, `1` findings) and evidence shape.
+
 ## Error Handling
 
 1. All subcommands return `Result<(), Box<dyn std::error::Error>>`.

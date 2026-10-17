@@ -31,6 +31,20 @@ pub enum ReplayStatus {
     Error { reason: String },
 }
 
+/// Completion status of a campaign, as recorded in evidence.
+///
+/// A campaign that executed no cases is not a completed campaign: it is
+/// either a misconfigured invocation or a filter that matched nothing. Such
+/// a run must not be scored as a clean pass by release assurance.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum CampaignStatus {
+    /// The campaign executed at least one case and ran to completion.
+    Completed,
+    /// The campaign executed zero cases; nothing was verified.
+    ZeroExecution,
+}
+
 /// Evidence a completed campaign hands to release assurance.
 ///
 /// Every field is a value derived from the campaign itself. Nothing here is
@@ -40,6 +54,8 @@ pub enum ReplayStatus {
 pub struct CampaignEvidence {
     /// True when the campaign ran to completion.
     pub campaign_completed: bool,
+    /// Completion status; `ZeroExecution` when no case ran.
+    pub status: CampaignStatus,
     /// Campaign configuration snapshot (deterministic inputs).
     pub config: crate::artifact::CampaignConfig,
     /// Cases executed.
@@ -83,6 +99,9 @@ impl CampaignEvidence {
     /// write); `replay` maps artifact hash → outcome for artifacts that were
     /// replayed. `deterministic` is the campaign runner's own determinism
     /// verdict.
+    ///
+    /// When `result.executed == 0` the campaign is recorded as
+    /// [`CampaignStatus::ZeroExecution`] and `campaign_completed` is false.
     pub fn from_result(
         result: &CampaignResult,
         config: crate::artifact::CampaignConfig,
@@ -90,6 +109,7 @@ impl CampaignEvidence {
         replay: &BTreeMap<String, ReplayStatus>,
         deterministic: bool,
     ) -> Self {
+        let executed_zero = result.executed == 0;
         // The artifact hash is the canonical hash of the serialized finding,
         // not the wasm hash; match artifacts to findings by case id
         // (artifacts are produced in finding order).
@@ -113,7 +133,12 @@ impl CampaignEvidence {
             .collect();
 
         Self {
-            campaign_completed: true,
+            campaign_completed: !executed_zero,
+            status: if executed_zero {
+                CampaignStatus::ZeroExecution
+            } else {
+                CampaignStatus::Completed
+            },
             config,
             case_count: result.executed,
             passed: result.passed.len(),
@@ -124,6 +149,11 @@ impl CampaignEvidence {
             replay: replay.clone(),
             deterministic,
         }
+    }
+
+    /// True when the campaign executed at least one case and completed.
+    pub fn is_completed(&self) -> bool {
+        self.campaign_completed && self.status == CampaignStatus::Completed
     }
 
     /// True when the campaign produced at least one finding.
