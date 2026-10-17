@@ -1,6 +1,7 @@
 # Table of contents
 
 * [CLI Command Reference](README.md)
+* [Configuration Reference](configuration.md)
 * [sdkt-agent — natural-language front end](agent.md)
 * [Real-Contract Fuzz Evidence](fuzz-real-contract-evidence.md)
 * [sdkt-fuzz — extension guide](../../crates/sdkt-fuzz/README.md)
