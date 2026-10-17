@@ -185,7 +185,7 @@ combined.
    | Linux (aarch64) | `sdkt-aarch64-unknown-linux-gnu.tar.gz` |
    | macOS (Intel) | `sdkt-x86_64-apple-darwin.tar.gz` |
    | macOS (Apple Silicon) | `sdkt-aarch64-apple-darwin.tar.gz` |
-   | Windows (x86_64) | `sdkt-x86_64-pc-windows-msvc.zip` |
+   | Windows (x86_64) | `sdkt-x86_64-pc-windows-msvc.zip` (first shipped in v2.7.0) |
 
 2. Extract and run:
 
@@ -200,7 +200,8 @@ combined.
    ```
 
    **Windows:** use `sdkt-x86_64-pc-windows-msvc.zip` from the
-   GitHub Release. Alternatively, install from crates.io or source:
+   GitHub Release (first shipped in v2.7.0). Alternatively, install from
+   crates.io or source:
 
    ```powershell
    cargo install sdkt-cli
@@ -212,8 +213,9 @@ combined.
    > crates: `sdkt-cli`, `sdkt-core`, `sdkt-xdr`, `sdkt-wasm`, `sdkt-rpc`,
    > `sdkt-storage`, `sdkt-audit`, `sdkt-audit-example-rule`), so
    > `cargo install sdkt-cli` installs v2.7.0. `sdkt-agent` remains a
-   > repo-only prototype and is not on crates.io. For the Windows zip use
-   > the release binary, or build from source (below).
+   > repo-only prototype and is not on crates.io. The Windows zip is
+   > published starting with v2.7.0; for earlier tags build from source
+   > (below).
 
 #### Alternative — Build from source (requires Rust 1.88.0+)
 
