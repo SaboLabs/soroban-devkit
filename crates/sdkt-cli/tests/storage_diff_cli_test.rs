@@ -103,7 +103,17 @@ fn create_snapshot_file(path: &Path, contract_id: &str, entries: &[(&str, u32)])
         })
         .collect();
 
-    write_snapshot_report(path, contract_id, entry_objs);
+    let report = serde_json::json!({
+        "contract_id": contract_id,
+        "total_entries": entries.len(),
+        "instance_entries": 0,
+        "persistent_entries": entries.len(),
+        "temporary_entries": 0,
+        "other_entries": 0,
+        "entries": entry_objs,
+    });
+
+    fs::write(path, serde_json::to_string_pretty(&report).unwrap()).unwrap();
 }
 
 fn create_snapshot_file_with_values(
@@ -122,22 +132,17 @@ fn create_snapshot_file_with_values(
                 "extension_cost_stroops": 0,
             });
             if let Some(v) = value {
-                obj["value"] = serde_json::json!(v);
+                obj["value"] = serde_json::Value::String((*v).to_string());
             }
             obj
         })
         .collect();
 
-    write_snapshot_report(path, contract_id, entry_objs);
-}
-
-fn write_snapshot_report(path: &Path, contract_id: &str, entry_objs: Vec<serde_json::Value>) {
-
     let report = serde_json::json!({
         "contract_id": contract_id,
-        "total_entries": entry_objs.len(),
+        "total_entries": entries.len(),
         "instance_entries": 0,
-        "persistent_entries": entry_objs.len(),
+        "persistent_entries": entries.len(),
         "temporary_entries": 0,
         "other_entries": 0,
         "entries": entry_objs,
@@ -147,7 +152,7 @@ fn write_snapshot_report(path: &Path, contract_id: &str, entry_objs: Vec<serde_j
 }
 
 #[test]
-fn storage_diff_cli_reports_value_changed_delta() {
+fn storage_diff_cli_reports_value_changed_when_ttl_matches() {
     let dir = tempdir().unwrap();
     let old_path = dir.path().join("old.json");
     let new_path = dir.path().join("new.json");
@@ -155,14 +160,29 @@ fn storage_diff_cli_reports_value_changed_delta() {
     create_snapshot_file_with_values(
         &old_path,
         CONTRACT,
-        &[("keyA==", 20_000, Some("AAAAAQ==")), ("keyB==", 20_000, Some("AAAAAg=="))],
+        &[("keyA==", 20_000, Some("AAAAAQ=="))],
     );
     create_snapshot_file_with_values(
         &new_path,
         CONTRACT,
-        &[("keyA==", 20_000, Some("AAAAAw==")), ("keyB==", 20_000, Some("AAAAAg=="))],
+        &[("keyA==", 20_000, Some("AAAAAAAA"))],
     );
 
+    // Pretty output
+    let mut pretty = sdkt();
+    pretty
+        .args(["storage", "diff", "--old"])
+        .arg(&old_path)
+        .arg("--new")
+        .arg(&new_path);
+    let assert = pretty.assert().success();
+    let stdout = String::from_utf8(assert.get_output().stdout.clone()).unwrap();
+    assert!(
+        stdout.contains("value_changed"),
+        "pretty output missing value_changed: {stdout}"
+    );
+
+    // JSON output
     let mut json_cmd = sdkt();
     json_cmd
         .args(["storage", "diff", "--old"])
@@ -173,40 +193,85 @@ fn storage_diff_cli_reports_value_changed_delta() {
     let output = json_cmd.assert().success().get_output().stdout.clone();
     let parsed: serde_json::Value = serde_json::from_slice(&output).unwrap();
     let entries = parsed["entries"].as_array().unwrap();
-    let changed: Vec<&serde_json::Value> = entries
-        .iter()
-        .filter(|e| e["key"] == "keyA==")
-        .collect();
-    assert_eq!(changed.len(), 1);
-    assert_eq!(changed[0]["value_changed"], true);
-    let unchanged: Vec<&serde_json::Value> = entries
-        .iter()
-        .filter(|e| e["key"] == "keyB==")
-        .collect();
-    assert_eq!(unchanged.len(), 1);
-    assert!(unchanged[0].get("value_changed").is_none() || unchanged[0]["value_changed"] == false);
-
-    let mut pretty_cmd = sdkt();
-    pretty_cmd
-        .args(["storage", "diff", "--old"])
-        .arg(&old_path)
-        .arg("--new")
-        .arg(&new_path);
-    let pretty_out = String::from_utf8(
-        pretty_cmd.assert().success().get_output().stdout.clone(),
-    )
-    .unwrap();
-    assert!(pretty_out.contains("value_changed"));
+    assert_eq!(entries.len(), 1);
+    assert_eq!(entries[0]["key"], "keyA==");
+    assert_eq!(entries[0]["delta"], "value_changed");
+    assert_eq!(entries[0]["old_value"], "AAAAAQ==");
+    assert_eq!(entries[0]["new_value"], "AAAAAAAA");
 }
 
 #[test]
-fn storage_diff_cli_parses_value_less_snapshot() {
+fn storage_diff_cli_value_and_ttl_match_is_unchanged() {
     let dir = tempdir().unwrap();
     let old_path = dir.path().join("old.json");
     let new_path = dir.path().join("new.json");
 
+    create_snapshot_file_with_values(
+        &old_path,
+        CONTRACT,
+        &[("keyA==", 20_000, Some("AAAAAQ=="))],
+    );
+    create_snapshot_file_with_values(
+        &new_path,
+        CONTRACT,
+        &[("keyA==", 20_000, Some("AAAAAQ=="))],
+    );
+
+    let mut cmd = sdkt();
+    cmd.args(["storage", "diff", "--old"])
+        .arg(&old_path)
+        .arg("--new")
+        .arg(&new_path)
+        .args(["--format", "json"]);
+    let output = cmd.assert().success().get_output().stdout.clone();
+    let parsed: serde_json::Value = serde_json::from_slice(&output).unwrap();
+    assert_eq!(parsed["unchanged"].as_u64().unwrap(), 1);
+    assert_eq!(parsed["changed"].as_u64().unwrap(), 0);
+}
+
+#[test]
+fn storage_diff_cli_ttl_only_change_reports_ttl_delta() {
+    let dir = tempdir().unwrap();
+    let old_path = dir.path().join("old.json");
+    let new_path = dir.path().join("new.json");
+
+    create_snapshot_file_with_values(
+        &old_path,
+        CONTRACT,
+        &[("keyA==", 50_000, Some("AAAAAQ=="))],
+    );
+    create_snapshot_file_with_values(
+        &new_path,
+        CONTRACT,
+        &[("keyA==", 3_000, Some("AAAAAQ=="))],
+    );
+
+    let mut cmd = sdkt();
+    cmd.args(["storage", "diff", "--old"])
+        .arg(&old_path)
+        .arg("--new")
+        .arg(&new_path)
+        .args(["--format", "json"]);
+    let output = cmd.assert().success().get_output().stdout.clone();
+    let parsed: serde_json::Value = serde_json::from_slice(&output).unwrap();
+    let entries = parsed["entries"].as_array().unwrap();
+    assert_eq!(entries.len(), 1);
+    assert_ne!(entries[0]["delta"], "value_changed");
+}
+
+#[test]
+fn storage_diff_cli_legacy_snapshot_without_value_parses() {
+    let dir = tempdir().unwrap();
+    let old_path = dir.path().join("old.json");
+    let new_path = dir.path().join("new.json");
+
+    // Legacy snapshot: no `value` field.
     create_snapshot_file(&old_path, CONTRACT, &[("keyA==", 20_000)]);
-    create_snapshot_file_with_values(&new_path, CONTRACT, &[("keyA==", 20_000, Some("AAAAAQ=="))]);
+    create_snapshot_file_with_values(
+        &new_path,
+        CONTRACT,
+        &[("keyA==", 20_000, Some("AAAAAQ=="))],
+    );
 
     let mut cmd = sdkt();
     cmd.args(["storage", "diff", "--old"])

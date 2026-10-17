@@ -12,10 +12,7 @@
 //!   otherwise gone).
 //! - [`DiffStatus::ExpiringSoon`] — entry still live in new but with a TTL below
 //!   [`EXPIRING_SOON_LEDGERS`] (≈ 1 day).
-//! - [`DiffStatus::ValueChanged`] — entry still live, TTL above the threshold,
-//!   but its captured value differs from the baseline.
-//! - [`DiffStatus::Unchanged`] — entry live, above the threshold, and value
-//!   unchanged (or not captured).
+//! - [`DiffStatus::Unchanged`] — entry live and above the threshold.
 //!
 //! [`derive_extend_plan`] turns the diff result into a non-mutating
 //! [`ExtendPlan`]: the set of ledger keys that need remediation, the contract
@@ -46,10 +43,9 @@ pub const DEFAULT_SUGGESTED_LEDGERS: u32 = 518_400;
 
 /// A point-in-time capture of one contract's storage entries.
 ///
-/// The snapshot stores the data needed for diffing (`key` + `current_ttl`),
-/// plus an optional captured value per entry.  Callers may build it from a
-/// [`StorageReport`] via [`StorageSnapshot::from_report`], or construct it
-/// directly in tests.
+/// The snapshot intentionally stores only the data needed for diffing
+/// (`key` + `current_ttl`).  Callers may build it from a [`StorageReport`]
+/// via [`StorageSnapshot::from_report`], or construct it directly in tests.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
 pub struct StorageSnapshot {
     /// The on-chain contract identifier (C… StrKey or hex).
@@ -66,14 +62,14 @@ pub struct SnapshotEntry {
     /// Readable ABI-derived key label, when available.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub label: Option<String>,
-    /// TTL in ledgers relative to the ledger at snapshot time.
-    pub current_ttl: u32,
-    /// Base64 XDR encoded `ScVal` captured at snapshot time, when available.
+    /// Base64 XDR encoded `ScVal` captured for this entry, when available.
     ///
-    /// Optional so snapshot documents written before value capture keep
-    /// parsing unchanged.
+    /// Optional so that snapshot documents written before value capture was
+    /// introduced continue to deserialize unchanged.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub value: Option<String>,
+    /// TTL in ledgers relative to the ledger at snapshot time.
+    pub current_ttl: u32,
 }
 
 impl StorageSnapshot {
@@ -96,8 +92,8 @@ impl StorageSnapshot {
                 .map(|e| SnapshotEntry {
                     key: e.key.clone(),
                     label: e.label.clone(),
-                    current_ttl: e.current_ttl,
                     value: None,
+                    current_ttl: e.current_ttl,
                 })
                 .collect(),
         })
@@ -127,12 +123,11 @@ pub enum DiffStatus {
     /// Entry is still live in the new snapshot but its TTL is below
     /// [`EXPIRING_SOON_LEDGERS`].  Action is recommended before it expires.
     ExpiringSoon,
-    /// Entry is still live, its TTL is above the expiring-soon threshold, but
-    /// its captured value differs from the baseline.
-    ValueChanged,
-    /// Entry is still live, its TTL is above the expiring-soon threshold, and
-    /// its value is unchanged (or was not captured).
+    /// Entry is still live and its TTL is above the expiring-soon threshold.
     Unchanged,
+    /// Entry's stored value changed between the two snapshots while its TTL
+    /// did not.
+    ValueChanged,
 }
 
 /// A single entry in a [`SnapshotDiff`].
@@ -150,10 +145,10 @@ pub struct DiffEntry {
     pub old_ttl: Option<u32>,
     /// TTL in the new snapshot (`None` for `Removed` entries).
     pub new_ttl: Option<u32>,
-    /// Captured value in the old snapshot, when available.
+    /// Captured value (base64 XDR `ScVal`) in the old snapshot, when available.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub old_value: Option<String>,
-    /// Captured value in the new snapshot, when available.
+    /// Captured value (base64 XDR `ScVal`) in the new snapshot, when available.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub new_value: Option<String>,
 }
@@ -172,14 +167,12 @@ impl SnapshotDiff {
     pub fn actionable(&self) -> impl Iterator<Item = &DiffEntry> {
         self.entries
             .iter()
-            .filter(|e| matches!(e.status, DiffStatus::Removed | DiffStatus::ExpiringSoon))
-    }
-
-    /// Return only the entries whose captured value changed.
-    pub fn value_changed(&self) -> impl Iterator<Item = &DiffEntry> {
-        self.entries
-            .iter()
-            .filter(|e| matches!(e.status, DiffStatus::ValueChanged))
+            .filter(|e| {
+                matches!(
+                    e.status,
+                    DiffStatus::Removed | DiffStatus::ExpiringSoon | DiffStatus::ValueChanged
+                )
+            })
     }
 }
 
@@ -196,9 +189,11 @@ impl SnapshotDiff {
 ///    [`DiffStatus::Removed`].
 /// 2. Every key in the new snapshot whose TTL < [`EXPIRING_SOON_LEDGERS`] →
 ///    [`DiffStatus::ExpiringSoon`].
-/// 3. Every key whose captured value differs between old and new (and whose TTL
-///    is above the threshold) → [`DiffStatus::ValueChanged`].
-/// 4. All other keys present in the new snapshot → [`DiffStatus::Unchanged`].
+/// 3. All other keys present in the new snapshot → [`DiffStatus::Unchanged`].
+///
+/// When both snapshots captured a value for a key and those values differ
+/// (structural XDR equality), the entry is reported as
+/// [`DiffStatus::ValueChanged`] regardless of its TTL status.
 ///
 /// Keys that appear only in the new snapshot (added entries) are reported as
 /// [`DiffStatus::Unchanged`] (or `ExpiringSoon` if their TTL is low).  There is
@@ -230,16 +225,19 @@ pub fn diff_snapshots(
         let old_ttl = old_entry.current_ttl;
         if let Some(&new_entry) = new_map.get(key) {
             let new_ttl = new_entry.current_ttl;
-            let value_changed = match (&old_entry.value, &new_entry.value) {
+            let status = if new_ttl < EXPIRING_SOON_LEDGERS {
+                DiffStatus::ExpiringSoon
+            } else {
+                DiffStatus::Unchanged
+            };
+            let values_differ = match (&old_entry.value, &new_entry.value) {
                 (Some(old_value), Some(new_value)) => old_value != new_value,
                 _ => false,
             };
-            let status = if new_ttl < EXPIRING_SOON_LEDGERS {
-                DiffStatus::ExpiringSoon
-            } else if value_changed {
+            let status = if values_differ {
                 DiffStatus::ValueChanged
             } else {
-                DiffStatus::Unchanged
+                status
             };
             entries.push(DiffEntry {
                 key: key.to_string(),
@@ -419,6 +417,7 @@ mod tests {
                 .map(|(k, ttl)| SnapshotEntry {
                     key: k.to_string(),
                     label: None,
+                    value: None,
                     current_ttl: ttl,
                 })
                 .collect(),
@@ -588,6 +587,8 @@ mod tests {
                 status: DiffStatus::Removed,
                 old_ttl: Some(50_000),
                 new_ttl: None,
+                old_value: None,
+                new_value: None,
             }],
         };
         let plan = derive_extend_plan(&diff);
@@ -608,6 +609,8 @@ mod tests {
                 status: DiffStatus::ExpiringSoon,
                 old_ttl: Some(50_000),
                 new_ttl: Some(remaining),
+                old_value: None,
+                new_value: None,
             }],
         };
         let plan = derive_extend_plan(&diff);
@@ -632,6 +635,8 @@ mod tests {
                     status: DiffStatus::ExpiringSoon,
                     old_ttl: Some(50_000),
                     new_ttl: Some(10_000),
+                    old_value: None,
+                    new_value: None,
                 },
                 DiffEntry {
                     key: "k2".to_string(),
@@ -639,6 +644,8 @@ mod tests {
                     status: DiffStatus::ExpiringSoon,
                     old_ttl: Some(50_000),
                     new_ttl: Some(1_000), // minimum
+                    old_value: None,
+                    new_value: None,
                 },
                 DiffEntry {
                     key: "k3".to_string(),
@@ -646,6 +653,8 @@ mod tests {
                     status: DiffStatus::Removed,
                     old_ttl: Some(50_000),
                     new_ttl: None,
+                    old_value: None,
+                    new_value: None,
                 },
             ],
         };
@@ -666,6 +675,8 @@ mod tests {
                     status: DiffStatus::Unchanged,
                     old_ttl: Some(100_000),
                     new_ttl: Some(99_000),
+                    old_value: None,
+                    new_value: None,
                 },
                 DiffEntry {
                     key: "expiring".to_string(),
@@ -673,6 +684,8 @@ mod tests {
                     status: DiffStatus::ExpiringSoon,
                     old_ttl: Some(20_000),
                     new_ttl: Some(5_000),
+                    old_value: None,
+                    new_value: None,
                 },
             ],
         };
@@ -745,5 +758,81 @@ mod tests {
         };
         let err = StorageSnapshot::from_report(&report).unwrap_err();
         assert!(matches!(err, StorageError::Parse(msg) if msg.contains("total_entries (3) > 0")));
+    }
+
+    // -----------------------------------------------------------------------
+    // value capture / comparison
+    // -----------------------------------------------------------------------
+
+    fn snap_with_values(entries: Vec<(&str, u32, Option<&str>)>) -> StorageSnapshot {
+        StorageSnapshot::from_entries(
+            CONTRACT,
+            entries
+                .into_iter()
+                .map(|(k, ttl, value)| SnapshotEntry {
+                    key: k.to_string(),
+                    label: None,
+                    value: value.map(str::to_string),
+                    current_ttl: ttl,
+                })
+                .collect(),
+        )
+    }
+
+    #[test]
+    fn diff_reports_value_changed_when_value_differs_and_ttl_matches() {
+        let ttl = EXPIRING_SOON_LEDGERS + 1;
+        let old = snap_with_values(vec![("keyA", ttl, Some("AAAA"))]);
+        let new = snap_with_values(vec![("keyA", ttl, Some("BBBB"))]);
+        let diff = diff_snapshots(&old, &new).unwrap();
+        assert_eq!(diff.entries.len(), 1);
+        let entry = &diff.entries[0];
+        assert_eq!(entry.status, DiffStatus::ValueChanged);
+        assert_eq!(entry.old_value.as_deref(), Some("AAAA"));
+        assert_eq!(entry.new_value.as_deref(), Some("BBBB"));
+        assert_eq!(entry.old_ttl, Some(ttl));
+        assert_eq!(entry.new_ttl, Some(ttl));
+    }
+
+    #[test]
+    fn diff_no_value_delta_when_value_and_ttl_match() {
+        let ttl = EXPIRING_SOON_LEDGERS + 1;
+        let old = snap_with_values(vec![("keyA", ttl, Some("AAAA"))]);
+        let new = snap_with_values(vec![("keyA", ttl, Some("AAAA"))]);
+        let diff = diff_snapshots(&old, &new).unwrap();
+        assert_eq!(diff.entries.len(), 1);
+        assert_eq!(diff.entries[0].status, DiffStatus::Unchanged);
+    }
+
+    #[test]
+    fn diff_value_less_snapshot_reports_unchanged() {
+        let ttl = EXPIRING_SOON_LEDGERS + 1;
+        let old = snap_with_values(vec![("keyA", ttl, None)]);
+        let new = snap_with_values(vec![("keyA", ttl, Some("BBBB"))]);
+        let diff = diff_snapshots(&old, &new).unwrap();
+        assert_eq!(diff.entries.len(), 1);
+        assert_eq!(diff.entries[0].status, DiffStatus::Unchanged);
+    }
+
+    #[test]
+    fn snapshot_entry_without_value_field_deserializes() {
+        let json = r#"{"key":"keyA","current_ttl":20000}"#;
+        let entry: SnapshotEntry = serde_json::from_str(json).unwrap();
+        assert_eq!(entry.key, "keyA");
+        assert_eq!(entry.current_ttl, 20_000);
+        assert!(entry.value.is_none());
+    }
+
+    #[test]
+    fn snapshot_entry_with_value_roundtrips() {
+        let entry = SnapshotEntry {
+            key: "keyA".to_string(),
+            label: None,
+            value: Some("AAAA".to_string()),
+            current_ttl: 20_000,
+        };
+        let json = serde_json::to_string(&entry).unwrap();
+        let back: SnapshotEntry = serde_json::from_str(&json).unwrap();
+        assert_eq!(back, entry);
     }
 }
