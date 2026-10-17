@@ -27,6 +27,7 @@ use std::fs;
 use std::io::{self, Write};
 use std::path::Path;
 use std::process;
+use std::time::Duration;
 
 use commands::network::{
     network_is_explicit, resolve_network_config, resolve_rpc_client, resolve_rpc_client_mutating,
@@ -484,6 +485,12 @@ enum Commands {
         /// Path to the currently deployed (baseline) WASM, used with --deny-breaking.
         #[arg(long, value_name = "WASM")]
         old_wasm: Option<String>,
+        /// Timeout in seconds while waiting for the upload and create transactions to settle
+        #[arg(long, default_value_t = 60)]
+        timeout: u64,
+        /// Polling interval in seconds while waiting for settlement
+        #[arg(long, default_value_t = 1)]
+        interval: u64,
         #[command(flatten)]
         net: NetworkArgs,
     },
@@ -543,6 +550,12 @@ enum Commands {
         /// Return after submission with the transaction hash instead of polling for settlement
         #[arg(long)]
         no_wait: bool,
+        /// Timeout in seconds while waiting for settlement (only without --no-wait)
+        #[arg(long, default_value_t = 60)]
+        timeout: u64,
+        /// Polling interval in seconds while waiting for settlement (only without --no-wait)
+        #[arg(long, default_value_t = 1)]
+        interval: u64,
         /// Build and sign the invocation envelope, print it, and stop without submitting (#73)
         #[arg(long)]
         build_only: bool,
@@ -1104,6 +1117,12 @@ enum ProjectCommand {
         /// Identity name to sign and pay for each contract deployment. Defaults to "default".
         #[arg(short = 'I', long, default_value = "default")]
         identity: String,
+        /// Timeout in seconds while waiting for each contract deployment to settle (default 60)
+        #[arg(long, default_value_t = 60)]
+        timeout: u64,
+        /// Poll interval in seconds between status checks (default 1)
+        #[arg(long, default_value_t = 1)]
+        interval: u64,
         #[arg(short, long, default_value = "pretty")]
         format: String,
     },
@@ -1271,6 +1290,12 @@ enum StorageAction {
         /// Identity name to sign the extend transaction. Defaults to "default".
         #[arg(short = 'I', long, default_value = "default")]
         identity: String,
+        /// Timeout in seconds while waiting for the extend transaction to settle (default 60)
+        #[arg(long, default_value_t = 60)]
+        timeout: u64,
+        /// Poll interval in seconds between status checks (default 1)
+        #[arg(long, default_value_t = 1)]
+        interval: u64,
         #[arg(short, long, default_value = "pretty")]
         format: String,
     },
@@ -1292,6 +1317,12 @@ enum StorageAction {
         /// Dry-run: show what would be restored without submitting.
         #[arg(long)]
         dry_run: bool,
+        /// Timeout in seconds while waiting for the restore transaction to settle (default 60)
+        #[arg(long, default_value_t = 60)]
+        timeout: u64,
+        /// Poll interval in seconds between status checks (default 1)
+        #[arg(long, default_value_t = 1)]
+        interval: u64,
         #[arg(short, long, default_value = "pretty")]
         format: String,
     },
@@ -2583,6 +2614,26 @@ fn parse_format_str(s: &str) -> OutputFormat {
     }
 }
 
+/// Validate a `(timeout, interval)` wait pair before any transaction is
+/// submitted.
+///
+/// `interval` must be non-zero — a zero interval spins the poll loop without
+/// advancing. `timeout` must cover at least one interval — a timeout below the
+/// interval could never observe a settled transaction. Both errors name the
+/// offending values so the operator can correct them without a source dive.
+/// Callers exit with status 2 (usage error) on `Err`.
+fn validate_poll_pair(timeout: u64, interval: u64) -> Result<(), String> {
+    if interval == 0 {
+        return Err("--interval must be greater than 0".to_string());
+    }
+    if timeout < interval {
+        return Err(format!(
+            "--timeout ({timeout}s) must be at least one --interval ({interval}s)"
+        ));
+    }
+    Ok(())
+}
+
 /// Terminate with a machine-parseable error envelope when `--format json` is
 /// active, otherwise keep the human-readable stderr contract.
 ///
@@ -3240,7 +3291,34 @@ fn run_encode(values: &[String]) -> Result<String, String> {
 
 #[cfg(test)]
 mod encode_tests {
-    use super::{parse_typed_args, run_encode};
+    use super::{parse_typed_args, run_encode, validate_poll_pair};
+
+    #[test]
+    fn poll_pair_defaults_are_valid() {
+        // The CLI defaults (60s timeout, 1s interval) must pass validation.
+        assert!(validate_poll_pair(60, 1).is_ok());
+    }
+
+    #[test]
+    fn poll_pair_zero_interval_is_rejected() {
+        let err = validate_poll_pair(60, 0).expect_err("zero interval must error");
+        assert!(err.contains("--interval"), "{err}");
+    }
+
+    #[test]
+    fn poll_pair_timeout_below_interval_is_rejected() {
+        let err = validate_poll_pair(2, 5).expect_err("timeout below interval must error");
+        assert!(err.contains("--timeout"), "{err}");
+        assert!(err.contains("--interval"), "{err}");
+        assert!(err.contains('2'), "{err}");
+        assert!(err.contains('5'), "{err}");
+    }
+
+    #[test]
+    fn poll_pair_equal_timeout_and_interval_is_valid() {
+        // timeout == interval is the minimum valid pair (one poll).
+        assert!(validate_poll_pair(5, 5).is_ok());
+    }
 
     #[test]
     fn new_types_match_runtime_typed_arguments() {
@@ -4452,9 +4530,15 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
                     ledgers,
                     key,
                     identity,
+                    timeout,
+                    interval,
                     format,
                 } => {
                     let fmt = parse_format_str(&format);
+                    if let Err(msg) = validate_poll_pair(timeout, interval) {
+                        eprintln!("Error: {msg}");
+                        process::exit(1);
+                    }
 
                     if contract.trim().is_empty() {
                         eprintln!("Error: --contract / contract id must not be empty");
@@ -4516,6 +4600,10 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
                         })?;
                     let signer = sdkt_xdr::sign::Ed25519Signer::from_seed(&signing_key.to_bytes());
                     let source_account = identity_obj.public_key.clone();
+                    let poll_cfg = sdkt_rpc::PollConfig {
+                        timeout: Duration::from_secs(timeout),
+                        interval: Duration::from_secs(interval),
+                    };
                     let client = SorobanRpcClient::from_config(&network_config);
 
                     match extend_footprint(
@@ -4526,6 +4614,7 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
                         &source_account,
                         &signer,
                         network,
+                        &poll_cfg,
                     )
                     .await
                     {
@@ -4556,9 +4645,15 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
                     envelope,
                     identity,
                     dry_run,
+                    timeout,
+                    interval,
                     format,
                 } => {
                     let fmt = parse_format_str(&format);
+                    if let Err(msg) = validate_poll_pair(timeout, interval) {
+                        eprintln!("Error: {msg}");
+                        process::exit(1);
+                    }
 
                     if contract.trim().is_empty() {
                         eprintln!("Error: --contract / contract id must not be empty");
@@ -4624,16 +4719,21 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
                         })?;
                     let signer = sdkt_xdr::sign::Ed25519Signer::from_seed(&signing_key.to_bytes());
                     let source_account = identity_obj.public_key.clone();
+                    let poll_cfg = sdkt_rpc::PollConfig {
+                        timeout: Duration::from_secs(timeout),
+                        interval: Duration::from_secs(interval),
+                    };
                     let client = SorobanRpcClient::from_config(&network_config);
 
                     match restore_footprint(
                         &client,
-                        contract.trim(),
-                        envelope.trim(),
+                        &contract,
+                        &envelope,
                         &source_account,
                         &signer,
                         network,
                         dry_run,
+                        &poll_cfg,
                     )
                     .await
                     {
@@ -5412,10 +5512,9 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
                     net.network_profile.clone(),
                 );
 
-                use sdkt_rpc::{submit_and_wait, PollConfig, TransactionStatus};
-                use std::time::Duration;
+                use sdkt_rpc::{submit_and_wait, TransactionStatus};
 
-                let poll_cfg = PollConfig {
+                let poll_cfg = sdkt_rpc::PollConfig {
                     timeout: Duration::from_secs(timeout),
                     interval: Duration::from_secs(interval),
                 };
@@ -7575,9 +7674,21 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
             arg,
             deny_breaking,
             old_wasm,
+            timeout,
+            interval,
             net,
         } => {
             let fmt = parse_format_str(&format);
+
+            // Validate the wait pair before any I/O or transaction submission.
+            if let Err(msg) = validate_poll_pair(timeout, interval) {
+                eprintln!("Error: {msg}");
+                process::exit(2);
+            }
+            let poll_cfg = sdkt_rpc::PollConfig {
+                timeout: Duration::from_secs(timeout),
+                interval: Duration::from_secs(interval),
+            };
 
             // Exactly one code source: --wasm (upload + create) or --wasm-hash
             // (create-only from already-uploaded code). Validate before any I/O.
@@ -7732,6 +7843,7 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
                     network,
                     salt_bytes,
                     parsed_args,
+                    &poll_cfg,
                 )
                 .await
             } else {
@@ -7795,6 +7907,7 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
                     network,
                     prediction_salt,
                     parsed_args,
+                    &poll_cfg,
                 )
                 .await
             };
@@ -8038,10 +8151,24 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
             identity,
             format,
             no_wait,
+            timeout,
+            interval,
             build_only,
             net,
         } => {
             let fmt = parse_format_str(&format);
+
+            // Validate the wait pair before any transaction is built or
+            // submitted: `interval` must be non-zero and `timeout` must cover
+            // at least one interval. A zero interval would spin the poll loop
+            // without ever advancing; a timeout below one interval could never
+            // observe a settled transaction.
+            if !no_wait {
+                if let Err(msg) = validate_poll_pair(timeout, interval) {
+                    eprintln!("Error: {msg}");
+                    process::exit(2);
+                }
+            }
 
             // 1. Resolve network (mutating operation → mainnet safety guard).
             let network_config = resolve_network_config(
@@ -8098,7 +8225,10 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
             };
 
             let client = SorobanRpcClient::from_config(&network_config);
-            let poll = sdkt_rpc::PollConfig::default();
+            let poll = sdkt_rpc::PollConfig {
+                timeout: Duration::from_secs(timeout),
+                interval: Duration::from_secs(interval),
+            };
 
             // `--build-only`: stop after the envelope is built and signed. Nothing
             // is submitted, so the prepared envelope can be inspected (or handed to
@@ -8759,6 +8889,8 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
                 salt,
                 skip_deployed,
                 identity,
+                timeout,
+                interval,
                 format,
             } => {
                 let fmt = parse_format_str(&format);
@@ -8945,6 +9077,11 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
                                 }
                             };
 
+                            let poll_cfg = sdkt_rpc::PollConfig {
+                                timeout: std::time::Duration::from_secs(timeout),
+                                interval: std::time::Duration::from_secs(interval),
+                            };
+
                             // Parse and validate constructor arguments before upload (fail fast).
                             // Convert TYPE:VALUE to base64 ScVal (same as single-deploy path).
                             let parsed_args = match parse_typed_args(&contract.ctor_args, false) {
@@ -8977,6 +9114,7 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
                                 network.clone(),
                                 salt_bytes,
                                 parsed_args,
+                                &poll_cfg,
                             )
                             .await
                             {

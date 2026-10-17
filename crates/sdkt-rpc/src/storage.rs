@@ -169,6 +169,7 @@ pub fn collect_extend_keys(
 /// at least `extend_to` ledgers past the last closed ledger. It is passed to
 /// the operation unchanged; adding the current ledger would overshoot and
 /// exceed the network's maximum TTL.
+#[allow(clippy::too_many_arguments)]
 pub async fn extend_footprint(
     client: &SorobanRpcClient,
     contract_id: &str,
@@ -177,6 +178,7 @@ pub async fn extend_footprint(
     source_account: &str,
     signer: &sdkt_xdr::sign::Ed25519Signer,
     network: sdkt_xdr::sign::Network,
+    poll: &crate::submission::PollConfig,
 ) -> Result<ExtendResult, RpcError> {
     if extend_to == 0 {
         return Err(RpcError::Rpc(
@@ -230,14 +232,8 @@ pub async fn extend_footprint(
     let signed_envelope = sdkt_xdr::sign_transaction(&final_envelope, signer, &signing_opts)
         .map_err(|e| RpcError::Rpc(format!("Failed to sign extend transaction: {e}")))?;
 
-    let submission = crate::submission::submit_and_wait(
-        client,
-        &signed_envelope,
-        true,
-        &crate::submission::PollConfig::default(),
-    )
-    .await?;
-
+    let submission =
+        crate::submission::submit_and_wait(client, &signed_envelope, true, poll).await?;
     if submission.status != crate::submission::TransactionStatus::Success {
         let code = submission.error_code.as_deref().unwrap_or("unknown");
         let diag = submission.error_result_xdr.as_deref().unwrap_or("");
@@ -329,6 +325,7 @@ pub fn restore_params_from_simulation(
 /// `dry_run` the transaction is built but neither signed nor submitted;
 /// otherwise it is signed and submitted, waiting for confirmation like
 /// `extend_footprint`.
+#[allow(clippy::too_many_arguments)]
 pub async fn restore_footprint(
     client: &SorobanRpcClient,
     contract_id: &str,
@@ -337,6 +334,7 @@ pub async fn restore_footprint(
     signer: &sdkt_xdr::sign::Ed25519Signer,
     network: sdkt_xdr::sign::Network,
     dry_run: bool,
+    poll: &crate::submission::PollConfig,
 ) -> Result<RestoreResult, RpcError> {
     let simulation = crate::simulate::simulate_transaction(client, invocation_envelope)
         .await
@@ -367,14 +365,8 @@ pub async fn restore_footprint(
     let signed_envelope = sdkt_xdr::sign_transaction(&envelope, signer, &signing_opts)
         .map_err(|e| RpcError::Rpc(format!("Failed to sign restore transaction: {e}")))?;
 
-    let submission = crate::submission::submit_and_wait(
-        client,
-        &signed_envelope,
-        true,
-        &crate::submission::PollConfig::default(),
-    )
-    .await?;
-
+    let submission =
+        crate::submission::submit_and_wait(client, &signed_envelope, true, poll).await?;
     if submission.status != crate::submission::TransactionStatus::Success {
         let code = submission.error_code.as_deref().unwrap_or("unknown");
         let diag = submission.error_result_xdr.as_deref().unwrap_or("");
