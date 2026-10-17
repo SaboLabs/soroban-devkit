@@ -23,6 +23,7 @@ fn help_for(command: &[&str]) -> Option<String> {
     Some(String::from_utf8_lossy(&out.stdout).into_owned())
 }
 
+/// Parse immediate child command names from one Clap help page.
 fn subcommands(help: &str) -> Vec<String> {
     let mut in_commands = false;
     let mut commands = Vec::new();
@@ -48,10 +49,9 @@ fn subcommands(help: &str) -> Vec<String> {
     commands
 }
 
+/// Recursively collect command leaves, failing if any family help cannot load.
 fn leaf_commands(path: &[&str]) -> Vec<Vec<String>> {
-    let Some(help) = help_for(path) else {
-        return Vec::new();
-    };
+    let help = help_for(path).unwrap_or_else(|| panic!("`sdkt {}` --help failed", path.join(" ")));
     let children = subcommands(&help);
     if children.is_empty() {
         return vec![path.iter().map(|part| (*part).to_string()).collect()];
@@ -81,6 +81,7 @@ fn every_registered_command_path_exists() {
 }
 
 #[test]
+/// Ensure every command under the audited CLI families has registry metadata.
 fn every_subcommand_in_the_registry_families_is_registered() {
     // These family trees are exposed as agent-discoverable capability
     // metadata. Walk nested help (not just the top-level command names) so a
@@ -173,13 +174,9 @@ fn json_format_claims_match_the_real_cli() {
                 c.argv()
             ));
         }
-        if !c.formats.json && accepts_format {
-            mismatches.push(format!(
-                "{}: registry omits JSON, but `sdkt {} --help` accepts --format",
-                c.id,
-                c.argv()
-            ));
-        }
+        // A command may use --format for a non-JSON artifact format (for
+        // example, `package pack` supports `tar.zst` and `dir`). The core
+        // registry test documents commands that intentionally lack JSON.
     }
     assert!(
         mismatches.is_empty(),
