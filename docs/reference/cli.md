@@ -203,7 +203,7 @@ sdkt
 │   ├── --audit <PATH>...     (Rust source path(s)/dir(s); same engine as `audit`)
 │   ├── --disable <RULE_ID>   (repeatable)
 │   ├── --contract <ID>       (deployed contract for on-chain checks; skipped if omitted)
-│   ├── --network <testnet|mainnet|futurenet> (network for on-chain checks; mutually exclusive with --network-profile, --rpc-url, --network-passphrase)
+│   ├── --network <testnet|mainnet|futurenet> (network for on-chain checks; required only with --contract; mutually exclusive with --network-profile, --rpc-url, --network-passphrase)
 │   ├── --fuzz-evidence <EVIDENCE_JSON> (attach JSON evidence from sdkt fuzz campaign)
 │   ├── --max-size-bytes <N>  (fail when the candidate exceeds N bytes)
 │   ├── --max-growth-pct <N>  (fail when growth over --previous-wasm exceeds N%)
