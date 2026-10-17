@@ -98,7 +98,7 @@ fn protocol_initial_snapshot_round_trips() {
         "snapshot must record the plan kind: {json}"
     );
     let back: EnvironmentSnapshot = serde_json::from_str(&json).unwrap();
-    assert_eq!(Environment::from(&back), env);
+    assert_eq!(Environment::try_from(&back).unwrap(), env);
 }
 
 #[test]

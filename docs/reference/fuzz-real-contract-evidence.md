@@ -312,6 +312,18 @@ inside the artifact JSON (SHA-256 of the canonical JSON bytes) — never the
 SHA-256 of the file on disk, which includes a trailing newline and is a
 different value.
 
+### Budget fidelity on replay
+
+Replay restores the recorded budget plan exactly. `Default`, `Capped` and
+`ProtocolInitial` rebuild from the artifact alone. A `network_faithful` plan
+records only the profile's identity and content hash — its cost tables live in
+the `profile.json` stored beside the artifact — so replaying such an artifact
+without that profile is refused with a `ReplayError` naming the artifact and
+the missing `profile.json`. It never panics and never substitutes another
+budget model, and the behaviour is identical in debug and release builds. The
+`profile.json` is not loaded automatically; supply it and rebuild the plan
+when network-faithful reproducibility is required.
+
 ### Security claim
 
 > No vulnerability claim. Findings are behavioral/declaration/oracle mismatches

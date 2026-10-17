@@ -90,7 +90,7 @@ fn artifact_is_self_contained_for_replay() {
     assert_eq!(steps[0].function, "hello");
 
     // Environment and expectation round-trip.
-    let env = art.environment();
+    let env = art.environment().expect("default budget rebuilds");
     assert_eq!(env, sdkt_fuzz::Environment::default());
     assert_eq!(
         art.expected().behavior,
@@ -230,6 +230,113 @@ fn modified_artifact_never_silently_succeeds() {
     empty.sequence.clear();
     let err = replay(&empty, COUNTER_WASM).unwrap_err();
     assert!(matches!(err, sdkt_fuzz::ReplayError::InvalidArtifact(_)));
+}
+
+// ---------------------------------------------------------------------------
+// G. network-faithful budget: explicit refusal, never a panic or a swap
+// ---------------------------------------------------------------------------
+
+fn network_faithful_snapshot() -> sdkt_fuzz::artifact::BudgetPlanSnapshot {
+    use sdkt_fuzz::artifact::BudgetPlanSnapshot;
+    BudgetPlanSnapshot::NetworkFaithful {
+        profile_content_hash: "abc123def456".to_string(),
+        profile_network: "mainnet".to_string(),
+        profile_protocol: 29,
+        profile_ledger: 62_447_231,
+        coverage: "COMPLETE".to_string(),
+        covered_cost_types: 23,
+        host_cost_types: 23,
+    }
+}
+
+#[test]
+fn recorded_budget_variants_rebuild_unchanged() {
+    use sdkt_fuzz::artifact::{budget_plan_from_snapshot, BudgetPlanSnapshot};
+    use sdkt_fuzz::BudgetPlan;
+
+    assert_eq!(
+        budget_plan_from_snapshot(&BudgetPlanSnapshot::Default).unwrap(),
+        BudgetPlan::Default
+    );
+    assert_eq!(
+        budget_plan_from_snapshot(&BudgetPlanSnapshot::Capped { cpu: 7, mem: 9 }).unwrap(),
+        BudgetPlan::Capped { cpu: 7, mem: 9 }
+    );
+    assert_eq!(
+        budget_plan_from_snapshot(&BudgetPlanSnapshot::ProtocolInitial).unwrap(),
+        BudgetPlan::ProtocolInitial
+    );
+    assert!(
+        budget_plan_from_snapshot(&network_faithful_snapshot()).is_err(),
+        "a network-faithful plan cannot be rebuilt without its profile"
+    );
+}
+
+#[test]
+fn network_faithful_artifact_without_profile_is_refused() {
+    let (_, artifacts) = campaign([38u8; 32]);
+    let art = &artifacts[0];
+    let mut tampered = art.clone();
+    tampered.campaign.environment.budget = network_faithful_snapshot();
+
+    // The refusal is a ReplayError — no panic, no substituted budget model —
+    // and it names the artifact and the profile file it needs.
+    let err = replay(&tampered, COUNTER_WASM).unwrap_err();
+    match &err {
+        sdkt_fuzz::ReplayError::MissingBudgetProfile { artifact, detail } => {
+            assert_eq!(artifact, &tampered.case_id);
+            assert!(detail.contains("profile.json"), "{detail}");
+            assert!(detail.contains("abc123def456"), "{detail}");
+        }
+        other => panic!("expected MissingBudgetProfile, got {other:?}"),
+    }
+    let msg = err.to_string();
+    assert!(msg.contains(&tampered.case_id), "{msg}");
+    assert!(msg.contains("profile.json"), "{msg}");
+
+    // The JSON path (what the CLI uses) refuses identically.
+    let err = replay_json(&tampered.canonical_bytes(), COUNTER_WASM).unwrap_err();
+    assert!(
+        matches!(err, sdkt_fuzz::ReplayError::MissingBudgetProfile { .. }),
+        "{err:?}"
+    );
+}
+
+#[test]
+fn capped_and_protocol_initial_artifacts_still_replay() {
+    use sdkt_fuzz::artifact::BudgetPlanSnapshot;
+    use sdkt_fuzz::BudgetPlan;
+
+    let (_, artifacts) = campaign([39u8; 32]);
+    for snapshot in [
+        BudgetPlanSnapshot::Capped {
+            cpu: 400_000_000,
+            mem: 40_000_000,
+        },
+        BudgetPlanSnapshot::ProtocolInitial,
+    ] {
+        let mut art = artifacts[0].clone();
+        art.campaign.environment.budget = snapshot.clone();
+        let outcome = replay(&art, COUNTER_WASM)
+            .unwrap_or_else(|e| panic!("{snapshot:?} must replay as before: {e}"));
+        assert!(
+            outcome.is_reproduced(),
+            "{snapshot:?} must keep the recorded verdict: {outcome:?}"
+        );
+    }
+
+    // And the rebuilt plan is the recorded one, not a closest match.
+    assert_eq!(
+        BudgetPlan::Capped {
+            cpu: 400_000_000,
+            mem: 40_000_000
+        },
+        sdkt_fuzz::artifact::budget_plan_from_snapshot(&BudgetPlanSnapshot::Capped {
+            cpu: 400_000_000,
+            mem: 40_000_000
+        })
+        .unwrap()
+    );
 }
 
 // ---------------------------------------------------------------------------
