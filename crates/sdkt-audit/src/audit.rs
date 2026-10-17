@@ -65,6 +65,27 @@ pub struct FnScan {
     /// exploitability. See [`crate::rules::Cei001`] for heuristic scope and limitations.
     #[serde(default)]
     pub external_call_before_state_write: bool,
+    /// Number of recognized state-write operations in this function.
+    ///
+    /// Uses the same recognized method names as CEI-001
+    /// ([`FnVisitor::detect_state_write`]). A function with zero writes and
+    /// zero external calls is a read-only accessor: it cannot be a
+    /// missing-authorization defect, so AUTH-001/AUTH-004 demote it instead of
+    /// reporting it at `critical`.
+    #[serde(default)]
+    pub state_writes: usize,
+    /// True when the function is a contract entrypoint: a method inside a
+    /// `#[contractimpl]` impl block. Soroban contracts only expose such
+    /// methods to external callers; plain `fn` items and methods of
+    /// un-annotated impls are internal helpers, and authorization is the
+    /// responsibility of the entrypoint that calls them.
+    #[serde(default)]
+    pub is_entrypoint: bool,
+    /// True when the declared return type carries a value (not absent, not `()`).
+    /// Combined with zero side effects this is positive evidence of a
+    /// read-only accessor.
+    #[serde(default)]
+    pub returns_value: bool,
 }
 
 impl FnScan {
@@ -77,7 +98,45 @@ impl FnScan {
             usage: HashMap::new(),
             division_before_multiplication: false,
             external_call_before_state_write: false,
+            state_writes: 0,
+            is_entrypoint: false,
+            returns_value: false,
         }
+    }
+
+    /// True when the function mutates state or reaches an external contract.
+    ///
+    /// A pure accessor performs neither, so a name-based privileged match on
+    /// such a function is not evidence of a missing-authorization defect.
+    pub fn performs_side_effect(&self) -> bool {
+        self.state_writes > 0 || self.invoke_contract > 0
+    }
+
+    /// Severity for a name-based privileged-match finding (AUTH-001/AUTH-004).
+    ///
+    /// Mapping (documented in `docs/reference/cli.md`):
+    /// - not an entrypoint (plain `fn` / non-`#[contractimpl]` method) → `info`:
+    ///   external callers cannot reach it; its caller entrypoint holds the auth
+    ///   responsibility. The finding stays visible; nothing is deleted.
+    /// - entrypoint with a recognized side effect (state write or external
+    ///   call) → `critical` (current behavior, e.g. unguarded `mint`,
+    ///   `set_admin`, `pause`).
+    /// - entrypoint returning a value with no recognized side effect → `info`:
+    ///   positive evidence of a read-only getter (`get_paused`, `admin_balance`).
+    /// - entrypoint returning nothing with no *recognized* side effect →
+    ///   `critical`: a setter may write through an unrecognized helper; staying
+    ///   loud is the conservative choice.
+    pub(crate) fn privileged_match_severity(&self) -> Severity {
+        if !self.is_entrypoint {
+            return Severity::Info;
+        }
+        if self.performs_side_effect() {
+            return Severity::Critical;
+        }
+        if self.returns_value {
+            return Severity::Info;
+        }
+        Severity::Critical
     }
 }
 
@@ -90,12 +149,23 @@ fn is_auth_fn(name: &str) -> bool {
 }
 
 /// Heuristic: does this function name look privileged/admin?
+///
+/// Name-only signal. Callers combine it with observed behavior
+/// ([`FnScan::performs_side_effect`]) before assigning severity: a
+/// read-only accessor whose name happens to contain one of these substrings
+/// is not a missing-authorization defect.
 pub(crate) fn is_privileged(name: &str) -> bool {
     let n = unqualified(name).to_lowercase();
     n == "initialize"
         || n.starts_with("initialize_")
         || n == "init"
         || n.starts_with("init_")
+        // Admin setter shapes: `set_owner`, `set_fee`, `grant_role`,
+        // `revoke_role` and friends are the common unguarded-write pattern
+        // (issue #311 false-negative half).
+        || n.starts_with("set_")
+        || n.starts_with("grant_")
+        || n.starts_with("revoke_")
         || [
             "admin",
             "mint",
@@ -112,6 +182,7 @@ pub(crate) fn is_privileged(name: &str) -> bool {
             "transfer_ownership",
             "change_owner",
             "set_auth",
+            "drain",
         ]
         .iter()
         .any(|p| n.contains(p))
@@ -300,20 +371,37 @@ impl<'a> FnVisitor<'a> {
         let patterns = ["set", "write", "put", "remove", "delete", "extend"];
         if patterns.iter().any(|p| method_name.eq_ignore_ascii_case(p)) {
             self.order_events.push(OrderEvent::StateWrite);
+            self.scan.state_writes += 1;
         }
     }
 }
 
 /// Scan every function in the AST into a `FnScan` per function.
 ///
-/// Covers both top-level `fn` items and methods inside `impl` blocks
-/// (Soroban contract entrypoints are `impl` methods).
+/// Covers top-level `fn` items, methods inside `impl` blocks, and every `fn`
+/// or `impl` method inside nested `mod` blocks (recursively). Soroban contract
+/// entrypoints are `impl` methods. Methods of an impl block annotated with
+/// `#[contractimpl]` are marked as entrypoints; every other function is
+/// treated as an internal helper.
+///
+/// Functions inside modules get a qualified name (`inner::initialize`,
+/// `outer::inner::initialize`, `inner::Type::method`) so findings name the
+/// module path they came from. Only modules declared inline in the scanned
+/// file are visited; `mod foo;` declarations are not followed into other
+/// files.
 pub fn scan_all_functions(ast: &syn::File) -> Vec<FnScan> {
     let mut out = Vec::new();
-    for item in &ast.items {
+    scan_items(&ast.items, &mut Vec::new(), &mut out);
+    out
+}
+
+/// Recursively scan a slice of items, tracking the enclosing module path.
+fn scan_items(items: &[Item], mod_path: &mut Vec<String>, out: &mut Vec<FnScan>) {
+    for item in items {
         match item {
             Item::Fn(f) => {
-                let scan = fn_scan(&f.sig, &f.block);
+                let mut scan = fn_scan(&f.sig, &f.block);
+                scan.fn_name = qualify(mod_path, &scan.fn_name);
                 out.push(scan);
             }
             Item::Impl(imp) => {
@@ -327,6 +415,7 @@ pub fn scan_all_functions(ast: &syn::File) -> Vec<FnScan> {
                         .unwrap_or_default(),
                     _ => String::new(),
                 };
+                let is_contract_impl = has_contractimpl_attr(&imp.attrs);
                 for inner in &imp.items {
                     if let syn::ImplItem::Fn(m) = inner {
                         let qual = if type_name.is_empty() {
@@ -335,20 +424,68 @@ pub fn scan_all_functions(ast: &syn::File) -> Vec<FnScan> {
                             format!("{}::{}", type_name, m.sig.ident)
                         };
                         let mut scan = fn_scan(&m.sig, &m.block);
-                        scan.fn_name = qual;
+                        scan.fn_name = qualify(mod_path, &qual);
+                        scan.is_entrypoint = is_contract_impl;
                         out.push(scan);
                     }
+                }
+            }
+            Item::Mod(m) => {
+                // Only inline modules (`mod foo { ... }`) are scanned; `mod foo;`
+                // declarations have no content and are not followed into other
+                // files.
+                if let Some((_, items)) = &m.content {
+                    mod_path.push(m.ident.to_string());
+                    scan_items(items, mod_path, out);
+                    mod_path.pop();
                 }
             }
             _ => {}
         }
     }
-    out
+}
+
+/// Prefix a bare function name with the enclosing module path, if any.
+fn qualify(mod_path: &[String], name: &str) -> String {
+    if mod_path.is_empty() {
+        name.to_string()
+    } else {
+        format!("{}::{}", mod_path.join("::"), name)
+    }
+}
+
+/// True when the attribute list contains `#[contractimpl]`
+/// (e.g. `use soroban_sdk::contractimpl;` + `#[contractimpl]`, or the
+/// fully-qualified `#[soroban_sdk::contractimpl]`).
+fn has_contractimpl_attr(attrs: &[syn::Attribute]) -> bool {
+    attrs.iter().any(|attr| {
+        attr.path()
+            .segments
+            .last()
+            .is_some_and(|seg| seg.ident == "contractimpl")
+    })
+}
+
+/// True when a signature declares a return type that carries a value:
+/// any `-> T` except `-> ()`.
+///
+/// `Result<(), E>` counts as returning a value because the reader cannot tell
+/// a write-performing fallible setter from a pure accessor by the type alone;
+/// the side-effect signal decides severity in that shape.
+fn signature_returns_value(sig: &syn::Signature) -> bool {
+    let syn::ReturnType::Type(_, ty) = &sig.output else {
+        return false;
+    };
+    if let syn::Type::Tuple(tuple) = &**ty {
+        return !tuple.elems.is_empty();
+    }
+    true
 }
 
 /// Build a `FnScan` for one function signature + body.
 fn fn_scan(sig: &syn::Signature, block: &syn::Block) -> FnScan {
     let mut scan = FnScan::new(sig.ident.to_string());
+    scan.returns_value = signature_returns_value(sig);
     for input in &sig.inputs {
         if let FnArg::Typed(pt) = input {
             if let Pat::Ident(pat) = &*pt.pat {
@@ -392,8 +529,19 @@ pub fn scan_all_functions_str(src: &str) -> Option<Vec<FnScan>> {
     Some(scan_all_functions(&ast))
 }
 
-/// All built-in rules.
-pub fn all_rules() -> Vec<Box<dyn AuditRule>> {
+/// All built-in rules, in the same order [`crate::registry::RuleRegistry::register_builtin_rules`]
+/// registers them.
+///
+/// This is the single source of truth for the built-in rule set. The CLI uses
+/// it to describe the rule set (`--list-rules`) and to report how many rules
+/// ran. Keeping it in one place prevents the listing from drifting away from
+/// what the registry actually executes.
+///
+/// The rules are returned as `Send + Sync` boxes because the registry stores
+/// them in a process-wide `OnceLock<Mutex<_>>`; every built-in rule is
+/// `Send + Sync`, and callers that need plain `Box<dyn AuditRule>` can coerce
+/// each element.
+pub fn all_rules() -> Vec<Box<dyn AuditRule + Send + Sync>> {
     vec![
         Box::new(crate::rules::Auth001),
         Box::new(crate::rules::Auth002),
@@ -401,6 +549,7 @@ pub fn all_rules() -> Vec<Box<dyn AuditRule>> {
         Box::new(crate::rules::Auth004),
         Box::new(crate::rules::Move001),
         Box::new(crate::rules::Math001),
+        Box::new(crate::rules::Cei001),
     ]
 }
 
@@ -526,6 +675,62 @@ mod tests {
         let src = "pub fn balance_of(who: Address) -> u32 { 0 }";
         let rep = report_for(src);
         assert!(!has(&rep, "AUTH-001"));
+    }
+
+    #[test]
+    fn scans_functions_inside_nested_mod() {
+        let src = r#"
+            pub mod inner {
+                pub fn initialize(admin: u32) {}
+                pub fn mint_token(to: u32) {}
+            }
+        "#;
+        let rep = report_for(src);
+        assert!(has(&rep, "AUTH-001"));
+        assert!(has(&rep, "AUTH-003"));
+        let locations: Vec<_> = rep
+            .findings
+            .iter()
+            .filter_map(|f| f.location.clone())
+            .collect();
+        assert!(locations.iter().any(|l| l == "inner::initialize"));
+        assert!(locations.iter().any(|l| l == "inner::mint_token"));
+    }
+
+    #[test]
+    fn scans_functions_two_modules_deep_with_qualified_location() {
+        let src = r#"
+            pub mod outer {
+                pub mod inner {
+                    pub fn initialize(admin: u32) {}
+                }
+            }
+        "#;
+        let rep = report_for(src);
+        let finding = rep
+            .findings
+            .iter()
+            .find(|f| f.rule_id == "AUTH-003")
+            .expect("AUTH-003 should fire on nested initialize");
+        assert_eq!(finding.location.as_deref(), Some("outer::inner::initialize"));
+    }
+
+    #[test]
+    fn scans_impl_block_inside_mod() {
+        let src = r#"
+            pub mod inner {
+                impl Token {
+                    pub fn mint_token(&self) {}
+                }
+            }
+        "#;
+        let rep = report_for(src);
+        let finding = rep
+            .findings
+            .iter()
+            .find(|f| f.rule_id == "AUTH-001")
+            .expect("AUTH-001 should fire on impl method inside mod");
+        assert_eq!(finding.location.as_deref(), Some("inner::Token::mint_token"));
     }
 
     #[test]
