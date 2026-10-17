@@ -12,6 +12,12 @@
 //! `set`/`peek` are unguarded. `bump(source_address)` succeeds only with a
 //! matching source-account credential (empirically verified host 28.0.2
 //! behavior). No auth-tree/multi-signer semantics are claimed.
+//!
+//! Note: these multi-step sequences rely on the mutation planner's guarantee
+//! that consecutive steps cycle distinct mutation candidates (see
+//! `mutation::plan_mutation`, which walks `(start + step) % len`), so each
+//! step in a sequence can exercise a different (arg, operator) pair rather
+//! than repeating the same one.
 
 use sdkt_fuzz::{
     artifact::CampaignConfig, replay, AuthMode, Environment, ExecutionStatus, Expected,
