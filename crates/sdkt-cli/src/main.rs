@@ -7,7 +7,7 @@ use sdkt_rpc::inspect::StorageSummary;
 use sdkt_rpc::wasm::get_wasm_bytecode;
 use sdkt_rpc::{
     estimate_dynamic_fee, extend_footprint, first_topic_filter, get_contract_events_filtered,
-    get_next_sequence, get_ttl_info, get_wasm_metadata, inspect_account, inspect_contract,
+    get_next_sequence, get_ttl_info_for_keys, get_wasm_metadata, inspect_account, inspect_contract,
     inspect_transaction, read_contract_state, restore_footprint, simulate_transaction,
     SorobanRpcClient, StorageKeyInfo, TtlInfoSummary,
 };
@@ -17,7 +17,7 @@ use sdkt_storage::{
 };
 use sdkt_wasm::spec::parse_contract_spec;
 use sdkt_xdr::abi_decode::decode_event_topics;
-use sdkt_xdr::decode;
+use sdkt_xdr::decode_with_config;
 use sdkt_xdr::{
     build_invoke_transaction, sign_transaction, Ed25519Signer, InvokeTransactionParams, Network,
     SigningError, SigningOptions,
@@ -1173,6 +1173,12 @@ enum PackageCommand {
 enum StorageAction {
     Check {
         contract_id: String,
+        /// Repeatable: extra ledger keys (base64 XDR or hex XDR) to include in
+        /// the check. The contract instance key is always included.
+        /// Without these the check touches only the instance entry, so the
+        /// `[storage] max_entries` batch size has nothing to chunk.
+        #[arg(long, value_name = "BASE64_XDR", alias = "key")]
+        key_xdr: Vec<String>,
         #[arg(short, long, default_value = "pretty")]
         format: String,
     },
@@ -1409,6 +1415,7 @@ fn derive_verdict(
     verified: Option<bool>,
     expiring_soon: usize,
     total_entries: usize,
+    expiring_soon_ledgers: u32,
 ) -> (String, Vec<String>) {
     let mut reasons: Vec<String> = Vec::new();
 
@@ -1422,6 +1429,7 @@ or confirm you are comparing the correct artifact."
     }
 
     if expiring_soon > 0 {
+        let warning_days = (u64::from(expiring_soon_ledgers) * 5).div_ceil(86_400);
         reasons.push(format!(
             "{} storage entr{} expiring soon (within ~{} day{}).",
             expiring_soon,
@@ -1430,12 +1438,8 @@ or confirm you are comparing the correct artifact."
             } else {
                 "ies are"
             },
-            (u64::from(EXPIRING_SOON_LEDGERS) * 5).div_ceil(86_400),
-            if (u64::from(EXPIRING_SOON_LEDGERS) * 5).div_ceil(86_400) == 1 {
-                ""
-            } else {
-                "s"
-            }
+            warning_days,
+            if warning_days == 1 { "" } else { "s" }
         ));
     }
 
@@ -1483,10 +1487,15 @@ async fn contract_health(
     let on_chain_hash = inspection.wasm_hash;
 
     // Storage posture (read-only, existing RPC via StorageAnalyzer).
-    let storage_report = sdkt_storage::StorageAnalyzer::new(client.clone())
-        .inspect_contract_storage(contract_id)
-        .await
-        .map_err(|e| format!("{}", e))?;
+    let cfg = load_config();
+    let storage_report = sdkt_storage::StorageAnalyzer::with_config(
+        client.clone(),
+        cfg.storage.max_entries,
+        cfg.storage.ttl_warning_days,
+    )
+    .inspect_contract_storage(contract_id)
+    .await
+    .map_err(|e| format!("{}", e))?;
 
     // Optional -style verification (reuse existing helper, no duplicate logic).
     let verified = local_hash
@@ -1499,7 +1508,13 @@ async fn contract_health(
         .map(|t| t.expiring_entries_count)
         .unwrap_or(0);
 
-    let (health, reasons) = derive_verdict(verified, expiring_soon, storage_report.total_entries);
+    let (health, reasons) = derive_verdict(
+        verified,
+        expiring_soon,
+        storage_report.total_entries,
+        // Saturating: same days→ledgers conversion as StorageAnalyzer.
+        cfg.storage.ttl_warning_days.saturating_mul(17_280),
+    );
 
     let ttl = storage_report.ttl_summary.as_ref().map(|t| HealthTtl {
         minimum_ttl: t.minimum_ttl,
@@ -3837,11 +3852,36 @@ fn collect_doctor_checks() -> Vec<DoctorCheck> {
                 // Reuse the shared project graph resolver as the validity oracle.
                 match sdkt_core::project::validate_project(&config) {
                     Ok(()) => {
+                        let mut sections = Vec::new();
+                        if config.decode.max_depth != DevKitConfig::default().decode.max_depth
+                            || config.decode.allow_fallback_hex
+                                != DevKitConfig::default().decode.allow_fallback_hex
+                        {
+                            sections.push(format!(
+                                "decode: max_depth={}, allow_fallback_hex={}",
+                                config.decode.max_depth, config.decode.allow_fallback_hex
+                            ));
+                        }
+                        if config.storage.max_entries != DevKitConfig::default().storage.max_entries
+                            || config.storage.ttl_warning_days
+                                != DevKitConfig::default().storage.ttl_warning_days
+                        {
+                            sections.push(format!(
+                                "storage: max_entries={}, ttl_warning_days={}",
+                                config.storage.max_entries, config.storage.ttl_warning_days
+                            ));
+                        }
+                        let detail = if sections.is_empty() {
+                            String::new()
+                        } else {
+                            format!("; custom {}", sections.join("; "))
+                        };
                         checks.push(DoctorCheck::ok(
                             "project-config",
                             format!(
-                                ".sdkt.toml is valid ({} contract(s) configured)",
-                                config.contracts.len()
+                                ".sdkt.toml is valid ({} contract(s) configured){}",
+                                config.contracts.len(),
+                                detail
                             ),
                         ));
                     }
@@ -3935,7 +3975,17 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
             };
 
             let fmt = parse_format_str(&format);
-            let json = match decode(&input, r#type.as_deref(), fmt) {
+            let cfg = load_config();
+            if let Err(e) = cfg.validate() {
+                fail_cli(e, json_mode);
+            }
+            let json = match decode_with_config(
+                &input,
+                r#type.as_deref(),
+                fmt,
+                cfg.decode.max_depth,
+                cfg.decode.allow_fallback_hex,
+            ) {
                 Ok(j) => j,
                 Err(e) => fail_cli(e.to_string(), json_mode),
             };
@@ -4213,6 +4263,7 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
             match action {
                 StorageAction::Check {
                     contract_id,
+                    key_xdr,
                     format,
                 } => {
                     let fmt = parse_format_str(&format);
@@ -4222,8 +4273,29 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
                         net.network_profile.clone(),
                     );
 
-                    // Load ABI spec if provided for storage decoding
-                    match get_ttl_info(&client, &contract_id).await {
+                    // Load ABI spec if provided for storage decoding.
+                    // Issue #375: honour [storage] config instead of the
+                    // hardcoded defaults inside get_ttl_info().
+                    let cfg = load_config();
+                    // Repeatable --key-xdr: validate as XDR LedgerKeys so the
+                    // configured max_entries batch size has something to chunk.
+                    // (Without them the check fetches only the instance entry.)
+                    let mut extra_keys: Vec<String> = Vec::new();
+                    for raw in &key_xdr {
+                        if let Err(e) = sdkt_xdr::decode_ledger_key(raw) {
+                            fail_cli(format!("invalid LedgerKey: {e}"), fmt == OutputFormat::Json);
+                        }
+                        extra_keys.push(raw.clone());
+                    }
+                    match get_ttl_info_for_keys(
+                        &client,
+                        &contract_id,
+                        &extra_keys,
+                        cfg.storage.max_entries,
+                        cfg.storage.ttl_warning_days.saturating_mul(17_280),
+                    )
+                    .await
+                    {
                         Ok(ttl_info) => {
                             if fmt == OutputFormat::Json {
                                 let mut output = serde_json::to_value(&ttl_info)?;
@@ -4287,7 +4359,12 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
                         net.network_passphrase.clone(),
                         net.network_profile.clone(),
                     );
-                    let analyzer = sdkt_storage::StorageAnalyzer::new(client);
+                    let cfg = load_config();
+                    let analyzer = sdkt_storage::StorageAnalyzer::with_config(
+                        client,
+                        cfg.storage.max_entries,
+                        cfg.storage.ttl_warning_days,
+                    );
 
                     match analyzer
                         .inspect_contract_storage_keys(&contract_id, &extra_keys)
@@ -7088,9 +7165,14 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
                 // remaining ContractInspection fields without adding a circular
                 // sdkt-rpc -> sdkt-storage dependency.
                 let mut inspection = inspection;
-                if let Ok(report) = StorageAnalyzer::new(client.clone())
-                    .inspect_contract_storage(&contract)
-                    .await
+                let cfg = load_config();
+                if let Ok(report) = StorageAnalyzer::with_config(
+                    client.clone(),
+                    cfg.storage.max_entries,
+                    cfg.storage.ttl_warning_days,
+                )
+                .inspect_contract_storage(&contract)
+                .await
                 {
                     inspection.storage_summary = StorageSummary {
                         instance_entries: report.instance_entries,
@@ -9812,14 +9894,14 @@ mod m23_tests {
 
     #[test]
     fn derive_verdict_healthy() {
-        let (h, reasons) = derive_verdict(Some(true), 0, 12);
+        let (h, reasons) = derive_verdict(Some(true), 0, 12, 17_280);
         assert_eq!(h, "healthy");
         assert!(reasons.is_empty());
     }
 
     #[test]
     fn derive_verdict_at_risk_expiring() {
-        let (h, reasons) = derive_verdict(Some(true), 2, 12);
+        let (h, reasons) = derive_verdict(Some(true), 2, 12, 17_280);
         assert_eq!(h, "at_risk");
         let reason = reasons
             .iter()
@@ -9833,14 +9915,14 @@ mod m23_tests {
     #[test]
     fn derive_verdict_critical_mismatch() {
         // Mismatch wins over TTL, regardless of expiring count.
-        let (h, reasons) = derive_verdict(Some(false), 5, 12);
+        let (h, reasons) = derive_verdict(Some(false), 5, 12, 17_280);
         assert_eq!(h, "critical");
         assert!(reasons.iter().any(|r| r.contains("does NOT match")));
     }
 
     #[test]
     fn derive_verdict_at_risk_empty() {
-        let (h, reasons) = derive_verdict(None, 0, 0);
+        let (h, reasons) = derive_verdict(None, 0, 0, 17_280);
         assert_eq!(h, "at_risk");
         assert!(reasons.iter().any(|r| r.contains("no storage entries")));
     }
@@ -9848,7 +9930,7 @@ mod m23_tests {
     #[test]
     fn derive_verdict_onchain_only_healthy() {
         // No --wasm supplied (verified == None), nothing expiring → healthy.
-        let (h, reasons) = derive_verdict(None, 0, 7);
+        let (h, reasons) = derive_verdict(None, 0, 7, 17_280);
         assert_eq!(h, "healthy");
         assert!(reasons.is_empty());
     }
