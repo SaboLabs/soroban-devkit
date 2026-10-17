@@ -211,15 +211,32 @@ fn cli_rejects_invented_positionals_and_registry_omits_no_required_flags() {
             ));
         }
 
-        // Verify that passing an unexpected positional argument is rejected with exit code 2.
+        // Verify that passing an unexpected positional argument is rejected with exit code 2
+        // and that stderr explicitly identifies the unexpected positional argument.
+        // We supply dummy values for every required flag first so the command does not fail
+        // early due to missing required arguments.
         let mut cmd = Command::cargo_bin("sdkt").expect("sdkt binary built");
-        cmd.args(c.command).arg("__unexpected_positional_test__");
+        cmd.args(c.command);
+        for arg in c.required_args {
+            let tok = arg.split_whitespace().next().unwrap_or_default();
+            if tok.starts_with("--") {
+                cmd.arg(tok).arg("dummy_val");
+            }
+        }
+        cmd.arg("__unexpected_positional_test__");
+
         let out = cmd.output().expect("run sdkt with unexpected positional");
+        let stderr = String::from_utf8_lossy(&out.stderr);
         if out.status.code() != Some(2) {
             errors.push(format!(
                 "{}: CLI unexpectedly accepted positional argument on command that takes no positionals (exit code: {:?})",
                 c.id,
                 out.status.code()
+            ));
+        } else if !stderr.contains("unexpected argument '__unexpected_positional_test__'") {
+            errors.push(format!(
+                "{}: CLI exited with code 2 but stderr did not identify unexpected positional argument: {stderr}",
+                c.id
             ));
         }
     }
