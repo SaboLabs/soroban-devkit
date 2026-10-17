@@ -1381,7 +1381,10 @@ mod tests {
 
     #[test]
     fn storage_analyze_extracts_contract() {
-        let i = parse("storage analyze for contract CAD6C24POQGRYXMBNBEGVDHUROF5ZC37XRDC6NCVILTXWMYJIBMISZCV").unwrap();
+        let i = parse(
+            "storage analyze for contract CAD6C24POQGRYXMBNBEGVDHUROF5ZC37XRDC6NCVILTXWMYJIBMISZCV",
+        )
+        .unwrap();
         assert_eq!(i.capability_id, "storage.analyze");
         assert_eq!(
             i.args.contract.as_deref(),
@@ -1391,7 +1394,10 @@ mod tests {
 
     #[test]
     fn events_extracts_contract() {
-        let i = parse("fetch events for contract CAD6C24POQGRYXMBNBEGVDHUROF5ZC37XRDC6NCVILTXWMYJIBMISZCV").unwrap();
+        let i = parse(
+            "fetch events for contract CAD6C24POQGRYXMBNBEGVDHUROF5ZC37XRDC6NCVILTXWMYJIBMISZCV",
+        )
+        .unwrap();
         assert_eq!(i.capability_id, "events");
         assert_eq!(
             i.args.contract.as_deref(),

@@ -141,7 +141,10 @@ fn c_upgrade_safety_plans_old_and_new() {
         .map(|a| a.as_str().unwrap())
         .collect::<Vec<_>>()
         .join(" ");
-    assert_eq!(joined, "diff --upgrade-safety --old-wasm us_old.wasm --new-wasm us_new.wasm --format json");
+    assert_eq!(
+        joined,
+        "diff --upgrade-safety --old-wasm us_old.wasm --new-wasm us_new.wasm --format json"
+    );
     assert!(v["evidence"]["command_executed"].as_bool().unwrap());
 }
 
@@ -154,11 +157,7 @@ fn c_diff_base_route_plans_diff_separately_from_upgrade_safety() {
     }
     .write(tmp.path());
 
-    let out = agent(
-        &fx,
-        "diff baseline old.wasm candidate new.wasm",
-        true,
-    );
+    let out = agent(&fx, "diff baseline old.wasm candidate new.wasm", true);
     let v = parse_json(&out);
     assert_eq!(v["capability_id"], "diff");
     let joined = v["argv"]
