@@ -7,13 +7,15 @@
 //! Findable conditions and their exact triggers:
 //!
 //! - [`ReasonCode::ReturnMismatch`] — declared [`Expected::Success`] with an
-//!   expected return value, and the call succeeded with a different value.
+//!   expected return value, and the call succeeded with a different value,
+//!   or declared [`ExpectedBehavior::Error`] and the call succeeded.
 //! - [`ReasonCode::StateMismatch`] — declared expected state differs from
 //!   the observed state (byte-exact XDR comparison).
 //! - [`ReasonCode::EventMismatch`] — declared expected events differ from
 //!   the observed events.
 //! - [`ReasonCode::UnexpectedError`] — declared `Success` (or `SuccessWith`)
-//!   and the execution produced an error.
+//!   and the execution produced an error, or declared a specific
+//!   [`ExpectedBehavior::Error`] and the execution produced a different error.
 //! - [`ReasonCode::AuthorizationBypass`] — only when the oracle declares
 //!   `auth_required = true` AND the host enforced authorization AND the
 //!   execution succeeded anyway.
@@ -163,7 +165,9 @@ impl Oracle {
                         return Classification::ExpectedError;
                     }
                     // Declared a specific error but got a different one:
-                    // the declaration was violated. UnexpectedError.
+                    // the declaration was violated. Per the module contract,
+                    // UnexpectedError covers any error where the declared
+                    // outcome was not an error of this exact shape.
                     return Classification::Finding(ReasonCode::UnexpectedError);
                 }
                 if matches!(self.expected.behavior, ExpectedBehavior::Any) {
@@ -178,9 +182,10 @@ impl Oracle {
             ExecutionStatus::Void | ExecutionStatus::Returned(_) => {
                 if expected_error {
                     // Declared an error but the call produced a result: the
-                    // outcome differs from the declared expectation. Not
-                    // UNEXPECTED_ERROR — that reason code is reserved (per
-                    // contract) for errors raised where Success was declared.
+                    // outcome differs from the declared expectation. Per the
+                    // module contract, ReturnMismatch covers a declared
+                    // Success with a wrong value, and a declared error that
+                    // succeeded.
                     return Classification::Finding(ReasonCode::ReturnMismatch);
                 }
                 if matches!(self.expected.behavior, ExpectedBehavior::Any) {
