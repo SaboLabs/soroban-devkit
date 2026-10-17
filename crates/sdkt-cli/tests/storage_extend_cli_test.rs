@@ -466,14 +466,54 @@ fn storage_extend_rejects_invalid_ledger_key_offline() {
             "storage",
             "extend",
             "--contract",
-            "CAE3U7JKESRWZHPEQ72DVNGOQ6WPA7HSPQZL5YV46NPCE4TMUPAGYMEC",
+            VALID_CONTRACT,
             "--ledgers",
             "1000",
             "--key",
             "not-a-valid-key",
         ])
         .assert()
-        .failure();
+        .code(1)
+        .stderr(predicate::str::contains("invalid LedgerKey:"))
+        .stderr(predicate::str::contains("RPC error:").not());
+}
+
+#[test]
+fn storage_extend_network_failure_retains_rpc_error_prefix() {
+    let dir = tempdir().unwrap();
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let url = format!("http://{}", listener.local_addr().unwrap());
+    thread::spawn(move || {
+        for conn in listener.incoming() {
+            let Ok(mut sock) = conn else { break };
+            let _ = read_request(&mut sock);
+            let resp_body = r#"{"jsonrpc":"2.0","id":1,"error":{"code":-32603,"message":"internal node error"}}"#;
+            let resp = format!(
+                "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+                resp_body.len(),
+                resp_body
+            );
+            let _ = sock.write_all(resp.as_bytes());
+        }
+    });
+    setup_mock_network(dir.path(), &url);
+
+    sdkt_isolated(dir.path())
+        .args([
+            "storage",
+            "--network-profile",
+            "mocknet",
+            "extend",
+            "--contract",
+            VALID_CONTRACT,
+            "--ledgers",
+            "1000",
+            "--identity",
+            "alice",
+        ])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("RPC error:"));
 }
 
 #[test]

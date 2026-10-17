@@ -4442,7 +4442,12 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
                         process::exit(1);
                     }
                     if let Err(e) = sdkt_rpc::collect_extend_keys(&contract, &key) {
-                        eprintln!("Error: {}", e);
+                        let err_str = e.to_string();
+                        let msg = match &e {
+                            sdkt_rpc::RpcError::Rpc(inner) => inner.as_str(),
+                            _ => err_str.strip_prefix("RPC error: ").unwrap_or(&err_str),
+                        };
+                        eprintln!("Error: {msg}");
                         process::exit(1);
                     }
 
