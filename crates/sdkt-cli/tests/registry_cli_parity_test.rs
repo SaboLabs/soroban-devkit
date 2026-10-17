@@ -83,6 +83,106 @@ fn declared_flags_exist_in_the_real_cli() {
     );
 }
 
+/// Every flag the CLI requires for a capability must actually be listed in
+/// the registry's `required_args`. The registry is consumed as an argument
+/// contract, so a CLI-required flag missing from the registry (e.g.
+/// `--contract` on `storage.extend`, `--network-profile` on `identity.fund`)
+/// means a planner can emit an argv the CLI rejects.
+///
+/// Matching compares the leading flag token only, so `--network` never
+/// satisfies a claim for `--network-passphrase`.
+#[test]
+fn cli_required_flags_are_declared_in_the_registry() {
+    let mut missing = Vec::new();
+    for c in capabilities() {
+        let Some(help) = help_for(c.command) else {
+            missing.push(format!("{}: command path not resolvable", c.id));
+            continue;
+        };
+        // Long flags the CLI documents as required. clap renders required
+        // options in the usage line, e.g.
+        //   Usage: sdkt storage extend [OPTIONS] --contract <CONTRACT> --ledgers <LEDGERS>
+        // Collect every `--` token from the usage block.
+        let usage: String = help
+            .lines()
+            .skip_while(|l| !l.trim_start().starts_with("Usage:"))
+            .take_while(|l| !l.trim().is_empty())
+            .collect::<Vec<_>>()
+            .join(" ");
+        let cli_required: std::collections::HashSet<&str> = usage
+            .split_whitespace()
+            .map(|tok| tok.trim_end_matches(','))
+            .filter(|tok| tok.starts_with("--"))
+            .collect();
+
+        let declared: std::collections::HashSet<&str> = c
+            .required_args
+            .iter()
+            .filter_map(|arg| arg.split_whitespace().next())
+            .filter(|tok| tok.starts_with("--"))
+            .collect();
+
+        for flag in cli_required {
+            if !declared.contains(flag) {
+                missing.push(format!(
+                    "{}: CLI requires {flag}, but registry required_args omits it",
+                    c.id
+                ));
+            }
+        }
+    }
+    assert!(
+        missing.is_empty(),
+        "registry omits CLI-required flags ({} entries):\n{}",
+        missing.len(),
+        missing.join("\n")
+    );
+}
+
+/// The registry must not invent required positionals the CLI does not accept.
+/// A bracketed placeholder like `[name]` is optional in the registry's own
+/// notation; an unbracketed `<name>` is required. If the registry claims a
+/// required positional, the CLI's usage line must show one too.
+#[test]
+fn registry_required_positionals_match_the_real_cli() {
+    let mut invented = Vec::new();
+    for c in capabilities() {
+        let Some(help) = help_for(c.command) else {
+            invented.push(format!("{}: command path not resolvable", c.id));
+            continue;
+        };
+        let usage: String = help
+            .lines()
+            .skip_while(|l| !l.trim_start().starts_with("Usage:"))
+            .take_while(|l| !l.trim().is_empty())
+            .collect::<Vec<_>>()
+            .join(" ");
+        let cli_has_positional = usage
+            .split_whitespace()
+            .any(|tok| tok.starts_with('<') && tok.ends_with('>'));
+
+        let registry_required_positional = c
+            .required_args
+            .iter()
+            .filter_map(|arg| arg.split_whitespace().next())
+            .any(|tok| tok.starts_with('<') && tok.ends_with('>'));
+
+        if registry_required_positional && !cli_has_positional {
+            invented.push(format!(
+                "{}: registry requires a positional, but `{} --help` usage shows none",
+                c.id,
+                c.argv()
+            ));
+        }
+    }
+    assert!(
+        invented.is_empty(),
+        "registry invents required positionals the CLI rejects ({} entries):\n{}",
+        invented.len(),
+        invented.join("\n")
+    );
+}
+
 #[test]
 fn json_format_claims_match_the_real_cli() {
     let mut mismatches = Vec::new();
