@@ -153,7 +153,13 @@ sdkt
 ├── wasm
 │   ├── inspect <file.wasm>  Offline inspection of a local WASM file (sections, exports, spec)
 │   ├── metadata --contract <contract>  [--network testnet] [--refresh] [--format]
-│   └── cache                 (info | remove | clear)
+│   └── cache                 (info | list | remove | clear)
+│       `list` enumerates every cached entry for the selected `--network`:
+│       hash/key, WASM size, and metadata size where present, sorted by hash.
+│       `--format json` emits a structured array of entries. An empty or
+│       absent cache directory yields an empty result (not an error), and a
+│       malformed `{hash}.json` produces a warning for that entry while the
+│       listing still completes.
 │
 ├── verify --contract <contract-id>
 │   ├── --wasm <file.wasm>    (local artifact to compare; offline hashed)

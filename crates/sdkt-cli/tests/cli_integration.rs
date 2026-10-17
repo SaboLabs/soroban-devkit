@@ -378,6 +378,102 @@ fn lock_verify_detects_drift() {
 }
 
 #[test]
+fn wasm_cache_list_empty_is_valid_json_array() {
+    let dir = std::env::temp_dir().join(format!("sdkt-it-cache-empty-{}", unique_suffix()));
+    let _ = std::fs::create_dir_all(&dir);
+    let _guard = {
+        struct G(std::path::PathBuf);
+        impl Drop for G {
+            fn drop(&mut self) {
+                let _ = std::fs::remove_dir_all(&self.0);
+            }
+        }
+        G(dir.clone())
+    };
+
+    Command::cargo_bin("sdkt")
+        .expect("sdkt binary built")
+        .env("SDKT_CACHE_DIR", &dir)
+        .args(["wasm", "cache", "list", "--network", "testnet", "--format", "json"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("[]"));
+}
+
+#[test]
+fn wasm_cache_list_populated_reports_entries() {
+    let dir = std::env::temp_dir().join(format!("sdkt-it-cache-pop-{}", unique_suffix()));
+    let _ = std::fs::create_dir_all(&dir);
+    let _guard = {
+        struct G(std::path::PathBuf);
+        impl Drop for G {
+            fn drop(&mut self) {
+                let _ = std::fs::remove_dir_all(&self.0);
+            }
+        }
+        G(dir.clone())
+    };
+
+    let net_dir = dir.join("testnet");
+    std::fs::create_dir_all(&net_dir).unwrap();
+    let hash_a = "551c5a9c7fd4c4a71e57e9c8a0ece1e7bd506ea065993c63db2dc35516406775";
+    let hash_b = "aa11bb22cc33dd44ee55ff6600112233445566778899aabbccddeeff00112233";
+    std::fs::write(net_dir.join(format!("{}.wasm", hash_a)), vec![0u8; 530]).unwrap();
+    std::fs::write(
+        net_dir.join(format!("{}.json", hash_a)),
+        br#"{"name":"token"}"#,
+    )
+    .unwrap();
+    std::fs::write(net_dir.join(format!("{}.wasm", hash_b)), vec![0u8; 100]).unwrap();
+
+    let out = Command::cargo_bin("sdkt")
+        .expect("sdkt binary built")
+        .env("SDKT_CACHE_DIR", &dir)
+        .args(["wasm", "cache", "list", "--network", "testnet", "--format", "json"])
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+    let text = String::from_utf8_lossy(&out);
+    assert!(text.contains(hash_a), "missing hash_a in: {}", text);
+    assert!(text.contains(hash_b), "missing hash_b in: {}", text);
+    // Deterministic ordering: hash_a sorts before hash_b.
+    let pos_a = text.find(hash_a).unwrap();
+    let pos_b = text.find(hash_b).unwrap();
+    assert!(pos_a < pos_b, "entries not sorted by hash: {}", text);
+}
+
+#[test]
+fn wasm_cache_list_malformed_metadata_warns_but_completes() {
+    let dir = std::env::temp_dir().join(format!("sdkt-it-cache-bad-{}", unique_suffix()));
+    let _ = std::fs::create_dir_all(&dir);
+    let _guard = {
+        struct G(std::path::PathBuf);
+        impl Drop for G {
+            fn drop(&mut self) {
+                let _ = std::fs::remove_dir_all(&self.0);
+            }
+        }
+        G(dir.clone())
+    };
+
+    let net_dir = dir.join("testnet");
+    std::fs::create_dir_all(&net_dir).unwrap();
+    let hash = "bb11bb22cc33dd44ee55ff6600112233445566778899aabbccddeeff00112233";
+    std::fs::write(net_dir.join(format!("{}.wasm", hash)), vec![0u8; 64]).unwrap();
+    std::fs::write(net_dir.join(format!("{}.json", hash)), b"not-json").unwrap();
+
+    Command::cargo_bin("sdkt")
+        .expect("sdkt binary built")
+        .env("SDKT_CACHE_DIR", &dir)
+        .args(["wasm", "cache", "list", "--network", "testnet"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains(hash));
+}
+
+#[test]
 fn lock_verify_without_lock_is_non_fatal() {
     let tmp = std::env::temp_dir().join(format!(
         "sdkt-it-lock-none-{}",
