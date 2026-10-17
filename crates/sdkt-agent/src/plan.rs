@@ -206,6 +206,45 @@ const PLANNER_MANAGED_FLAGS: &[&str] = &[
     "--rpc",
 ];
 
+/// Registry-declared flags the CLI accepts **without a value** (clap
+/// switches). A flag in this list is emitted bare instead of hitting the
+/// value gate, and must still be declared by the registry for the
+/// capability — a flag it does not declare keeps refusing with
+/// `unsupported_argument`.
+///
+/// The registry writes its argument lists as prose (`--refresh`,
+/// `--rpc-url`), so a missing `<value>` placeholder cannot by itself mean
+/// "valueless": several value-taking flags are declared without one
+/// (`--rpc-url`, `--network-passphrase`, `--disable`, `--rules`). The list
+/// is therefore explicit, verified against the CLI definitions, and
+/// deliberately conservative: a declared flag *not* listed here keeps the
+/// value gate, so a value nobody supplied is still refused rather than
+/// emitted bare for the CLI to reject with a usage error.
+const VALUELESS_FLAGS: &[&str] = &[
+    "--refresh",          // wasm metadata
+    "--no-plugins",       // audit
+    "--upgrade-safety",   // diff, verify
+    "--all",              // plugin doctor
+    "--json",             // doctor
+    "--list-rules",       // audit
+    "--dry-run",          // package update/publish, deploy
+    "--minimal",          // init
+    "--force",            // init, plugin install
+    "--skip-unsupported", // generate client
+    "--check",            // package update
+    "--deny-breaking",    // deploy
+    "--build-only",       // invoke
+    "--no-wait",          // invoke
+];
+
+/// Whether the CLI accepts this flag with no value.
+///
+/// Used by the parser as well, so a valueless flag never swallows the word
+/// or path that follows it (`audit --no-plugins src/lib.rs`).
+pub(crate) fn is_valueless_flag(flag: &str) -> bool {
+    VALUELESS_FLAGS.contains(&flag)
+}
+
 /// Number of artifact paths the capability can accept, derived from the
 /// registry argument lists rather than a hand-maintained capability table.
 fn artifact_capacity(cap: &Capability) -> usize {
@@ -304,8 +343,9 @@ fn build_argv(cap: &Capability, args: &intent::IntentArgs) -> Result<Vec<String>
     let mut argv: Vec<String> = cap.command.iter().map(|s| (*s).to_string()).collect();
 
     // Flags the registry declares for this capability but the planner does
-    // not map itself (`--audit <path>`, `--max-size-bytes <N>`, `--key-xdr`):
+    // not map itself (`--audit <path>`, `--max-size-bytes <N>`, `--refresh`):
     // passed through verbatim, with the value the request supplied. A
+    // declared flag that the CLI accepts valueless is emitted bare; a
     // declared flag with no value is refused rather than emitted bare, which
     // the CLI would answer with a usage error.
     for (flag, value) in &args.explicit_flags {
@@ -314,6 +354,19 @@ fn build_argv(cap: &Capability, args: &intent::IntentArgs) -> Result<Vec<String>
         }
         if !declares_arg(cap, flag) {
             continue; // refused by the gate above; unreachable here
+        }
+        if is_valueless_flag(flag) {
+            // A value spelled onto a switch (`--refresh=always`) cannot be
+            // honoured: emitting it would build a line the CLI rejects, and
+            // dropping it would change the request. Refuse, never drop.
+            if value.is_some() {
+                return Err(PlanError::Parse(ParseError::UnsupportedArgument {
+                    capability_id: cap.id,
+                    arguments: format!("{flag} (it takes no value)"),
+                }));
+            }
+            argv.push(flag.clone());
+            continue;
         }
         match value {
             Some(v) => {
@@ -879,6 +932,140 @@ mod tests {
         // Release assurance with three artifacts: two roles, one leftover.
         let e = plan_err("release assurance for candidate a.wasm previous b.wasm extra c.wasm");
         assert_eq!(e.code(), "unsupported_argument", "{e:?}");
+    }
+
+    // ------------------------------------------------------------ #324 ----
+
+    #[test]
+    fn refresh_reaches_argv_without_a_value() {
+        // Regression: the valueless `--refresh` hit the value gate and the
+        // request refused with missing_argument although the CLI accepts it.
+        let p = plan_ok(&format!("wasm metadata {CID} --refresh"));
+        assert_eq!(p.capability_id, "wasm.metadata");
+        assert!(
+            p.argv.iter().any(|a| a == "--refresh"),
+            "--refresh must survive planning: {:?}",
+            p.argv
+        );
+        // Emitted bare: the token after it is another flag, never a value.
+        let i = p.argv.iter().position(|a| a == "--refresh").unwrap();
+        assert!(
+            p.argv.get(i + 1).is_none_or(|a| a.starts_with("--")),
+            "--refresh must not invent a value: {:?}",
+            p.argv
+        );
+    }
+
+    #[test]
+    fn no_plugins_reaches_argv_without_swallowing_the_path() {
+        let p = plan_ok("audit --no-plugins src/lib.rs");
+        assert_eq!(p.capability_id, "audit");
+        assert_eq!(
+            p.argv,
+            vec!["audit", "--no-plugins", "src/lib.rs", "--format", "json"]
+        );
+    }
+
+    #[test]
+    fn plugin_doctor_all_reaches_argv() {
+        // `--all` is declared only for `plugin.doctor`; the bare `doctor`
+        // capability must not claim the request.
+        let p = plan_ok("plugin doctor --all");
+        assert_eq!(p.capability_id, "plugin.doctor");
+        assert_eq!(&p.argv[..3], &["plugin", "doctor", "--all"], "{:?}", p.argv);
+        assert_eq!(
+            p.argv.iter().filter(|a| a.as_str() == "--all").count(),
+            1,
+            "{:?}",
+            p.argv
+        );
+    }
+
+    #[test]
+    fn upgrade_safety_flag_reaches_argv_on_diff() {
+        // `diff` declares `--upgrade-safety` as a switch (the dedicated
+        // `diff.upgrade_safety` capability bakes it into its command).
+        let p = plan_ok("diff --old-wasm old.wasm --new-wasm new.wasm --upgrade-safety");
+        assert_eq!(p.capability_id, "diff");
+        assert!(
+            p.argv.iter().any(|a| a == "--upgrade-safety"),
+            "{:?}",
+            p.argv
+        );
+        let i = p.argv.iter().position(|a| a == "--upgrade-safety").unwrap();
+        assert!(
+            p.argv.get(i + 1).is_none_or(|a| a.starts_with("--")),
+            "--upgrade-safety must not invent a value: {:?}",
+            p.argv
+        );
+    }
+
+    #[test]
+    fn upgrade_safety_flag_reaches_argv_on_verify() {
+        let p = plan_ok(&format!(
+            "verify contract {CID} against new.wasm --upgrade-safety"
+        ));
+        assert_eq!(p.capability_id, "verify");
+        assert!(
+            p.argv.iter().any(|a| a == "--upgrade-safety"),
+            "{:?}",
+            p.argv
+        );
+    }
+
+    #[test]
+    fn valueless_flag_with_a_spelled_value_is_refused_not_truncated() {
+        // `--refresh=always` cannot be honoured: the switch takes no value,
+        // and dropping the word would change the request.
+        let e = plan_err(&format!("wasm metadata {CID} --refresh=always"));
+        assert_eq!(e.code(), "unsupported_argument", "{e:?}");
+        match e {
+            PlanError::Parse(ParseError::UnsupportedArgument { arguments, .. }) => {
+                assert!(arguments.contains("--refresh"), "{arguments}")
+            }
+            other => panic!("expected UnsupportedArgument, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn value_taking_declared_flag_without_a_value_is_still_refused() {
+        // The valueless pass-through must not weaken the value gate for
+        // flags that do carry one: `--max-size-bytes` is declared for `diff`.
+        let e = plan_err("diff --old-wasm old.wasm --new-wasm new.wasm --max-size-bytes");
+        assert_eq!(e.code(), "missing_argument", "{e:?}");
+        match e {
+            PlanError::Parse(ParseError::MissingArgument { argument, .. }) => {
+                assert!(argument.contains("--max-size-bytes"), "{argument}")
+            }
+            other => panic!("expected MissingArgument, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn undeclared_valueless_flag_is_still_refused() {
+        // `--all` is not declared for `doctor`, and this list is not a
+        // wildcard: only the capability that declares the flag takes it.
+        let e = plan_err("run doctor --all");
+        assert_eq!(e.code(), "unsupported_argument", "{e:?}");
+    }
+
+    #[test]
+    fn request_without_flags_produces_todays_argv() {
+        let p = plan_ok(&format!("check health of contract {CID} on testnet"));
+        assert_eq!(
+            p.argv,
+            vec![
+                "health",
+                "--contract",
+                CID,
+                "--rpc-url",
+                TESTNET_RPC,
+                "--network-passphrase",
+                TESTNET_PASSPHRASE,
+                "--format",
+                "json",
+            ]
+        );
     }
 
     #[test]

@@ -117,6 +117,7 @@ instead of calling the request "unrecognised".
 | Read-only calls | `call` | contract + function; typed args passed through |
 | Network & project | `network.list`, `network.check`, `project.status` | profile/endpoint rules below |
 | Fee & transactions | `fee.estimate`, `tx.simulate` | source/envelope required |
+| Diagnostics | `doctor`, `plugin.doctor` | environment; `plugin doctor` supports `--all` |
 | Diagnostics | `doctor`, `plugin.doctor` | environment (`doctor`) and plugin self-check (`plugin.doctor`) |
 
 **Intentionally unreachable from prose (read-only and local-write)**
@@ -147,6 +148,9 @@ These capabilities exist in the registry and are runnable directly through `sdkt
 Requests that are recognised but under-specified return
 `needs_clarification` rather than running a partial command. Registry-only
 capabilities that the parser cannot map from prose (for example `network.add`,
+`package.*`, most of `plugin.*`, `identity.generate`) are simply not reachable
+and report `unrecognised_request`; use `sdkt` directly for those. The
+authoritative surface is the registry itself — see
 `package.*`, `plugin.list`, `plugin.verify_bundle`, `plugin.install`, `identity.generate`, or any listed in the intentionally unreachable set above) are simply not reachable from natural language and
 report `unrecognised_request` (or `needs_clarification` / `missing_argument` if matching generic keywords such as `verify` or `audit`); use `sdkt` directly for those. The authoritative
 surface is the registry itself — see
@@ -175,6 +179,41 @@ The same principle covers unsupported arguments: a flag the selected
 capability cannot express (or more artifact paths than it accepts) refuses the
 whole request instead of being dropped, so a partial request can never run and
 report success as if it were complete.
+
+### Valueless flags
+
+Flags the CLI accepts as switches are passed through **without a value**, as
+long as the registry declares them for the selected capability:
+
+| Capability | Pass-through switch |
+|------------|---------------------|
+| `wasm.metadata` | `--refresh` |
+| `audit` | `--no-plugins`, `--list-rules` |
+| `diff`, `verify` | `--upgrade-safety` |
+| `plugin.doctor` | `--all` |
+| `doctor` | `--json` |
+
+```bash
+sdkt-agent "wasm metadata CDO5TKQUEGINSQMX4NE62AGR2FSANGTOVV5Z77AQHQBFT5VGV4DUTAX3 --refresh"
+#   → sdkt wasm metadata --contract C… --refresh --rpc-url … --format json
+
+sdkt-agent "plugin doctor --all"
+#   → sdkt plugin doctor --all --format json
+```
+
+The list is explicit (`VALUELESS_FLAGS` in the planner) and conservative, not
+derived from the registry's prose: registry entries write value-taking flags
+without a `<value>` placeholder too (`--rpc-url`, `--network-passphrase`,
+`--disable`), so a missing placeholder cannot identify a switch. A declared
+flag outside that list still needs a value and is refused with
+`missing_argument` when none is supplied; an undeclared flag still refuses
+with `unsupported_argument`. Spelling a value onto a switch
+(`--refresh=always`) is refused rather than truncated — the agent never drops
+part of a request.
+
+A valueless flag never swallows the word after it, so
+`audit --no-plugins src/lib.rs` analyses `src/lib.rs` rather than reading the
+path as the flag's value.
 
 ***
 

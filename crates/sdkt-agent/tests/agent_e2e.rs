@@ -660,6 +660,96 @@ fn unsupported_argument_is_refused_and_never_executed() {
     }
 }
 
+// ---------------------------------------------------------------- #324 ---
+#[test]
+fn registry_declared_valueless_flags_reach_the_cli() {
+    // Regression: `--refresh`, `--no-plugins`, `--all` and `--upgrade-safety`
+    // were declared by the registry and accepted by the CLI, but the planner
+    // demanded a value and refused the request with missing_argument.
+    let tmp = tempfile::tempdir().unwrap();
+    // Echo the argv so the test proves what the child process received.
+    let fx = FakeCli {
+        echo_args: true,
+        ..FakeCli::ok()
+    }
+    .write(tmp.path());
+
+    for (request, capability, flag) in [
+        (
+            format!("wasm metadata {CID} --refresh"),
+            "wasm.metadata",
+            "--refresh",
+        ),
+        (
+            "audit src/lib.rs --no-plugins".to_string(),
+            "audit",
+            "--no-plugins",
+        ),
+        ("plugin doctor --all".to_string(), "plugin.doctor", "--all"),
+        (
+            "diff --old-wasm old.wasm --new-wasm new.wasm --upgrade-safety".to_string(),
+            "diff",
+            "--upgrade-safety",
+        ),
+        (
+            format!("verify contract {CID} against new.wasm --upgrade-safety"),
+            "verify",
+            "--upgrade-safety",
+        ),
+    ] {
+        let out = agent(&fx, &request, true);
+        let v = parse_json(&out);
+        assert_eq!(v["status"], "success", "{request:?}: {v}");
+        assert_eq!(v["capability_id"], capability, "{request:?}");
+
+        let argv: Vec<&str> = v["argv"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|a| a.as_str().unwrap())
+            .collect();
+        assert!(
+            argv.contains(&flag),
+            "{request:?}: {flag} missing from planned argv {argv:?}"
+        );
+        assert_eq!(
+            argv.iter().filter(|a| **a == flag).count(),
+            1,
+            "{request:?}: {flag} must be emitted once, argv {argv:?}"
+        );
+
+        // The executor ran that exact argv: the fake CLI echoes it back.
+        let echoed = v["stdout_text"].as_str().unwrap_or_default();
+        assert!(
+            echoed.split('|').any(|a| a == flag),
+            "{request:?}: the CLI did not receive {flag}, it saw {echoed:?}"
+        );
+    }
+}
+
+#[test]
+fn value_taking_flag_without_a_value_is_still_refused_e2e() {
+    let tmp = tempfile::tempdir().unwrap();
+    let marker = tmp.path().join("ran");
+    let fx = FakeCli {
+        stdout: "{}\n".into(),
+        marker: Some(marker.clone()),
+        ..FakeCli::ok()
+    }
+    .write(tmp.path());
+
+    let out = agent(
+        &fx,
+        "diff --old-wasm old.wasm --new-wasm new.wasm --max-size-bytes",
+        true,
+    );
+    let v = parse_json(&out);
+    assert_eq!(v["status"], "needs_clarification");
+    assert_eq!(v["error_code"], "missing_argument");
+    assert!(v["argv"].as_array().unwrap().is_empty());
+    assert!(!marker.exists(), "nothing may be executed");
+}
+
 #[test]
 fn help_and_version_work() {
     Command::cargo_bin("sdkt-agent")
