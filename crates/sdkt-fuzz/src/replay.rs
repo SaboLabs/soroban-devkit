@@ -32,6 +32,21 @@ use crate::observation::Observation;
 use crate::oracle::{Classification, Oracle, ReasonCode};
 use crate::sequence::execute_sequence_auth;
 
+/// Whether a [`ReplayError`] is a command-line usage error (exit `2`) or an
+/// input/runtime failure (exit `1`).
+///
+/// The CLI-wide convention (`crates/sdkt-core/src/registry.rs`) reserves exit
+/// `2` for malformed invocations. Every [`ReplayError`] variant here arises
+/// from a well-formed invocation whose input was unreadable, malformed,
+/// unsupported, or whose WASM did not match — so all of them are runtime
+/// failures, never usage errors.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ReplayErrorClass {
+    /// The invocation was well-formed; the failure is environmental or
+    /// data-dependent. Maps to exit `1`.
+    Runtime,
+}
+
 /// Replay could not be carried out — invalid input, never a finding.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum ReplayError {
@@ -47,6 +62,19 @@ pub enum ReplayError {
     WasmHashMismatch { expected: String, actual: String },
     #[error("execution could not be performed: {0}")]
     Execution(String),
+}
+
+impl ReplayError {
+    /// Classify this error for the CLI exit-code mapping.
+    ///
+    /// Every variant is a runtime/input failure: the command line was
+    /// well-formed and the failure came from the artifact or WASM. Genuine
+    /// usage errors (unknown flag, bad `--format`) are rejected by the
+    /// argument parser before replay is ever reached and never surface as a
+    /// [`ReplayError`].
+    pub fn class(&self) -> ReplayErrorClass {
+        ReplayErrorClass::Runtime
+    }
 }
 
 /// Replay verdict for a well-formed artifact against a matching WASM.

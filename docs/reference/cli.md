@@ -2,6 +2,8 @@
 
 The `sdkt-cli` crate uses `clap` (derive API) for command routing. Every command returns `Result<(), Box<dyn std::error::Error>>`; library errors (`RpcError`, `DecodeError`, `WasmError`) bubble up and are printed via `eprintln!` with a non-zero exit.
 
+Exit codes follow a CLI-wide convention: `0` success, `1` runtime/verdict failure, `2` usage error. A well-formed invocation that fails for environmental or data-dependent reasons (unreadable file, malformed input, unsupported schema, hash mismatch) exits `1`; only a genuine command-line usage error (unknown flag, invalid flag value) exits `2`.
+
 ## Command Tree
 
 ```text
@@ -915,8 +917,20 @@ names the conflicting function. A single valid declaration keeps its existing
 campaign behavior. Malformed `--expect-error` declarations also remain usage
 errors.
 
+`sdkt fuzz replay` verifies that a recorded finding artifact still reproduces
+against its WASM. Its exit codes are: `0` when the finding is `REPRODUCED`,
+`1` when the verdict is `MISMATCH` or when the input/runtime fails (missing or
+malformed artifact, unsupported `schema_version`, unknown `reason_code`, WASM
+hash mismatch), and `2` only for a genuine command-line usage error. The error
+messages are unchanged.
+
 ## Error Handling
 
 1. All subcommands return `Result<(), Box<dyn std::error::Error>>`.
 2. Library-level errors (`RpcError`, `DecodeError`, `WasmError`) are bubbled up to the CLI.
 3. The CLI uses `eprintln!` to print human-readable errors and exits non-zero on fatal errors to ensure correct bash piping behavior.
+
+Exit codes are part of the CLI contract: `0` success, `1` runtime/verdict
+failure, `2` usage error. Callers branch on the exit code without parsing
+output, so a well-formed invocation that fails on its input or environment
+must not be reported as a usage error.
