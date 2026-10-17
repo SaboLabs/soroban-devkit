@@ -4296,17 +4296,46 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
                         println!();
                         println!("Extension Plan");
                         println!("  Contract:            {}", plan.contract_id);
+                        let mixed =
+                            !plan.unverified_keys.is_empty() || !plan.expired_keys.is_empty();
                         if plan.keys.is_empty() {
                             println!("  Keys:                (none — nothing to remediate)");
-                        } else {
+                        } else if !mixed {
                             println!("  Keys ({}):", plan.keys.len());
                             for (i, k) in plan.keys.iter().enumerate() {
                                 println!("    #{} {}", i + 1, k);
                             }
+                        } else {
+                            if !plan.extend_keys.is_empty() {
+                                println!("  Extend keys ({}):", plan.extend_keys.len());
+                                for (i, k) in plan.extend_keys.iter().enumerate() {
+                                    println!("    #{} {}", i + 1, k);
+                                }
+                            }
+                            if !plan.unverified_keys.is_empty() {
+                                println!(
+                                    "  Removed, restore unverified ({}):",
+                                    plan.unverified_keys.len()
+                                );
+                                for (i, k) in plan.unverified_keys.iter().enumerate() {
+                                    println!("    #{} {}", i + 1, k);
+                                }
+                            }
+                            if !plan.expired_keys.is_empty() {
+                                println!(
+                                    "  Expired temporary, not restorable ({}):",
+                                    plan.expired_keys.len()
+                                );
+                                for (i, k) in plan.expired_keys.iter().enumerate() {
+                                    println!("    #{} {}", i + 1, k);
+                                }
+                            }
                         }
-                        println!("  Suggested --ledgers: {}", plan.suggested_ledgers);
+                        if !mixed || !plan.extend_keys.is_empty() {
+                            println!("  Suggested --ledgers: {}", plan.suggested_ledgers);
+                        }
                         println!("  Reason:              {}", plan.suggested_ledgers_reason);
-                        if !plan.keys.is_empty() {
+                        if !plan.extend_keys.is_empty() {
                             println!();
                             println!("  Ready-to-run:");
                             let mut net_args = String::new();
@@ -4325,7 +4354,7 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
                             }
 
                             let key_args: String = plan
-                                .keys
+                                .extend_keys
                                 .iter()
                                 .map(|k| format!(" --key {}", shell_quote(k)))
                                 .collect::<Vec<_>>()
@@ -4337,6 +4366,33 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
                                 net_args,
                                 key_args
                             );
+                        }
+                        if mixed {
+                            println!();
+                            println!("  Removed entries (not extendable):");
+                            println!(
+                                "    A snapshot diff cannot show whether a removed entry was archived,"
+                            );
+                            println!(
+                                "    omitted from the new analysis, or deleted; a TTL extension cannot revive it."
+                            );
+                            if !plan.unverified_keys.is_empty() {
+                                println!(
+                                    "    Confirm archival first (e.g. simulate the failing invocation and look for a"
+                                );
+                                println!(
+                                    "    restore preamble); only then run, with the envelope that failed:"
+                                );
+                                println!(
+                                    "      sdkt storage restore --contract {} --envelope <envelope>",
+                                    shell_quote(&plan.contract_id)
+                                );
+                            }
+                            if !plan.expired_keys.is_empty() {
+                                println!(
+                                    "    Expired temporary entries are deleted, not archived; restore does not apply."
+                                );
+                            }
                         }
                     }
                 } else if fmt == OutputFormat::Json {
