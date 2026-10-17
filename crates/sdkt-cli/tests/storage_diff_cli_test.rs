@@ -354,8 +354,27 @@ fn extend_plan_mixed_separates_classes() {
 #[test]
 fn extend_plan_expiring_only_output_is_unchanged() {
     let out = run_extend_plan(&[("keyA==", 50_000)], &[("keyA==", 3_000)]);
-    assert!(out.contains("  Keys (1):\n    #1 keyA==\n"), "{out}");
-    assert!(out.contains("Ready-to-run:"), "{out}");
-    assert!(!out.contains("restore"), "{out}");
-    assert!(!out.contains("Restore"), "{out}");
+    // Byte-for-byte the output `main` produces for this input: the
+    // extend/restore split must not touch the expiring-only plan.
+    let expected = format!(
+        "\
+Storage Diff for Contract: {CONTRACT}
+Total entries: 1
+  Removed:       0 | Expiring Soon: 1 | Unchanged: 0
+
+Expiring soon (1):
+  [expiring] key=keyA== (ttl=3000)
+
+Extension Plan
+  Contract:            {CONTRACT}
+  Keys (1):
+    #1 keyA==
+  Suggested --ledgers: 521400
+  Reason:              Minimum remaining TTL of expiring entries is 3000 ledgers; suggested 521400 (min_ttl + 518400 default horizon).
+
+  Ready-to-run:
+    sdkt storage extend --contract '{CONTRACT}' --ledgers 521400 --key 'keyA=='
+"
+    );
+    assert_eq!(out, expected);
 }
