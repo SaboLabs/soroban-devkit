@@ -161,3 +161,64 @@ jobs:
             exit 1
           fi
           echo "OK: a CLI error with no JSON report still failed the step."
+
+      # Audit gate — positive: a finding at or above the threshold must fail.
+      # The Action forwards --fail-on to the CLI, so the exit code alone gates
+      # the step; no jq parsing is involved.
+      - name: Audit should FAIL on a finding at/above threshold
+        id: audit_gated
+        continue-on-error: true
+        uses: ./.github/actions/sdkt
+        with:
+          command: audit
+          target: crates/sdkt-cli/tests/fixtures/us_new.wasm
+          severity-threshold: critical
+
+      - name: Assert audit gate failed on a finding
+        shell: bash
+        run: |
+          if [ "${{ steps.audit_gated.outcome }}" != "failure" ]; then
+            echo "::error::expected audit to FAIL with --fail-on critical on a finding, but outcome was '${{ steps.audit_gated.outcome }}' — the Action may not be forwarding severity-threshold"
+            exit 1
+          fi
+          echo "OK: audit gate failed on a finding at/above the threshold."
+
+      # Audit gate — negative: a clean run must pass. severity-threshold: info
+      # is the strictest level, so a clean artifact is the discriminating case.
+      - name: Audit should PASS on a clean run
+        id: audit_clean
+        uses: ./.github/actions/sdkt
+        with:
+          command: audit
+          target: crates/sdkt-cli/tests/fixtures/us_old.wasm
+          severity-threshold: info
+
+      - name: Assert audit gate passed on a clean run
+        shell: bash
+        run: |
+          if [ "${{ steps.audit_clean.outcome }}" != "success" ]; then
+            echo "::error::expected audit to PASS with --fail-on info on a clean artifact, but outcome was '${{ steps.audit_clean.outcome }}'"
+            exit 1
+          fi
+          echo "OK: audit gate passed on a clean run."
+
+      # Audit gate — invalid level: the CLI rejects an unknown --fail-on value
+      # with a usage error (exit 2), which the Action surfaces as a step
+      # failure. This replaces the old shell ::error guard.
+      - name: Audit should FAIL on an invalid severity-threshold
+        id: audit_invalid
+        continue-on-error: true
+        uses: ./.github/actions/sdkt
+        with:
+          command: audit
+          target: crates/sdkt-cli/tests/fixtures/us_new.wasm
+          severity-threshold: bogus
+
+      - name: Assert invalid severity-threshold failed
+        shell: bash
+        run: |
+          if [ "${{ steps.audit_invalid.outcome }}" != "failure" ]; then
+            echo "::error::expected audit to FAIL on an invalid severity-threshold, but outcome was '${{ steps.audit_invalid.outcome }}'"
+            exit 1
+          fi
+          echo "OK: invalid severity-threshold produced a clear error."
