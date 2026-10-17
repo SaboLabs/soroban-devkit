@@ -19,9 +19,43 @@ fn test_cli_wasm_cache_info_json() {
         .arg("--format")
         .arg("json")
         .assert();
-    assert
-        .success()
-        .stdout(predicates::str::contains("\"network\":\"testnet\""));
+    let output = assert.success().get_output().stdout.clone();
+    let stdout = String::from_utf8(output).expect("valid utf-8 output");
+    let val: serde_json::Value =
+        serde_json::from_str(&stdout).unwrap_or_else(|e| panic!("invalid JSON ({e}): {stdout}"));
+
+    assert_eq!(val["network"], "testnet");
+    assert!(val["entry_count"].is_number());
+    assert!(val["total_metadata_size_bytes"].is_number());
+    assert!(val["total_wasm_size_bytes"].is_number());
+
+    // Matches the existing stable byte format
+    let expected = format!(
+        "{{\"network\":\"testnet\",\"entry_count\":{},\"total_metadata_size_bytes\":{},\"total_wasm_size_bytes\":{}}}",
+        val["entry_count"], val["total_metadata_size_bytes"], val["total_wasm_size_bytes"]
+    );
+    assert_eq!(stdout.trim_end(), expected);
+}
+
+#[test]
+fn test_cli_wasm_cache_info_json_escaped_network_names() {
+    // Quotes in network name: valid path component containing JSON-special characters
+    let mut cmd_quote = Command::cargo_bin("sdkt").unwrap();
+    let assert_quote = cmd_quote
+        .arg("wasm")
+        .arg("cache")
+        .arg("info")
+        .arg("--format")
+        .arg("json")
+        .arg("--network")
+        .arg("a\"b")
+        .assert();
+    let stdout_quote =
+        String::from_utf8(assert_quote.success().get_output().stdout.clone()).unwrap();
+    let val_quote: serde_json::Value = serde_json::from_str(&stdout_quote)
+        .unwrap_or_else(|e| panic!("invalid JSON with quotes ({e}): {stdout_quote}"));
+    assert_eq!(val_quote["network"], "a\"b");
+    assert!(stdout_quote.contains(r#""network":"a\"b""#));
 }
 
 #[test]

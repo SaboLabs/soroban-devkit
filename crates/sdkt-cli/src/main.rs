@@ -7276,15 +7276,27 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
                         match cache.cache_info(&network) {
                             Ok(info) => {
                                 if fmt == OutputFormat::Json {
-                                    // In a real app we'd derive Serialize for CacheInfo,
-                                    // but we can manually output JSON here or derive it in sdkt-storage
-                                    println!(
-                                        "{{\"network\":\"{}\",\"entry_count\":{},\"total_metadata_size_bytes\":{},\"total_wasm_size_bytes\":{}}}",
-                                        info.network,
-                                        info.entry_count,
-                                        info.total_metadata_size_bytes,
-                                        info.total_wasm_size_bytes
-                                    );
+                                    // Serialize through serde_json rather than a
+                                    // hand-rolled format string so user-supplied
+                                    // network names (which may contain quotes,
+                                    // backslashes, or control characters) are
+                                    // escaped correctly. A small serializable
+                                    // struct keeps the field order stable.
+                                    #[derive(serde::Serialize)]
+                                    struct CacheInfoJson<'a> {
+                                        network: &'a str,
+                                        entry_count: usize,
+                                        total_metadata_size_bytes: u64,
+                                        total_wasm_size_bytes: u64,
+                                    }
+
+                                    let payload = CacheInfoJson {
+                                        network: &info.network,
+                                        entry_count: info.entry_count,
+                                        total_metadata_size_bytes: info.total_metadata_size_bytes,
+                                        total_wasm_size_bytes: info.total_wasm_size_bytes,
+                                    };
+                                    println!("{}", serde_json::to_string(&payload)?);
                                 } else {
                                     println!("Cache Info for Network '{}':", info.network);
                                     println!("Entries: {}", info.entry_count);
