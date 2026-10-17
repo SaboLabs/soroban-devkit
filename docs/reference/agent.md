@@ -121,7 +121,7 @@ instead of calling the request "unrecognised".
 
 **Intentionally unreachable from prose (read-only and local-write)**
 
-These capabilities exist in the registry and are runnable directly through `sdkt`, but are intentionally excluded from the agent's natural-language prose surface because their inputs or semantics require explicit CLI control or programmatic workflow management. Requests attempting to invoke them report `unrecognised_request`:
+These capabilities exist in the registry and are runnable directly through `sdkt`, but are intentionally excluded from the agent's natural-language prose surface because their inputs or semantics require explicit CLI control or programmatic workflow management. Requests attempting to invoke them typically report `unrecognised_request` (or `needs_clarification` / `missing_argument` when the phrasing happens to trigger broader intent keywords like `verify` or `audit` without the required arguments):
 
 * `lock.verify`: lockfile verification is typically driven by build systems/CI rather than interactive natural language.
 * `lock.generate`: local-write lockfile generation requires an existing build and precise artifact tracking.
@@ -148,7 +148,7 @@ Requests that are recognised but under-specified return
 `needs_clarification` rather than running a partial command. Registry-only
 capabilities that the parser cannot map from prose (for example `network.add`,
 `package.*`, `plugin.list`, `plugin.verify_bundle`, `plugin.install`, `identity.generate`, or any listed in the intentionally unreachable set above) are simply not reachable from natural language and
-report `unrecognised_request`; use `sdkt` directly for those. The authoritative
+report `unrecognised_request` (or `needs_clarification` / `missing_argument` if matching generic keywords such as `verify` or `audit`); use `sdkt` directly for those. The authoritative
 surface is the registry itself — see
 [CLI Command Reference](cli.md) and the
 [command table](../../README.md#commands).
