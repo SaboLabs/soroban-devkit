@@ -159,10 +159,18 @@ sdkt
 │
 ├── audit [path.rs]
 │   ├── --list-rules          (list available audit rules and exit)
-│   ├── --format <json|pretty>
+│   ├── --format <json|pretty|sarif>
 │   ├── --disable <RULE_ID>   (repeatable)
 │   ├── --rules <PATH|ID>     (repeatable; compiled plugin artifact or installed plugin ID)
-│   └── --no-plugins          (skip loading installed plugins)
+│   ├── --no-plugins          (skip loading installed plugins)
+│   ├── --abi <WASM>          (spec-correlated analysis input from a local WASM)
+│   ├── --abi-contract <CONTRACT_ID>  (fetch the deployed contract's on-chain WASM as the ABI source)
+│   ├── --network-profile <NAME>      (network for --abi-contract)
+│   ├── --rpc-url <URL>       (network for --abi-contract)
+│   └── --network-passphrase <PASSPHRASE>  (network for --abi-contract)
+│
+│   `--format sarif` emits SARIF 2.1.0; `--list-rules` accepts only
+│   `pretty`/`json` and rejects `sarif`.
 ├── release-assurance
 │   ├── --wasm <WASM>         (candidate artifact; required)
 │   ├── --previous-wasm <WASM> (baseline for the offline upgrade diff)
