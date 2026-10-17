@@ -242,6 +242,10 @@ sdkt
 │   │                         path graph (no network/registry; git/* sources rejected)
 │   ├── fetch                 Fetch deps into `.sdkt-cache`: local path passthrough,
 │   │                         git clone/checkout. `--force` updates. Never builds.
+│   │                         `--format json` always prints a JSON object on
+│   │                         success, including when there are no dependencies:
+│   │                         `{"fetched": []}`. The pretty path prints
+│   │                         `No dependencies to fetch.` in that case.
 │   ├── update                Synchronize deps: refresh git deps to latest available
 │   │                         commit and rewrite `sdkt.lock`. `rev` pinned; `tag`/`branch`
 │   │                         update on drift. `--check` reports; `--dry-run` previews.
@@ -249,6 +253,16 @@ sdkt
 │   │                         manifest + lock + cached git checkouts. `--out`, `--format`.
 │   └── publish               Validate publish readiness (`--dry-run` only, read-only);
 │                             detects missing cache, lock drift, integrity mismatch.
+
+### Fetching dependencies
+
+`sdkt package fetch [--force] [--format pretty|json]` materializes `[dependencies]`
+into `.sdkt-cache`. With `--format json` stdout is always a single parseable JSON
+document: `{"fetched": [...]}` on success, where each entry describes a fetched
+dependency. On a project with no dependencies the document is `{"fetched": []}` and
+the exit code is 0, so a consumer can distinguish "nothing to fetch" from a failed
+invocation. The pretty output is unchanged and prints `No dependencies to fetch.`
+when the dependency list is empty.
 
 ### Synchronizing dependencies
 
