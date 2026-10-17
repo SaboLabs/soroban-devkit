@@ -476,7 +476,7 @@ require the local WASM bytes.
 │   │
 │   └── replay <artifact>     Replay a finding artifact to verify reproduction
 │       ├── --wasm <WASM>                 Path to the campaign WASM
-│       └── (exit code: 0 = REPRODUCED, 1 = runtime error, 2 = usage error)
+│       └── (exit code: 0 = REPRODUCED, 1 = MISMATCH, 2 = usage error)
 │
 ├── generate                  Generate typed clients and other artifacts
 │   └── client <wasm>         Generate typed Rust client from ContractSpec
