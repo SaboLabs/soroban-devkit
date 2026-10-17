@@ -2638,20 +2638,27 @@ fn print_diff_pretty(diff: &sdkt_storage::SnapshotDiff) {
     use sdkt_storage::DiffStatus;
 
     println!("Storage Diff for Contract: {}", diff.contract_id);
-    match (diff.old_ledger, diff.new_ledger, diff.ledger_delta) {
-        (Some(old_l), Some(new_l), Some(delta)) => {
-            println!(
-                "Capture context: old ledger {}, new ledger {} (ledger delta: {:+})",
-                old_l, new_l, delta
-            );
-            if let Some(ref net) = diff.network {
-                println!("Network:         {}", net);
-            }
+    if diff.capture_context.as_deref() == Some("unknown") {
+        println!("Capture context: unknown");
+        if let Some(ref net) = diff.network {
+            println!("Network:         {}", net);
         }
-        _ => {
-            println!("Capture context: unknown");
-            if let Some(ref net) = diff.network {
-                println!("Network:         {}", net);
+    } else {
+        match (diff.old_ledger, diff.new_ledger, diff.ledger_delta) {
+            (Some(old_l), Some(new_l), Some(delta)) => {
+                println!(
+                    "Capture context: old ledger {}, new ledger {} (ledger delta: {:+})",
+                    old_l, new_l, delta
+                );
+                if let Some(ref net) = diff.network {
+                    println!("Network:         {}", net);
+                }
+            }
+            _ => {
+                println!("Capture context: unknown");
+                if let Some(ref net) = diff.network {
+                    println!("Network:         {}", net);
+                }
             }
         }
     }
@@ -2710,7 +2717,7 @@ fn print_diff_pretty(diff: &sdkt_storage::SnapshotDiff) {
             );
         }
     }
-    if unchanged.iter().any(|e| e.label.is_some()) {
+    if !unchanged.is_empty() {
         println!("\nUnchanged entries ({}):", unchanged.len());
         for e in &unchanged {
             let norm_str = e

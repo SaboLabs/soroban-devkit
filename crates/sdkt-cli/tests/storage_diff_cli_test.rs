@@ -303,26 +303,25 @@ fn storage_diff_cli_alias_diff_works() {
 }
 
 #[test]
-fn storage_diff_cli_ledger_delta_normalized_in_json_and_no_false_expiring() {
+fn storage_diff_cli_ledger_delta_normalized_in_json_and_absolute_threshold_preserved() {
     let dir = tempdir().unwrap();
     let old_path = dir.path().join("old.json");
     let new_path = dir.path().join("new.json");
 
-    // Capture A at ledger 1,000,000 with TTL 18,000.
-    // Capture B at ledger 1,017,281 (delta 17,281) with TTL 719.
-    // Untouched on chain -> TTL dropped by exactly the delta.
+    // keyA: 50,000 -> 40,000 with delta 10,000 (new_ttl >= 17,280 -> unchanged)
+    // keyB: 18,000 -> 719 with delta 10,000 (new_ttl < 17,280 -> expiring_soon)
     create_snapshot_file_with_context(
         &old_path,
         CONTRACT,
-        &[("keyA==", 18_000)],
+        &[("keyA==", 50_000), ("keyB==", 18_000)],
         Some(1_000_000),
         Some("testnet"),
     );
     create_snapshot_file_with_context(
         &new_path,
         CONTRACT,
-        &[("keyA==", 719)],
-        Some(1_017_281),
+        &[("keyA==", 40_000), ("keyB==", 719)],
+        Some(1_010_000),
         Some("testnet"),
     );
 
@@ -337,17 +336,25 @@ fn storage_diff_cli_ledger_delta_normalized_in_json_and_no_false_expiring() {
     let val: serde_json::Value = serde_json::from_slice(&output).unwrap();
 
     assert_eq!(val["old_ledger"], 1_000_000);
-    assert_eq!(val["new_ledger"], 1_017_281);
-    assert_eq!(val["ledger_delta"], 17_281);
+    assert_eq!(val["new_ledger"], 1_010_000);
+    assert_eq!(val["ledger_delta"], 10_000);
     assert_eq!(val["network"], "testnet");
 
     let entries = val["entries"].as_array().unwrap();
-    assert_eq!(entries.len(), 1);
-    // Crucial requirement: time skew alone does NOT manufacture an ExpiringSoon classification.
-    assert_eq!(entries[0]["status"], "unchanged");
-    assert_eq!(entries[0]["old_ttl"], 18_000);
-    assert_eq!(entries[0]["new_ttl"], 719);
-    assert_eq!(entries[0]["normalized_old_ttl"], 719);
+    assert_eq!(entries.len(), 2);
+
+    let entry_a = entries.iter().find(|e| e["key"] == "keyA==").unwrap();
+    assert_eq!(entry_a["status"], "unchanged");
+    assert_eq!(entry_a["old_ttl"], 50_000);
+    assert_eq!(entry_a["new_ttl"], 40_000);
+    assert_eq!(entry_a["normalized_old_ttl"], 40_000);
+
+    let entry_b = entries.iter().find(|e| e["key"] == "keyB==").unwrap();
+    // Absolute threshold preserved: 719 < 17,280 must remain expiring_soon.
+    assert_eq!(entry_b["status"], "expiring_soon");
+    assert_eq!(entry_b["old_ttl"], 18_000);
+    assert_eq!(entry_b["new_ttl"], 719);
+    assert_eq!(entry_b["normalized_old_ttl"], 8_000);
 }
 
 #[test]
@@ -429,14 +436,14 @@ fn storage_diff_cli_pretty_output_displays_ledger_delta_and_network() {
     create_snapshot_file_with_context(
         &old_path,
         CONTRACT,
-        &[("keyA==", 18_000), ("keyB==", 50_000)],
+        &[("keyA==", 50_000), ("keyB==", 50_000)],
         Some(1_000_000),
         Some("testnet"),
     );
     create_snapshot_file_with_context(
         &new_path,
         CONTRACT,
-        &[("keyA==", 719), ("keyB==", 5_000)],
+        &[("keyA==", 32_719), ("keyB==", 5_000)],
         Some(1_017_281),
         Some("testnet"),
     );
@@ -457,6 +464,9 @@ fn storage_diff_cli_pretty_output_displays_ledger_delta_and_network() {
     assert!(stdout.contains("Removed:       0 | Expiring Soon: 1 | Unchanged: 1"));
     assert!(stdout.contains("[expiring] key=keyB=="));
     assert!(stdout.contains("normalized_old_ttl=32719"));
+    // Unlabeled unchanged entry is also printed
+    assert!(stdout.contains("Unchanged entries (1):"));
+    assert!(stdout.contains("[unchanged] key=keyA=="));
 }
 
 #[test]
@@ -480,6 +490,18 @@ fn storage_diff_cli_partial_context_missing_network_states_unknown() {
         None,
     );
 
+    // Pretty output must consistently state unknown capture context
+    let mut pretty_cmd = sdkt();
+    pretty_cmd
+        .args(["storage", "diff", "--old"])
+        .arg(&old_path)
+        .arg("--new")
+        .arg(&new_path);
+
+    let pretty_out = pretty_cmd.assert().success().get_output().stdout.clone();
+    let pretty_str = String::from_utf8(pretty_out).unwrap();
+    assert!(pretty_str.contains("Capture context: unknown"));
+
     let mut json_cmd = sdkt();
     json_cmd
         .args(["storage", "diff", "--old"])
@@ -492,4 +514,36 @@ fn storage_diff_cli_partial_context_missing_network_states_unknown() {
     let val: serde_json::Value = serde_json::from_slice(&json_out).unwrap();
     assert_eq!(val["capture_context"], "unknown");
     assert_eq!(val["ledger_delta"], 1_000);
+}
+
+#[test]
+fn storage_diff_cli_pretty_output_prints_unlabeled_unchanged_entries() {
+    let dir = tempdir().unwrap();
+    let old_path = dir.path().join("old.json");
+    let new_path = dir.path().join("new.json");
+
+    // Both entries have no labels and both remain unchanged (> 17,280)
+    create_snapshot_file(
+        &old_path,
+        CONTRACT,
+        &[("unlabeledKey1==", 50_000), ("unlabeledKey2==", 60_000)],
+    );
+    create_snapshot_file(
+        &new_path,
+        CONTRACT,
+        &[("unlabeledKey1==", 49_000), ("unlabeledKey2==", 59_000)],
+    );
+
+    let mut cmd = sdkt();
+    cmd.args(["storage", "diff", "--old"])
+        .arg(&old_path)
+        .arg("--new")
+        .arg(&new_path);
+
+    let output = cmd.assert().success().get_output().stdout.clone();
+    let stdout = String::from_utf8(output).unwrap();
+
+    assert!(stdout.contains("Unchanged entries (2):"));
+    assert!(stdout.contains("[unchanged] key=unlabeledKey1=="));
+    assert!(stdout.contains("[unchanged] key=unlabeledKey2=="));
 }

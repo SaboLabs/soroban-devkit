@@ -205,14 +205,11 @@ impl SnapshotDiff {
 /// follows:
 ///
 /// 1. Every key in the old snapshot that is absent in the new snapshot →
-///    [`DiffStatus::Removed`].
 /// 2. If capture ledgers are recorded in both snapshots, old TTLs are normalized
-///    by the ledger delta before classification, preventing time skew alone from
-///    falsely flagging entries as [`DiffStatus::ExpiringSoon`].
-/// 3. Every key in the new snapshot whose remaining TTL is genuinely expiring soon
-///    (or below [`EXPIRING_SOON_LEDGERS`] when capture context is unknown) →
-///    [`DiffStatus::ExpiringSoon`].
-/// 4. All other keys present in the new snapshot → [`DiffStatus::Unchanged`].
+///    by the ledger delta for side-by-side comparison.
+/// 3. Every live entry in the new snapshot whose remaining TTL is below
+///    [`EXPIRING_SOON_LEDGERS`] → [`DiffStatus::ExpiringSoon`].
+/// 4. All other live entries present in the new snapshot → [`DiffStatus::Unchanged`].
 ///
 /// If differing networks are recorded in the snapshots, the diff is rejected
 /// with [`StorageError::NetworkMismatch`].
@@ -276,32 +273,21 @@ pub fn diff_snapshots(
         let old_ttl = old_entry.current_ttl;
         if let Some(&new_entry) = new_map.get(key) {
             let new_ttl = new_entry.current_ttl;
-            let (normalized_old_ttl, status) = match ledger_delta {
-                Some(delta) => {
-                    let norm_old = if delta >= 0 {
-                        old_ttl.saturating_sub(delta as u32)
-                    } else {
-                        old_ttl.saturating_add(delta.unsigned_abs() as u32)
-                    };
-
-                    let status = if new_ttl >= EXPIRING_SOON_LEDGERS
-                        || (old_ttl >= EXPIRING_SOON_LEDGERS && norm_old > 0 && new_ttl >= norm_old)
-                    {
-                        DiffStatus::Unchanged
-                    } else {
-                        DiffStatus::ExpiringSoon
-                    };
-
-                    (Some(norm_old), status)
+            let normalized_old_ttl = ledger_delta.map(|delta| {
+                if delta >= 0 {
+                    old_ttl.saturating_sub(delta as u32)
+                } else {
+                    old_ttl.saturating_add(delta.unsigned_abs() as u32)
                 }
-                None => {
-                    let status = if new_ttl < EXPIRING_SOON_LEDGERS {
-                        DiffStatus::ExpiringSoon
-                    } else {
-                        DiffStatus::Unchanged
-                    };
-                    (None, status)
-                }
+            });
+
+            // Any live entry with new_ttl < EXPIRING_SOON_LEDGERS must remain
+            // classified as ExpiringSoon, even when its TTL is greater than the
+            // normalized old TTL.
+            let status = if new_ttl < EXPIRING_SOON_LEDGERS {
+                DiffStatus::ExpiringSoon
+            } else {
+                DiffStatus::Unchanged
             };
 
             entries.push(DiffEntry {
@@ -907,22 +893,60 @@ mod tests {
     }
 
     #[test]
-    fn diff_ledger_delta_does_not_manufacture_expiring_soon_from_skew() {
-        // Capture A at ledger 1,000,000 with TTL = 18,000 (above threshold 17,280).
+    fn diff_absolute_expiry_threshold_preserved_below_threshold_even_with_natural_skew() {
+        // Capture A at ledger 1,000,000 with TTL = 18,000.
         // Capture B at ledger 1,017,281 (delta = 17,281).
-        // Contract is untouched on chain: remaining TTL in B is 18,000 - 17,281 = 719.
-        // Under unnormalized diffing, 719 < 17,280 would falsely classify as ExpiringSoon.
-        // Under normalized diffing, the drop is recognized as 100% time skew and remains Unchanged.
+        // Untouched on chain: remaining TTL in B is 18,000 - 17,281 = 719.
+        // Even though drop matches time skew (new_ttl == normalized_old_ttl),
+        // the remaining TTL 719 is < 17,280, so the absolute expiry threshold
+        // is preserved and it must be classified as ExpiringSoon.
         let old = snap(vec![("k1", 18_000)]).with_context(Some(1_000_000), Some("testnet"));
         let new = snap(vec![("k1", 719)]).with_context(Some(1_017_281), Some("testnet"));
 
         let diff = diff_snapshots(&old, &new).unwrap();
         assert_eq!(diff.ledger_delta, Some(17_281));
         assert_eq!(diff.entries.len(), 1);
-        assert_eq!(diff.entries[0].status, DiffStatus::Unchanged);
+        assert_eq!(diff.entries[0].status, DiffStatus::ExpiringSoon);
         assert_eq!(diff.entries[0].old_ttl, Some(18_000));
         assert_eq!(diff.entries[0].new_ttl, Some(719));
         assert_eq!(diff.entries[0].normalized_old_ttl, Some(719));
+        assert_eq!(diff.actionable().count(), 1);
+    }
+
+    #[test]
+    fn diff_absolute_expiry_threshold_preserved_when_ttl_greater_than_normalized_old() {
+        // Capture A at ledger 1,000,000 with TTL = 10,000 (< 17,280).
+        // Capture B at ledger 1,005,000 (delta = 5,000). Expected normalized old TTL = 5,000.
+        // On chain, TTL was extended slightly to 8,000 (> normalized_old_ttl of 5,000).
+        // Any live entry with new_ttl < EXPIRING_SOON_LEDGERS must remain classified as
+        // ExpiringSoon, even when its TTL is greater than the normalized old TTL.
+        let old = snap(vec![("k1", 10_000)]).with_context(Some(1_000_000), Some("testnet"));
+        let new = snap(vec![("k1", 8_000)]).with_context(Some(1_005_000), Some("testnet"));
+
+        let diff = diff_snapshots(&old, &new).unwrap();
+        assert_eq!(diff.ledger_delta, Some(5_000));
+        assert_eq!(diff.entries[0].status, DiffStatus::ExpiringSoon);
+        assert_eq!(diff.entries[0].old_ttl, Some(10_000));
+        assert_eq!(diff.entries[0].new_ttl, Some(8_000));
+        assert_eq!(diff.entries[0].normalized_old_ttl, Some(5_000));
+        assert_eq!(diff.actionable().count(), 1);
+    }
+
+    #[test]
+    fn diff_unchanged_when_new_ttl_at_or_above_threshold() {
+        // Capture A at ledger 1,000,000 with TTL = 50,000.
+        // Capture B at ledger 1,010,000 (delta = 10,000). Expected normalized old TTL = 40,000.
+        // Observed new TTL is 40,000, which is >= EXPIRING_SOON_LEDGERS (17,280).
+        // This is classified as Unchanged.
+        let old = snap(vec![("k1", 50_000)]).with_context(Some(1_000_000), Some("testnet"));
+        let new = snap(vec![("k1", 40_000)]).with_context(Some(1_010_000), Some("testnet"));
+
+        let diff = diff_snapshots(&old, &new).unwrap();
+        assert_eq!(diff.ledger_delta, Some(10_000));
+        assert_eq!(diff.entries[0].status, DiffStatus::Unchanged);
+        assert_eq!(diff.entries[0].old_ttl, Some(50_000));
+        assert_eq!(diff.entries[0].new_ttl, Some(40_000));
+        assert_eq!(diff.entries[0].normalized_old_ttl, Some(40_000));
         assert_eq!(diff.actionable().count(), 0);
     }
 

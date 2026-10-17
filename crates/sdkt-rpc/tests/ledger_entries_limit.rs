@@ -337,7 +337,29 @@ async fn ttl_reads_batch_extra_keys_including_the_instance_key() {
     );
     assert!(result.entries.iter().all(|entry| entry.current_ttl == 100));
     let requests = server.requests();
-    assert_eq!(requests.len(), 3); // one ledger lookup, then batches of 200 + 1
-    assert_eq!(requests[1]["params"], json!({"keys": &expected[..200]}));
-    assert_eq!(requests[2]["params"], json!({"keys": &expected[200..]}));
+    assert_eq!(requests.len(), 2); // batches of 200 + 1 (no redundant getLatestLedger lookup)
+    assert_eq!(requests[0]["params"], json!({"keys": &expected[..200]}));
+    assert_eq!(requests[1]["params"], json!({"keys": &expected[200..]}));
+}
+
+#[tokio::test]
+async fn ttl_reads_use_consistent_capture_ledger_from_storage_response() {
+    let server = MockRpc::start(|_, request| {
+        if request["method"] == "getLatestLedger" {
+            json!({"jsonrpc": "2.0", "id": 1, "result": {"sequence": 500}})
+        } else {
+            storage_response(request, 1000)
+        }
+    })
+    .await;
+    let contract = "CAE3U7JKESRWZHPEQ72DVNGOQ6WPA7HSPQZL5YV46NPCE4TMUPAGYMEC";
+    let result = get_ttl_info_for_keys(&server.client(), contract, &[], 200, 17_280)
+        .await
+        .unwrap();
+
+    assert_eq!(result.latest_ledger, Some(1000));
+    assert_eq!(result.entries[0].current_ttl, 100);
+    let requests = server.requests();
+    assert_eq!(requests.len(), 1);
+    assert_eq!(requests[0]["method"], "getLedgerEntries");
 }
