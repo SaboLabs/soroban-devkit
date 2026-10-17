@@ -378,56 +378,43 @@ impl<'a> FnVisitor<'a> {
 
 /// Scan every function in the AST into a `FnScan` per function.
 ///
-/// Recurses into `mod` blocks so every `fn` and `impl` method in the file's
-/// module tree is scanned. Covers top-level `fn` items and methods inside
-/// `impl` blocks (Soroban contract entrypoints are `impl` methods). Methods
-/// of an impl block annotated with `#[contractimpl]` are marked as
-/// entrypoints; every other function is treated as an internal helper.
+/// Covers top-level `fn` items, methods inside `impl` blocks, and functions
+/// nested inside `mod` blocks (recursively). Soroban contract entrypoints are
+/// `impl` methods. Methods of an impl block annotated with `#[contractimpl]`
+/// are marked as entrypoints; every other function is treated as an internal
+/// helper.
 ///
 /// Functions inside modules keep a qualified name (`inner::initialize`,
-/// `outer::inner::initialize`) so findings name the module they came from.
-/// Only modules declared in the scanned file are visited; `use` declarations
-/// and `mod foo;` file references are not followed.
+/// `outer::inner::mint`) so findings name the module path they came from.
+/// Only modules declared inline in the scanned file are visited; `mod foo;`
+/// declarations that point at other files are not followed.
 pub fn scan_all_functions(ast: &syn::File) -> Vec<FnScan> {
     let mut out = Vec::new();
-    scan_items(&ast.items, "", &mut out);
+    scan_items(&ast.items, &mut out);
     out
 }
 
-/// Recursive worker for [`scan_all_functions`]. `prefix` is the qualified
-/// module path of the items being scanned (empty at the file root).
-fn scan_items(items: &[Item], prefix: &str, out: &mut Vec<FnScan>) {
+/// Recursively scan a slice of items, prefixing module-nested names with the
+/// enclosing module path.
+fn scan_items(items: &[Item], out: &mut Vec<FnScan>) {
     for item in items {
         match item {
             Item::Fn(f) => {
-                let mut scan = fn_scan(&f.sig, &f.block);
-                if !prefix.is_empty() {
-                    scan.fn_name = format!("{}::{}", prefix, scan.fn_name);
-                }
+                let scan = fn_scan(&f.sig, &f.block);
                 out.push(scan);
             }
             Item::Impl(imp) => {
-                // Best-effort type name for context in locations.
-                let type_name = match &*imp.self_ty {
-                    syn::Type::Path(p) => p
-                        .path
-                        .segments
-                        .last()
-                        .map(|s| s.ident.to_string())
-                        .unwrap_or_default(),
-                    _ => String::new(),
-                };
-                let is_contract_impl = has_contractimpl_attr(&imp.attrs);
-                for inner in &imp.items {
-                    if let syn::ImplItem::Fn(m) = inner {
-                        let qual = if type_name.is_empty() {
-                            m.sig.ident.to_string()
-                        } else {
-                            format!("{}::{}", type_name, m.sig.ident)
-                        };
-                        let mut scan = fn_scan(&m.sig, &m.block);
-                        scan.fn_name = qual;
-                        scan.is_entrypoint = is_contract_impl;
+                scan_impl(imp, out);
+            }
+            Item::Mod(m) => {
+                // Recurse into inline module bodies. `mod foo;` (no content)
+                // is skipped: resolving it would require reading other files.
+                if let Some((_, items)) = &m.content {
+                    let mut nested = Vec::new();
+                    scan_items(items, &mut nested);
+                    let prefix = m.ident.to_string();
+                    for mut scan in nested {
+                        scan.fn_name = format!("{}::{}", prefix, scan.fn_name);
                         out.push(scan);
                     }
                 }
@@ -435,7 +422,34 @@ fn scan_items(items: &[Item], prefix: &str, out: &mut Vec<FnScan>) {
             _ => {}
         }
     }
-    out
+}
+
+/// Scan the methods of one `impl` block, qualifying each with the self type.
+fn scan_impl(imp: &syn::ItemImpl, out: &mut Vec<FnScan>) {
+    // Best-effort type name for context in locations.
+    let type_name = match &*imp.self_ty {
+        syn::Type::Path(p) => p
+            .path
+            .segments
+            .last()
+            .map(|s| s.ident.to_string())
+            .unwrap_or_default(),
+        _ => String::new(),
+    };
+    let is_contract_impl = has_contractimpl_attr(&imp.attrs);
+    for inner in &imp.items {
+        if let syn::ImplItem::Fn(m) = inner {
+            let qual = if type_name.is_empty() {
+                m.sig.ident.to_string()
+            } else {
+                format!("{}::{}", type_name, m.sig.ident)
+            };
+            let mut scan = fn_scan(&m.sig, &m.block);
+            scan.fn_name = qual;
+            scan.is_entrypoint = is_contract_impl;
+            out.push(scan);
+        }
+    }
 }
 
 /// True when the attribute list contains `#[contractimpl]`
