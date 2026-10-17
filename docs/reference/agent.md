@@ -119,7 +119,7 @@ instead of calling the request "unrecognised".
 | Fee & transactions | `fee.estimate`, `tx.simulate` | source/envelope required |
 | Diagnostics | `doctor`, `plugin.doctor` | environment (`doctor`) and plugin self-check (`plugin.doctor`) |
 
-**Intentionally unreachable from prose (read-only / non-mutating)**
+**Intentionally unreachable from prose (read-only and local-write)**
 
 These capabilities exist in the registry and are runnable directly through `sdkt`, but are intentionally excluded from the agent's natural-language prose surface because their inputs or semantics require explicit CLI control or programmatic workflow management. Requests attempting to invoke them report `unrecognised_request`:
 
@@ -147,7 +147,7 @@ These capabilities exist in the registry and are runnable directly through `sdkt
 Requests that are recognised but under-specified return
 `needs_clarification` rather than running a partial command. Registry-only
 capabilities that the parser cannot map from prose (for example `network.add`,
-`package.*`, `plugin.*`, `identity.generate`, or any listed in the intentionally unreachable set above) are simply not reachable from natural language and
+`package.*`, `plugin.list`, `plugin.verify_bundle`, `plugin.install`, `identity.generate`, or any listed in the intentionally unreachable set above) are simply not reachable from natural language and
 report `unrecognised_request`; use `sdkt` directly for those. The authoritative
 surface is the registry itself — see
 [CLI Command Reference](cli.md) and the
