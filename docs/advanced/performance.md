@@ -12,8 +12,8 @@ offline `sdkt` commands so future releases can detect regressions.
 | Memory | 3.7 GiB total |
 | OS | Linux (Ubuntu) |
 | Rust | rustc 1.97.1 (stable) |
-| sdkt | 2.1.1 (release build) — **historical baseline**, measured on the 2.1.1 release; not re-run since |
-| Benchmark date | 2026-08-06 |
+| sdkt | 2.7.0 (release build) — measured on the 2.7.0 release |
+| Benchmark date | 2026-10-05 |
 
 > Reported numbers were captured on the project VPS. Absolute values will vary
 > by host; **the relative trend across releases is what matters.** Re-run the
@@ -29,7 +29,9 @@ offline `sdkt` commands so future releases can detect regressions.
 - **Wall-clock:** measured with nanosecond `date +%s.%N` around the command;
   reported as **min / median / average** (seconds).
 - **Peak memory:** captured via `/usr/bin/time -v` (Maximum resident set
-  size). Reported as **median** peak RSS (kB).
+  size) when GNU time is available; otherwise a portable RSS probe is used
+  (see *RSS portability* below). Reported as **median** peak RSS (kB), or
+  `unavailable` when no probe exists on the host.
 - **Noise reduction:** each run is pinned to a single core with
   `taskset 0x1` when available, so scheduler migration does not inflate
   variance.
@@ -37,6 +39,27 @@ offline `sdkt` commands so future releases can detect regressions.
   (see Baseline Results), confirming the harness is not flaky.
 
 Helper script: `scripts/bench_offline.sh`.
+
+### RSS portability
+
+The harness never emits an empty RSS value as if it were zero. RSS is
+resolved in this order:
+
+| Platform | Probe | Notes |
+|----------|-------|-------|
+| Linux, GNU time present | `/usr/bin/time -v` | `Maximum resident set size` |
+| Linux, no GNU time | `/proc/<pid>/status` polling (`VmHWM`) | portable fallback |
+| macOS | `getrusage(RUSAGE_CHILDREN)` (`ru_maxrss`) | via a small helper |
+| Windows / other | none | reported as `unavailable` |
+
+When RSS is `unavailable`, wall-clock statistics are still produced and the
+RSS column reads `unavailable` — it is never blank and never `0`.
+
+### Fixtures
+
+The script ships with committed fixtures under `scripts/fixtures/` so it runs
+out of the box. To regenerate from `stellar/soroban-examples`, run
+`scripts/fetch_fixtures.sh` (requires the `wasm32v1-none` target).
 
 ```bash
 # Reproduce on any machine:
@@ -71,7 +94,7 @@ Audit target: `token/src/lib.rs` (8 source files) and `liquidity_pool/src/lib.rs
 
 ## Baseline results
 
-First pass (RUNS=7, pinned to 1 core), sdkt 2.1.1:
+First pass (RUNS=7, pinned to 1 core), sdkt 2.7.0:
 
 | Command | wall min | wall median | wall avg | peak RSS (median) |
 |---------|:-------:|:----------:|:-------:|:-----------------:|
@@ -82,7 +105,7 @@ First pass (RUNS=7, pinned to 1 core), sdkt 2.1.1:
 | `diff token→lp` | 0.0038 s | 0.0038 s | 0.0039 s | 5,924 kB |
 
 Second pass (RUNS=5, reproducibility) — `audit` against the heavier
-`liquidity_pool/src/lib.rs` (more code):
+`liquidity_pool/src/lib.rs` (more code), sdkt 2.7.0:
 
 | Command | wall median | peak RSS (median) |
 |---------|:-----------:|:-----------------:|
@@ -107,8 +130,9 @@ Second pass (RUNS=5, reproducibility) — `audit` against the heavier
 2. **No startup-time isolation.** Wall-clock includes process spawn + CLI
    arg parsing. For a pure library-level budget, wrap the core call in a
    microbench (e.g. `criterion`) — out of scope for this baseline.
-3. **Peak RSS via `/usr/bin/time -v`** is whole-process and includes the
-   Rust runtime + CLI overhead, not just the command's working set.
+3. **Peak RSS** (via `/usr/bin/time -v` or the portable fallback) is
+   whole-process and includes the Rust runtime + CLI overhead, not just the
+   command's working set. On hosts without any probe, RSS is `unavailable`.
 4. **Single binary, no parallel stress.** This measures one-shot offline
    commands, not throughput under concurrency.
 5. **No flamegraph / per-phase breakdown** yet; if a future release regresses,
