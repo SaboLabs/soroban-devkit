@@ -147,7 +147,7 @@ async fn reads_at_or_below_limit_keep_wire_shape_and_response_order() {
         let input = keys(count);
         let client = server.client();
         let direct = client.get_contract_storage("", &input).await.unwrap();
-        let fetched = fetch_ledger_entries(&client, &input).await.unwrap();
+        let fetched = fetch_ledger_entries(&client, &input, 200).await.unwrap();
         assert_eq!(direct, fetched);
         assert_eq!(direct.latest_ledger, 1000);
         assert_eq!(
@@ -168,7 +168,7 @@ async fn large_reads_use_bounded_sequential_batches_in_input_order() {
     for count in [201, 400, 401] {
         let server = MockRpc::start(|_, request| storage_response(request, 1000)).await;
         let input = keys(count);
-        let result = fetch_ledger_entries(&server.client(), &input)
+        let result = fetch_ledger_entries(&server.client(), &input, 200)
             .await
             .unwrap();
         assert_eq!(result.latest_ledger, 1000);
@@ -198,6 +198,49 @@ async fn large_reads_use_bounded_sequential_batches_in_input_order() {
 }
 
 #[tokio::test]
+async fn configured_batch_size_caps_every_request_including_followups() {
+    // Issue #375: a configured [storage].max_entries smaller than the node
+    // cap must bound every request, not just the first one.
+    let server = MockRpc::start(|_, request| storage_response(request, 1000)).await;
+    let input = keys(10);
+    let result = fetch_ledger_entries(&server.client(), &input, 3)
+        .await
+        .unwrap();
+    assert_eq!(
+        result
+            .entries
+            .iter()
+            .map(|entry| &entry.key)
+            .collect::<Vec<_>>(),
+        input.iter().collect::<Vec<_>>()
+    );
+    let requests = server.requests();
+    assert_eq!(requests.len(), 4, "10 keys / 3 per batch = 4 requests");
+    for (request, batch) in requests.iter().zip(input.chunks(3)) {
+        assert_eq!(request["params"], json!({"keys": batch}));
+    }
+}
+
+#[tokio::test]
+async fn batch_size_above_node_cap_is_clamped_to_max_ledger_keys() {
+    // Issue #375: a configured batch larger than the node's hard cap would
+    // otherwise fail the first request with TooManyLedgerKeys.
+    let server = MockRpc::start(|_, request| storage_response(request, 1000)).await;
+    let input = keys(MAX_LEDGER_KEYS + 1);
+    let result = fetch_ledger_entries(&server.client(), &input, 5_000)
+        .await
+        .unwrap();
+    assert_eq!(result.entries.len(), MAX_LEDGER_KEYS + 1);
+    let requests = server.requests();
+    assert_eq!(requests.len(), 2);
+    assert_eq!(
+        requests[0]["params"]["keys"].as_array().unwrap().len(),
+        MAX_LEDGER_KEYS
+    );
+    assert_eq!(requests[1]["params"]["keys"].as_array().unwrap().len(), 1);
+}
+
+#[tokio::test]
 async fn batching_omits_missing_entries_and_preserves_repeated_keys() {
     let server = MockRpc::start(|_, request| storage_response(request, 1000)).await;
     let mut input = keys(200);
@@ -205,7 +248,7 @@ async fn batching_omits_missing_entries_and_preserves_repeated_keys() {
     input.push(input[0].clone());
     input.push("missing".into());
     input.push(input[10].clone());
-    let result = fetch_ledger_entries(&server.client(), &input)
+    let result = fetch_ledger_entries(&server.client(), &input, 200)
         .await
         .unwrap();
     let expected: Vec<_> = input
@@ -235,7 +278,7 @@ async fn batching_propagates_failure_without_requesting_remaining_batches() {
         }
     })
     .await;
-    let error = fetch_ledger_entries(&server.client(), &keys(401))
+    let error = fetch_ledger_entries(&server.client(), &keys(401), 200)
         .await
         .unwrap_err();
     assert!(matches!(
@@ -249,7 +292,7 @@ async fn batching_propagates_failure_without_requesting_remaining_batches() {
 async fn batching_rejects_mixed_ledger_provenance() {
     let server =
         MockRpc::start(|index, request| storage_response(request, 1000 + index as u32)).await;
-    let error = fetch_ledger_entries(&server.client(), &keys(401))
+    let error = fetch_ledger_entries(&server.client(), &keys(401), 200)
         .await
         .unwrap_err();
     assert!(error
@@ -281,7 +324,7 @@ async fn ttl_reads_batch_extra_keys_including_the_instance_key() {
         .collect();
     let expected = collect_extend_keys(contract, &extra_keys).unwrap();
     assert_eq!(expected.len(), 201);
-    let result = get_ttl_info_for_keys(&server.client(), contract, &extra_keys)
+    let result = get_ttl_info_for_keys(&server.client(), contract, &extra_keys, 200, 17_280)
         .await
         .unwrap();
     assert_eq!(

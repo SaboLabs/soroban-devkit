@@ -28,8 +28,8 @@ sdkt
 │   ├── estimate <wasm-path>  [--ledgers <N>] [--format <pretty|json>]
 │   ├── storage-diff --old <snapshot-a.json> --new <snapshot-b.json> [--extend-plan] [--format <pretty|json>]
 │   ├── read --contract <contract-id> --key-xdr <BASE64_XDR> [--abi <wasm>] [--format]
-│   ├── extend --contract <contract-id> --ledgers <N> [--key <xdr>]... [--identity <name>] [--format]
-│   └── restore --contract <contract-id> --envelope <xdr> [--dry-run] [--identity <name>] [--format]
+│   ├── extend --contract <contract-id> --ledgers <N> [--key <xdr>]... [--identity <name>] [--timeout <s>] [--interval <s>] [--format]
+│   └── restore --contract <contract-id> --envelope <xdr> [--dry-run] [--identity <name>] [--timeout <s>] [--interval <s>] [--format]
 │
 │   `estimate` performs an offline calculation of storage rent over a specified
 │   ledger horizon (default 17,280 ledgers, ~1 day) using the contract spec ABI.
@@ -73,9 +73,16 @@ sdkt
 │   ├── --args <TYPE:VALUE>...    (same typed-args as `call` / `tx build`;
 │   │                            strict: unknown types are rejected)
 │   ├── --identity <name>        (signs and pays; default: "default")
- main
+│   ├── --timeout <SECONDS>      (wait-for-settlement timeout; default 60)
+│   ├── --interval <SECONDS>     (poll interval while waiting; default 1)
 │   ├── --format <json|pretty>
 │   └── --network-profile <NAME> / --rpc-url <URL> / --network-passphrase <P>
+│
+│   Polling rules (shared by every command that waits for a transaction):
+│   `--interval` must be greater than 0 and `--timeout` must be greater than
+│   or equal to `--interval`; invalid pairs are rejected before any network
+│   or identity work begins. `--no-wait` returns the transaction hash right
+│   after submission and ignores both flags.
 │
 │   State-changing end-to-end flow in one command:
 │     fetch account sequence → simulate → build final envelope (authoritative
@@ -190,7 +197,9 @@ sdkt
 │   └── --network-profile <NAME> / --rpc-url <URL> / --network-passphrase <PASS> (mutually exclusive with --network)
 ├── identity
 │   ├── generate <name>       [--format pretty|json]
-│   ├── import <name> <secret>
+│   ├── import <name> <secret>   (required)
+│   │   stdin form (recommended): import <name> -
+│   │   ⚠ argv secrets are deprecated (issue #64): pass `-` instead
 │   ├── list                  [--format pretty|json]
 │   ├── show <name>           [--format pretty|json]
 │   ├── delete <name>
@@ -310,6 +319,13 @@ Flags:
   `<out>/<name>-<version>.tar.zst`; `dir` writes a directory tree
   `<out>/<name>-<version>/`. Any other value is rejected with a clear error.
 
+**Pack preconditions:** every git dependency declared in the manifest must
+have a cached checkout under `.sdkt-cache/git/<cache_key>`. If a declared
+dependency's checkout is missing, `sdkt package pack` exits non-zero with a
+`git dependency '<name>' is declared but its checkout is not cached ...` error
+and writes no descriptor — the bundle never claims a dependency it does not
+contain.
+
 `sdkt package publish --dry-run` validates **publish readiness** using the
 existing manifest/lock/cache/integrity infrastructure. It detects missing cache,
 lock drift, integrity mismatch, commit mismatch, reference change, and invalid
@@ -326,6 +342,10 @@ or git logic is duplicated; the same `compute_dependency_integrity` /
 ├── project
 │   └── deploy                Deploy all contracts defined in the workspace (.sdkt.toml),
 │                             applying topological dependency sorting
+│
+│   `--timeout <SECONDS>` (default 60) and `--interval <SECONDS>` (default 1)
+│   control how long each contract deployment waits for settlement and how
+│   often it polls; both are validated before any network or identity work.
 │
 │   Contracts declare dependencies via `depends_on` (canonical) or the
 │   legacy `deploy_after` field in `[contracts.<alias>]`; both are merged. Build,
@@ -368,6 +388,20 @@ or git logic is duplicated; the same `compute_dependency_integrity` /
 │   deploys it fresh, replacing the stale record. The default identity (see
 │   `sdkt identity`) is used to sign all deployments.
 │
+│   **Constructor arguments**: contracts requiring initialization parameters at
+│   create time declare them in `.sdkt.toml` via the `ctor_args` field:
+│
+│     [contracts.token]
+│     path = "contracts/token"
+│     ctor_args = ["address:G...", "u32:1000000"]
+│
+│   Each string is a TYPE:VALUE pair (same format as `sdkt deploy --arg`: `u32:100`,
+│   `address:G...`, `string:hello`, `bool:true`, `bytes:deadbeef`, etc.) or a
+│   base64-encoded ScVal. Invalid arguments fail before WASM upload (fail-fast
+│   validation) with the same error messages as the single-contract deploy path.
+│   Contracts without `ctor_args` deploy with empty constructor arguments (no
+│   change from pre-feature behavior).
+│
 ├── call
 │   ├── <CONTRACT_ID>
 │   ├── <FUNCTION>
@@ -392,6 +426,9 @@ or git logic is duplicated; the same `compute_dependency_integrity` /
     ├── --deny-breaking        (abort if not backwards-compatible; requires --wasm)
     ├── --old-wasm <deployed>  (baseline, required by --deny-breaking)
     ├── --identity <name>      (signing identity; defaults to `default`)
+    ├── --timeout <SECONDS>    (wait-for-settlement timeout for the upload and
+    │                           create transactions; default 60)
+    ├── --interval <SECONDS>   (poll interval while waiting; default 1)
     ├── --arg <TYPE:VALUE>...  (constructor arguments)
     └── --network-profile <NAME> / --rpc-url <URL> / --network-passphrase <P>
 

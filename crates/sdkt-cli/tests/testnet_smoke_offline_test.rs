@@ -136,14 +136,47 @@ fn identity_import_stdin_rejects_malformed_secret_without_echo() {
 }
 
 #[test]
-fn identity_import_argv_still_works() {
-    // Backwards compatibility: the positional secret path is unchanged.
+fn identity_import_argv_still_works_with_deprecation_warning() {
+    // Backwards compatibility: the positional secret path still works, but
+    // must print a deprecation warning pointing at the stdin path (issue #64).
     let dir = tempfile::tempdir().unwrap();
     let (_seed_holder, secret) = throwaway_secret();
     sdkt_cmd(dir.path())
         .args(["identity", "import", "legacy", &secret])
         .assert()
-        .success();
+        .success()
+        .stderr(predicates::str::contains("WARNING"))
+        .stderr(predicates::str::contains("stdin"));
+}
+
+#[test]
+fn identity_import_stdin_emits_no_deprecation_warning() {
+    // The recommended path must be warning-free — no argv secret in play.
+    let dir = tempfile::tempdir().unwrap();
+    let (_seed_holder, secret) = throwaway_secret();
+    let mut child = StdCommand::new(assert_cmd::cargo::cargo_bin("sdkt"))
+        .args(["identity", "import", "smoke", "-"])
+        .env("SDKT_IDENTITY_DIR", dir.path().join("identity"))
+        .env("SDKT_NETWORK_DIR", dir.path().join("network"))
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("spawn sdkt");
+    child
+        .stdin
+        .as_mut()
+        .expect("stdin")
+        .write_all(secret.as_bytes())
+        .expect("write secret");
+    let out = child.wait_with_output().expect("wait");
+
+    assert!(out.status.success(), "import should succeed via stdin");
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        !stderr.contains("WARNING"),
+        "stdin path must not emit the argv deprecation warning: {stderr}"
+    );
 }
 
 #[test]
