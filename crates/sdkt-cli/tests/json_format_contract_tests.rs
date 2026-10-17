@@ -97,6 +97,16 @@ fn assert_error_envelope(output: &std::process::Output, expect_fragment: &str) {
         "expected non-zero exit, got {:?}",
         output.status.code()
     );
+    assert_eq!(
+        output.status.code(),
+        Some(1),
+        "error envelope must exit with code 1"
+    );
+    assert!(
+        output.stderr.is_empty(),
+        "stderr must be empty in JSON mode, got: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
     let stdout = String::from_utf8_lossy(&output.stdout);
     let parsed = assert_valid_json(&stdout);
     let err = parsed
@@ -909,6 +919,72 @@ mod audit {
             .clone();
         assert_error_envelope(&output, "Error diffing WASM");
     }
+
+    #[test]
+    fn json_error_when_size_policy_combined_with_upgrade_safety() {
+        // Validation failure: --upgrade-safety + --max-size-bytes is rejected.
+        let output = sdkt()
+            .args([
+                "diff",
+                "--old-wasm",
+                WASM_OLD,
+                "--new-wasm",
+                WASM_NEW,
+                "--upgrade-safety",
+                "--max-size-bytes",
+                "1000",
+                "--format",
+                "json",
+            ])
+            .assert()
+            .get_output()
+            .clone();
+        assert_error_envelope(
+            &output,
+            "size policy cannot be combined with --upgrade-safety",
+        );
+    }
+
+    #[test]
+    fn json_error_when_max_size_bytes_zero() {
+        // Validation failure: --max-size-bytes must be > 0.
+        let output = sdkt()
+            .args([
+                "diff",
+                "--old-wasm",
+                WASM_OLD,
+                "--new-wasm",
+                WASM_NEW,
+                "--max-size-bytes",
+                "0",
+                "--format",
+                "json",
+            ])
+            .assert()
+            .get_output()
+            .clone();
+        assert_error_envelope(&output, "--max-size-bytes must be greater than 0");
+    }
+
+    #[test]
+    fn json_error_when_max_growth_pct_negative() {
+        // Validation failure: --max-growth-pct must not be negative.
+        let output = sdkt()
+            .args([
+                "diff",
+                "--old-wasm",
+                WASM_OLD,
+                "--new-wasm",
+                WASM_NEW,
+                "--max-growth-pct=-5",
+                "--format",
+                "json",
+            ])
+            .assert()
+            .get_output()
+            .clone();
+        assert_error_envelope(&output, "--max-growth-pct must not be negative");
+    }
 }
 
 // ===========================================================================
@@ -1009,7 +1085,9 @@ mod decode {
             .assert()
             .get_output()
             .clone();
-        assert_error_envelope(&output, "No such file");
+        // The message must carry the path and the original I/O error, not a
+        // blanket "No such file" that hides which input failed.
+        assert_error_envelope(&output, "Failed to read input file '/no/such/input.xdr'");
     }
 
     #[test]

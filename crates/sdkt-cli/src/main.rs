@@ -3915,8 +3915,12 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
         } => {
             let json_mode = parse_format_str(&format) == OutputFormat::Json;
             let input = match (file, payload) {
-                (Some(path), _) => fs::read_to_string(&path)
-                    .unwrap_or_else(|e| fail_cli(format!("No such file: {}", e), json_mode)),
+                (Some(path), _) => fs::read_to_string(&path).unwrap_or_else(|e| {
+                    fail_cli(
+                        format!("Failed to read input file '{}': {}", path, e),
+                        json_mode,
+                    )
+                }),
                 (None, Some(p)) => p,
                 (None, None) => fail_cli(
                     "no input provided: pass XDR as an argument or use --file",
@@ -5973,19 +5977,16 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
             // into --upgrade-safety would conflate size budget with ABI
             // compatibility, so the combination is rejected explicitly.
             if upgrade_safety && (max_size_bytes.is_some() || max_growth_pct.is_some()) {
-                eprintln!(
-                    "Error: size-policy flags apply to `sdkt diff` output only; \
-                     run without --upgrade-safety to enforce them (ABI verdict is a separate check)"
+                fail_cli(
+                    "size policy cannot be combined with --upgrade-safety",
+                    json_mode,
                 );
-                return Err("size policy cannot be combined with --upgrade-safety".into());
             }
             if let Err(e) = validate_size_threshold_bytes(max_size_bytes, "--max-size-bytes") {
-                eprintln!("Error: {e}");
-                return Err(e.into());
+                fail_cli(e, json_mode);
             }
             if let Err(e) = validate_size_threshold_pct(max_growth_pct, "--max-growth-pct") {
-                eprintln!("Error: {e}");
-                return Err(e.into());
+                fail_cli(e, json_mode);
             }
             let old_bytes = fs::read(&old_wasm).unwrap_or_else(|e| {
                 fail_cli(
@@ -6102,10 +6103,10 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
                     let violations =
                         evaluate_size_policy_for_diff(&report, max_size_bytes, max_growth_pct);
                     if !violations.is_empty() {
-                        for v in &violations {
-                            eprintln!("Error: size policy violation: {v}");
-                        }
-                        process::exit(1);
+                        fail_cli(
+                            format!("size policy violation: {}", violations.join("; ")),
+                            json_mode,
+                        );
                     }
                 }
                 Err(e) => {
