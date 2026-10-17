@@ -653,8 +653,12 @@ byte-identical source, suitable for checking generated files into a repo.
 ### Supported types (core subset)
 
 Parameters and single return values of these primitive types are supported:
-`u32`, `i32`, `u64`, `i64`, `bool`, `address`, `string`, `symbol`, `void`
-(no return).
+`u32`, `i32`, `u64`, `i64`, `u128`, `i128`, `bytes`, `bool`, `address`,
+`string`, `symbol`, `void` (no return).
+
+`u128` and `i128` fields use their Rust integer types and decimal argument
+encoding. `bytes` fields use a hex string without a `0x` prefix, matching the
+`bytes:<hex>` argument format accepted by `sdkt call` and `sdkt invoke`.
 
 ### Unsupported (clear failure)
 
