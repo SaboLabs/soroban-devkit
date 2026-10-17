@@ -55,6 +55,9 @@ pub enum PackageError {
     MissingGitRef(String),
     /// A `git` dependency's `branch`/`tag`/`rev` value is empty.
     EmptyGitRef(String),
+    /// A lock-declared git dependency has no cached checkout, so the bundle
+    /// would claim a dependency it does not contain (issue #321).
+    DependencyNotCached(String),
     /// Generic error carrying a free-form message (used by packaging I/O).
     Other(String),
 }
@@ -126,6 +129,15 @@ impl fmt::Display for PackageError {
                 write!(
                     f,
                     "git dependency '{}' has an empty `branch`/`tag`/`rev`",
+                    name
+                )
+            }
+            PackageError::DependencyNotCached(name) => {
+                write!(
+                    f,
+                    "git dependency '{}' is declared but its checkout is not \
+                     cached under .sdkt-cache/git; fetch it before packing \
+                     (run `sdkt fetch` or clone the repo into the cache)",
                     name
                 )
             }
@@ -677,12 +689,18 @@ pub fn pack(base: &Path, out: &Path, format: &str) -> Result<PackageBundle, Pack
             _ => (String::new(), None),
         };
         // Stage the git checkout (local path deps are not in the cache; the plan
-        // bundles only the resolved git checkouts).
-        if let Some(checkout) = src_checkout {
-            if checkout.join(".git").exists() {
+        // bundles only the resolved git checkouts). If the declared dependency
+        // has no cached checkout, fail loudly — a bundle must never claim a
+        // dependency it does not contain (issue #321).
+        match src_checkout {
+            Some(checkout) if checkout.join(".git").exists() => {
                 let dst = staging.join(".sdkt-cache").join("git").join(&cache_key);
                 copy_dir_all(&checkout, &dst)?;
             }
+            Some(_) => {
+                return Err(PackageError::DependencyNotCached(entry.name.clone()));
+            }
+            None => {}
         }
         entries.push(BundleEntry {
             name: entry.name.clone(),
@@ -1394,6 +1412,51 @@ mod tests {
         };
         crate::lock::write_lock(base, &lock).unwrap();
         pkg
+    }
+
+    #[test]
+    fn pack_fails_when_declared_dependency_has_no_cached_checkout() {
+        // Issue #321: a lock-declared git dependency whose checkout is absent
+        // from .sdkt-cache must fail the pack — never produce a bundle that
+        // claims a dependency it does not contain.
+        let src = temp_dir("m321-src");
+        git_repo_with_tag(&src, "v1.0.0");
+        let url = src.to_string_lossy().replace('\\', "/");
+        let base = temp_dir("m321-base-nocache");
+        let cfg = setup_packed_project(&base, &url);
+
+        // Simulate the missing checkout (cache deleted after lock written).
+        let key = crate::fetch::git_cache_key(&cfg.dependencies["math"]);
+        let checkout = base.join(".sdkt-cache").join("git").join(&key);
+        assert!(checkout.exists());
+        std::fs::remove_dir_all(&checkout).unwrap();
+
+        let out = temp_dir("m321-out-nocache");
+        let err = pack(&base, &out, "dir").unwrap_err();
+        let msg = err.to_string();
+        assert!(
+            msg.contains("math"),
+            "error must name the dependency: {msg}"
+        );
+        assert!(
+            msg.contains("not") && msg.contains("cached"),
+            "error must state the cache is missing: {msg}"
+        );
+        assert!(
+            matches!(err, PackageError::DependencyNotCached(ref n) if n == "math"),
+            "must be the DependencyNotCached variant"
+        );
+
+        // No bundle descriptor may be written on failure — the bundle must not
+        // claim the missing dependency.
+        assert!(
+            !out.join("m38-app-0.3.0").join("package.json").exists(),
+            "failed pack must not write a descriptor claiming the dependency"
+        );
+
+        let _ = std::fs::remove_dir_all(&src);
+        let _ = std::fs::remove_dir_all(&base);
+        let _ = std::fs::remove_dir_all(&out);
     }
 
     #[test]
