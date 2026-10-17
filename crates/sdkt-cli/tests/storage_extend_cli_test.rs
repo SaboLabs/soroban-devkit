@@ -459,6 +459,8 @@ fn storage_extend_rejects_empty_contract_offline() {
         .stderr(predicate::str::contains("must not be empty"));
 }
 
+/// Asserts that `sdkt storage extend` rejects a malformed ledger key locally
+/// without prepending `RPC error:` while preserving the underlying diagnostic error.
 #[test]
 fn storage_extend_rejects_invalid_ledger_key_offline() {
     sdkt()
@@ -478,6 +480,8 @@ fn storage_extend_rejects_invalid_ledger_key_offline() {
         .stderr(predicate::str::contains("RPC error:").not());
 }
 
+/// Asserts that a real network RPC failure during `sdkt storage extend` retains
+/// the `RPC error:` prefix.
 #[test]
 fn storage_extend_network_failure_retains_rpc_error_prefix() {
     let dir = tempdir().unwrap();
