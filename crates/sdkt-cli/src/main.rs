@@ -728,6 +728,12 @@ enum IdentityAction {
         name: String,
         /// Secret key, or `-` to read it from stdin (keeps the secret out of
         /// the process argv / `ps` output — the path CI smoke jobs need).
+        ///
+        /// DEPRECATED (issue #64): passing the secret as a positional argv
+        /// value exposes it to shell history, `ps` output, and CI logs.
+        /// Prefer `sdkt identity import <name> -` and pipe the secret on
+        /// stdin. The argv path still works but prints a deprecation
+        /// warning on stderr.
         secret: String,
     },
     /// List all saved identities
@@ -7208,8 +7214,8 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
                     }
                 }
                 IdentityAction::Import { name, secret } => {
-                    // `-` means: read the secret from stdin. A secret passed on
-                    // argv is visible to any process listing on the machine;
+                    // `-` means: read the secret from stdin. A secret passed
+                    // on argv is visible to any process listing on the machine;
                     // piping it in is the CI-safe path.
                     let secret = if secret == "-" {
                         use std::io::Read;
@@ -7219,6 +7225,15 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
                             .map_err(|e| format!("Failed to read secret from stdin: {e}"))?;
                         buf.trim().to_string()
                     } else {
+                        // DEPRECATED (issue #64): argv secrets leak through
+                        // shell history, `ps`, and CI logs. Still functional
+                        // for backwards compatibility, but warn the user.
+                        eprintln!(
+                            "WARNING: passing the secret as a positional argv \
+                             argument exposes it to shell history, process listings, \
+                             and CI logs. Use `sdkt identity import <name> -` and \
+                             pipe the secret on stdin instead."
+                        );
                         secret
                     };
                     let identity = store.import(&name, &secret)?;

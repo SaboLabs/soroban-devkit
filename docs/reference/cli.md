@@ -175,7 +175,8 @@ sdkt
 │   └── --format <json|pretty>
 ├── identity
 │   ├── generate <name>       [--format pretty|json]
-│   ├── import <name> <secret>
+│   ├── import <name> [-]     (secret via stdin: `sdkt identity import <name> -`)
+│   │                          ⚠ positional secret deprecated (issue #64)
 │   ├── list                  [--format pretty|json]
 │   ├── show <name>           [--format pretty|json]
 │   ├── delete <name>
