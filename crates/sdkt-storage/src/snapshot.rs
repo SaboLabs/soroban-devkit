@@ -484,7 +484,7 @@ pub fn derive_extend_plan(diff: &SnapshotDiff) -> ExtendPlan {
             format!(
                 "All actionable entries are removed (no remaining TTL); \
                  defaulting to {} ledgers (~30 days). Removed entries cannot be \
-                 extended; whether they are restorable is unverified.",
+                 extended.",
                 DEFAULT_SUGGESTED_LEDGERS
             ),
         ),
@@ -492,7 +492,7 @@ pub fn derive_extend_plan(diff: &SnapshotDiff) -> ExtendPlan {
     let n_removed = unverified_keys.len() + expired_keys.len();
     if min_remaining.is_some() && n_removed > 0 {
         suggested_ledgers_reason.push_str(&format!(
-            " {n_removed} removed entr{} excluded from extend (restorability unverified or expired).",
+            " {n_removed} removed entr{} excluded from extend.",
             if n_removed == 1 { "y is" } else { "ies are" }
         ));
     }
@@ -848,7 +848,6 @@ mod tests {
         assert!(!plan
             .suggested_ledgers_reason
             .contains("sdkt storage restore"));
-        assert!(plan.suggested_ledgers_reason.contains("unverified"));
     }
 
     #[test]
