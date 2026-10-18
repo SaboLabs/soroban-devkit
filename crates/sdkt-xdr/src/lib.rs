@@ -472,7 +472,7 @@ pub fn extract_contract_data_value(
 /// back to raw output, and `Err` only when the input is not a decodable
 /// `TransactionMeta`.
 pub fn extract_return_value(meta_xdr: &str) -> Result<Option<ScVal>, DecodeError> {
-    let raw = detect_and_decode(meta_xdr)?;
+    let raw = detect_and_decode(meta_xdr, true)?;
     let mut cursor = std::io::Cursor::new(&raw);
     let mut l = Limited::new(&mut cursor, Limits::none());
     let meta = TransactionMeta::read_xdr(&mut l)
