@@ -45,6 +45,10 @@
 //! - `total`: {baseline_entries, cost_stroops, cost_xlm}
 //! - `spec_metrics`: {functions_count, custom_types_count, events_count}
 //! - `approximation_ceiling`: string
+//!
+//! ### `sdkt package fetch --format json`
+//! - `fetched`: array of fetched dependency entries. Empty array when the
+//!   project declares no dependencies, so stdout is never empty on success.
 
 use assert_cmd::Command;
 use base64::engine::general_purpose::STANDARD;
@@ -1325,5 +1329,47 @@ mod storage_estimate {
         assert_eq!(total["baseline_entries"], 1);
         assert_eq!(total["cost_stroops"], 10000);
         assert_eq!(total["cost_xlm"], "0.001");
+    }
+}
+
+// ===========================================================================
+// sdkt package fetch --format json
+// ===========================================================================
+
+mod package_fetch {
+    use super::*;
+
+    #[test]
+    fn json_no_dependencies_prints_parseable_object_with_empty_fetched() {
+        // A project with no `[dependencies]` must still emit a JSON document
+        // on stdout so consumers can distinguish "nothing fetched" from a
+        // broken invocation.
+        let dir = TempDir::new().unwrap();
+        write_fixture(
+            &dir,
+            "sdkt.toml",
+            "[package]\nname = \"no-deps\"\nversion = \"0.1.0\"\n",
+        );
+        let out = sdkt()
+            .current_dir(dir.path())
+            .args(["package", "fetch", "--format", "json"])
+            .assert()
+            .success()
+            .get_output()
+            .stdout
+            .clone();
+        assert!(
+            !out.is_empty(),
+            "stdout must not be empty for --format json on the no-dependencies path"
+        );
+        let v = assert_valid_json(&String::from_utf8_lossy(&out));
+        let fetched = v
+            .get("fetched")
+            .and_then(|f| f.as_array())
+            .expect("fetched field should be an array");
+        assert!(
+            fetched.is_empty(),
+            "dependency-free project should report zero fetched entries, got {fetched:?}"
+        );
     }
 }
