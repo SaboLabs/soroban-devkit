@@ -301,3 +301,57 @@ fn only_findings_produce_artifacts() {
         ExecutionStatus::Void,
     );
 }
+
+// ---------------------------------------------------------------------------
+// Unreadable input files are reported as what they are (issue #327)
+// ---------------------------------------------------------------------------
+
+fn scratch_dir(tag: &str) -> std::path::PathBuf {
+    let dir = std::env::temp_dir().join(format!("sdkt-fuzz-replay-{tag}-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    dir
+}
+
+#[test]
+fn unreadable_wasm_is_reported_as_wasm_read_failure() {
+    let dir = scratch_dir("wasm");
+    let artifact_path = dir.join("finding.json");
+    let (_, artifacts) = campaign([8u8; 32]);
+    std::fs::write(&artifact_path, artifacts[0].canonical_json()).unwrap();
+    let missing_wasm = dir.join("no-such.wasm");
+
+    let err = sdkt_fuzz::run_replay(&sdkt_fuzz::ReplayOptions {
+        artifact: artifact_path,
+        wasm: missing_wasm.clone(),
+    })
+    .unwrap_err();
+
+    assert!(matches!(err, sdkt_fuzz::ReplayError::WasmRead { .. }));
+    let msg = err.to_string();
+    assert!(msg.contains("WASM file could not be read"), "{msg}");
+    assert!(msg.contains(&missing_wasm.display().to_string()), "{msg}");
+    assert!(!msg.contains("artifact JSON could not be parsed"), "{msg}");
+    let _ = std::fs::remove_dir_all(dir);
+}
+
+#[test]
+fn unreadable_artifact_still_names_the_artifact_path() {
+    let dir = scratch_dir("artifact");
+    let wasm_path = dir.join("counter.wasm");
+    std::fs::write(&wasm_path, COUNTER_WASM).unwrap();
+    let missing_artifact = dir.join("no-such.json");
+
+    let err = sdkt_fuzz::run_replay(&sdkt_fuzz::ReplayOptions {
+        artifact: missing_artifact.clone(),
+        wasm: wasm_path,
+    })
+    .unwrap_err();
+
+    assert!(matches!(err, sdkt_fuzz::ReplayError::Malformed(_)));
+    let msg = err.to_string();
+    assert!(
+        msg.contains(&missing_artifact.display().to_string()),
+        "{msg}"
+    );
+    let _ = std::fs::remove_dir_all(dir);
+}

@@ -11,9 +11,16 @@ sdkt
 │   ├── --format <json|pretty>
 │   └── --file <path>
 │
+├── encode <TYPE:VALUE>...
+│   │   (fully offline: encode typed values to base64 XDR)
+│   │   Supports: u32, i32, u64, i64, timepoint, duration, u128, i128, bool,
+│   │   string, symbol, bytes, address. Also json:<JSON> for composite values.
+│
 ├── inspect <contract-id>
+│   ├── --interface                 (render full interface instead of name-only ABI)
 │   ├── --format <json|pretty>
-│   └── --abi <wasm>            (ABI-aware storage decode)
+│   ├── --abi <wasm>                (ABI-aware storage decode)
+│   └── --abi-contract <id>         (fetch deployed contract's ABI)
 │
 ├── storage
 │   ├── check <contract-id>   [--abi <wasm>] [--abi-contract <id>] [--format]
@@ -21,8 +28,8 @@ sdkt
 │   ├── estimate <wasm-path>  [--ledgers <N>] [--format <pretty|json>]
 │   ├── storage-diff --old <snapshot-a.json> --new <snapshot-b.json> [--extend-plan] [--format <pretty|json>]
 │   ├── read --contract <contract-id> --key-xdr <BASE64_XDR> [--abi <wasm>] [--format]
-│   ├── extend --contract <contract-id> --ledgers <N> [--key <xdr>]... [--identity <name>] [--format]
-│   └── restore --contract <contract-id> --envelope <xdr> [--dry-run] [--identity <name>] [--format]
+│   ├── extend --contract <contract-id> --ledgers <N> [--key <xdr>]... [--identity <name>] [--timeout <s>] [--interval <s>] [--format]
+│   └── restore --contract <contract-id> --envelope <xdr> [--dry-run] [--identity <name>] [--timeout <s>] [--interval <s>] [--format]
 │
 │   `estimate` performs an offline calculation of storage rent over a specified
 │   ledger horizon (default 17,280 ledgers, ~1 day) using the contract spec ABI.
@@ -66,9 +73,16 @@ sdkt
 │   ├── --args <TYPE:VALUE>...    (same typed-args as `call` / `tx build`;
 │   │                            strict: unknown types are rejected)
 │   ├── --identity <name>        (signs and pays; default: "default")
- main
+│   ├── --timeout <SECONDS>      (wait-for-settlement timeout; default 60)
+│   ├── --interval <SECONDS>     (poll interval while waiting; default 1)
 │   ├── --format <json|pretty>
 │   └── --network-profile <NAME> / --rpc-url <URL> / --network-passphrase <P>
+│
+│   Polling rules (shared by every command that waits for a transaction):
+│   `--interval` must be greater than 0 and `--timeout` must be greater than
+│   or equal to `--interval`; invalid pairs are rejected before any network
+│   or identity work begins. `--no-wait` returns the transaction hash right
+│   after submission and ignores both flags.
 │
 │   State-changing end-to-end flow in one command:
 │     fetch account sequence → simulate → build final envelope (authoritative
@@ -84,6 +98,7 @@ sdkt
 ├── tx
 │   ├── inspect <hash>        [--format]
 │   ├── validate <xdr>        [--format] (offline parse + structural checks)
+│   ├── decode <xdr>          [--format] (offline decode; human-readable transaction envelope)
 │   ├── simulate <xdr>        [--format] [--abi <wasm>] [--abi-contract <id>] (RPC; surfaces restore preambles, costs, state changes; ABI-aware result decoding. `--abi-contract` fetches the deployed contract's on-chain WASM for decoding)
 │   ├── sign                  [--input <xdr|file>] [--output <file>] [--identity <name>] [--network <testnet|mainnet|futurenet|custom:<p>>] [--format] (offline ED25519 signing)
 │   ├── submit <xdr>          [--wait] [--timeout <s>] [--interval <s>] [--format] (RPC)
@@ -108,11 +123,12 @@ sdkt
 │
 ├── events <contract-id>
 │   ├── --format <json|pretty>
-│   ├── --abi <wasm>          (ABI-aware decode from a local WASM)
-│   └── --abi-contract <id>   (ABI-aware decode using the deployed contract's
-│                               on-chain WASM, fetched via the inspection path;
-│                               no local artifact needed. Mutually exclusive
-│                               with --abi.)
+│   ├── --start-ledger <START_LEDGER> (start ledger sequence number for event search)
+│   ├── --end-ledger <END_LEDGER>     (end ledger sequence number for event search)
+│   ├── --topic <SYMBOL>              (filter by first topic/event name; server-side filtering)
+│   ├── --abi <wasm>                  (ABI-aware decode from a local WASM)
+│   ├── --abi-contract <id>           (ABI-aware decode using deployed contract's on-chain WASM)
+│   └── --network-profile <NAME> / --rpc-url <URL> / --network-passphrase <P>
 │
 ├── account <address>         [--format]
 │
@@ -162,20 +178,28 @@ sdkt
 │   ├── --format <json|pretty>
 │   ├── --disable <RULE_ID>   (repeatable)
 │   ├── --rules <PATH|ID>     (repeatable; compiled plugin artifact or installed plugin ID)
-│   └── --no-plugins          (skip loading installed plugins)
+│   ├── --no-plugins          (skip loading installed plugins)
+│   ├── --abi <wasm>          (path to contract WASM for spec-correlated analysis)
+│   ├── --abi-contract <id>   (contract ID whose deployed WASM provides ABI)
+│   ├── --fail-on <SEVERITY>  (exit non-zero if findings at or above this level; critical|warning|info)
+│   └── --network-profile <NAME> / --rpc-url <URL> / --network-passphrase <PASS>
 ├── release-assurance
 │   ├── --wasm <WASM>         (candidate artifact; required)
 │   ├── --previous-wasm <WASM> (baseline for the offline upgrade diff)
 │   ├── --audit <PATH>...     (Rust source path(s)/dir(s); same engine as `audit`)
 │   ├── --disable <RULE_ID>   (repeatable)
 │   ├── --contract <ID>       (deployed contract for on-chain checks; skipped if omitted)
-│   ├── --network <testnet>   (network for the on-chain checks; with --contract)
+│   ├── --network <testnet|mainnet|futurenet> (network for the on-chain checks; with --contract)
+│   ├── --fuzz-evidence <EVIDENCE_JSON> (attach JSON evidence from sdkt fuzz campaign)
 │   ├── --max-size-bytes <N>  (fail when the candidate exceeds N bytes)
 │   ├── --max-growth-pct <N>  (fail when growth over --previous-wasm exceeds N%)
-│   └── --format <json|pretty>
+│   ├── --format <json|pretty>
+│   └── --network-profile <NAME> / --rpc-url <URL> / --network-passphrase <PASS>
 ├── identity
 │   ├── generate <name>       [--format pretty|json]
-│   ├── import <name> <secret>
+│   ├── import <name> <secret>   (required)
+│   │   stdin form (recommended): import <name> -
+│   │   ⚠ argv secrets are deprecated (issue #64): pass `-` instead
 │   ├── list                  [--format pretty|json]
 │   ├── show <name>           [--format pretty|json]
 │   ├── delete <name>
@@ -295,6 +319,13 @@ Flags:
   `<out>/<name>-<version>.tar.zst`; `dir` writes a directory tree
   `<out>/<name>-<version>/`. Any other value is rejected with a clear error.
 
+**Pack preconditions:** every git dependency declared in the manifest must
+have a cached checkout under `.sdkt-cache/git/<cache_key>`. If a declared
+dependency's checkout is missing, `sdkt package pack` exits non-zero with a
+`git dependency '<name>' is declared but its checkout is not cached ...` error
+and writes no descriptor — the bundle never claims a dependency it does not
+contain.
+
 `sdkt package publish --dry-run` validates **publish readiness** using the
 existing manifest/lock/cache/integrity infrastructure. It detects missing cache,
 lock drift, integrity mismatch, commit mismatch, reference change, and invalid
@@ -311,6 +342,10 @@ or git logic is duplicated; the same `compute_dependency_integrity` /
 ├── project
 │   └── deploy                Deploy all contracts defined in the workspace (.sdkt.toml),
 │                             applying topological dependency sorting
+│
+│   `--timeout <SECONDS>` (default 60) and `--interval <SECONDS>` (default 1)
+│   control how long each contract deployment waits for settlement and how
+│   often it polls; both are validated before any network or identity work.
 │
 │   Contracts declare dependencies via `depends_on` (canonical) or the
 │   legacy `deploy_after` field in `[contracts.<alias>]`; both are merged. Build,
@@ -353,6 +388,20 @@ or git logic is duplicated; the same `compute_dependency_integrity` /
 │   deploys it fresh, replacing the stale record. The default identity (see
 │   `sdkt identity`) is used to sign all deployments.
 │
+│   **Constructor arguments**: contracts requiring initialization parameters at
+│   create time declare them in `.sdkt.toml` via the `ctor_args` field:
+│
+│     [contracts.token]
+│     path = "contracts/token"
+│     ctor_args = ["address:G...", "u32:1000000"]
+│
+│   Each string is a TYPE:VALUE pair (same format as `sdkt deploy --arg`: `u32:100`,
+│   `address:G...`, `string:hello`, `bool:true`, `bytes:deadbeef`, etc.) or a
+│   base64-encoded ScVal. Invalid arguments fail before WASM upload (fail-fast
+│   validation) with the same error messages as the single-contract deploy path.
+│   Contracts without `ctor_args` deploy with empty constructor arguments (no
+│   change from pre-feature behavior).
+│
 ├── call
 │   ├── <CONTRACT_ID>
 │   ├── <FUNCTION>
@@ -377,6 +426,9 @@ or git logic is duplicated; the same `compute_dependency_integrity` /
     ├── --deny-breaking        (abort if not backwards-compatible; requires --wasm)
     ├── --old-wasm <deployed>  (baseline, required by --deny-breaking)
     ├── --identity <name>      (signing identity; defaults to `default`)
+    ├── --timeout <SECONDS>    (wait-for-settlement timeout for the upload and
+    │                           create transactions; default 60)
+    ├── --interval <SECONDS>   (poll interval while waiting; default 1)
     ├── --arg <TYPE:VALUE>...  (constructor arguments)
     └── --network-profile <NAME> / --rpc-url <URL> / --network-passphrase <P>
 
@@ -385,6 +437,46 @@ which is useful to resume after an upload succeeded but creation failed.
 Prediction-only options (`--dry-run`, `--show-address`) and
 `--deny-breaking` are rejected with `--wasm-hash`, because these operations
 require the local WASM bytes.
+
+├── plugin                    Manage local audit plugins (install/remove/list/show/update)
+│   ├── init <name>           [--force] [--format]  Scaffold a new audit rule crate
+│   ├── list                  [--format]  List installed plugins
+│   ├── show <id>             [--format]  Show metadata for an installed plugin
+│   ├── install <source>      [--id <id>] [--force] [--public-key <key>] [--format]
+│   ├── remove <id>           [--format]  Remove an installed plugin (idempotent)
+│   ├── update <id> <source>  [--format]  Update from new local artifact
+│   ├── pack <source>         [--output <file>] [--secret-key <key>] [--format]
+│   ├── verify-bundle <bundle> [--public-key <key>] [--format]
+│   └── doctor [<target|--all>] [--format]  End-to-end diagnostics on a plugin
+│
+├── doctor                    Run diagnostic checks on sdkt environment and project
+│   ├── --format <json|pretty|--json>  Output format (pretty is default)
+│   └── (offline: no network access required)
+│
+├── completions <shell>       Generate shell completion scripts
+│   └── Supported shells: bash, zsh, fish, powershell, elvish
+│
+├── fuzz                      Soroban-aware deterministic fuzzing (offline, read-only)
+│   ├── campaign <wasm>       Run a deterministic fuzz campaign
+│   │   ├── --seed <N>                    Deterministic seed (u64, default: 0)
+│   │   ├── --cases <N>                   Number of test cases (default: 100)
+│   │   ├── --function <NAME>             Restrict to one exported function
+│   │   ├── --artifact-dir <DIR>          Directory for artifacts (default: ./sdkt-fuzz-artifacts)
+│   │   ├── --auth <MODE>                 Authorization mode: no-auth | correct-auth | wrong-auth
+│   │   ├── --expect-success <FN>         Declare function must succeed (repeatable)
+│   │   ├── --expect-error <FN:TYPE:CODE> Declare function must fail (repeatable)
+│   │   ├── --replay                      Replay every written artifact to verify determinism
+│   │   ├── --format <pretty|json|jsonl>  Output format (default: pretty)
+│   │   └── [network flags inherited from network-profile resolution]
+│   │
+│   └── replay <artifact>     Replay a finding artifact to verify reproduction
+│       ├── --wasm <WASM>                 Path to the campaign WASM
+│       └── (exit code: 0 = REPRODUCED, 1 = MISMATCH, 2 = usage error)
+│
+├── generate                  Generate typed clients and other artifacts
+│   └── client <wasm>         Generate typed Rust client from ContractSpec
+│       ├── --output <file>               Output file (prints to stdout if omitted)
+│       └── --skip-unsupported            Skip unsupported functions instead of aborting
 ```
 
 ## Network Profiles

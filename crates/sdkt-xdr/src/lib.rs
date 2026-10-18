@@ -235,7 +235,7 @@ pub fn encode_ledger_key(params: &LedgerKeyParams) -> Result<String, DecodeError
 /// is intentionally scoped to ContractData/Wasm extraction only — it does NOT replace
 /// stellar-xdr's generic `LedgerEntry` decoder used elsewhere.
 pub fn extract_wasm_hash(base64_ledger_entry: &str) -> Result<String, DecodeError> {
-    let raw = detect_and_decode(base64_ledger_entry)?;
+    let raw = detect_and_decode(base64_ledger_entry, true)?;
 
     // Fast path: standard stellar-xdr 28.0.0 layout.
     match extract_wasm_hash_standard(&raw) {
@@ -345,7 +345,7 @@ impl ContractExecutableRef {
 pub fn extract_contract_executable(
     base64_ledger_entry: &str,
 ) -> Result<ContractExecutableRef, DecodeError> {
-    let raw = detect_and_decode(base64_ledger_entry)?;
+    let raw = detect_and_decode(base64_ledger_entry, true)?;
     match extract_executable_standard(&raw) {
         Ok(exec) => Ok(exec),
         Err(DecodeError::XdrParse(..)) => extract_executable_from_live_ledger_entry(&raw),
@@ -451,7 +451,7 @@ fn extract_hash_from_contract_data(
 pub fn extract_contract_data_value(
     base64_ledger_entry: &str,
 ) -> Result<stellar_xdr::ContractDataEntry, DecodeError> {
-    let raw = detect_and_decode(base64_ledger_entry)?;
+    let raw = detect_and_decode(base64_ledger_entry, true)?;
     match extract_contract_data_value_standard(&raw) {
         Ok(data) => Ok(data),
         Err(e) => match e {
@@ -492,7 +492,7 @@ fn extract_contract_data_value_from_live_ledger_entry(
 /// Same compatibility bridge as [`extract_wasm_hash`]: tries the standard
 /// stellar-xdr 28.0.0 layout first, then falls back to the live data-first wire layout.
 pub fn extract_wasm_bytecode(base64_ledger_entry: &str) -> Result<Vec<u8>, DecodeError> {
-    let raw = detect_and_decode(base64_ledger_entry)?;
+    let raw = detect_and_decode(base64_ledger_entry, true)?;
 
     match extract_wasm_bytecode_standard(&raw) {
         Ok(code) => Ok(code),
@@ -553,13 +553,73 @@ pub fn decode(
     type_hint: Option<&str>,
     format: OutputFormat,
 ) -> Result<String, DecodeError> {
-    let raw = detect_and_decode(payload)?;
-    let value = decode_bytes(&raw, type_hint)?;
-    format_json(&value, format)
+    decode_with_config(payload, type_hint, format, 500, true)
+}
+
+/// Decode with explicit config values (wired from `.sdkt.toml` `[decode]`).
+///
+/// `max_depth` bounds nested XDR parsing depth. `0` means **unlimited** — the
+/// XDR layer runs with `Limits::none` — and `DevKitConfig::validate` accepts
+/// `0` for exactly the same reason, so a `.sdkt.toml` that sets `0` and one
+/// that omits the section behave identically.
+/// `allow_fallback_hex` gates the hex fallback when base64 detection fails.
+pub fn decode_with_config(
+    payload: &str,
+    type_hint: Option<&str>,
+    format: OutputFormat,
+    max_depth: u32,
+    allow_fallback_hex: bool,
+) -> Result<String, DecodeError> {
+    let raw = detect_and_decode(payload, allow_fallback_hex)?;
+    match decode_bytes_with_config(&raw, type_hint, max_depth) {
+        Ok(v) => format_json(&v, format),
+        Err(primary) => {
+            // Issue #375: a hex-encoded payload whose characters are all valid
+            // base64-alphabet symbols (common for short ScVals) decodes as
+            // valid base64 into garbage bytes that then fail XDR parsing. When
+            // the hex fallback is enabled, retry the pure-hex interpretation
+            // before surfacing the error. When it is disabled, the original
+            // decode path is taken and behaviour is unchanged.
+            if allow_fallback_hex {
+                if let Some(hex_bytes) = hex_bytes_if_valid(payload) {
+                    if hex_bytes != raw {
+                        if let Ok(v) = decode_bytes_with_config(&hex_bytes, type_hint, max_depth) {
+                            return format_json(&v, format);
+                        }
+                    }
+                }
+            }
+            Err(primary)
+        }
+    }
+}
+
+/// Decodes `payload` as hexadecimal when it is non-empty, even-length, and
+/// every character is an ASCII hex digit. Returns `None` otherwise — this is
+/// a pure decoding helper with no opinion about XDR validity.
+fn hex_bytes_if_valid(payload: &str) -> Option<Vec<u8>> {
+    let trimmed = payload.trim();
+    if !trimmed.is_empty()
+        && trimmed.len().is_multiple_of(2)
+        && trimmed.chars().all(|c| c.is_ascii_hexdigit())
+    {
+        hex::decode(trimmed).ok()
+    } else {
+        None
+    }
 }
 
 /// Decode raw bytes (no base64/hex pre-processing).
 pub fn decode_bytes(raw: &[u8], type_hint: Option<&str>) -> Result<Value, DecodeError> {
+    decode_bytes_with_config(raw, type_hint, 500)
+}
+
+/// Decode raw bytes with explicit max_depth.
+pub fn decode_bytes_with_config(
+    raw: &[u8],
+    type_hint: Option<&str>,
+    max_depth: u32,
+) -> Result<Value, DecodeError> {
     if raw.is_empty() {
         return Err(DecodeError::EmptyPayload);
     }
@@ -567,14 +627,18 @@ pub fn decode_bytes(raw: &[u8], type_hint: Option<&str>) -> Result<Value, Decode
     let type_name = type_hint.unwrap_or("auto");
 
     match type_name.to_lowercase().as_str() {
-        "scval" => decode_single::<ScVal>(raw, "ScVal"),
-        "transactionenvelope" => decode_single::<TransactionEnvelope>(raw, "TransactionEnvelope"),
-        "transactionresult" => decode_single::<TransactionResult>(raw, "TransactionResult"),
-        "transactionmeta" => decode_single::<TransactionMeta>(raw, "TransactionMeta"),
-        "ledgerkey" => decode_single::<LedgerKey>(raw, "LedgerKey"),
-        "ledgerentry" => decode_single::<LedgerEntry>(raw, "LedgerEntry"),
-        "contractevent" => decode_single::<ContractEvent>(raw, "ContractEvent"),
-        "auto" => auto_detect(raw),
+        "scval" => decode_single::<ScVal>(raw, "ScVal", max_depth),
+        "transactionenvelope" => {
+            decode_single::<TransactionEnvelope>(raw, "TransactionEnvelope", max_depth)
+        }
+        "transactionresult" => {
+            decode_single::<TransactionResult>(raw, "TransactionResult", max_depth)
+        }
+        "transactionmeta" => decode_single::<TransactionMeta>(raw, "TransactionMeta", max_depth),
+        "ledgerkey" => decode_single::<LedgerKey>(raw, "LedgerKey", max_depth),
+        "ledgerentry" => decode_single::<LedgerEntry>(raw, "LedgerEntry", max_depth),
+        "contractevent" => decode_single::<ContractEvent>(raw, "ContractEvent", max_depth),
+        "auto" => auto_detect(raw, max_depth),
         other => Err(DecodeError::TypeUnknown(other.to_string())),
     }
 }
@@ -582,9 +646,18 @@ pub fn decode_bytes(raw: &[u8], type_hint: Option<&str>) -> Result<Value, Decode
 fn decode_single<T: ReadXdr + serde::Serialize>(
     raw: &[u8],
     name: &str,
+    max_depth: u32,
 ) -> Result<Value, DecodeError> {
     let mut cursor = std::io::Cursor::new(raw);
-    let mut l = Limited::new(&mut cursor, Limits::none());
+    let limits = if max_depth == 0 {
+        Limits::none()
+    } else {
+        Limits {
+            depth: max_depth,
+            len: raw.len(),
+        }
+    };
+    let mut l = Limited::new(&mut cursor, limits);
     T::read_xdr(&mut l)
         .map_err(|e| DecodeError::XdrParse(name.to_string(), e))
         .and_then(|v| serde_json::to_value(&v).map_err(DecodeError::Json))
@@ -593,25 +666,36 @@ fn decode_single<T: ReadXdr + serde::Serialize>(
 fn decode_single_strict<T: ReadXdr + serde::Serialize>(
     raw: &[u8],
     name: &str,
+    max_depth: u32,
 ) -> Result<Value, DecodeError> {
     let mut cursor = std::io::Cursor::new(raw);
-    let mut l = Limited::new(&mut cursor, Limits::none());
+    let limits = if max_depth == 0 {
+        Limits::none()
+    } else {
+        Limits {
+            depth: max_depth,
+            len: raw.len(),
+        }
+    };
+    let mut l = Limited::new(&mut cursor, limits);
     T::read_xdr_to_end(&mut l)
         .map_err(|e| DecodeError::XdrParse(name.to_string(), e))
         .and_then(|v| serde_json::to_value(&v).map_err(DecodeError::Json))
 }
 
-fn auto_detect(raw: &[u8]) -> Result<Value, DecodeError> {
-    if let Ok(v) = decode_single_strict::<ScVal>(raw, "ScVal") {
+fn auto_detect(raw: &[u8], max_depth: u32) -> Result<Value, DecodeError> {
+    if let Ok(v) = decode_single_strict::<ScVal>(raw, "ScVal", max_depth) {
         return Ok(v);
     }
-    if let Ok(v) = decode_single_strict::<TransactionEnvelope>(raw, "TransactionEnvelope") {
+    if let Ok(v) =
+        decode_single_strict::<TransactionEnvelope>(raw, "TransactionEnvelope", max_depth)
+    {
         return Ok(v);
     }
-    if let Ok(v) = decode_single_strict::<ContractEvent>(raw, "ContractEvent") {
+    if let Ok(v) = decode_single_strict::<ContractEvent>(raw, "ContractEvent", max_depth) {
         return Ok(v);
     }
-    if let Ok(v) = decode_single_strict::<TransactionResult>(raw, "TransactionResult") {
+    if let Ok(v) = decode_single_strict::<TransactionResult>(raw, "TransactionResult", max_depth) {
         return Ok(v);
     }
     Err(DecodeError::TypeUnknown(
@@ -619,7 +703,7 @@ fn auto_detect(raw: &[u8]) -> Result<Value, DecodeError> {
     ))
 }
 
-fn detect_and_decode(payload: &str) -> Result<Vec<u8>, DecodeError> {
+fn detect_and_decode(payload: &str, allow_fallback_hex: bool) -> Result<Vec<u8>, DecodeError> {
     if payload.is_empty() {
         return Err(DecodeError::EmptyPayload);
     }
@@ -638,7 +722,10 @@ fn detect_and_decode(payload: &str) -> Result<Vec<u8>, DecodeError> {
         }
     }
 
-    if trimmed.len().is_multiple_of(2) && trimmed.chars().all(|c| c.is_ascii_hexdigit()) {
+    if allow_fallback_hex
+        && trimmed.len().is_multiple_of(2)
+        && trimmed.chars().all(|c| c.is_ascii_hexdigit())
+    {
         if let Ok(bytes) = hex::decode(trimmed) {
             return Ok(bytes);
         }
@@ -1051,7 +1138,7 @@ mod tests {
         let res =
             encode_ledger_key(&LedgerKeyParams::ContractData(contract_id.to_string())).unwrap();
         // Decode it back to verify it's a LedgerKey::ContractData with ScVal::LedgerKeyContractInstance
-        let decoded = detect_and_decode(&res).unwrap();
+        let decoded = detect_and_decode(&res, true).unwrap();
         let mut cursor = std::io::Cursor::new(&decoded);
         let mut l = Limited::new(&mut cursor, Limits::none());
         let lk = LedgerKey::read_xdr(&mut l).unwrap();
@@ -1137,7 +1224,7 @@ mod tests {
     fn test_extract_wasm_hash_live_wasm_wire_layout() {
         // The live entry must NOT decode via the standard (lastModifiedLedgerSeq-first)
         // path, proving the captured wire layout genuinely differs.
-        let raw = detect_and_decode(LIVE_WASM_LEDGER_ENTRY_B64).unwrap();
+        let raw = detect_and_decode(LIVE_WASM_LEDGER_ENTRY_B64, true).unwrap();
         assert!(extract_wasm_hash_standard(&raw).is_err());
 
         // The compatibility bridge decodes it and extracts the correct Wasm hash.
@@ -1156,7 +1243,7 @@ mod tests {
     fn test_extract_wasm_hash_live_sac_is_controlled_error() {
         // A live SAC (StellarAsset executable) decodes structurally but yields a
         // controlled `Extraction` error — never an XDR panic or a wrong hash.
-        let raw = detect_and_decode(LIVE_SAC_LEDGER_ENTRY_B64).unwrap();
+        let raw = detect_and_decode(LIVE_SAC_LEDGER_ENTRY_B64, true).unwrap();
         let err = extract_wasm_hash_from_live_ledger_entry(&raw).unwrap_err();
         assert!(matches!(err, DecodeError::Extraction(e) if e.contains("Not a Wasm")));
 
@@ -1179,6 +1266,86 @@ mod tests {
         let val = ScVal::U32(42);
         // Tag(4) + U32(4) = 8 bytes
         assert_eq!(estimate_xdr_size(&val), 8);
+    }
+
+    #[test]
+    fn test_decode_with_config_max_depth_rejects_deeper_payload() {
+        // Issue #375: a configured max_depth must reject a deeper value.
+        // Build a nested ScVal: Vec[Vec[Vec[Vec[U32]]]] = depth 4.
+        let innermost = ScVal::U32(7);
+        let d4 = ScVal::Vec(Some(ScVec::try_from(vec![innermost]).unwrap()));
+        let d3 = ScVal::Vec(Some(ScVec::try_from(vec![d4]).unwrap()));
+        let d2 = ScVal::Vec(Some(ScVec::try_from(vec![d3]).unwrap()));
+        let deep = ScVal::Vec(Some(ScVec::try_from(vec![d2]).unwrap()));
+        let mut buf = Vec::new();
+        let mut l = Limited::new(&mut buf, Limits::none());
+        deep.write_xdr(&mut l).unwrap();
+        let b64 = STANDARD.encode(&buf);
+
+        // Depth 2 must reject; depth 0 (unlimited) must accept.
+        let shallow = decode_with_config(&b64, Some("scval"), OutputFormat::Json, 2, true);
+        assert!(
+            shallow.is_err(),
+            "max_depth = 2 must reject a depth-4 ScVal"
+        );
+        let unlimited = decode_with_config(&b64, Some("scval"), OutputFormat::Json, 0, true);
+        assert!(unlimited.is_ok(), "max_depth = 0 (unlimited) must accept");
+    }
+
+    #[test]
+    fn test_decode_with_config_allow_fallback_hex_gates_hex_input() {
+        // Issue #375: allow_fallback_hex = false must refuse a hex-only payload
+        // that base64 detection cannot decode.
+        let hex_payload = "deadbeef";
+        let denied = decode_with_config(hex_payload, Some("scval"), OutputFormat::Json, 500, false);
+        assert!(
+            denied.is_err(),
+            "allow_fallback_hex = false must reject hex input"
+        );
+        let allowed = decode_with_config(hex_payload, Some("scval"), OutputFormat::Json, 500, true);
+        // With fallback enabled the bytes decode (then fail XDR parsing, which
+        // proves the hex path ran — the error is not a decode error).
+        assert!(allowed.is_err(), "hex bytes are not a valid ScVal");
+        assert!(
+            !matches!(allowed.unwrap_err(), DecodeError::Hex(_)),
+            "fallback must have consumed the hex input"
+        );
+    }
+
+    #[test]
+    fn test_decode_with_config_hex_fallback_recovers_valid_scval() {
+        // Issue #375 regression: a valid ScVal hex string is also a valid
+        // base64 string (short ScVals are all base64-alphabet symbols), so the
+        // base64 candidate decodes into garbage that fails XDR parsing. With
+        // the fallback enabled the hex interpretation must be retried and the
+        // payload must decode successfully.
+        let val = ScVal::U32(42);
+        let mut buf = Vec::new();
+        let mut l = Limited::new(&mut buf, Limits::none());
+        val.write_xdr(&mut l).unwrap();
+        let hex_payload = hex::encode(&buf);
+        // Guard the premise: the payload really is base64-shaped.
+        assert!(
+            hex_payload.len().is_multiple_of(4),
+            "premise: hex ScVal must also be base64-shaped"
+        );
+
+        let decoded =
+            decode_with_config(&hex_payload, Some("scval"), OutputFormat::Json, 500, true)
+                .expect("hex fallback must recover a valid ScVal");
+        assert!(
+            decoded.contains("42"),
+            "decoded ScVal must carry the u32 value, got: {decoded}"
+        );
+
+        // Behaviour when the fallback is disabled is unchanged: the hex payload
+        // is not accepted as XDR.
+        let denied =
+            decode_with_config(&hex_payload, Some("scval"), OutputFormat::Json, 500, false);
+        assert!(
+            denied.is_err(),
+            "allow_fallback_hex = false must not recover the hex payload"
+        );
     }
 }
 

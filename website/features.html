@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Features — Soroban DevKit</title>
-<meta name="description" content="Advanced fuzzing, artifact security, upgrade safety, and release assurance — verified against the current sdkt CLI.">
+<meta name="description" content="Advanced fuzzing, artifact inspection, upgrade safety, and release assurance — verified against the current sdkt CLI.">
 <meta name="theme-color" content="#0B0F19">
 <meta property="og:url" content="https://soroban-devkit.xyz/features.html">
 <meta property="og:title" content="Features — Soroban DevKit">
@@ -73,11 +73,11 @@
           <svg class="h-6 w-6 text-accent" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3l8 3v6c0 5-3.4 8-8 9-4.6-1-8-4-8-9V5z"/><path d="M9 12l2.2 2.2L15.5 10"/></svg>
           <span class="rounded-full border border-[#34D399]/40 bg-[#34D399]/10 px-2.5 py-0.5 font-mono text-[10px] font-bold text-[#34D399]">v2.7.0</span>
         </div>
-        <h3 class="mt-4 text-lg font-semibold text-white">Artifact Security</h3>
-        <p class="mt-2 text-sm text-slate-400">Graded findings from the compiled WASM: spec surface, build provenance, memory safety, and upgrade compatibility. No source needed.</p>
+        <h3 class="mt-4 text-lg font-semibold text-white">Artifact Inspection</h3>
+        <p class="mt-2 text-sm text-slate-400">Offline inspection of compiled WASM: size, SHA-256 hash, custom sections, build provenance, exports, and contract spec. No source needed.</p>
         <div class="mt-4 rounded-lg border border-[#08131F] bg-[#000612] p-3 font-mono text-[11px] leading-6 shadow-[0_0_40px_rgba(6,182,212,0.1)]">
-          <div class="text-accent">$ sdkt security us_old.wasm</div>
-          <div class="text-slate-400">Severity: 0 critical, 1 warning, 0 info</div>
+          <div class="text-accent">$ sdkt wasm inspect us_old.wasm</div>
+          <div class="text-slate-400">Size: 198 bytes &middot; Functions: 2 &middot; Events: 1</div>
         </div>
       </div>
 
@@ -136,44 +136,52 @@
   </section>
 
   <!-- ANNOTATED TERMINAL -->
-  <section id="security" class="mt-20">
+  <section id="wasm-inspect" class="mt-20">
     <div class="grid gap-8 lg:grid-cols-[1fr_1fr] lg:items-end">
       <div>
-        <p class="font-mono text-[11px] uppercase tracking-[0.16em] text-accent">Artifact security</p>
-        <h2 class="mt-2 text-3xl font-bold tracking-tight text-white">Graded findings from the WASM itself.</h2>
+        <p class="font-mono text-[11px] uppercase tracking-[0.16em] text-accent">Artifact inspection</p>
+        <h2 class="mt-2 text-3xl font-bold tracking-tight text-white">Inspection from the WASM itself.</h2>
       </div>
-      <p class="text-slate-400">No source required — the analyzer reads the compiled artifact, its spec, and its build metadata.</p>
+      <p class="text-slate-400">No source required — the inspector reads the compiled artifact, its spec, and its build metadata.</p>
     </div>
 
     <div class="mt-8 grid gap-6 lg:grid-cols-[1.4fr_1fr]">
       <div class="overflow-hidden rounded-2xl border border-[#0A1A2E] bg-[#000815]">
-        <div class="flex items-center justify-between border-b border-[#060D16] bg-[#010916] px-4 py-2 font-mono text-[11px]"><span class="text-slate-300">sdkt security us_old.wasm</span><span class="rounded border border-[#0A1A2E] px-1.5 py-0.5 text-[9px] uppercase tracking-wider text-accent">offline</span></div>
-        <pre class="overflow-x-auto p-4 font-mono text-[11px] leading-7 text-slate-300"><code><span class="text-accent">$ sdkt security us_old.wasm</span>
+        <div class="flex items-center justify-between border-b border-[#060D16] bg-[#010916] px-4 py-2 font-mono text-[11px]"><span class="text-slate-300">sdkt wasm inspect us_old.wasm</span><span class="rounded border border-[#0A1A2E] px-1.5 py-0.5 text-[9px] uppercase tracking-wider text-accent">offline</span></div>
+        <pre class="overflow-x-auto p-4 font-mono text-[11px] leading-7 text-slate-300"><code><span class="text-accent">$ sdkt wasm inspect us_old.wasm</span>
 
-Artifact Security Report: us_old.wasm
-=====================================
+WASM Inspection Report: us_old.wasm
+========================================
 Size: 198 bytes
-SHA-256: 05befa136e7f0829a5051d97b032f355a…
+SHA-256 Hash: 05befa136e7f0829a5051d97b032f355a5e65976397df90b224d141942dce46c
+Version: 1
 
-<span class="text-[#F59E0B]">[warning]</span> ART-002  Build provenance incomplete
-  <span class="text-slate-500">contractmetav0 is missing rssdkver and rsver</span>
+Custom Sections (1):
+  - contractspecv0
 
-<span class="text-[#F59E0B]">[warning]</span> SURF-002  transfer takes an address
-  <span class="text-slate-500">verify it calls require_auth()</span>
+Contract Metadata (0):
+  (none)
 
-Severity: 0 critical, 2 warning, 0 info (2 total)</code></pre>
+Exported Functions (0):
+
+Contract Spec Available: Yes
+  Functions: 2
+    - fn transfer(1) -&gt; 0
+    - fn mint(1) -&gt; 0
+  Custom Types: 1
+  Events: 1</code></pre>
       </div>
 
       <div class="space-y-5">
         <div class="rounded-2xl border border-[#0A1A2E] bg-[#000815] p-6 backdrop-blur-md">
-          <span class="inline-block rounded-full border border-[#F59E0B]/40 bg-[#F59E0B]/10 px-2.5 py-0.5 font-mono text-[10px] font-bold uppercase tracking-wider text-[#F59E0B]">Confirmed</span>
-          <h3 class="mt-3 font-semibold text-white">ART-002 — provenance gap</h3>
-          <p class="mt-2 text-sm text-slate-400">The <code class="text-accent">contractmetav0</code> section is present but lacks <code class="text-accent">rssdkver</code> and <code class="text-accent">rsver</code>. You cannot prove which toolchain produced this artifact.</p>
+          <span class="inline-block rounded-full border border-[#F59E0B]/40 bg-[#F59E0B]/10 px-2.5 py-0.5 font-mono text-[10px] font-bold uppercase tracking-wider text-[#F59E0B]">Provenance</span>
+          <h3 class="mt-3 font-semibold text-white">contractmetav0 — build metadata</h3>
+          <p class="mt-2 text-sm text-slate-400">Reports decoded build provenance (<code class="text-accent">rssdkver</code>, <code class="text-accent">rsver</code>). When absent, it reports <code class="text-accent">(none)</code> so you can audit toolchain provenance.</p>
         </div>
         <div class="rounded-2xl border border-[#0A1A2E] bg-[#000815] p-6 backdrop-blur-md">
-          <span class="inline-block rounded-full border border-accent/30 bg-accent/10 px-2.5 py-0.5 font-mono text-[10px] font-bold uppercase tracking-wider text-accent">Observation</span>
-          <h3 class="mt-3 font-semibold text-white">SURF-002 — address parameter</h3>
-          <p class="mt-2 text-sm text-slate-400"><code class="text-accent">transfer</code> takes an address. The analyzer cannot see the body, so it flags the surface for manual review rather than asserting a vulnerability.</p>
+          <span class="inline-block rounded-full border border-accent/30 bg-accent/10 px-2.5 py-0.5 font-mono text-[10px] font-bold uppercase tracking-wider text-accent">Interface</span>
+          <h3 class="mt-3 font-semibold text-white">contractspecv0 — spec surface</h3>
+          <p class="mt-2 text-sm text-slate-400">Decodes the contract specification: functions, argument counts, return types, custom types, and events directly from the WASM bytecode.</p>
         </div>
       </div>
     </div>
