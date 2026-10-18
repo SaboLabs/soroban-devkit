@@ -163,6 +163,7 @@ impl StorageAnalyzer {
                 current_ttl: entry.current_ttl,
                 days_remaining: entry.days_remaining,
                 extension_cost_stroops: entry.extension_cost_stroops,
+                value: entry.value.clone(),
             });
         }
 

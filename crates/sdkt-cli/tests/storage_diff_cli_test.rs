@@ -579,7 +579,9 @@ fn storage_diff_cli_pretty_output_displays_ledger_delta_and_network() {
         "Capture context: old ledger 1000000, new ledger 1017281 (ledger delta: +17281)"
     ));
     assert!(stdout.contains("Network:         testnet"));
-    assert!(stdout.contains("Removed:       0 | Expiring Soon: 1 | Unchanged: 1"));
+    assert!(
+        stdout.contains("Removed:       0 | Expiring Soon: 1 | Value Changed: 0 | Unchanged: 1")
+    );
     assert!(stdout.contains("[expiring] key=keyB=="));
     assert!(stdout.contains("normalized_old_ttl=32719"));
     // Unlabeled unchanged entry is also printed

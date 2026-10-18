@@ -73,6 +73,10 @@ pub struct SnapshotEntry {
     pub class: Option<StorageClass>,
     /// TTL in ledgers relative to the ledger at snapshot time.
     pub current_ttl: u32,
+    /// Base64 XDR encoded `ScVal` captured at snapshot time. Optional so
+    /// legacy snapshot files without values deserialize unchanged.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub value: Option<String>,
 }
 
 impl StorageSnapshot {
@@ -99,6 +103,7 @@ impl StorageSnapshot {
                     label: e.label.clone(),
                     class: Some(e.class),
                     current_ttl: e.current_ttl,
+                    value: e.value.clone(),
                 })
                 .collect(),
         })
@@ -143,6 +148,9 @@ pub enum DiffStatus {
     ExpiringSoon,
     /// Entry is still live and its TTL is above the expiring-soon threshold.
     Unchanged,
+    /// Entry is live with stable TTL but its stored value differs between
+    /// snapshots. Reported only when both snapshots captured a value.
+    ValueChanged,
 }
 
 /// A single entry in a [`SnapshotDiff`].
@@ -167,6 +175,14 @@ pub struct DiffEntry {
     /// (`old_ttl - ledger_delta`), if ledger context is known.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub normalized_old_ttl: Option<u32>,
+    /// Stored value captured in the old snapshot (base64 XDR `ScVal`), when
+    /// both snapshots recorded values for this entry.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub old_value: Option<String>,
+    /// Stored value captured in the new snapshot (base64 XDR `ScVal`), when
+    /// both snapshots recorded values for this entry.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub new_value: Option<String>,
 }
 
 /// The complete result of diffing two [`StorageSnapshot`]s.
@@ -290,11 +306,23 @@ pub fn diff_snapshots(
 
             // Any live entry with new_ttl < EXPIRING_SOON_LEDGERS must remain
             // classified as ExpiringSoon, even when its TTL is greater than the
-            // normalized old TTL.
+            // normalized old TTL. Value changes are additive: an entry whose
+            // TTL is stable but whose stored value differs is flagged
+            // ValueChanged instead of Unchanged.
             let status = if new_ttl < EXPIRING_SOON_LEDGERS {
                 DiffStatus::ExpiringSoon
             } else {
-                DiffStatus::Unchanged
+                let old_val = old_entry.value.clone();
+                let new_val = new_entry.value.clone();
+                let value_changed = match (&old_val, &new_val) {
+                    (Some(o), Some(n)) => o != n,
+                    _ => false,
+                };
+                if value_changed {
+                    DiffStatus::ValueChanged
+                } else {
+                    DiffStatus::Unchanged
+                }
             };
 
             entries.push(DiffEntry {
@@ -305,6 +333,8 @@ pub fn diff_snapshots(
                 old_ttl: Some(old_ttl),
                 new_ttl: Some(new_ttl),
                 normalized_old_ttl,
+                old_value: old_entry.value.clone(),
+                new_value: new_entry.value.clone(),
             });
         } else {
             entries.push(DiffEntry {
@@ -315,11 +345,14 @@ pub fn diff_snapshots(
                 old_ttl: Some(old_ttl),
                 new_ttl: None,
                 normalized_old_ttl: None,
+                old_value: old_entry.value.clone(),
+                new_value: None,
             });
         }
     }
 
-    // Entries that are new (only present in new snapshot).
+    // Entries that are new (only present in new snapshot). There is no old
+    // value to compare against, so value diffing cannot apply.
     for (key, &new_entry) in &new_map {
         if !old_map.contains_key(key) {
             let new_ttl = new_entry.current_ttl;
@@ -336,6 +369,8 @@ pub fn diff_snapshots(
                 old_ttl: None,
                 new_ttl: Some(new_ttl),
                 normalized_old_ttl: None,
+                old_value: None,
+                new_value: new_entry.value.clone(),
             });
         }
     }
@@ -518,6 +553,166 @@ mod tests {
 
     const CONTRACT: &str = "CAE3U7JKESRWZHPEQ72DVNGOQ6WPA7HSPQZL5YV46NPCE4TMUPAGYMEC";
 
+    #[test]
+    fn value_change_without_ttl_change_is_reported() {
+        // Issue #229: an entry whose stored value differs but whose TTL did
+        // not must be reported as ValueChanged, not Unchanged.
+        let old = StorageSnapshot::from_entries(
+            CONTRACT,
+            vec![SnapshotEntry {
+                key: "k1".to_string(),
+                label: None,
+                current_ttl: 100_000,
+                value: Some("AAAAAQ==".to_string()),
+            }],
+        );
+        let new = StorageSnapshot::from_entries(
+            CONTRACT,
+            vec![SnapshotEntry {
+                key: "k1".to_string(),
+                label: None,
+                current_ttl: 100_000,
+                value: Some("AAAAAg==".to_string()),
+            }],
+        );
+
+        let diff = diff_snapshots(&old, &new).expect("diff");
+        assert_eq!(diff.entries.len(), 1);
+        let e = &diff.entries[0];
+        assert_eq!(e.status, DiffStatus::ValueChanged);
+        assert_eq!(e.old_value.as_deref(), Some("AAAAAQ=="));
+        assert_eq!(e.new_value.as_deref(), Some("AAAAAg=="));
+    }
+
+    #[test]
+    fn identical_values_and_ttl_stay_unchanged() {
+        let old = StorageSnapshot::from_entries(
+            CONTRACT,
+            vec![SnapshotEntry {
+                key: "k1".to_string(),
+                label: None,
+                current_ttl: 100_000,
+                value: Some("AAAAAQ==".to_string()),
+            }],
+        );
+        let new = old.clone();
+
+        let diff = diff_snapshots(&old, &new).expect("diff");
+        assert_eq!(diff.entries.len(), 1);
+        assert_eq!(diff.entries[0].status, DiffStatus::Unchanged);
+    }
+
+    #[test]
+    fn missing_values_in_both_snapshots_stay_unchanged() {
+        // Legacy snapshots without values must not produce false positives.
+        let old = StorageSnapshot::from_entries(
+            CONTRACT,
+            vec![SnapshotEntry {
+                key: "k1".to_string(),
+                label: None,
+                current_ttl: 100_000,
+                value: None,
+            }],
+        );
+        let new = old.clone();
+
+        let diff = diff_snapshots(&old, &new).expect("diff");
+        assert_eq!(diff.entries.len(), 1);
+        assert_eq!(diff.entries[0].status, DiffStatus::Unchanged);
+    }
+
+    #[test]
+    fn value_change_with_expiring_ttl_stays_expiring() {
+        // TTL severity wins: an entry that is both expiring and value-changed
+        // is reported as ExpiringSoon.
+        let old = StorageSnapshot::from_entries(
+            CONTRACT,
+            vec![SnapshotEntry {
+                key: "k1".to_string(),
+                label: None,
+                current_ttl: 5_000,
+                value: Some("AAAAAQ==".to_string()),
+            }],
+        );
+        let new = StorageSnapshot::from_entries(
+            CONTRACT,
+            vec![SnapshotEntry {
+                key: "k1".to_string(),
+                label: None,
+                current_ttl: 4_000,
+                value: Some("AAAAAg==".to_string()),
+            }],
+        );
+
+        let diff = diff_snapshots(&old, &new).expect("diff");
+        assert_eq!(diff.entries.len(), 1);
+        assert_eq!(diff.entries[0].status, DiffStatus::ExpiringSoon);
+        // Values are still carried for downstream consumers.
+        assert_eq!(diff.entries[0].old_value.as_deref(), Some("AAAAAQ=="));
+        assert_eq!(diff.entries[0].new_value.as_deref(), Some("AAAAAg=="));
+    }
+
+    #[test]
+    fn value_change_does_not_contribute_to_extend_plan() {
+        // ValueChanged is informational; only Removed/ExpiringSoon are
+        // actionable for TTL extension.
+        let old = StorageSnapshot::from_entries(
+            CONTRACT,
+            vec![SnapshotEntry {
+                key: "k1".to_string(),
+                label: None,
+                current_ttl: 100_000,
+                value: Some("AAAAAQ==".to_string()),
+            }],
+        );
+        let new = StorageSnapshot::from_entries(
+            CONTRACT,
+            vec![SnapshotEntry {
+                key: "k1".to_string(),
+                label: None,
+                current_ttl: 100_000,
+                value: Some("AAAAAg==".to_string()),
+            }],
+        );
+
+        let diff = diff_snapshots(&old, &new).expect("diff");
+        let plan = derive_extend_plan(&diff);
+        assert!(
+            plan.keys.is_empty(),
+            "value change must not produce an extend plan"
+        );
+    }
+
+    #[test]
+    fn legacy_snapshot_json_without_value_deserializes() {
+        // v1 snapshot files (no `value` field) must keep parsing.
+        let json = r#"{
+            "contract_id": "CAE3U7JKESRWZHPEQ72DVNGOQ6WPA7HSPQZL5YV46NPCE4TMUPAGYMEC",
+            "entries": [
+                {"key": "k1", "current_ttl": 100000}
+            ]
+        }"#;
+        let snap: StorageSnapshot = serde_json::from_str(json).expect("legacy json parses");
+        assert_eq!(snap.entries.len(), 1);
+        assert_eq!(snap.entries[0].value, None);
+    }
+
+    #[test]
+    fn snapshot_json_roundtrip_preserves_value() {
+        let snap = StorageSnapshot::from_entries(
+            CONTRACT,
+            vec![SnapshotEntry {
+                key: "k1".to_string(),
+                label: None,
+                current_ttl: 100_000,
+                value: Some("AAAAAQ==".to_string()),
+            }],
+        );
+        let json = serde_json::to_string(&snap).expect("serialize");
+        let back: StorageSnapshot = serde_json::from_str(&json).expect("deserialize");
+        assert_eq!(back.entries[0].value.as_deref(), Some("AAAAAQ=="));
+    }
+
     fn snap(entries: Vec<(&str, u32)>) -> StorageSnapshot {
         StorageSnapshot::from_entries(
             CONTRACT,
@@ -528,6 +723,7 @@ mod tests {
                     label: None,
                     class: None,
                     current_ttl: ttl,
+                    value: None,
                 })
                 .collect(),
         )
@@ -701,6 +897,8 @@ mod tests {
                 old_ttl: Some(50_000),
                 new_ttl: None,
                 normalized_old_ttl: None,
+                old_value: None,
+                new_value: None,
             }],
             ..Default::default()
         };
@@ -724,6 +922,8 @@ mod tests {
                 old_ttl: Some(50_000),
                 new_ttl: Some(remaining),
                 normalized_old_ttl: None,
+                old_value: None,
+                new_value: None,
             }],
             ..Default::default()
         };
@@ -751,6 +951,8 @@ mod tests {
                     old_ttl: Some(50_000),
                     new_ttl: Some(10_000),
                     normalized_old_ttl: None,
+                    old_value: None,
+                    new_value: None,
                 },
                 DiffEntry {
                     key: "k2".to_string(),
@@ -760,6 +962,8 @@ mod tests {
                     old_ttl: Some(50_000),
                     new_ttl: Some(1_000), // minimum
                     normalized_old_ttl: None,
+                    old_value: None,
+                    new_value: None,
                 },
                 DiffEntry {
                     key: "k3".to_string(),
@@ -769,6 +973,8 @@ mod tests {
                     old_ttl: Some(50_000),
                     new_ttl: None,
                     normalized_old_ttl: None,
+                    old_value: None,
+                    new_value: None,
                 },
             ],
             ..Default::default()
@@ -792,6 +998,8 @@ mod tests {
                     old_ttl: Some(100_000),
                     new_ttl: Some(99_000),
                     normalized_old_ttl: None,
+                    old_value: None,
+                    new_value: None,
                 },
                 DiffEntry {
                     key: "expiring".to_string(),
@@ -801,6 +1009,8 @@ mod tests {
                     old_ttl: Some(20_000),
                     new_ttl: Some(5_000),
                     normalized_old_ttl: None,
+                    old_value: None,
+                    new_value: None,
                 },
             ],
             ..Default::default()
@@ -955,6 +1165,7 @@ mod tests {
                     current_ttl: 10_000,
                     days_remaining: 0,
                     extension_cost_stroops: 0,
+                    value: Some("AAAAAQ==".to_string()),
                 },
                 StorageEntry {
                     key: "key2".to_string(),
@@ -963,6 +1174,7 @@ mod tests {
                     current_ttl: 5_000,
                     days_remaining: 0,
                     extension_cost_stroops: 0,
+                    value: None,
                 },
             ],
             latest_ledger: Some(1_000_000),

@@ -302,11 +302,18 @@ const CAPABILITIES: [Capability; CAP_COUNT] = [
         command: &["audit"],
         summary: "Heuristic static security analysis of Soroban Rust sources (AUTH/MATH/CEI/MOVE rules).",
         required_args: &["<paths..>"],
-        optional_args: &["--format", "--disable", "--rules", "--no-plugins", "--list-rules"],
+        optional_args: &[
+            "--format",
+            "--disable",
+            "--rules",
+            "--no-plugins",
+            "--list-rules",
+            "--fail-on",
+        ],
         formats: PRETTY_JSON,
         evidence: Evidence::VerifiedLocal,
         notes: Some(
-            "Findings are advisory signals, never proofs of exploitability; the audit exit code does not encode finding severity (use the GitHub Action's severity-threshold).",
+            "Findings are advisory signals, never proofs of exploitability; exits 0 by default, or 1 if findings meet or exceed --fail-on.",
         ),
         ..Capability::BASE
     },

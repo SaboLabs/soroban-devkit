@@ -40,6 +40,10 @@ pub struct StorageEntry {
     pub current_ttl: u32,
     pub days_remaining: u32,
     pub extension_cost_stroops: u64,
+    /// Base64 XDR `ScVal` captured at snapshot time. Optional so legacy
+    /// serialized reports without values deserialize unchanged.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub value: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]

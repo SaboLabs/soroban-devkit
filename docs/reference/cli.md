@@ -60,6 +60,13 @@ sdkt
 │     The ledger delta is surfaced in both pretty and JSON output.
 │   - Backward compatibility: legacy snapshot files omitting capture context remain fully
 │     supported; their capture context is reported as "unknown".
+│   - Value drift detection: `sdkt storage analyze --format json` records each entry's
+│     base64 XDR `ScVal` value. When two snapshots both carry values for the same entry,
+│     `storage-diff` reports a `value_changed` delta (before/after values) instead of
+│     classifying the entry as unchanged. An entry whose value and TTL both match stays
+│     unchanged; TTL-only changes still report only TTL/rent deltas. Entries without
+│     captured values (legacy snapshots, contract-code entries) are never flagged for
+│     value drift.
 │
 │   `read` fetches a single ledger entry by its complete `LedgerKey` (base64 XDR).
 │   The instance key is NOT included automatically — supply the full key via --key-xdr.
