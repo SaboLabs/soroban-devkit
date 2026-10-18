@@ -140,6 +140,9 @@ sdkt
 │   ├── --start-ledger <START_LEDGER> (start ledger sequence number for event search)
 │   ├── --end-ledger <END_LEDGER>     (end ledger sequence number for event search)
 │   ├── --topic <SYMBOL>              (filter by first topic/event name; server-side filtering)
+│   ├── --limit <LIMIT>               (maximum number of events per page)
+│   ├── --cursor <CURSOR>             (resume fetching events from this cursor token)
+│   ├── --all-pages                   (follow cursor across pages up to the bounded page cap)
 │   ├── --abi <wasm>                  (ABI-aware decode from a local WASM)
 │   ├── --abi-contract <id>           (ABI-aware decode using deployed contract's on-chain WASM)
 │   ├── --network-profile <NAME> / --rpc-url <URL> / --network-passphrase <P>
@@ -541,6 +544,25 @@ explicit --rpc-url / --network-passphrase
 
 `tx sign` is excluded — it is offline signing and takes only `--network` for the
 signature hash. Commands invoked without these flags behave exactly as before.
+
+## Event Explorer Pagination
+
+`sdkt events` provides cursor-aware pagination over contract event trails:
+
+| Flag | Meaning |
+|------|---------|
+| `--limit <LIMIT>` | Maximum number of events to return per page (server default: 100). |
+| `--cursor <CURSOR>` | Opaque paging token to resume querying from a prior page boundary. |
+| `--all-pages` | Follows continuation cursors across pages up to a bounded cap (default 50 pages). |
+
+### Paging Semantics & Boundary Notices
+
+- **Default single-page behavior:** By default, `sdkt events` issues a single request and returns up to 100 events (or the specified `--limit`). If the response reaches the page limit and more events are available, a notice is displayed reporting the page boundary and printing the exact `--cursor <CURSOR>` argument needed to resume. In `--format json`, this notice is printed to `stderr` so `stdout` remains valid JSON.
+- **Resuming with `--cursor`:** When `--cursor <TOKEN>` is provided, the RPC request omits `startLedger` and `endLedger`, resuming directly from the saved stream position. Combining `--cursor` with `--start-ledger` or `--end-ledger` is rejected client-side with an actionable error before making any RPC call.
+- **Bounded multi-page queries (`--all-pages`):** `--all-pages` follows continuation cursors sequentially until:
+  1. The page is exhausted (no further cursor, empty page, or cursor unchanged).
+  2. The bounded page cap (50 pages) is reached to guard against unbounded request loops on high-volume contracts.
+  3. Events pass the observed `latestLedger`.
 
 ## Shell completions
 
