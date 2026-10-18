@@ -1,7 +1,11 @@
 use thiserror::Error;
 
 /// Core RPC error types for Soroban DevKit.
+///
+/// Marked `#[non_exhaustive]`: new variants may be added in minor releases,
+/// so downstream matches must keep a catch-all arm.
 #[derive(Debug, Error)]
+#[non_exhaustive]
 pub enum RpcError {
     /// The caller supplied more keys than one `getLedgerEntries` request allows.
     #[error("getLedgerEntries accepts at most {max} keys per request; received {count}. Use fetch_ledger_entries to read larger key sets in batches")]
