@@ -313,9 +313,10 @@ const CAPABILITIES: [Capability; CAP_COUNT] = [
             "--baseline",
         ],
         formats: PRETTY_JSON,
+        exit: ExitSemantics::VERDICT_GATED,
         evidence: Evidence::VerifiedLocal,
         notes: Some(
-            "Findings are advisory signals, never proofs of exploitability; the audit exit code does not encode finding severity (use the GitHub Action's severity-threshold).",
+            "Findings are advisory signals, never proofs of exploitability; exits 0 by default. When --fail-on is set, exits 1 if findings (or only new findings when --baseline is also used) meet or exceed the threshold. With --baseline alone, exits 1 if new findings are introduced. Note: --format sarif is not supported with --baseline or --save-baseline.",
         ),
         ..Capability::BASE
     },
@@ -1113,6 +1114,7 @@ mod tests {
             "diff",
             "deployment.verify",
             "network.diagnose",
+            "audit",
         ] {
             let c = find(id).expect("pinned verdict command");
             assert!(
@@ -1124,7 +1126,6 @@ mod tests {
         // verified by running it, so it must NOT claim a verdict gate.
         for id in [
             "wasm.inspect",
-            "audit",
             "inspect",
             "events",
             "account",

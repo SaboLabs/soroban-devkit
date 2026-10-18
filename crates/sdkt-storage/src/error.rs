@@ -10,6 +10,8 @@ pub enum StorageError {
     InvalidContractId(String),
     #[error("Snapshot contract ID mismatch: old '{old}' vs new '{new}'")]
     ContractIdMismatch { old: String, new: String },
+    #[error("Snapshot network mismatch: old '{old}' vs new '{new}'")]
+    NetworkMismatch { old: String, new: String },
     #[error("Parsing error: {0}")]
     Parse(String),
     #[error("IO error: {0}")]

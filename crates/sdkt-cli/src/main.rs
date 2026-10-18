@@ -27,6 +27,7 @@ use std::fs;
 use std::io::{self, Write};
 use std::path::Path;
 use std::process;
+use std::time::Duration;
 
 use commands::network::{
     network_is_explicit, resolve_network_config, resolve_rpc_client, resolve_rpc_client_mutating,
@@ -103,6 +104,45 @@ mod storage_label_tests {
             resolve_storage_read_key(contract, None, Some("Unknown"), &[], false, "persistent")
                 .unwrap();
         assert_eq!(storage_key_label(&unknown, &spec), unknown);
+    }
+
+    #[test]
+    fn shorten_value_passes_through_short_values_unchanged() {
+        assert_eq!(shorten_value("short"), "short");
+        assert_eq!(shorten_value("exactly-24"), "exactly-24");
+    }
+
+    #[test]
+    fn shorten_value_distinguishes_values_sharing_head_tail_and_length() {
+        // Same 16-char head, same 8-char tail, same length: fingerprint
+        // must differ.
+        let a = format!(
+            "{}{}{}{}",
+            "a".repeat(16),
+            "AAAA",
+            "Z".repeat(8),
+            "0".repeat(24)
+        );
+        let b = format!(
+            "{}{}{}{}",
+            "a".repeat(16),
+            "ZZZZ",
+            "Z".repeat(8),
+            "0".repeat(24)
+        );
+        // sanity: the structural parts really do coincide
+        assert_eq!(&a[0..16], &b[0..16]);
+        assert_eq!(&a[a.len() - 8..], &b[b.len() - 8..]);
+        assert_eq!(a.len(), b.len());
+        assert_ne!(
+            shorten_value(&a),
+            shorten_value(&b),
+            "fingerprint must distinguish structurally-alike values"
+        );
+        assert!(
+            shorten_value(&a).contains('#'),
+            "long value must carry the SHA-256 fingerprint"
+        );
     }
 }
 
@@ -490,6 +530,12 @@ enum Commands {
         /// Path to the currently deployed (baseline) WASM, used with --deny-breaking.
         #[arg(long, value_name = "WASM")]
         old_wasm: Option<String>,
+        /// Timeout in seconds while waiting for the upload and create transactions to settle
+        #[arg(long, default_value_t = 60)]
+        timeout: u64,
+        /// Polling interval in seconds while waiting for settlement
+        #[arg(long, default_value_t = 1)]
+        interval: u64,
         #[command(flatten)]
         net: NetworkArgs,
     },
@@ -549,6 +595,12 @@ enum Commands {
         /// Return after submission with the transaction hash instead of polling for settlement
         #[arg(long)]
         no_wait: bool,
+        /// Timeout in seconds while waiting for settlement (only without --no-wait)
+        #[arg(long, default_value_t = 60)]
+        timeout: u64,
+        /// Polling interval in seconds while waiting for settlement (only without --no-wait)
+        #[arg(long, default_value_t = 1)]
+        interval: u64,
         /// Build and sign the invocation envelope, print it, and stop without submitting (#73)
         #[arg(long)]
         build_only: bool,
@@ -1110,6 +1162,12 @@ enum ProjectCommand {
         /// Identity name to sign and pay for each contract deployment. Defaults to "default".
         #[arg(short = 'I', long, default_value = "default")]
         identity: String,
+        /// Timeout in seconds while waiting for each contract deployment to settle (default 60)
+        #[arg(long, default_value_t = 60)]
+        timeout: u64,
+        /// Poll interval in seconds between status checks (default 1)
+        #[arg(long, default_value_t = 1)]
+        interval: u64,
         #[arg(short, long, default_value = "pretty")]
         format: String,
     },
@@ -1277,6 +1335,12 @@ enum StorageAction {
         /// Identity name to sign the extend transaction. Defaults to "default".
         #[arg(short = 'I', long, default_value = "default")]
         identity: String,
+        /// Timeout in seconds while waiting for the extend transaction to settle (default 60)
+        #[arg(long, default_value_t = 60)]
+        timeout: u64,
+        /// Poll interval in seconds between status checks (default 1)
+        #[arg(long, default_value_t = 1)]
+        interval: u64,
         #[arg(short, long, default_value = "pretty")]
         format: String,
     },
@@ -1298,6 +1362,12 @@ enum StorageAction {
         /// Dry-run: show what would be restored without submitting.
         #[arg(long)]
         dry_run: bool,
+        /// Timeout in seconds while waiting for the restore transaction to settle (default 60)
+        #[arg(long, default_value_t = 60)]
+        timeout: u64,
+        /// Poll interval in seconds between status checks (default 1)
+        #[arg(long, default_value_t = 1)]
+        interval: u64,
         #[arg(short, long, default_value = "pretty")]
         format: String,
     },
@@ -2589,6 +2659,26 @@ fn parse_format_str(s: &str) -> OutputFormat {
     }
 }
 
+/// Validate a `(timeout, interval)` wait pair before any transaction is
+/// submitted.
+///
+/// `interval` must be non-zero — a zero interval spins the poll loop without
+/// advancing. `timeout` must cover at least one interval — a timeout below the
+/// interval could never observe a settled transaction. Both errors name the
+/// offending values so the operator can correct them without a source dive.
+/// Callers exit with status 2 (usage error) on `Err`.
+fn validate_poll_pair(timeout: u64, interval: u64) -> Result<(), String> {
+    if interval == 0 {
+        return Err("--interval must be greater than 0".to_string());
+    }
+    if timeout < interval {
+        return Err(format!(
+            "--timeout ({timeout}s) must be at least one --interval ({interval}s)"
+        ));
+    }
+    Ok(())
+}
+
 /// Terminate with a machine-parseable error envelope when `--format json` is
 /// active, otherwise keep the human-readable stderr contract.
 ///
@@ -2667,6 +2757,30 @@ fn print_diff_pretty(diff: &sdkt_storage::SnapshotDiff) {
     use sdkt_storage::DiffStatus;
 
     println!("Storage Diff for Contract: {}", diff.contract_id);
+    if diff.capture_context.as_deref() == Some("unknown") {
+        println!("Capture context: unknown");
+        if let Some(ref net) = diff.network {
+            println!("Network:         {}", net);
+        }
+    } else {
+        match (diff.old_ledger, diff.new_ledger, diff.ledger_delta) {
+            (Some(old_l), Some(new_l), Some(delta)) => {
+                println!(
+                    "Capture context: old ledger {}, new ledger {} (ledger delta: {:+})",
+                    old_l, new_l, delta
+                );
+                if let Some(ref net) = diff.network {
+                    println!("Network:         {}", net);
+                }
+            }
+            _ => {
+                println!("Capture context: unknown");
+                if let Some(ref net) = diff.network {
+                    println!("Network:         {}", net);
+                }
+            }
+        }
+    }
     println!("Total entries: {}", diff.entries.len());
 
     let removed: Vec<_> = diff
@@ -2679,6 +2793,11 @@ fn print_diff_pretty(diff: &sdkt_storage::SnapshotDiff) {
         .iter()
         .filter(|e| e.status == DiffStatus::ExpiringSoon)
         .collect();
+    let value_changed: Vec<_> = diff
+        .entries
+        .iter()
+        .filter(|e| e.status == DiffStatus::ValueChanged)
+        .collect();
     let unchanged: Vec<_> = diff
         .entries
         .iter()
@@ -2686,9 +2805,10 @@ fn print_diff_pretty(diff: &sdkt_storage::SnapshotDiff) {
         .collect();
 
     println!(
-        "  Removed:       {} | Expiring Soon: {} | Unchanged: {}",
+        "  Removed:       {} | Expiring Soon: {} | Value Changed: {} | Unchanged: {}",
         removed.len(),
         expiring.len(),
+        value_changed.len(),
         unchanged.len()
     );
 
@@ -2708,31 +2828,86 @@ fn print_diff_pretty(diff: &sdkt_storage::SnapshotDiff) {
     if !expiring.is_empty() {
         println!("\nExpiring soon ({}):", expiring.len());
         for e in &expiring {
+            let norm_str = e
+                .normalized_old_ttl
+                .map_or(String::new(), |n| format!(" normalized_old_ttl={n}"));
             println!(
-                "  [expiring] key={}{} (ttl={})",
+                "  [expiring] key={}{}{} (ttl={})",
                 e.key,
                 e.label
                     .as_ref()
                     .map_or(String::new(), |l| format!(" label={l}")),
+                norm_str,
                 e.new_ttl.map_or("?".to_string(), |t| t.to_string())
             );
         }
     }
-    if unchanged.iter().any(|e| e.label.is_some()) {
+    if !value_changed.is_empty() {
+        println!("\nValue changed ({}):", value_changed.len());
+        for e in &value_changed {
+            let old_short = e
+                .old_value
+                .as_deref()
+                .map(shorten_value)
+                .unwrap_or_else(|| "?".to_string());
+            let new_short = e
+                .new_value
+                .as_deref()
+                .map(shorten_value)
+                .unwrap_or_else(|| "?".to_string());
+            println!(
+                "  [value_changed] key={}{} ttl={} (old_value={} new_value={})",
+                e.key,
+                e.label
+                    .as_ref()
+                    .map_or(String::new(), |l| format!(" label={l}")),
+                e.new_ttl.map_or("?".to_string(), |t| t.to_string()),
+                old_short,
+                new_short
+            );
+        }
+    }
+    if !unchanged.is_empty() {
         println!("\nUnchanged entries ({}):", unchanged.len());
         for e in &unchanged {
+            let norm_str = e
+                .normalized_old_ttl
+                .map_or(String::new(), |n| format!(" normalized_old_ttl={n}"));
             println!(
-                "  [unchanged] key={}{} (ttl={})",
+                "  [unchanged] key={}{}{} (ttl={})",
                 e.key,
                 e.label
                     .as_ref()
                     .map_or(String::new(), |l| format!(" label={l}")),
+                norm_str,
                 e.new_ttl.map_or("?".to_string(), |t| t.to_string())
             );
         }
     }
-    if unchanged.is_empty() && removed.is_empty() && expiring.is_empty() {
+    if unchanged.is_empty() && removed.is_empty() && expiring.is_empty() && value_changed.is_empty()
+    {
         println!("  (no entries)");
+    }
+}
+
+/// Shorten a base64 XDR value for display: keep the first 16 and last 8
+/// characters plus a SHA-256 fingerprint (first 8 hex chars) of the complete
+/// value, so two distinct values sharing head, tail, and length still print
+/// differently in the `[value_changed]` line.
+fn shorten_value(value: &str) -> String {
+    if value.len() <= 24 {
+        value.to_string()
+    } else {
+        let mut hasher = Sha256::new();
+        hasher.update(value.as_bytes());
+        let fp = hasher.finalize();
+        format!(
+            "{}…{}#{} ({} chars)",
+            &value[..16],
+            &value[value.len() - 8..],
+            hex::encode(&fp[..4]),
+            value.len()
+        )
     }
 }
 
@@ -3246,7 +3421,34 @@ fn run_encode(values: &[String]) -> Result<String, String> {
 
 #[cfg(test)]
 mod encode_tests {
-    use super::{parse_typed_args, run_encode};
+    use super::{parse_typed_args, run_encode, validate_poll_pair};
+
+    #[test]
+    fn poll_pair_defaults_are_valid() {
+        // The CLI defaults (60s timeout, 1s interval) must pass validation.
+        assert!(validate_poll_pair(60, 1).is_ok());
+    }
+
+    #[test]
+    fn poll_pair_zero_interval_is_rejected() {
+        let err = validate_poll_pair(60, 0).expect_err("zero interval must error");
+        assert!(err.contains("--interval"), "{err}");
+    }
+
+    #[test]
+    fn poll_pair_timeout_below_interval_is_rejected() {
+        let err = validate_poll_pair(2, 5).expect_err("timeout below interval must error");
+        assert!(err.contains("--timeout"), "{err}");
+        assert!(err.contains("--interval"), "{err}");
+        assert!(err.contains('2'), "{err}");
+        assert!(err.contains('5'), "{err}");
+    }
+
+    #[test]
+    fn poll_pair_equal_timeout_and_interval_is_valid() {
+        // timeout == interval is the minimum valid pair (one poll).
+        assert!(validate_poll_pair(5, 5).is_ok());
+    }
 
     #[test]
     fn new_types_match_runtime_typed_arguments() {
@@ -4383,17 +4585,27 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
                     let fmt = parse_format_str(&format);
                     let extra_keys = analyze_extra_keys.expect("resolved for Analyze");
 
-                    let client = resolve_rpc_client(
-                        net.rpc_url.clone(),
-                        net.network_passphrase.clone(),
-                        net.network_profile.clone(),
-                    );
+                    let target_net = commands::network::resolve_target_network(None, &net).ok();
+                    let (client, network_name) = match target_net {
+                        Some(tn) => (tn.client, Some(tn.network_name)),
+                        None => (
+                            resolve_rpc_client(
+                                net.rpc_url.clone(),
+                                net.network_passphrase.clone(),
+                                net.network_profile.clone(),
+                            ),
+                            None,
+                        ),
+                    };
                     let cfg = load_config();
-                    let analyzer = sdkt_storage::StorageAnalyzer::with_config(
+                    let mut analyzer = sdkt_storage::StorageAnalyzer::with_config(
                         client,
                         cfg.storage.max_entries,
                         cfg.storage.ttl_warning_days,
                     );
+                    if let Some(net_name) = network_name {
+                        analyzer = analyzer.with_network(net_name);
+                    }
 
                     match analyzer
                         .inspect_contract_storage_keys(&contract_id, &extra_keys)
@@ -4409,6 +4621,12 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
                                 println!("{}", serde_json::to_string(&report)?);
                             } else {
                                 println!("Storage Analysis for Contract: {}", report.contract_id);
+                                if let Some(ledger) = report.latest_ledger {
+                                    println!("Latest Ledger: {}", ledger);
+                                }
+                                if let Some(ref net) = report.network {
+                                    println!("Network:       {}", net);
+                                }
                                 println!("Total Entries: {}", report.total_entries);
                                 println!("  Instance:    {}", report.instance_entries);
                                 println!("  Persistent: {}", report.persistent_entries);
@@ -4458,9 +4676,15 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
                     ledgers,
                     key,
                     identity,
+                    timeout,
+                    interval,
                     format,
                 } => {
                     let fmt = parse_format_str(&format);
+                    if let Err(msg) = validate_poll_pair(timeout, interval) {
+                        eprintln!("Error: {msg}");
+                        process::exit(2);
+                    }
 
                     if contract.trim().is_empty() {
                         eprintln!("Error: --contract / contract id must not be empty");
@@ -4522,6 +4746,10 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
                         })?;
                     let signer = sdkt_xdr::sign::Ed25519Signer::from_seed(&signing_key.to_bytes());
                     let source_account = identity_obj.public_key.clone();
+                    let poll_cfg = sdkt_rpc::PollConfig {
+                        timeout: Duration::from_secs(timeout),
+                        interval: Duration::from_secs(interval),
+                    };
                     let client = SorobanRpcClient::from_config(&network_config);
 
                     match extend_footprint(
@@ -4532,6 +4760,7 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
                         &source_account,
                         &signer,
                         network,
+                        &poll_cfg,
                     )
                     .await
                     {
@@ -4562,9 +4791,15 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
                     envelope,
                     identity,
                     dry_run,
+                    timeout,
+                    interval,
                     format,
                 } => {
                     let fmt = parse_format_str(&format);
+                    if let Err(msg) = validate_poll_pair(timeout, interval) {
+                        eprintln!("Error: {msg}");
+                        process::exit(2);
+                    }
 
                     if contract.trim().is_empty() {
                         eprintln!("Error: --contract / contract id must not be empty");
@@ -4630,6 +4865,10 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
                         })?;
                     let signer = sdkt_xdr::sign::Ed25519Signer::from_seed(&signing_key.to_bytes());
                     let source_account = identity_obj.public_key.clone();
+                    let poll_cfg = sdkt_rpc::PollConfig {
+                        timeout: Duration::from_secs(timeout),
+                        interval: Duration::from_secs(interval),
+                    };
                     let client = SorobanRpcClient::from_config(&network_config);
 
                     match restore_footprint(
@@ -4640,6 +4879,7 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
                         &signer,
                         network,
                         dry_run,
+                        &poll_cfg,
                     )
                     .await
                     {
@@ -5418,10 +5658,9 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
                     net.network_profile.clone(),
                 );
 
-                use sdkt_rpc::{submit_and_wait, PollConfig, TransactionStatus};
-                use std::time::Duration;
+                use sdkt_rpc::{submit_and_wait, TransactionStatus};
 
-                let poll_cfg = PollConfig {
+                let poll_cfg = sdkt_rpc::PollConfig {
                     timeout: Duration::from_secs(timeout),
                     interval: Duration::from_secs(interval),
                 };
@@ -7709,9 +7948,21 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
             arg,
             deny_breaking,
             old_wasm,
+            timeout,
+            interval,
             net,
         } => {
             let fmt = parse_format_str(&format);
+
+            // Validate the wait pair before any I/O or transaction submission.
+            if let Err(msg) = validate_poll_pair(timeout, interval) {
+                eprintln!("Error: {msg}");
+                process::exit(2);
+            }
+            let poll_cfg = sdkt_rpc::PollConfig {
+                timeout: Duration::from_secs(timeout),
+                interval: Duration::from_secs(interval),
+            };
 
             // Exactly one code source: --wasm (upload + create) or --wasm-hash
             // (create-only from already-uploaded code). Validate before any I/O.
@@ -7866,6 +8117,7 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
                     network,
                     salt_bytes,
                     parsed_args,
+                    &poll_cfg,
                 )
                 .await
             } else {
@@ -7929,6 +8181,7 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
                     network,
                     prediction_salt,
                     parsed_args,
+                    &poll_cfg,
                 )
                 .await
             };
@@ -8172,10 +8425,24 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
             identity,
             format,
             no_wait,
+            timeout,
+            interval,
             build_only,
             net,
         } => {
             let fmt = parse_format_str(&format);
+
+            // Validate the wait pair before any transaction is built or
+            // submitted: `interval` must be non-zero and `timeout` must cover
+            // at least one interval. A zero interval would spin the poll loop
+            // without ever advancing; a timeout below one interval could never
+            // observe a settled transaction.
+            if !no_wait {
+                if let Err(msg) = validate_poll_pair(timeout, interval) {
+                    eprintln!("Error: {msg}");
+                    process::exit(2);
+                }
+            }
 
             // 1. Resolve network (mutating operation → mainnet safety guard).
             let network_config = resolve_network_config(
@@ -8232,7 +8499,10 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
             };
 
             let client = SorobanRpcClient::from_config(&network_config);
-            let poll = sdkt_rpc::PollConfig::default();
+            let poll = sdkt_rpc::PollConfig {
+                timeout: Duration::from_secs(timeout),
+                interval: Duration::from_secs(interval),
+            };
 
             // `--build-only`: stop after the envelope is built and signed. Nothing
             // is submitted, so the prepared envelope can be inspected (or handed to
@@ -8893,9 +9163,17 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
                 salt,
                 skip_deployed,
                 identity,
+                timeout,
+                interval,
                 format,
             } => {
                 let fmt = parse_format_str(&format);
+                // Validate the polling pair before any network or identity work
+                // (fail fast): `--interval 0` must be rejected before deployment.
+                if let Err(msg) = validate_poll_pair(timeout, interval) {
+                    eprintln!("Error: {msg}");
+                    process::exit(2);
+                }
                 // Validate the salt before any network or identity work (fail fast).
                 let salt_bytes = salt.as_deref().map(parse_salt_hex).transpose()?;
                 let config = load_config();
@@ -9079,6 +9357,11 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
                                 }
                             };
 
+                            let poll_cfg = sdkt_rpc::PollConfig {
+                                timeout: std::time::Duration::from_secs(timeout),
+                                interval: std::time::Duration::from_secs(interval),
+                            };
+
                             // Parse and validate constructor arguments before upload (fail fast).
                             // Convert TYPE:VALUE to base64 ScVal (same as single-deploy path).
                             let parsed_args = match parse_typed_args(&contract.ctor_args, false) {
@@ -9111,6 +9394,7 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
                                 network.clone(),
                                 salt_bytes,
                                 parsed_args,
+                                &poll_cfg,
                             )
                             .await
                             {
