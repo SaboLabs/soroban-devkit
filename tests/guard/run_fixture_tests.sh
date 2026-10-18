@@ -132,6 +132,73 @@ out="$(python3 "$GUARD/guard_vscode_config.py" \
 assert_rc "B missing explicit path" 1 "$?"
 
 echo
+echo "==== Guard C — devcontainer auto-run ===="
+
+run_devc() {
+  # $1 = case dir relative to fixtures/devcontainer/
+  python3 "$GUARD/guard_devcontainer.py" --root "$FIX" --paths "$FIX/devcontainer/$1/devcontainer.json"
+}
+
+# --- safe configs (rc=0) ---
+for c in clean-minimal clean-npm-ci clean-cargo-build clean-apt-update root-without-hooks jsonc-comments-trailing-comma; do
+  out="$(run_devc "negative/$c" 2>&1)"
+  assert_rc "C safe:$c" 0 "$?"
+done
+
+# --- dangerous configs (rc=1) ---
+for c in fetch-and-run runs-asset-path poststart-network root-with-hooks initialize-exec ps-fetch; do
+  out="$(run_devc "positive/$c" 2>&1)"
+  assert_rc "C dangerous:$c" 1 "$?"
+done
+
+# --- explicit error messages ---
+out="$(run_devc positive/fetch-and-run)"
+assert_output "C fetch-and-run named" "network fetch" "$out"
+out="$(run_devc positive/runs-asset-path)"
+assert_output "C asset path named" "binary/asset path" "$out"
+out="$(run_devc positive/root-with-hooks)"
+assert_output "C root-with-hooks named" "runs as root" "$out"
+out="$(run_devc negative/clean-npm-ci)"
+assert_rc "C npm ci allowed" 0 "$?"
+
+# --- an explicitly requested path that does not exist must fail loud ---
+out="$(python3 "$GUARD/guard_devcontainer.py" \
+  --paths "$FIX/devcontainer/does-not-exist/devcontainer.json" 2>&1)"
+assert_rc "C missing explicit path" 1 "$?"
+
+echo
+echo "==== Guard D — npm lifecycle hooks ===="
+
+run_npm() {
+  python3 "$GUARD/guard_npm_lifecycle.py" --root "$FIX" --paths "$FIX/npm/$1/package.json"
+}
+
+# --- safe configs (rc=0) ---
+for c in husky-prepare pinst-postinstall npm-run-build tsc-prepare node-gyp-preinstall no-lifecycle-hooks no-scripts-key echo-postinstall patch-package; do
+  out="$(run_npm "negative/$c" 2>&1)"
+  assert_rc "D safe:$c" 0 "$?"
+done
+
+# --- dangerous configs (rc=1) ---
+for c in preinstall-runs-asset preinstall-font postinstall-network postinstall-wget prepare-eval install-base64-blob install-runs-js-outside-scripts; do
+  out="$(run_npm "positive/$c" 2>&1)"
+  assert_rc "D dangerous:$c" 1 "$?"
+done
+
+# --- explicit error messages ---
+out="$(run_npm positive/preinstall-runs-asset)"
+assert_output "D asset path named" "binary/asset path" "$out"
+out="$(run_npm positive/postinstall-network)"
+assert_output "D network named" "network fetch" "$out"
+out="$(run_npm positive/prepare-eval)"
+assert_output "D eval named" "eval()" "$out"
+
+# --- an explicitly requested path that does not exist must fail loud ---
+out="$(python3 "$GUARD/guard_npm_lifecycle.py" \
+  --paths "$FIX/npm/does-not-exist/package.json" 2>&1)"
+assert_rc "D missing explicit path" 1 "$?"
+
+echo
 echo "==== Real-repo guards (post-cleanup tree) ===="
 
 out="$(python3 "$GUARD/guard_assets.py" --root "$ROOT" 2>&1)"
@@ -139,6 +206,16 @@ assert_rc "A real repo (payload removed)" 0 "$?"
 
 out="$(python3 "$GUARD/guard_vscode_config.py" --root "$ROOT" 2>&1)"
 assert_rc "B real repo (settings clean)" 0 "$?"
+
+# Preventive guards: this repo currently has no .devcontainer/ and no package.json,
+# so these exercise the enumeration path and must exit 0 with 0 inspected files.
+out="$(python3 "$GUARD/guard_devcontainer.py" --root "$ROOT" 2>&1)"
+assert_rc "C real repo (no devcontainer)" 0 "$?"
+assert_output "C real repo inspected 0" "inspected 0 devcontainer file(s)" "$out"
+
+out="$(python3 "$GUARD/guard_npm_lifecycle.py" --root "$ROOT" 2>&1)"
+assert_rc "D real repo (no package.json)" 0 "$?"
+assert_output "D real repo inspected 0" "inspected 0 package.json file(s)" "$out"
 
 echo
 echo "==== summary: PASS=$PASS FAIL=$FAIL ===="

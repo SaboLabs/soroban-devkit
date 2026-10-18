@@ -128,6 +128,24 @@ jobs:
     - name: Incident payload regression (static bytes only)
       run: python3 tests/guard/test_incident_payload.py
 
+  devcontainer-guard:
+    name: devcontainer auto-run guard
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v7
+
+    - name: Reject risky dev-container auto-run configuration
+      run: python3 scripts/guard/guard_devcontainer.py --root .
+
+  npm-lifecycle-guard:
+    name: npm lifecycle hook guard
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v7
+
+    - name: Reject risky package.json lifecycle hooks
+      run: python3 scripts/guard/guard_npm_lifecycle.py --root .
+
   install-script:
     name: install-script validation
     runs-on: ubuntu-latest

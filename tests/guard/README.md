@@ -11,7 +11,7 @@ Cleanup is tracked in #483. These guardrails are the preventive layer.
 
 ## Jobs
 
-Three jobs run on every push to `main` / `feat/*` and every PR targeting
+Five jobs run on every push to `main` / `feat/*` and every PR targeting
 `main`, in parallel with the existing pipeline. None of them declare `needs`,
 so they cannot be skipped by a fast path.
 
@@ -19,9 +19,11 @@ so they cannot be skipped by a fast path.
 |---|---|
 | `asset-integrity` | Every tracked font asset must carry the signature of its own format |
 | `vscode-config-guard` | Reject committed VS Code configuration that auto-runs commands on folder open |
+| `devcontainer-guard` | Reject dev-container configuration that auto-runs risky commands |
+| `npm-lifecycle-guard` | Reject `package.json` lifecycle hooks that execute binaries/assets or fetch code |
 | `guardrail-tests` | Run the fixture suite and the incident-payload regression |
 
-All three are stdlib-Python only: no network, no Rust toolchain, no extra
+All five are stdlib-Python only: no network, no Rust toolchain, no extra
 actions beyond `checkout`.
 
 ## Guard A — `scripts/guard/guard_assets.py`
@@ -98,6 +100,87 @@ rule.
 * This guard does not claim to cover all ways code can execute. It targets the
   specific configuration surface used in the incident.
 
+## Guard C — `scripts/guard/guard_devcontainer.py`
+
+Preventive guard: this repository currently contains **no** `.devcontainer/`
+directory, so in production the guard prints `inspected 0 devcontainer file(s)`
+and exits 0. Its effectiveness is verified by fixtures only — no live target
+exists. It becomes active the moment a `devcontainer.json` is added.
+
+Inspected files: `.devcontainer/devcontainer.json`, top-level
+`.devcontainer.json`, and `devcontainer.json` inside any named folder under
+`.devcontainer/`. Parsed as JSONC (comments and trailing commas accepted).
+
+Flags:
+
+* `postCreateCommand` / `postStartCommand` / `postAttachCommand` /
+  `onCreateCommand` / `initializeCommand` / `updateContentCommand` whose body
+  pipes a network fetch into a shell (`curl … | sh`, `wget … | bash`,
+  `Invoke-WebRequest … | iex`)
+* hooks that execute a **binary/asset path** rather than a manifest
+  (`node ./public/fonts/x.woff2`, `sh ./dist/setup.js`, `node ./tools/x.js`)
+* `remoteUser`/`containerUser: root` **combined with** any exec hook
+  (root alone is not flagged — a root-only devcontainer passes)
+
+Explicitly allowed without error (documented allow-list, fixture-locked):
+`npm ci`, `yarn install`, `pnpm install`, `cargo build/check/fmt/clippy/test`,
+`rustup component add`, `sudo apt-get update/install`. Any other hook command
+is reported for human review rather than silently allowed.
+
+### Known false positives
+
+Any auto-run hook not on the allow-list is reported even if benign (for
+example `make setup`). The remedy is a narrowly-scoped allow-list entry with a
+fixture, not a widened rule.
+
+### Limitations
+
+* Does not inspect `Dockerfile` instructions (`RUN`, `ENTRYPOINT`) referenced
+  by the dev container image build.
+* Commands are matched by pattern, not interpreted; a hook that obfuscates its
+  intent behind an allow-listed prefix will pass.
+* Does not cover user-level dev-container overrides or extension-contributed
+  tasks.
+
+## Guard D — `scripts/guard/guard_npm_lifecycle.py`
+
+Preventive guard: this repository currently contains **no** `package.json`
+(pure Rust workspace), so in production the guard prints
+`inspected 0 package.json file(s)` and exits 0. Effectiveness is verified by
+fixtures only.
+
+Enumerates tracked `package.json` files via `git ls-files -z`, **excluding
+`tests/guard/fixtures/`** for the same reason as Guard A. Inspects only the
+lifecycle keys `preinstall`, `install`, `postinstall`, `prepare`, `prepublish`,
+`prepublishOnly` — ordinary `scripts.build`/`scripts.test` entries are not
+examined.
+
+Flags hooks that:
+
+* execute a **binary/asset path** (`node ./dist/setup.js`,
+  `node ./public/fonts/<file>`, `node ./tools/x.js` outside `scripts/`)
+* perform a network fetch at install time (`curl`, `wget`,
+  `Invoke-WebRequest`, `irm`)
+* use obfuscation markers (`eval(`, `atob(`) or a decodable base64 blob
+  longer than 120 characters
+
+Explicitly allowed without error (documented, fixture-locked): `husky
+install`, `pinst enable/disable`, `patch-package`, `npm run <script>`,
+`yarn/pnpm run`, `node-gyp`, `tsc`, `lerna run`, `corepack`, plain `echo` /
+`exit 0` / `true`. Any non-listed hook command is reported for human review.
+
+### Known false positives
+
+A lifecycle hook calling an unusual but legitimate tool (for example
+`simple-git-hooks`) is reported rather than silently passed. Remedy: add a
+narrow allow-list entry with a fixture proving the safe case.
+
+### Limitations
+
+* Does not cover `.npmrc`, `.yarnrc`, lockfile injection, or
+  `prepack`/`postpack` (pack-time, not install-time).
+* Pattern-based; not a semantic shell interpreter.
+
 ## Tests
 
 `tests/guard/run_fixture_tests.sh` asserts exit codes and error messages
@@ -125,3 +208,8 @@ The current `.vscode/settings.json` on `main` is clean (no
 exceptions. If a legitimate configuration is ever rejected, the correct response
 is to audit that case and add the narrowest justifiable allowance — not to
 weaken the rule.
+
+Guards C and D are **preventive**: this repository has no `.devcontainer/`
+and no `package.json`, so they inspect zero files today. They are documented as
+fixture-verified controls rather than live controls; neither claims to have
+caught anything in this repository.
