@@ -125,6 +125,8 @@ passphrase = "Test SDF Network ; September 2015"
 
 [contracts.main]
 path = "."
+# Optional: constructor arguments passed at create time
+# ctor_args = ["address:G...", "u32:100"]
 "#;
     write_template(root, ".sdkt.toml", sdkt_toml, &mut created)?;
 
@@ -132,7 +134,7 @@ path = "."
 
     if !config.minimal {
         let readme = format!(
-            "# {name}\n\nA Soroban smart contract project.\n\n## Build\n\n```\nsdkt build\n```\n\n## Test\n\n```\ncargo test\n```\n\n## Deploy to Testnet\n\nCreate and fund a test identity, then deploy the compiled contract:\n\n```\nsdkt identity generate my-dev\nsdkt network add testnet --rpc-url https://soroban-testnet.stellar.org --passphrase \"Test SDF Network ; September 2015\" --friendbot https://friendbot.stellar.org\nsdkt identity fund my-dev --network-profile testnet\nsdkt deploy --wasm target/wasm32v1-none/release/{crate_name}.wasm --identity my-dev --network-profile testnet\n```\n\n## Invoke\n\nReplace `<CONTRACT_ID>` with the deployed contract address:\n\n```\nsdkt call <CONTRACT_ID> hello --network-profile testnet\nsdkt invoke <CONTRACT_ID> hello --identity my-dev --network-profile testnet\n```\n",
+            "# {name}\n\nA Soroban smart contract project.\n\n## Build\n\n```\nsdkt build\n```\n\n## Test\n\n```\ncargo test\n```\n\n## Deploy to Testnet\n\nCreate and fund a test identity, then deploy the compiled contract:\n\n```\nsdkt identity generate my-dev\nsdkt network add testnet --rpc-url https://soroban-testnet.stellar.org --passphrase \"Test SDF Network ; September 2015\" --friendbot https://friendbot.stellar.org\nsdkt identity fund my-dev --network-profile testnet\nsdkt deploy --wasm target/wasm32v1-none/release/{crate_name}.wasm --identity my-dev --network-profile testnet\n```\n\n### Constructor Arguments\n\nIf your contract requires initialization parameters, pass them with `--arg`:\n\n```\nsdkt deploy --wasm target/wasm32v1-none/release/{crate_name}.wasm --identity my-dev --network-profile testnet --arg address:G... --arg u32:100\n```\n\nFor multi-contract projects, declare constructor arguments in `.sdkt.toml`:\n\n```toml\n[contracts.main]\npath = \".\"\nctor_args = [\"address:G...\", \"u32:100\"]\n```\n\n## Invoke\n\nReplace `<CONTRACT_ID>` with the deployed contract address:\n\n```\nsdkt call <CONTRACT_ID> hello --network-profile testnet\nsdkt invoke <CONTRACT_ID> hello --identity my-dev --network-profile testnet\n```\n",
             name = package_name,
             crate_name = crate_name,
         );

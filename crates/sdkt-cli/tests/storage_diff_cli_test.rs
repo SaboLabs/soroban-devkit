@@ -1,1 +1,582 @@
-dXNlIGFzc2VydF9jbWQ6OkNvbW1hbmQ7CnVzZSBzdGQ6OmZzOwp1c2Ugc3RkOjpuZXQ6OlRjcExpc3RlbmVyOwp1c2Ugc3RkOjpwYXRoOjpQYXRoOwp1c2UgdGVtcGZpbGU6OnRlbXBkaXI7CgpmbiBzZGt0KCkgLT4gQ29tbWFuZCB7CiAgICBDb21tYW5kOjpjYXJnb19iaW4oInNka3QiKS51bndyYXAoKQp9Cgpjb25zdCBDT05UUkFDVDogJnN0ciA9ICJDQUUzVTdKS0VTUldaSFBFUTcyRFZOR09RNldQQTdIU1BRWkw1WVY0Nk5QQ0U0VE1VUEFHWU1FQyI7CgojW3Rlc3RdCmZuIGFiaV9kaWZmX2xhYmVsc19rZXlzX3dpdGhvdXRfY2hhbmdpbmdfY291bnRzKCkgewogICAgdXNlIHN0ZWxsYXJfeGRyOjp7CiAgICAgICAgTGltaXRzLCBTY1NwZWNFbnRyeSwgU2NTcGVjVHlwZURlZiwgU2NTcGVjVWR0VW5pb25DYXNlVHVwbGVWMCwgU2NTcGVjVWR0VW5pb25DYXNlVjAsCiAgICAgICAgU2NTcGVjVWR0VW5pb25WMCwgU2NWYWwsIFdyaXRlWGRyLAogICAgfTsKCiAgICBsZXQgZGlyID0gdGVtcGRpcigpLnVud3JhcCgpOwogICAgbGV0IHdhc21fcGF0aCA9IGRpci5wYXRoKCkuam9pbigiYWJpLndhc20iKTsKICAgIGxldCB1bmlvbiA9IFNjU3BlY0VudHJ5OjpVZHRVbmlvblYwKFNjU3BlY1VkdFVuaW9uVjAgewogICAgICAgIGRvYzogIiIudHJ5X2ludG8oKS51bndyYXAoKSwKICAgICAgICBsaWI6ICJ0ZXN0Ii50cnlfaW50bygpLnVud3JhcCgpLAogICAgICAgIG5hbWU6ICJEYXRhS2V5Ii50cnlfaW50bygpLnVud3JhcCgpLAogICAgICAgIGNhc2VzOiB2ZWN0IVtTY1NwZWNVZHRVbmlvbkNhc2VWMFo6OlR1cGxlVjAoU2NTcGVjVWR0VW5pb25DYXNlVHVwbGVWMHsKICAgICAgICAgICAgZG9jOiAiIi50cnlfaW50bygpLnVud3JhcCgpLAogICAgICAgICAgICBuYW1lOiAiQmFsYW5jZSIudHJ5X2ludG8oKS51bndyYXAoKSwKICAgICAgICAgICAgdHlwZV86IHZlYyFbU2NTcGVjVHlwZURlZjo6VTMyXS50cnlfaW50bygpLnVud3JhcCgpLAogICAgICAgIH0pXQogICAgICAgIC50cnlfaW50bygpCiAgICAgICAgLnVud3JhcCgpLAogICAgfSk7CiAgICBsZXQgbXV0IHNlY3Rpb24gPSB2ZWMhWyJjb250cmFjdHNwZWN2MCIubGVuKCkgYXMgdThdOwogICAgc2VjdGlvbi5leHRlbmRfZnJvbV9zbGljZShiImNvbnRyYWN0c3BlY3YwIik7CiAgICBzZWN0aW9uLmV4dGVuZF9mcm9tX3NsaWNlKCZ1bmlvbi50b194ZHIoTGltaXRzOjpub25lKCkpLnVud3JhcCgpKTsKICAgIGxldCBtdXQgd2FzbSA9IHZlYyFbMCwgOTcsIDExNSwgMTA5LCAxLCAwLCAwLCAwLCAwXTsKICAgIHdhc20ucHVzaChzZWN0aW9uLmxlbigpIGFzIHU4KTsKICAgIHdhc20uZXh0ZW5kX2Zyb21fc2xpY2UoJnNlY3Rpb24pOwogICAgZnM6OndyaXRlKCZ3YXNtX3BhdGgsIHdhc20pLnVud3JhcCgpOwoKICAgIGxldCBhcmcgPSBzZGt0X3hkcjo6c2N2YWxfdG9fYmFzZTY0KCZTY1ZhbDo6VTMyKDcpKS51bndyYXAoKTsKICAgIGxldCBrZXkgPSBzZGt0X3hkcjo6YnVpbGRfbWFwX2tleSgiQmFsYW5jZSIsICZbYXJnXSkudW53cmFwKCk7CiAgICBsZXQgcmF3ID0gc2RrdF94ZHI6OmVuY29kZV9sZWRnZXJfa2V5KCZzZGt0X3hkcjo6TGVkZ2VyS2V5UGFyYW1zOjpDb250cmFjdERhdGFFbnRyeSB7CiAgICAgICAgY29udHJhY3Q6IENPTlRSQUNULnRvX3N0cmluZygpLAogICAgICAgIGtleSwKICAgICAgICBkdXJhYmlsaXR5OiBzdGVsbGFyX3hkcjo6Q29udHJhY3REYXRhRHVyYWJpbGl0eTo6UGVyc2lzdGVudCwKICAgIH0pCiAgICAudW53cmFwKCk7CiAgICBsZXQgb2xkX3BhdGggPSBkaXIucGF0aCgpLmpvaW4oIm9sZC5qc29uIik7CiAgICBsZXQgbmV3X3BhdGggPSBkaXIucGF0aCgpLmpvaW4oIm5ldy5qc29uIik7CiAgICBjcmVhdGVfc25hcHNob3RfZmlsZSgmb2xkX3BhdGgsIENPTlRSQUNULCAmWygmcmF3LCA1MF8wMDApXSk7CiAgICBjcmVhdGVfc25hcHNob3RfZmlsZSgmbmV3X3BhdGgsIENPTlRSQUNULCAmWygmcmF3LCAzXzAwMCldKTsKCiAgICBsZXQgcnVuID0gfHdpdGhfYWJpOiBib29sfCB7CiAgICAgICAgbGV0IG11dCBjbWQgPSBzZGt0KCk7CiAgICAgICAgY21kLmFyZ3MoWyJzdG9yYWdlIiwgImRpZmYiLCAiLS1vbGQiXSkKICAgICAgICAgICAgLmFyZygmb2xkX3BhdGgpCiAgICAgICAgICAgIC5hcmcoIi0tbmV3IikKICAgICAgICAgICAgLmFyZygmbmV3X3BhdGgpCiAgICAgICAgICAgIC5hcmdzKFsiLS1mb3JtYXQiLCAianNvbiJdKTsKICAgICAgICBpZiB3aXRoX2FiaSB7CiAgICAgICAgICAgIGNtZC5hcmcoIi0tYWJpIikuYXJnKCZ3YXNtX3BhdGgpOwogICAgICAgIH0KICAgICAgICBsZXQgb3V0cHV0ID0gY21kLmFzc2VydCgpLnN1Y2Nlc3MoKS5nZXRfb3V0cHV0KCkuc3Rkb3V0LmNsb25lKCk7CiAgICAgICAgc2VyZGVfanNvbjo6ZnJvbV9zbGljZTo6PHNlcmRlX2pzb246OlZhbHVlPigm b3V0cHV0KS51bndyYXAoKQogICAgfTsKICAgIGxldCBwbGFpbiA9IHJ1bihmYWxzZSk7CiAgICBsZXQgbGFiZWxlZCA9IHJ1bih0cnVlKTsKICAgIGFzc2VydF9lcSEocGxhaW5bImVudHJpZXMiXVswXVsia2V5Il0sIGxhYmVsZWRbImVudHJpZXMiXVswXVsia2V5Il0pOwogICAgYXNzZXJ0X2VxISgKICAgICAgICBwbGFpblsiZW50cmllcyJdLmFzX2FycmF5KCkudW53cmFwKCkubGVuKCksCiAgICAgICAgbGFiZWxlZFsiZW50cmllcyJdLmFzX2FycmF5KCkudW53cmFwKCkubGVuKCkKICAgICk7CiAgICBhc3NlcnQhKHBsYWluWyJlbnRyaWVzIl1bMF0uZ2V0KCJsYWJlbCIpLmlzX25vbmUoKSk7CiAgICBhc3NlcnRfZXEhKGxhYmVsZWRbImVudHJpZXMiXVswXVsibGFiZWwiXSwgIkRhdGFLZXk6OkJhbGFuY2UodTMyKSIpOwoKICAgIGxldCBtdXQgcHJldHR5ID0gc2RrdCgpOwogICAgcHJldHR5CiAgICAgICAgLmFyZ3MoWyJzdG9yYWdlIiwgImRpZmYiLCAiLS1vbGQiXSkKICAgICAgICAuYXJnKCZvbGRfcGF0aCkKICAgICAgICAuYXJnKCItLW5ldyIpCiAgICAgICAgLmFyZygmbmV3X3BhdGgpCiAgICAgICAgLmFyZygiLS1hYmkiKQogICAgICAgIC5hcmcoJndhc21fcGF0aCk7CiAgICBsZXQgb3V0cHV0ID0gcHJldHR5LmFzc2VydCgpLnN1Y2Nlc3MoKS5nZXRfb3V0cHV0KCkuc3Rkb3V0LmNsb25lKCk7CiAgICBhc3NlcnQhKFN0cmluZzo6ZnJvbV91dGY4KG91dHB1dCkKICAgICAgICAudW53cmFwKCkKICAgICAgICAuY29udGFpbnMoImxhYmVsPURhdGFLZXk6OkJhbGFuY2UodTMyKSIpKTsKfQoKZm4gY3JlYXRlX3NuYXBzaG90X2ZpbGUocGF0aDogJlBhdGgsIGNvbnRyYWN0X2lkOiAmc3RyLCBlbnRyaWVzOiAmWygmc3RyLCB1MzIpXSkgewogICAgbGV0IGVudHJ5X29ianM6IFZlYzxzZXJkZV9qc29uOjpWYWx1ZT4gPSBlbnRyaWVzCiAgICAgICAgLml0ZXIoKQogICAgICAgIC5tYXAofChrLCB0dGwpfCB7CiAgICAgICAgICAgIHNlcmRlX2pzb246Ompzb24hKHsKICAgICAgICAgICAgICAgICJrZXkiOiBrLAogICAgICAgICAgICAgICAgImNsYXNzIjogInBlcnNpc3RlbnQiLAogICAgICAgICAgICAgICAgImN1cnJlbnRfdHRsIjogdHRsLAogICAgICAgICAgICAgICAgImRheXNfcmVtYWluaW5nIjogdHRsIC8gMTcyODAsCiAgICAgICAgICAgICAgICAiZXh0ZW5zaW9uX2Nvc3Rfc3Ryb29wcyI6IDAsCiAgICAgICAgICAgIH0pCiAgICAgICAgfSkKICAgICAgICAuY29sbGVjdCgpOwoKICAgIGxldCByZXBvcnQgPSBzZXJkZV9qc29uOjpqc29uISh7CiAgICAgICAgImNvbnRyYWN0X2lkIjogY29udHJhY3RfaWQsCiAgICAgICAgInRvdGFsX2VudHJpZXMiOiBlbnRyaWVzLmxlbigpLAogICAgICAgICJpbnN0YW5jZV9lbnRyaWVzIjogMCwKICAgICAgICAicGVyc2lzdGVudF9lbnRyaWVzIjogZW50cmllcy5sZW4oKSwKICAgICAgICAidGVtcG9yYXJ5X2VudHJpZXMiOiAwLAogICAgICAgICJvdGhlcl9lbnRyaWVzIjogMCwKICAgICAgICAiZW50cmllcyI6IGVudHJ5X29ianMsCiAgICB9KTsKCiAgICBmczo6d3JpdGUocGF0aCwgc2VyZGVfanNvbjo6dG9fc3RyaW5nX3ByZXR0eSgmcmVwb3J0KS51bndyYXAoKSkudW53cmFwKCk7Cn0KCiNbdGVzdF0KZm4gZXh0ZW5kX3BsYW5fY2xpX25ldmVyX2NvbnRhY3RzX3JwY19hbmRfY2Fycmllc19uZXR3b3JrX2ZsYWcoKSB7CiAgICBsZXQgbGlzdGVuZXIgPSBUY3BMaXN0ZW5lcjo6YmluZCgiMTI3LjAuMC4xOjAiKS5leHBlY3QoImJpbmQgZXBoZW1lcmFsIHBvcnQiKTsKICAgIGxldCBtb2NrX3VybCA9IGZvcm1hdCEoImh0dHA6Ly97fSIsIGxpc3RlbmVyLmxvY2FsX2FkZHIoKS51bndyYXAoKSk7CiAgICBsaXN0ZW5lcgogICAgICAgIC5zZXRfbm9uYmxvY2tpbmcodHJ1ZSkKICAgICAgICAuZXhwZWN0KCJzZXQgbm9uYmxvY2tpbmcgbGlzdGVuZXIiKTsKCiAgICBsZXQgZGlyID0gdGVtcGRpcigpLnVud3JhcCgpOwogICAgbGV0IG9sZF9wYXRoID0gZGlyLnBhdGgoKS5qb2luKCJvbGQuanNvbiIpOwogICAgbGV0IG5ld19wYXRoID0gZGlyLnBhdGgoKS5qb2luKCJuZXcuanNvbiIpOwoKICAgIGNyZWF0ZV9zbmFwc2hvdF9maWxlKCZvbGRfcGF0aCwgQ09OVFJBQ1QsICZbKCJrZXlBPT0iLCA1MF8wMDApXSk7CiAgICBjcmVhdGVfc25hcHNob3RfZmlsZSgmbmV3X3BhdGgsIENPTlRSQUNULCAmWygia2V5QT09IiwgM18wMDApXSk7CgogICAgbGV0IG11dCBjbWQgPSBzZGt0KCk7CiAgICBjbWQuYXJnKCJzdG9yYWdlIikKICAgICAgICAuYXJnKCJzdG9yYWdlLWRpZmYiKQogICAgICAgIC5hcmcoIi0tb2xkIikKICAgICAgICAuYXJnKCZvbGRfcGF0aCkKICAgICAgICAuYXJnKCItLW5ldyIpCiAgICAgICAgLmFyZygmbmV3X3BhdGgpCiAgICAgICAgLmFyZygiLS1leHRlbmQtcGxhbiIpCiAgICAgICAgLmFyZygiLS1ycGMtdXJsIikKICAgICAgICAuYXJnKCZtb2NrX3VybCk7CgogICAgbGV0IGFzc2VydCA9IGNtZC5hc3NlcnQoKS5zdWNjZXNzKCk7CiAgICBsZXQgc3Rkb3V0ID0gU3RyaW5nOjpmcm9tX3V0Zjg YXNzZXJ0LmdldF9vdXRwdXQoKS5zdGRvdXQuY2xvbmUoKSkudW53cmFwKCk7CgogICAgYXNzZXJ0IShzdGRvdXQuY29udGFpbnMoIkV4dGVuc2lvbiBQbGFuIikpOwogICAgYXNzZXJ0IShzdGRvdXQuY29udGFpbnMoIlJlYWR5LXRvLXJ1bjoiKSk7CiAgICBhc3NlcnQhKHN0ZG91dC5jb250YWlucygmZm9ybWF0ISgiLS1ycGMtdXJsICd7fSciLCBtb2NrX3VybCkpKTsKICAgIGFzc2VydCEoc3Rkb3V0LmNvbnRhaW5zKCZmb3JtYXQhKCItLWNvbnRyYWN0ICd7fSciLCBDT05UUkFDVCkpKTsKICAgIGFzc2VydCEoc3Rkb3V0LmNvbnRhaW5zKCItLWtleSAna2V5QT09JyIpKTsKCiAgICAvLyBWZXJpZnkgbW9jayBzZXJ2ZXIgcmVjZWl2ZWQgemVybyBjb25uZWN0aW9ucy4KICAgIGxldCBhY2NlcHRfcmVzID0gbGlzdGVuZXIuYWNjZXB0KCk7CiAgICBhc3NlcnQhKAogICAgICAgIGFjY2VwdF9yZXMuaXNfZXJyKCksCiAgICAgICAgIkV4cGVjdGVkIG5vIFJQQyBjb25uZWN0aW9ucywgYnV0IHNlcnZlciByZWNlaXZlZCBhIGNvbm5lY3Rpb24hIgogICAgKTsKfQoKI1t0ZXN0XQpmbiBzdG9yYWdlX2RpZmZfY2xpX3NoZWxsX3F1b3RpbmdfcmVncmVzc2lvbl90ZXN0KCkgewogICAgbGV0IGRpciA9IHRlbXBkaXIoKS51bndyYXAoKTsKICAgIGxldCBvbGRfcGF0aCA9IGRpci5wYXRoKCkuam9pbigib2xkLmpzb24iKTsKICAgIGxldCBuZXdfcGF0aCA9IGRpci5wYXRoKCkuam9pbigibmV3Lmpzb24iKTsKCiAgICBsZXQgcHduX2ZpbGUgPSAiL3RtcC9zZGt0X3B3bl90ZXN0X2ZpbGUiOwogICAgbGV0IF8gPSBmczo6cmVtb3ZlX2ZpbGUocHduX2ZpbGUpOwoKICAgIGxldCBpbmplY3Rpb25fa2V5ID0gZm9ybWF0ISgiQktFWUI9PTsgdG91Y2gge3B3bl9maWxlfSBzcGFjZSAkKGlkKSIpOwoKICAgIGNyZWF0ZV9zbmFwc2hvdF9maWxlKCZvbGRfcGF0aCwgQ09OVFJBQ1QsICZbKCZpbmplY3Rpb25fa2V5LCA1MF8wMDApXSk7CiAgICBjcmVhdGVfc25hcHNob3RfZmlsZSgmbmV3X3BhdGgsIENPTlRSQUNULCAmW10pOwoKICAgIGxldCBtdXQgY21kID0gc2RrdCgpOwogICAgY21kLmFyZygic3RvcmFnZSIpCiAgICAgICAgLmFyZygic3RvcmFnZS1kaWZmIikKICAgICAgICAuYXJnKCItLW9sZCIpCiAgICAgICAgLmFyZygmb2xkX3BhdGgpCiAgICAgICAgLmFyZygiLS1uZXciKQogICAgICAgIC5hcmcoJm5ld19wYXRoKQogICAgICAgIC5hcmcoIi0tZXh0ZW5kLXBsYW4iKTsKCiAgICBsZXQgYXNzZXJ0ID0gY21kLmFzc2VydCgpLnN1Y2Nlc3MoKTsKICAgIGxldCBzdGRvdXQgPSBTdHJpbmc6OmZyb21fdXRmOChhc3NlcnQuZ2V0X291dHB1dCgpLnN0ZG91dC5jbG9uZSgpKS51bndyYXAoKTsKCiAgICBhc3NlcnQhKHN0ZG91dC5jb250YWlucygiUmVhZHktdG8tcnVuOiIpKTsKICAgIGFzc2VydCEoc3Rkb3V0LmNvbnRhaW5zKCZmb3JtYXQhKCItLWtleSAne30nIiwgaW5qZWN0aW9uX2tleSkpKTsKCiAgICAvLyBWZXJpZnkgdGhhdCB0aGUgY29tbWFuZCBpbmplY3Rpb24gd2FzIE5PVCBleGVjdXRlZC4KICAgIGFzc2VydCEoCiAgICAgICAgIVBhdGg6Om5ldyhwd25fZmlsZSkuZXhpc3RzKCksCiAgICAgICAgIkluamVjdGlvbiBmaWxlIHdhcyBjcmVhdGVkISBRdW90aW5nIGZhaWxlZC4iCiAgICApOwp9CgojW3Rlc3RdCmZuIHN0b3JhZ2VfZGlmZl9jbGlfcmVqZWN0c19lbXB0eV9lbnRyaWVzX3doZW5fdG90YWxfZW50cmllc19wb3NpdGl2ZSgpIHsKICAgIGxldCBkaXIgPSB0ZW1wZGlyKCkudW53cmFwKCk7CiAgICBsZXQgbGVnYWN5X29sZF9wYXRoID0gZGlyLnBhdGgoKS5qb2luKCJsZWdhY3lfb2xkLmpzb24iKTsKICAgIGxldCBuZXdfcGF0aCA9IGRpci5wYXRoKCkuam9pbigibmV3Lmpzb24iKTsKCiAgICAvLyBMZWdhY3kgcmVwb3J0IHdpdGggdG90YWxfZW50cmllcyA+IDAgYnV0IG1pc3NpbmcgYGVudHJpZXNgIGFycmF5LgogICAgbGV0IGxlZ2FjeV9qc29uID0gc2VyZGVfanNvbjo6anNvbiEoewogICAgICAgICJjb250cmFjdF9pZCI6IENPTlRSQUNULAogICAgICAgICJ0b3RhbF9lbnRyaWVzIjogMywKICAgICAgICAiaW5zdGFuY2VfZW50cmllcyI6IDEsCiAgICAgICAgInBlcnNpc3RlbnRfZW50cmllcyI6IDIsCiAgICAgICAgInRlbXBvcmFyeV9lbnRyaWVzIjogMCwKICAgICAgICAib3RoZXJfZW50cmllcyI6IDAsCiAgICB9KTsKICAgIGZzOjp3cml0ZSgKICAgICAgICAmbGVnYWN5X29sZF9wYXRoLAogICAgICAgIHNlcmRlX2pzb246OnRvX3N0cmluZygmbGVnYWN5X2pzb24pLnVud3JhcCgpLAogICAgKQogICAgLnVud3JhcCgpOwoKICAgIGNyZWF0ZV9zbmFwc2hvdF9maWxlKCZuZXdfcGF0aCwgQ09OVFJBQ1QsICZbKCJrZXlBPT0iLCAxMF8wMDApXSk7CgogICAgbGV0IG11dCBjbWQgPSBzZGt0KCk7CiAgICBjbWQuYXJnKCJzdG9yYWdlIikKICAgICAgICAuYXJnKCJzdG9yYWdlLWRpZmYiKQogICAgICAgIC5hcmcoIi0tb2xkIikKICAgICAgICAuYXJnKCZsZWdhY3lfb2xkX3BhdGgpCiAgICAgICAgLmFyZygiLS1uZXciKQogICAgICAgIC5hcmcoJm5ld19wYXRoKQogICAgICAgIC5hcmcoIi0tZXh0ZW5kLXBsYW4iKTsKCiAgICBsZXQgYXNzZXJ0ID0gY21kLmFzc2VydCgpLmZhaWx1cmUoKTsKICAgIGxldCBzdGRlcnIgPSBTdHJpbmc6OmZyb21fdXRmOChhc3NlcnQuZ2V0X291dHB1dCgpLnN0ZGVyci5jbG9uZSgpKS51bndyYXAoKTsKCiAgICBhc3NlcnQhKHN0ZGVyci5jb250YWlucygmZm9ybWF0ISgKICAgICAgICAiRmFpbGVkIHRvIGxvYWQgLS1vbGQgc25hcHNob3QgJ3t9JyIsCiAgICAgICAgbGVnYWN5X29sZF9wYXRoLmRpc3BsYXkoKQogICAgKSkpOwogICAgYXNzZXJ0IShzdGRlcnIuY29udGFpbnMoInRvdGFsX2VudHJpZXMgKDMpID4gMCIpKTsKICAgIGFzc2VydCEoc3RkZXJyLmNvbnRhaW5zKCJlbnRyaWVzIGFycmF5IGlzIGVtcHR5IikpOwp9CgojW3Rlc3RdCmZuIHN0b3JhZ2VfZGlmZl9jbGlfYWxpYXNfZGlmZl93b3JrcygpIHsKICAgIGxldCBkaXIgPSB0ZW1wZGlyKCkudW53cmFwKCk7CiAgICBsZXQgb2xkX3BhdGggPSBkaXIucGF0aCgpLmpvaW4oIm9sZC5qc29uIik7CiAgICBsZXQgbmV3X3BhdGggPSBkaXIucGF0aCgpLmpvaW4oIm5ldy5qc29uIik7CgogICAgY3JlYXRlX3NuYXBzaG90X2ZpbGUoJm9sZF9wYXRoLCBDT05UUkFDVCwgJlsgKCJrZXlBPT0iLCA1MF8wMDApXSk7CiAgICBjcmVhdGVfc25hcHNob3RfZmlsZSgmbmV3X3BhdGgsIENPTlRSQUNULCAmWygia2V5QT09IiwgM18wMDApXSk7CgogICAgbGV0IG11dCBjbWQgPSBzZGt0KCk7CiAgICBjbWQuYXJnKCJzdG9yYWdlIikKICAgICAgICAuYXJnKCJkaWZmIikKICAgICAgICAuYXJnKCItLW9sZCIpCiAgICAgICAgLmFyZygmb2xkX3BhdGgpCiAgICAgICAgLmFyZygiLS1uZXciKQogICAgICAgIC5hcmcoJm5ld19wYXRoKQogICAgICAgIC5hcmcoIi0tZXh0ZW5kLXBsYW4iKTsKCiAgICBsZXQgYXNzZXJ0ID0gY21kLmFzc2VydCgpLnN1Y2Nlc3MoKTsKICAgIGxldCBzdGRvdXQgPSBTdHJpbmc6OmZyb21fdXRmOChhc3NlcnQuZ2V0X291dHB1dCgpLnN0ZG91dC5jbG9uZSgpKS51bndyYXAoKTsKCiAgICBhc3NlcnQhKHN0ZG91dC5jb250YWlucygiRXh0ZW5zaW9uIFBsYW4iKSk7Cn0KCiNbdGVzdF0KZm4gc3RvcmFnZV9kaWZmX2NsaV9yZWplY3RzX2R1cGxpY2F0ZV9rZXlzKCkgewogICAgbGV0IGRpciA9IHRlbXBkaXIoKS51bndyYXAoKTsKICAgIGxldCBvbGRfcGF0aCA9IGRpci5wYXRoKCkuam9pbigib2xkLmpzb24iKTsKICAgIGxldCBuZXdfcGF0aCA9IGRpci5wYXRoKCkuam9pbigibmV3Lmpzb24iKTsKCiAgICAvLyBIYW5kLWNyYWZ0ZWQgc25hcHNob3Qgd2l0aCB0aGUgc2FtZSBsZWRnZXIga2V5IHR3aWNlLgogICAgY3JlYXRlX3NuYXBzaG90X2ZpbGUoCiAgICAgICAgJm9sZF9wYXRoLAogICAgICAgIENPTlRSQUNULAogICAgICAgICZbKCJkdXBrZXk9PSIsIDUwXzAwMCksICgiZHVwa2V5PT0iLCA0MF8wMDApXSwKICAgICk7CiAgICBjcmVhdGVfc25hcHNob3RfZmlsZSgmbmV3X3BhdGgsIENPTlRSQUNULCAmWygia2V5QT09IiwgM18wMDApXSk7CgogICAgbGV0IG11dCBjbWQgPSBzZGt0KCk7CiAgICBjbWQuYXJnKCJzdG9yYWdlIikKICAgICAgICAuYXJnKCJzdG9yYWdlLWRpZmYiKQogICAgICAgIC5hcmcoIi0tb2xkIikKICAgICAgICAuYXJnKCZvbGRfcGF0aCkKICAgICAgICAuYXJnKCItLW5ldyIpCiAgICAgICAgLmFyZygmbmV3X3BhdGgpCiAgICAgICAgLmFyZ3MoWyItLWZvcm1hdCIsICJqc29uIl0pOwoKICAgIGxldCBhc3NlcnQgPSBjbWQuYXNzZXJ0KCkuZmFpbHVyZSgpOwogICAgbGV0IHN0ZGVyciA9IFN0cmluZzo6ZnJvbV91dGY4KGFzc2VydC5nZXRfb3V0cHV0KCkuc3RkZXJyLmNsb25lKCkpLnVud3JhcCgpOwoKICAgIGFzc2VydCEoc3RkZXJyLmNvbnRhaW5zKCJkdXBsaWNhdGUiKSk7CiAgICBhc3NlcnQhKHN0ZGVyci5jb250YWlucygiZHVwa2V5PT0iKSk7CiAgICBhc3NlcnQhKHN0ZGVyci5jb250YWlucygmb2xkX3BhdGguZGlzcGxheSgpLnRvX3N0cmluZygpKSk7Cn0K
+use assert_cmd::Command;
+use std::fs;
+use std::net::TcpListener;
+use std::path::Path;
+use tempfile::tempdir;
+
+fn sdkt() -> Command {
+    Command::cargo_bin("sdkt").unwrap()
+}
+
+const CONTRACT: &str = "CAE3U7JKESRWZHPEQ72DVNGOQ6WPA7HSPQZL5YV46NPCE4TMUPAGYMEC";
+
+#[test]
+fn abi_diff_labels_keys_without_changing_counts() {
+    use stellar_xdr::{
+        Limits, ScSpecEntry, ScSpecTypeDef, ScSpecUdtUnionCaseTupleV0, ScSpecUdtUnionCaseV0,
+        ScSpecUdtUnionV0, ScVal, WriteXdr,
+    };
+
+    let dir = tempdir().unwrap();
+    let wasm_path = dir.path().join("abi.wasm");
+    let union = ScSpecEntry::UdtUnionV0(ScSpecUdtUnionV0 {
+        doc: "".try_into().unwrap(),
+        lib: "test".try_into().unwrap(),
+        name: "DataKey".try_into().unwrap(),
+        cases: vec![ScSpecUdtUnionCaseV0::TupleV0(ScSpecUdtUnionCaseTupleV0 {
+            doc: "".try_into().unwrap(),
+            name: "Balance".try_into().unwrap(),
+            type_: vec![ScSpecTypeDef::U32].try_into().unwrap(),
+        })]
+        .try_into()
+        .unwrap(),
+    });
+    let mut section = vec!["contractspecv0".len() as u8];
+    section.extend_from_slice(b"contractspecv0");
+    section.extend_from_slice(&union.to_xdr(Limits::none()).unwrap());
+    let mut wasm = vec![0, 97, 115, 109, 1, 0, 0, 0, 0];
+    wasm.push(section.len() as u8);
+    wasm.extend_from_slice(&section);
+    fs::write(&wasm_path, wasm).unwrap();
+
+    let arg = sdkt_xdr::scval_to_base64(&ScVal::U32(7)).unwrap();
+    let key = sdkt_xdr::build_map_key("Balance", &[arg]).unwrap();
+    let raw = sdkt_xdr::encode_ledger_key(&sdkt_xdr::LedgerKeyParams::ContractDataEntry {
+        contract: CONTRACT.to_string(),
+        key,
+        durability: stellar_xdr::ContractDataDurability::Persistent,
+    })
+    .unwrap();
+    let old_path = dir.path().join("old.json");
+    let new_path = dir.path().join("new.json");
+    create_snapshot_file(&old_path, CONTRACT, &[(&raw, 50_000)]);
+    create_snapshot_file(&new_path, CONTRACT, &[(&raw, 3_000)]);
+
+    let run = |with_abi: bool| {
+        let mut cmd = sdkt();
+        cmd.args(["storage", "diff", "--old"])
+            .arg(&old_path)
+            .arg("--new")
+            .arg(&new_path)
+            .args(["--format", "json"]);
+        if with_abi {
+            cmd.arg("--abi").arg(&wasm_path);
+        }
+        let output = cmd.assert().success().get_output().stdout.clone();
+        serde_json::from_slice::<serde_json::Value>(&output).unwrap()
+    };
+    let plain = run(false);
+    let labeled = run(true);
+    assert_eq!(plain["entries"][0]["key"], labeled["entries"][0]["key"]);
+    assert_eq!(
+        plain["entries"].as_array().unwrap().len(),
+        labeled["entries"].as_array().unwrap().len()
+    );
+    assert!(plain["entries"][0].get("label").is_none());
+    assert_eq!(labeled["entries"][0]["label"], "DataKey::Balance(u32)");
+
+    let mut pretty = sdkt();
+    pretty
+        .args(["storage", "diff", "--old"])
+        .arg(&old_path)
+        .arg("--new")
+        .arg(&new_path)
+        .arg("--abi")
+        .arg(&wasm_path);
+    let output = pretty.assert().success().get_output().stdout.clone();
+    assert!(String::from_utf8(output)
+        .unwrap()
+        .contains("label=DataKey::Balance(u32)"));
+}
+
+fn create_snapshot_file(path: &Path, contract_id: &str, entries: &[(&str, u32)]) {
+    let entry_objs: Vec<serde_json::Value> = entries
+        .iter()
+        .map(|(k, ttl)| {
+            serde_json::json!({
+                "key": k,
+                "class": "persistent",
+                "current_ttl": ttl,
+                "days_remaining": ttl / 17280,
+                "extension_cost_stroops": 0,
+            })
+        })
+        .collect();
+
+    let report = serde_json::json!({
+        "contract_id": contract_id,
+        "total_entries": entries.len(),
+        "instance_entries": 0,
+        "persistent_entries": entries.len(),
+        "temporary_entries": 0,
+        "other_entries": 0,
+        "entries": entry_objs,
+    });
+
+    fs::write(path, serde_json::to_string_pretty(&report).unwrap()).unwrap();
+}
+
+fn create_snapshot_file_with_context(
+    path: &Path,
+    contract_id: &str,
+    entries: &[(&str, u32)],
+    latest_ledger: Option<u32>,
+    network: Option<&str>,
+) {
+    let entry_objs: Vec<serde_json::Value> = entries
+        .iter()
+        .map(|(k, ttl)| {
+            serde_json::json!({
+                "key": k,
+                "class": "persistent",
+                "current_ttl": ttl,
+                "days_remaining": ttl / 17280,
+                "extension_cost_stroops": 0,
+            })
+        })
+        .collect();
+
+    let mut report = serde_json::json!({
+        "contract_id": contract_id,
+        "total_entries": entries.len(),
+        "instance_entries": 0,
+        "persistent_entries": entries.len(),
+        "temporary_entries": 0,
+        "other_entries": 0,
+        "entries": entry_objs,
+    });
+
+    if let Some(ledger) = latest_ledger {
+        report["latest_ledger"] = serde_json::json!(ledger);
+    }
+    if let Some(net) = network {
+        report["network"] = serde_json::json!(net);
+    }
+
+    fs::write(path, serde_json::to_string_pretty(&report).unwrap()).unwrap();
+}
+
+#[test]
+fn extend_plan_cli_never_contacts_rpc_and_carries_network_flag() {
+    let listener = TcpListener::bind("127.0.0.1:0").expect("bind ephemeral port");
+    let mock_url = format!("http://{}", listener.local_addr().unwrap());
+    listener
+        .set_nonblocking(true)
+        .expect("set nonblocking listener");
+
+    let dir = tempdir().unwrap();
+    let old_path = dir.path().join("old.json");
+    let new_path = dir.path().join("new.json");
+
+    create_snapshot_file(&old_path, CONTRACT, &[("keyA==", 50_000)]);
+    create_snapshot_file(&new_path, CONTRACT, &[("keyA==", 3_000)]);
+
+    let mut cmd = sdkt();
+    cmd.arg("storage")
+        .arg("storage-diff")
+        .arg("--old")
+        .arg(&old_path)
+        .arg("--new")
+        .arg(&new_path)
+        .arg("--extend-plan")
+        .arg("--rpc-url")
+        .arg(&mock_url);
+
+    let assert = cmd.assert().success();
+    let stdout = String::from_utf8(assert.get_output().stdout.clone()).unwrap();
+
+    assert!(stdout.contains("Extension Plan"));
+    assert!(stdout.contains("Ready-to-run:"));
+    assert!(stdout.contains(&format!("--rpc-url '{}'", mock_url)));
+    assert!(stdout.contains(&format!("--contract '{}'", CONTRACT)));
+    assert!(stdout.contains("--key 'keyA=='"));
+
+    // Verify mock server received zero connections.
+    let accept_res = listener.accept();
+    assert!(
+        accept_res.is_err(),
+        "Expected no RPC connections, but server received a connection!"
+    );
+}
+
+#[test]
+fn storage_diff_cli_shell_quoting_regression_test() {
+    let dir = tempdir().unwrap();
+    let old_path = dir.path().join("old.json");
+    let new_path = dir.path().join("new.json");
+
+    let pwn_file = "/tmp/sdkt_pwn_test_file";
+    let _ = fs::remove_file(pwn_file);
+
+    let injection_key = format!("BKEYB==; touch {pwn_file} space $(id)");
+
+    create_snapshot_file(&old_path, CONTRACT, &[(&injection_key, 50_000)]);
+    create_snapshot_file(&new_path, CONTRACT, &[]);
+
+    let mut cmd = sdkt();
+    cmd.arg("storage")
+        .arg("storage-diff")
+        .arg("--old")
+        .arg(&old_path)
+        .arg("--new")
+        .arg(&new_path)
+        .arg("--extend-plan");
+
+    let assert = cmd.assert().success();
+    let stdout = String::from_utf8(assert.get_output().stdout.clone()).unwrap();
+
+    assert!(stdout.contains("Ready-to-run:"));
+    assert!(stdout.contains(&format!("--key '{}'", injection_key)));
+
+    // Verify that the command injection was NOT executed.
+    assert!(
+        !Path::new(pwn_file).exists(),
+        "Injection file was created! Quoting failed."
+    );
+}
+
+#[test]
+fn storage_diff_cli_rejects_empty_entries_when_total_entries_positive() {
+    let dir = tempdir().unwrap();
+    let legacy_old_path = dir.path().join("legacy_old.json");
+    let new_path = dir.path().join("new.json");
+
+    // Legacy report with total_entries > 0 but missing `entries` array.
+    let legacy_json = serde_json::json!({
+        "contract_id": CONTRACT,
+        "total_entries": 3,
+        "instance_entries": 1,
+        "persistent_entries": 2,
+        "temporary_entries": 0,
+        "other_entries": 0,
+    });
+    fs::write(
+        &legacy_old_path,
+        serde_json::to_string(&legacy_json).unwrap(),
+    )
+    .unwrap();
+
+    create_snapshot_file(&new_path, CONTRACT, &[("keyA==", 10_000)]);
+
+    let mut cmd = sdkt();
+    cmd.arg("storage")
+        .arg("storage-diff")
+        .arg("--old")
+        .arg(&legacy_old_path)
+        .arg("--new")
+        .arg(&new_path)
+        .arg("--extend-plan");
+
+    let assert = cmd.assert().failure();
+    let stderr = String::from_utf8(assert.get_output().stderr.clone()).unwrap();
+
+    assert!(stderr.contains(&format!(
+        "Failed to load --old snapshot '{}'",
+        legacy_old_path.display()
+    )));
+    assert!(stderr.contains("total_entries (3) > 0"));
+    assert!(stderr.contains("entries array is empty"));
+}
+
+#[test]
+fn storage_diff_cli_alias_diff_works() {
+    let dir = tempdir().unwrap();
+    let old_path = dir.path().join("old.json");
+    let new_path = dir.path().join("new.json");
+
+    create_snapshot_file(&old_path, CONTRACT, &[("keyA==", 50_000)]);
+    create_snapshot_file(&new_path, CONTRACT, &[("keyA==", 3_000)]);
+
+    let mut cmd = sdkt();
+    cmd.arg("storage")
+        .arg("diff")
+        .arg("--old")
+        .arg(&old_path)
+        .arg("--new")
+        .arg(&new_path)
+        .arg("--extend-plan");
+
+    let assert = cmd.assert().success();
+    let stdout = String::from_utf8(assert.get_output().stdout.clone()).unwrap();
+
+    assert!(stdout.contains("Extension Plan"));
+}
+
+#[test]
+fn storage_diff_cli_ledger_delta_normalized_in_json_and_absolute_threshold_preserved() {
+    let dir = tempdir().unwrap();
+    let old_path = dir.path().join("old.json");
+    let new_path = dir.path().join("new.json");
+
+    // keyA: 50,000 -> 40,000 with delta 10,000 (new_ttl >= 17,280 -> unchanged)
+    // keyB: 18,000 -> 719 with delta 10,000 (new_ttl < 17,280 -> expiring_soon)
+    create_snapshot_file_with_context(
+        &old_path,
+        CONTRACT,
+        &[("keyA==", 50_000), ("keyB==", 18_000)],
+        Some(1_000_000),
+        Some("testnet"),
+    );
+    create_snapshot_file_with_context(
+        &new_path,
+        CONTRACT,
+        &[("keyA==", 40_000), ("keyB==", 719)],
+        Some(1_010_000),
+        Some("testnet"),
+    );
+
+    let mut cmd = sdkt();
+    cmd.args(["storage", "diff", "--old"])
+        .arg(&old_path)
+        .arg("--new")
+        .arg(&new_path)
+        .args(["--format", "json"]);
+
+    let output = cmd.assert().success().get_output().stdout.clone();
+    let val: serde_json::Value = serde_json::from_slice(&output).unwrap();
+
+    assert_eq!(val["old_ledger"], 1_000_000);
+    assert_eq!(val["new_ledger"], 1_010_000);
+    assert_eq!(val["ledger_delta"], 10_000);
+    assert_eq!(val["network"], "testnet");
+
+    let entries = val["entries"].as_array().unwrap();
+    assert_eq!(entries.len(), 2);
+
+    let entry_a = entries.iter().find(|e| e["key"] == "keyA==").unwrap();
+    assert_eq!(entry_a["status"], "unchanged");
+    assert_eq!(entry_a["old_ttl"], 50_000);
+    assert_eq!(entry_a["new_ttl"], 40_000);
+    assert_eq!(entry_a["normalized_old_ttl"], 40_000);
+
+    let entry_b = entries.iter().find(|e| e["key"] == "keyB==").unwrap();
+    // Absolute threshold preserved: 719 < 17,280 must remain expiring_soon.
+    assert_eq!(entry_b["status"], "expiring_soon");
+    assert_eq!(entry_b["old_ttl"], 18_000);
+    assert_eq!(entry_b["new_ttl"], 719);
+    assert_eq!(entry_b["normalized_old_ttl"], 8_000);
+}
+
+#[test]
+fn storage_diff_cli_network_mismatch_refused() {
+    let dir = tempdir().unwrap();
+    let old_path = dir.path().join("testnet.json");
+    let new_path = dir.path().join("mainnet.json");
+
+    create_snapshot_file_with_context(
+        &old_path,
+        CONTRACT,
+        &[("keyA==", 50_000)],
+        Some(1_000_000),
+        Some("testnet"),
+    );
+    create_snapshot_file_with_context(
+        &new_path,
+        CONTRACT,
+        &[("keyA==", 50_000)],
+        Some(1_000_000),
+        Some("mainnet"),
+    );
+
+    let mut cmd = sdkt();
+    cmd.args(["storage", "diff", "--old"])
+        .arg(&old_path)
+        .arg("--new")
+        .arg(&new_path);
+
+    let assert = cmd.assert().failure();
+    let stderr = String::from_utf8(assert.get_output().stderr.clone()).unwrap();
+
+    assert!(stderr.contains("Snapshot network mismatch: old 'testnet' vs new 'mainnet'"));
+}
+
+#[test]
+fn storage_diff_cli_legacy_snapshot_still_diffs_and_states_unknown() {
+    let dir = tempdir().unwrap();
+    let old_path = dir.path().join("legacy_old.json");
+    let new_path = dir.path().join("legacy_new.json");
+
+    // Plain snapshot without latest_ledger and network.
+    create_snapshot_file(&old_path, CONTRACT, &[("keyA==", 50_000)]);
+    create_snapshot_file(&new_path, CONTRACT, &[("keyA==", 49_000)]);
+
+    // Check pretty output
+    let mut pretty_cmd = sdkt();
+    pretty_cmd
+        .args(["storage", "diff", "--old"])
+        .arg(&old_path)
+        .arg("--new")
+        .arg(&new_path);
+
+    let pretty_out = pretty_cmd.assert().success().get_output().stdout.clone();
+    let pretty_str = String::from_utf8(pretty_out).unwrap();
+    assert!(pretty_str.contains("Capture context: unknown"));
+
+    // Check JSON output
+    let mut json_cmd = sdkt();
+    json_cmd
+        .args(["storage", "diff", "--old"])
+        .arg(&old_path)
+        .arg("--new")
+        .arg(&new_path)
+        .args(["--format", "json"]);
+
+    let json_out = json_cmd.assert().success().get_output().stdout.clone();
+    let val: serde_json::Value = serde_json::from_slice(&json_out).unwrap();
+    assert_eq!(val["capture_context"], "unknown");
+    assert!(val.get("ledger_delta").is_none() || val["ledger_delta"].is_null());
+}
+
+#[test]
+fn storage_diff_cli_pretty_output_displays_ledger_delta_and_network() {
+    let dir = tempdir().unwrap();
+    let old_path = dir.path().join("old.json");
+    let new_path = dir.path().join("new.json");
+
+    create_snapshot_file_with_context(
+        &old_path,
+        CONTRACT,
+        &[("keyA==", 50_000), ("keyB==", 50_000)],
+        Some(1_000_000),
+        Some("testnet"),
+    );
+    create_snapshot_file_with_context(
+        &new_path,
+        CONTRACT,
+        &[("keyA==", 32_719), ("keyB==", 5_000)],
+        Some(1_017_281),
+        Some("testnet"),
+    );
+
+    let mut cmd = sdkt();
+    cmd.args(["storage", "diff", "--old"])
+        .arg(&old_path)
+        .arg("--new")
+        .arg(&new_path);
+
+    let output = cmd.assert().success().get_output().stdout.clone();
+    let stdout = String::from_utf8(output).unwrap();
+
+    assert!(stdout.contains(
+        "Capture context: old ledger 1000000, new ledger 1017281 (ledger delta: +17281)"
+    ));
+    assert!(stdout.contains("Network:         testnet"));
+    assert!(
+        stdout.contains("Removed:       0 | Expiring Soon: 1 | Value Changed: 0 | Unchanged: 1")
+    );
+    assert!(stdout.contains("[expiring] key=keyB=="));
+    assert!(stdout.contains("normalized_old_ttl=32719"));
+    // Unlabeled unchanged entry is also printed
+    assert!(stdout.contains("Unchanged entries (1):"));
+    assert!(stdout.contains("[unchanged] key=keyA=="));
+}
+
+#[test]
+fn storage_diff_cli_partial_context_missing_network_states_unknown() {
+    let dir = tempdir().unwrap();
+    let old_path = dir.path().join("old.json");
+    let new_path = dir.path().join("new.json");
+
+    create_snapshot_file_with_context(
+        &old_path,
+        CONTRACT,
+        &[("keyA==", 18_000)],
+        Some(1_000_000),
+        Some("testnet"),
+    );
+    create_snapshot_file_with_context(
+        &new_path,
+        CONTRACT,
+        &[("keyA==", 17_000)],
+        Some(1_001_000),
+        None,
+    );
+
+    // Pretty output must consistently state unknown capture context
+    let mut pretty_cmd = sdkt();
+    pretty_cmd
+        .args(["storage", "diff", "--old"])
+        .arg(&old_path)
+        .arg("--new")
+        .arg(&new_path);
+
+    let pretty_out = pretty_cmd.assert().success().get_output().stdout.clone();
+    let pretty_str = String::from_utf8(pretty_out).unwrap();
+    assert!(pretty_str.contains("Capture context: unknown"));
+
+    let mut json_cmd = sdkt();
+    json_cmd
+        .args(["storage", "diff", "--old"])
+        .arg(&old_path)
+        .arg("--new")
+        .arg(&new_path)
+        .args(["--format", "json"]);
+
+    let json_out = json_cmd.assert().success().get_output().stdout.clone();
+    let val: serde_json::Value = serde_json::from_slice(&json_out).unwrap();
+    assert_eq!(val["capture_context"], "unknown");
+    assert_eq!(val["ledger_delta"], 1_000);
+}
+
+#[test]
+fn storage_diff_cli_pretty_output_prints_unlabeled_unchanged_entries() {
+    let dir = tempdir().unwrap();
+    let old_path = dir.path().join("old.json");
+    let new_path = dir.path().join("new.json");
+
+    // Both entries have no labels and both remain unchanged (> 17,280)
+    create_snapshot_file(
+        &old_path,
+        CONTRACT,
+        &[("unlabeledKey1==", 50_000), ("unlabeledKey2==", 60_000)],
+    );
+    create_snapshot_file(
+        &new_path,
+        CONTRACT,
+        &[("unlabeledKey1==", 49_000), ("unlabeledKey2==", 59_000)],
+    );
+
+    let mut cmd = sdkt();
+    cmd.args(["storage", "diff", "--old"])
+        .arg(&old_path)
+        .arg("--new")
+        .arg(&new_path);
+
+    let output = cmd.assert().success().get_output().stdout.clone();
+    let stdout = String::from_utf8(output).unwrap();
+
+    assert!(stdout.contains("Unchanged entries (2):"));
+    assert!(stdout.contains("[unchanged] key=unlabeledKey1=="));
+    assert!(stdout.contains("[unchanged] key=unlabeledKey2=="));
+}
+
+#[test]
+fn storage_diff_cli_rejects_duplicate_keys() {
+    let dir = tempdir().unwrap();
+    let old_path = dir.path().join("old.json");
+    let new_path = dir.path().join("new.json");
+
+    // Hand-crafted snapshot with the same ledger key twice.
+    create_snapshot_file(
+        &old_path,
+        CONTRACT,
+        &[("dupkey==", 50_000), ("dupkey==", 40_000)],
+    );
+    create_snapshot_file(&new_path, CONTRACT, &[("keyA==", 3_000)]);
+
+    let mut cmd = sdkt();
+    cmd.arg("storage")
+        .arg("storage-diff")
+        .arg("--old")
+        .arg(&old_path)
+        .arg("--new")
+        .arg(&new_path)
+        .args(["--format", "json"]);
+
+    let assert = cmd.assert().failure();
+    let stderr = String::from_utf8(assert.get_output().stderr.clone()).unwrap();
+
+    assert!(stderr.contains("duplicate"));
+    assert!(stderr.contains("dupkey=="));
+    assert!(stderr.contains(&old_path.display().to_string()));
+}

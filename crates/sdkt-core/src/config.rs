@@ -48,6 +48,11 @@ pub struct ContractConfig {
     /// `deploy_after`; listed here for explicit package-dependency graphs.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub depends_on: Vec<String>,
+    /// Constructor arguments passed to the contract at create time.
+    /// Each string is a TYPE:VALUE pair (e.g. "u32:100", "address:G...",
+    /// "string:hello") or a base64-encoded ScVal. Same format as `sdkt deploy --arg`.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub ctor_args: Vec<String>,
 }
 
 /// Package manifest metadata ().
@@ -142,9 +147,12 @@ pub struct NetworkConfig {
 /// Settings modifying XDR decoding actions.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct DecodeConfig {
-    /// Limit max depth during nested XDR parsing.
-    pub max_depth: usize,
+    /// Limit max depth during nested XDR parsing. `0` means unlimited
+    /// (`Limits::none` in the XDR layer) — same semantics as the decoder.
+    #[serde(default = "default_decode_max_depth")]
+    pub max_depth: u32,
     /// Fallback to hex decoding if base64 detection fails.
+    #[serde(default = "default_allow_fallback_hex")]
     pub allow_fallback_hex: bool,
 }
 
@@ -152,9 +160,27 @@ pub struct DecodeConfig {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct StorageConfig {
     /// Maximum number of storage entries to fetch per page.
+    #[serde(default = "default_storage_max_entries")]
     pub max_entries: usize,
     /// Number of days before TTL expiration to start warning.
+    #[serde(default = "default_ttl_warning_days")]
     pub ttl_warning_days: u32,
+}
+
+fn default_decode_max_depth() -> u32 {
+    500
+}
+
+fn default_allow_fallback_hex() -> bool {
+    true
+}
+
+fn default_storage_max_entries() -> usize {
+    200
+}
+
+fn default_ttl_warning_days() -> u32 {
+    30
 }
 
 impl Default for StorageConfig {
@@ -169,7 +195,7 @@ impl Default for StorageConfig {
 impl Default for DecodeConfig {
     fn default() -> Self {
         Self {
-            max_depth: 32,
+            max_depth: 500,
             allow_fallback_hex: true,
         }
     }
@@ -190,6 +216,16 @@ impl DevKitConfig {
     /// Loads configuration from a TOML string.
     pub fn from_toml(content: &str) -> Result<Self, toml::de::Error> {
         toml::from_str(content)
+    }
+
+    /// Validates semantic value ranges serde cannot express.
+    ///
+    /// `max_depth = 0` is accepted and means "unlimited" (the same value the
+    /// XDR decoder honours as `Limits::none`), so a `.sdkt.toml` that omits an
+    /// override or sets `0` behaves identically. This guard exists primarily
+    /// to surface a clear, named error if a future semantic rule is added.
+    pub fn validate(&self) -> Result<(), String> {
+        Ok(())
     }
 
     /// Loads configuration from a specific file path.
@@ -218,10 +254,77 @@ mod tests {
     #[test]
     fn test_default_config() {
         let default_config = DevKitConfig::default();
-        assert_eq!(default_config.decode.max_depth, 32);
+        assert_eq!(default_config.decode.max_depth, 500);
         assert!(default_config.decode.allow_fallback_hex);
         assert_eq!(default_config.storage.max_entries, 200);
         assert_eq!(default_config.storage.ttl_warning_days, 30);
+    }
+
+    #[test]
+    fn test_decode_storage_sections_parse_and_are_honoured() {
+        // Issue #375: the [decode]/[storage] sections must reach the code paths
+        // that consume them (XDR decode limits, storage paging + TTL warning).
+        // This test asserts the config surface the wired code reads.
+        let toml_data = r#"
+            [decode]
+            max_depth = 4
+            allow_fallback_hex = false
+
+            [storage]
+            max_entries = 50
+            ttl_warning_days = 7
+        "#;
+        let parsed = DevKitConfig::from_toml(toml_data).unwrap();
+        assert_eq!(parsed.decode.max_depth, 4);
+        assert!(!parsed.decode.allow_fallback_hex);
+        assert_eq!(parsed.storage.max_entries, 50);
+        assert_eq!(parsed.storage.ttl_warning_days, 7);
+    }
+
+    #[test]
+    fn test_partial_decode_and_storage_sections_use_defaults() {
+        // A section may set only one of its fields; the rest must fall back to
+        // the documented defaults rather than failing to parse.
+        let parsed = DevKitConfig::from_toml("[decode]\nmax_depth = 4\n").unwrap();
+        assert_eq!(parsed.decode.max_depth, 4);
+        assert!(parsed.decode.allow_fallback_hex);
+
+        let parsed = DevKitConfig::from_toml("[storage]\nttl_warning_days = 7\n").unwrap();
+        assert_eq!(parsed.storage.ttl_warning_days, 7);
+        assert_eq!(parsed.storage.max_entries, 200);
+    }
+
+    #[test]
+    fn test_default_ttl_warning_days_is_thirty() {
+        // Regression (review round 3): wiring [storage] into the analyzer must
+        // not silently change the default warning threshold. 30 days is the
+        // pre-existing default and must stay the default.
+        assert_eq!(DevKitConfig::default().storage.ttl_warning_days, 30);
+        // An omitted section must resolve to the same value.
+        let parsed = DevKitConfig::from_toml("[storage]\nmax_entries = 50\n").unwrap();
+        assert_eq!(parsed.storage.ttl_warning_days, 30);
+    }
+
+    #[test]
+    fn test_validate_accepts_zero_max_depth_as_unlimited() {
+        // Issue #375: `max_depth = 0` is documented and implemented as
+        // "unlimited" by decode_with_config, so the config validator must not
+        // contradict it. A .sdkt.toml with max_depth = 0 must load and decode.
+        let mut config = DevKitConfig::default();
+        config.decode.max_depth = 0;
+        assert!(
+            config.validate().is_ok(),
+            "max_depth = 0 must be valid (unlimited), matching decode_with_config"
+        );
+    }
+
+    #[test]
+    fn test_validate_accepts_positive_max_depth() {
+        let mut config = DevKitConfig::default();
+        config.decode.max_depth = 1;
+        assert!(config.validate().is_ok());
+        config.decode.max_depth = u32::MAX;
+        assert!(config.validate().is_ok());
     }
 
     #[test]
@@ -303,5 +406,38 @@ mod tests {
             .unwrap()
             .deploy_after
             .is_empty());
+    }
+
+    #[test]
+    fn test_ctor_args_field_parses() {
+        let toml_data = r#"
+            [contracts.token]
+            path = "contracts/token"
+            ctor_args = ["address:GABC123", "u32:100"]
+
+            [contracts.vault]
+            path = "contracts/vault"
+            depends_on = ["token"]
+        "#;
+        let parsed = DevKitConfig::from_toml(toml_data).unwrap();
+        let token = parsed.contracts.get("token").unwrap();
+        assert_eq!(token.ctor_args.len(), 2);
+        assert_eq!(token.ctor_args[0], "address:GABC123");
+        assert_eq!(token.ctor_args[1], "u32:100");
+
+        let vault = parsed.contracts.get("vault").unwrap();
+        assert!(vault.ctor_args.is_empty());
+    }
+
+    #[test]
+    fn test_empty_ctor_args_omitted_from_serialization() {
+        let config = ContractConfig {
+            path: "contracts/test".into(),
+            deploy_after: vec![],
+            depends_on: vec![],
+            ctor_args: vec![],
+        };
+        let serialized = toml::to_string(&config).unwrap();
+        assert!(!serialized.contains("ctor_args"));
     }
 }

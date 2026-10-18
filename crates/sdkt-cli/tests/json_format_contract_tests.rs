@@ -85,6 +85,40 @@ fn assert_valid_json(s: &str) -> Value {
     })
 }
 
+/// Assert that a failed `--format json` invocation emitted the documented error
+/// envelope on **stdout**: `{"error": "<message>"}` with exit code 1.
+///
+/// Machine consumers pipe `sdkt <cmd> --format json` into `jq`, so the error
+/// must be machine-parseable on stdout — a prose line on stderr with empty
+/// stdout is a parse failure for them.
+fn assert_error_envelope(output: &std::process::Output, expect_fragment: &str) {
+    assert!(
+        !output.status.success(),
+        "expected non-zero exit, got {:?}",
+        output.status.code()
+    );
+    assert_eq!(
+        output.status.code(),
+        Some(1),
+        "error envelope must exit with code 1"
+    );
+    assert!(
+        output.stderr.is_empty(),
+        "stderr must be empty in JSON mode, got: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let parsed = assert_valid_json(&stdout);
+    let err = parsed
+        .get("error")
+        .and_then(Value::as_str)
+        .unwrap_or_else(|| panic!("envelope missing `error` key: {stdout}"));
+    assert!(
+        err.contains(expect_fragment),
+        "error message should mention `{expect_fragment}`, got: {err}"
+    );
+}
+
 // ---------------------------------------------------------------------------
 // Compatibility: wasm inspect fixtures (project-local, stable)
 // ---------------------------------------------------------------------------
@@ -563,17 +597,17 @@ mod wasm_inspect {
 
     #[test]
     fn json_error_output_is_consistent() {
-        let out = sdkt()
+        let output = sdkt()
             .args(["wasm", "inspect", "/no/such/file.wasm", "--format", "json"])
             .assert()
-            .failure()
             .get_output()
-            .stderr
             .clone();
-        let err_str = String::from_utf8_lossy(&out);
+        assert_error_envelope(&output, "Error reading WASM file");
+        // stderr is intentionally empty for JSON consumers — error is on stdout.
         assert!(
-            err_str.contains("Error") || err_str.contains("No such file"),
-            "error output should mention the failure: {err_str}"
+            output.stderr.is_empty(),
+            "stderr should be empty in JSON mode, got: {}",
+            String::from_utf8_lossy(&output.stderr)
         );
     }
 }
@@ -687,7 +721,7 @@ mod diff_upgrade_safety {
 
     #[test]
     fn json_error_when_old_wasm_missing() {
-        let out = sdkt()
+        let output = sdkt()
             .args([
                 "diff",
                 "--old-wasm",
@@ -699,14 +733,13 @@ mod diff_upgrade_safety {
                 "json",
             ])
             .assert()
-            .failure()
             .get_output()
-            .stderr
             .clone();
-        let err_str = String::from_utf8_lossy(&out);
+        assert_error_envelope(&output, "Failed to read OLD WASM");
         assert!(
-            err_str.contains("Failed to read") || err_str.contains("No such file"),
-            "error should mention missing file: {err_str}"
+            output.stderr.is_empty(),
+            "stderr should be empty in JSON mode, got: {}",
+            String::from_utf8_lossy(&output.stderr)
         );
     }
 }
@@ -816,18 +849,141 @@ mod audit {
 
     #[test]
     fn json_error_when_source_missing() {
-        let out = sdkt()
+        let output = sdkt()
             .args(["audit", "/no/such/contract.rs", "--format", "json"])
             .assert()
-            .failure()
             .get_output()
-            .stderr
             .clone();
-        let err_str = String::from_utf8_lossy(&out);
+        assert_error_envelope(&output, "Failed to read source");
         assert!(
-            err_str.contains("Failed to read") || err_str.contains("No such file"),
-            "error should mention missing file: {err_str}"
+            output.stderr.is_empty(),
+            "stderr should be empty in JSON mode, got: {}",
+            String::from_utf8_lossy(&output.stderr)
         );
+    }
+
+    #[test]
+    fn json_error_when_no_rust_files_found() {
+        // A directory containing no .rs files — distinct from a missing file.
+        let dir = TempDir::with_prefix("sdkt-audit-empty").unwrap();
+        let output = sdkt()
+            .args(["audit", dir.path().to_str().unwrap(), "--format", "json"])
+            .assert()
+            .get_output()
+            .clone();
+        assert_error_envelope(&output, "No Rust source files");
+    }
+
+    #[test]
+    fn json_error_when_new_wasm_missing() {
+        let output = sdkt()
+            .args([
+                "diff",
+                "--old-wasm",
+                WASM_OLD,
+                "--new-wasm",
+                "/no/such/new.wasm",
+                "--upgrade-safety",
+                "--format",
+                "json",
+            ])
+            .assert()
+            .get_output()
+            .clone();
+        assert_error_envelope(&output, "Failed to read NEW WASM");
+        assert!(
+            output.stderr.is_empty(),
+            "stderr should be empty in JSON mode, got: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+
+    #[test]
+    fn json_error_when_wasm_not_a_binary() {
+        // A non-binary file triggers a parse failure, not a read failure.
+        let dir = TempDir::with_prefix("sdkt-diff-bad").unwrap();
+        let fake_wasm = write_fixture(&dir, "fake.wasm", "not a wasm binary");
+        let output = sdkt()
+            .args([
+                "diff",
+                "--old-wasm",
+                fake_wasm.to_str().unwrap(),
+                "--new-wasm",
+                WASM_NEW,
+                "--upgrade-safety",
+                "--format",
+                "json",
+            ])
+            .assert()
+            .get_output()
+            .clone();
+        assert_error_envelope(&output, "Error diffing WASM");
+    }
+
+    #[test]
+    fn json_error_when_size_policy_combined_with_upgrade_safety() {
+        // Validation failure: --upgrade-safety + --max-size-bytes is rejected.
+        let output = sdkt()
+            .args([
+                "diff",
+                "--old-wasm",
+                WASM_OLD,
+                "--new-wasm",
+                WASM_NEW,
+                "--upgrade-safety",
+                "--max-size-bytes",
+                "1000",
+                "--format",
+                "json",
+            ])
+            .assert()
+            .get_output()
+            .clone();
+        assert_error_envelope(
+            &output,
+            "size policy cannot be combined with --upgrade-safety",
+        );
+    }
+
+    #[test]
+    fn json_error_when_max_size_bytes_zero() {
+        // Validation failure: --max-size-bytes must be > 0.
+        let output = sdkt()
+            .args([
+                "diff",
+                "--old-wasm",
+                WASM_OLD,
+                "--new-wasm",
+                WASM_NEW,
+                "--max-size-bytes",
+                "0",
+                "--format",
+                "json",
+            ])
+            .assert()
+            .get_output()
+            .clone();
+        assert_error_envelope(&output, "--max-size-bytes must be greater than 0");
+    }
+
+    #[test]
+    fn json_error_when_max_growth_pct_negative() {
+        // Validation failure: --max-growth-pct must not be negative.
+        let output = sdkt()
+            .args([
+                "diff",
+                "--old-wasm",
+                WASM_OLD,
+                "--new-wasm",
+                WASM_NEW,
+                "--max-growth-pct=-5",
+                "--format",
+                "json",
+            ])
+            .assert()
+            .get_output()
+            .clone();
+        assert_error_envelope(&output, "--max-growth-pct must not be negative");
     }
 }
 
@@ -893,8 +1049,8 @@ mod decode {
 
     #[test]
     fn json_error_on_invalid_xdr() {
-        // Invalid base64 / truncated XDR → error envelope
-        let out = sdkt()
+        // Invalid base64 / truncated XDR → error envelope on stdout
+        let output = sdkt()
             .args([
                 "decode",
                 "AAAA",
@@ -904,27 +1060,71 @@ mod decode {
                 "json",
             ])
             .assert()
-            .failure()
             .get_output()
-            .stderr
             .clone();
-        let err_str = String::from_utf8_lossy(&out);
+        assert_error_envelope(&output, "XDR parse failed for type 'TransactionEnvelope'");
         assert!(
-            err_str.contains("XdrParse") || err_str.contains("Error"),
-            "error should mention parse failure: {err_str}"
+            output.stderr.is_empty(),
+            "stderr should be empty in JSON mode, got: {}",
+            String::from_utf8_lossy(&output.stderr)
         );
     }
 
     #[test]
-    fn json_output_is_valid_for_ledger_key_type() {
-        // Use a known-valid base64 LedgerKey (pre-encoded offline).
-        // This is a minimal valid LedgerKey for a AccountEntry.
-        // If this fixture is unavailable, the test still validates JSON shape
-        // by checking that ANY successful decode produces valid JSON.
-        //
-        // Ponytail: add a static base64 fixture here once a stable one is
-        // committed to tests/fixtures/. For now we only assert the error path
-        // above, which is the deterministic offline case.
+    fn json_error_when_file_missing() {
+        let output = sdkt()
+            .args([
+                "decode",
+                "--file",
+                "/no/such/input.xdr",
+                "--type",
+                "TransactionEnvelope",
+                "--format",
+                "json",
+            ])
+            .assert()
+            .get_output()
+            .clone();
+        // The message must carry the path and the original I/O error, not a
+        // blanket "No such file" that hides which input failed.
+        assert_error_envelope(&output, "Failed to read input file '/no/such/input.xdr'");
+    }
+
+    #[test]
+    fn json_error_when_no_input_provided() {
+        let output = sdkt()
+            .args([
+                "decode",
+                "--type",
+                "TransactionEnvelope",
+                "--format",
+                "json",
+            ])
+            .assert()
+            .get_output()
+            .clone();
+        assert_error_envelope(&output, "no input provided");
+    }
+
+    #[test]
+    fn pretty_mode_error_still_goes_to_stderr() {
+        // Non-JSON mode keeps the human-readable contract: stderr, not stdout.
+        let output = sdkt()
+            .args(["decode", "AAAA", "--type", "TransactionEnvelope"])
+            .assert()
+            .get_output()
+            .clone();
+        assert!(!output.status.success());
+        assert!(
+            output.stdout.is_empty(),
+            "stdout should be empty in pretty mode, got: {}",
+            String::from_utf8_lossy(&output.stdout)
+        );
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert!(
+            !stderr.is_empty(),
+            "stderr should carry the error in pretty mode: {stderr}"
+        );
     }
 }
 

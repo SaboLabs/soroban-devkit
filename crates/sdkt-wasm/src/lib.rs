@@ -31,7 +31,7 @@ pub enum WasmError {
     NoContractSpec,
     #[error("XDR decode error in contract spec: {0}")]
     SpecXdr(stellar_xdr::Error),
-    #[error("XDR decode error in contractmetav0 metadata: {0}")]
+    #[error("XDR decode error in contract metadata: {0}")]
     MetaXdr(stellar_xdr::Error),
 }
 
