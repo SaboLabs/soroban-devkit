@@ -808,3 +808,82 @@ fn test_events_all_pages_accumulates_and_stops_on_exhaustion() {
     );
     assert!(event_reqs[2]["params"].get("startLedger").is_none());
 }
+
+#[test]
+fn test_events_empty_cursor_with_start_ledger_normalized() {
+    let (rpc_url, seen) = mock_events_rpc(2500);
+    let mut cmd = Command::cargo_bin("sdkt").unwrap();
+    cmd.arg("events")
+        .arg(CONTRACT_ID)
+        .arg("--rpc-url")
+        .arg(&rpc_url)
+        .arg("--cursor")
+        .arg("")
+        .arg("--start-ledger")
+        .arg("1000")
+        .arg("--format")
+        .arg("json");
+
+    cmd.assert().success();
+
+    let reqs = seen.lock().unwrap().requests.clone();
+    let event_req = reqs
+        .iter()
+        .find(|r| r["method"] == "getEvents")
+        .expect("expected getEvents request");
+
+    // startLedger was retained and not dropped; cursor was dropped
+    assert_eq!(event_req["params"]["startLedger"], 1000);
+    assert!(event_req["params"].get("pagination").is_none());
+}
+
+#[test]
+fn test_events_short_page_with_continuation_cursor_reports_boundary() {
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let url = format!("http://{}", listener.local_addr().unwrap());
+
+    thread::spawn(move || {
+        for conn in listener.incoming() {
+            let Ok(mut sock) = conn else { break };
+            let req = read_request(&mut sock);
+            let body = req.split_once("\r\n\r\n").map(|(_, b)| b).unwrap_or("");
+            let json_body: serde_json::Value =
+                serde_json::from_str(body).unwrap_or_else(|_| serde_json::json!({}));
+            let method = json_body["method"].as_str().unwrap_or("").to_string();
+
+            let resp_body = match method.as_str() {
+                "getLatestLedger" => {
+                    r#"{"jsonrpc":"2.0","id":1,"result":{"id":"mock","protocolVersion":22,"sequence":2500}}"#.to_string()
+                }
+                "getEvents" => {
+                    r#"{"jsonrpc":"2.0","id":1,"result":{"events":[{"ledger":1000,"contractId":"CCVVW7N4R3KNY72QJQKQY3T753C2H34E6XJIVJQOQSQE3C3M3U72QJQK","topic":["AAAAAwAAACo="],"value":"AAAAAwAAACo="}],"cursor":"0000001000-0000000001","latestLedger":2500}}"#.to_string()
+                }
+                _ => {
+                    r#"{"jsonrpc":"2.0","id":1,"error":{"code":-32601,"message":"method not found"}}"#.to_string()
+                }
+            };
+
+            let header = format!(
+                "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+                resp_body.len(),
+                resp_body
+            );
+            let _ = sock.write_all(header.as_bytes());
+        }
+    });
+
+    let mut cmd = Command::cargo_bin("sdkt").unwrap();
+    cmd.arg("events")
+        .arg(CONTRACT_ID)
+        .arg("--rpc-url")
+        .arg(&url)
+        .arg("--limit")
+        .arg("10");
+
+    cmd.assert()
+        .success()
+        .stdout(predicate::str::contains("Event #1"))
+        .stdout(predicate::str::contains(
+            "Notice: Page boundary reached (1 events). To continue from this point, use --cursor 0000001000-0000000001",
+        ));
+}

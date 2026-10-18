@@ -241,7 +241,10 @@ pub async fn get_contract_events_paginated(
     pagination: Option<EventPagination>,
     page_cap: Option<usize>,
 ) -> Result<PaginatedEvents, RpcError> {
-    let mut current_cursor = pagination.as_ref().and_then(|p| p.cursor.clone());
+    let mut current_cursor = pagination
+        .as_ref()
+        .and_then(|p| p.cursor.clone())
+        .filter(|c| !c.is_empty());
     validate_cursor_and_ledger_range(current_cursor.as_deref(), start_ledger, end_ledger)?;
 
     if let (Some(start), Some(end)) = (start_ledger, end_ledger) {
@@ -341,14 +344,10 @@ pub async fn get_contract_events_paginated(
             });
         }
 
-        let next_cursor = result.cursor;
+        let next_cursor = result.cursor.filter(|c| !c.is_empty());
 
         // Termination Condition 1: No further cursor / page exhausted
-        if page_empty
-            || next_cursor.is_none()
-            || next_cursor.as_deref() == Some("")
-            || next_cursor == current_cursor
-        {
+        if page_empty || next_cursor.is_none() || next_cursor == current_cursor {
             current_cursor = next_cursor;
             break;
         }
@@ -1007,5 +1006,41 @@ mod tests {
         assert_eq!(res.pages_fetched, 2);
         assert_eq!(res.cursor.as_deref(), Some("c2"));
         assert!(!res.reached_page_cap);
+    }
+
+    #[tokio::test]
+    async fn test_empty_cursor_normalized_with_start_ledger() {
+        let (server_url, mut rx) = setup_mock_events_server(vec![serde_json::json!({
+            "events": [{
+                "ledger": 1000,
+                "contractId": "CA3D5KRYM6CB7OWQ6TWYRR3Z4T7GNZLKERYNZGGA5CWVMOMG2P3T2YYW",
+                "topic": ["AAAAAwAAACo="],
+                "value": "AAAAAwAAACo="
+            }],
+            "cursor": null,
+            "latestLedger": 2000
+        })])
+        .await;
+
+        let client = SorobanRpcClient::new(&server_url);
+        let res = get_contract_events_paginated(
+            &client,
+            "CA3D5KRYM6CB7OWQ6TWYRR3Z4T7GNZLKERYNZGGA5CWVMOMG2P3T2YYW",
+            Some(1000),
+            Some(1005),
+            None,
+            Some(EventPagination::cursor("")),
+            Some(1),
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(res.events.len(), 1);
+        let req = rx.recv().await.unwrap();
+        // startLedger must be preserved and not dropped
+        assert_eq!(req["params"]["startLedger"], 1000);
+        assert_eq!(req["params"]["endLedger"], 1006);
+        // pagination with empty cursor must be omitted
+        assert!(req["params"].get("pagination").is_none());
     }
 }

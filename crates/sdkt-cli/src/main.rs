@@ -5930,6 +5930,7 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
             all_pages,
             net,
         } => {
+            let cursor = cursor.filter(|c| !c.is_empty());
             let fmt = parse_format_str(&format);
             let client = resolve_rpc_client(
                 net.rpc_url.clone(),
@@ -6020,10 +6021,8 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
             {
                 Ok(paged) => {
                     let events = paged.events;
-                    let effective_limit = limit.unwrap_or(100);
-                    let hit_page_boundary = !all_pages
-                        && events.len() >= effective_limit as usize
-                        && paged.cursor.as_deref().is_some_and(|c| !c.is_empty());
+                    let hit_page_boundary =
+                        !all_pages && paged.cursor.as_deref().is_some_and(|c| !c.is_empty());
                     let hit_max_cap = all_pages
                         && paged.reached_page_cap
                         && paged.cursor.as_deref().is_some_and(|c| !c.is_empty());
