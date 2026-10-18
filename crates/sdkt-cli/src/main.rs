@@ -105,6 +105,45 @@ mod storage_label_tests {
                 .unwrap();
         assert_eq!(storage_key_label(&unknown, &spec), unknown);
     }
+
+    #[test]
+    fn shorten_value_passes_through_short_values_unchanged() {
+        assert_eq!(shorten_value("short"), "short");
+        assert_eq!(shorten_value("exactly-24"), "exactly-24");
+    }
+
+    #[test]
+    fn shorten_value_distinguishes_values_sharing_head_tail_and_length() {
+        // Same 16-char head, same 8-char tail, same length: fingerprint
+        // must differ.
+        let a = format!(
+            "{}{}{}{}",
+            "a".repeat(16),
+            "AAAA",
+            "Z".repeat(8),
+            "0".repeat(24)
+        );
+        let b = format!(
+            "{}{}{}{}",
+            "a".repeat(16),
+            "ZZZZ",
+            "Z".repeat(8),
+            "0".repeat(24)
+        );
+        // sanity: the structural parts really do coincide
+        assert_eq!(&a[0..16], &b[0..16]);
+        assert_eq!(&a[a.len() - 8..], &b[b.len() - 8..]);
+        assert_eq!(a.len(), b.len());
+        assert_ne!(
+            shorten_value(&a),
+            shorten_value(&b),
+            "fingerprint must distinguish structurally-alike values"
+        );
+        assert!(
+            shorten_value(&a).contains('#'),
+            "long value must carry the SHA-256 fingerprint"
+        );
+    }
 }
 
 /// Reusable network-resolution flags shared by every command that talks to a
@@ -2845,18 +2884,22 @@ fn print_diff_pretty(diff: &sdkt_storage::SnapshotDiff) {
     }
 }
 
-/// Shorten a base64 XDR value for display: keep the first 16 chars plus a
-/// length hint so the line stays readable while remaining stable.
+/// Shorten a base64 XDR value for display: keep the first 16 and last 8
+/// characters plus a SHA-256 fingerprint (first 8 hex chars) of the complete
+/// value, so two distinct values sharing head, tail, and length still print
+/// differently in the `[value_changed]` line.
 fn shorten_value(value: &str) -> String {
     if value.len() <= 24 {
         value.to_string()
     } else {
-        // Keep head and tail: two long values sharing a 16-char prefix stay
-        // distinguishable in the `[value_changed]` line.
+        let mut hasher = Sha256::new();
+        hasher.update(value.as_bytes());
+        let fp = hasher.finalize();
         format!(
-            "{}…{} ({} chars)",
+            "{}…{}#{} ({} chars)",
             &value[..16],
             &value[value.len() - 8..],
+            hex::encode(&fp[..4]),
             value.len()
         )
     }
