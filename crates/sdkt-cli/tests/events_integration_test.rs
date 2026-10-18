@@ -887,3 +887,39 @@ fn test_events_short_page_with_continuation_cursor_reports_boundary() {
             "Notice: Page boundary reached (1 events). To continue from this point, use --cursor 0000001000-0000000001",
         ));
 }
+
+#[test]
+fn test_events_all_pages_enforces_end_ledger_bound_across_pages() {
+    let (rpc_url, seen) = mock_multipage_events_rpc();
+    let mut cmd = Command::cargo_bin("sdkt").unwrap();
+    cmd.arg("events")
+        .arg(CONTRACT_ID)
+        .arg("--rpc-url")
+        .arg(&rpc_url)
+        .arg("--all-pages")
+        .arg("--limit")
+        .arg("2")
+        .arg("--start-ledger")
+        .arg("1000")
+        .arg("--end-ledger")
+        .arg("1002")
+        .arg("--format")
+        .arg("json");
+
+    let assert = cmd.assert().success();
+    let output = assert.get_output();
+
+    let json: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    let arr = json.as_array().expect("array of events");
+
+    // Must include 1000, 1001, 1002, and discard 1003 (which crossed end_ledger 1002)
+    assert_eq!(arr.len(), 3);
+    assert_eq!(arr[0]["ledger"], 1000);
+    assert_eq!(arr[1]["ledger"], 1001);
+    assert_eq!(arr[2]["ledger"], 1002);
+
+    // Page 3 was never requested because loop terminated at end_ledger
+    let reqs = seen.lock().unwrap().requests.clone();
+    let event_reqs: Vec<_> = reqs.iter().filter(|r| r["method"] == "getEvents").collect();
+    assert_eq!(event_reqs.len(), 2);
+}

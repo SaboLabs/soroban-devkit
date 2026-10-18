@@ -228,7 +228,8 @@ pub async fn get_contract_events_filtered(
 /// Follows cursor across pages until:
 /// 1. The page is exhausted (no cursor returned, empty events, or cursor unchanged).
 /// 2. The caller-supplied `page_cap` is reached.
-/// 3. The events pass `latestLedger` (an event's ledger exceeds the observed `latestLedger`).
+/// 3. The caller-supplied `end_ledger` is reached/passed (events beyond `end_ledger` are discarded).
+/// 4. The events pass `latestLedger` (an event's ledger exceeds the observed `latestLedger`).
 ///
 /// Client-side validation enforces that requests carrying a `cursor` omit `start_ledger`
 /// and `end_ledger` prior to making any network call.
@@ -334,8 +335,15 @@ pub async fn get_contract_events_paginated(
         }
 
         let page_empty = result.events.is_empty();
+        let mut passed_end_ledger = false;
 
         for ev in result.events {
+            if let Some(max_ledger) = end_ledger {
+                if ev.ledger > max_ledger {
+                    passed_end_ledger = true;
+                    break;
+                }
+            }
             accumulated_events.push(ContractEvent {
                 contract_id: ev.contract_id,
                 ledger: Some(ev.ledger),
@@ -361,7 +369,13 @@ pub async fn get_contract_events_paginated(
             }
         }
 
-        // Termination Condition 3: Passing latestLedger
+        // Termination Condition 3: Passing caller's end_ledger
+        if passed_end_ledger {
+            current_cursor = next_cursor;
+            break;
+        }
+
+        // Termination Condition 4: Passing latestLedger
         let passed_latest = if let Some(latest) = target_latest_ledger.or(result.latest_ledger) {
             accumulated_events
                 .last()
@@ -1042,5 +1056,83 @@ mod tests {
         assert_eq!(req["params"]["endLedger"], 1006);
         // pagination with empty cursor must be omitted
         assert!(req["params"].get("pagination").is_none());
+    }
+
+    #[tokio::test]
+    async fn test_follow_loop_enforces_end_ledger_on_subsequent_pages() {
+        let (server_url, mut rx) = setup_mock_events_server(vec![
+            serde_json::json!({
+                "events": [
+                    {
+                        "ledger": 1000,
+                        "contractId": "CA3D5KRYM6CB7OWQ6TWYRR3Z4T7GNZLKERYNZGGA5CWVMOMG2P3T2YYW",
+                        "topic": ["AAAAAwAAACo="],
+                        "value": "AAAAAwAAACo="
+                    },
+                    {
+                        "ledger": 1001,
+                        "contractId": "CA3D5KRYM6CB7OWQ6TWYRR3Z4T7GNZLKERYNZGGA5CWVMOMG2P3T2YYW",
+                        "topic": ["AAAAAwAAAAc="],
+                        "value": "AAAAAwAAAAc="
+                    }
+                ],
+                "cursor": "0000001001-0000000001",
+                "latestLedger": 2000
+            }),
+            serde_json::json!({
+                "events": [
+                    {
+                        "ledger": 1002,
+                        "contractId": "CA3D5KRYM6CB7OWQ6TWYRR3Z4T7GNZLKERYNZGGA5CWVMOMG2P3T2YYW",
+                        "topic": ["AAAAAwAAAEg="],
+                        "value": "AAAAAwAAAEg="
+                    },
+                    {
+                        "ledger": 1003,
+                        "contractId": "CA3D5KRYM6CB7OWQ6TWYRR3Z4T7GNZLKERYNZGGA5CWVMOMG2P3T2YYW",
+                        "topic": ["AAAAAwAAAEk="],
+                        "value": "AAAAAwAAAEk="
+                    }
+                ],
+                "cursor": "0000001003-0000000001",
+                "latestLedger": 2000
+            }),
+        ])
+        .await;
+
+        let client = SorobanRpcClient::new(&server_url);
+        // Caller specifies end_ledger: 1002
+        let res = get_contract_events_paginated(
+            &client,
+            "CA3D5KRYM6CB7OWQ6TWYRR3Z4T7GNZLKERYNZGGA5CWVMOMG2P3T2YYW",
+            Some(1000),
+            Some(1002),
+            None,
+            None,
+            None,
+        )
+        .await
+        .unwrap();
+
+        // Must include ledgers 1000, 1001, 1002, but discard ledger 1003
+        assert_eq!(res.events.len(), 3);
+        assert_eq!(res.events[0].ledger, Some(1000));
+        assert_eq!(res.events[1].ledger, Some(1001));
+        assert_eq!(res.events[2].ledger, Some(1002));
+        assert_eq!(res.pages_fetched, 2);
+
+        // Verify request 1 sent startLedger 1000 and endLedger 1003 (1002 + 1)
+        let req1 = rx.recv().await.unwrap();
+        assert_eq!(req1["params"]["startLedger"], 1000);
+        assert_eq!(req1["params"]["endLedger"], 1003);
+
+        // Verify request 2 resumed with cursor and omitted startLedger and endLedger per RPC spec
+        let req2 = rx.recv().await.unwrap();
+        assert!(req2["params"].get("startLedger").is_none());
+        assert!(req2["params"].get("endLedger").is_none());
+        assert_eq!(
+            req2["params"]["pagination"]["cursor"],
+            "0000001001-0000000001"
+        );
     }
 }
