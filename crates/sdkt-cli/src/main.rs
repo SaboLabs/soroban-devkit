@@ -703,6 +703,9 @@ enum FuzzAction {
         /// Replay every written artifact to verify determinism
         #[arg(long)]
         replay: bool,
+        /// Map budget-class failures to RESOURCE_LIMIT findings (default off)
+        #[arg(long)]
+        resource_limit_is_finding: bool,
         /// Output format (pretty | json | jsonl)
         #[arg(short, long, default_value = "pretty")]
         format: String,
