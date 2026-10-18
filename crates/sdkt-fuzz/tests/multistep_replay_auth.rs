@@ -12,7 +12,9 @@
 //! `set`/`peek` are unguarded. `bump(source_address)` succeeds only with a
 //! matching source-account credential (empirically verified host 28.0.2
 //! behavior). No auth-tree/multi-signer semantics are claimed.
-
+//!
+//! Note: these regression sequences are constructed explicitly with two
+//! `bump` calls. They do not exercise `mutation::plan_mutation`.
 use sdkt_fuzz::{
     artifact::CampaignConfig, replay, AuthMode, Environment, ExecutionStatus, Expected,
     ExpectedBehavior, Finding, FindingArtifact, FunctionCall, Oracle, ReasonCode,

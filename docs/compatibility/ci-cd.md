@@ -1,1 +1,175 @@
-IyBDSS9DRCB3aXRoIFNvcm9iYW4gRGV2S2l0IChgc2RrdGApCgpgc2RrdGAgc2hpcHMgYSByZXVzYWJsZSAqKkdpoXRIdWIgY29tcG9zaXRlIEFjdGlvbioqIGF0CltgYHNka3RgIGNvbXBvc2l0ZSBBY3Rpb25gXSguLi8uLi8uZ2l0aHViL2FjdGlvbnMvc2RrdC9hY3Rpb24ueW1sKSBzbyB5b3UgY2FuCmdhdGUgbWVyZ2VzIG9uIHN0YXRpYyBzZWN1cml0eSBmaW5kaW5ncyAoYHNka3QgYXVkaXRgKSwgb24gYnJlYWtpbmcgY29udHJhY3QKdXBncmFkZXMgKGBzZGt0IGRpZmYgLS11cGdyYWRlLXNhZmV0eWApLCBhbmQgb24gYSByZWFkLW9ubHkgcmVsZWFzZSB2ZXJkaWN0Cihgc2RrdCByZWxlYXNlLWFzc3VyYW5jZWApIOKAlCBlbnRpcmVseSBpbiBDSSwgbm8gbG9jYWwgaW5zdGFsbCByZXF1aXJlZC4KClRoZSBBY3Rpb24gaW5zdGFsbHMgYSBwaW5uZWQgYHNka3RgIGJpbmFyeSwgcnVucyB0aGUgY2hvc2VuIHN1YmNvbW1hbmQgaW4gSlNPTgptb2RlLCBhbmQgZmFpbHMgdGhlIHN0ZXAgd2hlbiB0aGUgY2hlY2sgZG9lcyBub3QgcGFzcy4KCiMjIElucHV0cwoKfCBJbnB1dCB8IFJlcXVpcmVkIHwgRGVmYXVsdCB8IE1lYW5pbmcgfAp8LS0tLS0tLXwtLS0tLS0tLS0tfC0tLS0tLS0tLXwtLS0tLS0tLS18CnwgYGNvbW1hbmRgIHwgeWVzIHwg4oCUIHwgYGF1ZGl0YCwgYHVwZ3JhZGUtc2FmZXR5YCwgb3IgYHJlbGVhc2UtYXNzdXJhbmNlYCB8CnwgYHNka3QtdmVyc2lvbmAgfCBubyB8IGB2Mi43LjBgIHwgUGlubmVkIGBzZGt0YCBnaXQgdGFnIHRvIGluc3RhbGwgfAp8IGB0YXJnZXRgIHwgZm9yIGBhdWRpdGAgfCBgIiJgIHwgUGF0aCB0byB0aGUgYC5yc2Agc291cmNlIHRvIGF1ZGl0IHwKfCBgb2xkLXdhc21gIHwgZm9yIGB1cGdyYWRlLXNhZmV0eWAgfCBgIiJgIHwgQmFzZWxpbmUgKGN1cnJlbnRseSBkZXBsb3llZCkgV0FTTSB8CnwgYG5ldy13YXNtYCB8IGZvciBgdXBncmFkZS1zYWZldHlgIHwgYCIiYCB8IENhbmRpZGF0ZSAobmV3KSBXQVNNIHwKfCBgc2V2ZXJpdHktdGhyZXNob2xkYCB8IG5vIHwgYGNyaXRpY2FsYCB8IGBjcml0aWNhbGAgXCB8IGB3YXJuaW5nYCBcIHwgYGluZm9gIHwKfCBgd2FzbWAgfCBmb3IgYHJlbGVhc2UtYXNzdXJhbmNlYCB8IGAiImAgfCBDYW5kaWRhdGUgV0FTTSBhcnRpZmFjdCB0byBhc3Nlc3MgfAp8IGBwcmV2aW91cy13YXNtYCB8IG5vIHwgYCIiYCB8IEJhc2VsaW5lIFdBU00gZm9yIHRoZSBvZmZsaW5lIHVwZ3JhZGUgZGlmZiB8CnwgYGF1ZGl0YCB8IG5vIHwgYCIiYCB8IFJ1c3Qgc291cmNlIHBhdGgocykvZGlyKHMpIGZvciB0aGUgc3RhdGljIGF1ZGl0IChzcGFjZS1zZXBhcmF0ZWQpIHwKfCBgZGlzYWJsZWAgfCBubyB8IGAiImAgfCBBdWRpdCBydWxlIGlkKHMpIHRvIGRpc2FibGUgKHNwYWNlLXNlcGFyYXRlZCkgfAp8IGBjb250cmFjdGAgfCBubyB8IGAiImAgfCBEZXBsb3llZCBjb250cmFjdCBJRCAoQy4uLikgZm9yIG9uLWNoYWluIGNoZWNrczsgc2tpcHBlZCB3aGVuIGVtcHR5IHwKfCBgbmV0d29ya2AgfCBubyB8IGAiImAgfCBgdGVzdG5ldGAgXCB8IGBtYWlubmV0YCBcIHwgYGZ1dHVyZW5ldGAgZm9yIHRoZSBvbi1jaGFpbiBjaGVja3MgfAp8IGBtYXgtc2l6ZS1ieXRlc2AgfCBmb3IgYHJlbGVhc2UtYXNzdXJhbmNlYCB8IGAiImAgfCBGYWlsIHRoZSByZWxlYXNlIHdoZW4gdGhlIGNhbmRpZGF0ZSBhcnRpZmFjdCBleGNlZWRzIE4gYnl0ZXMgKGZvcndhcmRzIGAtLW1heC1zaXplLWJ5dGVzYCkgfAp8IGBtYXgtZ3Jvd3RoLXBjdGAgfCBmb3IgYHJlbGVhc2UtYXNzdXJhbmNlYCB8IGAiImAgfCBGYWlsIHRoZSByZWxlYXNlIHdoZW4gdGhlIGNhbmRpZGF0ZSBncmV3IG1vcmUgdGhhbiBOIHBlcmNlbnQgb3ZlciBgcHJldmlvdXMtd2FzbWAgKGZvcndhcmRzIGAtLW1heC1ncm93dGgtcGN0YCkgfAoKKipUaHJlc2hvbGQgc2VtYW50aWNzOioqIG9ubHkgZmluZGluZ3MgYXQgb3IgYWJvdmUgYHNldmVyaXR5LXRocmVzaG9sZGAgZmFpbAp0aGUgYnVpbGQuIFRoZSBkZWZhdWx0IGBjcml0aWNhbGAgbWVhbnMgYE1PVkUtMDAxYCAoV2FybmluZykgbmV2ZXIgYnJlYWtzIENJLgpUaGUgQWN0aW9uIGZvcndhcmRzIHRoZSBsZXZlbCB0byB0aGUgQ0xJJ3MgbmF0aXZlIGBzZGt0IGF1ZGl0IC0tZmFpbC1vbgpgZmxhZywgd2hpY2ggaXMgdGhlIHNpbmdsZSBzb3VyY2Ugb2YgdHJ1dGggZm9yIHRoZSBnYXRlOyB0aGUgQWN0aW9uIGRvZXMgbm90CnBhcnNlIHRoZSBKU09OIG91dHB1dCBvciByZWltcGxlbWVudCB0aGUgdGhyZXNob2xkIGxvZ2ljLiBBbiBpbnZhbGlkIGxldmVsIGlzCnJlamVjdGVkIGJ5IHRoZSBDTEkgYXMgYSB1c2FnZSBlcnJvciAoZXhpdCBjb2RlIDIpLCBhbmQgdGhlIEFjdGlvbiBzdXJmYWNlcwp0aGF0IGFzIGEgY2xlYXIgYDo6ZXJyb3I6OmludmFsaWQgc2V2ZXJpdHktdGhyZXNob2xkYCBtZXNzYWdlLgoKKipSZWxlYXNlLWFzc3VyYW5jZSBzZW1hbnRpY3M6KiogdGhlIGFnZ3JlZ2F0ZWQgYHJlbGVhc2Vfc3RhdHVzYCBnYXRlcyB0aGUKc3RlcC4gYEZBSUxgIGJsb2NrcyAoc3RlcCBleGl0cyAxKTsgYFBBU1NgLCBgUkVWSUVXYCwgYW5kIGBTS0lQUEVEYC1vbmx5CnJlc3VsdHMgZG8gKipub3QqKiBibG9jayAoZXhpdCAwKSwgbWF0Y2hpbmcgdGhlIENMSS4gQSBicmVha2luZyBiYXNlbGluZQp0aGVyZWZvcmUgZmFpbHMgQ0ksIHdoaWxlIGEgcmVwb3J0IHRoYXQgb25seSBuZWVkcyBodW1hbiByZXZpZXcgcGFzc2VzLiBBCkNMSSBlcnJvciB0aGF0IHByb2R1Y2VzIG5vIHJlcG9ydCBhdCBhbGwgKGludmFsaWQgaW5wdXQsIHVucmVhZGFibGUgYXJ0aWZhY3QsClJQQyBmYWlsdXJlKSBhbHNvIGZhaWxzIHRoZSBzdGVwOiB0aGUgQWN0aW9uIHByb3BhZ2F0ZXMgdGhlIENMSSdzIGV4aXQgY29kZQpyYXRoZXIgdGhhbiByZWx5aW5nIG9uIGByZWxlYXNlX3N0YXR1c2AgYWxvbmUuCgoqKlNpemUgcG9saWN5OioqIGBtYXgtc2l6ZS1ieXRlc2AgYW5kIGBtYXgtZ3Jvd3RoLXBjdGAgYXJlIG9wdGlvbmFsIGFuZApmb3J3YXJkZWQgdG8gdGhlIENMSSdzIGV4aXN0aW5nIHNpemUgcG9saWN5LiBUaHJlc2hvbGRzIGFyZQpvcGVyYXRvci1zdXBwbGllZCDigJQgU0RLVCBoYXJkY29kZXMgbm8gbmV0d29yayBsaW1pdC4gQm91bmRhcmllcyBhcmUKaW5jbHVzaXZlLCBzbyBhIHNpemUgZXhhY3RseSBhdCB0aGUgbGltaXQgb3IgZ3Jvd3RoIGV4YWN0bHkgYXQgdGhlIGNhcApwYXNzZXMuIGBtYXgtZ3Jvd3RoLXBjdGAgcmVxdWlyZXMgYHByZXZpb3VzLXdhc21gOyB3aXRob3V0IGl0IHRoZSBDTEkKZmFpbHMgcmF0aGVyIHRoYW4gc2lsZW50bHkgc2tpcHBpbmcgdGhlIGNoZWNrLiBPbWl0dGluZyBib3RoIGlucHV0cwpsZWF2ZXMgdGhlIHJlbGVhc2UtYXNzdXJhbmNlIHJlc3VsdCB1bmNoYW5nZWQuCgoqKlJlYWQtb25seToqKiBgcmVsZWFzZS1hc3N1cmFuY2VgIG5ldmVyIHNpZ25zLCBzdWJtaXRzLCBkZXBsb3lzLCBleHRlbmRzIFRUTCwKb3IgbXV0YXRlcyBzdGF0ZSwgYW5kIHRoZSBBY3Rpb24gcGFzc2VzIG5vIGNyZWRlbnRpYWxzLgoKIyMgRXhhbXBsZSAxIOKAlCBBdWRpdCBvbiBldmVyeSBQUgoKYGBgeWFtbAojIC5naXRodWIvd29ya2Zsb3dzL3Nka3QtYXVkaXQueW1sCm5hbWU6IHNka3QgQXVkaXQKCm9uOgogIHB1bGxfcmVxdWVzdDoKICBwdXNoOgogICAgYnJhbmNoZXM6IFttYWluXQoKam9iczoKICBhdWRpdDoKICAgIHJ1bnMtb246IHVidW50dS1sYXRlc3QKICAgIHN0ZXBzOgogICAgICAtIHVzZXM6IGFjdGlvbnMvY2hlY2tvdXRAdjQKICAgICAgLSBuYW1lOiBTdGF0aWMgc2VjdXJpdHkgYXVkaXQKICAgICAgICB1c2VzOiBTYWJvTGFicy9zb3JvYmFuLWRldmtpdC8uZ2l0aHViL2FjdGlvbnMvc2RrdEBtYWluCiAgICAgICAgd2l0aDoKICAgICAgICAgIGNvbW1hbmQ6IGF1ZGl0CiAgICAgICAgICBzZGt0LXZlcnNpb246IHYyLjcuMAogICAgICAgICAgdGFyZ2V0OiBjb250cmFjdHMvdG9rZW4vc3JjL2xpYi5ycwogICAgICAgICAgc2V2ZXJpdHktdGhyZXNob2xkOiBjcml0aWNhbApgYGAKCiMjIEV4YW1wbGUgMiDigJQgVXBncmFkZSBzYWZldHkgb24gcmVsZWFzZQoKUHJvdmlkZSB0aGUgY3VycmVudGx5LWRlcGxveWVkIFdBU00gKGBvbGQtd2FzbWApIGFuZCB0aGUgY2FuZGlkYXRlCihgbmV3LXdhc21gKS4gVGhlIHN0ZXAgZmFpbHMgd2hlbiB0aGUgdXBncmFkZSBpcyBub3QgYmFja3dhcmRzLWNvbXBhdGlibGUuCgpgYGB5YW1sCiMgLmdpdGh1Yi93b3JrZmxvd3Mvc2RrdC11cGdyYWRlLXNhZmV0eS55bWwKbmFtZTogc2RrdCBVcGdyYWRlIFNhZmV0eQoKb246CiAgcmVsZWFzZToKICAgIHR5cGVzOiBbcHVibGlzaGVkXQoKam9iczoKICB1cGdyYWRlLXNhZmV0eToKICAgIHJ1bnMtb246IHVidW50dS1sYXRlc3QKICAgIHN0ZXBzOgogICAgICAtIHVzZXM6IGFjdGlvbnMvY2hlY2tvdXRAdjQKICAgICAgLSBuYW1lOiBDaGVjayB1cGdyYWRlIGNvbXBhdGliaWxpdHkKICAgICAgICB1c2VzOiBTYWJvTGFicy9zb3JvYmFuLWRldmtpdC8uZ2l0aHViL2FjdGlvbnMvc2RrdEBtYWluCiAgICAgICAgd2l0aDoKICAgICAgICAgIGNvbW1hbmQ6IHVwZ3JhZGUtc2FmZXR5CiAgICAgICAgICBzZGt0LXZlcnNpb246IHYyLjcuMAogICAgICAgICAgb2xkLXdhc206IGJ1aWxkcy9jdXJyZW50Lndhc20KICAgICAgICAgIG5ldy13YXNtOiBidWlsZHMvY2FuZGlkYXRlLndhc20KYGBgCgojIyBFeGFtcGxlIDMg4oCUIFJlbGVhc2UgYXNzdXJhbmNlIGJlZm9yZSBwdWJsaXNoaW5nCgpBc3Nlc3MgdGhlIGNhbmRpZGF0ZSBhcnRpZmFjdCBhcyBhIHdob2xlOiBhcnRpZmFjdCBtZXRhZGF0YSwgc3RhdGljIGF1ZGl0LAp1cGdyYWRlIHNhZmV0eSwgYW5kIChvcHRpb25hbGx5KSBvbi1jaGFpbiB2ZXJpZmljYXRpb24gYW5kIGhlYWx0aC4gVGhlIHN0ZXAKZmFpbHMgb25seSB3aGVuIGByZWxlYXNlX3N0YXR1c2AgaXMgYEZBSUxgLgoKYGBgeWFtbAojIC5naXRodWIvd29ya2Zsb3dzL3Nka3QtcmVsZWFzZS1hc3N1cmFuY2UueW1sCm5hbWU6IHNka3QgUmVsZWFzZSBBc3N1cmFuY2UKCm9uOgogIHB1bGxfcmVxdWVzdDoKICAgIGJyYW5jaGVzOiBbbWFpbl0KCmpvYnM6CiAgcmVsZWFzZS1hc3N1cmFuY2U6CiAgICBydW5zLW9uOiB1YnVudHUtbGF0ZXN0CiAgICBzdGVwczoKICAgICAgLSB1c2VzOiBhY3Rpb25zL2NoZWNrb3V0QHY0CiAgICAgIC0gbmFtZTogUmVsZWFzZSBhc3N1cmFuY2UKICAgICAgICB1c2VzOiBTYWJvTGFicy9zb3JvYmFuLWRldmtpdC8uZ2l0aHViL2FjdGlvbnMvc2RrdEBtYWluCiAgICAgICAgd2l0aDoKICAgICAgICAgIGNvbW1hbmQ6IHJlbGVhc2UtYXNzdXJhbmNlCiAgICAgICAgICBzZGt0LXZlcnNpb246IHYyLjcuMAogICAgICAgICAgd2FzbTogYnVpbGRzL2NhbmRpZGF0ZS53YXNtCiAgICAgICAgICBwcmV2aW91cy13YXNtOiBidWlsZHMvY3VycmVudC53YXNtCiAgICAgICAgICBhdWRpdDogY29udHJhY3RzL3Rva2VuL3NyYy9saWIucnMKICAgICAgICAgIGRpc2FibGU6IE1PVkUtMDAxCmBgYAoKYHdhc21gIGlzIHJlcXVpcmVkLiBgcHJldmlvdXMtd2FzbWAsIGBhdWRpdGAsIGBkaXNhYmxlYCwgYGNvbnRyYWN0YCwgYW5kCmBuZXR3b3JrYCBhcmUgb3B0aW9uYWw6IGBwcmV2aW91cy13YXNtYCBzdXBwbGllcyB0aGUgb2ZmbGluZSB1cGdyYWRlIGJhc2VsaW5lLApgYXVkaXRgL2BkaXNhYmxlYCBkcml2ZSB0aGUgc3RhdGljIHNlY3VyaXR5IHNlY3Rpb24sIGFuZCBgY29udHJhY3RgL2BuZXR3b3JrYCBhZGQgdGhlIG9uLWNoYWluIHZlcmlmaWNhdGlvbiBhbmQgaGVhbHRoIHNlY3Rpb25zIChza2lwcGVkIGVudGlyZWx5IHdoZW4KYGNvbnRyYWN0YCBpcyBlbXB0eSkuIEFkZGluZyBgY29udHJhY3RgIGFuZCBgbmV0d29ya2AgcGVyZm9ybXMgcmVhZC1vbmx5IFJQQwpyZWFkcyBvbmx5LgoKIyMgRXhhbXBsZSA0IOKAlCBTZWxmLXZhbGlkYXRpbmcgdGhlIEFjdGlvbiAodGhpcyByZXBvKQoKVGhpcyByZXBvc2l0b3J5IHZhbGlkYXRlcyB0aGUgY29tcG9zaXRlIEFjdGlvbiBpdHNlbGYgaW4KW2AuZ2l0aHViL3dvcmtmbG93cy9zZGt0LWFjdGlvbi1jaS55bWxgXSguLi8uLi8uZ2l0aHViL3dvcmtmbG93cy9zZGt0LWFjdGlvbi1jaS55bWwpOgphICoqYnJlYWtpbmcqKiBkaWZmIChjb21taXR0ZWQgZml4dHVyZXMgYHVzX29sZC53YXNtYCDihpIgYHVzX25ldy53YXNtYCkgaXMK YXNzZXJ0ZWQgdG8gKipmYWlsKiosIGFuICoqaWRlbnRpY2FsKiogZGlmZiBpcyBhc3NlcnRlZCB0byAqKnBhc3MqKiwgYQpyZWxlYXNlLWFzc3VyYW5jZSBydW4gYWdhaW5zdCB0aGF0IHNhbWUgYnJlYWtpbmcgYmFzZWxpbmUgaXMgYXNzZXJ0ZWQgdG8KKipmYWlsKiogKGByZWxlYXNlX3N0YXR1cz1GQUlMYCksIGFuZCBhIGNhbmRpZGF0ZS1vbmx5IHJ1biBpcyBhc3NlcnRlZCB0bwoqKnBhc3MqKiAoYHJlbGVhc2Vfc3RhdHVzPVJFVklFV2ApLiBUaGUgYXVkaXQgZ2F0ZSBpcyBleGVyY2lzZWQgd2l0aCBhCmNsZWFuIGZpeHR1cmUgKGFzc2VydGVkIHRvIHBhc3MpLCBhIGdhdGVkIGZpeHR1cmUgKGFzc2VydGVkIHRvIGZhaWwpLCBhbmQgYW4KaW52YWxpZCB0aHJlc2hvbGQgKGFzc2VydGVkIHRvIGZhaWwgd2l0aCBhIGNsZWFyIGVycm9yKS4KCiMjIE5vdGVzCgotIFRoZSBBY3Rpb24gaW5zdGFsbHMgYHNka3RgIGZyb20gYSBwaW5uZWQgZ2l0IHRhZyB2aWEKICBgY2FyZ28gaW5zdGFsbCAtLWdpdCBodHRwczovL2dpdGh1Yi5jb20vU2Fib0xhYnMvc29yb2Jhbi1kZXZraXQgLS10YWcgPHNka3QtdmVyc2lvbj4gc2RrdC1jbGkgLS1sb2NrZWRgCiAgKG9yLCB3aGVuIHJ1biBpbnNpZGUgdGhlIHNka3Qgd29ya3NwYWNlIGl0c2VsZiwgZnJvbSB0aGUgbG9jYWwgcGF0aCkuIEZvcgogIGZhc3RlciwgcmVwcm9kdWNpYmxlIENJLCBwaW4gdG8gYSByZWxlYXNlZCB0YWcgYW5kIGNvbnNpZGVyIGEgcHJlYnVpbHQtYmluYXJ5CiAgaW5zdGFsbCBtb2RlIChmdXR1cmUgb3B0aW1pemF0aW9uKS4KLSBgdXBncmFkZS1zYWZldHlgIHJlcXVpcmVzIHRoZSAqKmJhc2VsaW5lKiogV0FTTSB0byBiZSBzdXBwbGllZCBleHBsaWNpdGx5CiAgKGBvbGQtd2FzbWApOyBpdCBkb2VzIG5vdCBmZXRjaCB0aGUgb24tY2hhaW4gZGVwbG95ZWQgY29udHJhY3QuIFByb3ZpZGUgeW91cgogIHByZXZpb3VzbHktZGVwbG95ZWQgYC53YXNtYCBhcyB0aGUgYmFzZWxpbmUgYXJ0aWZhY3QuCi0gSlNPTiBvdXRwdXQgb2YgYHNka3QgYXVkaXRgLCBgc2RrdCBkaWZmIC0tdXBncmFkZS1zYWZldHlgLCBhbmQKICBgc2RrdCByZWxlYXNlLWFzc3VyYW5jZWAgaXMgdGhlIHN0YWJsZSBjb250cmFjdCB0aGUgQWN0aW9uIHBhcnNlczsgYWxsIGFyZQogIGFkZGl0aXZlIGFuZCBzZXJkZS1kZXJpdmVkLgotIFRoZSBhdWRpdCBnYXRlIG5vIGxvbmdlciByZXF1aXJlcyBganFgOiB0aGUgQWN0aW9uIGZvcndhcmRzCiAgYHNldmVyaXR5LXRocmVzaG9sZGAgdG8gYHNka3QgYXVkaXQgLS1mYWlsLW9uYCBhbmQgYnJhbmNoZXMgb24gdGhlIENMSQogIGV4aXQgY29kZSwgc28gdGhlIHRocmVzaG9sZCBsb2dpYyBoYXMgYSBzaW5nbGUgaW1wbGVtZW50YXRpb24uCg==
+# CI/CD with Soroban DevKit (`sdkt`)
+
+`sdkt` ships a reusable **GitHub composite Action** at
+[`sdkt` composite Action](../../.github/actions/sdkt/action.yml) so you can
+gate merges on static security findings (`sdkt audit`), on breaking contract
+upgrades (`sdkt diff --upgrade-safety`), and on a read-only release verdict
+(`sdkt release-assurance`) — entirely in CI, no local install required.
+
+The Action installs a pinned `sdkt` binary, runs the chosen subcommand in JSON
+mode, and fails the step when the check does not pass.
+
+## Inputs
+
+| Input | Required | Default | Meaning |
+|-------|----------|---------|---------|
+| `command` | yes | — | `audit`, `upgrade-safety`, or `release-assurance` |
+| `sdkt-version` | no | `v2.7.0` | Pinned `sdkt` git tag to install |
+| `install-from-source` | no | `"false"` | Build sdkt from the pinned git tag instead of downloading the prebuilt release asset. Slower (~4-5 min) but resolves: unsupported kernel, missing prebuilt asset for the runner OS/arch, missing release asset for the version, missing checksum, or missing `sha256sum`/`shasum` tool. |
+| `target` | for `audit` | `""` | Path to the `.rs` source to audit |
+| `old-wasm` | for `upgrade-safety` | `""` | Baseline (currently deployed) WASM |
+| `new-wasm` | for `upgrade-safety` | `""` | Candidate (new) WASM |
+| `severity-threshold` | no | `critical` | `critical` \| `warning` \| `info` |
+| `wasm` | for `release-assurance` | `""` | Candidate WASM artifact to assess |
+| `previous-wasm` | no | `""` | Baseline WASM for the offline upgrade diff |
+| `audit` | no | `""` | Rust source path(s)/dir(s) for the static audit (space-separated) |
+| `disable` | no | `""` | Audit rule id(s) to disable (space-separated) |
+| `contract` | no | `""` | Deployed contract ID (C...) for on-chain checks; skipped when empty |
+| `network` | no | `""` | `testnet` \| `mainnet` \| `futurenet` for the on-chain checks |
+| `max-size-bytes` | for `release-assurance` | `""` | Fail the release when the candidate artifact exceeds N bytes (forwards `--max-size-bytes`) |
+| `max-growth-pct` | for `release-assurance` | `""` | Fail the release when the candidate grew more than N percent over `previous-wasm` (forwards `--max-growth-pct`) |
+
+**Threshold semantics:** only findings at or above `severity-threshold` fail
+the build. The default `critical` means `MOVE-001` (Warning) never breaks CI.
+The Action forwards the level to the CLI's native `sdkt audit --fail-on`
+flag, which is the single source of truth for the gate; the Action does not
+parse the JSON output or reimplement the threshold logic. An invalid level is
+rejected by the CLI as a usage error (exit code 2), and the Action surfaces
+that as a clear `::error::invalid severity-threshold` message.
+
+**Release-assurance semantics:** the aggregated `release_status` gates the
+step. `FAIL` blocks (step exits 1); `PASS`, `REVIEW`, and `SKIPPED`-only
+results do **not** block (exit 0), matching the CLI. A breaking baseline
+therefore fails CI, while a report that only needs human review passes. A
+CLI error that produces no report at all (invalid input, unreadable artifact,
+RPC failure) also fails the step: the Action propagates the CLI's exit code
+rather than relying on `release_status` alone.
+
+**Size policy:** `max-size-bytes` and `max-growth-pct` are optional and
+forwarded to the CLI's existing size policy. Thresholds are
+operator-supplied — SDKT hardcodes no network limit. Boundaries are
+inclusive, so a size exactly at the limit or growth exactly at the cap
+passes. `max-growth-pct` requires `previous-wasm`; without it the CLI
+fails rather than silently skipping the check. Omitting both inputs
+leaves the release-assurance result unchanged.
+
+**Read-only:** `release-assurance` never signs, submits, deploys, extends TTL,
+or mutates state, and the Action passes no credentials.
+
+## Example 1 — Audit on every PR
+
+```yaml
+# .github/workflows/sdkt-audit.yml
+name: sdkt Audit
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Static security audit
+        uses: SaboLabs/soroban-devkit/.github/actions/sdkt@main
+        with:
+          command: audit
+          sdkt-version: v2.7.0
+          target: contracts/token/src/lib.rs
+          severity-threshold: critical
+```
+
+## Example 2 — Upgrade safety on release
+
+Provide the currently-deployed WASM (`old-wasm`) and the candidate
+(`new-wasm`). The step fails when the upgrade is not backwards-compatible.
+
+```yaml
+# .github/workflows/sdkt-upgrade-safety.yml
+name: sdkt Upgrade Safety
+
+on:
+  release:
+    types: [published]
+
+jobs:
+  upgrade-safety:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Check upgrade compatibility
+        uses: SaboLabs/soroban-devkit/.github/actions/sdkt@main
+        with:
+          command: upgrade-safety
+          sdkt-version: v2.7.0
+          old-wasm: builds/current.wasm
+          new-wasm: builds/candidate.wasm
+```
+
+## Example 3 — Release assurance before publishing
+
+Assess the candidate artifact as a whole: artifact metadata, static audit,
+upgrade safety, and (optionally) on-chain verification and health. The step
+fails only when `release_status` is `FAIL`.
+
+```yaml
+# .github/workflows/sdkt-release-assurance.yml
+name: sdkt Release Assurance
+
+on:
+  pull_request:
+    branches: [main]
+
+jobs:
+  release-assurance:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Release assurance
+        uses: SaboLabs/soroban-devkit/.github/actions/sdkt@main
+        with:
+          command: release-assurance
+          sdkt-version: v2.7.0
+          wasm: builds/candidate.wasm
+          previous-wasm: builds/current.wasm
+          audit: contracts/token/src/lib.rs
+          disable: MOVE-001
+```
+
+`wasm` is required. `previous-wasm`, `audit`, `disable`, `contract`, and
+`network` are optional: `previous-wasm` supplies the offline upgrade baseline,
+`audit`/`disable` drive the static security section, and `contract`/`network`
+add the on-chain verification and health sections (skipped entirely when
+`contract` is empty). Adding `contract` and `network` performs read-only RPC
+reads only.
+
+## Example 4 — Self-validating the Action (this repo)
+
+This repository validates the composite Action itself in
+[`.github/workflows/sdkt-action-ci.yml`](../../.github/workflows/sdkt-action-ci.yml):
+a **breaking** diff (committed fixtures `us_old.wasm` → `us_new.wasm`) is
+asserted to **fail**, an **identical** diff is asserted to **pass**, a
+release-assurance run against that same breaking baseline is asserted to
+**fail** (`release_status=FAIL`), and a candidate-only run is asserted to
+**pass** (`release_status=REVIEW`). The audit gate is exercised with a
+clean fixture (asserted to pass), a gated fixture (asserted to fail), and an
+invalid threshold (asserted to fail with a clear error).
+
+## Notes
+
+- The Action installs `sdkt` from a pinned git tag via
+  `cargo install --git https://github.com/SaboLabs/soroban-devkit --tag <sdkt-version> sdkt-cli --locked`
+  (or, when run inside the sdkt workspace itself, from the local path). For
+  faster, reproducible CI, pin to a released tag and consider a prebuilt-binary
+  install mode (future optimization).
+- `upgrade-safety` requires the **baseline** WASM to be supplied explicitly
+  (`old-wasm`); it does not fetch the on-chain deployed contract. Provide your
+  previously-deployed `.wasm` as the baseline artifact.
+- JSON output of `sdkt audit`, `sdkt diff --upgrade-safety`, and
+  `sdkt release-assurance` is the stable contract the Action parses; all are
+  additive and serde-derived.
+- The audit gate no longer requires `jq`: the Action forwards
+  `severity-threshold` to `sdkt audit --fail-on` and branches on the CLI
+  exit code, so the threshold logic has a single implementation.

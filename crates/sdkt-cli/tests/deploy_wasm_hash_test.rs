@@ -10,7 +10,7 @@
 use assert_cmd::Command;
 use predicates::prelude::*;
 use sdkt_rpc::client::SorobanRpcClient;
-use sdkt_rpc::{deploy_contract, deploy_contract_from_hash, DeployOutcome};
+use sdkt_rpc::{deploy_contract, deploy_contract_from_hash, DeployOutcome, PollConfig};
 use sdkt_xdr::sign::{Ed25519Signer, Network};
 use std::io::{Read, Write};
 use std::net::TcpListener;
@@ -110,6 +110,7 @@ async fn deploy_from_hash_creates_without_uploading() {
         Network::Testnet,
         Some(salt),
         Vec::new(),
+        &PollConfig::default(),
     )
     .await
     .expect("create-only deploy succeeds");
@@ -147,6 +148,7 @@ async fn deploy_from_hash_matches_full_deploy_contract_id() {
         &signer,
         Network::Testnet,
         Some(salt),
+        &PollConfig::default(),
     )
     .await
     .expect("full deploy succeeds");
@@ -166,6 +168,7 @@ async fn deploy_from_hash_matches_full_deploy_contract_id() {
         Network::Testnet,
         Some(salt),
         Vec::new(),
+        &PollConfig::default(),
     )
     .await
     .expect("create-only deploy succeeds");
