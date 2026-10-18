@@ -625,7 +625,8 @@ sdkt encode json:'[1,2,3]' | xargs sdkt decode --type ScVal
 `u32`, `i32`, `u64`, `i64`, `timepoint`, `duration`, `u128`, `i128`, `bool`, `string`,
 `symbol` (up to 32 bytes), `bytes`, `address` (Stellar `G...` strkey).
 
-Exactly one value is encoded per invocation; the `TYPE:VALUE` syntax matches
+**Exactly one value per invocation** (enforced by validation: `run_encode()` rejects multiple values
+with "expected exactly one value, got N" error). The `TYPE:VALUE` syntax matches
 the typed-argument convention used by `sdkt call` and `sdkt invoke`.
 
 `u128` and `i128` accept decimal integers within their full 128-bit ranges.
