@@ -25,6 +25,12 @@ pub enum RpcError {
     /// An error related to network connectivity or HTTP protocol.
     #[error("HTTP request error: {0}")]
     Reqwest(#[from] reqwest::Error),
+    /// The RPC endpoint answered with a non-success HTTP status (e.g. `429`,
+    /// `503`). Carries the numeric status so a caller can tell a server-side
+    /// outage from a malformed body, and so retryable statuses can be named
+    /// once the retry budget is exhausted.
+    #[error("HTTP request failed with status {status}")]
+    HttpStatus { status: u16 },
     /// An error parsing or structuring JSON data.
     #[error("JSON parsing error: {0}")]
     Json(#[from] serde_json::Error),

@@ -75,6 +75,12 @@ impl SorobanRpcClient {
     }
 
     /// Helper for making JSON-RPC calls with basic timeout retry logic.
+    ///
+    /// Retryable failures — transport timeouts/connect errors and retryable
+    /// HTTP statuses (`429`, `5xx`) — are retried within the same two-attempt
+    /// budget. A non-success status is surfaced as [`RpcError::HttpStatus`]
+    /// (or, when its body fails to parse, an error naming the status) instead
+    /// of being misread as a body-decoding failure.
     pub async fn request<T: serde::de::DeserializeOwned>(
         &self,
         method: &str,
@@ -88,10 +94,10 @@ impl SorobanRpcClient {
         });
 
         let mut attempt = 0;
-        let mut last_err = None;
+        let mut last_err: Option<RpcError> = None;
 
         while attempt < 2 {
-            match self
+            let res = match self
                 .http_client
                 .post(&self.endpoint)
                 .json(&payload)
@@ -99,42 +105,59 @@ impl SorobanRpcClient {
                 .send()
                 .await
             {
-                Ok(res) => {
-                    let rpc_res: JsonRpcResponse<T> = match res.json().await {
-                        Ok(json) => json,
-                        Err(e) => return Err(RpcError::Reqwest(e)),
-                    };
-
-                    if let Some(error) = rpc_res.error {
-                        // JSON-RPC 2.0 requires `code`; a node that omits it
-                        // still gets its message surfaced as before.
-                        return Err(match error.code {
-                            Some(code) => RpcError::JsonRpc {
-                                code,
-                                message: error.message,
-                                data: error.data,
-                            },
-                            None => RpcError::Rpc(error.message),
-                        });
-                    }
-
-                    return rpc_res.result.ok_or_else(|| {
-                        RpcError::Rpc("Missing result in JSON-RPC response".to_string())
-                    });
-                }
+                Ok(res) => res,
                 Err(e) => {
                     if e.is_timeout() || e.is_connect() {
-                        last_err = Some(e);
+                        last_err = Some(RpcError::Reqwest(e));
                         attempt += 1;
                         tokio::time::sleep(Duration::from_millis(500)).await;
                         continue;
                     }
                     return Err(RpcError::Reqwest(e));
                 }
+            };
+
+            if !res.status().is_success() {
+                let status = res.status();
+                if status == reqwest::StatusCode::TOO_MANY_REQUESTS || status.is_server_error() {
+                    // Retryable at the HTTP level: same budget, same backoff
+                    // as the transport branch.
+                    last_err = Some(RpcError::HttpStatus {
+                        status: status.as_u16(),
+                    });
+                    attempt += 1;
+                    tokio::time::sleep(Duration::from_millis(500)).await;
+                    continue;
+                }
+                return Err(RpcError::HttpStatus {
+                    status: status.as_u16(),
+                });
             }
+
+            let rpc_res: JsonRpcResponse<T> = match res.json().await {
+                Ok(json) => json,
+                Err(e) => return Err(RpcError::Reqwest(e)),
+            };
+
+            if let Some(error) = rpc_res.error {
+                // JSON-RPC 2.0 requires `code`; a node that omits it
+                // still gets its message surfaced as before.
+                return Err(match error.code {
+                    Some(code) => RpcError::JsonRpc {
+                        code,
+                        message: error.message,
+                        data: error.data,
+                    },
+                    None => RpcError::Rpc(error.message),
+                });
+            }
+
+            return rpc_res
+                .result
+                .ok_or_else(|| RpcError::Rpc("Missing result in JSON-RPC response".to_string()));
         }
 
-        Err(RpcError::Reqwest(last_err.unwrap()))
+        Err(last_err.unwrap_or_else(|| RpcError::Rpc("request failed".to_string())))
     }
 
     /// Check the health of the Soroban RPC node.
@@ -652,6 +675,133 @@ mod tests {
             sock.write_all(response.as_bytes()).await.unwrap();
         });
         (format!("http://{addr}"), server)
+    }
+
+    /// Serve a fixed HTTP status + body to *every* request, counting how many
+    /// requests arrived. Returns the URL, the request counter, and the handle.
+    async fn serve_status_always(
+        status_line: &'static str,
+        body: &'static str,
+    ) -> (
+        String,
+        std::sync::Arc<std::sync::atomic::AtomicUsize>,
+        tokio::task::JoinHandle<()>,
+    ) {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        use std::sync::Arc;
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        use tokio::net::TcpListener;
+
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let count = Arc::new(AtomicUsize::new(0));
+        let count_srv = Arc::clone(&count);
+
+        let server = tokio::spawn(async move {
+            loop {
+                let (mut sock, _) = match listener.accept().await {
+                    Ok(v) => v,
+                    Err(_) => break,
+                };
+                let mut buf = [0u8; 8192];
+                let _n = sock.read(&mut buf).await.unwrap_or(0);
+                count_srv.fetch_add(1, Ordering::SeqCst);
+                let response = format!(
+                    "HTTP/1.1 {status_line}\r\nContent-Type: text/plain\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+                    body.len(),
+                    body
+                );
+                let _ = sock.write_all(response.as_bytes()).await;
+            }
+        });
+        (format!("http://{addr}"), count, server)
+    }
+
+    /// A non-JSON `HTTP 503` body must yield an error naming the status, not a
+    /// body-decoding error — that was the core ambiguity of the issue.
+    #[tokio::test]
+    async fn request_non_json_503_names_status() {
+        let (url, count, server) =
+            serve_status_always("503 Service Unavailable", "upstream unavailable").await;
+
+        let err = SorobanRpcClient::new(&url)
+            .request::<HealthCheck>("getHealth", ())
+            .await
+            .unwrap_err();
+
+        let text = err.to_string();
+        assert!(text.contains("503"), "error must name the status: {text}");
+        assert!(
+            matches!(err, RpcError::HttpStatus { status: 503 }),
+            "expected HttpStatus{{503}}, got {err:?}"
+        );
+        // 503 is retryable: the budget is 2 attempts.
+        assert_eq!(count.load(std::sync::atomic::Ordering::SeqCst), 2);
+        server.abort();
+    }
+
+    /// A `HTTP 503` carrying a valid JSON-RPC error body must be retried and,
+    /// once the budget is exhausted, name the status — the retry branch must
+    /// not be skipped just because the body parsed.
+    #[tokio::test]
+    async fn request_jsonrpc_503_is_retried_then_names_status() {
+        let (url, count, server) = serve_status_always(
+            "503 Service Unavailable",
+            r#"{"jsonrpc":"2.0","id":1,"error":{"code":-32000,"message":"service unavailable"}}"#,
+        )
+        .await;
+
+        let err = SorobanRpcClient::new(&url)
+            .request::<HealthCheck>("getHealth", ())
+            .await
+            .unwrap_err();
+
+        let text = err.to_string();
+        assert!(text.contains("503"), "{text}");
+        assert!(
+            matches!(err, RpcError::HttpStatus { status: 503 }),
+            "expected HttpStatus{{503}}, got {err:?}"
+        );
+        assert!(
+            count.load(std::sync::atomic::Ordering::SeqCst) > 1,
+            "503 must be retried"
+        );
+        server.abort();
+    }
+
+    #[tokio::test]
+    async fn request_429_is_retried() {
+        let (url, count, server) = serve_status_always("429 Too Many Requests", "slow down").await;
+
+        let err = SorobanRpcClient::new(&url)
+            .request::<HealthCheck>("getHealth", ())
+            .await
+            .unwrap_err();
+
+        assert!(matches!(err, RpcError::HttpStatus { status: 429 }));
+        assert_eq!(count.load(std::sync::atomic::Ordering::SeqCst), 2);
+        server.abort();
+    }
+
+    /// A non-retryable 4xx must fail immediately with the status named, and
+    /// must NOT consume a retry attempt.
+    #[tokio::test]
+    async fn request_400_is_terminal_and_names_status() {
+        let (url, count, server) = serve_status_always("400 Bad Request", "nope").await;
+
+        let err = SorobanRpcClient::new(&url)
+            .request::<HealthCheck>("getHealth", ())
+            .await
+            .unwrap_err();
+
+        assert!(matches!(err, RpcError::HttpStatus { status: 400 }));
+        assert!(err.to_string().contains("400"));
+        assert_eq!(
+            count.load(std::sync::atomic::Ordering::SeqCst),
+            1,
+            "400 must not be retried"
+        );
+        server.abort();
     }
 
     #[tokio::test]
