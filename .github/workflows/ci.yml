@@ -157,10 +157,14 @@ jobs:
         PREV="$(printf '%s' "$VER" | awk -F. '{printf "%s.%s.0", $1, $2-1}')"
         echo "stale pin to look for: $PREV"
         # crates.io legitimately lags: lines that name crates.io may state the
-        # older version, so exclude them explicitly.
+        # older version, so exclude them explicitly. ROADMAP also records
+        # shipped milestones and prior tags; those historical mentions are not
+        # current release pins. Keep the exclusion limited to those markers so
+        # a stale current-release statement elsewhere in ROADMAP still fails.
         MATCHES="$(grep -rn "$PREV" README.md ROADMAP.md docs/ --include='*.md' \
           | grep -v '^docs/releases/' \
-          | grep -vi 'crates.io\|published\|--version \|lacks\|predates\|older v' || true)"
+          | grep -vi 'crates.io\|published\|--version \|lacks\|predates\|older v' \
+          | grep -viE '^ROADMAP\.md:[0-9]+:.*(Shipped in|shipped \(|Prior tagged releases:)' || true)"
         if [[ -n "$MATCHES" ]]; then
           echo "::error::stale $PREV reference(s) in current documentation:"
           echo "$MATCHES"
