@@ -32,7 +32,8 @@ pub struct TtlEntry {
     pub value: Option<String>,
 }
 
-/// Decode a base64 `LedgerEntry` XDR and extract its contract-data `ScVal`
+/// Decode a base64 `LedgerEntryData` XDR (the shape Soroban RPC returns in
+/// `getLedgerEntries.entries[].xdr`) and extract its contract-data `ScVal`
 /// (base64 XDR). Returns `None` for contract-code entries, entries whose XDR
 /// fails to parse, or entries whose payload is not contract data.
 fn extract_contract_data_value(entry_xdr: &str) -> Option<String> {
@@ -42,8 +43,8 @@ fn extract_contract_data_value(entry_xdr: &str) -> Option<String> {
         .ok()?;
     let mut cursor = std::io::Cursor::new(&bytes);
     let mut l = stellar_xdr::Limited::new(&mut cursor, stellar_xdr::Limits::none());
-    let entry = stellar_xdr::LedgerEntry::read_xdr(&mut l).ok()?;
-    let cd = match entry.data {
+    let data = stellar_xdr::LedgerEntryData::read_xdr(&mut l).ok()?;
+    let cd = match data {
         stellar_xdr::LedgerEntryData::ContractData(cd) => cd,
         _ => return None,
     };
@@ -992,5 +993,68 @@ mod restore_tests {
         let expected = base64::engine::general_purpose::STANDARD
             .encode(instance_key().to_xdr(Limits::none()).unwrap());
         assert_eq!(keys, vec![expected]);
+    }
+
+    /// `extract_contract_data_value` must decode the wire shape Soroban RPC
+    /// actually returns in `getLedgerEntries.entries[].xdr`: a bare
+    /// `LedgerEntryData` union (the testnet layout), NOT a full `LedgerEntry`.
+    /// Regression guard for the value-drift path: a wrong envelope decode
+    /// returns None and silently drops every value from snapshots/diffs.
+    #[test]
+    fn extract_contract_data_value_decodes_rpc_ledger_entry_data() {
+        use stellar_xdr::{ScVal, WriteXdr};
+        let cd = stellar_xdr::ContractDataEntry {
+            contract: stellar_xdr::ScAddress::Contract(stellar_xdr::ContractId(stellar_xdr::Hash(
+                [7u8; 32],
+            ))),
+            key: ScVal::I32(42),
+            val: ScVal::I32(43),
+            durability: stellar_xdr::ContractDataDurability::Persistent,
+            ext: stellar_xdr::ExtensionPoint::V0,
+        };
+        let data = stellar_xdr::LedgerEntryData::ContractData(cd);
+        let raw = data
+            .to_xdr(Limits::none())
+            .expect("LedgerEntryData encodes to XDR");
+        let b64 = base64::engine::general_purpose::STANDARD.encode(&raw);
+
+        let got = extract_contract_data_value(&b64)
+            .expect("RPC-shaped LedgerEntryData must decode to a value");
+
+        // The returned base64 must decode back to the original ScVal.
+        let got_bytes = base64::engine::general_purpose::STANDARD
+            .decode(got)
+            .expect("value must be base64 XDR");
+        let mut cursor = std::io::Cursor::new(&got_bytes);
+        let mut l = stellar_xdr::Limited::new(&mut cursor, Limits::none());
+        let val = ScVal::read_xdr(&mut l).expect("value must decode to ScVal");
+        assert_eq!(val, ScVal::I32(43));
+    }
+
+    #[test]
+    fn extract_contract_data_value_rejects_non_contract_data() {
+        use stellar_xdr::{AccountId, WriteXdr};
+        let data = stellar_xdr::LedgerEntryData::Account(stellar_xdr::AccountEntry {
+            account_id: AccountId(stellar_xdr::PublicKey::PublicKeyTypeEd25519(
+                stellar_xdr::Uint256([1u8; 32]),
+            )),
+            balance: 100,
+            seq_num: stellar_xdr::SequenceNumber(0),
+            num_sub_entries: 0,
+            inflation_dest: None,
+            flags: 0,
+            home_domain: stellar_xdr::String32::default(),
+            thresholds: stellar_xdr::Thresholds([0u8; 4]),
+            signers: stellar_xdr::VecM::default(),
+            ext: stellar_xdr::AccountEntryExt::V0,
+        });
+        let raw = data
+            .to_xdr(Limits::none())
+            .expect("LedgerEntryData encodes to XDR");
+        let b64 = base64::engine::general_purpose::STANDARD.encode(&raw);
+        assert!(
+            extract_contract_data_value(&b64).is_none(),
+            "non-contract-data entries carry no value"
+        );
     }
 }

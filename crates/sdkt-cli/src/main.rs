@@ -2851,7 +2851,14 @@ fn shorten_value(value: &str) -> String {
     if value.len() <= 24 {
         value.to_string()
     } else {
-        format!("{}…({} chars)", &value[..16], value.len())
+        // Keep head and tail: two long values sharing a 16-char prefix stay
+        // distinguishable in the `[value_changed]` line.
+        format!(
+            "{}…{} ({} chars)",
+            &value[..16],
+            &value[value.len() - 8..],
+            value.len()
+        )
     }
 }
 
