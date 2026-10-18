@@ -401,7 +401,7 @@ fn extend_plan_expiring_only_output_is_unchanged() {
 Storage Diff for Contract: {CONTRACT}
 Capture context: unknown
 Total entries: 1
-  Removed:       0 | Expiring Soon: 1 | Unchanged: 0
+  Removed:       0 | Expiring Soon: 1 | Value Changed: 0 | Unchanged: 0
 
 Expiring soon (1):
   [expiring] key=keyA== (ttl=3000)

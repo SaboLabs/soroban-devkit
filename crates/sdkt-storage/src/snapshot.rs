@@ -562,6 +562,7 @@ mod tests {
             vec![SnapshotEntry {
                 key: "k1".to_string(),
                 label: None,
+                class: None,
                 current_ttl: 100_000,
                 value: Some("AAAAAQ==".to_string()),
             }],
@@ -571,6 +572,7 @@ mod tests {
             vec![SnapshotEntry {
                 key: "k1".to_string(),
                 label: None,
+                class: None,
                 current_ttl: 100_000,
                 value: Some("AAAAAg==".to_string()),
             }],
@@ -591,6 +593,7 @@ mod tests {
             vec![SnapshotEntry {
                 key: "k1".to_string(),
                 label: None,
+                class: None,
                 current_ttl: 100_000,
                 value: Some("AAAAAQ==".to_string()),
             }],
@@ -610,6 +613,7 @@ mod tests {
             vec![SnapshotEntry {
                 key: "k1".to_string(),
                 label: None,
+                class: None,
                 current_ttl: 100_000,
                 value: None,
             }],
@@ -630,6 +634,7 @@ mod tests {
             vec![SnapshotEntry {
                 key: "k1".to_string(),
                 label: None,
+                class: None,
                 current_ttl: 5_000,
                 value: Some("AAAAAQ==".to_string()),
             }],
@@ -639,6 +644,7 @@ mod tests {
             vec![SnapshotEntry {
                 key: "k1".to_string(),
                 label: None,
+                class: None,
                 current_ttl: 4_000,
                 value: Some("AAAAAg==".to_string()),
             }],
@@ -661,6 +667,7 @@ mod tests {
             vec![SnapshotEntry {
                 key: "k1".to_string(),
                 label: None,
+                class: None,
                 current_ttl: 100_000,
                 value: Some("AAAAAQ==".to_string()),
             }],
@@ -670,6 +677,7 @@ mod tests {
             vec![SnapshotEntry {
                 key: "k1".to_string(),
                 label: None,
+                class: None,
                 current_ttl: 100_000,
                 value: Some("AAAAAg==".to_string()),
             }],
@@ -704,6 +712,7 @@ mod tests {
             vec![SnapshotEntry {
                 key: "k1".to_string(),
                 label: None,
+                class: None,
                 current_ttl: 100_000,
                 value: Some("AAAAAQ==".to_string()),
             }],
@@ -1032,6 +1041,8 @@ mod tests {
             status,
             old_ttl: Some(50_000),
             normalized_old_ttl: None,
+            old_value: None,
+            new_value: None,
             new_ttl,
         }
     }
