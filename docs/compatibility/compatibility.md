@@ -1,10 +1,20 @@
 # Compatibility Matrix — Real-World Soroban Projects
 
-Validated: 2026-08-06 against sdkt 2.1.1 (historical baseline — see note below).
-Current workspace version: **2.7.0** (`sdkt --version` → 2.7.0). The results
-below were captured on the 2.1.1 build listed in the environment header and
-have not been re-run since.
-Toolchain: rustc 1.97.1, target `wasm32v1-none`
+> **Historical baseline.** The matrix below was captured on **2026-08-06 against
+> sdkt v2.1.1** (toolchain: rustc 1.97.1, target `wasm32v1-none`) and has **not**
+> been re-run since. It is retained for historical comparison only.
+
+**Current v2.7.0 evidence.** The workspace is at **v2.7.0** (`sdkt --version` →
+2.7.0). Current compatibility is validated by the
+[`compatibility.yml`](../../.github/workflows/compatibility.yml) workflow (green
+on `main`; latest run 2026-10-18), which builds the current `sdkt` and runs it
+against the same real `stellar/soroban-examples` contracts (`token`,
+`atomic_swap`, `liquidity_pool`, `timelock`, `single_offer`):
+`sdkt wasm inspect`, `sdkt diff --upgrade-safety` (self + cross-contract
+`token`→`liquidity_pool`), and `sdkt audit`, plus offline fixture assertions
+for on-chain `wasm metadata`, `verify --upgrade-safety`, `events
+--abi-contract`, and `storage analyze --abi-contract`. This workflow does not
+re-run the historical v2.1.1 matrix above.
 
 ## Purpose
 

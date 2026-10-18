@@ -28,13 +28,13 @@ and runs `sdkt` offline commands against the compiled artifacts:
 - Workflow definition: [.github/workflows/compatibility.yml](../../.github/workflows/compatibility.yml)
 - Compatibility matrix: [docs/compatibility.md](../compatibility/compatibility.md)
 - CI runs on every push to `main`/`feat/*` and all PRs:
-  [Actions tab](https://github.com/naninu123/soroban-devkit/actions/workflows/compatibility.yml)
+  [Actions tab](https://github.com/SaboLabs/soroban-devkit/actions/workflows/compatibility.yml)
 
 **Reproduce from a clean checkout:**
 
 ```bash
 # 1. Clone sdkt
-git clone https://github.com/naninu123/soroban-devkit
+git clone https://github.com/SaboLabs/soroban-devkit
 cd soroban-devkit
 cargo build --bin sdkt
 SDKT=$(pwd)/target/debug/sdkt
@@ -59,7 +59,7 @@ Requires: Rust stable with `wasm32v1-none` target (`rustup target add wasm32v1-n
 
 ### CI Test Suite
 
-**Repository:** [naninu123/soroban-devkit](https://github.com/naninu123/soroban-devkit)
+**Repository:** [SaboLabs/soroban-devkit](https://github.com/SaboLabs/soroban-devkit)
 **sdkt version:** 2.7.0
 **Workflow:** `.github/workflows/ci.yml`
 
@@ -68,7 +68,7 @@ infrastructure:
 
 | Command | Purpose | Platforms |
 |---------|---------|-----------|
-| `cargo test --workspace` | Unit + integration tests (28 test files) | Linux, macOS, Windows |
+| `cargo test --workspace` | 96 integration test files + 68 files with inline `#[cfg(test)]` unit tests (1,988 test functions) | Linux, macOS, Windows |
 | `cargo clippy --workspace --all-targets -- -D warnings` | Lint | Ubuntu |
 | `cargo fmt --all --check` | Format check | Ubuntu |
 | `cargo check --workspace` (Rust 1.88.0) | MSRV validation | Ubuntu |
@@ -77,11 +77,11 @@ infrastructure:
 **Evidence:**
 - Workflow definition: [.github/workflows/ci.yml](../../.github/workflows/ci.yml)
 - CI runs on every push to `main`/`feat/*` and all PRs:
-  [Actions tab](https://github.com/naninu123/soroban-devkit/actions/workflows/ci.yml)
+  [Actions tab](https://github.com/SaboLabs/soroban-devkit/actions/workflows/ci.yml)
 
 ### On-Chain Fixture Validation
 
-**Repository:** [naninu123/soroban-devkit](https://github.com/naninu123/soroban-devkit)
+**Repository:** [SaboLabs/soroban-devkit](https://github.com/SaboLabs/soroban-devkit)
 **sdkt version:** 2.7.0
 **Workflow:** `.github/workflows/compatibility.yml` (online steps)
 
