@@ -89,6 +89,45 @@ jobs:
       continue-on-error: true
       run: cargo audit
 
+  # ---------------------------------------------------------------------------
+  # Supply-chain guardrails (added after the 2026-10-18 incident in which
+  # obfuscated JavaScript was committed as "public/fonts/fa-solid-500.woff2").
+  #
+  # Both jobs are cheap: stdlib Python only, no network, no Rust toolchain.
+  # Neither job declares `needs`, so they run in parallel with the existing
+  # pipeline and fail the run if either guard reports a problem.
+  # ---------------------------------------------------------------------------
+
+  asset-integrity:
+    name: asset integrity (font magic bytes)
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v7
+
+    - name: Validate tracked font assets
+      run: python3 scripts/guard/guard_assets.py --root .
+
+  vscode-config-guard:
+    name: vscode auto-task guard
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v7
+
+    - name: Reject dangerous VS Code auto-task configuration
+      run: python3 scripts/guard/guard_vscode_config.py --root .
+
+  guardrail-tests:
+    name: guardrail fixture tests
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v7
+
+    - name: Run guardrail fixture tests
+      run: bash tests/guard/run_fixture_tests.sh
+
+    - name: Incident payload regression (static bytes only)
+      run: python3 tests/guard/test_incident_payload.py
+
   install-script:
     name: install-script validation
     runs-on: ubuntu-latest
