@@ -7168,12 +7168,30 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
                     }
                 }
             }
-            let mut current_rule_ids: Vec<String> =
-                rules_info.iter().map(|r| r.id.clone()).collect();
+            let mut current_rule_ids: Vec<String> = rules_info
+                .iter()
+                .filter(|r| !disabled_refs.contains(&r.id.as_str()))
+                .map(|r| r.id.clone())
+                .collect();
             current_rule_ids.sort();
             current_rule_ids.dedup();
 
+            let comparison_baseline = if let Some(ref baseline_path) = baseline {
+                match sdkt_audit::AuditBaseline::from_file(baseline_path) {
+                    Ok(b) => Some(b),
+                    Err(e) => {
+                        eprintln!("Error reading baseline '{}': {}", baseline_path, e);
+                        process::exit(1);
+                    }
+                }
+            } else {
+                None
+            };
+
             if let Some(ref save_path) = save_baseline {
+                if had_file_errors {
+                    process::exit(1);
+                }
                 let baseline_obj = sdkt_audit::AuditBaseline::new(
                     sdkt_version_string(),
                     current_rule_ids.clone(),
@@ -7185,16 +7203,9 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
                 }
             }
 
-            if let Some(ref baseline_path) = baseline {
-                let baseline_obj = match sdkt_audit::AuditBaseline::from_file(baseline_path) {
-                    Ok(b) => b,
-                    Err(e) => {
-                        eprintln!("Error reading baseline '{}': {}", baseline_path, e);
-                        process::exit(1);
-                    }
-                };
+            if let Some(ref baseline_obj) = comparison_baseline {
                 let diff = sdkt_audit::compare_baseline(
-                    &baseline_obj,
+                    baseline_obj,
                     &aggregate,
                     sdkt_version_string(),
                     &current_rule_ids,

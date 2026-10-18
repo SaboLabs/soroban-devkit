@@ -106,10 +106,11 @@ impl AuditBaseline {
 }
 
 /// Structural key used to compare findings across audit runs:
-/// `(rule_id, location, message)`.
+/// `(rule_id, file, location, message)`.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct FindingKey {
     pub rule_id: String,
+    pub file: Option<String>,
     pub location: Option<String>,
     pub message: String,
 }
@@ -118,6 +119,7 @@ impl FindingKey {
     pub fn from_finding(f: &Finding) -> Self {
         Self {
             rule_id: f.rule_id.clone(),
+            file: f.file.clone(),
             location: f.location.clone(),
             message: f.message.clone(),
         }
@@ -435,5 +437,40 @@ mod tests {
         let diff = compare_baseline(&baseline, &report, "2.7.0", &rules);
         assert!(diff.warning.is_some());
         assert!(diff.warning.unwrap().contains("generated with sdkt v1.0.0"));
+    }
+
+    #[test]
+    fn test_comparison_differentiates_files_with_identical_findings() {
+        let mut baseline_report = AuditReport::default();
+        baseline_report.add(Finding {
+            rule_id: "AUTH-001".to_string(),
+            severity: Severity::Critical,
+            message: "missing auth".to_string(),
+            file: Some("contract_a.rs".to_string()),
+            location: Some("init".to_string()),
+        });
+
+        let mut current_report = AuditReport::default();
+        current_report.add(Finding {
+            rule_id: "AUTH-001".to_string(),
+            severity: Severity::Critical,
+            message: "missing auth".to_string(),
+            file: Some("contract_b.rs".to_string()),
+            location: Some("init".to_string()),
+        });
+
+        let rules = vec!["AUTH-001".to_string()];
+        let baseline = AuditBaseline::new("2.7.0", rules.clone(), baseline_report);
+
+        let diff = compare_baseline(&baseline, &current_report, "2.7.0", &rules);
+        assert!(!diff.is_ratchet_pass);
+        assert_eq!(diff.new_count, 1);
+        assert_eq!(diff.resolved_count, 1);
+        assert_eq!(diff.new_findings[0].file.as_deref(), Some("contract_b.rs"));
+        assert_eq!(
+            diff.resolved_findings[0].file.as_deref(),
+            Some("contract_a.rs")
+        );
+        assert_eq!(diff.known_count, 0);
     }
 }
