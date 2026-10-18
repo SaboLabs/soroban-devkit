@@ -9,11 +9,19 @@ on:
 env:
   CARGO_TERM_COLOR: always
 
+# Default read-only permissions for all jobs; jobs needing writes opt in.
+# Combined with persist-credentials: false on every checkout to prevent
+# a compromised step or fork from exfiltrating GITHUB_TOKEN or persisting it.
+permissions:
+  contents: read
+
 jobs:
   format_and_lint:
     runs-on: ubuntu-latest
     steps:
     - uses: actions/checkout@v7
+      with:
+        persist-credentials: false
 
     - name: Set up Rust
       uses: dtolnay/rust-toolchain@stable
@@ -43,6 +51,8 @@ jobs:
         os: [ubuntu-latest, macos-latest, windows-latest]
     steps:
     - uses: actions/checkout@v7
+      with:
+        persist-credentials: false
 
     - name: Set up Rust
       uses: dtolnay/rust-toolchain@stable
@@ -68,6 +78,8 @@ jobs:
     continue-on-error: true
     steps:
     - uses: actions/checkout@v7
+      with:
+        persist-credentials: false
 
     - name: Set up Rust
       uses: dtolnay/rust-toolchain@stable
@@ -103,6 +115,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
     - uses: actions/checkout@v7
+      with:
+        persist-credentials: false
 
     - name: Validate tracked font assets
       run: python3 scripts/guard/guard_assets.py --root .
@@ -112,6 +126,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
     - uses: actions/checkout@v7
+      with:
+        persist-credentials: false
 
     - name: Reject dangerous VS Code auto-task configuration
       run: python3 scripts/guard/guard_vscode_config.py --root .
@@ -121,6 +137,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
     - uses: actions/checkout@v7
+      with:
+        persist-credentials: false
 
     - name: Run guardrail fixture tests
       run: bash tests/guard/run_fixture_tests.sh
@@ -133,6 +151,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
     - uses: actions/checkout@v7
+      with:
+        persist-credentials: false
 
     - name: Reject risky dev-container auto-run configuration
       run: python3 scripts/guard/guard_devcontainer.py --root .
@@ -142,6 +162,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
     - uses: actions/checkout@v7
+      with:
+        persist-credentials: false
 
     - name: Reject risky package.json lifecycle hooks
       run: python3 scripts/guard/guard_npm_lifecycle.py --root .
@@ -151,6 +173,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
     - uses: actions/checkout@v7
+      with:
+        persist-credentials: false
     - name: Syntax check (no network)
       run: bash -n install.sh
     - name: ShellCheck (if available)
@@ -170,6 +194,8 @@ jobs:
     runs-on: ubuntu-24.04-arm
     steps:
     - uses: actions/checkout@v7
+      with:
+        persist-credentials: false
     - name: Syntax check (no network)
       run: bash -n install.sh
     - name: Offline self-test on aarch64
@@ -187,6 +213,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
     - uses: actions/checkout@v7
+      with:
+        persist-credentials: false
 
     # Parse MSRV from Cargo.toml or fallback
     - name: Set up Rust (MSRV)
@@ -207,6 +235,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
     - uses: actions/checkout@v7
+      with:
+        persist-credentials: false
     - name: Current docs describe the workspace version
       run: |
         VER="$(grep -m1 '^version = ' Cargo.toml | sed -E 's/version = "([^"]+)".*/\1/')"
@@ -230,6 +260,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
     - uses: actions/checkout@v7
+      with:
+        persist-credentials: false
 
     - name: Set up Rust
       uses: dtolnay/rust-toolchain@stable

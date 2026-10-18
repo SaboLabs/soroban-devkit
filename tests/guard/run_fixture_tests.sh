@@ -140,13 +140,13 @@ run_devc() {
 }
 
 # --- safe configs (rc=0) ---
-for c in clean-minimal clean-npm-ci clean-cargo-build clean-apt-update root-without-hooks jsonc-comments-trailing-comma; do
+for c in clean-minimal clean-npm-ci clean-cargo-build clean-apt-update root-without-hooks jsonc-comments-trailing-comma clean-bun-install clean-pip-install array-form-clean object-form-clean; do
   out="$(run_devc "negative/$c" 2>&1)"
   assert_rc "C safe:$c" 0 "$?"
 done
 
 # --- dangerous configs (rc=1) ---
-for c in fetch-and-run runs-asset-path poststart-network root-with-hooks initialize-exec ps-fetch; do
+for c in fetch-and-run runs-asset-path poststart-network root-with-hooks initialize-exec ps-fetch npm-ci-chain-curl npm-ci-semicolon-curl cargo-chain-font array-form-danger object-form-danger; do
   out="$(run_devc "positive/$c" 2>&1)"
   assert_rc "C dangerous:$c" 1 "$?"
 done
@@ -161,6 +161,16 @@ assert_output "C root-with-hooks named" "runs as root" "$out"
 out="$(run_devc negative/clean-npm-ci)"
 assert_rc "C npm ci allowed" 0 "$?"
 
+# --- allow-list must NOT short-circuit danger checks on chained commands ---
+out="$(run_devc positive/npm-ci-chain-curl)"
+assert_output "C chained curl named" "network fetch" "$out"
+out="$(run_devc positive/cargo-chain-font)"
+assert_output "C chained asset named" "binary/asset path" "$out"
+out="$(run_devc positive/array-form-danger)"
+assert_output "C array danger named" "network fetch" "$out"
+out="$(run_devc positive/object-form-danger)"
+assert_output "C object danger named" "asset/seed directory" "$out"
+
 # --- an explicitly requested path that does not exist must fail loud ---
 out="$(python3 "$GUARD/guard_devcontainer.py" \
   --paths "$FIX/devcontainer/does-not-exist/devcontainer.json" 2>&1)"
@@ -174,24 +184,36 @@ run_npm() {
 }
 
 # --- safe configs (rc=0) ---
-for c in husky-prepare pinst-postinstall npm-run-build tsc-prepare node-gyp-preinstall no-lifecycle-hooks no-scripts-key echo-postinstall patch-package; do
+for c in husky-prepare pinst-postinstall npm-run-build tsc-prepare node-gyp-preinstall no-lifecycle-hooks no-scripts-key echo-postinstall patch-package npm-run-build-chain npm-run-if-present node-scripts-postinstall; do
   out="$(run_npm "negative/$c" 2>&1)"
   assert_rc "D safe:$c" 0 "$?"
 done
 
 # --- dangerous configs (rc=1) ---
-for c in preinstall-runs-asset preinstall-font postinstall-network postinstall-wget prepare-eval install-base64-blob install-runs-js-outside-scripts; do
+for c in preinstall-runs-asset preinstall-font postinstall-network postinstall-wget prepare-eval install-base64-blob install-runs-js-outside-scripts husky-chain-curl tsc-semicolon-asset husky-newline-curl husky-backslash-chain-curl echo-chain-asset; do
   out="$(run_npm "positive/$c" 2>&1)"
   assert_rc "D dangerous:$c" 1 "$?"
 done
 
 # --- explicit error messages ---
 out="$(run_npm positive/preinstall-runs-asset)"
-assert_output "D asset path named" "binary/asset path" "$out"
+assert_output "D asset path named" "asset/build directory" "$out"
 out="$(run_npm positive/postinstall-network)"
 assert_output "D network named" "network fetch" "$out"
 out="$(run_npm positive/prepare-eval)"
 assert_output "D eval named" "eval()" "$out"
+
+# --- allow-list must NOT short-circuit danger checks on chained commands ---
+out="$(run_npm positive/husky-chain-curl)"
+assert_output "D chained curl named" "network fetch" "$out"
+out="$(run_npm positive/tsc-semicolon-asset)"
+assert_output "D chained asset named" "asset/build directory" "$out"
+out="$(run_npm positive/husky-newline-curl)"
+assert_output "D newline chain named" "network fetch" "$out"
+out="$(run_npm positive/husky-backslash-chain-curl)"
+assert_output "D backslash chain named" "network fetch" "$out"
+out="$(run_npm positive/echo-chain-asset)"
+assert_output "D echo chain named" "asset/build directory" "$out"
 
 # --- an explicitly requested path that does not exist must fail loud ---
 out="$(python3 "$GUARD/guard_npm_lifecycle.py" \
