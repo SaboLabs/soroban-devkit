@@ -390,7 +390,5 @@ fn sequence_state_round_trips_observation_deltas() {
     // And the delta application is stable (idempotent on unchanged state).
     let again = sdkt_fuzz::apply_state_delta(carried.clone(), &first).unwrap();
     assert_eq!(again, carried);
-    assert!(first
-        .changes()
-        .all(|c| c.change != StateChange::Unchanged || true));
+    assert!(first.changes().all(|c| c.change != StateChange::Unchanged));
 }

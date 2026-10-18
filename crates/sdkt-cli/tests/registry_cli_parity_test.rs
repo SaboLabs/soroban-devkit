@@ -265,6 +265,148 @@ fn mutating_capabilities_are_confirmation_gated() {
 }
 
 #[test]
+fn cli_rejects_invented_positionals_and_registry_omits_no_required_flags() {
+    let mut errors = Vec::new();
+
+    // Verify bidirectional parity for the four capabilities targeted by the argument contract:
+    // tx.validate, tx.sign, tx.submit, and tx.build.
+    let target_ids = ["tx.validate", "tx.sign", "tx.submit", "tx.build"];
+
+    for id in target_ids {
+        let c = sdkt_core::registry::find(id)
+            .unwrap_or_else(|| panic!("capability {id} not found in registry"));
+
+        let help =
+            help_for(c.command).unwrap_or_else(|| panic!("{}: command path not resolvable", c.id));
+
+        // 1. Required flags direction: every required flag enforced by the CLI
+        // in its Usage line must be present in the registry's required_args.
+        let usage_line = help
+            .lines()
+            .find(|l| l.trim_start().starts_with("Usage:"))
+            .unwrap_or_default();
+
+        let registry_required_flags: std::collections::HashSet<&str> = c
+            .required_args
+            .iter()
+            .filter_map(|arg| {
+                let tok = arg.split_whitespace().next().unwrap_or_default();
+                if tok.starts_with("--") {
+                    Some(tok)
+                } else {
+                    None
+                }
+            })
+            .collect();
+
+        for tok in usage_line.split_whitespace() {
+            if tok.starts_with("--") && !tok.ends_with(']') {
+                let flag =
+                    tok.trim_matches(|ch: char| !ch.is_alphanumeric() && ch != '-' && ch != '_');
+                if flag.starts_with("--") && !registry_required_flags.contains(flag) {
+                    errors.push(format!(
+                        "{}: CLI requires flag `{flag}` in usage `{usage_line}`, but registry omits it from required_args",
+                        c.id
+                    ));
+                }
+            }
+        }
+
+        // 2. Rejected positional direction: every positional that the CLI rejects
+        // must not be declared as required positional in the registry.
+        let registry_has_positionals = c.required_args.iter().any(|arg| {
+            !arg.split_whitespace()
+                .next()
+                .unwrap_or_default()
+                .starts_with("--")
+        });
+
+        if registry_has_positionals {
+            errors.push(format!(
+                "{}: registry declares positional required_args ({:?}), but CLI requires flags instead",
+                c.id, c.required_args
+            ));
+        }
+
+        // Verify that passing an unexpected positional argument is rejected with exit code 2
+        // and that stderr explicitly identifies the unexpected positional argument.
+        // We supply dummy values for every required flag first so the command does not fail
+        // early due to missing required arguments.
+        let mut cmd = Command::cargo_bin("sdkt").expect("sdkt binary built");
+        cmd.args(c.command);
+        for arg in c.required_args {
+            let tok = arg.split_whitespace().next().unwrap_or_default();
+            if tok.starts_with("--") {
+                cmd.arg(tok).arg("dummy_val");
+            }
+        }
+        cmd.arg("__unexpected_positional_test__");
+
+        let out = cmd.output().expect("run sdkt with unexpected positional");
+        let stderr = String::from_utf8_lossy(&out.stderr);
+        if out.status.code() != Some(2) {
+            errors.push(format!(
+                "{}: CLI unexpectedly accepted positional argument on command that takes no positionals (exit code: {:?})",
+                c.id,
+                out.status.code()
+            ));
+        } else if !stderr.contains("unexpected argument '__unexpected_positional_test__'") {
+            errors.push(format!(
+                "{}: CLI exited with code 2 but stderr did not identify unexpected positional argument: {stderr}",
+                c.id
+            ));
+        }
+    }
+
+    assert!(
+        errors.is_empty(),
+        "registry/CLI parity errors found ({} entries):\n{}",
+        errors.len(),
+        errors.join("\n")
+    );
+}
+
+#[test]
+fn updated_tx_entries_resolve_against_real_cli() {
+    let test_cases = [
+        ("tx.validate", vec!["tx", "validate", "--envelope", "AAAA"]),
+        (
+            "tx.sign",
+            vec!["tx", "sign", "--input", "AAA", "--identity", "x"],
+        ),
+        ("tx.submit", vec!["tx", "submit", "--envelope", "AAA"]),
+        (
+            "tx.build",
+            vec![
+                "tx",
+                "build",
+                "--source",
+                "S",
+                "--contract",
+                "C",
+                "--function",
+                "f",
+            ],
+        ),
+    ];
+
+    for (id, argv) in test_cases {
+        let mut cmd = Command::cargo_bin("sdkt").expect("sdkt binary built");
+        cmd.args(&argv);
+        let out = cmd
+            .output()
+            .unwrap_or_else(|e| panic!("{id}: failed to run sdkt: {e}"));
+        let code = out.status.code().unwrap_or(-1);
+        assert_ne!(
+            code,
+            2,
+            "{id} invocation `{argv:?}` was rejected by CLI with clap usage error (exit code 2). Stderr: {}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+    }
+}
+
+#[test]
 fn registry_exports_a_versioned_manifest() {
     let json = sdkt_core::registry::to_json().expect("serialize registry");
     let v: serde_json::Value = serde_json::from_str(&json).expect("valid JSON manifest");

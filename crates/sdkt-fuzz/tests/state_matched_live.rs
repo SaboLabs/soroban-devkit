@@ -140,7 +140,7 @@ async fn live_state_matched_read_only_outcome_agrees() {
     println!("FOOTPRINT: {} keys", footprint.len());
 
     // --- 3. Fetch the current ledger state for every footprint key. ---
-    let storage = fetch_ledger_entries(&client, &footprint)
+    let storage = fetch_ledger_entries(&client, &footprint, 200)
         .await
         .expect("getLedgerEntries reachable");
     let fetch_ledger = storage.latest_ledger;

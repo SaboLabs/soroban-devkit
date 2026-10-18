@@ -241,8 +241,10 @@ pub fn run_replay(options: &ReplayOptions) -> Result<ReplayOutcome, ReplayError>
     let json = std::fs::read(&options.artifact).map_err(|e| {
         ReplayError::Malformed(format!("reading {}: {e}", options.artifact.display()))
     })?;
-    let wasm = std::fs::read(&options.wasm)
-        .map_err(|e| ReplayError::Malformed(format!("reading {}: {e}", options.wasm.display())))?;
+    let wasm = std::fs::read(&options.wasm).map_err(|e| ReplayError::WasmRead {
+        path: options.wasm.display().to_string(),
+        message: e.to_string(),
+    })?;
     let artifact = parse_artifact(&json)?;
     replay(&artifact, &wasm)
 }

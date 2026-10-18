@@ -10,7 +10,8 @@
 use serde::{Deserialize, Serialize};
 use std::io::Cursor;
 use stellar_xdr::{
-    Limited, Limits, ReadXdr, ScMetaEntry, ScSpecEntry, ScSpecEntryKind, ScSpecTypeDef,
+    Limited, Limits, ReadXdr, ScEnvMetaEntry, ScMetaEntry, ScSpecEntry, ScSpecEntryKind,
+    ScSpecTypeDef,
 };
 use wasmparser::Payload;
 
@@ -39,8 +40,11 @@ pub const MAX_SPEC_XDR_DEPTH: u32 = 500;
 /// The full contract ABI, as declared in the compiled WASM.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct ContractSpec {
-    /// Contract-level metadata (from `contractenvmetav0`, currently the
-    /// interface version integer).
+    /// Contract-level metadata (from `contractenvmetav0`). The section is the
+    /// `SCEnvMetaEntry` union; the only defined variant carries a `protocol`
+    /// version and a `pre_release` marker. `None` when the WASM declares no
+    /// `contractenvmetav0` section. The upgrade-safety diff does not consume
+    /// these fields — see [`crate::spec_diff`].
     pub env_meta: Option<EnvMetaSpec>,
     /// All declared functions.
     pub functions: Vec<ContractFunction>,
@@ -51,10 +55,31 @@ pub struct ContractSpec {
 }
 
 /// Parsed `contractenvmetav0` payload.
+///
+/// The XDR definition (`SCEnvMetaEntry`, stellar-xdr 28.0.0) is a single-arm
+/// union:
+///
+/// ```text
+/// union SCEnvMetaEntry switch (SCEnvMetaKind kind)
+/// {
+/// case SC_ENV_META_KIND_INTERFACE_VERSION:
+///     struct {
+///         uint32 protocol;
+///         uint32 preRelease;
+///     } interfaceVersion;
+/// };
+/// ```
+///
+/// `protocol` is the ledger/protocol version checked for ordered host
+/// compatibility (soroban-env-common `meta.rs`); `pre_release` is a value
+/// checked for exact identity. There is no "interface version" integer on the
+/// wire — the union arm is merely *named* `interfaceVersion`.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct EnvMetaSpec {
-    /// Interface version reported by the contract.
-    pub interface_version: u64,
+    /// Protocol version (`SCEnvMetaEntryInterfaceVersion.protocol`).
+    pub protocol: u32,
+    /// Pre-release marker (`SCEnvMetaEntryInterfaceVersion.preRelease`).
+    pub pre_release: u32,
 }
 
 /// A single exported contract function.
@@ -262,27 +287,33 @@ fn decode_spec_section(
     Ok(())
 }
 
-/// Decodes the `contractenvmetav0` payload (a single `u64` interface version).
+/// Decodes the `contractenvmetav0` payload as the `SCEnvMetaEntry` union.
+///
+/// The payload is exactly 12 bytes: a 4-byte discriminant `kind`, then a
+/// 4-byte `protocol`, then a 4-byte `pre_release`. The only defined variant
+/// is `ScEnvMetaKindInterfaceVersion` (kind = 0); any other kind is rejected
+/// with [`WasmError::MetaXdr`] rather than folded into a numeric field.
+/// A payload shorter than 12 bytes (including the 8-byte truncated form) is
+/// also rejected.
 fn decode_env_meta_section(data: &[u8]) -> Result<EnvMetaSpec, WasmError> {
-    if data.len() < 8 {
-        return Err(WasmError::SpecXdr(stellar_xdr::Error::Invalid));
+    if data.len() != 12 {
+        return Err(WasmError::MetaXdr(stellar_xdr::Error::Invalid));
     }
-    let raw = [
-        data[0], data[1], data[2], data[3], data[4], data[5], data[6], data[7],
-    ];
-    // ReadXdr for Uint64 is big-endian like Stellar XDR.
-    let mut cursor = Cursor::new(&raw[..]);
+    let mut cursor = Cursor::new(data);
     let mut limited = Limited::new(
         &mut cursor,
         Limits {
             depth: MAX_SPEC_XDR_DEPTH,
-            len: raw.len(),
+            len: data.len(),
         },
     );
-    let v = stellar_xdr::Uint64::read_xdr(&mut limited).map_err(WasmError::SpecXdr)?;
-    Ok(EnvMetaSpec {
-        interface_version: v,
-    })
+    let entry = ScEnvMetaEntry::read_xdr(&mut limited).map_err(WasmError::MetaXdr)?;
+    match entry {
+        ScEnvMetaEntry::ScEnvMetaKindInterfaceVersion(v) => Ok(EnvMetaSpec {
+            protocol: v.protocol,
+            pre_release: v.pre_release,
+        }),
+    }
 }
 
 /// Decodes the `contractmetav0` payload into ordered key/value entries.
@@ -1085,5 +1116,150 @@ pub(crate) mod tests {
         };
         assert_eq!(get("rsver").as_deref(), Some("1.97.1"));
         assert!(get("cliver").unwrap().starts_with("27.1.0#"));
+    }
+
+    // ---- contractenvmetav0 (SCEnvMetaEntry union) ----
+    //
+    // The payload is a 12-byte union: kind (u32) + protocol (u32) +
+    // pre_release (u32). Fixtures serialize real `ScEnvMetaEntry` XDR values
+    // via stellar-xdr; the tracked `us_new.wasm` fixture carries
+    // kind=0, protocol=22, pre_release=0.
+
+    /// Encodes an `ScEnvMetaEntry` into a bare `contractenvmetav0` payload.
+    fn encode_env_meta(entry: &ScEnvMetaEntry) -> Vec<u8> {
+        let mut buf = Vec::new();
+        let mut cursor = Cursor::new(&mut buf);
+        let mut l = Limited::new(&mut cursor, Limits::none());
+        entry.write_xdr(&mut l).unwrap();
+        buf
+    }
+
+    /// Wraps a `contractenvmetav0` payload in a real WASM custom section.
+    fn encode_env_meta_section(payload: &[u8]) -> Vec<u8> {
+        encode_custom_section(CONTRACT_ENV_META_V0, payload)
+    }
+
+    /// Encodes an arbitrary custom section (section id 0, uleb128 size) WITHOUT
+    /// the WASM magic/version header — append to an existing module blob.
+    fn encode_custom_section(name: &str, payload: &[u8]) -> Vec<u8> {
+        let mut section = Vec::new();
+        section.push(name.len() as u8);
+        section.extend_from_slice(name.as_bytes());
+        section.extend_from_slice(payload);
+        let mut result = Vec::new();
+        result.push(0); // section id
+        let mut sz = section.len() as u32;
+        let mut size_bytes = Vec::new();
+        while sz >= 0x80 {
+            size_bytes.push((sz as u8 & 0x7f) | 0x80);
+            sz >>= 7;
+        }
+        size_bytes.push(sz as u8);
+        result.extend_from_slice(&size_bytes);
+        result.extend_from_slice(&section);
+        result
+    }
+
+    fn env_meta_entry(protocol: u32, pre_release: u32) -> ScEnvMetaEntry {
+        ScEnvMetaEntry::ScEnvMetaKindInterfaceVersion(stellar_xdr::ScEnvMetaEntryInterfaceVersion {
+            protocol,
+            pre_release,
+        })
+    }
+
+    #[test]
+    fn env_meta_decodes_protocol_and_pre_release() {
+        let payload = encode_env_meta(&env_meta_entry(22, 0));
+        assert_eq!(payload.len(), 12);
+        // `spec_section` returns magic+version + the spec custom section. Append
+        // the env-meta custom section directly after it (real WASM layout).
+        let mut wasm = spec_section(&[func_entry("greet", vec![])]);
+        wasm.extend_from_slice(&encode_env_meta_section(&payload));
+        let spec = parse_contract_spec(&wasm).unwrap();
+        assert_eq!(
+            spec.env_meta,
+            Some(EnvMetaSpec {
+                protocol: 22,
+                pre_release: 0,
+            })
+        );
+    }
+
+    #[test]
+    fn env_meta_pre_release_difference_is_not_lost() {
+        // Two payloads differing only in pre_release must decode differently.
+        // Each WASM carries a minimal spec section so parse_contract_spec
+        // accepts it (real WASM layout: spec + env-meta sections).
+        let wasm_with = |pre_release: u32| {
+            let payload = encode_env_meta(&env_meta_entry(22, pre_release));
+            let mut wasm = spec_section(&[func_entry("greet", vec![])]);
+            wasm.extend_from_slice(&encode_env_meta_section(&payload));
+            wasm
+        };
+        let a = parse_contract_spec(&wasm_with(0)).unwrap();
+        let b = parse_contract_spec(&wasm_with(5)).unwrap();
+        assert_ne!(a.env_meta, b.env_meta);
+        assert_eq!(
+            b.env_meta,
+            Some(EnvMetaSpec {
+                protocol: 22,
+                pre_release: 5,
+            })
+        );
+    }
+
+    #[test]
+    fn env_meta_unknown_kind_is_rejected() {
+        // kind = 1 is not a defined SCEnvMetaKind variant. The old decoder
+        // folded the discriminant into a u64 (0x1_0000_0016); the union decode
+        // must reject it instead.
+        let mut payload = vec![0x00, 0x00, 0x00, 0x01]; // kind = 1
+        payload.extend_from_slice(&22u32.to_be_bytes());
+        payload.extend_from_slice(&0u32.to_be_bytes());
+        assert_eq!(payload.len(), 12);
+        let err = decode_env_meta_section(&payload).expect_err("unknown kind must error");
+        assert!(matches!(err, WasmError::MetaXdr(_)), "got {err:?}");
+    }
+
+    #[test]
+    fn env_meta_truncated_payload_is_rejected() {
+        // kind + protocol only (8 bytes): the old decoder accepted this and
+        // silently dropped pre_release.
+        let mut payload = vec![0x00, 0x00, 0x00, 0x00];
+        payload.extend_from_slice(&22u32.to_be_bytes());
+        assert_eq!(payload.len(), 8);
+        let err = decode_env_meta_section(&payload).expect_err("truncated payload must error");
+        assert!(matches!(err, WasmError::MetaXdr(_)), "got {err:?}");
+        // A 12-byte payload must still decode.
+        let mut full = payload;
+        full.extend_from_slice(&0u32.to_be_bytes());
+        decode_env_meta_section(&full).expect("12-byte payload decodes");
+    }
+
+    #[test]
+    fn wasm_without_env_meta_section_yields_none() {
+        let wasm = spec_section(&[func_entry("greet", vec![])]);
+        let spec = parse_contract_spec(&wasm).unwrap();
+        assert_eq!(spec.env_meta, None);
+    }
+
+    #[test]
+    fn env_meta_decodes_real_committed_contract_fixture() {
+        // `us_new.wasm` carries `contractenvmetav0` with kind=0, protocol=22,
+        // pre_release=0 — the single tracked fixture required for
+        // reproduction. Read the same way as the contractmetav0 fixture test.
+        let bytes = std::fs::read(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../sdkt-cli/tests/fixtures/us_new.wasm"
+        ))
+        .expect("fixture present");
+        let spec = parse_contract_spec(&bytes).expect("fixture decodes");
+        assert_eq!(
+            spec.env_meta,
+            Some(EnvMetaSpec {
+                protocol: 22,
+                pre_release: 0,
+            })
+        );
     }
 }

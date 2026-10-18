@@ -15,6 +15,7 @@ mode, and fails the step when the check does not pass.
 |-------|----------|---------|---------|
 | `command` | yes | — | `audit`, `upgrade-safety`, or `release-assurance` |
 | `sdkt-version` | no | `v2.7.0` | Pinned `sdkt` git tag to install |
+| `install-from-source` | no | `"false"` | Build sdkt from the pinned git tag instead of downloading the prebuilt release asset. Slower (~4-5 min) but resolves: unsupported kernel, missing prebuilt asset for the runner OS/arch, missing release asset for the version, missing checksum, or missing `sha256sum`/`shasum` tool. |
 | `target` | for `audit` | `""` | Path to the `.rs` source to audit |
 | `old-wasm` | for `upgrade-safety` | `""` | Baseline (currently deployed) WASM |
 | `new-wasm` | for `upgrade-safety` | `""` | Candidate (new) WASM |
