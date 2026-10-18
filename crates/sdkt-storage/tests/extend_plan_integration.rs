@@ -31,6 +31,7 @@ fn snap(entries: Vec<(&str, u32)>) -> StorageSnapshot {
                 key: k.to_string(),
                 label: None,
                 current_ttl: ttl,
+                value: None,
             })
             .collect(),
     )
@@ -262,6 +263,8 @@ fn snapshot_diff_json_has_stable_field_names() {
             old_ttl: Some(50_000),
             new_ttl: Some(1_000),
             normalized_old_ttl: Some(49_000),
+            old_value: None,
+            new_value: None,
         }],
     };
 
@@ -297,6 +300,8 @@ fn removed_entry_json_new_ttl_is_null() {
             old_ttl: Some(50_000),
             new_ttl: None,
             normalized_old_ttl: None,
+            old_value: None,
+            new_value: None,
         }],
         ..Default::default()
     };

@@ -312,6 +312,12 @@ pub struct LedgerEntryResult {
     pub xdr: String,
     pub last_modified_ledger_seq: u32,
     pub live_until_ledger_seq: Option<u32>,
+    /// Base64 XDR encoded `ScVal` extracted from the entry's `ContractData`
+    /// when the entry is a contract-data entry. `None` for `ContractCode`
+    /// entries, entries whose XDR fails to parse, or when the field is absent
+    /// from the RPC response. Additive: existing consumers ignore it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub value: Option<String>,
 }
 
 #[cfg(test)]

@@ -3,7 +3,7 @@ use crate::error::RpcError;
 use base64::Engine;
 use serde::Serialize;
 use std::collections::HashMap;
-use stellar_xdr::{LedgerEntryData, ReadXdr, SorobanTransactionData};
+use stellar_xdr::{LedgerEntryData, ReadXdr, SorobanTransactionData, WriteXdr};
 
 /// Storage TTL info for a contract.
 #[derive(Debug, Clone, PartialEq, Serialize)]
@@ -26,6 +26,31 @@ pub struct TtlEntry {
     /// [`get_ttl_info_for_keys`]); used to surface TTL warnings consistently
     /// across `StorageAnalyzer` and `sdkt storage read`. (Issue #375.)
     pub expiring_soon: bool,
+    /// Base64 XDR `ScVal` extracted from the entry's contract-data payload.
+    /// `None` when the entry is not contract data or the XDR fails to parse.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub value: Option<String>,
+}
+
+/// Decode a base64 `LedgerEntry` XDR and extract its contract-data `ScVal`
+/// (base64 XDR). Returns `None` for contract-code entries, entries whose XDR
+/// fails to parse, or entries whose payload is not contract data.
+fn extract_contract_data_value(entry_xdr: &str) -> Option<String> {
+    use base64::Engine as _;
+    let bytes = base64::engine::general_purpose::STANDARD
+        .decode(entry_xdr.trim())
+        .ok()?;
+    let mut cursor = std::io::Cursor::new(&bytes);
+    let mut l = stellar_xdr::Limited::new(&mut cursor, stellar_xdr::Limits::none());
+    let entry = stellar_xdr::LedgerEntry::read_xdr(&mut l).ok()?;
+    let cd = match entry.data {
+        stellar_xdr::LedgerEntryData::ContractData(cd) => cd,
+        _ => return None,
+    };
+    let mut buf = Vec::new();
+    let mut l2 = stellar_xdr::Limited::new(&mut buf, stellar_xdr::Limits::none());
+    cd.val.write_xdr(&mut l2).ok()?;
+    Some(base64::engine::general_purpose::STANDARD.encode(&buf))
 }
 
 /// Calculates extension cost using a simple placeholder formula
@@ -80,6 +105,11 @@ pub async fn get_ttl_info_for_keys(
         let days_remaining = (current_ttl * 5) / (24 * 3600);
         let extension_cost_stroops = calculate_extension_cost(current_ttl);
 
+        // Extract the stored `ScVal` (base64 XDR) for value-diffing. Only
+        // contract-data entries carry a value; decode failures degrade to
+        // `None` so TTL analysis never breaks on an unusual entry.
+        let value = extract_contract_data_value(&entry.xdr);
+
         entries.push(TtlEntry {
             key: entry.key,
             current_ttl,
@@ -91,6 +121,7 @@ pub async fn get_ttl_info_for_keys(
             // read`, `sdkt ttl`) sees the same flag for the same config value.
             // (Issue #375: wired from [storage].ttl_warning_days.)
             expiring_soon: current_ttl < expiring_soon_ledgers,
+            value,
         });
     }
 

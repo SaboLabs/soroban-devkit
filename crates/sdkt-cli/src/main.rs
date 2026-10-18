@@ -2748,6 +2748,11 @@ fn print_diff_pretty(diff: &sdkt_storage::SnapshotDiff) {
         .iter()
         .filter(|e| e.status == DiffStatus::ExpiringSoon)
         .collect();
+    let value_changed: Vec<_> = diff
+        .entries
+        .iter()
+        .filter(|e| e.status == DiffStatus::ValueChanged)
+        .collect();
     let unchanged: Vec<_> = diff
         .entries
         .iter()
@@ -2755,9 +2760,10 @@ fn print_diff_pretty(diff: &sdkt_storage::SnapshotDiff) {
         .collect();
 
     println!(
-        "  Removed:       {} | Expiring Soon: {} | Unchanged: {}",
+        "  Removed:       {} | Expiring Soon: {} | Value Changed: {} | Unchanged: {}",
         removed.len(),
         expiring.len(),
+        value_changed.len(),
         unchanged.len()
     );
 
@@ -2791,6 +2797,31 @@ fn print_diff_pretty(diff: &sdkt_storage::SnapshotDiff) {
             );
         }
     }
+    if !value_changed.is_empty() {
+        println!("\nValue changed ({}):", value_changed.len());
+        for e in &value_changed {
+            let old_short = e
+                .old_value
+                .as_deref()
+                .map(shorten_value)
+                .unwrap_or_else(|| "?".to_string());
+            let new_short = e
+                .new_value
+                .as_deref()
+                .map(shorten_value)
+                .unwrap_or_else(|| "?".to_string());
+            println!(
+                "  [value_changed] key={}{} ttl={} (old_value={} new_value={})",
+                e.key,
+                e.label
+                    .as_ref()
+                    .map_or(String::new(), |l| format!(" label={l}")),
+                e.new_ttl.map_or("?".to_string(), |t| t.to_string()),
+                old_short,
+                new_short
+            );
+        }
+    }
     if !unchanged.is_empty() {
         println!("\nUnchanged entries ({}):", unchanged.len());
         for e in &unchanged {
@@ -2808,8 +2839,19 @@ fn print_diff_pretty(diff: &sdkt_storage::SnapshotDiff) {
             );
         }
     }
-    if unchanged.is_empty() && removed.is_empty() && expiring.is_empty() {
+    if unchanged.is_empty() && removed.is_empty() && expiring.is_empty() && value_changed.is_empty()
+    {
         println!("  (no entries)");
+    }
+}
+
+/// Shorten a base64 XDR value for display: keep the first 16 chars plus a
+/// length hint so the line stays readable while remaining stable.
+fn shorten_value(value: &str) -> String {
+    if value.len() <= 24 {
+        value.to_string()
+    } else {
+        format!("{}…({} chars)", &value[..16], value.len())
     }
 }
 
