@@ -392,7 +392,7 @@ See [`docs/plugin-authoring.md`](docs/plugins/plugin-authoring.md) for how to bu
 | `sdkt wasm metadata --contract <contract>` | WASM metadata for a deployed contract (cached). |
 | `sdkt wasm cache` | Manage the WASM cache (`info` / `remove` / `clear`). |
 || `sdkt audit <path.rs>` | Static security analysis (AUTH-001/002/003/004, MOVE-001, MATH-001, CEI-001). `--disable <RULE_ID>` to skip a rule. `--rules <path|id>` (repeatable) to load external rule paths or resolve installed plugin IDs. |
-| `sdkt identity <generate\|import\|list\|show\|delete\|default>` | ED25519 keystore management. |
+| `sdkt identity <generate\|import\|list\|show\|delete\|default>` | ED25519 keystore management. `import <name> <secret>` requires a secret; pass `-` to read it from stdin (recommended — argv secrets are deprecated, issue #64). |
 | `sdkt identity fund <name> --network-profile <NAME>` | Fund an identity via Stellar Testnet Friendbot. |
 | `sdkt network <add\|list\|show\|remove>` | Named network profiles (RPC URL + passphrase). Combine with `--network-profile <NAME>` on any RPC command to avoid repeating endpoints; `--rpc-url` / `--network-passphrase` override. |
 | `sdkt network diagnose [--network <testnet>]` | Read-only network identity / protocol / resource-limit diagnosis. Reports passphrase identity, protocol agreement, and ledger limits. Never signs or mutates. |
@@ -623,13 +623,12 @@ Most commands accept `--format json` for scripting / CI integration.
 
 ## Common Workflows
 
-- **Audit every PR** — gate merges on `sdkt audit` via the
+- **Audit every PR** — gate merges on `sdkt audit`. By default, `sdkt audit`
+  exits 0 on findings; use `--fail-on critical` (or `warning` / `info`) to exit 1
+  when findings at or above that threshold exist. You can also gate via the
   [reusable Action](docs/compatibility/ci-cd.md), whose `severity-threshold`
-  input fails the build on `critical` findings. The CLI itself reports findings
-  but does **not** encode severity into its exit code — `sdkt audit` exits 0
-  even when it prints critical findings, so gate on the Action (or parse
-  `--format json`'s `summary.critical`) rather than on the bare exit code. See
-  [docs/ci-cd.md](docs/compatibility/ci-cd.md).
+  input fails the build on `critical`, or parse `--format json`'s
+  `summary.critical`. See [docs/ci-cd.md](docs/compatibility/ci-cd.md).
 - **Safe upgrades** — run `sdkt diff --upgrade-safety` in release CI to block
   breaking contract changes.
 - **Local analysis** — `decode`, `diff`, and `audit` need no RPC; run them in

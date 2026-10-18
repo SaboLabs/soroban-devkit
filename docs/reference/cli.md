@@ -11,9 +11,16 @@ sdkt
 │   ├── --format <json|pretty>
 │   └── --file <path>
 │
+├── encode <TYPE:VALUE>...
+│   │   (fully offline: encode typed values to base64 XDR)
+│   │   Supports: u32, i32, u64, i64, timepoint, duration, u128, i128, bool,
+│   │   string, symbol, bytes, address. Also json:<JSON> for composite values.
+│
 ├── inspect <contract-id>
+│   ├── --interface                 (render full interface instead of name-only ABI)
 │   ├── --format <json|pretty>
-│   └── --abi <wasm>            (ABI-aware storage decode)
+│   ├── --abi <wasm>                (ABI-aware storage decode)
+│   └── --abi-contract <id>         (fetch deployed contract's ABI)
 │
 ├── storage
 │   ├── check <contract-id>   [--abi <wasm>] [--abi-contract <id>] [--format]
@@ -21,8 +28,8 @@ sdkt
 │   ├── estimate <wasm-path>  [--ledgers <N>] [--format <pretty|json>]
 │   ├── storage-diff --old <snapshot-a.json> --new <snapshot-b.json> [--extend-plan] [--format <pretty|json>]
 │   ├── read --contract <contract-id> --key-xdr <BASE64_XDR> [--abi <wasm>] [--format]
-│   ├── extend --contract <contract-id> --ledgers <N> [--key <xdr>]... [--identity <name>] [--format]
-│   └── restore --contract <contract-id> --envelope <xdr> [--dry-run] [--identity <name>] [--format]
+│   ├── extend --contract <contract-id> --ledgers <N> [--key <xdr>]... [--identity <name>] [--timeout <s>] [--interval <s>] [--format]
+│   └── restore --contract <contract-id> --envelope <xdr> [--dry-run] [--identity <name>] [--timeout <s>] [--interval <s>] [--format]
 │
 │   `estimate` performs an offline calculation of storage rent over a specified
 │   ledger horizon (default 17,280 ledgers, ~1 day) using the contract spec ABI.
@@ -33,6 +40,27 @@ sdkt
 │   `sdkt storage analyze --format json`) and identifies removed, expiring, and unchanged
 │   entries. With `--extend-plan`, it derives a non-mutating remediation plan (target contract,
 │   affected keys, and suggested ledger horizon) for operator extension.
+│
+│   Snapshots recorded by `sdkt storage analyze --format json` include capture context:
+│   - `latest_ledger`: the ledger sequence at capture time.
+│   - `network`: the network identity (passphrase or network name) against which capture was performed.
+│
+│   When diffing snapshots:
+│   - If both snapshots record a network and they differ, the diff is refused with an error
+│     naming both networks (preventing cross-network skew from reading as state drift).
+│   - If both snapshots record a ledger, TTLs are compared on a common basis by normalising
+│     the old snapshot's TTLs by the ledger delta (`new_ledger - old_ledger`), ensuring normal
+│     time passage between snapshots does not falsely classify entries as expiring soon.
+│     The ledger delta is surfaced in both pretty and JSON output.
+│   - Backward compatibility: legacy snapshot files omitting capture context remain fully
+│     supported; their capture context is reported as "unknown".
+│   - Value drift detection: `sdkt storage analyze --format json` records each entry's
+│     base64 XDR `ScVal` value. When two snapshots both carry values for the same entry,
+│     `storage-diff` reports a `value_changed` delta (before/after values) instead of
+│     classifying the entry as unchanged. An entry whose value and TTL both match stays
+│     unchanged; TTL-only changes still report only TTL/rent deltas. Entries without
+│     captured values (legacy snapshots, contract-code entries) are never flagged for
+│     value drift.
 │
 │   `read` fetches a single ledger entry by its complete `LedgerKey` (base64 XDR).
 │   The instance key is NOT included automatically — supply the full key via --key-xdr.
@@ -66,9 +94,16 @@ sdkt
 │   ├── --args <TYPE:VALUE>...    (same typed-args as `call` / `tx build`;
 │   │                            strict: unknown types are rejected)
 │   ├── --identity <name>        (signs and pays; default: "default")
- main
+│   ├── --timeout <SECONDS>      (wait-for-settlement timeout; default 60)
+│   ├── --interval <SECONDS>     (poll interval while waiting; default 1)
 │   ├── --format <json|pretty>
 │   └── --network-profile <NAME> / --rpc-url <URL> / --network-passphrase <P>
+│
+│   Polling rules (shared by every command that waits for a transaction):
+│   `--interval` must be greater than 0 and `--timeout` must be greater than
+│   or equal to `--interval`; invalid pairs are rejected before any network
+│   or identity work begins. `--no-wait` returns the transaction hash right
+│   after submission and ignores both flags.
 │
 │   State-changing end-to-end flow in one command:
 │     fetch account sequence → simulate → build final envelope (authoritative
@@ -84,6 +119,7 @@ sdkt
 ├── tx
 │   ├── inspect <hash>        [--format]
 │   ├── validate <xdr>        [--format] (offline parse + structural checks)
+│   ├── decode <xdr>          [--format] (offline decode; human-readable transaction envelope)
 │   ├── simulate <xdr>        [--format] [--abi <wasm>] [--abi-contract <id>] (RPC; surfaces restore preambles, costs, state changes; ABI-aware result decoding. `--abi-contract` fetches the deployed contract's on-chain WASM for decoding)
 │   ├── sign                  [--input <xdr|file>] [--output <file>] [--identity <name>] [--network <testnet|mainnet|futurenet|custom:<p>>] [--format] (offline ED25519 signing)
 │   ├── submit <xdr>          [--wait] [--timeout <s>] [--interval <s>] [--format] (RPC)
@@ -108,11 +144,13 @@ sdkt
 │
 ├── events <contract-id>
 │   ├── --format <json|pretty>
-│   ├── --abi <wasm>          (ABI-aware decode from a local WASM)
-│   └── --abi-contract <id>   (ABI-aware decode using the deployed contract's
-│                               on-chain WASM, fetched via the inspection path;
-│                               no local artifact needed. Mutually exclusive
-│                               with --abi.)
+│   ├── --start-ledger <START_LEDGER> (start ledger sequence number for event search)
+│   ├── --end-ledger <END_LEDGER>     (end ledger sequence number for event search)
+│   ├── --topic <SYMBOL>              (filter by first topic/event name; server-side filtering)
+│   ├── --abi <wasm>                  (ABI-aware decode from a local WASM)
+│   ├── --abi-contract <id>           (ABI-aware decode using deployed contract's on-chain WASM)
+│   ├── --network-profile <NAME> / --rpc-url <URL> / --network-passphrase <P>
+│   └── [other network resolution flags]
 │
 ├── account <address>         [--format]
 │
@@ -162,20 +200,29 @@ sdkt
 │   ├── --format <json|pretty>
 │   ├── --disable <RULE_ID>   (repeatable)
 │   ├── --rules <PATH|ID>     (repeatable; compiled plugin artifact or installed plugin ID)
-│   └── --no-plugins          (skip loading installed plugins)
+│   ├── --no-plugins          (skip loading installed plugins)
+│   ├── --abi <wasm>          (path to contract WASM for spec-correlated analysis)
+│   ├── --abi-contract <id>   (contract ID whose deployed WASM provides ABI)
+│   ├── --fail-on <SEVERITY>  (exit non-zero if findings at or above this level; critical|warning|info)
+│   └── --network-profile <NAME> / --rpc-url <URL> / --network-passphrase <PASS>
 ├── release-assurance
 │   ├── --wasm <WASM>         (candidate artifact; required)
 │   ├── --previous-wasm <WASM> (baseline for the offline upgrade diff)
 │   ├── --audit <PATH>...     (Rust source path(s)/dir(s); same engine as `audit`)
 │   ├── --disable <RULE_ID>   (repeatable)
 │   ├── --contract <ID>       (deployed contract for on-chain checks; skipped if omitted)
-│   ├── --network <testnet>   (network for the on-chain checks; with --contract)
+│   ├── --network <testnet|mainnet|futurenet> (network for the on-chain checks; with --contract)
+│   ├── --fuzz-evidence <EVIDENCE_JSON> (attach JSON evidence from sdkt fuzz campaign)
 │   ├── --max-size-bytes <N>  (fail when the candidate exceeds N bytes)
 │   ├── --max-growth-pct <N>  (fail when growth over --previous-wasm exceeds N%)
-│   └── --format <json|pretty>
+│   ├── --format <json|pretty>
+│   ├── --network-profile <NAME> / --rpc-url <URL> / --network-passphrase <PASS>
+│   └── [other flags inherited from network-profile resolution]
 ├── identity
 │   ├── generate <name>       [--format pretty|json]
-│   ├── import <name> <secret>
+│   ├── import <name> <secret>   (required)
+│   │   stdin form (recommended): import <name> -
+│   │   ⚠ argv secrets are deprecated (issue #64): pass `-` instead
 │   ├── list                  [--format pretty|json]
 │   ├── show <name>           [--format pretty|json]
 │   ├── delete <name>
@@ -295,6 +342,13 @@ Flags:
   `<out>/<name>-<version>.tar.zst`; `dir` writes a directory tree
   `<out>/<name>-<version>/`. Any other value is rejected with a clear error.
 
+**Pack preconditions:** every git dependency declared in the manifest must
+have a cached checkout under `.sdkt-cache/git/<cache_key>`. If a declared
+dependency's checkout is missing, `sdkt package pack` exits non-zero with a
+`git dependency '<name>' is declared but its checkout is not cached ...` error
+and writes no descriptor — the bundle never claims a dependency it does not
+contain.
+
 `sdkt package publish --dry-run` validates **publish readiness** using the
 existing manifest/lock/cache/integrity infrastructure. It detects missing cache,
 lock drift, integrity mismatch, commit mismatch, reference change, and invalid
@@ -311,6 +365,10 @@ or git logic is duplicated; the same `compute_dependency_integrity` /
 ├── project
 │   └── deploy                Deploy all contracts defined in the workspace (.sdkt.toml),
 │                             applying topological dependency sorting
+│
+│   `--timeout <SECONDS>` (default 60) and `--interval <SECONDS>` (default 1)
+│   control how long each contract deployment waits for settlement and how
+│   often it polls; both are validated before any network or identity work.
 │
 │   Contracts declare dependencies via `depends_on` (canonical) or the
 │   legacy `deploy_after` field in `[contracts.<alias>]`; both are merged. Build,
@@ -353,6 +411,20 @@ or git logic is duplicated; the same `compute_dependency_integrity` /
 │   deploys it fresh, replacing the stale record. The default identity (see
 │   `sdkt identity`) is used to sign all deployments.
 │
+│   **Constructor arguments**: contracts requiring initialization parameters at
+│   create time declare them in `.sdkt.toml` via the `ctor_args` field:
+│
+│     [contracts.token]
+│     path = "contracts/token"
+│     ctor_args = ["address:G...", "u32:1000000"]
+│
+│   Each string is a TYPE:VALUE pair (same format as `sdkt deploy --arg`: `u32:100`,
+│   `address:G...`, `string:hello`, `bool:true`, `bytes:deadbeef`, etc.) or a
+│   base64-encoded ScVal. Invalid arguments fail before WASM upload (fail-fast
+│   validation) with the same error messages as the single-contract deploy path.
+│   Contracts without `ctor_args` deploy with empty constructor arguments (no
+│   change from pre-feature behavior).
+│
 ├── call
 │   ├── <CONTRACT_ID>
 │   ├── <FUNCTION>
@@ -377,6 +449,9 @@ or git logic is duplicated; the same `compute_dependency_integrity` /
     ├── --deny-breaking        (abort if not backwards-compatible; requires --wasm)
     ├── --old-wasm <deployed>  (baseline, required by --deny-breaking)
     ├── --identity <name>      (signing identity; defaults to `default`)
+    ├── --timeout <SECONDS>    (wait-for-settlement timeout for the upload and
+    │                           create transactions; default 60)
+    ├── --interval <SECONDS>   (poll interval while waiting; default 1)
     ├── --arg <TYPE:VALUE>...  (constructor arguments)
     └── --network-profile <NAME> / --rpc-url <URL> / --network-passphrase <P>
 
@@ -385,6 +460,50 @@ which is useful to resume after an upload succeeded but creation failed.
 Prediction-only options (`--dry-run`, `--show-address`) and
 `--deny-breaking` are rejected with `--wasm-hash`, because these operations
 require the local WASM bytes.
+
+├── plugin                    Manage local audit plugins (install/remove/list/show/update)
+│   ├── init <name>           [--force] [--format]  Scaffold a new audit rule crate
+│   ├── list                  [--format]  List installed plugins
+│   ├── show <id>             [--format]  Show metadata for an installed plugin
+│   ├── install <source>      [--id <id>] [--force] [--public-key <key>] [--format]
+│   │                         Install from local artifact or .sdktplugin bundle
+│   ├── remove <id>           [--format]  Remove an installed plugin (idempotent)
+│   ├── update <id> <source>  [--format]  Update from new local artifact
+│   ├── pack <source>         [--output <file>] [--secret-key <key>] [--format]
+│   │                         Pack directory into .sdktplugin bundle
+│   ├── verify-bundle <bundle> [--public-key <key>] [--format]
+│   │                         Verify bundle integrity and signature
+│   └── doctor [<target|--all>] [--format]  End-to-end diagnostics on a plugin
+│
+├── doctor                    Run diagnostic checks on sdkt environment and project
+│   ├── --format <json|pretty|--json>  Output format (pretty is default)
+│   └── (offline: no network access required)
+│
+├── completions <shell>       Generate shell completion scripts
+│   └── Supported shells: bash, zsh, fish, powershell, elvish
+│
+├── fuzz                      Soroban-aware deterministic fuzzing (offline, read-only)
+│   ├── campaign <wasm>       Run a deterministic fuzz campaign
+│   │   ├── --seed <N>                    Deterministic seed (u64, default: 0)
+│   │   ├── --cases <N>                   Number of test cases (default: 100)
+│   │   ├── --function <NAME>             Restrict to one exported function
+│   │   ├── --artifact-dir <DIR>          Directory for artifacts (default: ./sdkt-fuzz-artifacts)
+│   │   ├── --auth <MODE>                 Authorization mode: no-auth | correct-auth | wrong-auth
+│   │   ├── --expect-success <FN>         Declare function must succeed (repeatable)
+│   │   ├── --expect-error <FN:TYPE:CODE> Declare function must fail (repeatable)
+│   │   ├── --replay                      Replay every written artifact to verify determinism
+│   │   ├── --format <pretty|json|jsonl>  Output format (default: pretty)
+│   │   └── [network flags inherited from network-profile resolution]
+│   │
+│   └── replay <artifact>     Replay a finding artifact to verify reproduction
+│       ├── --wasm <WASM>                 Path to the campaign WASM
+│       └── (exit code: 0 = REPRODUCED, 1 = MISMATCH, 2 = usage error)
+│
+├── generate                  Generate typed clients and other artifacts
+│   └── client <wasm>         Generate typed Rust client from ContractSpec
+│       ├── --output <file>               Output file (prints to stdout if omitted)
+│       └── --skip-unsupported            Skip unsupported functions instead of aborting
+
 ```
 
 ## Network Profiles
@@ -597,6 +716,133 @@ functions instead of aborting the entire command:
   default (no-flag) output.
 - If all functions in the contract are unsupported, valid non-crashing output is
   produced with an empty `contract_functions()` and an explanatory header.
+
+## Fuzz
+
+`sdkt fuzz` provides Soroban-aware deterministic fuzzing for release assurance. It is fully offline and read-only: contracts execute in an isolated in-memory host environment without touching the network.
+
+### Campaign
+
+`sdkt fuzz campaign <wasm>` runs a deterministic fuzz campaign against a compiled contract.
+
+**Syntax:**
+
+```bash
+sdkt fuzz campaign contract.wasm \
+  --seed 42 \
+  --cases 100 \
+  --function increment \
+  --auth correct-auth \
+  --artifact-dir ./sdkt-fuzz-artifacts \
+  --expect-success increment \
+  --expect-error invalid:Auth:6 \
+  --replay \
+  --format json
+```
+
+**Arguments and flags:**
+
+| Flag | Default | Meaning |
+|------|---------|---------|
+| `<WASM>` | *required* | Path to the compiled contract WASM file |
+| `--seed <N>` | `0` | Deterministic seed (u64). Same seed produces identical test case sequence across runs |
+| `--cases <N>` | `100` | Number of test cases to execute |
+| `--function <NAME>` | all | Restrict the campaign to one exported contract function |
+| `--artifact-dir <DIR>` | `./sdkt-fuzz-artifacts` | Directory where finding artifacts are written |
+| `--auth <MODE>` | `no-auth` | Authorization mode per test case: `no-auth`, `correct-auth`, or `wrong-auth`. See the sdkt-fuzz docs for exact semantics |
+| `--expect-success <FN>` | none | Declare that function `<FN>` must succeed (repeatable). Violations produce `RETURN_MISMATCH` or `UNEXPECTED_ERROR` findings |
+| `--expect-error <FN:TYPE:CODE>` | none | Declare that function `<FN>` must fail with error type `<TYPE>` and code `<CODE>`, e.g. `--expect-error bump:Auth:6` (repeatable) |
+| `--replay` | false | Replay every written artifact to verify determinism and reproduce findings |
+| `--format <FORMAT>` | `pretty` | Output format: `pretty`, `json`, or `jsonl` |
+
+**Expectation declarations:**
+
+- `--expect-success <FN>` — declare that a function must always return successfully. If a case returns an error or value mismatch, it produces a finding.
+- `--expect-error <FN:TYPE:CODE>` — declare that a function must fail with a specific error. Format: `FunctionName:ErrorType:ErrorCode`. Example: `--expect-error transfer:Auth:6` means the `transfer` function must fail with `ContractError{Auth, 6}`.
+- A function may have only one expectation; declaring it with both flags is a usage error (exit 2).
+- Malformed declarations are usage errors (exit 2).
+
+**Output artifacts:**
+
+Finding artifacts are written to `--artifact-dir` as JSON files following the naming pattern `<contract>-<function>-case<NNNN>.json`. Each artifact contains:
+
+- `artifact_hash` — SHA-256 of the canonical artifact JSON (used for deduplication and replay verification)
+- `wasm_hash` — SHA-256 of the WASM that produced the finding
+- `campaign_seed` — seed used to generate the test case sequence
+- `case_id` — zero-based case index in the campaign
+- `input` — the typed arguments, seed, and auth mode for this case
+- `observed_result` — the actual return value or error from contract execution
+- `classification` — the finding type: `Pass`, `ExpectedError`, `ReturnMismatch`, `UnexpectedError`, etc.
+- `minimized` — whether the case was minimized
+- `complexity` — case complexity before and after minimization
+- `observation` — structured error/return data for replay
+- `auth_per_step` — authorization entries for each step in a multi-step sequence (if applicable)
+
+**Supported `--format` values:**
+
+| Format | Purpose |
+|--------|---------|
+| `pretty` | Human-readable report; findings listed with classification and details |
+| `json` | Single JSON document: campaign metadata + findings array |
+| `jsonl` | JSON Lines: one artifact per line for streaming processing |
+
+**Exit codes:**
+
+- `0` — campaign executed successfully; findings may or may not have been discovered
+- `1` — runtime error (e.g. WASM load failure, host error, invalid arguments)
+- `2` — usage error (e.g. malformed expectation, invalid seed)
+
+### Replay
+
+`sdkt fuzz replay <artifact>` replays a finding artifact against its WASM to verify it reproduces.
+
+**Syntax:**
+
+```bash
+sdkt fuzz replay ./sdkt-fuzz-artifacts/contract-increment-case0042.json \
+  --wasm contract.wasm
+```
+
+**Arguments and flags:**
+
+| Flag | Meaning |
+|------|---------|
+| `<ARTIFACT>` | Path to the finding artifact (JSON) produced by a campaign |
+| `--wasm <WASM>` | *required* — Path to the campaign WASM the artifact was produced from |
+
+**Replay verdict:**
+
+| Exit code | Verdict | Meaning |
+|-----------|---------|---------|
+| `0` | `REPRODUCED` | The artifact reproduced: same input, same result, finding verified |
+| `1` | `MISMATCH` | The artifact did not reproduce: result differs from expected |
+| `2` | Usage error | Invalid artifact or WASM path |
+
+**Determinism:**
+
+If `--replay` was used during the campaign, every artifact was automatically replayed to verify determinism. A `REPRODUCED` verdict confirms that the finding can be independently re-executed with the exact same inputs and produce the same result.
+
+### Artifact directory layout
+
+By default, artifacts are written to `./sdkt-fuzz-artifacts` with this structure:
+
+```
+./sdkt-fuzz-artifacts/
+├── <contract-hash>-<function-name>-case0000.json
+├── <contract-hash>-<function-name>-case0001.json
+├── <contract-hash>-<function-name>-case0042.json
+└── ...
+```
+
+Each JSON file is a complete finding artifact, self-contained and ready for replay.
+
+### Real-contract evidence
+
+For details on fuzz evidence from real Soroban contracts and multi-step execution, see [Real-Contract Fuzz Evidence](fuzz-real-contract-evidence.md).
+
+### Integration with release assurance
+
+`sdkt release-assurance` accepts `--fuzz-evidence <EVIDENCE_JSON>` to attach fuzz evidence to a release report. The release pipeline does not run fuzz campaigns itself; campaigns are run separately (manually or in CI) and the resulting evidence is attached by path.
 
 ## Plugin management
 
