@@ -21,9 +21,6 @@ Thumbs.db
 .sdkt.toml.local
 *.local
 
-# Default `sdkt fuzz` output dir (written to the cwd, e.g. by CLI tests)
-sdkt-fuzz-artifacts/
-
 # Runtime dependency cache (sdkt package fetch/update) — never commit
 .sdkt-cache/
 **/.sdkt-cache/
