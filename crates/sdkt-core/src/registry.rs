@@ -54,7 +54,9 @@
 //!      commands that exit 1 while still producing a valid report.
 //! 4. Add the id to the pinned lists in the tests that cross-check against
 //!    observed behavior (`json_format_flags_match_cli`,
-//!    `verdict_gated_commands_are_marked`).
+//!    `verdict_gated_commands_are_marked`). The CLI parity integration test
+//!    also walks every leaf below `plugin`, `storage`, `tx`, `wasm`, `lock`,
+//!    `package`, and `identity`; add a registry entry for each command.
 //! 5. `cargo test -p sdkt-core` must stay green. Bump
 //!    [`SCHEMA_VERSION`] only on a breaking change to this metadata format.
 
@@ -270,6 +272,39 @@ const CAPABILITIES: [Capability; CAP_COUNT] = [
         evidence: Evidence::VerifiedTestnet,
         ..Capability::BASE
     },
+    Capability {
+        id: "wasm.cache.info",
+        command: &["wasm", "cache", "info"],
+        summary: "Show local WASM cache size and item count for a network.",
+        optional_args: &["--network", "--format"],
+        formats: PRETTY_JSON,
+        evidence: Evidence::Unverified,
+        notes: Some("Not executed during the registry audit; reads local cache metadata only."),
+        ..Capability::BASE
+    },
+    Capability {
+        id: "wasm.cache.remove",
+        command: &["wasm", "cache", "remove"],
+        summary: "Remove one WASM hash from the local cache for a network.",
+        required_args: &["<hash>"],
+        optional_args: &["--network"],
+        safety: Safety::LocalWrite,
+        requires_confirmation: true,
+        evidence: Evidence::Unverified,
+        notes: Some("Not executed during the registry audit; deletes a selected local cache entry."),
+        ..Capability::BASE
+    },
+    Capability {
+        id: "wasm.cache.clear",
+        command: &["wasm", "cache", "clear"],
+        summary: "Clear the local WASM cache for a network.",
+        optional_args: &["--network"],
+        safety: Safety::LocalWrite,
+        requires_confirmation: true,
+        evidence: Evidence::Unverified,
+        notes: Some("Not executed during the registry audit; deletes cached WASM entries for the selected network."),
+        ..Capability::BASE
+    },
     // ---- Diff / upgrade safety -------------------------------------------
     Capability {
         id: "diff",
@@ -418,6 +453,52 @@ const CAPABILITIES: [Capability; CAP_COUNT] = [
         ..Capability::BASE
     },
     Capability {
+        id: "storage.check",
+        command: &["storage", "check"],
+        summary: "Check a deployed contract's storage health.",
+        required_args: &["<contract-id>"],
+        optional_args: &["--abi", "--abi-contract", "--rpc-url", "--network-passphrase", "--network-profile", "--format"],
+        formats: PRETTY_JSON,
+        network: NetworkRequirement::Both,
+        evidence: Evidence::Unverified,
+        notes: Some("Not executed during the registry audit; requires a reachable RPC endpoint."),
+        ..Capability::BASE
+    },
+    Capability {
+        id: "storage.estimate",
+        command: &["storage", "estimate"],
+        summary: "Estimate storage rent from a local WASM contract specification.",
+        required_args: &["<file.wasm>"],
+        optional_args: &["--ledgers", "--format"],
+        formats: PRETTY_JSON,
+        evidence: Evidence::Unverified,
+        notes: Some("Not executed during the registry audit; computes an offline baseline and cannot predict dynamic runtime entries."),
+        ..Capability::BASE
+    },
+    Capability {
+        id: "storage.read",
+        command: &["storage", "read"],
+        summary: "Read one deployed contract storage entry by XDR or typed key.",
+        required_args: &["--contract <contract-id>"],
+        optional_args: &["--key-xdr", "--map-key", "--key-arg", "--instance", "--durability", "--abi", "--abi-contract", "--rpc-url", "--network-passphrase", "--network-profile", "--format"],
+        formats: PRETTY_JSON,
+        network: NetworkRequirement::Both,
+        evidence: Evidence::Unverified,
+        notes: Some("Not executed during the registry audit; reads a selected ledger entry from Soroban RPC. Exactly one key source is required: --key-xdr, --map-key (optionally with --key-arg), or --instance."),
+        ..Capability::BASE
+    },
+    Capability {
+        id: "storage.diff",
+        command: &["storage", "storage-diff"],
+        summary: "Compare two storage snapshots and optionally derive a TTL extension plan.",
+        required_args: &["--old <file>", "--new <file>"],
+        optional_args: &["--extend-plan", "--format"],
+        formats: PRETTY_JSON,
+        evidence: Evidence::Unverified,
+        notes: Some("Not executed during the registry audit; reads local JSON snapshots and never signs or submits a transaction."),
+        ..Capability::BASE
+    },
+    Capability {
         id: "events",
         command: &["events"],
         summary: "Fetch contract events with ledger range, server-side topic filter, optional ABI decoding.",
@@ -554,6 +635,17 @@ const CAPABILITIES: [Capability; CAP_COUNT] = [
         ..Capability::BASE
     },
     Capability {
+        id: "identity.show",
+        command: &["identity", "show"],
+        summary: "Show one saved identity's public metadata without exposing its secret key.",
+        required_args: &["<name>"],
+        optional_args: &["--format"],
+        formats: PRETTY_JSON,
+        evidence: Evidence::Unverified,
+        notes: Some("Not executed during the registry audit; secret key material must never be surfaced to an agent."),
+        ..Capability::BASE
+    },
+    Capability {
         id: "identity.generate",
         command: &["identity", "generate"],
         summary: "Create a new keypair in the local keystore.",
@@ -641,6 +733,30 @@ const CAPABILITIES: [Capability; CAP_COUNT] = [
         ..Capability::BASE
     },
     Capability {
+        id: "package.fetch",
+        command: &["package", "fetch"],
+        summary: "Fetch declared dependencies into the local cache without building them.",
+        optional_args: &["--force", "--format"],
+        formats: PRETTY_JSON,
+        safety: Safety::LocalWrite,
+        requires_confirmation: true,
+        network: NetworkRequirement::Both,
+        evidence: Evidence::Unverified,
+        notes: Some("Not executed during the registry audit; can clone or update remote git dependencies and write the local dependency cache."),
+        ..Capability::BASE
+    },
+    Capability {
+        id: "package.pack",
+        command: &["package", "pack"],
+        summary: "Bundle the project manifest, lockfile, and cached dependencies for offline use.",
+        optional_args: &["--out", "--format"],
+        safety: Safety::LocalWrite,
+        requires_confirmation: true,
+        evidence: Evidence::Unverified,
+        notes: Some("Not executed during the registry audit; writes a local package bundle. Its --format selects tar.zst or dir, not JSON output."),
+        ..Capability::BASE
+    },
+    Capability {
         id: "package.update",
         command: &["package", "update"],
         summary: "Resolve/update git dependencies against semver constraints.",
@@ -683,6 +799,16 @@ const CAPABILITIES: [Capability; CAP_COUNT] = [
         evidence: Evidence::VerifiedLocal,
         ..Capability::BASE
     },
+    Capability {
+        id: "lock.show",
+        command: &["lock", "show"],
+        summary: "Print the current local sdkt.lock contents.",
+        optional_args: &["--format"],
+        formats: PRETTY_JSON,
+        evidence: Evidence::Unverified,
+        notes: Some("Not executed during the registry audit; reads the local lockfile."),
+        ..Capability::BASE
+    },
     // ---- Plugins ---------------------------------------------------------------
     Capability {
         id: "plugin.list",
@@ -691,6 +817,69 @@ const CAPABILITIES: [Capability; CAP_COUNT] = [
         optional_args: &["--format"],
         formats: PRETTY_JSON,
         evidence: Evidence::VerifiedLocal,
+        ..Capability::BASE
+    },
+    Capability {
+        id: "plugin.init",
+        command: &["plugin", "init"],
+        summary: "Scaffold a local audit plugin rule project.",
+        required_args: &["<name>"],
+        optional_args: &["--force", "--format"],
+        formats: PRETTY_JSON,
+        safety: Safety::LocalWrite,
+        requires_confirmation: true,
+        evidence: Evidence::Unverified,
+        notes: Some("Not executed during the registry audit; creates or overwrites local project files."),
+        ..Capability::BASE
+    },
+    Capability {
+        id: "plugin.show",
+        command: &["plugin", "show"],
+        summary: "Show metadata for one installed local audit plugin.",
+        required_args: &["<id>"],
+        optional_args: &["--format"],
+        formats: PRETTY_JSON,
+        evidence: Evidence::Unverified,
+        notes: Some("Not executed during the registry audit; reads metadata from the local plugin store."),
+        ..Capability::BASE
+    },
+    Capability {
+        id: "plugin.remove",
+        command: &["plugin", "remove"],
+        summary: "Remove an installed plugin from the local store.",
+        required_args: &["<id>"],
+        optional_args: &["--format"],
+        formats: PRETTY_JSON,
+        safety: Safety::LocalWrite,
+        requires_confirmation: true,
+        evidence: Evidence::Unverified,
+        notes: Some("Not executed during the registry audit; deletes a local plugin installation."),
+        ..Capability::BASE
+    },
+    Capability {
+        id: "plugin.update",
+        command: &["plugin", "update"],
+        summary: "Replace an installed plugin using a local artifact.",
+        required_args: &["<id>", "<artifact-path>"],
+        optional_args: &["--format"],
+        formats: PRETTY_JSON,
+        safety: Safety::LocalWrite,
+        requires_confirmation: true,
+        evidence: Evidence::Unverified,
+        notes: Some("Not executed during the registry audit; replaces local plugin files and does not fetch remote artifacts."),
+        ..Capability::BASE
+    },
+    Capability {
+        id: "plugin.pack",
+        command: &["plugin", "pack"],
+        summary: "Create a portable .sdktplugin bundle from a local plugin directory.",
+        required_args: &["<plugin-directory>"],
+        optional_args: &["--output", "--secret-key", "--format"],
+        formats: PRETTY_JSON,
+        safety: Safety::LocalWrite,
+        requires_confirmation: true,
+        evidence: Evidence::Unverified,
+        notes: Some("Not executed during the registry audit; writes a local bundle and may sign it with the supplied secret-key file."),
         ..Capability::BASE
     },
     Capability {
@@ -752,6 +941,18 @@ const CAPABILITIES: [Capability; CAP_COUNT] = [
         formats: PRETTY_JSON,
         evidence: Evidence::VerifiedLocal,
         notes: Some("Fully offline. Malformed base64 or trailing bytes exit non-zero; the valid-envelope breakdown was not exercised this session."),
+        ..Capability::BASE
+    },
+    Capability {
+        id: "tx.inspect",
+        command: &["tx", "inspect"],
+        summary: "Look up a transaction's status, ledger, fee, and operation count by hash.",
+        required_args: &["<hash>"],
+        optional_args: &["--rpc-url", "--network-passphrase", "--network-profile", "--format"],
+        formats: PRETTY_JSON,
+        network: NetworkRequirement::Both,
+        evidence: Evidence::Unverified,
+        notes: Some("Not executed during the registry audit; performs a read-only transaction lookup through Soroban RPC."),
         ..Capability::BASE
     },
     Capability {
@@ -921,7 +1122,7 @@ const CAPABILITIES: [Capability; CAP_COUNT] = [
 
 /// Number of described capabilities; kept as a const so the array length is
 /// checked by the compiler against every entry.
-const CAP_COUNT: usize = 53;
+const CAP_COUNT: usize = 70;
 
 #[cfg(test)]
 mod tests {
@@ -1033,6 +1234,7 @@ mod tests {
         const JSON: &[&str] = &[
             "wasm.inspect",
             "wasm.metadata",
+            "wasm.cache.info",
             "diff",
             "diff.upgrade_safety",
             "audit",
@@ -1044,6 +1246,10 @@ mod tests {
             "deployment.verify",
             "network.diagnose",
             "storage.analyze",
+            "storage.check",
+            "storage.estimate",
+            "storage.read",
+            "storage.diff",
             "events",
             "call",
             "account",
@@ -1052,6 +1258,7 @@ mod tests {
             "network.check",
             "network.add",
             "network.remove",
+            "identity.show",
             "doctor",
             "build",
             "init",
@@ -1059,12 +1266,19 @@ mod tests {
             "package.update",
             "lock.verify",
             "lock.generate",
+            "lock.show",
             "plugin.list",
             "plugin.doctor",
             "plugin.verify_bundle",
+            "plugin.init",
+            "plugin.show",
+            "plugin.remove",
+            "plugin.update",
+            "plugin.pack",
             "plugin.install",
             "fee.estimate",
             "tx.decode",
+            "tx.inspect",
             "tx.validate",
             "tx.simulate",
             "tx.build",
@@ -1079,8 +1293,9 @@ mod tests {
             "identity.fund",
             "identity.generate",
             "identity.list",
+            "package.fetch",
         ];
-        const NO_JSON: &[&str] = &["generate.client", "package.publish"];
+        const NO_JSON: &[&str] = &["generate.client", "package.publish", "package.pack"];
         for id in JSON {
             let c = find(id).unwrap_or_else(|| panic!("missing {id}"));
             assert!(
