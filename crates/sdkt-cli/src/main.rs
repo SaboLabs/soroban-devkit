@@ -430,6 +430,12 @@ enum Commands {
         /// Without this flag sdkt audit always exits 0 on findings.
         #[arg(long, value_name = "SEVERITY")]
         fail_on: Option<String>,
+        /// Path to save the audit baseline report (JSON format with version and rule-set metadata)
+        #[arg(long, value_name = "PATH")]
+        save_baseline: Option<String>,
+        /// Path to a baseline report to compare against (ratchet-style CI gating: pass if no NEW findings)
+        #[arg(long, value_name = "PATH")]
+        baseline: Option<String>,
         #[command(flatten)]
         net: NetworkArgs,
     },
@@ -6474,6 +6480,8 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
             abi,
             abi_contract,
             fail_on,
+            save_baseline,
+            baseline,
             net,
         } => {
             // Validate --fail-on before any analysis runs so an invalid level
@@ -7138,21 +7146,158 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
                 }
             }
 
-            if audit_fmt == AuditFormat::Sarif {
-                let mut rules_info: Vec<sdkt_audit::RuleInfo> = sdkt_audit::registered_rule_info();
-                if multi_file {
-                    // Merge per-file local registry rule infos (covers plugin
-                    // rules; global registry only has built-ins). Dedup by rule ID.
-                    let mut seen: std::collections::HashSet<String> =
-                        rules_info.iter().map(|r| r.id.clone()).collect();
-                    for local_infos in &multi_file_local_rule_infos {
-                        for info in local_infos {
-                            if seen.insert(info.id.clone()) {
-                                rules_info.push(info.clone());
-                            }
+            if (baseline.is_some() || save_baseline.is_some()) && audit_fmt == AuditFormat::Sarif {
+                eprintln!(
+                    "Error: --format sarif is not supported with --baseline or --save-baseline. \
+                     Use --format json or --format pretty."
+                );
+                process::exit(1);
+            }
+
+            let mut rules_info: Vec<sdkt_audit::RuleInfo> = sdkt_audit::registered_rule_info();
+            if multi_file {
+                // Merge per-file local registry rule infos (covers plugin
+                // rules; global registry only has built-ins). Dedup by rule ID.
+                let mut seen: std::collections::HashSet<String> =
+                    rules_info.iter().map(|r| r.id.clone()).collect();
+                for local_infos in &multi_file_local_rule_infos {
+                    for info in local_infos {
+                        if seen.insert(info.id.clone()) {
+                            rules_info.push(info.clone());
                         }
                     }
                 }
+            }
+            let mut current_rule_ids: Vec<String> = rules_info
+                .iter()
+                .filter(|r| !disabled_refs.contains(&r.id.as_str()))
+                .map(|r| r.id.clone())
+                .collect();
+            current_rule_ids.sort();
+            current_rule_ids.dedup();
+
+            let comparison_baseline = if let Some(ref baseline_path) = baseline {
+                match sdkt_audit::AuditBaseline::from_file(baseline_path) {
+                    Ok(b) => Some(b),
+                    Err(e) => {
+                        eprintln!("Error reading baseline '{}': {}", baseline_path, e);
+                        process::exit(1);
+                    }
+                }
+            } else {
+                None
+            };
+
+            if let Some(ref save_path) = save_baseline {
+                if had_file_errors {
+                    process::exit(1);
+                }
+                let baseline_obj = sdkt_audit::AuditBaseline::new(
+                    sdkt_version_string(),
+                    current_rule_ids.clone(),
+                    aggregate.clone(),
+                );
+                if let Err(e) = baseline_obj.save_to_file(save_path) {
+                    eprintln!("Error saving baseline to '{}': {}", save_path, e);
+                    process::exit(1);
+                }
+            }
+
+            if let Some(ref baseline_obj) = comparison_baseline {
+                let diff = sdkt_audit::compare_baseline(
+                    baseline_obj,
+                    &aggregate,
+                    sdkt_version_string(),
+                    &current_rule_ids,
+                );
+                if let Some(ref warn) = diff.warning {
+                    eprintln!("Warning: {}", warn);
+                }
+
+                if fmt == OutputFormat::Json {
+                    let json_diff = serde_json::json!({
+                        "baseline_count": diff.baseline_count,
+                        "known_count": diff.known_count,
+                        "new_count": diff.new_count,
+                        "resolved_count": diff.resolved_count,
+                        "new_findings": diff.new_findings,
+                        "resolved_findings": diff.resolved_findings,
+                        "pass": diff.is_ratchet_pass,
+                        "warning": diff.warning,
+                    });
+                    println!("{}", serde_json::to_string(&json_diff)?);
+                } else {
+                    let known_s = if diff.baseline_count == 1 {
+                        "known finding"
+                    } else {
+                        "known findings"
+                    };
+                    println!("Baseline: {} {}", diff.baseline_count, known_s);
+                    println!("New findings: {}", diff.new_count);
+                    for f in &diff.new_findings {
+                        let loc = match &f.location {
+                            Some(l) => format!(" [{}]", l),
+                            None => String::new(),
+                        };
+                        println!("  [{}] {}{}: {}", f.severity, f.rule_id, loc, f.message);
+                    }
+                    println!("Resolved: {}", diff.resolved_count);
+                }
+
+                let should_fail = match fail_on_level {
+                    Some(level) => {
+                        let mut new_summary = sdkt_audit::AuditSummary::default();
+                        for f in &diff.new_findings {
+                            match f.severity {
+                                sdkt_audit::Severity::Critical => new_summary.critical += 1,
+                                sdkt_audit::Severity::Warning => new_summary.warning += 1,
+                                sdkt_audit::Severity::Info => new_summary.info += 1,
+                            }
+                            new_summary.total += 1;
+                        }
+                        audit_gate_trips(level, &new_summary)
+                    }
+                    None => !diff.is_ratchet_pass,
+                };
+                if should_fail || had_file_errors {
+                    process::exit(1);
+                }
+                return Ok(());
+            }
+
+            if save_baseline.is_some() && fmt == OutputFormat::Pretty {
+                let mut parts = Vec::new();
+                if aggregate.summary.critical > 0 {
+                    parts.push(format!("{} critical", aggregate.summary.critical));
+                }
+                if aggregate.summary.warning > 0 {
+                    parts.push(format!("{} warning", aggregate.summary.warning));
+                }
+                if aggregate.summary.info > 0 {
+                    parts.push(format!("{} info", aggregate.summary.info));
+                }
+                let detail = if parts.is_empty() {
+                    String::new()
+                } else {
+                    format!(": {}", parts.join(", "))
+                };
+                let s = if aggregate.summary.total == 1 {
+                    ""
+                } else {
+                    "s"
+                };
+                println!(
+                    "Report saved ({} finding{}{})",
+                    aggregate.summary.total, s, detail
+                );
+                apply_audit_gate(fail_on_level, &aggregate.summary);
+                if had_file_errors {
+                    process::exit(1);
+                }
+                return Ok(());
+            }
+
+            if audit_fmt == AuditFormat::Sarif {
                 if multi_file {
                     let sarif_str = sdkt_audit::sarif::report_to_sarif_string_multi_file(
                         &aggregate,
