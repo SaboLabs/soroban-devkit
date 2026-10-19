@@ -1,0 +1,1 @@
+names/values containing 'tasks'/'folderOpen' must NOT trip the guard

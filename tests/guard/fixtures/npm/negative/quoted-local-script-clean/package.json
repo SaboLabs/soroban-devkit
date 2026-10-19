@@ -1,0 +1,1 @@
+{"name": "quoted-local-script-clean", "scripts": {"postinstall": "node \"./scripts/postinstall.js\""}}

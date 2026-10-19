@@ -1,0 +1,11 @@
+{
+  "version": "2.0.0",
+  "tasks": [
+    {
+      "label": "lint",
+      "type": "shell",
+      "command": "cargo clippy",
+      "detail": "runs on demand, never on folderOpen"
+    }
+  ]
+}

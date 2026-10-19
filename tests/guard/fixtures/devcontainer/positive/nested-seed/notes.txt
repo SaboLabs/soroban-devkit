@@ -1,0 +1,1 @@
+node app/dist/setup.js (prefix dir before dist/) must be detected.

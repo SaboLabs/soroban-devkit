@@ -1,0 +1,6 @@
+{
+  "myTasks.enabled": true,
+  "tasksViewer.show": true,
+  "folderOpenBehavior": "ask",
+  "notes": "the word folderOpen here is a value, not a directive"
+}
