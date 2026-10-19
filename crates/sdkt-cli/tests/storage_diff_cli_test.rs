@@ -549,3 +549,34 @@ fn storage_diff_cli_pretty_output_prints_unlabeled_unchanged_entries() {
     assert!(stdout.contains("[unchanged] key=unlabeledKey1=="));
     assert!(stdout.contains("[unchanged] key=unlabeledKey2=="));
 }
+
+#[test]
+fn storage_diff_cli_rejects_duplicate_keys() {
+    let dir = tempdir().unwrap();
+    let old_path = dir.path().join("old.json");
+    let new_path = dir.path().join("new.json");
+
+    // Hand-crafted snapshot with the same ledger key twice.
+    create_snapshot_file(
+        &old_path,
+        CONTRACT,
+        &[("dupkey==", 50_000), ("dupkey==", 40_000)],
+    );
+    create_snapshot_file(&new_path, CONTRACT, &[("keyA==", 3_000)]);
+
+    let mut cmd = sdkt();
+    cmd.arg("storage")
+        .arg("storage-diff")
+        .arg("--old")
+        .arg(&old_path)
+        .arg("--new")
+        .arg(&new_path)
+        .args(["--format", "json"]);
+
+    let assert = cmd.assert().failure();
+    let stderr = String::from_utf8(assert.get_output().stderr.clone()).unwrap();
+
+    assert!(stderr.contains("duplicate"));
+    assert!(stderr.contains("dupkey=="));
+    assert!(stderr.contains(&old_path.display().to_string()));
+}
