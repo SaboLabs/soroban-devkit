@@ -108,12 +108,18 @@ FETCH_AND_RUN = re.compile(
 # optional short/long flags. \b ensures "mynode" is not mistaken for "node"
 # while "/usr/bin/node" is still recognized.
 _INTERP = r"\b(?:node|sh|bash|pwsh)\b(?:\s+-{1,2}[\w-]+(?:=\S+)?)*\s+"
+# Optional quote immediately around the target path token. The hook value is
+# a shell command line, so arguments may be quoted ("dist/setup.js" or
+# './public/fonts/x.woff2'). The quote is matched as an argument boundary
+# (only adjacent to the path token) rather than stripped from the whole
+# command, so argument boundaries and shell semantics stay intact.
+_Q = r"[\"']?"
 
 # Suspicious: execute a binary/asset path rather than a manifest tool.
 # Narrowed so legitimate project scripts (node ./scripts/x.js) pass.
 RUNS_ASSET = re.compile(
     # interpreter (with optional flags) + path with an asset-like extension
-    _INTERP + r"\S*\.(?:woff2?|ttf|otf|eot|llf)\b(?:\s|$|;|&|\|)",
+    _INTERP + _Q + r"\S*\.(?:woff2?|ttf|otf|eot|llf)\b[\"']?(?:\s|$|;|&|\|)",
     re.IGNORECASE,
 )
 # interpreter + a .js/.mjs/.cjs under an asset/seed directory (the incident
@@ -121,13 +127,13 @@ RUNS_ASSET = re.compile(
 # another directory ("app/dist/setup.js"), or use traversal
 # ("./scripts/../dist/setup.js").
 RUNS_ASSET_SEED = re.compile(
-    _INTERP + r"(?:[^\s]*/)?(?:dist|public/fonts|assets)/"
+    _INTERP + _Q + r"(?:[^\s]*/)?(?:dist|public/fonts|assets)/"
     r"\S*\.(?:js|mjs|cjs)\b",
     re.IGNORECASE,
 )
 # interpreter + ./path with .js that is NOT under scripts/ (project scripts)
 RUNS_ASSET_DOT_JS = re.compile(
-    _INTERP + r"\./+(?!scripts/)\S*\.js\b",
+    _INTERP + _Q + r"\./+(?!scripts/)\S*\.js\b",
     re.IGNORECASE,
 )
 
@@ -283,6 +289,50 @@ def _normalize_commands(val, key: str = "", rel: str = "",
     return []
 
 
+def _split_shell_cmd(cmd: str) -> list[tuple[str, str]]:
+    """Split a shell command line into (raw_token, unquoted_token) pairs.
+
+    Respects single and double quotes. Quoted arguments are returned with
+    both the raw form (including quotes) and the unquoted form.
+    """
+    tokens: list[tuple[str, str]] = []
+    i, n = 0, len(cmd)
+    while i < n:
+        if cmd[i].isspace():
+            i += 1
+            continue
+        start = i
+        parts: list[str] = []
+        while i < n and not cmd[i].isspace():
+            ch = cmd[i]
+            if ch in ("'", '"'):
+                quote = ch
+                i += 1
+                buf: list[str] = []
+                while i < n and cmd[i] != quote:
+                    buf.append(cmd[i])
+                    i += 1
+                if i < n:
+                    i += 1
+                parts.append("".join(buf))
+            else:
+                parts.append(ch)
+                i += 1
+        raw = cmd[start:i]
+        tokens.append((raw, "".join(parts)))
+    return tokens
+
+
+def _dequote(cmd: str) -> str:
+    """Command with shell quotes removed, for argument-boundary-insensitive scans.
+
+    ``node "dist/setup.js"`` and ``node 'dist/setup.js'`` must be scanned the
+    same way as the unquoted spelling; the regexes match on the path token, so
+    quotes would otherwise sit between the interpreter and the path and hide it.
+    """
+    return " ".join(val for _raw, val in _split_shell_cmd(cmd))
+
+
 def _is_safe_bootstrap(cmd: str) -> bool:
     """True only if the *entire* command matches an allow-listed pattern."""
     return _SAFE_BOOTSTRAP.match(cmd) is not None
@@ -299,15 +349,18 @@ def check_command(cmd: str, key: str, rel: str, errors: list[str]) -> None:
         return
 
     problems: list[str] = []
-    if FETCH_AND_RUN.search(cmd):
+    # Scan the dequoted form so quoted arguments ("dist/setup.js") are caught
+    # the same way as unquoted ones.
+    scan = _dequote(cmd)
+    if FETCH_AND_RUN.search(scan):
         problems.append(f"pipes a network fetch to a shell ({cmd[:80]!r})")
-    if RUNS_ASSET.search(cmd):
+    if RUNS_ASSET.search(scan):
         problems.append(f"executes a binary/asset path ({cmd[:80]!r})")
-    if RUNS_ASSET_SEED.search(cmd):
+    if RUNS_ASSET_SEED.search(scan):
         problems.append(
             f"executes a .js file from an asset/seed directory ({cmd[:80]!r})"
         )
-    if RUNS_ASSET_DOT_JS.search(cmd):
+    if RUNS_ASSET_DOT_JS.search(scan):
         problems.append(
             f"executes a .js file outside scripts/ ({cmd[:80]!r})"
         )

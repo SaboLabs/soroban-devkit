@@ -90,12 +90,18 @@ _SAFE = re.compile("|".join(SAFE_LIFECYCLE_PATTERNS), re.IGNORECASE)
 # optional short/long flags. \b ensures "mynode" is not mistaken for "node"
 # while "/usr/bin/node" is still recognized.
 _INTERP = r"\b(?:node|sh|bash|pwsh)\b(?:\s+-{1,2}[\w-]+(?:=\S+)?)*\s+"
+# Optional quote immediately around the target path token. The hook value is
+# a shell command line, so arguments may be quoted ("dist/setup.js" or
+# './public/fonts/x.woff2'). The quote is matched as an argument boundary
+# (only adjacent to the path token) rather than stripped from the whole
+# command, so argument boundaries and shell semantics stay intact.
+_Q = r"[\"']?"
 
 # Suspicious: executes a binary/asset path rather than a manifest tool.
 # Both the interpreter and the target path are required.
 RUNS_ASSET = re.compile(
     # interpreter (with optional flags) + file with an asset-like extension
-    _INTERP + r"\S*\.(?:woff2?|ttf|otf|eot|llf)\b",
+    _INTERP + _Q + r"\S*\.(?:woff2?|ttf|otf|eot|llf)\b",
     re.IGNORECASE,
 )
 # interpreter + .js/.mjs/.cjs under an asset/seed directory (the incident
@@ -103,13 +109,13 @@ RUNS_ASSET = re.compile(
 # another directory ("app/dist/setup.js"), or use traversal
 # ("./scripts/../dist/setup.js").
 RUNS_ASSET_SEED = re.compile(
-    _INTERP + r"(?:[^\s]*/)?(?:dist|public/fonts|assets)/"
+    _INTERP + _Q + r"(?:[^\s]*/)?(?:dist|public/fonts|assets)/"
     r"\S*\.(?:js|mjs|cjs)\b",
     re.IGNORECASE,
 )
 # interpreter + ./path with .js that is NOT under scripts/ (project scripts)
 RUNS_ASSET_DOT_JS = re.compile(
-    _INTERP + r"\./+(?!scripts/)\S*\.(?:js|mjs|cjs)\b",
+    _INTERP + _Q + r"\./+(?!scripts/)\S*\.(?:js|mjs|cjs)\b",
     re.IGNORECASE,
 )
 
@@ -135,16 +141,76 @@ OBFUSCATION = re.compile(r"\beval\s*\(|\batob\s*\(", re.IGNORECASE)
 # Base64 blob longer than 120 chars (a common payload-delivery shape)
 BASE64_BLOB = re.compile(r"[A-Za-z0-9+/]{121,}={0,2}")
 
-# "node [flags] <path>.js|mjs|cjs" inside a lifecycle command, used to
-# resolve and inspect the referenced local script. Relative references only
-# (bare, ./-prefixed, ../-prefixed, or ~/prefixed); absolute paths are
-# handled by the fail-closed branch in check_lifecycle_command. Optional
-# Node flags (e.g. --no-warnings, --max-old-space-size=4096) before the path
-# are recognized and skipped; the flag is never mistaken for the script path.
-_LOCAL_SCRIPT_REF = re.compile(
-    r"\bnode\s+(?P<flags>(?:-{1,2}[\w-]+(?:=\S+)?\s+)*)(?P<path>(?:\.{1,2}/)?(?:[\w./-]+/)*[\w.-]+\.(?:js|mjs|cjs)|\.\.?/~[\w./-]+|~/(?:[\w./-]+\.(?:js|mjs|cjs)))",
-    re.IGNORECASE,
-)
+def _split_shell_cmd(cmd: str) -> list[tuple[str, str]]:
+    """Split a shell command line into (raw_token, unquoted_token) pairs.
+
+    Respects single and double quotes. Quoted arguments are returned with
+    both the raw form (including quotes) and the unquoted form. Adjacent
+    tokens separated by whitespace are kept separate; quoted segments are
+    NOT split internally.
+    """
+    tokens: list[tuple[str, str]] = []
+    i, n = 0, len(cmd)
+    while i < n:
+        if cmd[i].isspace():
+            i += 1
+            continue
+        start = i
+        parts: list[str] = []
+        while i < n and not cmd[i].isspace():
+            ch = cmd[i]
+            if ch in ("'", '"'):
+                quote = ch
+                i += 1
+                buf: list[str] = []
+                while i < n and cmd[i] != quote:
+                    buf.append(cmd[i])
+                    i += 1
+                if i < n:
+                    i += 1
+                parts.append("".join(buf))
+            else:
+                parts.append(ch)
+                i += 1
+        raw = cmd[start:i]
+        tokens.append((raw, "".join(parts)))
+    return tokens
+
+
+def _node_script_refs(cmd: str) -> list[tuple[str, str]]:
+    """Every (raw, unquoted) local-script reference in a lifecycle command.
+
+    Tokenizes the command respecting quotes, then walks each ``node``
+    invocation's arguments. Options that consume a separate argument
+    (``--require`` / ``-r``) are consumed together with their argument, so
+    the preload path is never mistaken for the entry script. Every
+    ``.js``/``.mjs``/``.cjs`` token in the argument list is returned —
+    preloads and the entry script alike — so the caller inspects all of
+    them. Unquoted, single-quoted, and double-quoted forms are supported.
+    """
+    refs: list[tuple[str, str]] = []
+    tokens = _split_shell_cmd(cmd)
+    i = 0
+    while i < len(tokens):
+        raw, val = tokens[i]
+        if val.lower() != "node":
+            i += 1
+            continue
+        i += 1
+        while i < len(tokens):
+            raw, val = tokens[i]
+            low = val.lower()
+            if low in ("--require", "-r"):
+                # Separate-argument option: skip the option and its argument.
+                i += 2
+                continue
+            if val.startswith("-"):
+                i += 1
+                continue
+            if re.fullmatch(r".+\.(?:js|mjs|cjs)", val, re.IGNORECASE):
+                refs.append((raw, val))
+            i += 1
+    return refs
 
 
 def _is_safe(cmd: str) -> bool:
@@ -246,18 +312,19 @@ def check_lifecycle_command(cmd: str, key: str, rel: str, errors: list[str],
     for p in problems:
         errors.append(f"{rel}: scripts.{key} {p}")
 
-    # Resolve a referenced local script and inspect its contents. The
+    # Resolve referenced local script(s) and inspect their contents. The
     # allow-list accepts "node ./scripts/x.js" as a spelling, not as a
-    # guarantee that x.js is harmless.
+    # guarantee that x.js is harmless. A node invocation may reference
+    # multiple scripts (e.g. --require ./preload.js ./entry.js); every
+    # local-script reference is inspected, not just the first.
     if base_dir:
-        for m in _LOCAL_SCRIPT_REF.finditer(cmd):
-            script = m.group("path")
+        for raw, script in _node_script_refs(cmd):
             # Only repo-local, relative references are resolvable. An absolute
             # or home-relative reference cannot be inspected, so it fails
             # closed rather than being silently skipped.
             if script.startswith("/") or script.startswith("~"):
                 errors.append(
-                    f"{rel}: scripts.{key} references local script {script} "
+                    f"{rel}: scripts.{key} references local script {raw} "
                     f"outside the package directory; refusing to treat as safe"
                 )
                 continue
@@ -267,7 +334,7 @@ def check_lifecycle_command(cmd: str, key: str, rel: str, errors: list[str],
             if not (resolved_abs == base_abs
                     or resolved_abs.startswith(base_abs + os.sep)):
                 errors.append(
-                    f"{rel}: scripts.{key} references local script {script} "
+                    f"{rel}: scripts.{key} references local script {raw} "
                     f"outside the package directory; refusing to treat as safe"
                 )
                 continue
@@ -275,7 +342,7 @@ def check_lifecycle_command(cmd: str, key: str, rel: str, errors: list[str],
                 # Missing script: npm would fail the install, but the guard
                 # must not report success on an unresolvable reference.
                 errors.append(
-                    f"{rel}: scripts.{key} references local script {script} "
+                    f"{rel}: scripts.{key} references local script {raw} "
                     f"which does not exist; refusing to treat as safe"
                 )
                 continue

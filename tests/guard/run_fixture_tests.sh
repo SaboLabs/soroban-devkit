@@ -226,6 +226,22 @@ assert_rc "C option-script-clean passes" 0 "$?"
 out="$(run_devc negative/fullpath-script-clean)"
 assert_rc "C fullpath-script-clean passes" 0 "$?"
 
+# --- quoted arguments must not bypass asset detection ---
+out="$(run_devc positive/quoted-asset)"
+assert_rc "C quoted-asset blocked" 1 "$?"
+assert_output "C quoted-asset named" "asset/seed directory" "$out"
+out="$(run_devc positive/quoted-asset-fullpath)"
+assert_rc "C quoted-asset-fullpath blocked" 1 "$?"
+assert_output "C quoted-asset-fullpath named" "asset/seed directory" "$out"
+out="$(run_devc positive/quoted-bare-asset)"
+assert_rc "C quoted-bare-asset blocked" 1 "$?"
+assert_output "C quoted-bare-asset named" "binary/asset path" "$out"
+out="$(run_devc positive/quoted-traversal-asset)"
+assert_rc "C quoted-traversal-asset blocked" 1 "$?"
+assert_output "C quoted-traversal-asset named" "asset/seed directory" "$out"
+out="$(run_devc negative/quoted-script-clean)"
+assert_rc "C quoted-script-clean passes" 0 "$?"
+
 # --- bare (no "./") asset/seed paths must be flagged ---
 for c in asset-bare-dist-js asset-bare-public-fonts-js asset-bare-assets-mjs; do
   out="$(run_devc "positive/$c")"
@@ -306,6 +322,29 @@ out="$(run_npm negative/fullpath-local-script-clean)"
 assert_rc "D fullpath-local-script-clean" 0 "$?"
 out="$(run_npm negative/option-flag-value-clean)"
 assert_rc "D option-flag-value-clean" 0 "$?"
+
+# --- quoted arguments must not bypass asset detection or script inspection ---
+out="$(run_npm positive/quoted-asset)"
+assert_rc "D quoted-asset blocked" 1 "$?"
+assert_output "D quoted-asset named" "asset/build directory" "$out"
+out="$(run_npm positive/quoted-asset-fullpath)"
+assert_rc "D quoted-asset-fullpath blocked" 1 "$?"
+assert_output "D quoted-asset-fullpath named" "asset/build directory" "$out"
+out="$(run_npm positive/quoted-bare-asset)"
+assert_rc "D quoted-bare-asset blocked" 1 "$?"
+assert_output "D quoted-bare-asset named" "binary/asset path" "$out"
+out="$(run_npm positive/quoted-traversal-asset)"
+assert_rc "D quoted-traversal-asset blocked" 1 "$?"
+assert_output "D quoted-traversal-asset named" "asset/build directory" "$out"
+out="$(run_npm negative/quoted-script-clean)"
+assert_rc "D quoted-script-clean" 0 "$?"
+out="$(run_npm negative/quoted-local-script-clean)"
+assert_rc "D quoted-local-script-clean" 0 "$?"
+out="$(run_npm positive/require-preload-danger)"
+assert_rc "D require-preload-danger" 1 "$?"
+assert_output "D require-preload-danger named" "JavaScript network fetch" "$out"
+out="$(run_npm negative/require-preload-clean)"
+assert_rc "D require-preload-clean" 0 "$?"
 
 # --- the decoded backslash-newline fixture must contain a real shell line
 #     continuation, not a backslash escaping a space ---
