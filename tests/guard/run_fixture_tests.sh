@@ -146,7 +146,7 @@ for c in clean-minimal clean-npm-ci clean-cargo-build clean-apt-update root-with
 done
 
 # --- dangerous configs (rc=1) ---
-for c in fetch-and-run runs-asset-path poststart-network root-with-hooks initialize-exec ps-fetch npm-ci-chain-curl npm-ci-semicolon-curl cargo-chain-font array-form-danger object-form-danger named-key-setup-danger command-key-with-dangerous-sibling array-argv-node-woff2 array-argv-bash-dist-js array-argv-sh-c-fetch asset-bare-dist-js asset-bare-public-fonts-js asset-bare-assets-mjs object-form-empty object-form-bad-type; do
+for c in fetch-and-run runs-asset-path poststart-network root-with-hooks initialize-exec ps-fetch npm-ci-chain-curl npm-ci-semicolon-curl cargo-chain-font array-form-danger object-form-danger named-key-setup-danger command-key-with-dangerous-sibling array-argv-node-woff2 array-argv-bash-dist-js array-argv-sh-c-fetch asset-bare-dist-js asset-bare-public-fonts-js asset-bare-assets-mjs object-form-empty object-form-bad-type array-element-number array-element-null array-element-object array-element-mixed-object array-element-subarray; do
   out="$(run_devc "positive/$c" 2>&1)"
   assert_rc "C dangerous:$c" 1 "$?"
 done
@@ -179,6 +179,19 @@ out="$(run_devc positive/object-form-empty)"
 assert_rc "C empty object fails loud" 1 "$?"
 out="$(run_devc positive/object-form-bad-type)"
 assert_rc "C bad-type object fails loud" 1 "$?"
+
+# --- malformed array elements must fail closed with a diagnostic ---
+out="$(run_devc positive/array-element-number)"
+assert_rc "C array number fails" 1 "$?"
+assert_output "C array number named" "unsupported element" "$out"
+out="$(run_devc positive/array-element-null)"
+assert_rc "C array null fails" 1 "$?"
+out="$(run_devc positive/array-element-object)"
+assert_rc "C array object fails" 1 "$?"
+out="$(run_devc positive/array-element-mixed-object)"
+assert_rc "C array mixed fails" 1 "$?"
+out="$(run_devc positive/array-element-subarray)"
+assert_rc "C array subarray fails" 1 "$?"
 
 # --- a "command" key must not hide a dangerous sibling key ---
 out="$(run_devc positive/command-key-with-dangerous-sibling)"
@@ -222,7 +235,7 @@ for c in husky-prepare pinst-postinstall npm-run-build tsc-prepare node-gyp-prei
 done
 
 # --- dangerous configs (rc=1) ---
-for c in preinstall-runs-asset preinstall-font postinstall-network postinstall-wget prepare-eval install-base64-blob install-runs-js-outside-scripts husky-chain-curl tsc-semicolon-asset husky-newline-curl husky-backslash-chain-curl echo-chain-asset local-script-danger asset-bare-mjs asset-bare-cjs asset-bare-public-fonts-js asset-bare-dist-js; do
+for c in preinstall-runs-asset preinstall-font postinstall-network postinstall-wget prepare-eval install-base64-blob install-runs-js-outside-scripts husky-chain-curl tsc-semicolon-asset husky-newline-curl husky-backslash-chain-curl echo-chain-asset local-script-danger local-script-js-fetch local-script-escape asset-bare-mjs asset-bare-cjs asset-bare-public-fonts-js asset-bare-dist-js; do
   out="$(run_npm "positive/$c" 2>&1)"
   assert_rc "D dangerous:$c" 1 "$?"
 done
@@ -240,6 +253,16 @@ assert_rc "D local-script-danger" 1 "$?"
 assert_output "D local-script danger named" "local script" "$out"
 out="$(run_npm negative/local-script-benign)"
 assert_rc "D local-script-benign" 0 "$?"
+
+# --- a local script that performs a JavaScript network fetch must fail ---
+out="$(run_npm positive/local-script-js-fetch)"
+assert_rc "D local-script-js-fetch" 1 "$?"
+assert_output "D local-script-js-fetch named" "JavaScript network fetch" "$out"
+
+# --- an absolute local-script reference must fail closed ---
+out="$(run_npm positive/local-script-escape)"
+assert_rc "D local-script-escape" 1 "$?"
+assert_output "D local-script-escape named" "outside the package directory" "$out"
 
 # --- the decoded backslash-newline fixture must contain a real shell line
 #     continuation, not a backslash escaping a space ---

@@ -113,6 +113,16 @@ NETWORK_FETCH = re.compile(
     re.IGNORECASE,
 )
 
+# Suspicious: JavaScript network-fetch idioms inside a referenced local
+# script (the shell fetch regex above does not match these): the standard
+# fetch API, Node http/https/https modules, and the common axios wrapper.
+JS_NETWORK_FETCH = re.compile(
+    r"\b(?:fetch\s*\(|require\s*\(\s*['\"](?:node:)?https?['\"]\s*\)|"
+    r"from\s+['\"](?:node:)?https?['\"]|import\s*\(\s*['\"](?:node:)?https?['\"]\s*\)|"
+    r"axios\s*\.\s*(?:get|post|request)\s*\()",
+    re.IGNORECASE,
+)
+
 # Suspicious: obfuscation markers
 OBFUSCATION = re.compile(r"\beval\s*\(|\batob\s*\(", re.IGNORECASE)
 
@@ -121,9 +131,10 @@ BASE64_BLOB = re.compile(r"[A-Za-z0-9+/]{121,}={0,2}")
 
 # "node <path>.js|mjs|cjs" inside a lifecycle command, used to resolve and
 # inspect the referenced local script. Relative references only (bare,
-# ./-prefixed, or ../-prefixed).
+# ./-prefixed, ../-prefixed, or ~/prefixed); absolute paths are handled by the
+# fail-closed branch in check_lifecycle_command.
 _LOCAL_SCRIPT_REF = re.compile(
-    r"\bnode\s+(?P<path>(?:\.{1,2}/)?[\w./-]+\.(?:js|mjs|cjs))\b",
+    r"\bnode\s+(?P<path>(?:\.{1,2}/)?(?:[\w./-]+/)*[\w.-]+\.(?:js|mjs|cjs)|\.\.?/~[\w./-]+|\~/(?:[\w./-]+\.(?:js|mjs|cjs)))",
     re.IGNORECASE,
 )
 
@@ -148,6 +159,7 @@ def _looks_like_base64(token: str) -> bool:
 # (network fetch, eval/atob, base64 blobs, asset-path execution).
 SCRIPT_DANGER_PATTERNS: list[tuple[str, re.Pattern[str]]] = [
     ("network fetch", NETWORK_FETCH),
+    ("JavaScript network fetch", JS_NETWORK_FETCH),
     ("eval()/atob() obfuscation", OBFUSCATION),
     ("base64 blob", BASE64_BLOB),
     ("asset-path execution", RUNS_ASSET),
@@ -232,8 +244,14 @@ def check_lifecycle_command(cmd: str, key: str, rel: str, errors: list[str],
     if base_dir:
         for m in _LOCAL_SCRIPT_REF.finditer(cmd):
             script = m.group("path")
-            # Only repo-local, relative references are resolvable.
+            # Only repo-local, relative references are resolvable. An absolute
+            # or home-relative reference cannot be inspected, so it fails
+            # closed rather than being silently skipped.
             if script.startswith("/") or script.startswith("~"):
+                errors.append(
+                    f"{rel}: scripts.{key} references local script {script} "
+                    f"outside the package directory; refusing to treat as safe"
+                )
                 continue
             resolved = os.path.normpath(os.path.join(base_dir, script))
             base_abs = os.path.abspath(base_dir)

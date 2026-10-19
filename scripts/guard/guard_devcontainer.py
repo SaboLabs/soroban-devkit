@@ -239,7 +239,20 @@ def _normalize_commands(val, key: str = "", rel: str = "",
     if isinstance(val, str):
         return [val]
     if isinstance(val, list):
-        return [str(p) if not isinstance(p, str) else p for p in val]
+        # Per the devcontainer spec, an array-form hook is a list of *strings*
+        # (an argv, executed directly without a shell). We do NOT stringify
+        # numbers, objects, or null into command text — an element of the wrong
+        # type is a malformed hook and fails closed with a specific diagnostic.
+        cmds: list[str] = []
+        for p in val:
+            if isinstance(p, str):
+                cmds.append(p)
+            elif errors is not None:
+                errors.append(
+                    f"{rel}: {key} array-form command has an unsupported "
+                    f"element of type {type(p).__name__} (expected a string)"
+                )
+        return cmds
     if isinstance(val, dict):
         cmds: list[str] = []
         saw_value = False
@@ -327,18 +340,22 @@ def check_devcontainer(path: str, errors: list[str], rel: str) -> None:
 
         cmds = _normalize_commands(val, key, rel, errors)
         if not cmds:
-            errors.append(
-                f"{rel}: {key} is an unsupported named-command shape "
-                f"(empty object or non-string command value); refusing to "
-                f"treat it as safe"
-            )
+            # A specific diagnostic was already appended by _normalize_commands
+            # for the malformed element; only add the generic one when the
+            # value was an empty/unsupported object shape.
+            if not any(key in e for e in errors):
+                errors.append(
+                    f"{rel}: {key} is an unsupported named-command shape "
+                    f"(empty object or non-string command value); refusing to "
+                    f"treat it as safe"
+                )
             continue
         hooks_found.append(key)
 
         if isinstance(val, list):
             # Array form executes directly via exec (no shell). Detect
             # interpreter+path across argv elements, which the per-element
-            # scan alone misses.
+            # scan alone misses. Only well-formed string argv participates.
             argv = [p for p in val if isinstance(p, str)]
             if len(argv) >= 2 and argv[0].lower() in ("node", "sh", "bash", "pwsh") \
                     and not argv[1].startswith("-"):

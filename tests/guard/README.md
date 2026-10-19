@@ -141,8 +141,14 @@ Hook value forms accepted per the devcontainer spec: **string**, **array**
 **object** — a named-command object. The devcontainer CLI accepts named
 commands under *any* property key (e.g. `"command"`, `"setup"`, …), so every
 string/array value in the object is normalized and scanned; a `"command"` key
-does not hide a dangerous sibling. Empty objects and non-string values fail
-loud with a diagnostic rather than silently passing.
+does not hide a dangerous sibling.
+
+An array-form hook must contain **only strings**. Malformed elements
+(`42`, `null`, a nested object, a nested array) are **not** stringified into
+command text — they fail closed with a diagnostic naming the offending type
+(`postCreateCommand array-form command has an unsupported element of type
+int`), so a malicious command cannot hide behind a non-string element. Empty
+named-command objects and non-string command values likewise fail loud.
 
 ### Known false positives
 
@@ -197,11 +203,14 @@ flagged. The allow-list only suppresses noise for known-good single
 commands.
 
 `node <path>.js` invocations are additionally resolved and the referenced
-local script is scanned for the same danger patterns (network fetch,
+local script is scanned for the same danger patterns (shell network fetch,
+JavaScript network fetch — `fetch(`, `require('https')`, `axios.get(` —,
 `eval(`/`atob(`, base64 blobs, asset-path execution). The allow-listed
-spelling of a local script is not by itself a safety claim. This is **not** a
-JavaScript malware detector — it catches the same shapes the lifecycle-command
-scan catches, not arbitrary malicious logic.
+spelling of a local script is not by itself a safety claim. A relative
+reference that escapes the package directory, or an absolute/`~` reference
+that cannot be resolved, fails closed. This is **not** a JavaScript malware
+detector — it catches the shapes the lifecycle-command scan catches plus the
+common JS fetch idioms, not arbitrary malicious logic.
 
 ### Known false positives
 
@@ -218,9 +227,10 @@ narrow a danger pattern, not to widen an allow-list.
   that avoids every pattern below will pass (for example a payload built
   via shell command substitution rather than `eval(`).
 * The local-script content check (item 5) is shallow: it scans only the
-  same danger patterns used for the lifecycle command itself. It does not
-  statically analyze JavaScript semantics, resolve `require`/`import`
-  chains, or evaluate conditional execution.
+  same danger patterns used for the lifecycle command itself, plus the
+  common JavaScript fetch idioms (`fetch(`, `require('https')`,
+  `axios.get(`). It does not statically analyze JavaScript semantics,
+  resolve `require`/`import` chains, or evaluate conditional execution.
 
 ## Tests
 
