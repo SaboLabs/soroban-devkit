@@ -244,16 +244,40 @@ jobs:
         PREV="$(printf '%s' "$VER" | awk -F. '{printf "%s.%s.0", $1, $2-1}')"
         echo "stale pin to look for: $PREV"
         # crates.io legitimately lags: lines that name crates.io may state the
-        # older version, so exclude them explicitly.
-        MATCHES="$(grep -rn "$PREV" README.md docs/ --include='*.md' \
+        # older version, so exclude them explicitly. ROADMAP also records
+        # shipped milestones and prior tags; those historical mentions are not
+        # current release pins. Keep the exclusion limited to those markers so
+        # a stale current-release statement elsewhere in ROADMAP still fails.
+        MATCHES="$(grep -rn "$PREV" README.md ROADMAP.md docs/ --include='*.md' \
           | grep -v '^docs/releases/' \
-          | grep -vi 'crates.io\|published\|--version \|lacks\|predates\|older v' || true)"
+          | grep -vi 'crates.io\|published\|--version \|lacks\|predates\|older v' \
+          | grep -viE '^ROADMAP\.md:[0-9]+:.*(Shipped in|shipped \(|Prior tagged releases:)' || true)"
         if [[ -n "$MATCHES" ]]; then
           echo "::error::stale $PREV reference(s) in current documentation:"
           echo "$MATCHES"
           exit 1
         fi
-        echo "OK: no stale $PREV pins outside crates.io notes and release history"
+
+        # The composite Action is an installable artifact whose default must
+        # name a real release tag. Its version pin lives in YAML, not Markdown.
+        ACTION_DEFAULT="$(awk '
+          /^  sdkt-version:/ { in_input=1; next }
+          in_input && /^  [A-Za-z0-9_-]+:/ { exit }
+          in_input && /^[[:space:]]+default:/ { print NR ":" $2; exit }
+        ' .github/actions/sdkt/action.yml)"
+        if [[ -z "$ACTION_DEFAULT" ]]; then
+          echo "::error::.github/actions/sdkt/action.yml: missing default for sdkt-version input"
+          exit 1
+        fi
+        ACTION_LINE="${ACTION_DEFAULT%%:*}"
+        ACTION_VERSION="${ACTION_DEFAULT#*:}"
+        ACTION_VERSION="$(printf '%s' "$ACTION_VERSION" | sed "s/[\"']//g")"
+        if ! git ls-remote --exit-code --tags origin "refs/tags/$ACTION_VERSION" >/dev/null; then
+          echo "::error::.github/actions/sdkt/action.yml:$ACTION_LINE: sdkt-version default '$ACTION_VERSION' is not a tag on origin"
+          exit 1
+        fi
+
+        echo "OK: no stale $PREV pins outside crates.io notes and release history; Action default $ACTION_VERSION exists"
 
   onboarding-smoke:
     name: offline onboarding smoke test
