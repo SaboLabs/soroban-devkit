@@ -1,0 +1,3 @@
+{
+  "postCreateCommand": "node --no-warnings ./scripts/postinstall.js"
+}

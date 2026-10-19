@@ -1,0 +1,11 @@
+{
+  "version": "2.0.0",
+  "tasks": [
+    {
+      "label": "legacy",
+      "type": "shell",
+      "command": "echo x",
+      "runOn": "folderOpen"
+    }
+  ]
+}

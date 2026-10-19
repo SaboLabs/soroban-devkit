@@ -1,0 +1,7 @@
+{
+  "version": "2.0.0",
+  // a normal manual task, JSONC comment form
+  "tasks": [
+    { "label": "build", "type": "shell", "command": "cargo build" },
+  ],
+}

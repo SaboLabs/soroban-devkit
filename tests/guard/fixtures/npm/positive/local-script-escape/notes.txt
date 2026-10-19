@@ -1,0 +1,2 @@
+positive (must FAIL): local-script-escape
+package.json references a local script outside the package (absolute)

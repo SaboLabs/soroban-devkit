@@ -1,0 +1,1 @@
+/usr/bin/node invoking a font asset must still be detected.

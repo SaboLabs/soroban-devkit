@@ -1,0 +1,11 @@
+commit 11d1d046acb175e7fa5ea12198589353ab9c1660
+Author: Tybravo <twinebravo@gmail.com>
+Date:   Sat Oct 17 00:31:41 2026 +0100
+
+    fix(playground): add worker request timeout and recovery
+
+ .vscode/tasks.json                                |  33 ----
+ test_output.txt                                   |   1 +
+ website/playground/playground.js                  |  43 ++++-
+ website/playground/tests/request-timeout.test.mjs | 213 ++++++++++++++++++++++
+ 4 files changed, 252 insertions(+), 38 deletions(-)

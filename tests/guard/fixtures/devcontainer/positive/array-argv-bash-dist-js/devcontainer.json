@@ -1,0 +1,6 @@
+{
+  "postCreateCommand": [
+    "bash",
+    "./dist/setup.js"
+  ]
+}

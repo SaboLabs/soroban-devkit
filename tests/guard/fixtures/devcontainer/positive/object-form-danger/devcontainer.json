@@ -1,0 +1,5 @@
+{
+  "postCreateCommand": {
+    "command": "node ./dist/setup.js"
+  }
+}

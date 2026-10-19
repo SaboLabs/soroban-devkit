@@ -1,0 +1,61 @@
+# CODEOWNERS — supply-chain sensitive paths
+#
+# Require maintainer review before changes to paths that can execute code or
+# ship binary assets. GitHub evaluates rules top-to-bottom and applies the
+# LAST matching pattern; keep the most specific entries last.
+#
+# NOTE: This file assigns ownership and records intent. It becomes a
+# MANDATORY review rule only when branch protection enables
+# "Require review from Code Owners" on `main`. As of 2026-10-18 that rule
+# is NOT enabled (branch protection returns 404 / empty ruleset), so this
+# file alone does not block any merge.
+
+# Editor / dev-container auto-execution surface
+/.vscode/                   @naninu123
+/.devcontainer/             @naninu123
+
+# npm lifecycle hooks
+/package.json               @naninu123
+
+# CI workflows (can inject arbitrary runner steps)
+/.github/workflows/         @naninu123
+
+# The CODEOWNERS file itself
+/.github/CODEOWNERS          @naninu123
+
+# Guardrail code + fixtures (can weaken the safety net)
+/scripts/guard/              @naninu123
+/tests/guard/                @naninu123
+
+# Binary / font assets (the incident disguised JS as a font here)
+/public/fonts/               @naninu123
+/dist/                       @naninu123
+
+# Cargo manifests (dependency resolution — supply-chain attack surface)
+/Cargo.toml                  @naninu123
+/crates/*/Cargo.toml         @naninu123
+/tests/fixtures/testnet-smoke/Cargo.toml @naninu123
+
+# Lockfiles (pin exact dependency versions)
+/Cargo.lock                  @naninu123
+/crates/sdkt-playground/Cargo.lock @naninu123
+/tests/fixtures/testnet-smoke/Cargo.lock @naninu123
+
+# Build scripts (execute at compile time)
+/crates/sdkt-cli/build.rs    @naninu123
+/crates/sdkt-core/src/build.rs @naninu123
+
+# GitHub Actions (can inject arbitrary runner steps)
+/.github/actions/            @naninu123
+
+# Dependabot config (can change dependency update policy)
+/.github/dependabot.yml      @naninu123
+
+# Build orchestration (Makefile can run arbitrary commands)
+/Makefile                    @naninu123
+
+# Install script (executes on user machines)
+/install.sh                  @naninu123
+
+# Playground build script (produces wasm artifacts)
+/website/playground/build.sh @naninu123

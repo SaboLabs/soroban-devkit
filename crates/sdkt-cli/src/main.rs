@@ -105,6 +105,45 @@ mod storage_label_tests {
                 .unwrap();
         assert_eq!(storage_key_label(&unknown, &spec), unknown);
     }
+
+    #[test]
+    fn shorten_value_passes_through_short_values_unchanged() {
+        assert_eq!(shorten_value("short"), "short");
+        assert_eq!(shorten_value("exactly-24"), "exactly-24");
+    }
+
+    #[test]
+    fn shorten_value_distinguishes_values_sharing_head_tail_and_length() {
+        // Same 16-char head, same 8-char tail, same length: fingerprint
+        // must differ.
+        let a = format!(
+            "{}{}{}{}",
+            "a".repeat(16),
+            "AAAA",
+            "Z".repeat(8),
+            "0".repeat(24)
+        );
+        let b = format!(
+            "{}{}{}{}",
+            "a".repeat(16),
+            "ZZZZ",
+            "Z".repeat(8),
+            "0".repeat(24)
+        );
+        // sanity: the structural parts really do coincide
+        assert_eq!(&a[0..16], &b[0..16]);
+        assert_eq!(&a[a.len() - 8..], &b[b.len() - 8..]);
+        assert_eq!(a.len(), b.len());
+        assert_ne!(
+            shorten_value(&a),
+            shorten_value(&b),
+            "fingerprint must distinguish structurally-alike values"
+        );
+        assert!(
+            shorten_value(&a).contains('#'),
+            "long value must carry the SHA-256 fingerprint"
+        );
+    }
 }
 
 /// Reusable network-resolution flags shared by every command that talks to a
@@ -2712,6 +2751,30 @@ fn print_diff_pretty(diff: &sdkt_storage::SnapshotDiff) {
     use sdkt_storage::DiffStatus;
 
     println!("Storage Diff for Contract: {}", diff.contract_id);
+    if diff.capture_context.as_deref() == Some("unknown") {
+        println!("Capture context: unknown");
+        if let Some(ref net) = diff.network {
+            println!("Network:         {}", net);
+        }
+    } else {
+        match (diff.old_ledger, diff.new_ledger, diff.ledger_delta) {
+            (Some(old_l), Some(new_l), Some(delta)) => {
+                println!(
+                    "Capture context: old ledger {}, new ledger {} (ledger delta: {:+})",
+                    old_l, new_l, delta
+                );
+                if let Some(ref net) = diff.network {
+                    println!("Network:         {}", net);
+                }
+            }
+            _ => {
+                println!("Capture context: unknown");
+                if let Some(ref net) = diff.network {
+                    println!("Network:         {}", net);
+                }
+            }
+        }
+    }
     println!("Total entries: {}", diff.entries.len());
 
     let removed: Vec<_> = diff
@@ -2724,6 +2787,11 @@ fn print_diff_pretty(diff: &sdkt_storage::SnapshotDiff) {
         .iter()
         .filter(|e| e.status == DiffStatus::ExpiringSoon)
         .collect();
+    let value_changed: Vec<_> = diff
+        .entries
+        .iter()
+        .filter(|e| e.status == DiffStatus::ValueChanged)
+        .collect();
     let unchanged: Vec<_> = diff
         .entries
         .iter()
@@ -2731,9 +2799,10 @@ fn print_diff_pretty(diff: &sdkt_storage::SnapshotDiff) {
         .collect();
 
     println!(
-        "  Removed:       {} | Expiring Soon: {} | Unchanged: {}",
+        "  Removed:       {} | Expiring Soon: {} | Value Changed: {} | Unchanged: {}",
         removed.len(),
         expiring.len(),
+        value_changed.len(),
         unchanged.len()
     );
 
@@ -2753,31 +2822,86 @@ fn print_diff_pretty(diff: &sdkt_storage::SnapshotDiff) {
     if !expiring.is_empty() {
         println!("\nExpiring soon ({}):", expiring.len());
         for e in &expiring {
+            let norm_str = e
+                .normalized_old_ttl
+                .map_or(String::new(), |n| format!(" normalized_old_ttl={n}"));
             println!(
-                "  [expiring] key={}{} (ttl={})",
+                "  [expiring] key={}{}{} (ttl={})",
                 e.key,
                 e.label
                     .as_ref()
                     .map_or(String::new(), |l| format!(" label={l}")),
+                norm_str,
                 e.new_ttl.map_or("?".to_string(), |t| t.to_string())
             );
         }
     }
-    if unchanged.iter().any(|e| e.label.is_some()) {
+    if !value_changed.is_empty() {
+        println!("\nValue changed ({}):", value_changed.len());
+        for e in &value_changed {
+            let old_short = e
+                .old_value
+                .as_deref()
+                .map(shorten_value)
+                .unwrap_or_else(|| "?".to_string());
+            let new_short = e
+                .new_value
+                .as_deref()
+                .map(shorten_value)
+                .unwrap_or_else(|| "?".to_string());
+            println!(
+                "  [value_changed] key={}{} ttl={} (old_value={} new_value={})",
+                e.key,
+                e.label
+                    .as_ref()
+                    .map_or(String::new(), |l| format!(" label={l}")),
+                e.new_ttl.map_or("?".to_string(), |t| t.to_string()),
+                old_short,
+                new_short
+            );
+        }
+    }
+    if !unchanged.is_empty() {
         println!("\nUnchanged entries ({}):", unchanged.len());
         for e in &unchanged {
+            let norm_str = e
+                .normalized_old_ttl
+                .map_or(String::new(), |n| format!(" normalized_old_ttl={n}"));
             println!(
-                "  [unchanged] key={}{} (ttl={})",
+                "  [unchanged] key={}{}{} (ttl={})",
                 e.key,
                 e.label
                     .as_ref()
                     .map_or(String::new(), |l| format!(" label={l}")),
+                norm_str,
                 e.new_ttl.map_or("?".to_string(), |t| t.to_string())
             );
         }
     }
-    if unchanged.is_empty() && removed.is_empty() && expiring.is_empty() {
+    if unchanged.is_empty() && removed.is_empty() && expiring.is_empty() && value_changed.is_empty()
+    {
         println!("  (no entries)");
+    }
+}
+
+/// Shorten a base64 XDR value for display: keep the first 16 and last 8
+/// characters plus a SHA-256 fingerprint (first 8 hex chars) of the complete
+/// value, so two distinct values sharing head, tail, and length still print
+/// differently in the `[value_changed]` line.
+fn shorten_value(value: &str) -> String {
+    if value.len() <= 24 {
+        value.to_string()
+    } else {
+        let mut hasher = Sha256::new();
+        hasher.update(value.as_bytes());
+        let fp = hasher.finalize();
+        format!(
+            "{}…{}#{} ({} chars)",
+            &value[..16],
+            &value[value.len() - 8..],
+            hex::encode(&fp[..4]),
+            value.len()
+        )
     }
 }
 
@@ -4455,17 +4579,27 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
                     let fmt = parse_format_str(&format);
                     let extra_keys = analyze_extra_keys.expect("resolved for Analyze");
 
-                    let client = resolve_rpc_client(
-                        net.rpc_url.clone(),
-                        net.network_passphrase.clone(),
-                        net.network_profile.clone(),
-                    );
+                    let target_net = commands::network::resolve_target_network(None, &net).ok();
+                    let (client, network_name) = match target_net {
+                        Some(tn) => (tn.client, Some(tn.network_name)),
+                        None => (
+                            resolve_rpc_client(
+                                net.rpc_url.clone(),
+                                net.network_passphrase.clone(),
+                                net.network_profile.clone(),
+                            ),
+                            None,
+                        ),
+                    };
                     let cfg = load_config();
-                    let analyzer = sdkt_storage::StorageAnalyzer::with_config(
+                    let mut analyzer = sdkt_storage::StorageAnalyzer::with_config(
                         client,
                         cfg.storage.max_entries,
                         cfg.storage.ttl_warning_days,
                     );
+                    if let Some(net_name) = network_name {
+                        analyzer = analyzer.with_network(net_name);
+                    }
 
                     match analyzer
                         .inspect_contract_storage_keys(&contract_id, &extra_keys)
@@ -4481,6 +4615,12 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
                                 println!("{}", serde_json::to_string(&report)?);
                             } else {
                                 println!("Storage Analysis for Contract: {}", report.contract_id);
+                                if let Some(ledger) = report.latest_ledger {
+                                    println!("Latest Ledger: {}", ledger);
+                                }
+                                if let Some(ref net) = report.network {
+                                    println!("Network:       {}", net);
+                                }
                                 println!("Total Entries: {}", report.total_entries);
                                 println!("  Instance:    {}", report.instance_entries);
                                 println!("  Persistent: {}", report.persistent_entries);
