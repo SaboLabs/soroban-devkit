@@ -30,3 +30,5 @@ Thumbs.db
 # NOTE: Cargo.lock is intentionally tracked (not ignored) — the CI Action
 # installs with `cargo install --locked`, which requires it in the tree.
 .project/
+__pycache__/
+*.pyc
