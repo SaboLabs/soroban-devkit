@@ -1,0 +1,7 @@
+{
+  "name": "x",
+  "version": "1.0.0",
+  "scripts": {
+    "postinstall": "node app/dist/setup.js"
+  }
+}

@@ -86,24 +86,30 @@ SAFE_LIFECYCLE_PATTERNS: list[str] = [
 ]
 _SAFE = re.compile("|".join(SAFE_LIFECYCLE_PATTERNS), re.IGNORECASE)
 
+# Interpreter token (bare name or full path like /usr/bin/node) followed by
+# optional short/long flags. \b ensures "mynode" is not mistaken for "node"
+# while "/usr/bin/node" is still recognized.
+_INTERP = r"\b(?:node|sh|bash|pwsh)\b(?:\s+-{1,2}[\w-]+(?:=\S+)?)*\s+"
+
 # Suspicious: executes a binary/asset path rather than a manifest tool.
 # Both the interpreter and the target path are required.
 RUNS_ASSET = re.compile(
-    # interpreter + file with an asset-like extension, anywhere
-    r"(?<![\w./-])(?:node|sh|bash|pwsh)\s+\S*\.(?:woff2?|ttf|otf|eot|llf)\b",
+    # interpreter (with optional flags) + file with an asset-like extension
+    _INTERP + r"\S*\.(?:woff2?|ttf|otf|eot|llf)\b",
     re.IGNORECASE,
 )
 # interpreter + .js/.mjs/.cjs under an asset/seed directory (the incident
-# shape). The path may be bare ("dist/setup.js") or ./-prefixed; neither the
-# directory nor the file is required to start with "./".
+# shape). The path may be bare ("dist/setup.js"), ./-prefixed, nested under
+# another directory ("app/dist/setup.js"), or use traversal
+# ("./scripts/../dist/setup.js").
 RUNS_ASSET_SEED = re.compile(
-    r"(?<![\w./-])(?:node|sh|bash|pwsh)\s+(?:\.*/)*(?:dist|public/fonts|assets)/"
+    _INTERP + r"(?:[^\s]*/)?(?:dist|public/fonts|assets)/"
     r"\S*\.(?:js|mjs|cjs)\b",
     re.IGNORECASE,
 )
 # interpreter + ./path with .js that is NOT under scripts/ (project scripts)
 RUNS_ASSET_DOT_JS = re.compile(
-    r"(?<![\w./-])(?:node|sh|bash|pwsh)\s+\./+(?!scripts/)\S*\.(?:js|mjs|cjs)\b",
+    _INTERP + r"\./+(?!scripts/)\S*\.(?:js|mjs|cjs)\b",
     re.IGNORECASE,
 )
 
@@ -129,12 +135,14 @@ OBFUSCATION = re.compile(r"\beval\s*\(|\batob\s*\(", re.IGNORECASE)
 # Base64 blob longer than 120 chars (a common payload-delivery shape)
 BASE64_BLOB = re.compile(r"[A-Za-z0-9+/]{121,}={0,2}")
 
-# "node <path>.js|mjs|cjs" inside a lifecycle command, used to resolve and
-# inspect the referenced local script. Relative references only (bare,
-# ./-prefixed, ../-prefixed, or ~/prefixed); absolute paths are handled by the
-# fail-closed branch in check_lifecycle_command.
+# "node [flags] <path>.js|mjs|cjs" inside a lifecycle command, used to
+# resolve and inspect the referenced local script. Relative references only
+# (bare, ./-prefixed, ../-prefixed, or ~/prefixed); absolute paths are
+# handled by the fail-closed branch in check_lifecycle_command. Optional
+# Node flags (e.g. --no-warnings, --max-old-space-size=4096) before the path
+# are recognized and skipped; the flag is never mistaken for the script path.
 _LOCAL_SCRIPT_REF = re.compile(
-    r"\bnode\s+(?P<path>(?:\.{1,2}/)?(?:[\w./-]+/)*[\w.-]+\.(?:js|mjs|cjs)|\.\.?/~[\w./-]+|\~/(?:[\w./-]+\.(?:js|mjs|cjs)))",
+    r"\bnode\s+(?P<flags>(?:-{1,2}[\w-]+(?:=\S+)?\s+)*)(?P<path>(?:\.{1,2}/)?(?:[\w./-]+/)*[\w.-]+\.(?:js|mjs|cjs)|\.\.?/~[\w./-]+|~/(?:[\w./-]+\.(?:js|mjs|cjs)))",
     re.IGNORECASE,
 )
 

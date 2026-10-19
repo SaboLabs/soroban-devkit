@@ -140,13 +140,13 @@ run_devc() {
 }
 
 # --- safe configs (rc=0) ---
-for c in clean-minimal clean-npm-ci clean-cargo-build clean-apt-update root-without-hooks jsonc-comments-trailing-comma clean-bun-install clean-pip-install array-form-clean object-form-clean named-key-setup-clean named-key-multi-clean array-form-argv-clean; do
+for c in clean-minimal clean-npm-ci clean-cargo-build clean-apt-update root-without-hooks jsonc-comments-trailing-comma clean-bun-install clean-pip-install array-form-clean object-form-clean named-key-setup-clean named-key-multi-clean array-form-argv-clean option-script-clean fullpath-script-clean; do
   out="$(run_devc "negative/$c" 2>&1)"
   assert_rc "C safe:$c" 0 "$?"
 done
 
 # --- dangerous configs (rc=1) ---
-for c in fetch-and-run runs-asset-path poststart-network root-with-hooks initialize-exec ps-fetch npm-ci-chain-curl npm-ci-semicolon-curl cargo-chain-font array-form-danger object-form-danger named-key-setup-danger command-key-with-dangerous-sibling array-argv-node-woff2 array-argv-bash-dist-js array-argv-sh-c-fetch asset-bare-dist-js asset-bare-public-fonts-js asset-bare-assets-mjs object-form-empty object-form-bad-type array-element-number array-element-null array-element-object array-element-mixed-object array-element-subarray; do
+for c in fetch-and-run runs-asset-path poststart-network root-with-hooks initialize-exec ps-fetch npm-ci-chain-curl npm-ci-semicolon-curl cargo-chain-font array-form-danger object-form-danger named-key-setup-danger command-key-with-dangerous-sibling array-argv-node-woff2 array-argv-bash-dist-js array-argv-sh-c-fetch asset-bare-dist-js asset-bare-public-fonts-js asset-bare-assets-mjs object-form-empty object-form-bad-type array-element-number array-element-null array-element-object array-element-mixed-object array-element-subarray option-asset fullpath-asset nested-seed traversal-seed; do
   out="$(run_devc "positive/$c" 2>&1)"
   assert_rc "C dangerous:$c" 1 "$?"
 done
@@ -208,6 +208,24 @@ out="$(run_devc positive/array-argv-sh-c-fetch)"
 assert_rc "C array argv sh -c fetch" 1 "$?"
 assert_output "C array argv sh -c named" "network fetch" "$out"
 
+# --- interpreter options / full paths must not bypass asset detection ---
+out="$(run_devc positive/option-asset)"
+assert_rc "C option-asset blocked" 1 "$?"
+assert_output "C option-asset named" "binary/asset path" "$out"
+out="$(run_devc positive/fullpath-asset)"
+assert_rc "C fullpath-asset blocked" 1 "$?"
+assert_output "C fullpath-asset named" "binary/asset path" "$out"
+out="$(run_devc positive/nested-seed)"
+assert_rc "C nested-seed blocked" 1 "$?"
+assert_output "C nested-seed named" "asset/seed directory" "$out"
+out="$(run_devc positive/traversal-seed)"
+assert_rc "C traversal-seed blocked" 1 "$?"
+assert_output "C traversal-seed named" "asset/seed directory" "$out"
+out="$(run_devc negative/option-script-clean)"
+assert_rc "C option-script-clean passes" 0 "$?"
+out="$(run_devc negative/fullpath-script-clean)"
+assert_rc "C fullpath-script-clean passes" 0 "$?"
+
 # --- bare (no "./") asset/seed paths must be flagged ---
 for c in asset-bare-dist-js asset-bare-public-fonts-js asset-bare-assets-mjs; do
   out="$(run_devc "positive/$c")"
@@ -229,13 +247,13 @@ run_npm() {
 }
 
 # --- safe configs (rc=0) ---
-for c in husky-prepare pinst-postinstall npm-run-build tsc-prepare node-gyp-preinstall no-lifecycle-hooks no-scripts-key echo-postinstall patch-package npm-run-build-chain npm-run-if-present node-scripts-postinstall; do
+for c in husky-prepare pinst-postinstall npm-run-build tsc-prepare node-gyp-preinstall no-lifecycle-hooks no-scripts-key echo-postinstall patch-package npm-run-build-chain npm-run-if-present node-scripts-postinstall option-local-script-clean fullpath-local-script-clean option-flag-value-clean; do
   out="$(run_npm "negative/$c" 2>&1)"
   assert_rc "D safe:$c" 0 "$?"
 done
 
 # --- dangerous configs (rc=1) ---
-for c in preinstall-runs-asset preinstall-font postinstall-network postinstall-wget prepare-eval install-base64-blob install-runs-js-outside-scripts husky-chain-curl tsc-semicolon-asset husky-newline-curl husky-backslash-chain-curl echo-chain-asset local-script-danger local-script-js-fetch local-script-escape asset-bare-mjs asset-bare-cjs asset-bare-public-fonts-js asset-bare-dist-js; do
+for c in preinstall-runs-asset preinstall-font postinstall-network postinstall-wget prepare-eval install-base64-blob install-runs-js-outside-scripts husky-chain-curl tsc-semicolon-asset husky-newline-curl husky-backslash-chain-curl echo-chain-asset local-script-danger local-script-js-fetch local-script-escape asset-bare-mjs asset-bare-cjs asset-bare-public-fonts-js asset-bare-dist-js option-asset fullpath-asset nested-seed traversal-seed option-local-script-danger; do
   out="$(run_npm "positive/$c" 2>&1)"
   assert_rc "D dangerous:$c" 1 "$?"
 done
@@ -264,11 +282,36 @@ out="$(run_npm positive/local-script-escape)"
 assert_rc "D local-script-escape" 1 "$?"
 assert_output "D local-script-escape named" "outside the package directory" "$out"
 
+# --- interpreter options / full paths must not bypass asset detection ---
+out="$(run_npm positive/option-asset)"
+assert_rc "D option-asset blocked" 1 "$?"
+assert_output "D option-asset named" "binary/asset path" "$out"
+out="$(run_npm positive/fullpath-asset)"
+assert_rc "D fullpath-asset blocked" 1 "$?"
+assert_output "D fullpath-asset named" "binary/asset path" "$out"
+out="$(run_npm positive/nested-seed)"
+assert_rc "D nested-seed blocked" 1 "$?"
+assert_output "D nested-seed named" "asset/build directory" "$out"
+out="$(run_npm positive/traversal-seed)"
+assert_rc "D traversal-seed blocked" 1 "$?"
+assert_output "D traversal-seed named" "asset/build directory" "$out"
+
+# --- a local script invoked WITH interpreter flags must still be inspected ---
+out="$(run_npm positive/option-local-script-danger)"
+assert_rc "D option-local-script-danger" 1 "$?"
+assert_output "D option-local-script-danger named" "JavaScript network fetch" "$out"
+out="$(run_npm negative/option-local-script-clean)"
+assert_rc "D option-local-script-clean" 0 "$?"
+out="$(run_npm negative/fullpath-local-script-clean)"
+assert_rc "D fullpath-local-script-clean" 0 "$?"
+out="$(run_npm negative/option-flag-value-clean)"
+assert_rc "D option-flag-value-clean" 0 "$?"
+
 # --- the decoded backslash-newline fixture must contain a real shell line
 #     continuation, not a backslash escaping a space ---
-python3 - <<'PY'
+python3 - "$FIX/npm/positive/husky-backslash-chain-curl/package.json" <<'PY'
 import json, sys
-p = "tests/guard/fixtures/npm/positive/husky-backslash-chain-curl/package.json"
+p = sys.argv[1]
 v = json.load(open(p))["scripts"]["postinstall"]
 if "\\\n" not in v:
     print("FAIL backslash-newline not exercised: %r" % v); sys.exit(1)

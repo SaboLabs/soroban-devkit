@@ -104,24 +104,30 @@ FETCH_AND_RUN = re.compile(
     re.IGNORECASE | re.DOTALL,
 )
 
+# Interpreter token (bare name or full path like /usr/bin/node) followed by
+# optional short/long flags. \b ensures "mynode" is not mistaken for "node"
+# while "/usr/bin/node" is still recognized.
+_INTERP = r"\b(?:node|sh|bash|pwsh)\b(?:\s+-{1,2}[\w-]+(?:=\S+)?)*\s+"
+
 # Suspicious: execute a binary/asset path rather than a manifest tool.
 # Narrowed so legitimate project scripts (node ./scripts/x.js) pass.
 RUNS_ASSET = re.compile(
-    # interpreter + path with an asset-like extension, anywhere
-    r"(?<![\w./-])(?:node|sh|bash|pwsh)\s+\S*\.(?:woff2?|ttf|otf|eot|llf)\b(?:\s|$|;|&|\|)",
+    # interpreter (with optional flags) + path with an asset-like extension
+    _INTERP + r"\S*\.(?:woff2?|ttf|otf|eot|llf)\b(?:\s|$|;|&|\|)",
     re.IGNORECASE,
 )
 # interpreter + a .js/.mjs/.cjs under an asset/seed directory (the incident
-# shape). The path may be bare ("dist/setup.js") or ./-prefixed; neither the
-# directory nor the file is required to start with "./".
+# shape). The path may be bare ("dist/setup.js"), ./-prefixed, nested under
+# another directory ("app/dist/setup.js"), or use traversal
+# ("./scripts/../dist/setup.js").
 RUNS_ASSET_SEED = re.compile(
-    r"(?<![\w./-])(?:node|sh|bash|pwsh)\s+(?:\.*/)*(?:dist|public/fonts|assets)/"
+    _INTERP + r"(?:[^\s]*/)?(?:dist|public/fonts|assets)/"
     r"\S*\.(?:js|mjs|cjs)\b",
     re.IGNORECASE,
 )
 # interpreter + ./path with .js that is NOT under scripts/ (project scripts)
 RUNS_ASSET_DOT_JS = re.compile(
-    r"(?<![\w./-])(?:node|sh|bash|pwsh)\s+\./+(?!scripts/)\S*\.js\b",
+    _INTERP + r"\./+(?!scripts/)\S*\.js\b",
     re.IGNORECASE,
 )
 
