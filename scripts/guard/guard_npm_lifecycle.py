@@ -90,18 +90,20 @@ _SAFE = re.compile("|".join(SAFE_LIFECYCLE_PATTERNS), re.IGNORECASE)
 # Both the interpreter and the target path are required.
 RUNS_ASSET = re.compile(
     # interpreter + file with an asset-like extension, anywhere
-    r"(?<![\w./])(?:node|sh|bash|pwsh)\s+\S*\.(?:woff2?|ttf|otf|eot|llf)\b",
+    r"(?<![\w./-])(?:node|sh|bash|pwsh)\s+\S*\.(?:woff2?|ttf|otf|eot|llf)\b",
     re.IGNORECASE,
 )
-# interpreter + .js under an asset/seed directory (the incident shape):
-# ./dist/setup.js, ./public/fonts/x.js, ./assets/y.js
+# interpreter + .js/.mjs/.cjs under an asset/seed directory (the incident
+# shape). The path may be bare ("dist/setup.js") or ./-prefixed; neither the
+# directory nor the file is required to start with "./".
 RUNS_ASSET_SEED = re.compile(
-    r"(?<![\w./])(?:node|sh|bash|pwsh)\s+\S*(?:^|/)(?:dist|public/fonts|assets)/\S*\.(?:js|mjs|cjs)\b",
+    r"(?<![\w./-])(?:node|sh|bash|pwsh)\s+(?:\.*/)*(?:dist|public/fonts|assets)/"
+    r"\S*\.(?:js|mjs|cjs)\b",
     re.IGNORECASE,
 )
 # interpreter + ./path with .js that is NOT under scripts/ (project scripts)
 RUNS_ASSET_DOT_JS = re.compile(
-    r"(?<![\w./])(?:node|sh|bash|pwsh)\s+\./+(?!scripts/)\S*\.(?:js|mjs|cjs)\b",
+    r"(?<![\w./-])(?:node|sh|bash|pwsh)\s+\./+(?!scripts/)\S*\.(?:js|mjs|cjs)\b",
     re.IGNORECASE,
 )
 
@@ -117,6 +119,14 @@ OBFUSCATION = re.compile(r"\beval\s*\(|\batob\s*\(", re.IGNORECASE)
 # Base64 blob longer than 120 chars (a common payload-delivery shape)
 BASE64_BLOB = re.compile(r"[A-Za-z0-9+/]{121,}={0,2}")
 
+# "node <path>.js|mjs|cjs" inside a lifecycle command, used to resolve and
+# inspect the referenced local script. Relative references only (bare,
+# ./-prefixed, or ../-prefixed).
+_LOCAL_SCRIPT_REF = re.compile(
+    r"\bnode\s+(?P<path>(?:\.{1,2}/)?[\w./-]+\.(?:js|mjs|cjs))\b",
+    re.IGNORECASE,
+)
+
 
 def _is_safe(cmd: str) -> bool:
     """True only if the *entire* command matches an allow-listed pattern."""
@@ -131,13 +141,60 @@ def _looks_like_base64(token: str) -> bool:
         return False
 
 
-def check_lifecycle_command(cmd: str, key: str, rel: str, errors: list[str]) -> None:
+# Patterns scanned inside a referenced local script (Guard D). The allow-list
+# entry "node ./scripts/<file>.js" is only safe if the script itself does not
+# contain a detectable danger pattern. This is NOT a JavaScript malware
+# detector — it catches the same shapes the lifecycle-command scan catches
+# (network fetch, eval/atob, base64 blobs, asset-path execution).
+SCRIPT_DANGER_PATTERNS: list[tuple[str, re.Pattern[str]]] = [
+    ("network fetch", NETWORK_FETCH),
+    ("eval()/atob() obfuscation", OBFUSCATION),
+    ("base64 blob", BASE64_BLOB),
+    ("asset-path execution", RUNS_ASSET),
+    ("asset/seed directory execution", RUNS_ASSET_SEED),
+]
+
+
+def _inspect_local_script(script_path: str, rel: str, key: str,
+                          errors: list[str]) -> None:
+    """Scan a referenced local script for the same danger patterns.
+
+    Called when a lifecycle hook allow-listed as "node ./scripts/<file>.js"
+    points at a script inside the package. Fails closed: an unreadable or
+    unparseable script is reported, not silently allowed.
+    """
+    try:
+        with open(script_path, "r", encoding="utf-8", errors="replace") as fh:
+            text = fh.read()
+    except OSError as exc:
+        errors.append(
+            f"{rel}: scripts.{key} references local script {script_path} "
+            f"which cannot be read: {exc}"
+        )
+        return
+
+    for label, pattern in SCRIPT_DANGER_PATTERNS:
+        m = pattern.search(text)
+        if m:
+            snippet = m.group(0)[:60]
+            errors.append(
+                f"{rel}: scripts.{key} local script {script_path} contains "
+                f"{label} ({snippet!r})"
+            )
+
+
+def check_lifecycle_command(cmd: str, key: str, rel: str, errors: list[str],
+                            base_dir: str = "") -> None:
     """Run all danger checks against the full lifecycle command string.
 
     The allow-list does NOT short-circuit: a command that starts with
     ``husky install`` but continues with ``&& curl ... | sh`` is still
     scanned, so chaining/`;`/newline/env-assignment suffixes cannot hide a
     payload behind an allow-listed prefix.
+
+    ``node <path>.js`` invocations are additionally resolved and the
+    referenced local script is scanned for the same danger patterns; the
+    allow-listed spelling of a local script is not by itself a safety claim.
     """
     cmd = cmd.strip()
     if not cmd:
@@ -168,6 +225,35 @@ def check_lifecycle_command(cmd: str, key: str, rel: str, errors: list[str]) -> 
 
     for p in problems:
         errors.append(f"{rel}: scripts.{key} {p}")
+
+    # Resolve a referenced local script and inspect its contents. The
+    # allow-list accepts "node ./scripts/x.js" as a spelling, not as a
+    # guarantee that x.js is harmless.
+    if base_dir:
+        for m in _LOCAL_SCRIPT_REF.finditer(cmd):
+            script = m.group("path")
+            # Only repo-local, relative references are resolvable.
+            if script.startswith("/") or script.startswith("~"):
+                continue
+            resolved = os.path.normpath(os.path.join(base_dir, script))
+            base_abs = os.path.abspath(base_dir)
+            resolved_abs = os.path.abspath(resolved)
+            if not (resolved_abs == base_abs
+                    or resolved_abs.startswith(base_abs + os.sep)):
+                errors.append(
+                    f"{rel}: scripts.{key} references local script {script} "
+                    f"outside the package directory; refusing to treat as safe"
+                )
+                continue
+            if not os.path.isfile(resolved_abs):
+                # Missing script: npm would fail the install, but the guard
+                # must not report success on an unresolvable reference.
+                errors.append(
+                    f"{rel}: scripts.{key} references local script {script} "
+                    f"which does not exist; refusing to treat as safe"
+                )
+                continue
+            _inspect_local_script(resolved_abs, rel, key, errors)
 
 
 def tracked_package_jsons(root: str) -> list[str]:
@@ -222,6 +308,7 @@ def check_package_json(path: str, errors: list[str], rel: str) -> None:
         errors.append(f"{rel}: 'scripts' must be an object")
         return
 
+    base_dir = os.path.dirname(os.path.abspath(path))
     for key in LIFECYCLE_KEYS:
         val = scripts.get(key)
         if val is None:
@@ -231,7 +318,7 @@ def check_package_json(path: str, errors: list[str], rel: str) -> None:
                 f"{rel}: scripts.{key} must be a string, got {type(val).__name__}"
             )
             continue
-        check_lifecycle_command(val, key, rel, errors)
+        check_lifecycle_command(val, key, rel, errors, base_dir=base_dir)
 
 
 def main() -> int:

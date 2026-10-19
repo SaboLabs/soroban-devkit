@@ -13,10 +13,13 @@ Scope (explicit, intentionally narrow):
     directories)
   * command value forms accepted by the devcontainer spec:
     - string: a single shell command line
-    - array:  a list of shell command lines (joined with ``&&`` for scanning)
-    - object: a named-command object — its "command" value, and failing
-      that every string/list value in the object (the devcontainer CLI
-      accepts named commands under arbitrary keys such as "setup")
+    - array:  a list of shell command lines (each scanned individually;
+      arrays execute directly via exec, so argv[0]+argv[1] are also
+      recombined for asset-path detection)
+    - object: a named-command object. The devcontainer CLI accepts named
+      commands under ANY property key (e.g. "command", "setup"), so every
+      string/array value is normalized and scanned; empty objects and
+      non-string values fail loud
   * signals checked across the *whole* command string (no prefix bypass):
     - pipes a network fetch to a shell: ``curl ... | (sh|bash|pwsh|iex)``,
       ``wget ... | (sh|bash)`` — including after an allow-listed prefix
@@ -105,17 +108,20 @@ FETCH_AND_RUN = re.compile(
 # Narrowed so legitimate project scripts (node ./scripts/x.js) pass.
 RUNS_ASSET = re.compile(
     # interpreter + path with an asset-like extension, anywhere
-    r"(?<![\w./])(?:node|sh|bash|pwsh)\s+\S*\.(?:woff2?|ttf|otf|eot|llf)\b(?:\s|$|;|&|\|)",
+    r"(?<![\w./-])(?:node|sh|bash|pwsh)\s+\S*\.(?:woff2?|ttf|otf|eot|llf)\b(?:\s|$|;|&|\|)",
     re.IGNORECASE,
 )
-# interpreter + a .js under an asset/seed directory (the incident shape)
+# interpreter + a .js/.mjs/.cjs under an asset/seed directory (the incident
+# shape). The path may be bare ("dist/setup.js") or ./-prefixed; neither the
+# directory nor the file is required to start with "./".
 RUNS_ASSET_SEED = re.compile(
-    r"(?<![\w./])(?:node|sh|bash|pwsh)\s+\S*(?:^|/)(?:dist|public/fonts|assets)/\S*\.js\b",
+    r"(?<![\w./-])(?:node|sh|bash|pwsh)\s+(?:\.*/)*(?:dist|public/fonts|assets)/"
+    r"\S*\.(?:js|mjs|cjs)\b",
     re.IGNORECASE,
 )
 # interpreter + ./path with .js that is NOT under scripts/ (project scripts)
 RUNS_ASSET_DOT_JS = re.compile(
-    r"(?<![\w./])(?:node|sh|bash|pwsh)\s+\./+(?!scripts/)\S*\.js\b",
+    r"(?<![\w./-])(?:node|sh|bash|pwsh)\s+\./+(?!scripts/)\S*\.js\b",
     re.IGNORECASE,
 )
 
@@ -215,20 +221,20 @@ def strip_jsonc(text: str) -> str:
     return "".join(cleaned)
 
 
-def _normalize_commands(val) -> list[str]:
+def _normalize_commands(val, key: str = "", rel: str = "",
+                        errors: list[str] | None = None) -> list[str]:
     """Extract command strings from a devcontainer hook value.
 
     Accepts every form the devcontainer spec allows:
       - str  -> returned as-is (one command)
-      - list -> each element is a separate command line (array form)
-      - dict -> a named-command object. Its command value is taken from the
-        ``"command"`` key when present; because the devcontainer CLI also
-        accepts named-command objects under other property names, ANY other
-        string or list value in the object is treated as a command too, so a
-        hostile command cannot hide behind an unexpected key.
-    Returns a list of normalized command strings (empty if no command).
-    Unsupported shapes (an empty object, a command value of the wrong type)
-    are reported by the caller via ``errors``; nothing is skipped silently.
+      - list -> each element is a separate command line (array form; arrays
+        execute directly via exec, so argv[0]+argv[1] are also recombined for
+        asset-path detection — see check_devcontainer)
+      - dict -> a named-command object. The devcontainer CLI accepts named
+        commands under *any* property key (e.g. "command", "setup", ...), so
+        EVERY string/list/dict value is normalized and scanned. Empty objects
+        and non-string values are reported via ``errors`` rather than silently
+        skipped.
     """
     if isinstance(val, str):
         return [val]
@@ -236,20 +242,24 @@ def _normalize_commands(val) -> list[str]:
         return [str(p) if not isinstance(p, str) else p for p in val]
     if isinstance(val, dict):
         cmds: list[str] = []
-        candidate = val.get("command")
-        if candidate is None:
-            # No "command" key: treat every string/list value as a command so
-            # that an arbitrary key (e.g. "setup") cannot smuggle one past
-            # the danger checks.
-            for sub in val.values():
-                cmds.extend(_normalize_commands(sub))
-            if not cmds:
-                candidate = val  # fall through to the unsupported-shape diagnostic
-        if candidate is not None:
-            if isinstance(candidate, (str, list)):
-                cmds.extend(_normalize_commands(candidate))
-            else:
-                cmds.append(None)  # placeholder: unsupported shape, diagnosed below
+        saw_value = False
+        for sub in val.values():
+            if sub is None:
+                continue
+            if isinstance(sub, (str, list, dict)):
+                saw_value = True
+                cmds.extend(_normalize_commands(sub, key, rel, errors))
+            elif errors is not None:
+                errors.append(
+                    f"{rel}: {key} named-command object has an unsupported "
+                    f"value of type {type(sub).__name__} "
+                    f"(expected string or array of strings)"
+                )
+        if not saw_value and errors is not None:
+            errors.append(
+                f"{rel}: {key} is an empty named-command object; "
+                f"refusing to treat as safe"
+            )
         return cmds
     return []
 
@@ -315,7 +325,7 @@ def check_devcontainer(path: str, errors: list[str], rel: str) -> None:
             )
             continue
 
-        cmds = _normalize_commands(val)
+        cmds = _normalize_commands(val, key, rel, errors)
         if not cmds:
             errors.append(
                 f"{rel}: {key} is an unsupported named-command shape "
@@ -324,13 +334,17 @@ def check_devcontainer(path: str, errors: list[str], rel: str) -> None:
             )
             continue
         hooks_found.append(key)
+
+        if isinstance(val, list):
+            # Array form executes directly via exec (no shell). Detect
+            # interpreter+path across argv elements, which the per-element
+            # scan alone misses.
+            argv = [p for p in val if isinstance(p, str)]
+            if len(argv) >= 2 and argv[0].lower() in ("node", "sh", "bash", "pwsh") \
+                    and not argv[1].startswith("-"):
+                check_command(f"{argv[0]} {argv[1]}", key, rel, errors)
+
         for cmd in cmds:
-            if cmd is None:
-                errors.append(
-                    f"{rel}: {key} contains a non-string command value; "
-                    f"refusing to treat it as safe"
-                )
-                continue
             check_command(cmd, key, rel, errors)
 
     # root user only matters if combined with an exec hook

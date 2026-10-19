@@ -140,13 +140,13 @@ run_devc() {
 }
 
 # --- safe configs (rc=0) ---
-for c in clean-minimal clean-npm-ci clean-cargo-build clean-apt-update root-without-hooks jsonc-comments-trailing-comma clean-bun-install clean-pip-install array-form-clean object-form-clean named-key-setup-clean named-key-multi-clean; do
+for c in clean-minimal clean-npm-ci clean-cargo-build clean-apt-update root-without-hooks jsonc-comments-trailing-comma clean-bun-install clean-pip-install array-form-clean object-form-clean named-key-setup-clean named-key-multi-clean array-form-argv-clean; do
   out="$(run_devc "negative/$c" 2>&1)"
   assert_rc "C safe:$c" 0 "$?"
 done
 
 # --- dangerous configs (rc=1) ---
-for c in fetch-and-run runs-asset-path poststart-network root-with-hooks initialize-exec ps-fetch npm-ci-chain-curl npm-ci-semicolon-curl cargo-chain-font array-form-danger object-form-danger named-key-setup-danger object-form-empty object-form-bad-type; do
+for c in fetch-and-run runs-asset-path poststart-network root-with-hooks initialize-exec ps-fetch npm-ci-chain-curl npm-ci-semicolon-curl cargo-chain-font array-form-danger object-form-danger named-key-setup-danger command-key-with-dangerous-sibling array-argv-node-woff2 array-argv-bash-dist-js array-argv-sh-c-fetch asset-bare-dist-js asset-bare-public-fonts-js asset-bare-assets-mjs object-form-empty object-form-bad-type; do
   out="$(run_devc "positive/$c" 2>&1)"
   assert_rc "C dangerous:$c" 1 "$?"
 done
@@ -180,6 +180,29 @@ assert_rc "C empty object fails loud" 1 "$?"
 out="$(run_devc positive/object-form-bad-type)"
 assert_rc "C bad-type object fails loud" 1 "$?"
 
+# --- a "command" key must not hide a dangerous sibling key ---
+out="$(run_devc positive/command-key-with-dangerous-sibling)"
+assert_rc "C dangerous sibling" 1 "$?"
+assert_output "C dangerous sibling named" "network fetch" "$out"
+
+# --- array form executes directly: interpreter+path across argv elements ---
+out="$(run_devc positive/array-argv-node-woff2)"
+assert_rc "C array argv woff2" 1 "$?"
+assert_output "C array argv woff2 named" "binary/asset path" "$out"
+out="$(run_devc positive/array-argv-bash-dist-js)"
+assert_rc "C array argv dist js" 1 "$?"
+out="$(run_devc positive/array-argv-sh-c-fetch)"
+assert_rc "C array argv sh -c fetch" 1 "$?"
+assert_output "C array argv sh -c named" "network fetch" "$out"
+
+# --- bare (no "./") asset/seed paths must be flagged ---
+for c in asset-bare-dist-js asset-bare-public-fonts-js asset-bare-assets-mjs; do
+  out="$(run_devc "positive/$c")"
+  assert_rc "C bare path:$c" 1 "$?"
+done
+out="$(run_devc positive/asset-bare-dist-js)"
+assert_output "C bare dist named" "asset/seed directory" "$out"
+
 # --- an explicitly requested path that does not exist must fail loud ---
 out="$(python3 "$GUARD/guard_devcontainer.py" \
   --paths "$FIX/devcontainer/does-not-exist/devcontainer.json" 2>&1)"
@@ -199,10 +222,38 @@ for c in husky-prepare pinst-postinstall npm-run-build tsc-prepare node-gyp-prei
 done
 
 # --- dangerous configs (rc=1) ---
-for c in preinstall-runs-asset preinstall-font postinstall-network postinstall-wget prepare-eval install-base64-blob install-runs-js-outside-scripts husky-chain-curl tsc-semicolon-asset husky-newline-curl husky-backslash-chain-curl echo-chain-asset; do
+for c in preinstall-runs-asset preinstall-font postinstall-network postinstall-wget prepare-eval install-base64-blob install-runs-js-outside-scripts husky-chain-curl tsc-semicolon-asset husky-newline-curl husky-backslash-chain-curl echo-chain-asset local-script-danger asset-bare-mjs asset-bare-cjs asset-bare-public-fonts-js asset-bare-dist-js; do
   out="$(run_npm "positive/$c" 2>&1)"
   assert_rc "D dangerous:$c" 1 "$?"
 done
+
+# --- bare (no "./") asset/seed paths must be flagged for the intended reason ---
+for c in asset-bare-mjs asset-bare-cjs asset-bare-public-fonts-js asset-bare-dist-js; do
+  out="$(run_npm "positive/$c")"
+  assert_output "D bare path named:$c" "asset/build directory" "$out"
+done
+
+# --- a local script referenced by an allow-listed spelling must have its
+#     CONTENTS inspected: the hook text alone is safe, the script is not ---
+out="$(run_npm positive/local-script-danger)"
+assert_rc "D local-script-danger" 1 "$?"
+assert_output "D local-script danger named" "local script" "$out"
+out="$(run_npm negative/local-script-benign)"
+assert_rc "D local-script-benign" 0 "$?"
+
+# --- the decoded backslash-newline fixture must contain a real shell line
+#     continuation, not a backslash escaping a space ---
+python3 - <<'PY'
+import json, sys
+p = "tests/guard/fixtures/npm/positive/husky-backslash-chain-curl/package.json"
+v = json.load(open(p))["scripts"]["postinstall"]
+if "\\\n" not in v:
+    print("FAIL backslash-newline not exercised: %r" % v); sys.exit(1)
+if "\\ " in v:
+    print("FAIL fixture uses backslash-space: %r" % v); sys.exit(1)
+print("PASS  D backslash-newline decoded")
+PY
+assert_rc "D backslash-newline fixture" 0 "$?"
 
 # --- explicit error messages ---
 out="$(run_npm positive/preinstall-runs-asset)"

