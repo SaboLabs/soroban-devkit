@@ -157,6 +157,12 @@ sdkt
 ├── fee
 │   └── estimate              (manual value entry, type-prefixed)
 │
+│   `fee estimate` prints the `getFeeStats` distributions it derives the
+│   estimate from, including each distribution's `transactionCount` and
+│   `ledgerCount` sample sizes, so a thin distribution (few transactions or
+│   ledgers) is visible alongside the percentiles. The estimator's arithmetic
+│   is unchanged; the counts are informational only.
+│
 ├── wasm
 │   ├── inspect <file.wasm>  Offline inspection of a local WASM file (sections, exports, spec)
 │   ├── metadata --contract <contract>  [--network testnet] [--refresh] [--format]
