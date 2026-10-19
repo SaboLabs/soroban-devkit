@@ -13,7 +13,12 @@ members = [
 # Browser-only glue crate for the Web Playground. Excluded so that
 # `cargo build/clippy/test --workspace` stays a pure native build; it is built
 # explicitly for wasm32-unknown-unknown via website/playground/build.sh.
-exclude = ["crates/sdkt-playground"]
+#
+# The onroarding example under `examples/sample_token` is also excluded:
+# it is a deliberately non-compiling contract source (the AUTH-001
+# demonstration) and is analyzed as source only by `sdkt audit`. It can be
+# built explicitly via its own manifest for wasm32v1-none.
+exclude = ["crates/sdkt-playground", "examples/sample_token"]
 resolver = "2"
 
 [workspace.package]

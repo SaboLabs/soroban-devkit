@@ -1,0 +1,25 @@
+[package]
+name = "sample-token"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+[lib]
+crate-type = ["cdylib"]
+doctype = false
+
+[profile.release]
+opt-level = "z"
+overflow-checks = true
+debug = 0
+strip = "symbols"
+code-gen-units = 1
+lto = true
+panic = "abort"
+
+[profile.release.package]
+debug = 0
+strip = "symbols"
+
+[dependencies]
+soroban-sdk = "22.0.0"

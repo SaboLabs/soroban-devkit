@@ -15,6 +15,11 @@ examples/
   sample_token/src/lib.rs   # minimal Soroban contract (intentionally has an AUTH-001 finding)
   sample_scval.b64          # a valid base64-encoded ScVal for `sdkt decode`
 ```
+`examples/sample_token/` is **source-only**: it ships just `src/lib.rs` and is
+analyzed as Rust source by `sdkt audit`. It is not a buildable Cargo project
+(there is no `Cargo.toml`), so `cargo build` inside it will fail — that is
+expected, and the AUTH-001 finding does not require a build.
+
 
 Build `sdkt` first, then run the deterministic smoke test (no network, no
 secrets):
