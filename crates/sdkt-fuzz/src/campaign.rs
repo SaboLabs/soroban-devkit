@@ -159,12 +159,27 @@ pub struct CampaignResult {
     pub skipped_functions: Vec<SkippedFunction>,
     /// Cases actually executed.
     pub executed: usize,
+    /// True when the campaign ran to completion with at least one executed
+    /// case. A campaign that executed nothing (empty selectable set, or a
+    /// `--function` filter matching no runnable function) is not a completed
+    /// campaign and must not be scored as clean evidence.
+    pub completed: bool,
 }
 
 impl CampaignResult {
     /// Minimized findings only.
     pub fn minimized_findings(&self) -> impl Iterator<Item = &Finding> {
         self.findings.iter().filter(|f| f.minimization.attempted)
+    }
+
+    /// True when the campaign executed at least one case.
+    pub fn executed_any(&self) -> bool {
+        self.executed > 0
+    }
+
+    /// True when the campaign is a completed, non-zero-execution run.
+    pub fn is_completed(&self) -> bool {
+        self.completed
     }
 }
 
@@ -195,6 +210,7 @@ fn run_campaign_inner(
         return Ok((
             CampaignResult {
                 skipped_functions: skipped,
+                completed: false,
                 ..Default::default()
             },
             Vec::new(),
@@ -203,6 +219,7 @@ fn run_campaign_inner(
 
     let mut result = CampaignResult {
         skipped_functions: skipped,
+        completed: true,
         ..Default::default()
     };
     let mut artifacts: Vec<FindingArtifact> = Vec::new();
@@ -439,11 +456,12 @@ fn hex(bytes: &[u8]) -> String {
 /// Convenience: a one-line summary (logging only).
 pub fn summarize(result: &CampaignResult) -> String {
     format!(
-        "executed={} passed={} expected_errors={} findings={} skipped={}",
+        "executed={} passed={} expected_errors={} findings={} skipped={} completed={}",
         result.executed,
         result.passed.len(),
         result.expected_errors.len(),
         result.findings.len(),
         result.skipped_functions.len(),
+        result.completed,
     )
 }

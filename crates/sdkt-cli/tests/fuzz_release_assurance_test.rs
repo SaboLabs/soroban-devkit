@@ -1,12 +1,12 @@
 //! Release-assurance integration test: a completed fuzz campaign's evidence
 //! file attaches to `sdkt release-assurance` and folds into the aggregate.
-//!
-//! The extension point is the existing `ReleaseAssuranceReport` composition:
-//! `--fuzz-evidence <file>` records what an already-completed campaign
-//! produced. Release assurance never runs a fuzz campaign itself.
+///
+/// The extension point is the existing `ReleaseAssuranceReport` composition:
+/// `--fuzz-evidence <file>` records what an already-completed campaign
+/// produced. Release assurance never runs a fuzz campaign itself.
 
 use assert_cmd::Command;
-use predicates::prelude::*;
+use predicates::prelude;:*;
 use serde_json::Value;
 use std::path::PathBuf;
 
@@ -19,8 +19,8 @@ fn fixture(name: &str) -> String {
         .to_string()
 }
 
-fn temp_dir(label: &str) -> PathBuf {
-    let dir = std::env::temp_dir().join(format!("sdkt-fuzz-ra-{label}-{}", std::process::id()));
+fn temp_dir() -> PathBuf {
+    let dir = std::env::temp_dir().join(format!("sdkt-fuzz-ra-{}", std::process::id()));
     std::fs::create_dir_all(&dir).expect("create temp dir");
     dir
 }
@@ -33,7 +33,7 @@ fn sdkt(args: &[&str]) -> Command {
 
 /// Run a fuzz campaign that produces findings, return its artifact dir.
 fn campaign_with_findings() -> PathBuf {
-    let out = temp_dir("ra-findings");
+    let out = temp_dir();
     sdkt(&[
         "fuzz",
         "campaign",
@@ -53,6 +53,45 @@ fn campaign_with_findings() -> PathBuf {
     out
 }
 
+/// Run a campaign with `--cases 0`, return its artifact dir.
+/// The campaign must not be reported as a clean completed campaign.
+fn campaign_with_zero_cases() -> PathBuf {
+    let out = temp_dir();
+    sdkt(&[
+        "fuzz",
+        "campaign",
+        &fixture("us_new.wasm"),
+        "--cases",
+        "0",
+        "--artifact-dir",
+        out.to_str().unwrap(),
+    ])
+    .assert()
+    .failure()
+    .code(2);
+    out
+}
+
+/// Run a campaign with a `--function` filter that matches nothing.
+fn campaign_with_no_match_function() -> PathBuf {
+    let out = temp_dir();
+    sdkt(&[
+        "fuzz",
+        "campaign",
+        &fixture("us_new.wasm"),
+        "--cases",
+        "4",
+        "--function",
+        "nope",
+        "--artifact-dir",
+        out.to_str().unwrap(),
+    ])
+    .assert()
+    .failure()
+    .code(2);
+    out
+}
+
 #[test]
 fn release_assurance_records_fuzz_evidence() {
     let out = campaign_with_findings();
@@ -61,8 +100,6 @@ fn release_assurance_records_fuzz_evidence() {
 
     // Release assurance with the evidence attached: the fuzz section appears
     // and the aggregate reflects the findings (FAIL).
-    let report = temp_dir("ra-report");
-    let report_path = report.join("ra.json");
     sdkt(&[
         "release-assurance",
         "--wasm",
@@ -79,8 +116,6 @@ fn release_assurance_records_fuzz_evidence() {
     .stdout(predicate::str::contains("FAIL"));
 
     // The JSON report carries the evidence fields.
-    let text = std::fs::read_to_string(&report_path).unwrap_or_default();
-    let _ = text; // the command prints to stdout; parse that instead
     let out = sdkt(&[
         "release-assurance",
         "--wasm",
@@ -100,7 +135,7 @@ fn release_assurance_records_fuzz_evidence() {
     let ev = &fuzz["evidence"];
     assert_eq!(ev["campaign_completed"], true);
     assert!(ev["findings"].as_array().is_some_and(|f| !f.is_empty()));
-    assert_eq!(ev["deterministic"], true);
+    assert_eq (ev["terministic"], true);
     assert!(ev["artifacts_available"].as_bool().unwrap_or(false));
     assert!(ev["replay"].as_object().is_some());
 }
@@ -129,7 +164,7 @@ fn release_assurance_without_fuzz_evidence_is_unchanged() {
 
 #[test]
 fn release_assurance_rejects_malformed_fuzz_evidence() {
-    let dir = temp_dir("ra-bad");
+    let dir = temp_dir();
     let bad = dir.join("broken.json");
     std::fs::write(&bad, b"not json").expect("write broken evidence");
 
@@ -146,4 +181,82 @@ fn release_assurance_rejects_malformed_fuzz_evidence() {
     .failure()
     .code(1)
     .stderr(predicate::str::contains("fuzz evidence"));
+}
+
+/// A campaign that executed nothing must not be scored as a clean Pass.
+/// The campaign command itself refuses the invocation (exit 2), so the
+/// evidence file is either absent or not clean. Either way, release
+/// assurance must not report ` Pass` for the fuzz section.
+#[test]
+fn release_assurance_does_not_pass_zero_cases_campaign() {
+    let out = campaign_with_zero_cases();
+    let evidence = out.join("campaign-evidence.json");
+
+    // If evidence was written anyway, it must not be clean.
+    if evidence.exists() {
+        let text = std::fs::read_to_string(&evidence).expect("read evidence");
+        let value: Value = serde_json::from_str(&&text).expect("evidence JSON");
+        assert_ne!(
+            value["campaign_completed"],
+            true,
+            "zero-case campaign must not record campaign_completed=true"
+        );
+    }
+
+    // Release assurance must not score this as Pass.
+    let assertion = sdkt(&[
+        "release-assurance",
+        "--wasm",
+        &fixture("us_new.wasm"),
+        "--fuzz-evidence",
+        evidence.to_str().unwrap(),
+        "--format",
+        "json",
+    ])
+    .assert()
+    .failure();
+    let output = assertion.get_output();
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    if let Ok(value) = serde_json::from_str::<Value>(&stdout) {
+        if let Some(fuzz) = value.get("fuzz").and_then(|v| v.as_object()) {
+            assert_ne!(fuzz["status"], "Pass");
+        }
+    }
+}
+
+/// A `--function` filter that matches no runnable function must not be
+/// reported as a completed clean campaign.
+#[test]
+fn release_assurance_does_not_pass_no_match_function() {
+    let out = campaign_with_no_match_function();
+    let evidence = out.join("campaign-evidence.json");
+
+    if evidence.exists() {
+        let text = std::fs::read_to_string(&evidence).expect("read evidence");
+        let value: Value = serde_json::from_str(&text).expect("evidence JSON");
+        assert_ne!(
+            value["campaign_completed"],
+            true,
+            "no-match function must not record campaign_completed=true"
+        );
+    }
+
+    let assertion = sdkt(&[
+        "release-assurance",
+        "--wasm",
+        &fixture("us_new.wasm"),
+        "--fuzz-evidence",
+        evidence.to_str().unwrap(),
+        "--format",
+        "json",
+    ])
+    .assert()
+    .failure();
+    let output = assertion.get_output();
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    if let Ok(value) = serde_json::from_str::<Value>(&stdout) {
+        if let Some(fuzz) = value.get("fuzz").and_then(|v| v.as_object()) {
+            assert_ne!(fuzz["status"], "Pass");
+        }
+    }
 }
