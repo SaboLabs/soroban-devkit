@@ -8,6 +8,10 @@
 //! Failure taxonomy (kept strictly separate):
 //!
 //! - **Invalid input** → [`ReplayError`]: unknown schema version, malformed
+//!   artifact, a WASM whose SHA-256 does not match the artifact, or a
+//!   network-faithful budget whose profile snapshot is absent (replay refuses
+//!   to substitute a different budget model). These are *never* a
+//!   [`crate::Classification::Finding`] and never a contract result.
 //!   (or unreadable) artifact, a WASM file that cannot be read
 //!   ([`ReplayError::WasmRead`]), or a WASM whose SHA-256 does not match the
 //!   artifact. These are *never* a [`crate::Classification::Finding`] and
@@ -45,6 +49,17 @@ pub enum ReplayError {
     InvalidArtifact(String),
     #[error("wasm hash mismatch: artifact={expected} supplied={actual}")]
     WasmHashMismatch { expected: String, actual: String },
+    #[error(
+        "artifact `{artifact}` records a network-faithful budget whose profile snapshot is \
+         missing: `profile.json` must sit beside the artifact; replay refuses to substitute a \
+         different budget model ({detail})"
+    )]
+    MissingBudgetProfile {
+        /// Artifact identity (its case id, as recorded in the file).
+        artifact: String,
+        /// Which profile content the artifact expects, from the snapshot.
+        detail: String,
+    },
     #[error("execution could not be performed: {0}")]
     Execution(String),
 }
@@ -159,7 +174,16 @@ pub fn replay(artifact: &FindingArtifact, wasm: &[u8]) -> Result<ReplayOutcome, 
             "artifact contains no sequence steps".to_string(),
         ));
     }
-    let environment: Environment = artifact.environment();
+    // A network-faithful snapshot needs its profile (cost tables) from beside
+    // the artifact. Refuse explicitly — in every build profile — rather than
+    // panic in debug and silently replay under another budget model.
+    let environment: Environment =
+        artifact
+            .environment()
+            .map_err(|e| ReplayError::MissingBudgetProfile {
+                artifact: artifact.case_id.clone(),
+                detail: e.to_string(),
+            })?;
     let seed = artifact
         .seed()
         .map_err(|e| ReplayError::InvalidArtifact(e.to_string()))?;

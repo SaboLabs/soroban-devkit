@@ -296,6 +296,70 @@ fn cli_replay_malformed_artifact_is_invalid_input() {
 }
 
 // ---------------------------------------------------------------------------
+// 6b. Network-faithful budget without its profile: refusal, not a panic and
+//     not a silent substitute plan — identical in debug and release builds.
+// ---------------------------------------------------------------------------
+
+#[test]
+fn cli_replay_network_faithful_without_profile_is_invalid_input() {
+    let out = temp_dir("networkfaithful");
+    fuzz_campaign(&[
+        &fixture("us_new.wasm"),
+        "--cases",
+        "4",
+        "--seed",
+        "17",
+        "--expect-error",
+        "hello:Storage:3",
+        "--artifact-dir",
+        out.to_str().unwrap(),
+    ])
+    .assert()
+    .failure()
+    .code(1);
+
+    let artifact = std::fs::read_dir(&out)
+        .expect("dir readable")
+        .filter_map(|e| e.ok().map(|e| e.path()))
+        .find(|p| {
+            p.file_name()
+                .and_then(|n| n.to_str())
+                .is_some_and(|n| n.starts_with("finding-") && n.ends_with(".json"))
+        })
+        .expect("at least one finding artifact");
+
+    // Rewrite the recorded budget to a network-faithful plan without its
+    // profile.json — exactly the artifact shape issue #368 describes.
+    let mut json: Value =
+        serde_json::from_str(&std::fs::read_to_string(&artifact).unwrap()).unwrap();
+    json["campaign"]["environment"]["budget"] = serde_json::json!({
+        "kind": "network_faithful",
+        "profile_content_hash": "deadbeefcafe",
+        "profile_network": "mainnet",
+        "profile_protocol": 29,
+        "profile_ledger": 62447231,
+        "coverage": "COMPLETE",
+        "covered_cost_types": 23,
+        "host_cost_types": 23
+    });
+    let patched = out.join("network-faithful.json");
+    std::fs::write(&patched, serde_json::to_vec(&json).unwrap()).expect("write patched artifact");
+
+    fuzz(&[
+        "replay",
+        patched.to_str().unwrap(),
+        "--wasm",
+        &fixture("us_new.wasm"),
+    ])
+    .assert()
+    .failure()
+    .code(2)
+    .stderr(predicate::str::contains("profile.json"))
+    .stderr(predicate::str::contains("network-faithful budget"))
+    .stderr(predicate::str::contains(patched.to_str().unwrap()));
+}
+
+// ---------------------------------------------------------------------------
 // 7. Missing WASM file / bad flags: usage error, exit 2
 // ---------------------------------------------------------------------------
 

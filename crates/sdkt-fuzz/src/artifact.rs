@@ -121,44 +121,79 @@ impl Default for EnvironmentSnapshot {
     }
 }
 
-impl From<&EnvironmentSnapshot> for Environment {
-    fn from(s: &EnvironmentSnapshot) -> Self {
-        Self {
+impl TryFrom<&EnvironmentSnapshot> for Environment {
+    type Error = BudgetPlanError;
+
+    fn try_from(s: &EnvironmentSnapshot) -> Result<Self, Self::Error> {
+        Ok(Self {
             ledger: crate::config::LedgerConfig {
                 sequence_number: s.sequence_number,
                 timestamp: s.timestamp,
             },
-            budget: budget_plan_from_snapshot(&s.budget),
-        }
+            budget: budget_plan_from_snapshot(&s.budget)?,
+        })
     }
+}
+
+/// A budget snapshot that cannot be rebuilt from the artifact alone.
+///
+/// A network-faithful plan records only the profile's identity and content
+/// hash: its cost tables live in the `profile.json` stored beside the
+/// artifact. Rebuilding it from the artifact alone is impossible, and
+/// substituting another model — a silent release-only fallback, or a debug
+/// panic — would change the execution semantics while reporting a replay
+/// verdict. The snapshot is therefore refused as data, identically in every
+/// build profile, and the caller decides how to surface it.
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+pub enum BudgetPlanError {
+    /// The recorded plan is network-faithful and its profile snapshot is not
+    /// available to rebuild the cost model.
+    #[error(
+        "network-faithful budget requires its profile snapshot (profile.json), which was \
+         not loaded; refusing to substitute a different budget model \
+         [profile_content_hash={profile_content_hash}, network={profile_network}, \
+         protocol={profile_protocol}, ledger={profile_ledger}]"
+    )]
+    MissingProfile {
+        /// `NetworkProfile::content_hash_hex()` recorded in the artifact.
+        profile_content_hash: String,
+        /// Profile network name recorded in the artifact.
+        profile_network: String,
+        /// Profile protocol version recorded in the artifact.
+        profile_protocol: u32,
+        /// Profile ledger sequence recorded in the artifact.
+        profile_ledger: u32,
+    },
 }
 
 /// Rebuild a [`BudgetPlan`] from its snapshot.
 ///
-/// A network-faithful plan cannot be rebuilt from the artifact alone: the
+/// `Default`, `Capped` and `ProtocolInitial` rebuild exactly as recorded. A
+/// network-faithful plan cannot be rebuilt from the artifact alone: the
 /// profile (with its cost tables) is required and is stored beside the
-/// artifact. The fallback is an explicit refusal to substitute a different
-/// budget model — replay surfaces this as an error, not as a silent change of
-/// semantics.
-pub fn budget_plan_from_snapshot(s: &BudgetPlanSnapshot) -> BudgetPlan {
+/// artifact. That case is an explicit [`BudgetPlanError`] — never a panic and
+/// never a substitute plan — so replay refuses instead of silently changing
+/// the budget model.
+pub fn budget_plan_from_snapshot(s: &BudgetPlanSnapshot) -> Result<BudgetPlan, BudgetPlanError> {
     match s {
-        BudgetPlanSnapshot::Default => BudgetPlan::Default,
-        BudgetPlanSnapshot::Capped { cpu, mem } => BudgetPlan::Capped {
+        BudgetPlanSnapshot::Default => Ok(BudgetPlan::Default),
+        BudgetPlanSnapshot::Capped { cpu, mem } => Ok(BudgetPlan::Capped {
             cpu: *cpu,
             mem: *mem,
-        },
-        BudgetPlanSnapshot::ProtocolInitial => BudgetPlan::ProtocolInitial,
-        BudgetPlanSnapshot::NetworkFaithful { .. } => {
-            debug_assert!(
-                false,
-                "network-faithful budget requires the profile snapshot; \
-                 load profile.json and rebuild the plan"
-            );
-            // Debug builds fail loudly; release builds fall back to the
-            // protocol-initial plan, which is the closest *honest* model
-            // available offline (documented, deterministic, no live claim).
-            BudgetPlan::ProtocolInitial
-        }
+        }),
+        BudgetPlanSnapshot::ProtocolInitial => Ok(BudgetPlan::ProtocolInitial),
+        BudgetPlanSnapshot::NetworkFaithful {
+            profile_content_hash,
+            profile_network,
+            profile_protocol,
+            profile_ledger,
+            ..
+        } => Err(BudgetPlanError::MissingProfile {
+            profile_content_hash: profile_content_hash.clone(),
+            profile_network: profile_network.clone(),
+            profile_protocol: *profile_protocol,
+            profile_ledger: *profile_ledger,
+        }),
     }
 }
 
@@ -602,8 +637,12 @@ impl FindingArtifact {
     }
 
     /// The runtime environment to replay under.
-    pub fn environment(&self) -> Environment {
-        Environment::from(&self.campaign.environment)
+    ///
+    /// Fails when the recorded budget is network-faithful: rebuilding that
+    /// plan needs the profile snapshot stored beside the artifact, and no
+    /// other budget model may stand in for it.
+    pub fn environment(&self) -> Result<Environment, BudgetPlanError> {
+        Environment::try_from(&self.campaign.environment)
     }
 
     /// Deterministic seed, decoded from the campaign snapshot.
