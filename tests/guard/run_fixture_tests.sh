@@ -140,13 +140,13 @@ run_devc() {
 }
 
 # --- safe configs (rc=0) ---
-for c in clean-minimal clean-npm-ci clean-cargo-build clean-apt-update root-without-hooks jsonc-comments-trailing-comma clean-bun-install clean-pip-install array-form-clean object-form-clean; do
+for c in clean-minimal clean-npm-ci clean-cargo-build clean-apt-update root-without-hooks jsonc-comments-trailing-comma clean-bun-install clean-pip-install array-form-clean object-form-clean named-key-setup-clean named-key-multi-clean; do
   out="$(run_devc "negative/$c" 2>&1)"
   assert_rc "C safe:$c" 0 "$?"
 done
 
 # --- dangerous configs (rc=1) ---
-for c in fetch-and-run runs-asset-path poststart-network root-with-hooks initialize-exec ps-fetch npm-ci-chain-curl npm-ci-semicolon-curl cargo-chain-font array-form-danger object-form-danger; do
+for c in fetch-and-run runs-asset-path poststart-network root-with-hooks initialize-exec ps-fetch npm-ci-chain-curl npm-ci-semicolon-curl cargo-chain-font array-form-danger object-form-danger named-key-setup-danger object-form-empty object-form-bad-type; do
   out="$(run_devc "positive/$c" 2>&1)"
   assert_rc "C dangerous:$c" 1 "$?"
 done
@@ -170,6 +170,15 @@ out="$(run_devc positive/array-form-danger)"
 assert_output "C array danger named" "network fetch" "$out"
 out="$(run_devc positive/object-form-danger)"
 assert_output "C object danger named" "asset/seed directory" "$out"
+
+# --- named-command objects under arbitrary keys must be scanned ---
+out="$(run_devc positive/named-key-setup-danger)"
+assert_rc "C named-key danger" 1 "$?"
+assert_output "C named-key danger named" "network fetch" "$out"
+out="$(run_devc positive/object-form-empty)"
+assert_rc "C empty object fails loud" 1 "$?"
+out="$(run_devc positive/object-form-bad-type)"
+assert_rc "C bad-type object fails loud" 1 "$?"
 
 # --- an explicitly requested path that does not exist must fail loud ---
 out="$(python3 "$GUARD/guard_devcontainer.py" \
@@ -219,6 +228,26 @@ assert_output "D echo chain named" "asset/build directory" "$out"
 out="$(python3 "$GUARD/guard_npm_lifecycle.py" \
   --paths "$FIX/npm/does-not-exist/package.json" 2>&1)"
 assert_rc "D missing explicit path" 1 "$?"
+
+# --- --root outside the current working directory must still inspect every
+#     tracked manifest (regression: paths used to be CWD-relative) ---
+EXTROOT="$(mktemp -d)"
+python3 "$FIX/make_external_root.py" "$EXTROOT" >/dev/null
+# Run from a directory that is NOT the repo root.
+out="$(cd /tmp && python3 "$GUARD/guard_npm_lifecycle.py" --root "$EXTROOT" 2>&1)"
+assert_rc "D external-root hostile" 1 "$?"
+assert_output "D external-root hostile named" "network fetch" "$out"
+assert_output "D external-root inspected both" "inspected 2 package.json file(s)" "$out"
+# Safe manifest under the same external root must pass.
+out="$(cd /tmp && python3 "$GUARD/guard_npm_lifecycle.py" --root "$EXTROOT" \
+  --paths "$EXTROOT/safe/package.json" 2>&1)"
+assert_rc "D external-root safe" 0 "$?"
+# A tracked manifest that cannot be resolved against --root must fail loud,
+# not silently report "inspected 0".
+out="$(cd /tmp && python3 "$GUARD/guard_npm_lifecycle.py" --root "$EXTROOT" \
+  --paths "$EXTROOT/missing.json" 2>&1)"
+assert_rc "D external-root missing explicit" 1 "$?"
+rm -rf "$EXTROOT"
 
 echo
 echo "==== Real-repo guards (post-cleanup tree) ===="

@@ -175,10 +175,9 @@ def tracked_package_jsons(root: str) -> list[str]:
 
     -z keeps NUL-delimited output so paths containing spaces/newlines survive.
 
-    Test fixtures are excluded for the same reason as guard_assets.py:
-    tests/guard/fixtures deliberately contains malicious package.json samples
-    that must be rejected when passed explicitly via --paths, but which must
-    not fail the production guard when they are merely tracked.
+    Returns absolute paths (resolved against *root*) so the manifests are
+    found regardless of the current working directory; diagnostic messages
+    keep the repo-relative form (see main()).
     """
     out = subprocess.run(
         ["git", "-C", root, "ls-files", "-z"],
@@ -192,8 +191,16 @@ def tracked_package_jsons(root: str) -> list[str]:
         if path.startswith("tests/guard/fixtures/"):
             continue
         if os.path.basename(path) == "package.json":
-            result.append(path)
+            result.append(os.path.join(root, path))
     return result
+
+
+def _repo_rel(path: str, root: str) -> str:
+    """Repo-relative form of *path* for diagnostics, robust to any CWD."""
+    try:
+        return os.path.relpath(path, root)
+    except ValueError:
+        return path
 
 
 def check_package_json(path: str, errors: list[str], rel: str) -> None:
@@ -243,9 +250,18 @@ def main() -> int:
             for p in missing:
                 print(f"::error file={p}::explicitly requested package.json path does not exist")
             return 1
-        targets = [(p, p) for p in args.paths]
+        targets = [(p, _repo_rel(p, args.root)) for p in args.paths]
     else:
-        targets = [(p, p) for p in tracked_package_jsons(args.root)]
+        # Absolute paths resolved against --root: a guard invoked from another
+        # working directory must still inspect every tracked manifest.
+        targets = [(p, _repo_rel(p, args.root)) for p in tracked_package_jsons(args.root)]
+        if targets and not any(os.path.isfile(p) for p, _ in targets):
+            for path, rel in targets:
+                if not os.path.isfile(path):
+                    print(f"::error file={rel}::tracked package.json not found "
+                          f"(resolved against --root {args.root!r})")
+            print(f"inspected 0 package.json file(s), {len(targets)} problem(s)")
+            return 1
 
     for path, rel in targets:
         if os.path.isfile(path):

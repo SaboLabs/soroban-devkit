@@ -14,7 +14,9 @@ Scope (explicit, intentionally narrow):
   * command value forms accepted by the devcontainer spec:
     - string: a single shell command line
     - array:  a list of shell command lines (joined with ``&&`` for scanning)
-    - object: an object with a ``"command"`` key
+    - object: a named-command object — its "command" value, and failing
+      that every string/list value in the object (the devcontainer CLI
+      accepts named commands under arbitrary keys such as "setup")
   * signals checked across the *whole* command string (no prefix bypass):
     - pipes a network fetch to a shell: ``curl ... | (sh|bash|pwsh|iex)``,
       ``wget ... | (sh|bash)`` — including after an allow-listed prefix
@@ -219,22 +221,36 @@ def _normalize_commands(val) -> list[str]:
     Accepts every form the devcontainer spec allows:
       - str  -> returned as-is (one command)
       - list -> each element is a separate command line (array form)
-      - dict -> dict["command"] (string or list) is used
+      - dict -> a named-command object. Its command value is taken from the
+        ``"command"`` key when present; because the devcontainer CLI also
+        accepts named-command objects under other property names, ANY other
+        string or list value in the object is treated as a command too, so a
+        hostile command cannot hide behind an unexpected key.
     Returns a list of normalized command strings (empty if no command).
+    Unsupported shapes (an empty object, a command value of the wrong type)
+    are reported by the caller via ``errors``; nothing is skipped silently.
     """
     if isinstance(val, str):
         return [val]
     if isinstance(val, list):
         return [str(p) if not isinstance(p, str) else p for p in val]
     if isinstance(val, dict):
-        cmd = val.get("command")
-        if cmd is None:
-            return []
-        if isinstance(cmd, str):
-            return [cmd]
-        if isinstance(cmd, list):
-            return [str(p) if not isinstance(p, str) else p for p in cmd]
-        return []
+        cmds: list[str] = []
+        candidate = val.get("command")
+        if candidate is None:
+            # No "command" key: treat every string/list value as a command so
+            # that an arbitrary key (e.g. "setup") cannot smuggle one past
+            # the danger checks.
+            for sub in val.values():
+                cmds.extend(_normalize_commands(sub))
+            if not cmds:
+                candidate = val  # fall through to the unsupported-shape diagnostic
+        if candidate is not None:
+            if isinstance(candidate, (str, list)):
+                cmds.extend(_normalize_commands(candidate))
+            else:
+                cmds.append(None)  # placeholder: unsupported shape, diagnosed below
+        return cmds
     return []
 
 
@@ -301,9 +317,20 @@ def check_devcontainer(path: str, errors: list[str], rel: str) -> None:
 
         cmds = _normalize_commands(val)
         if not cmds:
+            errors.append(
+                f"{rel}: {key} is an unsupported named-command shape "
+                f"(empty object or non-string command value); refusing to "
+                f"treat it as safe"
+            )
             continue
         hooks_found.append(key)
         for cmd in cmds:
+            if cmd is None:
+                errors.append(
+                    f"{rel}: {key} contains a non-string command value; "
+                    f"refusing to treat it as safe"
+                )
+                continue
             check_command(cmd, key, rel, errors)
 
     # root user only matters if combined with an exec hook

