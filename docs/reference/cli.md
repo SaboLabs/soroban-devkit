@@ -582,13 +582,20 @@ Checks included in the core:
 |-------|----|---------|
 | sdkt runtime | `sdkt-runtime` | confirms the binary is running and reports its version |
 | Rust toolchain | `rust-toolchain` | verifies `cargo` and `rustc` are on `PATH` |
-| WASM build target | `wasm-target` | verifies a Soroban WASM target is installed via `rustup` |
+| WASM build target | `wasm-target` | verifies the exact WASM target `sdkt build` uses (`wasm32v1-none`) is installed via `rustup` |
 | Project config | `project-config` | validates `.sdkt.toml` and the `[contracts]` dependency graph when inside a project |
 
 Exit codes:
 
 - `0` — all checks passed, or only warnings (non-fatal)
 - `1` — at least one check failed (e.g. invalid config, missing WASM target)
+
+The `wasm-target` check accepts only the target named by
+`sdkt_core::build::WASM_BUILD_TARGET` (`wasm32v1-none`), the same constant
+`sdkt build` passes to `cargo build --target`. A toolchain that has only
+`wasm32-unknown-unknown` installed is reported as an error, and the remediation
+names `wasm32v1-none` — so an `ok` status means `sdkt build` will find the
+target it needs.
 
 Warnings are never fatal. The JSON output contains no secret material.
 

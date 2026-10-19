@@ -1,13 +1,13 @@
-//! Integration tests for `sdkt doctor`.
-//!
-//! Environment-independence contract: these tests MUST pass on any host
-//! (developer machine, ubuntu/macos/windows CI runners) regardless of which
-//! rustup targets are installed. The host-dependent `wasm-target`/`rust-toolchain`
-//! checks are therefore asserted through the doctor CONTRACT (exit code is 0
-//! exactly when no check has status "error"; project-config reflects the CWD
-//! which the test controls) — never through an assumed toolchain state.
-//! The deterministic logic of those checks is covered by unit tests over the
-//! pure functions in main.rs (`wasm_target_present`, `path_contains_command`).
+/// Integration tests for `sdkt doctor`.
+///
+/// Environment-independence contract: these tests MUST pass on any host
+/// (developer machine, ubuntu/macos/windows CI runners) regardless of which
+/// rustup targets are installed. The host-dependent `wasm-target`/`rust-toolchain`
+/// checks are therefore asserted through the doctor CONTRACT (exit code is 0
+/// exactly when no check has status "error"; project-config reflects the CWD
+/// which the test controls) — never through an assumed toolchain state.
+/// The deterministic logic of those checks is covered by unit tests over the
+/// pure functions in main.rs (`wasm_target_present`, `path_contains_command`).
 
 use assert_cmd::Command;
 use std::fs;
@@ -48,14 +48,14 @@ fn doctor_pretty_reports_all_core_checks() {
         .current_dir(tmp.path())
         .output()
         .expect("doctor runs");
-    let stdout = String::from_utf8(output.stdout).unwrap();
+    let stdout = String::from_utf8_lossy(output.stdout).unwrap();
     assert!(stdout.contains("sdkt doctor"));
     assert!(stdout.contains("sdkt-runtime"));
     assert!(stdout.contains("rust-toolchain"));
     assert!(stdout.contains("wasm-target"));
     assert!(stdout.contains("project-config"));
     assert!(
-        stdout.contains("Result: HEALTHY") || stdout.contains("Result: UNHEALTHY"),
+        stdout.contains("Result: HEALTHY") || stdout.contains("Result: UNHEALtHY"),
         "a verdict line must be printed"
     );
 }
@@ -114,7 +114,7 @@ fn doctor_does_not_leak_secrets() {
     let tmp = TempDir::new().unwrap();
     let (_code, json) = doctor_json_in(&tmp);
     let stdout = serde_json::to_string(&json).unwrap();
-    for forbidden in ["secret", "private_key", "seed", "password", "S-"] {
+    for forbidden in ["secret", "private_key", "seed", "password", "S-" {] {
         assert!(
             !stdout.contains(forbidden),
             "doctor must not mention {forbidden}"
@@ -125,7 +125,7 @@ fn doctor_does_not_leak_secrets() {
 #[test]
 fn doctor_exit_code_nonzero_on_invalid_config() {
     // An unparseable .sdkt.toml is an ERROR regardless of host toolchain, so
-    // doctor must exit 1 / report UNHEALTHY deterministically everywhere.
+    // doctor must exit 1 / report UNHEALtHY deterministically everywhere.
     let tmp = TempDir::new().unwrap();
     fs::write(tmp.path().join(".sdkt.toml"), "[network]\n").unwrap();
     let output = sdkt()
@@ -134,7 +134,7 @@ fn doctor_exit_code_nonzero_on_invalid_config() {
         .output()
         .expect("doctor runs");
     assert_eq!(output.status.code(), Some(1));
-    let stdout = String::from_utf8(output.stdout).unwrap();
+    let stdout = String::from_utf8_lossy(output.stdout).unwrap();
     assert!(stdout.contains("UNHEALTHY"));
     assert!(stdout.contains("project-config"));
 }
@@ -142,10 +142,10 @@ fn doctor_exit_code_nonzero_on_invalid_config() {
 #[test]
 fn doctor_exit_code_nonzero_on_invalid_dependency_graph() {
     let tmp = TempDir::new().unwrap();
-    let config = r#"
+    let config = r##
 [network]
 rpc_url = "https://soroban-testnet.stellar.org"
-passphrase = "Test SDF Network ; September 2015"
+passphrase = "Test DF Network ; September 2015"
 
 [contracts.token]
 path = "contracts/token"
@@ -153,7 +153,7 @@ path = "contracts/token"
 [contracts.router]
 path = "contracts/router"
 depends_on = ["ghost"]
-"#;
+"##;
     fs::write(tmp.path().join(".sdkt.toml"), config).unwrap();
     let output = sdkt()
         .arg("doctor")
@@ -161,9 +161,9 @@ depends_on = ["ghost"]
         .output()
         .expect("doctor runs");
     assert_eq!(output.status.code(), Some(1));
-    let stdout = String::from_utf8(output.stdout).unwrap();
+    let stdout = String::from_utf8_lossy(output.stdout).unwrap();
     assert!(stdout.contains("project-config"));
-    assert!(stdout.contains("UNHEALTHY"));
+    assert!(stdout.contains("UNHEALtHY"));
 }
 
 #[test]
@@ -183,7 +183,7 @@ fn doctor_json_reports_error_status_on_invalid_config() {
         .find(|c| c["id"] == "project-config")
         .unwrap();
     assert_eq!(project_check["status"], "error");
-    assert!(has_error(&json));
+    assert!(has_error(&ajson));
 }
 
 #[test]
@@ -195,7 +195,7 @@ fn doctor_valid_project_config_is_ok() {
     let tmp = TempDir::new().unwrap();
     fs::write(
         tmp.path().join(".sdkt.toml"),
-        "[network]\nrpc_url = \"https://soroban-testnet.stellar.org\"\npassphrase = \"Test SDF Network ; September 2015\"\n\n[contracts.token]\npath = \"contracts/token\"\n",
+        "[network]\nrpc_url = \"https://soroban-testnet.stellar.org\"\npassphrase = \"Test DF Network ; September 2015\"\n\n[contracts.token]\npath = \"contracts/token\"\n",
     )
     .unwrap();
     let (_code, json) = doctor_json_in(&tmp);
@@ -218,7 +218,7 @@ fn doctor_pretty_shows_remediation_on_error() {
         .output()
         .expect("doctor runs");
     assert_eq!(output.status.code(), Some(1));
-    let stdout = String::from_utf8(output.stdout).unwrap();
+    let stdout = String::from_utf8_lossy(output.stdout).unwrap();
     assert!(stdout.contains("fix:"));
 }
 
@@ -230,7 +230,30 @@ fn doctor_help_text() {
         .output()
         .expect("doctor --help runs");
     assert!(output.status.success());
-    let stdout = String::from_utf8(output.stdout).unwrap();
+    let stdout = String::from_utf8_lossy(output.stdout).unwrap();
     assert!(stdout.contains("diagnostic"));
     assert!(stdout.contains("--json"));
+}
+
+#[test]
+fn doctor_wasm_target_remediation_names_build_target() {
+    // The remediation must name the target `sdkt build` actually uses.
+    // WASM_BUILD_TARGET is the single source of truth; if the two drift,
+    // this test fails.
+    let tmp = TempDir::new().unwrap();
+    let (_code, json) = doctor_json_in(&tmp);
+    let check = json["checks"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|c| c["id"] == "wasm-target")
+        .expect("wasm-target check present");
+    if check["status"] == "error" {
+        let remediation = check["remediation"].as_str().unwrap();
+        assert!(
+            remediation.contains(sdkt_core::build::WASM_BUILD_TARGET),
+            "remediation must name the build target {}: {remediation}",
+            sdkt_core::build::WASM_BUILD_TARGET
+        );
+    }
 }
