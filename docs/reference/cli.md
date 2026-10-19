@@ -492,6 +492,7 @@ require the local WASM bytes.
 │   │   ├── --expect-success <FN>         Declare function must succeed (repeatable)
 │   │   ├── --expect-error <FN:TYPE:CODE> Declare function must fail (repeatable)
 │   │   ├── --replay                      Replay every written artifact to verify determinism
+│   │   ├── --resource-limit-is-finding   Map budget-class failures to RESOURCE_LIMIT findings (default off)
 │   │   ├── --format <pretty|json|jsonl>  Output format (default: pretty)
 │   │   └── [network flags inherited from network-profile resolution]
 │   │
