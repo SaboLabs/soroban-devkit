@@ -30,3 +30,31 @@
 # Binary / font assets (the incident disguised JS as a font here)
 /public/fonts/               @naninu123
 /dist/                       @naninu123
+
+# Cargo manifests (dependency resolution — supply-chain attack surface)
+/Cargo.toml                  @naninu123
+/crates/*/Cargo.toml         @naninu123
+/tests/fixtures/testnet-smoke/Cargo.toml @naninu123
+
+# Lockfiles (pin exact dependency versions)
+/Cargo.lock                  @naninu123
+/tests/fixtures/testnet-smoke/Cargo.lock @naninu123
+
+# Build scripts (execute at compile time)
+/crates/sdkt-cli/build.rs    @naninu123
+/crates/sdkt-core/src/build.rs @naninu123
+
+# GitHub Actions (can inject arbitrary runner steps)
+/.github/actions/            @naninu123
+
+# Dependabot config (can change dependency update policy)
+/.github/dependabot.yml      @naninu123
+
+# Build orchestration (Makefile can run arbitrary commands)
+/Makefile                    @naninu123
+
+# Install script (executes on user machines)
+/install.sh                  @naninu123
+
+# Playground build script (produces wasm artifacts)
+/website/playground/build.sh @naninu123
