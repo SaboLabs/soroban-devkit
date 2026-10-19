@@ -1,0 +1,1 @@
+{"name": "quoted-script-clean", "postCreateCommand": "node --no-warnings \"scripts/x.js\""}

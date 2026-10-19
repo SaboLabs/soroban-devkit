@@ -9,11 +9,19 @@ on:
 env:
   CARGO_TERM_COLOR: always
 
+# Default read-only permissions for all jobs; jobs needing writes opt in.
+# Combined with persist-credentials: false on every checkout to prevent
+# a compromised step or fork from exfiltrating GITHUB_TOKEN or persisting it.
+permissions:
+  contents: read
+
 jobs:
   format_and_lint:
     runs-on: ubuntu-latest
     steps:
     - uses: actions/checkout@v7
+      with:
+        persist-credentials: false
 
     - name: Set up Rust
       uses: dtolnay/rust-toolchain@stable
@@ -43,6 +51,8 @@ jobs:
         os: [ubuntu-latest, macos-latest, windows-latest]
     steps:
     - uses: actions/checkout@v7
+      with:
+        persist-credentials: false
 
     - name: Set up Rust
       uses: dtolnay/rust-toolchain@stable
@@ -68,6 +78,8 @@ jobs:
     continue-on-error: true
     steps:
     - uses: actions/checkout@v7
+      with:
+        persist-credentials: false
 
     - name: Set up Rust
       uses: dtolnay/rust-toolchain@stable
@@ -89,11 +101,80 @@ jobs:
       continue-on-error: true
       run: cargo audit
 
+  # ---------------------------------------------------------------------------
+  # Supply-chain guardrails (added after the 2026-10-18 incident in which
+  # obfuscated JavaScript was committed as "public/fonts/fa-solid-500.woff2").
+  #
+  # Both jobs are cheap: stdlib Python only, no network, no Rust toolchain.
+  # Neither job declares `needs`, so they run in parallel with the existing
+  # pipeline and fail the run if either guard reports a problem.
+  # ---------------------------------------------------------------------------
+
+  asset-integrity:
+    name: asset integrity (font magic bytes)
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v7
+      with:
+        persist-credentials: false
+
+    - name: Validate tracked font assets
+      run: python3 scripts/guard/guard_assets.py --root .
+
+  vscode-config-guard:
+    name: vscode auto-task guard
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v7
+      with:
+        persist-credentials: false
+
+    - name: Reject dangerous VS Code auto-task configuration
+      run: python3 scripts/guard/guard_vscode_config.py --root .
+
+  guardrail-tests:
+    name: guardrail fixture tests
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v7
+      with:
+        persist-credentials: false
+
+    - name: Run guardrail fixture tests
+      run: bash tests/guard/run_fixture_tests.sh
+
+    - name: Incident payload regression (static bytes only)
+      run: python3 tests/guard/test_incident_payload.py
+
+  devcontainer-guard:
+    name: devcontainer auto-run guard
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v7
+      with:
+        persist-credentials: false
+
+    - name: Reject risky dev-container auto-run configuration
+      run: python3 scripts/guard/guard_devcontainer.py --root .
+
+  npm-lifecycle-guard:
+    name: npm lifecycle hook guard
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v7
+      with:
+        persist-credentials: false
+
+    - name: Reject risky package.json lifecycle hooks
+      run: python3 scripts/guard/guard_npm_lifecycle.py --root .
+
   install-script:
     name: install-script validation
     runs-on: ubuntu-latest
     steps:
     - uses: actions/checkout@v7
+      with:
+        persist-credentials: false
     - name: Syntax check (no network)
       run: bash -n install.sh
     - name: ShellCheck (if available)
@@ -113,6 +194,8 @@ jobs:
     runs-on: ubuntu-24.04-arm
     steps:
     - uses: actions/checkout@v7
+      with:
+        persist-credentials: false
     - name: Syntax check (no network)
       run: bash -n install.sh
     - name: Offline self-test on aarch64
@@ -130,6 +213,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
     - uses: actions/checkout@v7
+      with:
+        persist-credentials: false
 
     # Parse MSRV from Cargo.toml or fallback
     - name: Set up Rust (MSRV)
@@ -150,6 +235,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
     - uses: actions/checkout@v7
+      with:
+        persist-credentials: false
     - name: Current docs describe the workspace version
       run: |
         VER="$(grep -m1 '^version = ' Cargo.toml | sed -E 's/version = "([^"]+)".*/\1/')"
@@ -197,6 +284,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
     - uses: actions/checkout@v7
+      with:
+        persist-credentials: false
 
     - name: Set up Rust
       uses: dtolnay/rust-toolchain@stable
