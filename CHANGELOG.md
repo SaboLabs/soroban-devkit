@@ -108,6 +108,45 @@ Two correctness fixes above change what CI observes. Neither is a regression; bo
 ### Changed
 - Public docs refreshed for deployment, contributor onboarding, security-model wording, Windows availability, GitBook navigation, and README positioning. Historical internal/planning docs were archived or removed where appropriate.
 
+## [v2.3.0] - 2026-08-07
+
+### Added
+- **Network profile management commands.** `sdkt network add | list | show | remove` manage named network profiles, and `sdkt-storage` gains network profile storage for them.
+
+## [v2.2.1] - 2026-08-07
+
+### Fixed
+- **Cross-platform identity directory override.** The identity store honors a cross-platform directory override.
+
+## [v1.5.0] - 2026-08-06
+
+### Added
+- **Workspace build and multi-contract deployment orchestration.** `sdkt project` can build a workspace and orchestrate multi-contract deployments.
+- **Contract Health Report (M23).** `sdkt` reports contract health.
+
+## [v1.4.0] - 2026-08-05
+
+### Added
+- **Contract Verification (M22).** `sdkt` can verify a deployed contract.
+
+## [v1.3.0] - 2026-08-05
+
+### Added
+- **Soroban Contract Inspector (M21).** `sdkt` can inspect a Soroban contract.
+
+### Fixed
+- **`cache_info` succeeds when the cache dir is absent.** WASM cache info no longer fails when the cache directory does not exist.
+
+## [v1.2.1] - 2026-08-05
+
+### Fixed
+- **Windows compatibility restored in storage.** Storage paths work on Windows again.
+
+## [v1.2.0] - 2026-08-05
+
+### Changed
+- Version bump only; no user-visible changes in this range.
+
 ## [v2.5.0] - 2026-08-08
 
 ### Added
