@@ -38,6 +38,7 @@
 
 # Lockfiles (pin exact dependency versions)
 /Cargo.lock                  @naninu123
+/crates/sdkt-playground/Cargo.lock @naninu123
 /tests/fixtures/testnet-smoke/Cargo.lock @naninu123
 
 # Build scripts (execute at compile time)
