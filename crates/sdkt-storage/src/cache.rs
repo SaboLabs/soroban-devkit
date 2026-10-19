@@ -18,6 +18,16 @@ pub struct CacheInfo {
     pub total_wasm_size_bytes: u64,
 }
 
+/// Info about a single cached WASM entry for a specific network.
+#[derive(Debug, Clone, PartialEq)]
+pub struct CacheEntryInfo {
+    pub hash: String,
+    pub wasm_size_bytes: Option<u64>,
+    pub metadata_size_bytes: Option<u64>,
+    /// `true` when the `{hash}.json` file exists but could not be parsed.
+    pub metadata_malformed: bool,
+}
+
 /// A local file-system cache for Soroban WASM metadata and binaries.
 pub struct WasmCache {
     base_dir: PathBuf,
@@ -224,6 +234,69 @@ impl WasmCache {
             total_metadata_size_bytes,
             total_wasm_size_bytes,
         })
+    }
+
+    /// Lists every cached entry for a specific network.
+    ///
+    /// Entries are paired by filename stem: a `{hash}.json` and/or
+    /// `{hash}.wasm` file contributes a single entry. A half-pair (only one
+    /// of the two files present) is reported with the missing size as `None`.
+    ///
+    /// A missing or unreadable cache directory is treated as an empty cache,
+    /// matching `cache_info`. A malformed `{hash}.json` is reported with
+    /// `metadata_malformed = true` rather than aborting the listing.
+    ///
+    /// Results are sorted deterministically by hash.
+    pub fn list_entries(&self, network: &str) -> Result<Vec<CacheEntryInfo>, StorageError> {
+        validate_network_name(network)?;
+        let net_dir = self.base_dir.join("wasm").join(network);
+
+        // Map from hash -> (wasm_size, metadata_size, metadata_malformed)
+        let mut entries: std::collections::BTreeMap<String, (Option<u64>, Option<u64>, bool)> =
+            std::collections::BTreeMap::new();
+
+        if let Ok(dir_entries) = fs::read_dir(&net_dir) {
+            for entry in dir_entries {
+                let entry = match entry {
+                    Ok(e) => e,
+                    Err(_) => continue,
+                };
+                let name = entry.file_name().to_string_lossy().to_string();
+
+                let (stem, is_json) = if let Some(stem) = name.strip_suffix(".json") {
+                    (stem.to_string(), true)
+                } else if let Some(stem) = name.strip_suffix(".wasm") {
+                    (stem.to_string(), false)
+                } else {
+                    continue;
+                };
+
+                let size = entry.metadata().ok().map(|m| m.len());
+                let slot = entries.entry(stem).or_insert((None, None, false));
+                if is_json {
+                    slot.1 = size;
+                    if let Ok(contents) = fs::read_to_string(entry.path()) {
+                        if serde_json::from_str::<WasmMetadata>(&contents).is_err() {
+                            slot.2 = true;
+                        }
+                    }
+                } else {
+                    slot.0 = size;
+                }
+            }
+        }
+
+        Ok(entries
+            .into_iter()
+            .map(|(hash, (wasm_size_bytes, metadata_size_bytes, metadata_malformed))| {
+                CacheEntryInfo {
+                    hash,
+                    wasm_size_bytes,
+                    metadata_size_bytes,
+                    metadata_malformed,
+                }
+            })
+            .collect())
     }
 }
 
