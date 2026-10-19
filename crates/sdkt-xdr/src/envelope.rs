@@ -16,12 +16,7 @@ use stellar_xdr::{
     TransactionV0Ext,
 };
 
-use crate::DecodeError;
-
-/// Nesting cap for untrusted envelopes. Matches the host's XDR depth limit, so
-/// any envelope the network would accept still decodes, while a hostile one
-/// cannot recurse deep enough to exhaust the stack.
-const MAX_XDR_DEPTH: u32 = 500;
+use crate::{DecodeError, MAX_XDR_DEPTH};
 
 /// Structured, stable breakdown of a transaction envelope.
 ///

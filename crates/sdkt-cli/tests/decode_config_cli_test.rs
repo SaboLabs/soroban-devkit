@@ -25,10 +25,9 @@ fn write_config(dir: &TempDir, toml: &str) {
     fs::write(dir.path().join(".sdkt.toml"), toml).expect("write .sdkt.toml");
 }
 
-/// `max_depth = 0` means unlimited, so a depth-4 payload must decode
-/// successfully — proving the documented 0=unlimited semantics are honoured.
+/// `max_depth = 0` selects the safe default, so ordinary nested XDR decodes.
 #[test]
-fn cli_decode_max_depth_zero_is_unlimited() {
+fn cli_decode_max_depth_zero_uses_safe_default() {
     let dir = TempDir::new().unwrap();
     write_config(&dir, "[decode]\nmax_depth = 0\nallow_fallback_hex = true\n");
 
@@ -44,7 +43,7 @@ fn cli_decode_max_depth_zero_is_unlimited() {
     let out = cmd.output().expect("decode runs");
     assert!(
         out.status.success(),
-        "max_depth=0 must be unlimited, got stderr: {}",
+        "max_depth=0 must use the safe default, got stderr: {}",
         String::from_utf8_lossy(&out.stderr)
     );
     let decoded = String::from_utf8(out.stdout).unwrap();

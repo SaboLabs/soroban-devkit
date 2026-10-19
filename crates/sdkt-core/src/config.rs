@@ -147,8 +147,8 @@ pub struct NetworkConfig {
 /// Settings modifying XDR decoding actions.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct DecodeConfig {
-    /// Limit max depth during nested XDR parsing. `0` means unlimited
-    /// (`Limits::none` in the XDR layer) — same semantics as the decoder.
+    /// Limit max depth during nested XDR parsing. `0` selects the safe default
+    /// limit of 500; values above 500 are capped to protect against stack exhaustion.
     #[serde(default = "default_decode_max_depth")]
     pub max_depth: u32,
     /// Fallback to hex decoding if base64 detection fails.
@@ -220,10 +220,8 @@ impl DevKitConfig {
 
     /// Validates semantic value ranges serde cannot express.
     ///
-    /// `max_depth = 0` is accepted and means "unlimited" (the same value the
-    /// XDR decoder honours as `Limits::none`), so a `.sdkt.toml` that omits an
-    /// override or sets `0` behaves identically. This guard exists primarily
-    /// to surface a clear, named error if a future semantic rule is added.
+    /// `max_depth = 0` is accepted and selects the XDR decoder's safe default
+    /// limit. The decoder also caps larger values at the host's depth limit.
     pub fn validate(&self) -> Result<(), String> {
         Ok(())
     }
@@ -306,15 +304,13 @@ mod tests {
     }
 
     #[test]
-    fn test_validate_accepts_zero_max_depth_as_unlimited() {
-        // Issue #375: `max_depth = 0` is documented and implemented as
-        // "unlimited" by decode_with_config, so the config validator must not
-        // contradict it. A .sdkt.toml with max_depth = 0 must load and decode.
+    fn test_validate_accepts_zero_max_depth_as_default() {
+        // Zero selects the decoder's safe default depth cap.
         let mut config = DevKitConfig::default();
         config.decode.max_depth = 0;
         assert!(
             config.validate().is_ok(),
-            "max_depth = 0 must be valid (unlimited), matching decode_with_config"
+            "max_depth = 0 must select the default safe limit"
         );
     }
 
