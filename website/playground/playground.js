@@ -35,15 +35,15 @@
   // Future network capability placeholder. Group 2 (RPC reads) and Group 3
   // (transactions) will plug in here; the local inspector never touches it.
   const networkProvider = { mode: 'local', supported: ['local'] };
+  const MAX_WASM_SIZE_BYTES = 64 * 1024 * 1024;
+  const MAX_WASM_SIZE_LABEL = '64 MiB';
 
   const REQUEST_TIMEOUT_MS = 30000;  // 30 seconds — timeout for worker requests
 
   let nextId = 1;
   const pending = new Map();
   let currentFile = null;
-  let currentBytes = null;
   let candidateFile = null;
-  let candidateBytes = null;
   let inspected = false;
 
   // Monotonic selection generation. Every user selection (upload or example)
@@ -114,7 +114,15 @@
       }, REQUEST_TIMEOUT_MS);
       
       pending.set(id, { resolve: resolve_, reject: reject_ });
-      worker.postMessage(Object.assign({ id }, msg));
+      const transfer = [...new Set(['bytes', 'oldBytes', 'newBytes']
+        .map((key) => msg[key])
+        .filter((bytes) => bytes instanceof Uint8Array)
+        .map((bytes) => bytes.buffer))];
+      try {
+        worker.postMessage(Object.assign({ id }, msg), transfer);
+      } catch (err) {
+        reject_(err);
+      }
     });
   }
 
@@ -517,27 +525,32 @@
   }
 
   function compareFiles(gen) {
-    if (!currentBytes || !candidateBytes) return;
+    if (!currentFile || !candidateFile) return;
+    const baseFile = currentFile;
+    const nextFile = candidateFile;
     setStatus('loading', 'comparing…');
-    post({ type: 'diff', oldBytes: currentBytes, newBytes: candidateBytes }).then((verdict) => {
-      if (!isCurrent(gen)) return;
-      renderUpgrade(verdict);
-      setStatus('ok', verdict.compatible ? 'upgrade is compatible' : 'breaking changes detected');
-    }).catch((err) => {
-      if (!isCurrent(gen)) return;
-      const errMsg = String(err && err.message ? err.message : err);
-      const isTimeout = errMsg.includes('timed out');
-      setStatus('err', isTimeout ? 'comparison timed out' : 'comparison failed');
-      renderUpgrade(null);
-      const sec = results.querySelector('[data-upgrade-safety]');
-      if (sec) {
-        if (isTimeout) {
-          sec.appendChild(kvTable([['Error', errMsg + '. The comparison timed out; the file may be too large or complex. Reload and try again.']]));
-        } else {
-          sec.appendChild(kvTable([['Error', errMsg]]));
+    Promise.all([baseFile.arrayBuffer(), nextFile.arrayBuffer()])
+      .then(([oldBuffer, newBuffer]) => {
+        if (!isCurrent(gen)) return null;
+        return post({ type: 'diff', oldBytes: new Uint8Array(oldBuffer), newBytes: new Uint8Array(newBuffer) });
+      }).then((verdict) => {
+        if (!verdict || !isCurrent(gen)) return;
+        renderUpgrade(verdict);
+        setStatus('ok', verdict.compatible ? 'upgrade is compatible' : 'breaking changes detected');
+      }).catch((err) => {
+        if (!isCurrent(gen)) return;
+        const errMsg = String(err && err.message ? err.message : err);
+        const isTimeout = errMsg.includes('timed out');
+        setStatus('err', isTimeout ? 'comparison timed out' : 'comparison failed');
+        renderUpgrade(null);
+        const sec = results.querySelector('[data-upgrade-safety]');
+        if (sec) {
+          const message = isTimeout
+            ? errMsg + '. The comparison timed out; the file may be too large or complex. Reload and try again.'
+            : errMsg;
+          sec.appendChild(kvTable([['Error', message]]));
         }
-      }
-    });
+      });
   }
 
   /* ---------- file flow ---------- */
@@ -546,12 +559,21 @@
     if (!file) return;
     // A call without a token (direct upload path) claims a fresh selection.
     const g = gen !== undefined ? gen : beginSelection();
+    if (file.size > MAX_WASM_SIZE_BYTES) {
+      currentFile = null;
+      candidateFile = null;
+      candidateName.textContent = 'No candidate loaded';
+      filebar.hidden = false;
+      fname.textContent = file.name;
+      fmeta.textContent = fmtSize(file.size) + ' · ' + (file.type || 'application/octet-stream');
+      setStatus('err', 'file too large');
+      showError('This WASM file is too large. The maximum supported file size is ' + MAX_WASM_SIZE_LABEL + '.');
+      return;
+    }
     // Extension + content validation happens in inspect() after read; the
     // picker is restricted to .wasm already, but drops can bypass that.
     currentFile = file;
-    currentBytes = null;
     candidateFile = null;
-    candidateBytes = null;
     candidateInput.value = '';
     candidateName.textContent = 'No candidate loaded';
     filebar.hidden = false;
@@ -567,7 +589,6 @@
   function inspectFile(file, gen) {
     file.arrayBuffer().then((buf) => {
       const bytes = new Uint8Array(buf);
-      currentBytes = bytes;
       return post({ type: 'inspect', bytes });
     }).then((result) => {
       if (!isCurrent(gen)) return;
@@ -606,10 +627,7 @@
         if (!isCurrent(gen)) return;
         const file = new File([new Uint8Array(buf)], ex.label, { type: 'application/wasm' });
         if (key === 'us_new' && currentFile) {
-          candidateFile = file;
-          candidateBytes = new Uint8Array(buf);
-          candidateName.textContent = file.name;
-          compareFiles(gen);
+          acceptCandidateFile(file, gen);
         } else {
           acceptFile(file, gen);
         }
@@ -627,9 +645,7 @@
     // Invalidate any in-flight fetch/inspection so it cannot re-render after reset.
     beginSelection();
     currentFile = null;
-    currentBytes = null;
     candidateFile = null;
-    candidateBytes = null;
     candidateName.textContent = 'No candidate loaded';
     inspected = false;
     fileInput.value = '';
@@ -645,7 +661,28 @@
 
   fileInput.addEventListener('change', () => {
     if (fileInput.files && fileInput.files[0]) acceptFile(fileInput.files[0]);
+    // Clearing the value lets a user choose the same file again after a
+    // failed inspection; inspectFile re-reads its retained File object.
+    fileInput.value = '';
   });
+
+  function acceptCandidateFile(file, gen) {
+    if (file.size > MAX_WASM_SIZE_BYTES) {
+      candidateFile = null;
+      candidateName.textContent = 'No candidate loaded';
+      candidateInput.value = '';
+      setStatus('err', 'file too large');
+      errorMsg.textContent = 'This candidate WASM file is too large. The maximum supported file size is ' + MAX_WASM_SIZE_LABEL + '.';
+      errorBox.hidden = false;
+      renderUpgrade(null);
+      return;
+    }
+    candidateFile = file;
+    candidateName.textContent = file.name;
+    candidateInput.value = '';
+    clearError();
+    compareFiles(gen);
+  }
 
   candidateInput.addEventListener('change', () => {
     const file = candidateInput.files && candidateInput.files[0];
@@ -655,15 +692,7 @@
       return;
     }
     const gen = beginSelection();
-    candidateFile = file;
-    candidateName.textContent = file.name;
-    file.arrayBuffer().then((buf) => {
-      if (!isCurrent(gen)) return;
-      candidateBytes = new Uint8Array(buf);
-      compareFiles(gen);
-    }).catch((err) => {
-      if (isCurrent(gen)) showError(String(err && err.message ? err.message : err));
-    });
+    acceptCandidateFile(file, gen);
   });
 
   ['dragenter', 'dragover'].forEach((evt) =>

@@ -74,20 +74,24 @@ class StubWorker {
     this.onmessage = null;
     this.inspects = [];
     this.diffs = [];
+    this.transferLists = [];
     workers.push(this);
   }
-  postMessage(msg) {
-    if (msg.type === 'ping') {
+  postMessage(msg, transfer = []) {
+    this.transferLists.push(transfer);
+    const senderBytes = [msg.bytes, msg.oldBytes, msg.newBytes].filter(Boolean);
+    const copied = structuredClone(msg, { transfer });
+    if (copied.type === 'ping') {
       queueMicrotask(() => this.onmessage({ data: { id: 'boot', ok: true } }));
-      queueMicrotask(() => this.onmessage({ data: { id: msg.id, ok: true, payload: { ready: true } } }));
+      queueMicrotask(() => this.onmessage({ data: { id: copied.id, ok: true, payload: { ready: true } } }));
       return;
     }
-    if (msg.type === 'inspect') {
-      this.inspects.push({ id: msg.id, bytes: msg.bytes, answered: false });
+    if (copied.type === 'inspect') {
+      this.inspects.push({ id: copied.id, bytes: copied.bytes, senderBytes: senderBytes[0], answered: false });
       return;
     }
-    if (msg.type === 'diff') {
-      this.diffs.push({ id: msg.id, answered: false });
+    if (copied.type === 'diff') {
+      this.diffs.push({ id: copied.id, senderBytes, answered: false });
     }
   }
   answer(i, payload) {
@@ -95,6 +99,12 @@ class StubWorker {
     assert.ok(m && !m.answered, 'inspect ' + i + ' must exist and be unanswered');
     m.answered = true;
     queueMicrotask(() => this.onmessage({ data: { id: m.id, ok: true, payload } }));
+  }
+  answerError(i, error) {
+    const m = this.inspects[i];
+    assert.ok(m && !m.answered, 'inspect ' + i + ' must exist and be unanswered');
+    m.answered = true;
+    queueMicrotask(() => this.onmessage({ data: { id: m.id, ok: false, error } }));
   }
   answerDiff(i, payload, error) {
     const m = this.diffs[i];
@@ -136,10 +146,22 @@ function payloadFor(extra) {
 
 const tick = async (n = 10) => { for (let i = 0; i < n; i += 1) await new Promise((r) => setTimeout(r, 0)); };
 const clickExample = (key) => handlers.get('btn:' + key)();
-const dropFile = (name) => handlers.get('drop')({
-  preventDefault() {},
-  dataTransfer: { files: [{ name, size: 10, type: 'application/wasm', arrayBuffer: async () => new Uint8Array([1, 2, 3]).buffer }] },
+const makeUploadFile = (name, size = 10) => ({
+  name, size, type: 'application/wasm', reads: 0,
+  arrayBuffer() {
+    this.reads += 1;
+    if (this.size > 64 * 1024 * 1024) throw new Error('oversized file must not be read');
+    return Promise.resolve(new Uint8Array([1, 2, 3]).buffer);
+  },
 });
+const dropExistingFile = (file) => handlers.get('drop')({
+  preventDefault() {}, dataTransfer: { files: [file] },
+});
+const dropFile = (name, size = 10) => {
+  const file = makeUploadFile(name, size);
+  dropExistingFile(file);
+  return file;
+};
 const reset = () => handlers.get('reset')({});
 const fname = () => els.get('fname').textContent;
 const statusText = () => els.get('status').textContent;
@@ -162,6 +184,7 @@ answerFetch(1, US_NEW());               // B's fetch wins
 await tick();
 assert.equal(fname(), 'example: us_new.wasm (bundled)', 'B renders');
 assert.equal(worker.inspects.length, 1, 'only B reached inspection');
+assert.equal(worker.inspects[0].senderBytes.byteLength, 0, 'inspection transfers and detaches its sender buffer');
 worker.answer(0, payloadFor({ interface_version: 23 }));
 await tick();
 assert.ok(statusText().startsWith('inspection complete'), 'B inspection completes');
@@ -216,6 +239,9 @@ els.get('candidateInput').files = [candidate('candidate.wasm')];
 handlers.get('candidate')();
 await tick();
 assert.equal(worker.diffs.length, 1, 'candidate selection starts a comparison');
+assert.equal(worker.diffs[0].senderBytes.length, 2, 'comparison transfers both contract buffers');
+assert.ok(worker.diffs[0].senderBytes.every((bytes) => bytes.byteLength === 0),
+  'comparison detaches both sender buffers');
 worker.answerDiff(0, { compatible: false, breaking_changes: [
   { kind: 'removed_function', name: 'old_method', detail: 'function was removed' },
 ], non_breaking_changes: [
@@ -248,6 +274,49 @@ worker.answerDiff(1, null, 'bad wasm input');
 await tick();
 assert.match(treeText(els.get('results')), /Error bad wasm input/,
   'comparison errors are rendered in the upgrade panel');
+
+// 5) Failed inspections can be retried from the retained File after transfer
+//    detached the first Uint8Array; each attempt must read fresh bytes.
+const retryFile = dropFile('retry.wasm');
+await tick();
+const retryIndex = worker.inspects.length - 1;
+assert.equal(retryFile.reads, 1, 'initial inspection reads the retained File');
+assert.equal(worker.inspects[retryIndex].senderBytes.byteLength, 0, 'retry fixture buffer is detached');
+worker.answerError(retryIndex, 'temporary inspector failure');
+await tick();
+const inspectCountBeforeRetry = worker.inspects.length;
+dropExistingFile(retryFile);
+await tick();
+assert.equal(worker.inspects.length, inspectCountBeforeRetry + 1, 'reselecting the same File starts another inspection');
+assert.equal(retryFile.reads, 2, 'retry re-reads the File instead of the detached buffer');
+worker.answer(worker.inspects.length - 1, payloadFor(null));
+await tick();
+
+// 6) Oversized uploads are rejected before reading or posting to the worker.
+const inspectionsBeforeOversize = worker.inspects.length;
+const oversizedFile = dropFile('oversized.wasm', 64 * 1024 * 1024 + 1);
+await tick();
+assert.equal(oversizedFile.reads, 0, 'oversized input is rejected before reading');
+assert.equal(worker.inspects.length, inspectionsBeforeOversize, 'oversized input is rejected before posting');
+assert.match(els.get('errorMsg').textContent, /64 MiB.*too large|too large.*64 MiB/i,
+  'the error names the 64 MiB limit and says the file is too large');
+
+dropFile('candidate-base.wasm');
+await tick();
+worker.answer(worker.inspects.length - 1, payloadFor(null));
+await tick();
+const candidateDiffsBeforeOversize = worker.diffs.length;
+const oversizedCandidate = makeUploadFile('oversized-candidate.wasm', 64 * 1024 * 1024 + 1);
+els.get('candidateInput').files = [oversizedCandidate];
+handlers.get('candidate')();
+await tick();
+assert.equal(oversizedCandidate.reads, 0, 'oversized candidate is rejected before reading');
+assert.equal(worker.diffs.length, candidateDiffsBeforeOversize, 'oversized candidate is rejected before posting');
+assert.match(els.get('errorMsg').textContent, /64 MiB.*too large|too large.*64 MiB/i,
+  'the candidate error names the same file-size limit');
+assert.equal(resultsHidden(), false, 'rejecting an oversized candidate keeps base inspection visible');
+assert.match(treeText(els.get('results')), /Load a candidate WASM to compare it/,
+  'rejecting an oversized candidate clears any stale comparison verdict');
 
 console.log('stale-race tests: OK');
 
