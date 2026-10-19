@@ -1,0 +1,6 @@
+{
+  "postCreateCommand": [
+    "npm",
+    "ci"
+  ]
+}

@@ -1,0 +1,2 @@
+positive (must FAIL): local-script-js-fetch
+the referenced local script performs a JavaScript network fetch

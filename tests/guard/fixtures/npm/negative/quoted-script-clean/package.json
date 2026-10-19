@@ -1,0 +1,1 @@
+{"name": "quoted-script-clean", "scripts": {"postinstall": "node --no-warnings \"scripts/x.js\""}}
