@@ -1,0 +1,9 @@
+# Benchmark WASM fixtures for scripts/bench_offline.sh
+# source: stellar/soroban-examples@03d42aa6b973dcf3a453a99d0c6a6e8d25a196e2
+# built with: stellar contract build (wasm32v1-none, release)
+# rebuilt: 2026-10-19
+
+5fd7e548fca862eb30301000fcf86c5c4f3d262d4940600ee13bb1eb4945bf5d  wasm/timelock.wasm
+e7bd5867b55977deaa8a3c3cd5dec392416cf54e49417f1c1a333ecd582987e1  wasm/atomic_swap.wasm
+60dd515cf2fa14304e4253fb5e06d5a4006804956065e57cfd3599bc400a1f39  wasm/liquidity_pool.wasm
+370acec03b6e7a066f9255e41d8b8e47d9d12363203b02c28dba9d87ad4cfd3c  wasm/token.wasm
