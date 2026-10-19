@@ -7,17 +7,21 @@ offline `sdkt` commands so future releases can detect regressions.
 
 | Field | Value |
 |-------|-------|
-| Machine | VPS (AWS `aarch64`/`x86_64` shared, 2 vCPU) |
-| CPU | 2 vCPU (`nproc` = 2) |
-| Memory | 3.7 GiB total |
-| OS | Linux (Ubuntu) |
-| Rust | rustc 1.97.1 (stable) |
-| sdkt | 2.7.0 (release build) — measured on the 2.7.0 release |
-| Benchmark date | 2026-10-05 |
+| Machine | MacBook Pro (Intel) |
+| CPU | `Intel(R) Core(TM) i7-9750H CPU @ 2.60GHz` |
+| Memory | 16 GiB |
+| OS | macOS 26.5.2 (`x86_64`) |
+| RSS probe | `getrusage(RUSAGE_CHILDREN)` (no GNU time installed) |
+| Rust | rustc 1.99.1 (stable) |
+| sdkt | 2.7.0 (release build) |
+| Benchmark date | 2026-10-19 |
 
-> Reported numbers were captured on the project VPS. Absolute values will vary
-> by host; **the relative trend across releases is what matters.** Re-run the
-> helper script on the same machine to compare.
+An earlier capture on the shared project VPS (Linux/Ubuntu, 2 vCPU, 3.7 GiB,
+rustc 1.97.1) is kept in [Linux capture](#linux-capture-reference) for trend
+comparison.
+
+> Absolute values vary by host; **the relative trend across releases is what
+> matters.** Re-run the helper script on the same machine to compare.
 
 ## Benchmark methodology
 
@@ -58,14 +62,29 @@ RSS column reads `unavailable` — it is never blank and never `0`.
 ### Fixtures
 
 The script ships with committed fixtures under `scripts/fixtures/` so it runs
-out of the box. To regenerate from `stellar/soroban-examples`, run
-`scripts/fetch_fixtures.sh` (requires the `wasm32v1-none` target).
+out of the box on any platform:
+
+- `scripts/fixtures/wasm/` — `token.wasm`, `liquidity_pool.wasm`,
+  `atomic_swap.wasm` and `timelock.wasm`, built with `stellar contract build`
+  (`wasm32v1-none`, release) from `stellar/soroban-examples`.
+- `examples/sample_token/src/lib.rs` — the self-contained sample contract
+  audited by the harness. It deliberately omits `require_auth()` in
+  `admin_action`, so `sdkt audit` always reports the same `AUTH-001` finding.
+
+`stellar/soroban-examples` does not publish pre-built WASM (the upstream
+`target/` directory is gitignored and its releases carry no assets), so
+`scripts/fetch_bench_fixtures.sh` fetches the sources at a pinned commit and
+builds them locally. `scripts/fixtures/MANIFEST.txt` records that ref and the
+SHA-256 of each artifact:
 
 ```bash
+# Rebuild the committed fixtures (requires stellar-cli + wasm32v1-none).
+bash scripts/fetch_bench_fixtures.sh
+
 # Reproduce on any machine:
 SDKT=target/release/sdkt \
 WASM_DIR=/path/to/wasm \
-AUDIT_SRC=/path/to/token/src/lib.rs \
+AUDIT_SRC=/path/to/lib.rs \
 RUNS=7 bash scripts/bench_offline.sh
 ```
 
@@ -80,46 +99,65 @@ RUNS=7 bash scripts/bench_offline.sh
 ## Dataset
 
 Reuses the real-world fixtures (compiled from the official
-`stellar/soroban-examples` tree, `wasm32v1-none` release):
+`stellar/soroban-examples` tree, `wasm32v1-none` release, committed under
+`scripts/fixtures/wasm/`):
 
 | Artifact | Size | Type |
 |----------|------|------|
-| `token.wasm` | 8.4 KiB | SIP-10 token |
-| `liquidity_pool.wasm` | 10.4 KiB | DeFi AMM |
-| `atomic_swap.wasm` | 1.7 KiB | swap/escrow |
-| `timelock.wasm` | 3.7 KiB | claimable balance |
-| `single_offer.wasm` | 5.3 KiB | DEX offer |
+| `token.wasm` | 6.6 KiB | SIP-10 token |
+| `liquidity_pool.wasm` | 8.6 KiB | DeFi AMM |
+| `atomic_swap.wasm` | 1.6 KiB | swap/escrow |
+| `timelock.wasm` | 3.0 KiB | claimable balance |
 
-Audit target: `token/src/lib.rs` (8 source files) and `liquidity_pool/src/lib.rs`.
+Audit target: `examples/sample_token/src/lib.rs` (self-contained; deterministic
+`AUTH-001` finding).
 
 ## Baseline results
 
-First pass (RUNS=7, pinned to 1 core), sdkt 2.7.0:
+Recorded baseline — macOS, `RUNS=7`, sdkt 2.7.0, RSS via `getrusage`:
+
+| Command | wall min | wall median | wall avg | peak RSS (median) |
+|---------|:-------:|:----------:|:-------:|:-----------------:|
+| `wasm inspect token` | 0.0204 s | 0.0205 s | 0.0211 s | 4,420 kB |
+| `wasm inspect liquidity_pool` | 0.0164 s | 0.0174 s | 0.0178 s | 4,428 kB |
+| `audit sample_token` | 0.0166 s | 0.0174 s | 0.0174 s | 4,920 kB |
+| `diff self token` | 0.0184 s | 0.0206 s | 0.0204 s | 4,524 kB |
+| `diff token→lp` | 0.0173 s | 0.0194 s | 0.0190 s | 4,548 kB |
+
+On this host wall-clock is dominated by process spawn (the release binary is
+~25 MB); the per-command work is a single-digit-millisecond delta below that
+floor, which is why the Linux capture below reports ~3–5 ms. Wall-clock is
+measured on the bare command, so RSS sampling (a Python helper for `rusage`)
+never inflates it.
+
+Verifying the `unavailable` fallback (same host, `RSS_MODE=unavailable`) keeps
+the wall-clock columns and replaces only the RSS column:
+
+```text
+wasm inspect token           wall min=0.0162s med=0.0162s avg=0.0164s | peakRSS med=unavailable kB
+wasm inspect liquidity_pool  wall min=0.0162s med=0.0163s avg=0.0164s | peakRSS med=unavailable kB
+audit sample_token           wall min=0.0164s med=0.0166s avg=0.0167s | peakRSS med=unavailable kB
+diff self token              wall min=0.0162s med=0.0163s avg=0.0163s | peakRSS med=unavailable kB
+diff token->lp               wall min=0.0165s med=0.0169s avg=0.0168s | peakRSS med=unavailable kB
+```
+
+### Linux capture (reference)
+
+Earlier capture on the shared project VPS (Linux/Ubuntu, 2 vCPU, 3.7 GiB),
+sdkt 2.7.0, `RUNS=7`, pinned to one core, RSS via `/usr/bin/time -v`:
 
 | Command | wall min | wall median | wall avg | peak RSS (median) |
 |---------|:-------:|:----------:|:-------:|:-----------------:|
 | `wasm inspect token` | 0.0035 s | 0.0036 s | 0.0039 s | 5,916 kB |
 | `wasm inspect liquidity_pool` | 0.0035 s | 0.0036 s | 0.0036 s | 5,972 kB |
-| `audit token/src/lib.rs` | 0.0036 s | 0.0037 s | 0.0037 s | 6,376 kB |
+| `audit sample_token` | 0.0036 s | 0.0037 s | 0.0037 s | 6,376 kB |
 | `diff self token` | 0.0036 s | 0.0037 s | 0.0037 s | 5,976 kB |
 | `diff token→lp` | 0.0038 s | 0.0038 s | 0.0039 s | 5,924 kB |
 
-Second pass (RUNS=5, reproducibility) — `audit` against the heavier
-`liquidity_pool/src/lib.rs` (more code), sdkt 2.7.0:
-
-| Command | wall median | peak RSS (median) |
-|---------|:-----------:|:-----------------:|
-| `wasm inspect token` | 0.0037 s | 6,016 kB |
-| `wasm inspect liquidity_pool` | 0.0034 s | 6,036 kB |
-| `audit liquidity_pool/src/lib.rs` | 0.0049 s | 7,392 kB |
-| `diff self token` | 0.0036 s | 5,936 kB |
-| `diff token→lp` | 0.0041 s | 5,968 kB |
-
 **Takeaways (baseline):**
-- All three commands finish in **< 5 ms** on this host.
-- Peak RSS stays **< 8 MiB** even on the largest audited source.
-- `audit` scales gently with source size (token ~3.7 ms / 6.4 MiB →
-  liquidity_pool ~4.9 ms / 7.4 MiB).
+- All three commands finish in **< 0.1 s** end-to-end on either host.
+- Peak RSS stays **< 5 MiB** on macOS and **< 8 MiB** on the Linux VPS.
+- `audit` scales gently with source size.
 - `diff` cost is dominated by WASM ABI decode, roughly constant per artifact.
 
 ## Known limitations
