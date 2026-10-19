@@ -31,6 +31,11 @@ mode, and fails the step when the check does not pass.
 
 **Threshold semantics:** only findings at or above `severity-threshold` fail
 the build. The default `critical` means `MOVE-001` (Warning) never breaks CI.
+The Action forwards the level to the CLI's native `sdkt audit --fail-on`
+flag, which is the single source of truth for the gate; the Action does not
+parse the JSON output or reimplement the threshold logic. An invalid level is
+rejected by the CLI as a usage error (exit code 2), and the Action surfaces
+that as a clear `::error::invalid severity-threshold` message.
 
 **Release-assurance semantics:** the aggregated `release_status` gates the
 step. `FAIL` blocks (step exits 1); `PASS`, `REVIEW`, and `SKIPPED`-only
@@ -148,7 +153,9 @@ a **breaking** diff (committed fixtures `us_old.wasm` → `us_new.wasm`) is
 asserted to **fail**, an **identical** diff is asserted to **pass**, a
 release-assurance run against that same breaking baseline is asserted to
 **fail** (`release_status=FAIL`), and a candidate-only run is asserted to
-**pass** (`release_status=REVIEW`).
+**pass** (`release_status=REVIEW`). The audit gate is exercised with a
+clean fixture (asserted to pass), a gated fixture (asserted to fail), and an
+invalid threshold (asserted to fail with a clear error).
 
 ## Notes
 
@@ -163,3 +170,6 @@ release-assurance run against that same breaking baseline is asserted to
 - JSON output of `sdkt audit`, `sdkt diff --upgrade-safety`, and
   `sdkt release-assurance` is the stable contract the Action parses; all are
   additive and serde-derived.
+- The audit gate no longer requires `jq`: the Action forwards
+  `severity-threshold` to `sdkt audit --fail-on` and branches on the CLI
+  exit code, so the threshold logic has a single implementation.
