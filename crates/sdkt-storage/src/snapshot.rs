@@ -25,7 +25,7 @@
 //!   with an empty key list and exits cleanly.
 
 use crate::error::StorageError;
-use crate::types::StorageReport;
+use crate::types::{StorageClass, StorageReport};
 use serde::{Deserialize, Serialize};
 
 /// Threshold in ledgers below which a live entry is flagged as "expiring soon".
@@ -68,6 +68,9 @@ pub struct SnapshotEntry {
     /// Readable ABI-derived key label, when available.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub label: Option<String>,
+    /// Storage durability class, when the source report recorded it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub class: Option<StorageClass>,
     /// TTL in ledgers relative to the ledger at snapshot time.
     pub current_ttl: u32,
     /// Base64 XDR encoded `ScVal` captured at snapshot time. Optional so
@@ -98,6 +101,7 @@ impl StorageSnapshot {
                 .map(|e| SnapshotEntry {
                     key: e.key.clone(),
                     label: e.label.clone(),
+                    class: Some(e.class),
                     current_ttl: e.current_ttl,
                     value: e.value.clone(),
                 })
@@ -159,6 +163,9 @@ pub struct DiffEntry {
     pub label: Option<String>,
     /// How this entry changed between the two snapshots.
     pub status: DiffStatus,
+    /// Storage durability class from the snapshots, when recorded.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub class: Option<StorageClass>,
     /// TTL in the old snapshot (`None` for entries that are `Removed` and were
     /// not observed at the new point in time).
     pub old_ttl: Option<u32>,
@@ -322,6 +329,7 @@ pub fn diff_snapshots(
                 key: key.to_string(),
                 label: new_entry.label.clone().or_else(|| old_entry.label.clone()),
                 status,
+                class: new_entry.class.or(old_entry.class),
                 old_ttl: Some(old_ttl),
                 new_ttl: Some(new_ttl),
                 normalized_old_ttl,
@@ -333,6 +341,7 @@ pub fn diff_snapshots(
                 key: key.to_string(),
                 label: old_entry.label.clone(),
                 status: DiffStatus::Removed,
+                class: old_entry.class,
                 old_ttl: Some(old_ttl),
                 new_ttl: None,
                 normalized_old_ttl: None,
@@ -356,6 +365,7 @@ pub fn diff_snapshots(
                 key: key.to_string(),
                 label: new_entry.label.clone(),
                 status,
+                class: new_entry.class,
                 old_ttl: None,
                 new_ttl: Some(new_ttl),
                 normalized_old_ttl: None,
@@ -395,6 +405,20 @@ pub struct ExtendPlan {
     /// Ledger keys (base64 XDR) that should be included in the extend footprint.
     /// Empty when there is nothing to remediate.
     pub keys: Vec<String>,
+    /// Subset of `keys` that are `ExpiringSoon`: still live, so
+    /// `sdkt storage extend` can remediate them.
+    #[serde(default)]
+    pub extend_keys: Vec<String>,
+    /// `Removed` non-temporary keys. A snapshot cannot show whether these
+    /// were archived (restorable), merely omitted from the new analysis, or
+    /// deleted, so restoration is unverified: confirm archival (e.g. a
+    /// simulation returning a restore preamble) before `sdkt storage restore`.
+    #[serde(default)]
+    pub unverified_keys: Vec<String>,
+    /// `Removed` temporary keys. Expired temporary entries are deleted, not
+    /// archived, and cannot be restored.
+    #[serde(default)]
+    pub expired_keys: Vec<String>,
     /// Suggested value for `--ledgers` (relative TTL extension).
     ///
     /// When there are actionable entries the suggestion is
@@ -436,6 +460,9 @@ pub fn derive_extend_plan(diff: &SnapshotDiff) -> ExtendPlan {
         return ExtendPlan {
             contract_id: diff.contract_id.clone(),
             keys: vec![],
+            extend_keys: vec![],
+            unverified_keys: vec![],
+            expired_keys: vec![],
             suggested_ledgers: DEFAULT_SUGGESTED_LEDGERS,
             suggested_ledgers_reason: "No actionable entries; nothing to extend.".into(),
         };
@@ -443,6 +470,24 @@ pub fn derive_extend_plan(diff: &SnapshotDiff) -> ExtendPlan {
 
     // Collect the keys for the plan.
     let keys: Vec<String> = actionable.iter().map(|e| e.key.clone()).collect();
+    let extend_keys: Vec<String> = actionable
+        .iter()
+        .filter(|e| e.status == DiffStatus::ExpiringSoon)
+        .map(|e| e.key.clone())
+        .collect();
+    let removed = || {
+        actionable
+            .iter()
+            .filter(|e| e.status == DiffStatus::Removed)
+    };
+    let unverified_keys: Vec<String> = removed()
+        .filter(|e| e.class != Some(StorageClass::Temporary))
+        .map(|e| e.key.clone())
+        .collect();
+    let expired_keys: Vec<String> = removed()
+        .filter(|e| e.class == Some(StorageClass::Temporary))
+        .map(|e| e.key.clone())
+        .collect();
 
     // Derive suggested ledgers from the minimum remaining TTL of expiring-soon
     // entries.  Removed entries have no remaining TTL and are excluded.
@@ -457,7 +502,7 @@ pub fn derive_extend_plan(diff: &SnapshotDiff) -> ExtendPlan {
         })
         .min();
 
-    let (suggested_ledgers, suggested_ledgers_reason) = match min_remaining {
+    let (suggested_ledgers, mut suggested_ledgers_reason) = match min_remaining {
         Some(min_ttl) => {
             let suggested = min_ttl.saturating_add(DEFAULT_SUGGESTED_LEDGERS);
             (
@@ -473,15 +518,26 @@ pub fn derive_extend_plan(diff: &SnapshotDiff) -> ExtendPlan {
             DEFAULT_SUGGESTED_LEDGERS,
             format!(
                 "All actionable entries are removed (no remaining TTL); \
-                 defaulting to {} ledgers (~30 days).",
+                 defaulting to {} ledgers (~30 days). Removed entries cannot be \
+                 extended.",
                 DEFAULT_SUGGESTED_LEDGERS
             ),
         ),
     };
+    let n_removed = unverified_keys.len() + expired_keys.len();
+    if min_remaining.is_some() && n_removed > 0 {
+        suggested_ledgers_reason.push_str(&format!(
+            " {n_removed} removed entr{} excluded from extend.",
+            if n_removed == 1 { "y is" } else { "ies are" }
+        ));
+    }
 
     ExtendPlan {
         contract_id: diff.contract_id.clone(),
         keys,
+        extend_keys,
+        unverified_keys,
+        expired_keys,
         suggested_ledgers,
         suggested_ledgers_reason,
     }
@@ -506,6 +562,7 @@ mod tests {
             vec![SnapshotEntry {
                 key: "k1".to_string(),
                 label: None,
+                class: None,
                 current_ttl: 100_000,
                 value: Some("AAAAAQ==".to_string()),
             }],
@@ -515,6 +572,7 @@ mod tests {
             vec![SnapshotEntry {
                 key: "k1".to_string(),
                 label: None,
+                class: None,
                 current_ttl: 100_000,
                 value: Some("AAAAAg==".to_string()),
             }],
@@ -535,6 +593,7 @@ mod tests {
             vec![SnapshotEntry {
                 key: "k1".to_string(),
                 label: None,
+                class: None,
                 current_ttl: 100_000,
                 value: Some("AAAAAQ==".to_string()),
             }],
@@ -554,6 +613,7 @@ mod tests {
             vec![SnapshotEntry {
                 key: "k1".to_string(),
                 label: None,
+                class: None,
                 current_ttl: 100_000,
                 value: None,
             }],
@@ -574,6 +634,7 @@ mod tests {
             vec![SnapshotEntry {
                 key: "k1".to_string(),
                 label: None,
+                class: None,
                 current_ttl: 5_000,
                 value: Some("AAAAAQ==".to_string()),
             }],
@@ -583,6 +644,7 @@ mod tests {
             vec![SnapshotEntry {
                 key: "k1".to_string(),
                 label: None,
+                class: None,
                 current_ttl: 4_000,
                 value: Some("AAAAAg==".to_string()),
             }],
@@ -605,6 +667,7 @@ mod tests {
             vec![SnapshotEntry {
                 key: "k1".to_string(),
                 label: None,
+                class: None,
                 current_ttl: 100_000,
                 value: Some("AAAAAQ==".to_string()),
             }],
@@ -614,6 +677,7 @@ mod tests {
             vec![SnapshotEntry {
                 key: "k1".to_string(),
                 label: None,
+                class: None,
                 current_ttl: 100_000,
                 value: Some("AAAAAg==".to_string()),
             }],
@@ -648,6 +712,7 @@ mod tests {
             vec![SnapshotEntry {
                 key: "k1".to_string(),
                 label: None,
+                class: None,
                 current_ttl: 100_000,
                 value: Some("AAAAAQ==".to_string()),
             }],
@@ -665,6 +730,7 @@ mod tests {
                 .map(|(k, ttl)| SnapshotEntry {
                     key: k.to_string(),
                     label: None,
+                    class: None,
                     current_ttl: ttl,
                     value: None,
                 })
@@ -835,6 +901,7 @@ mod tests {
             entries: vec![DiffEntry {
                 key: "k1".to_string(),
                 label: None,
+                class: None,
                 status: DiffStatus::Removed,
                 old_ttl: Some(50_000),
                 new_ttl: None,
@@ -859,6 +926,7 @@ mod tests {
             entries: vec![DiffEntry {
                 key: "k1".to_string(),
                 label: None,
+                class: None,
                 status: DiffStatus::ExpiringSoon,
                 old_ttl: Some(50_000),
                 new_ttl: Some(remaining),
@@ -887,6 +955,7 @@ mod tests {
                 DiffEntry {
                     key: "k1".to_string(),
                     label: None,
+                    class: None,
                     status: DiffStatus::ExpiringSoon,
                     old_ttl: Some(50_000),
                     new_ttl: Some(10_000),
@@ -897,6 +966,7 @@ mod tests {
                 DiffEntry {
                     key: "k2".to_string(),
                     label: None,
+                    class: None,
                     status: DiffStatus::ExpiringSoon,
                     old_ttl: Some(50_000),
                     new_ttl: Some(1_000), // minimum
@@ -907,6 +977,7 @@ mod tests {
                 DiffEntry {
                     key: "k3".to_string(),
                     label: None,
+                    class: None,
                     status: DiffStatus::Removed,
                     old_ttl: Some(50_000),
                     new_ttl: None,
@@ -931,6 +1002,7 @@ mod tests {
                 DiffEntry {
                     key: "unchanged".to_string(),
                     label: None,
+                    class: None,
                     status: DiffStatus::Unchanged,
                     old_ttl: Some(100_000),
                     new_ttl: Some(99_000),
@@ -941,6 +1013,7 @@ mod tests {
                 DiffEntry {
                     key: "expiring".to_string(),
                     label: None,
+                    class: None,
                     status: DiffStatus::ExpiringSoon,
                     old_ttl: Some(20_000),
                     new_ttl: Some(5_000),
@@ -955,11 +1028,122 @@ mod tests {
         assert_eq!(plan.keys, vec!["expiring"]);
     }
 
+    fn plan_entry(
+        key: &str,
+        status: DiffStatus,
+        class: Option<StorageClass>,
+        new_ttl: Option<u32>,
+    ) -> DiffEntry {
+        DiffEntry {
+            key: key.to_string(),
+            label: None,
+            class,
+            status,
+            old_ttl: Some(50_000),
+            normalized_old_ttl: None,
+            old_value: None,
+            new_value: None,
+            new_ttl,
+        }
+    }
+
+    fn plan_for(entries: Vec<DiffEntry>) -> ExtendPlan {
+        derive_extend_plan(&SnapshotDiff {
+            contract_id: CONTRACT.to_string(),
+            entries,
+            ..Default::default()
+        })
+    }
+
+    #[test]
+    fn plan_removed_persistent_is_unverified_not_restorable() {
+        let plan = plan_for(vec![plan_entry(
+            "gone",
+            DiffStatus::Removed,
+            Some(StorageClass::Persistent),
+            None,
+        )]);
+        assert!(plan.extend_keys.is_empty());
+        assert_eq!(plan.unverified_keys, vec!["gone"]);
+        assert!(plan.expired_keys.is_empty());
+        assert!(!plan
+            .suggested_ledgers_reason
+            .contains("sdkt storage restore"));
+    }
+
+    #[test]
+    fn plan_removed_unknown_class_is_unverified() {
+        let plan = plan_for(vec![plan_entry("gone", DiffStatus::Removed, None, None)]);
+        assert_eq!(plan.unverified_keys, vec!["gone"]);
+        assert!(plan.expired_keys.is_empty());
+    }
+
+    #[test]
+    fn plan_removed_temporary_is_expired_not_restorable() {
+        let plan = plan_for(vec![plan_entry(
+            "tmp",
+            DiffStatus::Removed,
+            Some(StorageClass::Temporary),
+            None,
+        )]);
+        assert!(plan.unverified_keys.is_empty());
+        assert_eq!(plan.expired_keys, vec!["tmp"]);
+    }
+
+    #[test]
+    fn plan_mixed_separates_classes() {
+        let plan = plan_for(vec![
+            plan_entry(
+                "gone",
+                DiffStatus::Removed,
+                Some(StorageClass::Persistent),
+                None,
+            ),
+            plan_entry(
+                "tmp",
+                DiffStatus::Removed,
+                Some(StorageClass::Temporary),
+                None,
+            ),
+            plan_entry("soon", DiffStatus::ExpiringSoon, None, Some(5_000)),
+        ]);
+        assert_eq!(plan.keys.len(), 3);
+        assert_eq!(plan.extend_keys, vec!["soon"]);
+        assert_eq!(plan.unverified_keys, vec!["gone"]);
+        assert_eq!(plan.expired_keys, vec!["tmp"]);
+        assert_eq!(plan.suggested_ledgers, 5_000 + DEFAULT_SUGGESTED_LEDGERS);
+    }
+
+    #[test]
+    fn plan_expiring_only_is_unchanged() {
+        let plan = plan_for(vec![plan_entry(
+            "soon",
+            DiffStatus::ExpiringSoon,
+            None,
+            Some(5_000),
+        )]);
+        assert_eq!(plan.keys, plan.extend_keys);
+        assert!(plan.unverified_keys.is_empty());
+        assert!(plan.expired_keys.is_empty());
+        assert_eq!(
+            plan.suggested_ledgers_reason,
+            format!(
+                "Minimum remaining TTL of expiring entries is 5000 ledgers; \
+                 suggested {} (min_ttl + {} default horizon).",
+                5_000 + DEFAULT_SUGGESTED_LEDGERS,
+                DEFAULT_SUGGESTED_LEDGERS
+            )
+        );
+    }
+
     #[test]
     fn plan_json_has_stable_field_names() {
         let plan = ExtendPlan {
             contract_id: CONTRACT.to_string(),
             keys: vec!["k1".to_string(), "k2".to_string()],
+            extend_keys: vec!["k1".to_string()],
+            unverified_keys: vec!["k2".to_string()],
+            expired_keys: vec![],
             suggested_ledgers: 518_400,
             suggested_ledgers_reason: "test".to_string(),
         };
