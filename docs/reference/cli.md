@@ -11,8 +11,8 @@ sdkt
 │   ├── --format <json|pretty>
 │   └── --file <path>
 │
-├── encode <TYPE:VALUE>...
-│   │   (fully offline: encode typed values to base64 XDR)
+├── encode <TYPE:VALUE>
+│   │   (fully offline: encode a single typed value to base64 XDR)
 │   │   Supports: u32, i32, u64, i64, timepoint, duration, u128, i128, bool,
 │   │   string, symbol, bytes, address. Also json:<JSON> for composite values.
 │
@@ -147,10 +147,9 @@ sdkt
 │   ├── --start-ledger <START_LEDGER> (start ledger sequence number for event search)
 │   ├── --end-ledger <END_LEDGER>     (end ledger sequence number for event search)
 │   ├── --topic <SYMBOL>              (filter by first topic/event name; server-side filtering)
-│   ├── --abi <wasm>                  (ABI-aware decode from a local WASM)
-│   ├── --abi-contract <id>           (ABI-aware decode using deployed contract's on-chain WASM)
-│   ├── --network-profile <NAME> / --rpc-url <URL> / --network-passphrase <P>
-│   └── [other network resolution flags]
+│   ├── --abi <wasm>                  (ABI-aware decode from a local WASM; mutually exclusive with --abi-contract)
+│   ├── --abi-contract <id>           (ABI-aware decode using deployed contract's on-chain WASM; mutually exclusive with --abi)
+│   └── --network-profile <NAME> / --rpc-url <URL> / --network-passphrase <P>
 │
 ├── account <address>         [--format]
 │
@@ -211,13 +210,12 @@ sdkt
 │   ├── --audit <PATH>...     (Rust source path(s)/dir(s); same engine as `audit`)
 │   ├── --disable <RULE_ID>   (repeatable)
 │   ├── --contract <ID>       (deployed contract for on-chain checks; skipped if omitted)
-│   ├── --network <testnet|mainnet|futurenet> (network for the on-chain checks; with --contract)
+│   ├── --network <testnet|mainnet|futurenet> (network for on-chain checks; optional — omitted network resolves from --network-profile, explicit RPC settings, or defaults; mutually exclusive with --network-profile, --rpc-url, --network-passphrase)
 │   ├── --fuzz-evidence <EVIDENCE_JSON> (attach JSON evidence from sdkt fuzz campaign)
 │   ├── --max-size-bytes <N>  (fail when the candidate exceeds N bytes)
 │   ├── --max-growth-pct <N>  (fail when growth over --previous-wasm exceeds N%)
 │   ├── --format <json|pretty>
-│   ├── --network-profile <NAME> / --rpc-url <URL> / --network-passphrase <PASS>
-│   └── [other flags inherited from network-profile resolution]
+│   └── --network-profile <NAME> / --rpc-url <URL> / --network-passphrase <PASS> (mutually exclusive with --network)
 ├── identity
 │   ├── generate <name>       [--format pretty|json]
 │   ├── import <name> <secret>   (required)
@@ -476,7 +474,8 @@ require the local WASM bytes.
 │   └── doctor [<target|--all>] [--format]  End-to-end diagnostics on a plugin
 │
 ├── doctor                    Run diagnostic checks on sdkt environment and project
-│   ├── --format <json|pretty|--json>  Output format (pretty is default)
+│   ├── --format <json|pretty> (output format; default: pretty)
+│   ├── --json                 (shorthand for --format json; conflicts with --format)
 │   └── (offline: no network access required)
 │
 ├── completions <shell>       Generate shell completion scripts
@@ -633,7 +632,8 @@ sdkt encode json:'[1,2,3]' | xargs sdkt decode --type ScVal
 `u32`, `i32`, `u64`, `i64`, `timepoint`, `duration`, `u128`, `i128`, `bool`, `string`,
 `symbol` (up to 32 bytes), `bytes`, `address` (Stellar `G...` strkey).
 
-Exactly one value is encoded per invocation; the `TYPE:VALUE` syntax matches
+**Exactly one value per invocation** (enforced by validation: `run_encode()` rejects multiple values
+with "expected exactly one value, got N" error). The `TYPE:VALUE` syntax matches
 the typed-argument convention used by `sdkt call` and `sdkt invoke`.
 
 `u128` and `i128` accept decimal integers within their full 128-bit ranges.
