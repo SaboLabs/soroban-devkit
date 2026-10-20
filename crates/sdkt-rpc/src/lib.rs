@@ -30,8 +30,10 @@ pub use deploy::{
 };
 pub use error::RpcError;
 pub use events::{
-    first_topic_filter, get_contract_events, get_contract_events_filtered, resolve_ledger_range,
-    ContractEvent, EventFilter, GetEventsRequest, TopicFilter, TOPIC_WILDCARD_ONE,
+    first_topic_filter, get_contract_events, get_contract_events_filtered,
+    get_contract_events_paginated, resolve_ledger_range, validate_cursor_and_ledger_range,
+    ContractEvent, EventFilter, EventPagination, GetEventsRequest, GetEventsResponse,
+    PaginatedEvents, RpcEvent, TopicFilter, DEFAULT_PAGE_CAP, TOPIC_WILDCARD_ONE,
     TOPIC_WILDCARD_REST,
 };
 pub use fee::{estimate_dynamic_fee, get_fee_stats, FeeDistribution, FeeStats};

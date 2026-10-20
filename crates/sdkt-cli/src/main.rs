@@ -6,10 +6,10 @@ use sdkt_core::{DevKitConfig, OutputFormat};
 use sdkt_rpc::inspect::StorageSummary;
 use sdkt_rpc::wasm::get_wasm_bytecode;
 use sdkt_rpc::{
-    estimate_dynamic_fee, extend_footprint, first_topic_filter, get_contract_events_filtered,
+    estimate_dynamic_fee, extend_footprint, first_topic_filter, get_contract_events_paginated,
     get_next_sequence, get_ttl_info_for_keys, get_wasm_metadata, inspect_account, inspect_contract,
     inspect_transaction, read_contract_state, restore_footprint, simulate_transaction,
-    SorobanRpcClient, StorageKeyInfo, TtlInfoSummary,
+    EventPagination, SorobanRpcClient, StorageKeyInfo, TtlInfoSummary, DEFAULT_PAGE_CAP,
 };
 use sdkt_storage::WasmCache;
 use sdkt_storage::{
@@ -347,6 +347,15 @@ enum Commands {
         /// symbol. Case-sensitive; filtered server-side by the RPC.
         #[arg(long, value_name = "SYMBOL")]
         topic: Option<String>,
+        /// Maximum number of events to return in a single page
+        #[arg(long, value_name = "LIMIT")]
+        limit: Option<u32>,
+        /// Cursor paging token to resume fetching events from
+        #[arg(long, value_name = "CURSOR")]
+        cursor: Option<String>,
+        /// Follow cursor across pages up to the bounded page cap
+        #[arg(long)]
+        all_pages: bool,
         #[command(flatten)]
         net: NetworkArgs,
     },
@@ -6008,14 +6017,26 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
             abi,
             abi_contract,
             topic,
+            limit,
+            cursor,
+            all_pages,
             net,
         } => {
+            let cursor = cursor.filter(|c| !c.is_empty());
             let fmt = parse_format_str(&format);
             let client = resolve_rpc_client(
                 net.rpc_url.clone(),
                 net.network_passphrase.clone(),
                 net.network_profile.clone(),
             );
+
+            // Reject cursor combined with explicit ledger bounds before any RPC dispatch
+            if cursor.is_some() && (start_ledger.is_some() || end_ledger.is_some()) {
+                eprintln!(
+                    "Error: cannot specify --cursor together with --start-ledger or --end-ledger; cursor resumes from an existing position and cannot be combined with an explicit ledger range"
+                );
+                process::exit(1);
+            }
 
             // Reject inverted ranges before making RPC calls
             if let (Some(start), Some(end)) = (start_ledger, end_ledger) {
@@ -6025,6 +6046,11 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
                     );
                     process::exit(1);
                 }
+            }
+
+            if let Some(0) = limit {
+                eprintln!("Error: --limit must be greater than 0");
+                process::exit(1);
             }
 
             // Encode `--topic` before any RPC call so an invalid symbol fails fast.
@@ -6059,16 +6085,40 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
                 }
             }
 
-            match get_contract_events_filtered(
+            let page_cap = if all_pages {
+                Some(DEFAULT_PAGE_CAP)
+            } else {
+                Some(1)
+            };
+
+            let pagination = if cursor.is_some() || limit.is_some() {
+                Some(EventPagination {
+                    cursor: cursor.clone(),
+                    limit,
+                })
+            } else {
+                None
+            };
+
+            match get_contract_events_paginated(
                 &client,
                 &contract_id,
                 start_ledger,
                 end_ledger,
                 topic_filters,
+                pagination,
+                page_cap,
             )
             .await
             {
-                Ok(events) => {
+                Ok(paged) => {
+                    let events = paged.events;
+                    let hit_page_boundary =
+                        !all_pages && paged.cursor.as_deref().is_some_and(|c| !c.is_empty());
+                    let hit_max_cap = all_pages
+                        && paged.reached_page_cap
+                        && paged.cursor.as_deref().is_some_and(|c| !c.is_empty());
+
                     if let Some(spec) = contract_spec {
                         // ABI-aware decoding: topics[0] is the event symbol,
                         // remaining topics + the data value carry the payload.
@@ -6105,6 +6155,19 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
                                 .collect();
                             let json_str = serde_json::to_string(&decoded_events)?;
                             println!("{}", json_str);
+                            if hit_page_boundary {
+                                eprintln!(
+                                    "Notice: Page boundary reached ({} events). To continue from this point, use --cursor {}",
+                                    events.len(),
+                                    paged.cursor.as_ref().unwrap()
+                                );
+                            } else if hit_max_cap {
+                                eprintln!(
+                                    "Notice: Reached maximum page cap ({} pages). To continue from this point, use --cursor {}",
+                                    paged.pages_fetched,
+                                    paged.cursor.as_ref().unwrap()
+                                );
+                            }
                         } else {
                             println!("Contract Events (ABI-decoded):");
                             if events.is_empty() {
@@ -6143,12 +6206,38 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
                                     }
                                 }
                             }
+                            if hit_page_boundary {
+                                println!(
+                                    "\nNotice: Page boundary reached ({} events). To continue from this point, use --cursor {}",
+                                    events.len(),
+                                    paged.cursor.as_ref().unwrap()
+                                );
+                            } else if hit_max_cap {
+                                println!(
+                                    "\nNotice: Reached maximum page cap ({} pages). To continue from this point, use --cursor {}",
+                                    paged.pages_fetched,
+                                    paged.cursor.as_ref().unwrap()
+                                );
+                            }
                         }
                     } else {
                         // Original raw output
                         if fmt == OutputFormat::Json {
                             let json_str = serde_json::to_string(&events)?;
                             println!("{}", json_str);
+                            if hit_page_boundary {
+                                eprintln!(
+                                    "Notice: Page boundary reached ({} events). To continue from this point, use --cursor {}",
+                                    events.len(),
+                                    paged.cursor.as_ref().unwrap()
+                                );
+                            } else if hit_max_cap {
+                                eprintln!(
+                                    "Notice: Reached maximum page cap ({} pages). To continue from this point, use --cursor {}",
+                                    paged.pages_fetched,
+                                    paged.cursor.as_ref().unwrap()
+                                );
+                            }
                         } else {
                             println!("Contract Events:");
                             if events.is_empty() {
@@ -6163,6 +6252,19 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
                                     println!("Topics: {:?}", ev.topics);
                                     println!("Value: {}", ev.value.as_deref().unwrap_or("N/A"));
                                 }
+                            }
+                            if hit_page_boundary {
+                                println!(
+                                    "\nNotice: Page boundary reached ({} events). To continue from this point, use --cursor {}",
+                                    events.len(),
+                                    paged.cursor.as_ref().unwrap()
+                                );
+                            } else if hit_max_cap {
+                                println!(
+                                    "\nNotice: Reached maximum page cap ({} pages). To continue from this point, use --cursor {}",
+                                    paged.pages_fetched,
+                                    paged.cursor.as_ref().unwrap()
+                                );
                             }
                         }
                     }

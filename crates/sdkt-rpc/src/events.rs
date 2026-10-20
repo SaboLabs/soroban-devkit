@@ -3,7 +3,7 @@ use serde::{Deserialize, Serialize};
 use crate::client::SorobanRpcClient;
 use crate::error::RpcError;
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct ContractEvent {
     pub contract_id: String,
     pub ledger: Option<u32>,
@@ -65,33 +65,97 @@ pub fn first_topic_filter(first_topic_b64: impl Into<String>) -> TopicFilter {
     vec![first_topic_b64.into(), TOPIC_WILDCARD_REST.to_string()]
 }
 
+pub const DEFAULT_PAGE_CAP: usize = 50;
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct EventPagination {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub cursor: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub limit: Option<u32>,
+}
+
+impl EventPagination {
+    pub fn new(cursor: Option<String>, limit: Option<u32>) -> Self {
+        Self { cursor, limit }
+    }
+
+    pub fn cursor(cursor: impl Into<String>) -> Self {
+        Self {
+            cursor: Some(cursor.into()),
+            limit: None,
+        }
+    }
+
+    pub fn limit(limit: u32) -> Self {
+        Self {
+            cursor: None,
+            limit: Some(limit),
+        }
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct GetEventsRequest {
-    pub start_ledger: u32,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub start_ledger: Option<u32>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub end_ledger: Option<u32>,
     pub filters: Vec<EventFilter>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub pagination: Option<EventPagination>,
 }
 
-#[derive(Deserialize)]
-struct GetEventsResponse {
-    events: Vec<RpcEvent>,
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct GetEventsResponse {
+    pub events: Vec<RpcEvent>,
+    #[serde(default)]
+    pub cursor: Option<String>,
+    #[serde(default)]
+    pub latest_ledger: Option<u32>,
 }
 
-#[derive(Deserialize)]
-#[allow(non_snake_case, dead_code)]
-struct RpcEvent {
-    // The Soroban RPC `getEvents` response returns `ledger` as an integer, not a
-    // string (unlike some other RPC fields). Declared as `u32` to match the wire
-    // format; callers in `get_contract_events` map it into `ContractEvent.ledger`
-    // (Option<u32>) directly.
-    ledger: u32,
-    contractId: String,
-    topic: Vec<String>,
-    // The RPC returns `value` as a base64-encoded XDR *string* (not an object with
-    // an `xdr` field), so it maps directly onto `ContractEvent.value: Option<String>`.
-    value: String,
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct RpcEvent {
+    pub ledger: u32,
+    pub contract_id: String,
+    #[serde(default)]
+    pub topic: Vec<String>,
+    #[serde(default)]
+    pub value: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct PaginatedEvents {
+    pub events: Vec<ContractEvent>,
+    pub cursor: Option<String>,
+    pub latest_ledger: Option<u32>,
+    pub pages_fetched: usize,
+    pub reached_page_cap: bool,
+}
+
+/// Validate that cursor pagination is not mixed with startLedger or endLedger.
+///
+/// Under the Soroban RPC protocol, providing a `cursor` encapsulates the stream
+/// continuation point and must omit `startLedger` and `endLedger`. Supplying both
+/// is rejected client-side before any RPC dispatch.
+pub fn validate_cursor_and_ledger_range(
+    cursor: Option<&str>,
+    start_ledger: Option<u32>,
+    end_ledger: Option<u32>,
+) -> Result<(), RpcError> {
+    if let Some(c) = cursor {
+        if !c.is_empty() && (start_ledger.is_some() || end_ledger.is_some()) {
+            return Err(RpcError::Rpc(
+                "Cannot specify cursor together with start ledger or end ledger: cursor pagination continues from an existing stream position and cannot be combined with an explicit ledger range".to_string(),
+            ));
+        }
+    }
+    Ok(())
 }
 
 /// Resolve the start and end ledger query range.
@@ -146,7 +210,44 @@ pub async fn get_contract_events_filtered(
     end_ledger: Option<u32>,
     topics: Option<Vec<TopicFilter>>,
 ) -> Result<Vec<ContractEvent>, RpcError> {
-    // Fast rejection if both start and end are provided and inverted, prior to any RPC call.
+    let paginated = get_contract_events_paginated(
+        client,
+        contract_id,
+        start_ledger,
+        end_ledger,
+        topics,
+        None,
+        Some(1),
+    )
+    .await?;
+    Ok(paginated.events)
+}
+
+/// Query contract events with cursor-aware pagination and bounded page following.
+///
+/// Follows cursor across pages until:
+/// 1. The page is exhausted (no cursor returned, empty events, or cursor unchanged).
+/// 2. The caller-supplied `page_cap` is reached.
+/// 3. The caller-supplied `end_ledger` is reached/passed (events beyond `end_ledger` are discarded).
+/// 4. The events pass `latestLedger` (an event's ledger exceeds the observed `latestLedger`).
+///
+/// Client-side validation enforces that requests carrying a `cursor` omit `start_ledger`
+/// and `end_ledger` prior to making any network call.
+pub async fn get_contract_events_paginated(
+    client: &SorobanRpcClient,
+    contract_id: &str,
+    start_ledger: Option<u32>,
+    end_ledger: Option<u32>,
+    topics: Option<Vec<TopicFilter>>,
+    pagination: Option<EventPagination>,
+    page_cap: Option<usize>,
+) -> Result<PaginatedEvents, RpcError> {
+    let mut current_cursor = pagination
+        .as_ref()
+        .and_then(|p| p.cursor.clone())
+        .filter(|c| !c.is_empty());
+    validate_cursor_and_ledger_range(current_cursor.as_deref(), start_ledger, end_ledger)?;
+
     if let (Some(start), Some(end)) = (start_ledger, end_ledger) {
         if start > end {
             return Err(RpcError::Rpc(format!(
@@ -155,57 +256,149 @@ pub async fn get_contract_events_filtered(
         }
     }
 
-    // Determine start and end ledger. When both are omitted, query latest ledger
-    // and look back up to 1000 ledgers.
-    let (start_ledger, end_ledger) = if start_ledger.is_none() && end_ledger.is_none() {
-        let latest_ledger_info =
-            client
-                .get_ledger()
-                .await
-                .unwrap_or_else(|_| crate::client::LedgerInfo {
-                    id: "".to_string(),
-                    protocol_version: 0,
-                    sequence: 1000,
-                });
-        resolve_ledger_range(start_ledger, end_ledger, latest_ledger_info.sequence)?
+    let limit = pagination.as_ref().and_then(|p| p.limit);
+
+    // If cursor is provided, start/end ledger are not resolved or sent.
+    let (resolved_start, request_end_ledger) = if current_cursor.is_some() {
+        (None, None)
     } else {
-        resolve_ledger_range(start_ledger, end_ledger, 0)?
+        let (start, end) = if start_ledger.is_none() && end_ledger.is_none() {
+            let latest_ledger_info =
+                client
+                    .get_ledger()
+                    .await
+                    .unwrap_or_else(|_| crate::client::LedgerInfo {
+                        id: "".to_string(),
+                        protocol_version: 0,
+                        sequence: 1000,
+                    });
+            resolve_ledger_range(start_ledger, end_ledger, latest_ledger_info.sequence)?
+        } else {
+            resolve_ledger_range(start_ledger, end_ledger, 0)?
+        };
+
+        let req_end = match end {
+            Some(e) => Some(e.checked_add(1).ok_or_else(|| {
+                RpcError::Rpc(format!(
+                    "End ledger ({e}) exceeds maximum supported ledger sequence"
+                ))
+            })?),
+            None => None,
+        };
+
+        (Some(start), req_end)
     };
 
-    // The Soroban RPC `getEvents` treats `endLedger` as exclusive. Convert the
-    // user-supplied bound to inclusive by sending end + 1.
-    let request_end_ledger = match end_ledger {
-        Some(end) => Some(end.checked_add(1).ok_or_else(|| {
-            RpcError::Rpc(format!(
-                "End ledger ({end}) exceeds maximum supported ledger sequence"
-            ))
-        })?),
-        None => None,
-    };
+    let mut accumulated_events = Vec::new();
+    let mut pages_fetched = 0;
+    let mut target_latest_ledger: Option<u32> = None;
+    let mut reached_page_cap = false;
 
-    let request_body = GetEventsRequest {
-        start_ledger,
-        end_ledger: request_end_ledger,
-        filters: vec![EventFilter {
-            topics,
-            ..EventFilter::contract([contract_id])
-        }],
-    };
+    loop {
+        if let Some(cap) = page_cap {
+            if pages_fetched >= cap {
+                reached_page_cap = true;
+                break;
+            }
+        }
 
-    let result: GetEventsResponse = client.request("getEvents", request_body).await?;
+        let (req_start, req_end) = if current_cursor.is_some() {
+            (None, None)
+        } else {
+            (resolved_start, request_end_ledger)
+        };
 
-    let mut contract_events = Vec::new();
+        let req_pagination = if current_cursor.is_some() || limit.is_some() {
+            Some(EventPagination {
+                cursor: current_cursor.clone(),
+                limit,
+            })
+        } else {
+            None
+        };
 
-    for ev in result.events {
-        contract_events.push(ContractEvent {
-            contract_id: ev.contractId,
-            ledger: Some(ev.ledger),
-            topics: ev.topic,
-            value: Some(ev.value),
-        });
+        let request_body = GetEventsRequest {
+            start_ledger: req_start,
+            end_ledger: req_end,
+            filters: vec![EventFilter {
+                topics: topics.clone(),
+                ..EventFilter::contract([contract_id])
+            }],
+            pagination: req_pagination,
+        };
+
+        let result: GetEventsResponse = client.request("getEvents", request_body).await?;
+        pages_fetched += 1;
+
+        if target_latest_ledger.is_none() {
+            target_latest_ledger = result.latest_ledger;
+        }
+
+        let page_empty = result.events.is_empty();
+        let mut passed_end_ledger = false;
+
+        for ev in result.events {
+            if let Some(max_ledger) = end_ledger {
+                if ev.ledger > max_ledger {
+                    passed_end_ledger = true;
+                    break;
+                }
+            }
+            accumulated_events.push(ContractEvent {
+                contract_id: ev.contract_id,
+                ledger: Some(ev.ledger),
+                topics: ev.topic,
+                value: Some(ev.value),
+            });
+        }
+
+        let next_cursor = result.cursor.filter(|c| !c.is_empty());
+
+        // Termination Condition 1: No further cursor / page exhausted
+        if page_empty || next_cursor.is_none() || next_cursor == current_cursor {
+            current_cursor = next_cursor;
+            break;
+        }
+
+        // Termination Condition 2: Caller-supplied page cap reached
+        if let Some(cap) = page_cap {
+            if pages_fetched >= cap {
+                reached_page_cap = true;
+                current_cursor = next_cursor;
+                break;
+            }
+        }
+
+        // Termination Condition 3: Passing caller's end_ledger
+        if passed_end_ledger {
+            current_cursor = next_cursor;
+            break;
+        }
+
+        // Termination Condition 4: Passing latestLedger
+        let passed_latest = if let Some(latest) = target_latest_ledger.or(result.latest_ledger) {
+            accumulated_events
+                .last()
+                .and_then(|ev| ev.ledger)
+                .is_some_and(|ledger| ledger > latest)
+        } else {
+            false
+        };
+
+        current_cursor = next_cursor;
+
+        if passed_latest {
+            break;
+        }
     }
 
-    Ok(contract_events)
+    Ok(PaginatedEvents {
+        events: accumulated_events,
+        cursor: current_cursor,
+        latest_ledger: target_latest_ledger,
+        pages_fetched,
+        reached_page_cap,
+    })
 }
 
 #[cfg(test)]
@@ -284,7 +477,7 @@ mod tests {
     #[test]
     fn test_get_events_request_serialization_with_end_ledger() {
         let req = GetEventsRequest {
-            start_ledger: 1000,
+            start_ledger: Some(1000),
             end_ledger: Some(2000),
             filters: vec![EventFilter {
                 filter_type: "contract".to_string(),
@@ -293,6 +486,7 @@ mod tests {
                 ],
                 topics: None,
             }],
+            pagination: None,
         };
 
         let json = serde_json::to_string(&req).unwrap();
@@ -305,12 +499,13 @@ mod tests {
             value["filters"][0]["contractIds"][0],
             "CA3D5KRYM6CB7OWQ6TWYRR3Z4T7GNZLKERYNZGGA5CWVMOMG2P3T2YYW"
         );
+        assert!(value.get("pagination").is_none());
     }
 
     #[test]
     fn test_get_events_request_serialization_omits_none_end_ledger() {
         let req = GetEventsRequest {
-            start_ledger: 1000,
+            start_ledger: Some(1000),
             end_ledger: None,
             filters: vec![EventFilter {
                 filter_type: "contract".to_string(),
@@ -319,15 +514,146 @@ mod tests {
                 ],
                 topics: None,
             }],
+            pagination: None,
         };
 
         let json = serde_json::to_string(&req).unwrap();
         assert!(json.contains("\"startLedger\":1000"));
         assert!(!json.contains("endLedger"));
+        assert!(!json.contains("pagination"));
 
         let value: serde_json::Value = serde_json::from_str(&json).unwrap();
         assert_eq!(value["startLedger"], 1000);
         assert!(value.get("endLedger").is_none());
+        assert!(value.get("pagination").is_none());
+    }
+
+    #[test]
+    fn test_get_events_request_serialization_with_pagination() {
+        let req = GetEventsRequest {
+            start_ledger: None,
+            end_ledger: None,
+            filters: vec![EventFilter {
+                filter_type: "contract".to_string(),
+                contract_ids: vec![
+                    "CA3D5KRYM6CB7OWQ6TWYRR3Z4T7GNZLKERYNZGGA5CWVMOMG2P3T2YYW".to_string()
+                ],
+                topics: None,
+            }],
+            pagination: Some(EventPagination {
+                cursor: Some("0000001000-0000000001".to_string()),
+                limit: Some(50),
+            }),
+        };
+
+        let json = serde_json::to_string(&req).unwrap();
+        assert!(!json.contains("startLedger"));
+        assert!(!json.contains("endLedger"));
+
+        let value: serde_json::Value = serde_json::from_str(&json).unwrap();
+        assert_eq!(value["pagination"]["cursor"], "0000001000-0000000001");
+        assert_eq!(value["pagination"]["limit"], 50);
+        assert!(value.get("startLedger").is_none());
+        assert!(value.get("endLedger").is_none());
+    }
+
+    #[test]
+    fn test_get_events_request_without_pagination_is_byte_identical() {
+        let req = GetEventsRequest {
+            start_ledger: Some(1000),
+            end_ledger: Some(2000),
+            filters: vec![EventFilter {
+                filter_type: "contract".to_string(),
+                contract_ids: vec![
+                    "CA3D5KRYM6CB7OWQ6TWYRR3Z4T7GNZLKERYNZGGA5CWVMOMG2P3T2YYW".to_string()
+                ],
+                topics: None,
+            }],
+            pagination: None,
+        };
+        let expected = r#"{"startLedger":1000,"endLedger":2000,"filters":[{"type":"contract","contractIds":["CA3D5KRYM6CB7OWQ6TWYRR3Z4T7GNZLKERYNZGGA5CWVMOMG2P3T2YYW"]}]}"#;
+        assert_eq!(serde_json::to_string(&req).unwrap(), expected);
+    }
+
+    #[test]
+    fn test_get_events_response_deserialization_with_cursor_and_latest_ledger() {
+        let json = r#"{
+            "events": [
+                {
+                    "ledger": 1000,
+                    "contractId": "CA3D5KRYM6CB7OWQ6TWYRR3Z4T7GNZLKERYNZGGA5CWVMOMG2P3T2YYW",
+                    "topic": ["AAAAAwAAACo="],
+                    "value": "AAAAAwAAACo="
+                }
+            ],
+            "cursor": "0000001000-0000000001",
+            "latestLedger": 2500
+        }"#;
+
+        let resp: GetEventsResponse = serde_json::from_str(json).unwrap();
+        assert_eq!(resp.events.len(), 1);
+        assert_eq!(resp.cursor.as_deref(), Some("0000001000-0000000001"));
+        assert_eq!(resp.latest_ledger, Some(2500));
+        assert_eq!(resp.events[0].ledger, 1000);
+        assert_eq!(
+            resp.events[0].contract_id,
+            "CA3D5KRYM6CB7OWQ6TWYRR3Z4T7GNZLKERYNZGGA5CWVMOMG2P3T2YYW"
+        );
+    }
+
+    #[test]
+    fn test_get_events_response_deserialization_omits_optional_cursor_and_latest_ledger() {
+        let json = r#"{"events":[]}"#;
+
+        let resp: GetEventsResponse = serde_json::from_str(json).unwrap();
+        assert!(resp.events.is_empty());
+        assert_eq!(resp.cursor, None);
+        assert_eq!(resp.latest_ledger, None);
+    }
+
+    #[test]
+    fn test_validate_cursor_and_ledger_range() {
+        assert!(validate_cursor_and_ledger_range(None, Some(1000), Some(2000)).is_ok());
+        assert!(validate_cursor_and_ledger_range(None, None, None).is_ok());
+        assert!(
+            validate_cursor_and_ledger_range(Some("0000001000-0000000001"), None, None).is_ok()
+        );
+
+        let err1 =
+            validate_cursor_and_ledger_range(Some("0000001000-0000000001"), Some(1000), None)
+                .unwrap_err();
+        match err1 {
+            RpcError::Rpc(msg) => {
+                assert!(
+                    msg.contains("Cannot specify cursor together with start ledger or end ledger")
+                );
+            }
+            other => panic!("Unexpected error: {other:?}"),
+        }
+
+        let err2 =
+            validate_cursor_and_ledger_range(Some("0000001000-0000000001"), None, Some(2000))
+                .unwrap_err();
+        match err2 {
+            RpcError::Rpc(msg) => {
+                assert!(
+                    msg.contains("Cannot specify cursor together with start ledger or end ledger")
+                );
+            }
+            other => panic!("Unexpected error: {other:?}"),
+        }
+
+        let err3 =
+            validate_cursor_and_ledger_range(Some("0000001000-0000000001"), Some(1000), Some(2000))
+                .unwrap_err();
+        match err3 {
+            RpcError::Rpc(msg) => {
+                assert!(
+                    msg.contains("Cannot specify cursor together with start ledger or end ledger")
+                );
+            }
+            other => panic!("Unexpected error: {other:?}"),
+        }
     }
 
     #[test]
@@ -433,5 +759,380 @@ mod tests {
             }
             other => panic!("Unexpected error variant: {other:?}"),
         }
+    }
+
+    #[tokio::test]
+    async fn test_get_contract_events_paginated_rejects_cursor_with_ledger_range_before_network() {
+        let client = SorobanRpcClient::new("http://127.0.0.1:9999");
+        let result = get_contract_events_paginated(
+            &client,
+            "CA3D5KRYM6CB7OWQ6TWYRR3Z4T7GNZLKERYNZGGA5CWVMOMG2P3T2YYW",
+            Some(1000),
+            None,
+            None,
+            Some(EventPagination::cursor("0000001000-0000000001")),
+            None,
+        )
+        .await;
+
+        let err = result.unwrap_err();
+        match err {
+            RpcError::Rpc(msg) => {
+                assert!(
+                    msg.contains("Cannot specify cursor together with start ledger or end ledger")
+                );
+            }
+            other => panic!("Unexpected error variant: {other:?}"),
+        }
+    }
+
+    async fn setup_mock_events_server(
+        responses: Vec<serde_json::Value>,
+    ) -> (String, tokio::sync::mpsc::Receiver<serde_json::Value>) {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        use tokio::net::TcpListener;
+
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let (tx, rx) = tokio::sync::mpsc::channel(32);
+
+        tokio::spawn(async move {
+            let mut resp_iter = responses.into_iter();
+            loop {
+                let Ok((mut socket, _)) = listener.accept().await else {
+                    break;
+                };
+                let mut data = Vec::new();
+                let mut buf = [0u8; 4096];
+                loop {
+                    let n = socket.read(&mut buf).await.unwrap_or(0);
+                    if n == 0 {
+                        break;
+                    }
+                    data.extend_from_slice(&buf[..n]);
+                    let text = String::from_utf8_lossy(&data);
+                    if let Some(pos) = text.find("\r\n\r\n") {
+                        let header_part = &text[..pos];
+                        let len = header_part
+                            .lines()
+                            .find_map(|l| {
+                                let (k, v) = l.split_once(':')?;
+                                if k.trim().eq_ignore_ascii_case("content-length") {
+                                    v.trim().parse::<usize>().ok()
+                                } else {
+                                    None
+                                }
+                            })
+                            .unwrap_or(0);
+                        if data.len() >= pos + 4 + len {
+                            break;
+                        }
+                    }
+                }
+                let body_str = String::from_utf8_lossy(&data);
+                let body = body_str
+                    .split_once("\r\n\r\n")
+                    .map(|(_, b)| b)
+                    .unwrap_or("");
+                let req_json: serde_json::Value = serde_json::from_str(body).unwrap_or_default();
+                let _ = tx.send(req_json).await;
+
+                if let Some(next_resp) = resp_iter.next() {
+                    let resp_body = serde_json::to_string(&serde_json::json!({
+                        "jsonrpc": "2.0",
+                        "id": 1,
+                        "result": next_resp
+                    }))
+                    .unwrap();
+                    let response = format!(
+                        "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+                        resp_body.len(),
+                        resp_body
+                    );
+                    let _ = socket.write_all(response.as_bytes()).await;
+                }
+            }
+        });
+
+        (format!("http://{}", addr), rx)
+    }
+
+    #[tokio::test]
+    async fn test_follow_loop_terminates_on_no_further_cursor() {
+        let (server_url, mut rx) = setup_mock_events_server(vec![
+            serde_json::json!({
+                "events": [
+                    {
+                        "ledger": 1000,
+                        "contractId": "CA3D5KRYM6CB7OWQ6TWYRR3Z4T7GNZLKERYNZGGA5CWVMOMG2P3T2YYW",
+                        "topic": ["AAAAAwAAACo="],
+                        "value": "AAAAAwAAACo="
+                    }
+                ],
+                "cursor": "0000001000-0000000001",
+                "latestLedger": 2000
+            }),
+            serde_json::json!({
+                "events": [
+                    {
+                        "ledger": 1001,
+                        "contractId": "CA3D5KRYM6CB7OWQ6TWYRR3Z4T7GNZLKERYNZGGA5CWVMOMG2P3T2YYW",
+                        "topic": ["AAAAAwAAAAc="],
+                        "value": "AAAAAwAAAAc="
+                    }
+                ],
+                "cursor": null,
+                "latestLedger": 2000
+            }),
+        ])
+        .await;
+
+        let client = SorobanRpcClient::new(&server_url);
+        let res = get_contract_events_paginated(
+            &client,
+            "CA3D5KRYM6CB7OWQ6TWYRR3Z4T7GNZLKERYNZGGA5CWVMOMG2P3T2YYW",
+            Some(1000),
+            Some(1005),
+            None,
+            None,
+            None,
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(res.events.len(), 2);
+        assert_eq!(res.pages_fetched, 2);
+        assert_eq!(res.cursor, None);
+        assert!(!res.reached_page_cap);
+
+        // Check request 1 had startLedger and endLedger
+        let req1 = rx.recv().await.unwrap();
+        assert_eq!(req1["params"]["startLedger"], 1000);
+        assert_eq!(req1["params"]["endLedger"], 1006);
+        assert!(req1["params"].get("pagination").is_none());
+
+        // Check request 2 had cursor and omitted startLedger/endLedger
+        let req2 = rx.recv().await.unwrap();
+        assert!(req2["params"].get("startLedger").is_none());
+        assert!(req2["params"].get("endLedger").is_none());
+        assert_eq!(
+            req2["params"]["pagination"]["cursor"],
+            "0000001000-0000000001"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_follow_loop_terminates_on_page_cap() {
+        let (server_url, _rx) = setup_mock_events_server(vec![
+            serde_json::json!({
+                "events": [{
+                    "ledger": 1000,
+                    "contractId": "CA3D5KRYM6CB7OWQ6TWYRR3Z4T7GNZLKERYNZGGA5CWVMOMG2P3T2YYW",
+                    "topic": ["AAAAAwAAACo="],
+                    "value": "AAAAAwAAACo="
+                }],
+                "cursor": "c1",
+                "latestLedger": 2000
+            }),
+            serde_json::json!({
+                "events": [{
+                    "ledger": 1001,
+                    "contractId": "CA3D5KRYM6CB7OWQ6TWYRR3Z4T7GNZLKERYNZGGA5CWVMOMG2P3T2YYW",
+                    "topic": ["AAAAAwAAAAc="],
+                    "value": "AAAAAwAAAAc="
+                }],
+                "cursor": "c2",
+                "latestLedger": 2000
+            }),
+            serde_json::json!({
+                "events": [{
+                    "ledger": 1002,
+                    "contractId": "CA3D5KRYM6CB7OWQ6TWYRR3Z4T7GNZLKERYNZGGA5CWVMOMG2P3T2YYW",
+                    "topic": ["AAAAAwAAAEg="],
+                    "value": "AAAAAwAAAEg="
+                }],
+                "cursor": "c3",
+                "latestLedger": 2000
+            }),
+        ])
+        .await;
+
+        let client = SorobanRpcClient::new(&server_url);
+        let res = get_contract_events_paginated(
+            &client,
+            "CA3D5KRYM6CB7OWQ6TWYRR3Z4T7GNZLKERYNZGGA5CWVMOMG2P3T2YYW",
+            Some(1000),
+            Some(1005),
+            None,
+            None,
+            Some(2),
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(res.events.len(), 2);
+        assert_eq!(res.pages_fetched, 2);
+        assert_eq!(res.cursor.as_deref(), Some("c2"));
+        assert!(res.reached_page_cap);
+    }
+
+    #[tokio::test]
+    async fn test_follow_loop_terminates_on_passing_latest_ledger() {
+        let (server_url, _rx) = setup_mock_events_server(vec![
+            serde_json::json!({
+                "events": [{
+                    "ledger": 100,
+                    "contractId": "CA3D5KRYM6CB7OWQ6TWYRR3Z4T7GNZLKERYNZGGA5CWVMOMG2P3T2YYW",
+                    "topic": ["AAAAAwAAACo="],
+                    "value": "AAAAAwAAACo="
+                }],
+                "cursor": "c1",
+                "latestLedger": 100
+            }),
+            serde_json::json!({
+                "events": [{
+                    "ledger": 101,
+                    "contractId": "CA3D5KRYM6CB7OWQ6TWYRR3Z4T7GNZLKERYNZGGA5CWVMOMG2P3T2YYW",
+                    "topic": ["AAAAAwAAAAc="],
+                    "value": "AAAAAwAAAAc="
+                }],
+                "cursor": "c2",
+                "latestLedger": 100
+            }),
+        ])
+        .await;
+
+        let client = SorobanRpcClient::new(&server_url);
+        let res = get_contract_events_paginated(
+            &client,
+            "CA3D5KRYM6CB7OWQ6TWYRR3Z4T7GNZLKERYNZGGA5CWVMOMG2P3T2YYW",
+            Some(90),
+            None,
+            None,
+            None,
+            None,
+        )
+        .await
+        .unwrap();
+
+        // Page 2 has event with ledger 101 > latestLedger (100), terminating the loop
+        assert_eq!(res.events.len(), 2);
+        assert_eq!(res.pages_fetched, 2);
+        assert_eq!(res.cursor.as_deref(), Some("c2"));
+        assert!(!res.reached_page_cap);
+    }
+
+    #[tokio::test]
+    async fn test_empty_cursor_normalized_with_start_ledger() {
+        let (server_url, mut rx) = setup_mock_events_server(vec![serde_json::json!({
+            "events": [{
+                "ledger": 1000,
+                "contractId": "CA3D5KRYM6CB7OWQ6TWYRR3Z4T7GNZLKERYNZGGA5CWVMOMG2P3T2YYW",
+                "topic": ["AAAAAwAAACo="],
+                "value": "AAAAAwAAACo="
+            }],
+            "cursor": null,
+            "latestLedger": 2000
+        })])
+        .await;
+
+        let client = SorobanRpcClient::new(&server_url);
+        let res = get_contract_events_paginated(
+            &client,
+            "CA3D5KRYM6CB7OWQ6TWYRR3Z4T7GNZLKERYNZGGA5CWVMOMG2P3T2YYW",
+            Some(1000),
+            Some(1005),
+            None,
+            Some(EventPagination::cursor("")),
+            Some(1),
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(res.events.len(), 1);
+        let req = rx.recv().await.unwrap();
+        // startLedger must be preserved and not dropped
+        assert_eq!(req["params"]["startLedger"], 1000);
+        assert_eq!(req["params"]["endLedger"], 1006);
+        // pagination with empty cursor must be omitted
+        assert!(req["params"].get("pagination").is_none());
+    }
+
+    #[tokio::test]
+    async fn test_follow_loop_enforces_end_ledger_on_subsequent_pages() {
+        let (server_url, mut rx) = setup_mock_events_server(vec![
+            serde_json::json!({
+                "events": [
+                    {
+                        "ledger": 1000,
+                        "contractId": "CA3D5KRYM6CB7OWQ6TWYRR3Z4T7GNZLKERYNZGGA5CWVMOMG2P3T2YYW",
+                        "topic": ["AAAAAwAAACo="],
+                        "value": "AAAAAwAAACo="
+                    },
+                    {
+                        "ledger": 1001,
+                        "contractId": "CA3D5KRYM6CB7OWQ6TWYRR3Z4T7GNZLKERYNZGGA5CWVMOMG2P3T2YYW",
+                        "topic": ["AAAAAwAAAAc="],
+                        "value": "AAAAAwAAAAc="
+                    }
+                ],
+                "cursor": "0000001001-0000000001",
+                "latestLedger": 2000
+            }),
+            serde_json::json!({
+                "events": [
+                    {
+                        "ledger": 1002,
+                        "contractId": "CA3D5KRYM6CB7OWQ6TWYRR3Z4T7GNZLKERYNZGGA5CWVMOMG2P3T2YYW",
+                        "topic": ["AAAAAwAAAEg="],
+                        "value": "AAAAAwAAAEg="
+                    },
+                    {
+                        "ledger": 1003,
+                        "contractId": "CA3D5KRYM6CB7OWQ6TWYRR3Z4T7GNZLKERYNZGGA5CWVMOMG2P3T2YYW",
+                        "topic": ["AAAAAwAAAEk="],
+                        "value": "AAAAAwAAAEk="
+                    }
+                ],
+                "cursor": "0000001003-0000000001",
+                "latestLedger": 2000
+            }),
+        ])
+        .await;
+
+        let client = SorobanRpcClient::new(&server_url);
+        // Caller specifies end_ledger: 1002
+        let res = get_contract_events_paginated(
+            &client,
+            "CA3D5KRYM6CB7OWQ6TWYRR3Z4T7GNZLKERYNZGGA5CWVMOMG2P3T2YYW",
+            Some(1000),
+            Some(1002),
+            None,
+            None,
+            None,
+        )
+        .await
+        .unwrap();
+
+        // Must include ledgers 1000, 1001, 1002, but discard ledger 1003
+        assert_eq!(res.events.len(), 3);
+        assert_eq!(res.events[0].ledger, Some(1000));
+        assert_eq!(res.events[1].ledger, Some(1001));
+        assert_eq!(res.events[2].ledger, Some(1002));
+        assert_eq!(res.pages_fetched, 2);
+
+        // Verify request 1 sent startLedger 1000 and endLedger 1003 (1002 + 1)
+        let req1 = rx.recv().await.unwrap();
+        assert_eq!(req1["params"]["startLedger"], 1000);
+        assert_eq!(req1["params"]["endLedger"], 1003);
+
+        // Verify request 2 resumed with cursor and omitted startLedger and endLedger per RPC spec
+        let req2 = rx.recv().await.unwrap();
+        assert!(req2["params"].get("startLedger").is_none());
+        assert!(req2["params"].get("endLedger").is_none());
+        assert_eq!(
+            req2["params"]["pagination"]["cursor"],
+            "0000001001-0000000001"
+        );
     }
 }

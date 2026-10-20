@@ -546,3 +546,380 @@ fn test_events_topic_without_abi_does_not_warn() {
         .success()
         .stderr(predicate::str::contains("Warning").not());
 }
+
+// ── Cursor-aware pagination and bounded follow loop ──
+
+fn mock_multipage_events_rpc() -> (String, Arc<Mutex<MockRpcSeen>>) {
+    let fixture_str = include_str!("fixtures/get_events_multipage.json");
+    let fixture: serde_json::Value = serde_json::from_str(fixture_str).unwrap();
+    let pages = fixture["pages"].as_array().unwrap().clone();
+
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let url = format!("http://{}", listener.local_addr().unwrap());
+    let seen = Arc::new(Mutex::new(MockRpcSeen::default()));
+    let seen_thread = seen.clone();
+
+    thread::spawn(move || {
+        for conn in listener.incoming() {
+            let Ok(mut sock) = conn else { break };
+            let req = read_request(&mut sock);
+            let body = req.split_once("\r\n\r\n").map(|(_, b)| b).unwrap_or("");
+            let json_body: serde_json::Value =
+                serde_json::from_str(body).unwrap_or_else(|_| serde_json::json!({}));
+            let method = json_body["method"].as_str().unwrap_or("").to_string();
+
+            {
+                let mut s = seen_thread.lock().unwrap();
+                s.requests.push(json_body.clone());
+            }
+
+            let resp_body = match method.as_str() {
+                "getLatestLedger" => {
+                    r#"{"jsonrpc":"2.0","id":1,"result":{"id":"mock","protocolVersion":22,"sequence":1010}}"#.to_string()
+                }
+                "getEvents" => {
+                    let cursor_opt = json_body["params"]["pagination"]["cursor"].as_str();
+                    let page = match cursor_opt {
+                        None => &pages[0],
+                        Some("0000001001-0000000001") => &pages[1],
+                        Some("0000001003-0000000001") => &pages[2],
+                        _ => &pages[2],
+                    };
+                    serde_json::json!({
+                        "jsonrpc": "2.0",
+                        "id": 1,
+                        "result": page
+                    })
+                    .to_string()
+                }
+                _ => {
+                    r#"{"jsonrpc":"2.0","id":1,"error":{"code":-32601,"message":"method not found"}}"#.to_string()
+                }
+            };
+
+            let header = format!(
+                "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+                resp_body.len(),
+                resp_body
+            );
+            let _ = sock.write_all(header.as_bytes());
+        }
+    });
+
+    (url, seen)
+}
+
+#[test]
+fn test_events_help_shows_pagination_flags() {
+    let mut cmd = Command::cargo_bin("sdkt").unwrap();
+    cmd.arg("events").arg("--help");
+    cmd.assert()
+        .success()
+        .stdout(predicate::str::contains("--limit <LIMIT>"))
+        .stdout(predicate::str::contains("--cursor <CURSOR>"))
+        .stdout(predicate::str::contains("--all-pages"));
+}
+
+#[test]
+fn test_events_rejects_cursor_with_start_ledger() {
+    let mut cmd = Command::cargo_bin("sdkt").unwrap();
+    cmd.arg("events")
+        .arg(CONTRACT_ID)
+        .arg("--cursor")
+        .arg("0000001001-0000000001")
+        .arg("--start-ledger")
+        .arg("1000");
+
+    cmd.assert().failure().stderr(predicate::str::contains(
+        "cannot specify --cursor together with --start-ledger or --end-ledger",
+    ));
+}
+
+#[test]
+fn test_events_rejects_cursor_with_end_ledger() {
+    let mut cmd = Command::cargo_bin("sdkt").unwrap();
+    cmd.arg("events")
+        .arg(CONTRACT_ID)
+        .arg("--cursor")
+        .arg("0000001001-0000000001")
+        .arg("--end-ledger")
+        .arg("2000");
+
+    cmd.assert().failure().stderr(predicate::str::contains(
+        "cannot specify --cursor together with --start-ledger or --end-ledger",
+    ));
+}
+
+#[test]
+fn test_events_rejects_zero_limit() {
+    let mut cmd = Command::cargo_bin("sdkt").unwrap();
+    cmd.arg("events").arg(CONTRACT_ID).arg("--limit").arg("0");
+
+    cmd.assert()
+        .failure()
+        .stderr(predicate::str::contains("--limit must be greater than 0"));
+}
+
+#[test]
+fn test_events_single_page_boundary_notice_pretty() {
+    let (rpc_url, seen) = mock_multipage_events_rpc();
+    let mut cmd = Command::cargo_bin("sdkt").unwrap();
+    cmd.arg("events")
+        .arg(CONTRACT_ID)
+        .arg("--rpc-url")
+        .arg(&rpc_url)
+        .arg("--limit")
+        .arg("2");
+
+    cmd.assert()
+        .success()
+        .stdout(predicate::str::contains("Event #1"))
+        .stdout(predicate::str::contains("Event #2"))
+        .stdout(predicate::str::contains("Event #3").not())
+        .stdout(predicate::str::contains(
+            "Notice: Page boundary reached (2 events). To continue from this point, use --cursor 0000001001-0000000001",
+        ));
+
+    // Only 1 page requested
+    let reqs = seen.lock().unwrap().requests.clone();
+    let event_reqs: Vec<_> = reqs.iter().filter(|r| r["method"] == "getEvents").collect();
+    assert_eq!(event_reqs.len(), 1);
+    assert_eq!(event_reqs[0]["params"]["pagination"]["limit"], 2);
+}
+
+#[test]
+fn test_events_single_page_boundary_notice_json() {
+    let (rpc_url, _seen) = mock_multipage_events_rpc();
+    let mut cmd = Command::cargo_bin("sdkt").unwrap();
+    cmd.arg("events")
+        .arg(CONTRACT_ID)
+        .arg("--rpc-url")
+        .arg(&rpc_url)
+        .arg("--limit")
+        .arg("2")
+        .arg("--format")
+        .arg("json");
+
+    let assert = cmd.assert().success();
+    let output = assert.get_output();
+
+    // Stdout must be pure JSON containing exactly 2 events
+    let json: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(json.as_array().unwrap().len(), 2);
+
+    // Stderr carries the truncation notice
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains(
+        "Notice: Page boundary reached (2 events). To continue from this point, use --cursor 0000001001-0000000001"
+    ));
+}
+
+#[test]
+fn test_events_cursor_continuation() {
+    let (rpc_url, seen) = mock_multipage_events_rpc();
+    let mut cmd = Command::cargo_bin("sdkt").unwrap();
+    cmd.arg("events")
+        .arg(CONTRACT_ID)
+        .arg("--rpc-url")
+        .arg(&rpc_url)
+        .arg("--cursor")
+        .arg("0000001001-0000000001")
+        .arg("--limit")
+        .arg("2");
+
+    cmd.assert()
+        .success()
+        .stdout(predicate::str::contains("Ledger: 1002"))
+        .stdout(predicate::str::contains("Ledger: 1003"))
+        .stdout(predicate::str::contains(
+            "Notice: Page boundary reached (2 events). To continue from this point, use --cursor 0000001003-0000000001",
+        ));
+
+    let reqs = seen.lock().unwrap().requests.clone();
+    let event_req = reqs
+        .iter()
+        .find(|r| r["method"] == "getEvents")
+        .expect("expected getEvents request");
+
+    // Per protocol rule, cursor request omits startLedger and endLedger
+    assert!(event_req["params"].get("startLedger").is_none());
+    assert!(event_req["params"].get("endLedger").is_none());
+    assert_eq!(
+        event_req["params"]["pagination"]["cursor"],
+        "0000001001-0000000001"
+    );
+    assert_eq!(event_req["params"]["pagination"]["limit"], 2);
+}
+
+#[test]
+fn test_events_all_pages_accumulates_and_stops_on_exhaustion() {
+    let (rpc_url, seen) = mock_multipage_events_rpc();
+    let mut cmd = Command::cargo_bin("sdkt").unwrap();
+    cmd.arg("events")
+        .arg(CONTRACT_ID)
+        .arg("--rpc-url")
+        .arg(&rpc_url)
+        .arg("--all-pages")
+        .arg("--limit")
+        .arg("2")
+        .arg("--format")
+        .arg("json");
+
+    let assert = cmd.assert().success();
+    let output = assert.get_output();
+
+    let json: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    let arr = json.as_array().expect("array of events");
+
+    // Accumulated 5 events across all 3 pages
+    assert_eq!(arr.len(), 5);
+    assert_eq!(arr[0]["ledger"], 1000);
+    assert_eq!(arr[1]["ledger"], 1001);
+    assert_eq!(arr[2]["ledger"], 1002);
+    assert_eq!(arr[3]["ledger"], 1003);
+    assert_eq!(arr[4]["ledger"], 1004);
+
+    // Stderr should NOT have a boundary notice because all pages were completed
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(!stderr.contains("Notice: Page boundary reached"));
+
+    // Verify 3 getEvents requests were dispatched
+    let reqs = seen.lock().unwrap().requests.clone();
+    let event_reqs: Vec<_> = reqs.iter().filter(|r| r["method"] == "getEvents").collect();
+    assert_eq!(event_reqs.len(), 3);
+
+    // Request 1: initial request with limit
+    assert_eq!(event_reqs[0]["params"]["pagination"]["limit"], 2);
+    assert!(event_reqs[0]["params"]["pagination"]
+        .get("cursor")
+        .is_none());
+
+    // Request 2: resumed with cursor from page 1
+    assert_eq!(
+        event_reqs[1]["params"]["pagination"]["cursor"],
+        "0000001001-0000000001"
+    );
+    assert!(event_reqs[1]["params"].get("startLedger").is_none());
+
+    // Request 3: resumed with cursor from page 2
+    assert_eq!(
+        event_reqs[2]["params"]["pagination"]["cursor"],
+        "0000001003-0000000001"
+    );
+    assert!(event_reqs[2]["params"].get("startLedger").is_none());
+}
+
+#[test]
+fn test_events_empty_cursor_with_start_ledger_normalized() {
+    let (rpc_url, seen) = mock_events_rpc(2500);
+    let mut cmd = Command::cargo_bin("sdkt").unwrap();
+    cmd.arg("events")
+        .arg(CONTRACT_ID)
+        .arg("--rpc-url")
+        .arg(&rpc_url)
+        .arg("--cursor")
+        .arg("")
+        .arg("--start-ledger")
+        .arg("1000")
+        .arg("--format")
+        .arg("json");
+
+    cmd.assert().success();
+
+    let reqs = seen.lock().unwrap().requests.clone();
+    let event_req = reqs
+        .iter()
+        .find(|r| r["method"] == "getEvents")
+        .expect("expected getEvents request");
+
+    // startLedger was retained and not dropped; cursor was dropped
+    assert_eq!(event_req["params"]["startLedger"], 1000);
+    assert!(event_req["params"].get("pagination").is_none());
+}
+
+#[test]
+fn test_events_short_page_with_continuation_cursor_reports_boundary() {
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let url = format!("http://{}", listener.local_addr().unwrap());
+
+    thread::spawn(move || {
+        for conn in listener.incoming() {
+            let Ok(mut sock) = conn else { break };
+            let req = read_request(&mut sock);
+            let body = req.split_once("\r\n\r\n").map(|(_, b)| b).unwrap_or("");
+            let json_body: serde_json::Value =
+                serde_json::from_str(body).unwrap_or_else(|_| serde_json::json!({}));
+            let method = json_body["method"].as_str().unwrap_or("").to_string();
+
+            let resp_body = match method.as_str() {
+                "getLatestLedger" => {
+                    r#"{"jsonrpc":"2.0","id":1,"result":{"id":"mock","protocolVersion":22,"sequence":2500}}"#.to_string()
+                }
+                "getEvents" => {
+                    r#"{"jsonrpc":"2.0","id":1,"result":{"events":[{"ledger":1000,"contractId":"CCVVW7N4R3KNY72QJQKQY3T753C2H34E6XJIVJQOQSQE3C3M3U72QJQK","topic":["AAAAAwAAACo="],"value":"AAAAAwAAACo="}],"cursor":"0000001000-0000000001","latestLedger":2500}}"#.to_string()
+                }
+                _ => {
+                    r#"{"jsonrpc":"2.0","id":1,"error":{"code":-32601,"message":"method not found"}}"#.to_string()
+                }
+            };
+
+            let header = format!(
+                "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+                resp_body.len(),
+                resp_body
+            );
+            let _ = sock.write_all(header.as_bytes());
+        }
+    });
+
+    let mut cmd = Command::cargo_bin("sdkt").unwrap();
+    cmd.arg("events")
+        .arg(CONTRACT_ID)
+        .arg("--rpc-url")
+        .arg(&url)
+        .arg("--limit")
+        .arg("10");
+
+    cmd.assert()
+        .success()
+        .stdout(predicate::str::contains("Event #1"))
+        .stdout(predicate::str::contains(
+            "Notice: Page boundary reached (1 events). To continue from this point, use --cursor 0000001000-0000000001",
+        ));
+}
+
+#[test]
+fn test_events_all_pages_enforces_end_ledger_bound_across_pages() {
+    let (rpc_url, seen) = mock_multipage_events_rpc();
+    let mut cmd = Command::cargo_bin("sdkt").unwrap();
+    cmd.arg("events")
+        .arg(CONTRACT_ID)
+        .arg("--rpc-url")
+        .arg(&rpc_url)
+        .arg("--all-pages")
+        .arg("--limit")
+        .arg("2")
+        .arg("--start-ledger")
+        .arg("1000")
+        .arg("--end-ledger")
+        .arg("1002")
+        .arg("--format")
+        .arg("json");
+
+    let assert = cmd.assert().success();
+    let output = assert.get_output();
+
+    let json: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    let arr = json.as_array().expect("array of events");
+
+    // Must include 1000, 1001, 1002, and discard 1003 (which crossed end_ledger 1002)
+    assert_eq!(arr.len(), 3);
+    assert_eq!(arr[0]["ledger"], 1000);
+    assert_eq!(arr[1]["ledger"], 1001);
+    assert_eq!(arr[2]["ledger"], 1002);
+
+    // Page 3 was never requested because loop terminated at end_ledger
+    let reqs = seen.lock().unwrap().requests.clone();
+    let event_reqs: Vec<_> = reqs.iter().filter(|r| r["method"] == "getEvents").collect();
+    assert_eq!(event_reqs.len(), 2);
+}
