@@ -269,6 +269,10 @@ const INTENT_KEYWORDS: &[(&str, &[&[&str]])] = &[
         &[&["network", "check"], &["network", "status"]],
     ),
     ("network.list", &[&["networks"], &["network", "list"]]),
+    // `plugin doctor` is its own capability (`--all` is only declared
+    // there); the specificity pass below resolves it over the bare
+    // `doctor` rule, which is a strict subset of these keywords.
+    ("plugin.doctor", &[&["plugin", "doctor"]]),
     (
         "plugin.doctor",
         &[&["plugin", "doctor"], &["plugin", "self-check"]],
@@ -518,7 +522,13 @@ fn extract_args(request: &str) -> IntentArgs {
             let mut value = eq_value;
             // Tokens consumed by this flag: 1 = flag alone.
             let mut advance = 1usize;
-            if value.is_none() {
+            // A valueless switch never consumes the next token: the word or
+            // path after it (`audit --no-plugins src/lib.rs`) belongs to the
+            // request, not to the flag. A value spelled into the token
+            // (`--refresh=always`) is still recorded so the planner can
+            // refuse it instead of dropping it.
+            let valueless = crate::plan::is_valueless_flag(&flag);
+            if value.is_none() && !valueless {
                 if let Some(next) = raw_tokens.get(i + 1) {
                     if let Some((quoted, used)) = quoted_value(&raw_tokens[i + 1..]) {
                         value = Some(quoted);
