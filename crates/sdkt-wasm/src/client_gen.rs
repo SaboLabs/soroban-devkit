@@ -23,7 +23,7 @@ pub enum ClientGenError {
     /// The interface references a type outside the supported subset.
     #[error(
         "unsupported type '{type_name}' ({where_}) in function `{function}` — \
-         the generator core supports u32|i32|u64|i64|bool|address|string|symbol|void only"
+         the generator core supports u32|i32|u64|i64|u128|i128|bytes|bool|address|string|symbol|void only"
     )]
     UnsupportedType {
         function: String,
@@ -43,6 +43,9 @@ fn map_scalar(t: &ContractType) -> Option<&'static str> {
         "i32" => Some("i32"),
         "u64" => Some("u64"),
         "i64" => Some("i64"),
+        "u128" => Some("u128"),
+        "i128" => Some("i128"),
+        "bytes" => Some("String"),
         "bool" => Some("bool"),
         "address" | "string" | "symbol" => Some("String"),
         "void" => Some("()"),
@@ -57,6 +60,9 @@ fn scalar_type_tag(t: &ContractType) -> Option<&'static str> {
         "i32" => Some("i32"),
         "u64" => Some("u64"),
         "i64" => Some("i64"),
+        "u128" => Some("u128"),
+        "i128" => Some("i128"),
+        "bytes" => Some("bytes"),
         "bool" => Some("bool"),
         "address" => Some("address"),
         "string" => Some("string"),
@@ -222,6 +228,9 @@ pub fn generate_client_with_options(
         for p in &f.parameters {
             let rust_ty = map_scalar(&p.type_).expect("validated above");
             let field = rust_ident(&p.name);
+            if p.type_.name == "bytes" {
+                let _ = writeln!(out, "    /// Hex string without a `0x` prefix.");
+            }
             if !p.doc.trim().is_empty() {
                 let _ = writeln!(
                     out,
@@ -278,6 +287,33 @@ pub fn generate_client_with_options(
 mod tests {
     use super::*;
     use crate::spec::ContractParameter;
+    use std::{
+        fs,
+        path::PathBuf,
+        process::Command,
+        time::{SystemTime, UNIX_EPOCH},
+    };
+
+    struct TempDir(PathBuf);
+
+    impl TempDir {
+        fn new() -> Self {
+            let unique = SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap()
+                .as_nanos();
+            let path = std::env::temp_dir()
+                .join(format!("sdkt-client-gen-{}-{unique}", std::process::id()));
+            fs::create_dir(&path).unwrap();
+            Self(path)
+        }
+    }
+
+    impl Drop for TempDir {
+        fn drop(&mut self) {
+            let _ = fs::remove_dir_all(&self.0);
+        }
+    }
 
     fn param(name: &str, type_name: &str, kind: &str) -> ContractParameter {
         ContractParameter {
@@ -355,6 +391,65 @@ mod tests {
         assert!(code.contains("format!(\"u64:{}\", self.amount.to_string())"));
         assert!(code.contains("format!(\"bool:{}\", self.flag.to_string())"));
         assert!(code.contains("pub type TransferOutput = ();"));
+    }
+
+    #[test]
+    fn generates_u128_i128_and_hex_bytes_arguments() {
+        let spec = spec_of(vec![func(
+            "transfer",
+            vec![
+                param("amount", "u128", "primitive"),
+                param("delta", "i128", "primitive"),
+                param("memo", "bytes", "primitive"),
+            ],
+            vec![ty("bytes", "primitive")],
+        )]);
+        let code = generate_client(&spec).unwrap();
+        let repeated = generate_client(&spec).unwrap();
+        assert_eq!(
+            code, repeated,
+            "generation must be byte-identical across runs"
+        );
+
+        assert!(code.contains("pub amount: u128,"));
+        assert!(code.contains("pub delta: i128,"));
+        assert!(code.contains("pub memo: String,"));
+        assert!(code.contains("format!(\"u128:{}\", self.amount.to_string())"));
+        assert!(code.contains("format!(\"i128:{}\", self.delta.to_string())"));
+        assert!(code.contains("format!(\"bytes:{}\", self.memo.clone())"));
+        assert!(code.contains("Hex string without a `0x` prefix."));
+        assert!(code.contains("pub type TransferOutput = String;"));
+
+        let temp = TempDir::new();
+        let source = temp.0.join("generated.rs");
+        fs::write(&source, code).unwrap();
+        let output = Command::new("rustc")
+            .args(["--crate-type", "lib", "--emit", "metadata"])
+            .arg(&source)
+            .arg("--out-dir")
+            .arg(&temp.0)
+            .output()
+            .expect("rustc must be available to compile generated client code");
+        assert!(
+            output.status.success(),
+            "generated client must compile: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+
+    #[test]
+    fn continues_rejecting_timepoint_and_duration() {
+        for unsupported in ["timepoint", "duration"] {
+            let spec = spec_of(vec![func(
+                "set_time",
+                vec![param("value", unsupported, "primitive")],
+                vec![],
+            )]);
+            assert!(matches!(
+                generate_client(&spec),
+                Err(ClientGenError::UnsupportedType { .. })
+            ));
+        }
     }
 
     #[test]
