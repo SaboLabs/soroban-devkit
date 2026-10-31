@@ -896,6 +896,7 @@ Store root precedence (lowest → highest): `<cwd>/.sdkt/plugins`,
   ```
 
 - `audit` implements the static-analysis rules (AUTH-001/002/003/004, MOVE-001, MATH-001, CEI-001).
+- **Rules summary in every audit shape.** When plugin rules are loaded, the pretty report prints `Rules loaded: N built-in, M plugin(s)` for both single-file and directory targets. The count is scoped to the ruleset that produced that file's report, so a directory run does not accumulate counts across files. No new machine-readable field was added: SARIF already carries its `rules[]` catalogue, and the JSON multi-file document is unchanged.
 - **AUTH-001/AUTH-004 severity follows observed behavior, not the name.** Both rules start from a privileged-name heuristic (`initialize`/`init`, `set_*`/`grant_*`/`revoke_*` prefixes, and the substrings `admin`, `mint`, `burn`, `pause`, `unpause`, `upgrade`, `withdraw`, `configure`, `freeze`, `ban`, `drain`, `set_admin`, `owner_set`, `transfer_ownership`, `change_owner`, `set_auth`), then decide severity from what the function actually does:
   - a method of a `#[contractimpl]` block that performs a recognized state write or an external call and never calls `require_auth()` → **critical** (the unguarded-privilege case);
   - a function that is **not** a `#[contractimpl]` method (a plain `fn` or a method of an un-annotated impl) → **info**: external callers cannot reach it, so authorization is the responsibility of the entrypoint that calls it;

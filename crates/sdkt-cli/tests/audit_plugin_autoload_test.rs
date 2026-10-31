@@ -164,12 +164,7 @@ fn find_or_build_example_cdylib() -> PathBuf {
 }
 
 #[cfg(feature = "plugins")]
-#[test]
-fn test_installed_plugin_runs_without_rules_flag() {
-    let temp = TempDir::new().unwrap();
-    let store = temp.path().join("store");
-    fs::create_dir_all(&store).unwrap();
-
+fn install_example_plugin(temp: &TempDir, store: &Path) {
     let cdylib = find_or_build_example_cdylib();
     let ext = cdylib.extension().unwrap().to_str().unwrap();
 
@@ -197,11 +192,21 @@ abi_minor = 0
 
     // Install the plugin into the temp store
     sdkt()
-        .env("SDKT_PLUGIN_DIR", &store)
+        .env("SDKT_PLUGIN_DIR", store)
         .env("SDKT_NETWORK_DIR", temp.path())
         .args(["plugin", "install", artifact_dest.to_str().unwrap()])
         .assert()
         .success();
+}
+
+#[cfg(feature = "plugins")]
+#[test]
+fn test_installed_plugin_runs_without_rules_flag() {
+    let temp = TempDir::new().unwrap();
+    let store = temp.path().join("store");
+    fs::create_dir_all(&store).unwrap();
+
+    install_example_plugin(&temp, &store);
 
     let contract = write_contract_source(
         temp.path(),
@@ -246,4 +251,39 @@ abi_minor = 0
         .assert()
         .success()
         .stdout(predicate::str::contains("Rules loaded:").not());
+}
+
+/// Regression test for #384: a directory audit runs plugins through the
+/// multi-file registry, but the report header used to be suppressed because
+/// the plugin counter was only incremented on the single-file path.
+#[cfg(feature = "plugins")]
+#[test]
+fn test_installed_plugin_reported_for_directory_audit() {
+    let temp = TempDir::new().unwrap();
+    let store = temp.path().join("store");
+    fs::create_dir_all(&store).unwrap();
+
+    install_example_plugin(&temp, &store);
+
+    // A directory target forces the multi-file path even though it contains
+    // exactly one Rust source file.
+    let src_dir = temp.path().join("contracts");
+    fs::create_dir_all(&src_dir).unwrap();
+    fs::write(
+        src_dir.join("contract.rs"),
+        "pub fn sdkt_example_trigger_admin() { require_auth(); }\n",
+    )
+    .unwrap();
+
+    sdkt()
+        .env("SDKT_PLUGIN_DIR", &store)
+        .env("SDKT_NETWORK_DIR", temp.path())
+        .args(["audit", src_dir.to_str().unwrap()])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains(
+            "Rules loaded: 7 built-in, 1 plugin",
+        ))
+        .stdout(predicate::str::contains("EXAMPLE-001"))
+        .stdout(predicate::str::contains("sdkt_example_trigger_admin"));
 }

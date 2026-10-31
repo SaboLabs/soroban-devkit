@@ -6877,7 +6877,11 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
             let disabled_refs: Vec<&str> = disable.iter().map(String::as_str).collect();
 
             let mut aggregate = sdkt_audit::AuditReport::default();
-            let mut per_file = Vec::new();
+            // Each entry carries the number of plugin rules that applied to
+            // that file, so the report header describes the ruleset that ran
+            // instead of a counter accumulated across the whole loop.
+            let mut per_file: Vec<(std::path::PathBuf, sdkt_audit::AuditReport, usize)> =
+                Vec::new();
             let mut had_file_errors = false;
             // Accumulate per-file local registry rule infos so SARIF output
             // can include plugin rules (global registry only has built-ins).
@@ -6906,7 +6910,7 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
                         report.add(finding.clone());
 
                         aggregate.add(finding);
-                        per_file.push((source_path.clone(), report));
+                        per_file.push((source_path.clone(), report, 0));
                         continue;
                     }
                 };
@@ -7024,6 +7028,20 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
                     }
                 }
 
+                // The header must describe the ruleset that produced this
+                // file's report. In multi-file mode plugins are registered
+                // into the per-file registry, so derive the count from that
+                // registry; in single-file mode they go into the global
+                // registry and `loaded_plugins` already tracks them.
+                let file_plugin_count = if multi_file {
+                    local_reg
+                        .registered_rule_info()
+                        .len()
+                        .saturating_sub(builtin_rule_count)
+                } else {
+                    loaded_plugins
+                };
+
                 // Capture SARIF rule info AFTER plugins are loaded into
                 // local_reg (covers plugin rules in multi-file mode; global
                 // registry only has built-ins). Do NOT capture for single-file
@@ -7051,7 +7069,7 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
                             for finding in &report.findings {
                                 aggregate.add(finding.clone());
                             }
-                            per_file.push((source_path.clone(), report));
+                            per_file.push((source_path.clone(), report, file_plugin_count));
                         }
                         Err(_) => {
                             eprintln!("Error auditing source: Failed to parse Rust source");
@@ -7079,7 +7097,7 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
                             aggregate.add(finding.clone());
                         }
 
-                        per_file.push((source_path.clone(), report));
+                        per_file.push((source_path.clone(), report, file_plugin_count));
                     }
                     None => {
                         let e = "Failed to parse Rust source";
@@ -7102,7 +7120,9 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
                         report.add(finding.clone());
 
                         aggregate.add(finding);
-                        per_file.push((source_path.clone(), report));
+                        // No rule ran for this file, so do not claim a plugin
+                        // ruleset in its report header.
+                        per_file.push((source_path.clone(), report, 0));
                     }
                 }
             }
@@ -7187,7 +7207,7 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
 
                     let files = per_file
                         .iter()
-                        .map(|(path, report)| {
+                        .map(|(path, report, _)| {
                             serde_json::json!({
                                 "file": path.display().to_string(),
                                 "report": report,
@@ -7209,19 +7229,19 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
                     println!("{}", serde_json::to_string(&report)?);
                 }
             } else {
-                for (path, report) in &per_file {
+                for (path, report, plugin_count) in &per_file {
                     println!("Static Analysis Report: {}", path.display());
 
                     if audit_spec.is_some() {
                         println!("  Spec-correlated analysis: enabled");
                     }
 
-                    if loaded_plugins > 0 {
+                    if *plugin_count > 0 {
                         println!(
                             "Rules loaded: {} built-in, {} plugin{}",
                             builtin_rule_count,
-                            loaded_plugins,
-                            if loaded_plugins == 1 { "" } else { "s" }
+                            plugin_count,
+                            if *plugin_count == 1 { "" } else { "s" }
                         );
                     }
 
