@@ -124,6 +124,59 @@ fn a_protocol_above_the_host_is_refused_by_budget_construction() {
     );
 }
 
+/// A representative protocol-29 capture: the same live mainnet shape, but
+/// with only the 86 cost entries a protocol-29 network actually reported.
+/// The protocol-30 host knows 95 cost types (the 9 extra entries are the
+/// ML-DSA post-quantum types), so this capture is short of the host. The
+/// first 86 variants are identical across stellar-xdr 28/29/30, so
+/// truncating the host-derived table reproduces a real protocol-29 capture.
+fn protocol29_capture() -> CaptureInput {
+    let mut c = mainnet_capture(29);
+    let cpu = c.cpu_cost_params.take().unwrap();
+    let mem = c.mem_cost_params.take().unwrap();
+    c.cpu_cost_params = Some(cpu[..86].to_vec());
+    c.mem_cost_params = Some(mem[..86].to_vec());
+    c
+}
+
+#[test]
+fn a_protocol_29_capture_with_86_cost_entries_is_refused_explicitly() {
+    // Compatibility policy (see `BudgetPlan::NetworkFaithful`): protocol-29
+    // captures are NOT supported on the protocol-30 host. The profile itself
+    // is Complete — protocol 29 is within the host's range and the config is
+    // fully observed — but its 86-entry cost table is short of the 95 types
+    // the host requires, so coverage is INCOMPLETE and the budget is refused.
+    // The error must name the shortfall and the remedy (re-capture on
+    // protocol 30), not just the verdict.
+    let p = profile_from_capture(protocol29_capture());
+    assert_eq!(p.status(), ProfileStatus::Complete);
+    let coverage = BudgetCoverage::for_profile(&p, sdkt_fuzz::environment::host_cost_type_count());
+    assert!(!coverage.complete);
+    assert_eq!(coverage.as_str(), "INCOMPLETE");
+    assert_eq!(coverage.covered_cost_types, 86);
+    assert_eq!(
+        coverage.host_cost_types,
+        sdkt_fuzz::environment::host_cost_type_count()
+    );
+    let env = Environment {
+        ledger: Default::default(),
+        budget: network_faithful_plan(p),
+    };
+    let err = env.make_budget().unwrap_err().to_string();
+    assert!(
+        err.contains("INCOMPLETE"),
+        "refusal must name the coverage verdict: {err}"
+    );
+    assert!(
+        err.contains("covers only 86 of the 95 cost types"),
+        "refusal must name the shortfall explicitly: {err}"
+    );
+    assert!(
+        err.contains("Re-capture the profile on protocol 30"),
+        "refusal must name the remedy: {err}"
+    );
+}
+
 #[test]
 fn a_mainnet_protocol_29_profile_now_builds_a_budget() {
     // The whole point of the host upgrade: the same live mainnet profile that
