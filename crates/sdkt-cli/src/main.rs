@@ -6885,8 +6885,14 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
             // Derived, never hard-coded: the header must agree with
             // `--list-rules` and with what the registry executes.
             let builtin_rule_count = sdkt_audit::all_rules().len();
-            #[allow(unused_mut)]
-            let mut loaded_plugins = 0usize;
+            // Successful plugin loads, recorded per source file so each
+            // file's report names the plugins that actually ran for it.
+            // A single global count is wrong in directory audits: the load
+            // arms used to increment it only in single-file mode, so a
+            // directory audit with a working plugin printed
+            // "Rules loaded: 7 built-in, 0 plugins" even though the plugin
+            // ran through `local_reg` for every file.
+            let mut loaded_plugins_per_file: Vec<usize> = Vec::new();
             // Plugins that fail to load are skipped with a warning instead of
             // aborting the audit (issue #385). Recorded once per plugin id
             // with the load error so the report can name every skipped plugin.
@@ -6894,6 +6900,11 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
             let mut skipped_plugins: Vec<(String, String)> = Vec::new();
 
             for source_path in &source_paths {
+                // Plugins that load for this file. The increments live
+                // inside feature-gated blocks, so the `mut` is unused in
+                // builds without the plugin features.
+                #[allow(unused_mut)]
+                let mut file_loaded_plugins = 0usize;
                 let source = match fs::read_to_string(source_path) {
                     Ok(source) => source,
                     Err(e) => {
@@ -6912,6 +6923,7 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
 
                         aggregate.add(finding);
                         per_file.push((source_path.clone(), report));
+                        loaded_plugins_per_file.push(file_loaded_plugins);
                         continue;
                     }
                 };
@@ -6941,9 +6953,7 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
 
                                 match result {
                                     Ok(()) => {
-                                        if single_file {
-                                            loaded_plugins += 1;
-                                        }
+                                        file_loaded_plugins += 1;
                                     }
                                     Err(e) => {
                                         if matches!(
@@ -6991,9 +7001,7 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
 
                                 match result {
                                     Ok(()) => {
-                                        if single_file {
-                                            loaded_plugins += 1;
-                                        }
+                                        file_loaded_plugins += 1;
                                     }
                                     Err(e) => {
                                         if matches!(
@@ -7065,6 +7073,7 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
                                 aggregate.add(finding.clone());
                             }
                             per_file.push((source_path.clone(), report));
+                            loaded_plugins_per_file.push(file_loaded_plugins);
                         }
                         Err(_) => {
                             eprintln!("Error auditing source: Failed to parse Rust source");
@@ -7093,6 +7102,7 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
                         }
 
                         per_file.push((source_path.clone(), report));
+                        loaded_plugins_per_file.push(file_loaded_plugins);
                     }
                     None => {
                         let e = "Failed to parse Rust source";
@@ -7116,6 +7126,7 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
 
                         aggregate.add(finding);
                         per_file.push((source_path.clone(), report));
+                        loaded_plugins_per_file.push(file_loaded_plugins);
                     }
                 }
             }
@@ -7222,19 +7233,25 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
                     println!("{}", serde_json::to_string(&report)?);
                 }
             } else {
-                for (path, report) in &per_file {
+                for (idx, (path, report)) in per_file.iter().enumerate() {
+                    // Per-file count (0 when the parallel vec has no entry
+                    // for this file); the skipped list stays global because
+                    // a broken plugin is recorded once per plugin id for the
+                    // whole audit.
+                    let file_loaded_plugins =
+                        loaded_plugins_per_file.get(idx).copied().unwrap_or(0);
                     println!("Static Analysis Report: {}", path.display());
 
                     if audit_spec.is_some() {
                         println!("  Spec-correlated analysis: enabled");
                     }
 
-                    if loaded_plugins > 0 || !skipped_plugins.is_empty() {
+                    if file_loaded_plugins > 0 || !skipped_plugins.is_empty() {
                         println!(
                             "Rules loaded: {} built-in, {} plugin{}",
                             builtin_rule_count,
-                            loaded_plugins,
-                            if loaded_plugins == 1 { "" } else { "s" }
+                            file_loaded_plugins,
+                            if file_loaded_plugins == 1 { "" } else { "s" }
                         );
                     }
 
