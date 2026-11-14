@@ -2,8 +2,8 @@
 //!
 //! An [`Environment`] carries exactly what `soroban-env-host` can honour
 //! through its public API: ledger sequence, ledger timestamp, and a CPU/mem
-//! budget cap. Protocol version is **not** configurable: host 28.0.2 rejects
-//! ledger protocols other than its own via `set_ledger_info`, so protocol
+//! budget cap. Protocol version is **not** configurable: the pinned host
+//! rejects ledger protocols other than its own via `set_ledger_info`, so protocol
 //! variation is marked unsupported / not exercised rather than faked.
 
 use soroban_env_host::budget::Budget;
@@ -65,6 +65,16 @@ pub enum BudgetPlan {
     ///   (`ProfileStatus::HostUnsupported`) — the pinned host would reject the
     ///   ledger protocol anyway, and pretending otherwise would be a false
     ///   parity claim.
+    ///
+    /// Compatibility policy: a profile is only usable when its cost table
+    /// covers every cost type the pinned host knows. A protocol-29 capture
+    /// carries 86 cost entries while the protocol-30 host requires 95, so
+    /// protocol-29 captures are NOT supported: [`Environment::make_budget`]
+    /// refuses them with an error naming the shortfall, and the capture must
+    /// be retaken on protocol 30. This is a deliberate breaking change of the
+    /// protocol-30 migration, not a regression — there is no
+    /// backward-compatibility path (e.g. zero-filling the missing types),
+    /// because that would silently charge the new ML-DSA cost types zero.
     ///
     /// The budget itself is still buildable from an unsupported profile's cost
     /// table (useful for differential comparison against RPC simulation); the
@@ -279,13 +289,25 @@ impl Environment {
                     // The caller asked for network-faithful execution; telling
                     // them they got something else by returning Ok would be the
                     // false-parity claim this whole module exists to avoid.
+                    // The message names the shortfall explicitly: a cost table
+                    // shorter than the host's cost-type count (e.g. an 86-entry
+                    // protocol-29 capture on the 95-type protocol-30 host) is
+                    // not supported, and the remedy is to re-capture.
                     return Err(FuzzError::InvalidConfig(format!(
                         "NetworkFaithful budget unavailable: {} \
-                         (profile {}, covered {}/{} cost types)",
+                         (profile {}, covered {}/{} cost types) — the profile's \
+                         cost table is too short for the pinned host (protocol {}): \
+                         it covers only {} of the {} cost types the host requires, \
+                         so the missing types would be charged zero. Re-capture the \
+                         profile on protocol {} for a complete cost table.",
                         coverage_str(coverage),
                         coverage.profile_status.as_str(),
                         coverage.covered_cost_types,
                         coverage.host_cost_types,
+                        crate::network_profile::HOST_SUPPORTED_PROTOCOL,
+                        coverage.covered_cost_types,
+                        coverage.host_cost_types,
+                        crate::network_profile::HOST_SUPPORTED_PROTOCOL,
                     )));
                 }
                 let params = profile.config.cost_params.value.as_ref().ok_or_else(|| {
