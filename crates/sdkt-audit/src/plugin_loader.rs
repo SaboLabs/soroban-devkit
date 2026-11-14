@@ -260,10 +260,10 @@ impl AuditRule for PluginRule {
         // if a malicious/buggy plugin sets count > MAX_FINDINGS.
         let safe_count = buf.count.min(crate::plugin_abi::MAX_FINDINGS);
 
-        for i in 0..safe_count {
+        for f in buf.findings.iter().take(safe_count) {
             // SAFETY: entries [0, count) were written by the plugin during the
             // call above; we copy their C strings into owned `String`s now.
-            let f: SdktAuditFindingC = buf.findings[i];
+            let f: SdktAuditFindingC = *f;
             if f.rule_id.is_null() {
                 continue;
             }
