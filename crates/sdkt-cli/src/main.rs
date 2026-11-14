@@ -6887,6 +6887,11 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
             let builtin_rule_count = sdkt_audit::all_rules().len();
             #[allow(unused_mut)]
             let mut loaded_plugins = 0usize;
+            // Plugins that fail to load are skipped with a warning instead of
+            // aborting the audit (issue #385). Recorded once per plugin id
+            // with the load error so the report can name every skipped plugin.
+            #[allow(unused_mut)]
+            let mut skipped_plugins: Vec<(String, String)> = Vec::new();
 
             for source_path in &source_paths {
                 let source = match fs::read_to_string(source_path) {
@@ -6951,11 +6956,15 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
                                             );
                                             continue;
                                         }
-                                        eprintln!(
-                                            "Error loading native plugin '{}': {}",
-                                            plugin_id, e
-                                        );
-                                        process::exit(1);
+                                        if !skipped_plugins.iter().any(|(id, _)| id == plugin_id) {
+                                            eprintln!(
+                                                "Warning: skipping native plugin '{}': {}; audit continues without it",
+                                                plugin_id, e
+                                            );
+                                            skipped_plugins
+                                                .push((plugin_id.clone(), e.to_string()));
+                                        }
+                                        continue;
                                     }
                                 }
                             }
@@ -6997,11 +7006,15 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
                                             );
                                             continue;
                                         }
-                                        eprintln!(
-                                            "Error loading WASM plugin '{}': {}",
-                                            plugin_id, e
-                                        );
-                                        process::exit(1);
+                                        if !skipped_plugins.iter().any(|(id, _)| id == plugin_id) {
+                                            eprintln!(
+                                                "Warning: skipping WASM plugin '{}': {}; audit continues without it",
+                                                plugin_id, e
+                                            );
+                                            skipped_plugins
+                                                .push((plugin_id.clone(), e.to_string()));
+                                        }
+                                        continue;
                                     }
                                 }
                             }
@@ -7216,12 +7229,24 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
                         println!("  Spec-correlated analysis: enabled");
                     }
 
-                    if loaded_plugins > 0 {
+                    if loaded_plugins > 0 || !skipped_plugins.is_empty() {
                         println!(
                             "Rules loaded: {} built-in, {} plugin{}",
                             builtin_rule_count,
                             loaded_plugins,
                             if loaded_plugins == 1 { "" } else { "s" }
+                        );
+                    }
+
+                    if !skipped_plugins.is_empty() {
+                        println!(
+                            "Plugins skipped: {} ({})",
+                            skipped_plugins.len(),
+                            skipped_plugins
+                                .iter()
+                                .map(|(id, err)| format!("{}: {}", id, err))
+                                .collect::<Vec<_>>()
+                                .join("; ")
                         );
                     }
 

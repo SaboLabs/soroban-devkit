@@ -168,6 +168,10 @@ sdkt audit contracts/token/src/lib.rs --rules target/debug/libmy_rule.so
 > built yourself. A plugin whose ABI major version differs from the host is
 > rejected with a clear error.
 
+> **Load failure:** a plugin that fails to load (missing symbol, unreadable
+> file, invalid module) is skipped with a warning instead of aborting the
+> audit; the report lists it under `Plugins skipped` with the reason.
+
 ## WebAssembly Plugins (Phase C)
 
 To distribute a rule across platforms without native compilation overhead on the host, build it as a WebAssembly (`.wasm`) module.
