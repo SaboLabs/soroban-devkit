@@ -503,8 +503,8 @@ mod tests {
         let variants = soroban_env_host::xdr::ContractCostType::variants();
         assert_eq!(
             variants.len(),
-            86,
-            "the pinned host must know the 86 live cost types"
+            95,
+            "the pinned host must know the 95 live cost types"
         );
         // The first 23 are the protocol-initial table, in order.
         for (i, expected) in [

@@ -684,7 +684,7 @@ pub(crate) mod tests {
         ScSpecEntry::EventV0(ScSpecEventV0 {
             doc: "".try_into().unwrap(),
             lib: "soroban_sdk".try_into().unwrap(),
-            name: symbol_e(name),
+            name: name.try_into().unwrap(),
             prefix_topics: vec![].try_into().unwrap(),
             params: params
                 .into_iter()
@@ -824,7 +824,7 @@ pub(crate) mod tests {
         let event = ScSpecEntry::EventV0(ScSpecEventV0 {
             doc: "transfer event".try_into().unwrap(),
             lib: "test".try_into().unwrap(),
-            name: symbol_e("Transfer"),
+            name: "Transfer".try_into().unwrap(),
             prefix_topics: vec![symbol_e("TOKEN")].try_into().unwrap(),
             params: vec![ScSpecEventParamV0 {
                 doc: "amount".try_into().unwrap(),
