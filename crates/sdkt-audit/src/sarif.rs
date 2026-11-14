@@ -136,14 +136,10 @@ fn is_absolute_source_path(source_file: &str) -> bool {
     }
     // Windows drive-letter absolute: `C:\…` or `C:/…`
     let bytes = source_file.as_bytes();
-    if bytes.len() >= 3
+    bytes.len() >= 3
         && bytes[0].is_ascii_alphabetic()
         && bytes[1] == b':'
         && (bytes[2] == b'\\' || bytes[2] == b'/')
-    {
-        return true;
-    }
-    false
 }
 
 /// Percent-encode a single path *segment* (the text between `/` separators).

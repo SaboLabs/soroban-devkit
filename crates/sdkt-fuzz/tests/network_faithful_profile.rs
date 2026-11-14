@@ -14,13 +14,14 @@ use sdkt_fuzz::{
 const MAINNET: &str = "Public Global Stellar Network ; September 2015";
 const TESTNET: &str = "Test SDF Network ; September 2015";
 
-/// A capture shaped like the live mainnet one (protocol 29, 86 cost types).
+/// A capture shaped like the live mainnet one (cost tables derived from the
+/// pinned host's cost-type enum; protocol varies per test).
 fn mainnet_capture(protocol: u32) -> CaptureInput {
     let names: Vec<String> = soroban_env_host::xdr::ContractCostType::variants()
         .iter()
         .map(|v| v.name().to_string())
         .collect();
-    let params: Vec<sdkt_fuzz::CostParamEntrySnapshot> = (0..86u32)
+    let params: Vec<sdkt_fuzz::CostParamEntrySnapshot> = (0..names.len() as u32)
         .map(|i| sdkt_fuzz::CostParamEntrySnapshot {
             cost_type: names[i as usize].clone(),
             index: i,
@@ -68,8 +69,8 @@ fn snapshot_round_trips_through_a_file_with_identical_hash() {
     assert_eq!(loaded.content_hash(), p.content_hash());
     assert_eq!(loaded.content_hash_hex(), p.content_hash_hex());
     assert_eq!(loaded.status(), p.status());
-    // The pinned host is protocol 29, so a fully-observed protocol-29
-    // mainnet profile is complete and its budget builds.
+    // A fully-observed protocol-29 mainnet profile is complete under the
+    // pinned host (protocol 30) and its budget builds.
     assert_eq!(loaded.status(), ProfileStatus::Complete);
     loaded.validate(None).unwrap();
 }
@@ -164,11 +165,11 @@ fn missing_parameters_are_incomplete_not_zero() {
 
 #[test]
 fn a_protocol_29_profile_with_full_config_is_complete() {
-    // The pinned host is protocol 29: a fully-observed protocol-29 profile
+    // The pinned host is protocol 30: a fully-observed protocol-29 profile
     // is complete and its budget builds with the live limits.
     let p = profile_from_capture(mainnet_capture(29));
     assert_eq!(p.status(), ProfileStatus::Complete);
-    assert_eq!(HOST_SUPPORTED_PROTOCOL, 29);
+    assert_eq!(HOST_SUPPORTED_PROTOCOL, 30);
     let coverage = BudgetCoverage::for_profile(&p, sdkt_fuzz::environment::host_cost_type_count());
     assert!(coverage.complete);
     assert_eq!(coverage.as_str(), "COMPLETE");
@@ -190,8 +191,9 @@ fn coverage_reports_the_host_cost_type_count() {
     let coverage = BudgetCoverage::for_profile(&p, sdkt_fuzz::environment::host_cost_type_count());
     // The live table covers exactly as many types as the host knows, so the
     // model is complete for this host.
-    assert_eq!(coverage.covered_cost_types, 86);
-    assert_eq!(coverage.host_cost_types, 86);
+    let host_types = sdkt_fuzz::environment::host_cost_type_count();
+    assert_eq!(coverage.covered_cost_types, host_types);
+    assert_eq!(coverage.host_cost_types, host_types);
     assert!(coverage.complete);
 }
 
@@ -208,7 +210,10 @@ fn a_short_table_is_reported_incomplete_not_silently_free() {
     assert!(!coverage.complete);
     assert_eq!(coverage.as_str(), "INCOMPLETE");
     assert_eq!(coverage.covered_cost_types, 23);
-    assert_eq!(coverage.host_cost_types, 86);
+    assert_eq!(
+        coverage.host_cost_types,
+        sdkt_fuzz::environment::host_cost_type_count()
+    );
 }
 
 // --- 5. Differential classification --------------------------------------
