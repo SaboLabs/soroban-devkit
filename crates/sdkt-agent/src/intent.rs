@@ -122,8 +122,7 @@ const TYPED_ARG_PREFIXES: &[&str] = &[
 const CANDIDATE_MARKERS: &[&str] = &["candidate", "new", "current", "to"];
 /// Words that mark an artifact as the baseline.
 const BASELINE_MARKERS: &[&str] = &["previous", "baseline", "old", "from"];
-/// Format words the CLI accepts as `--format` values (not shapeful, so they
-/// need spelling out — prose words must never be swallowed as values).
+/// Format values the agent can currently plan from the registry.
 const FORMAT_WORDS: &[&str] = &["json", "pretty"];
 
 /// Why a request could not be turned into an intent.
@@ -512,9 +511,9 @@ fn extract_args(request: &str) -> IntentArgs {
             };
             // A flag's value is either spelled into the token, quoted (a
             // quoted value may contain spaces — passphrases do), or a
-            // shapeful/known-word token following it. Ordinary prose is never
-            // swallowed, so a value the parser cannot trust stays absent and
-            // the planner refuses rather than guessing.
+            // shapeful/known-word token following it. `--format` is
+            // unambiguous: its next token is the requested format, including
+            // an unsupported one that the planner must refuse.
             let mut value = eq_value;
             // Tokens consumed by this flag: 1 = flag alone.
             let mut advance = 1usize;
@@ -527,7 +526,8 @@ fn extract_args(request: &str) -> IntentArgs {
                         let n = trim_punct(next);
                         if !n.is_empty()
                             && !n.starts_with('-')
-                            && (looks_like_value(n)
+                            && (flag == "--format"
+                                || looks_like_value(n)
                                 || FORMAT_WORDS.contains(&n.to_ascii_lowercase().as_str()))
                         {
                             value = Some(n.to_string());
@@ -618,6 +618,13 @@ fn extract_args(request: &str) -> IntentArgs {
         i += 1;
     }
 
+    if !args.has_flag("--format") {
+        if let Some(value) = extract_prose_format(&raw_tokens) {
+            args.explicit_flags
+                .push(("--format".to_string(), Some(value)));
+        }
+    }
+
     // Flag-carried values: `--base-fees <v>` supplies samples; `--rpc` (the
     // bare flag) asks for live statistics; `--rpc-url <v>` supplies an
     // endpoint; `--envelope <v>` and repeated `--args <v>` carry their data.
@@ -653,6 +660,50 @@ fn extract_args(request: &str) -> IntentArgs {
         args.function = extract_function(&raw_tokens);
     }
     args
+}
+
+/// Extract a format named in prose, such as "with sarif format" or
+/// "format json". Unknown values are retained for the planner to refuse.
+fn extract_prose_format(tokens: &[&str]) -> Option<String> {
+    const CONNECTORS: &[&str] = &[
+        "a", "an", "as", "for", "in", "is", "of", "the", "to", "with",
+    ];
+
+    for (index, token) in tokens.iter().enumerate() {
+        if !trim_punct(token).eq_ignore_ascii_case("format") {
+            continue;
+        }
+
+        let next = tokens
+            .get(index + 1)
+            .map(|token| trim_punct(token))
+            .filter(|token| !token.starts_with('-'));
+        let next = match next {
+            Some(connector) if CONNECTORS.contains(&connector.to_ascii_lowercase().as_str()) => {
+                tokens
+                    .get(index + 2)
+                    .map(|token| trim_punct(token))
+                    .filter(|token| !token.starts_with('-'))
+            }
+            other => other,
+        };
+        if let Some(value) = next.filter(|value| {
+            !value.is_empty() && !CONNECTORS.contains(&value.to_ascii_lowercase().as_str())
+        }) {
+            return Some(value.to_ascii_lowercase());
+        }
+
+        if let Some(previous) = index.checked_sub(1).and_then(|i| tokens.get(i)) {
+            let value = trim_punct(previous);
+            if !value.is_empty()
+                && !value.starts_with('-')
+                && !CONNECTORS.contains(&value.to_ascii_lowercase().as_str())
+            {
+                return Some(value.to_ascii_lowercase());
+            }
+        }
+    }
+    None
 }
 
 /// Record an artifact path once (a flag-supplied value must not double-count
@@ -1170,6 +1221,25 @@ mod tests {
             .unwrap();
         assert_eq!(i.args.wasm.as_deref(), Some("cand.wasm"));
         assert_eq!(i.args.previous_wasm.as_deref(), Some("base.wasm"));
+    }
+
+    #[test]
+    fn prose_format_names_are_captured_for_planner_validation() {
+        for (request, expected) in [
+            ("audit src/lib.rs with sarif format", "sarif"),
+            ("audit src/lib.rs with xml format", "xml"),
+            ("audit src/lib.rs with csv format", "csv"),
+            ("audit src/lib.rs with yaml format", "yaml"),
+            ("audit src/lib.rs with json format", "json"),
+            ("audit src/lib.rs with pretty format", "pretty"),
+        ] {
+            let intent = parse(request).unwrap();
+            assert_eq!(
+                intent.args.flag_value("--format"),
+                Some(expected),
+                "{request}"
+            );
+        }
     }
 
     #[test]

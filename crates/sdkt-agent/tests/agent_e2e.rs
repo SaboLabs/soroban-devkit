@@ -661,6 +661,78 @@ fn unsupported_argument_is_refused_and_never_executed() {
 }
 
 #[test]
+fn named_unsupported_formats_are_refused_and_never_executed() {
+    let tmp = tempfile::tempdir().unwrap();
+    let marker = tmp.path().join("ran");
+    let fx = FakeCli {
+        stdout: "{}\n".into(),
+        marker: Some(marker.clone()),
+        ..FakeCli::ok()
+    }
+    .write(tmp.path());
+
+    for request in [
+        "audit src/lib.rs with sarif format",
+        "audit src/lib.rs with xml format",
+        "audit src/lib.rs with csv format",
+        "audit src/lib.rs with yaml format",
+        "audit src/lib.rs --format yaml",
+    ] {
+        let out = agent(&fx, request, true);
+        let v = parse_json(&out);
+        assert_eq!(v["status"], "needs_clarification", "{request:?}");
+        assert_eq!(v["error_code"], "unsupported_argument", "{request:?}");
+        assert!(
+            v["explanation"].as_str().unwrap().contains(
+                "audit cannot use --format <json|pretty>; refusing to run a partial request"
+            ),
+            "{request:?}: {}",
+            v["explanation"]
+        );
+        assert!(v["argv"].as_array().unwrap().is_empty(), "{request:?}");
+        assert_eq!(v["evidence"]["command_executed"], false, "{request:?}");
+        assert!(!marker.exists(), "{request:?}: nothing may be executed");
+    }
+}
+
+#[test]
+fn prose_format_success_paths_preserve_argv() {
+    let tmp = tempfile::tempdir().unwrap();
+    let fx = FakeCli {
+        stdout: "{}\n".into(),
+        ..FakeCli::ok()
+    }
+    .write(tmp.path());
+
+    for (request, expected) in [
+        (
+            "audit src/lib.rs",
+            vec!["audit", "src/lib.rs", "--format", "json"],
+        ),
+        (
+            "audit src/lib.rs with json format",
+            vec!["audit", "src/lib.rs", "--format", "json"],
+        ),
+        (
+            "audit src/lib.rs with pretty format",
+            vec!["audit", "src/lib.rs"],
+        ),
+    ] {
+        let out = agent(&fx, request, true);
+        let v = parse_json(&out);
+        assert_eq!(v["status"], "success", "{request:?}");
+        let argv = v["argv"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|arg| arg.as_str().unwrap())
+            .collect::<Vec<_>>();
+        assert_eq!(argv, expected, "{request:?}");
+        assert_eq!(v["evidence"]["command_executed"], true, "{request:?}");
+    }
+}
+
+#[test]
 fn help_and_version_work() {
     Command::cargo_bin("sdkt-agent")
         .unwrap()

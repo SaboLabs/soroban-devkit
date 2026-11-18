@@ -176,6 +176,15 @@ capability cannot express (or more artifact paths than it accepts) refuses the
 whole request instead of being dropped, so a partial request can never run and
 report success as if it were complete.
 
+Output format follows the same rule. The agent plans `json` or `pretty` only
+when the capability registry advertises that format. A named but unadvertised
+format is refused with `unsupported_argument`; it is never replaced with the
+default JSON output. For example, `audit ... with sarif format` is refused:
+although the `sdkt audit` CLI accepts SARIF, the agent's registry currently
+advertises only JSON and pretty for `audit`. A request with no format continues
+to use JSON when the registry supports it, while an explicit `pretty` request
+omits `--format json`.
+
 ***
 
 ## Ambiguity, refusals, and their codes
