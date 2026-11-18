@@ -3,7 +3,8 @@
 # install.sh — one-line installer for sdkt (Soroban DevKit CLI)
 #
 # Downloads the latest stable release binary from GitHub Releases, verifies
-# its SHA-256 checksum, and installs it to ~/.local/bin/sdkt by default.
+# its SHA-256 checksum, and installs it to ~/.local/bin/sdkt (or
+# ~/.local/bin/sdkt.exe on Windows) by default.
 #
 # Usage:
 # curl -fsSL https://raw.githubusercontent.com/SaboLabs/soroban-devkit/main/install.sh | bash
@@ -21,7 +22,13 @@
 # - set -euo pipefail (strict mode)
 # - the downloaded binary is NEVER executed before its checksum is verified
 # - the checksum is verified, preferring the standalone release .sha256
-# asset and falling back to the embedded sdkt.sha256 inside the tarball
+#   asset and falling back to the embedded sdkt.sha256 inside the archive
+#
+# Supported platforms:
+#   Linux        x86_64, aarch64   (sdkt-<target>.tar.gz)
+#   macOS        x86_64, arm64     (sdkt-<target>.tar.gz)
+#   Windows      x86_64            (sdkt-<target>.zip, via Git Bash / MSYS /
+#                                  Cygwin; extracted with PowerShell)
 
 set -euo pipefail
 
@@ -36,10 +43,10 @@ info() { echo "==> $*"; }
 # Checksum helpers (kept pure so they can be unit-tested offline)
 # ---------------------------------------------------------------------------
 
-# resolve_checksum_to <tarball> <standalone_sha256_path> <out_sha256_path>
+# resolve_checksum_to <archive> <standalone_sha256_path> <out_sha256_path>
 # Writes a sdkt.sha256 file to <out_sha256_path>.
 # Prefers the standalone asset at <standalone_sha256_path> if it exists,
-# otherwise extracts the embedded sdkt.sha256 from <tarball>.
+# otherwise extracts the embedded sdkt.sha256 from <archive>.
 # Returns non-zero if neither is available.
 resolve_checksum_to() {
   local tb="$1" standalone="$2" out="$3"
@@ -54,8 +61,8 @@ resolve_checksum_to() {
   return 1
 }
 
-# verify_binary <tarball> <sha256_path>
-# Extracts sdkt from <tarball> and checks it against <sha256_path>.
+# verify_binary <archive> <sha256_path>
+# Extracts sdkt from <archive> and checks it against <sha256_path>.
 verify_binary() {
   local tb="$1" sf="$2" d
   d="$(dirname "$tb")"
@@ -65,10 +72,100 @@ verify_binary() {
 }
 
 # ---------------------------------------------------------------------------
-# Offline self-test (no network, no real install)
+# Windows archive helpers (no `tar` guarantee on Windows; PowerShell is used)
 # ---------------------------------------------------------------------------
+
+# extract_zip <zipfile> <outdir>
+# Extracts a ZIP archive using PowerShell Expand-Archive.
+# Paths are converted with cygpath -m and passed as bound parameters to a
+# parameterized PowerShell script invoked via -File (never interpolated into
+# command text), so paths with spaces or backslashes are handled safely.
+# Works with both Windows PowerShell 5.1 and PowerShell 7.
+extract_zip() {
+  local zip="$1" out="$2" winzip winout ps ps_script win_script
+  winzip="$(cygpath -m "$zip" 2>/dev/null)" || winzip="$zip"
+  winout="$(cygpath -m "$out" 2>/dev/null)" || winout="$out"
+  ps_script="$TMP/sdkt-extract-$$.ps1"
+  cat > "$ps_script" <<'EOF'
+param([string]$Path, [string]$DestinationPath)
+Expand-Archive -Path $Path -DestinationPath $DestinationPath -Force
+EOF
+  win_script="$(cygpath -m "$ps_script" 2>/dev/null)" || win_script="$ps_script"
+  if command -v pwsh >/dev/null 2>&1; then
+    ps="pwsh"
+  elif command -v powershell >/dev/null 2>&1; then
+    ps="powershell"
+  else
+    err "PowerShell (pwsh or powershell) is required to extract the Windows ZIP but was not found."
+  fi
+  "$ps" -NoProfile -ExecutionPolicy Bypass -File "$win_script" -Path "$winzip" -DestinationPath "$winout" >/dev/null 2>&1 \
+    && return 0
+  err "failed to extract ZIP archive with PowerShell."
+}
+
+# extract_embedded_checksum <zipfile> <out_sha256_path>
+# Extracts the embedded sdkt.sha256 entry from a Windows ZIP using PowerShell.
+# Paths are converted with cygpath -m and passed as bound parameters to a
+# parameterized PowerShell script invoked via -File (never interpolated into
+# command text). Returns 0 on success, non-zero if the sdkt.sha256 entry is
+# absent. Works with both Windows PowerShell 5.1 and PowerShell 7.
+extract_embedded_checksum() {
+  local zip="$1" out="$2" winzip winout ps ps_script win_script result=1
+  winzip="$(cygpath -m "$zip" 2>/dev/null)" || winzip="$zip"
+  winout="$(cygpath -m "$out" 2>/dev/null)" || winout="$out"
+  ps_script="$TMP/sdkt-checksum-$$.ps1"
+  cat > "$ps_script" <<'EOF'
+param([string]$Path, [string]$DestinationPath)
+Add-Type -AssemblyName System.IO.Compression.FileSystem
+$z = [System.IO.Compression.ZipFile]::OpenRead($Path)
+$e = $z.Entries | Where-Object { $_.Name -eq "sdkt.sha256" }
+if ($e) {
+  [System.IO.Compression.ZipFileExtensions]::ExtractToFile($e, $DestinationPath, $true)
+  $z.Dispose()
+  exit 0
+}
+$z.Dispose()
+exit 1
+EOF
+  win_script="$(cygpath -m "$ps_script" 2>/dev/null)" || win_script="$ps_script"
+  if command -v pwsh >/dev/null 2>&1; then
+    ps="pwsh"
+  elif command -v powershell >/dev/null 2>&1; then
+    ps="powershell"
+  else
+    return 1
+  fi
+  "$ps" -NoProfile -ExecutionPolicy Bypass -File "$win_script" -Path "$winzip" -DestinationPath "$winout" >/dev/null 2>&1 \
+    && result=0
+  return $result
+}
+
+# ---------------------------------------------------------------------------
+# Offline self-test helpers (no network, no real install)
+# ---------------------------------------------------------------------------
+
+# _selftest_windows_target <os> [arch]
+# Mirrors the real platform detection: Git Bash / MSYS / Cygwin and Windows_NT
+# uname -s values all normalize to the Windows x86_64 target. Used by the
+# offline self-test so the Windows detection logic is exercised on Linux CI
+# runners without any network call.
+_selftest_windows_target() {
+  local os="$1" arch="${2:-x86_64}" target=""
+  case "$os" in
+    MINGW*|MSYS*|CYGWIN*|Windows_NT) os="Windows" ;;
+  esac
+  case "$os" in
+    Windows)
+      case "$arch" in
+        x86_64) target="x86_64-pc-windows-msvc" ;;
+      esac
+      ;;
+  esac
+  printf '%s' "$target"
+}
+
 selftest() {
-  local d; d="$(mktemp -d)"; trap 'rm -rf "$d"' EXIT
+  local d; d="$(mktemp -d)"; TMP="$d"; trap 'rm -rf "$d"' EXIT
   echo "fake-sdkt-binary" > "$d/sdkt"
   ( cd "$d" && $SHASUM sdkt > sdkt.sha256 )
   tar -czf "$d/sdkt-x86_64-unknown-linux-gnu.tar.gz" -C "$d" sdkt sdkt.sha256
@@ -94,6 +191,56 @@ selftest() {
     err "SELFTEST B (embedded checksum fallback) FAILED"
   fi
 
+ # Case C: Windows OS detection (no network, no real install).
+  local os
+  for os in "MINGW64_NT-10.0-19045" "MSYS_NT-10.0" "CYGWIN_NT-10.0" "Windows_NT"; do
+    local r; r="$(_selftest_windows_target "$os")"
+    [[ "$r" == "x86_64-pc-windows-msvc" ]] \
+      || err "SELFTEST C: expected x86_64-pc-windows-msvc for OS '$os', got '$r'"
+  done
+  # Non-Windows values must not resolve to a Windows target.
+  for os in "Linux" "Darwin" "FreeBSD"; do
+    local r; r="$(_selftest_windows_target "$os")"
+    [[ -z "$r" ]] \
+      || err "SELFTEST C: expected empty for non-Windows OS '$os', got '$r'"
+  done
+  info "SELFTEST C (Windows OS detection) PASS"
+
+ # Case D: Windows ZIP extraction (only when PowerShell and zip are both
+ # available; skipped on Linux CI runners where PowerShell is not installed).
+ # Verifies extraction with a path that contains spaces, exercising both the
+ # standalone-checksum path and the embedded-checksum fallback.
+  if command -v pwsh >/dev/null 2>&1 || command -v powershell >/dev/null 2>&1; then
+    if command -v zip >/dev/null 2>&1; then
+      local wd; wd="$(mktemp -d)"
+      mkdir -p "$wd/path with spaces"
+      echo "fake-sdkt-exe" > "$wd/path with spaces/sdkt.exe"
+      ( cd "$wd" && $SHASUM "path with spaces/sdkt.exe" > sdkt.sha256 )
+      local zip_path; zip_path="$wd/sdkt-x86_64-pc-windows-msvc.zip"
+      ( cd "$wd" && zip -r -q "$zip_path" "path with spaces/sdkt.exe" sdkt.sha256 )
+
+      # ZIP extraction with standalone checksum present.
+      extract_zip "$zip_path" "$wd/extracted"
+      [[ -f "$wd/extracted/path with spaces/sdkt.exe" ]] \
+        || err "SELFTEST D: sdkt.exe not extracted from ZIP"
+      info "SELFTEST D (ZIP extraction, path with spaces) PASS"
+
+      # Embedded checksum fallback: standalone missing -> extract sdkt.sha256.
+      rm -f "$wd/sdkt.sha256"
+      extract_embedded_checksum "$zip_path" "$wd/embedded.sha256" \
+        || err "SELFTEST D: embedded sdkt.sha256 not extracted from ZIP"
+      [[ -s "$wd/embedded.sha256" ]] \
+        || err "SELFTEST D: embedded sdkt.sha256 is empty"
+      info "SELFTEST D (embedded checksum from ZIP) PASS"
+
+      rm -rf "$wd"
+    else
+      info "SELFTEST D skipped: 'zip' not available to build test archive"
+    fi
+  else
+    info "SELFTEST D skipped: PowerShell not available on this runner."
+  fi
+
   info "ALL SELFTESTS PASS"
   exit 0
 }
@@ -116,6 +263,17 @@ fi
 OS="$(uname -s)"
 ARCH="$(uname -m)"
 
+# Normalize Windows OS values reported by Git Bash / MSYS / Cygwin and by
+# Windows_NT (native Windows shells) so the case below can branch on a
+# single "Windows" value.
+# uname -s on Git Bash:   MINGW64_NT-10.0-19045 (or MINGW32_NT-...)
+# uname -s on MSYS:       MSYS_NT-10.0 (or MSYS_NT-6.1, ...)
+# uname -s on Cygwin:     CYGWIN_NT-10.0 (or CYGWIN_NT-...)
+# uname -s on Windows_NT: Windows_NT
+case "$OS" in
+  MINGW*|MSYS*|CYGWIN*|Windows_NT) OS="Windows" ;;
+esac
+
 TARGET=""
 case "$OS" in
   Linux)
@@ -132,19 +290,31 @@ case "$OS" in
       *) err "unsupported architecture '$ARCH' on macOS. Supported: x86_64, arm64 (aarch64)." ;;
     esac
     ;;
-  *) err "unsupported operating system '$OS'. Supported: Linux, macOS." ;;
+  Windows)
+    case "$ARCH" in
+      x86_64) TARGET="x86_64-pc-windows-msvc" ;;
+      *) err "unsupported architecture '$ARCH' on Windows. Supported: x86_64." ;;
+    esac
+    ;;
+  *) err "unsupported operating system '$OS'. Supported: Linux, macOS, Windows." ;;
 esac
 
-TARBALL="sdkt-${TARGET}.tar.gz"
+if [[ "$OS" == "Windows" ]]; then
+  ASSET="sdkt-${TARGET}.zip"
+else
+  TARBALL="sdkt-${TARGET}.tar.gz"
+  ASSET="$TARBALL"
+fi
 CHECKSUM="sdkt-${TARGET}.sha256"
 
-info "detected platform: $OS / $ARCH  ->  asset $TARBALL"
+info "detected platform: $OS / $ARCH  ->  asset $ASSET"
 
 # ---------------------------------------------------------------------------
-# 2. Resolve the latest stable release tag
+# 2. Prerequisites shared by every platform
 # ---------------------------------------------------------------------------
 command -v curl >/dev/null 2>&1 || err "curl is required but not found in PATH."
-command -v tar  >/dev/null 2>&1 || err "tar is required but not found in PATH."
+
+# A checksum tool is required on every platform (Git Bash ships sha256sum).
 if command -v sha256sum >/dev/null 2>&1; then
   SHASUM="sha256sum"
 elif command -v shasum >/dev/null 2>&1; then
@@ -153,6 +323,18 @@ else
   err "neither sha256sum nor shasum is available to verify the checksum."
 fi
 
+# Platform-specific prerequisite: tar on Unix, PowerShell on Windows.
+if [[ "$OS" == "Windows" ]]; then
+  if ! command -v pwsh >/dev/null 2>&1 && ! command -v powershell >/dev/null 2>&1; then
+    err "PowerShell (pwsh or powershell) is required to install on Windows but was not found."
+  fi
+else
+  command -v tar  >/dev/null 2>&1 || err "tar is required but not found in PATH."
+fi
+
+# ---------------------------------------------------------------------------
+# 3. Resolve the latest stable release tag
+# ---------------------------------------------------------------------------
 if [[ -n "${SDKT_VERSION:-}" ]]; then
   VERSION="$SDKT_VERSION"
   info "using pinned version: $VERSION"
@@ -172,11 +354,90 @@ fi
 BASE="https://github.com/${REPO}/releases/download/${VERSION}"
 
 # ---------------------------------------------------------------------------
-# 3. Download tarball + resolve checksum (no execution yet)
+# Temp directory (shared by both platform paths)
 # ---------------------------------------------------------------------------
 TMP="$(mktemp -d)"
 trap 'rm -rf "$TMP"' EXIT
 
+# ---------------------------------------------------------------------------
+# Windows install path: download .zip, extract via PowerShell, verify the
+# checksum, install sdkt.exe, then exit. Linux/macOS continue below.
+# ---------------------------------------------------------------------------
+if [[ "$OS" == "Windows" ]]; then
+  ZIP="sdkt-${TARGET}.zip"
+
+  info "downloading $ZIP ..."
+  # Distinguish "this release has no asset for your platform" from a transport
+  # failure. Older tags predate a platform's release asset, and a bare curl 404
+  # reads as a broken installer rather than a missing (but supported) target.
+  if ! curl -fsSL "$BASE/$ZIP" -o "$TMP/$ZIP"; then
+    if curl -fsSL -o /dev/null \
+      "https://api.github.com/repos/${REPO}/releases/tags/${VERSION}" 2>/dev/null \
+      && ! curl -fsSL -o /dev/null -I "$BASE/$ZIP" 2>/dev/null; then
+      err "release ${VERSION} has no ${ZIP} asset for this platform.
+         Build from source instead:
+           git clone https://github.com/${REPO}
+           cd soroban-devkit && cargo install --path crates/sdkt-cli
+         Or install an older/newer release that ships this target:
+           SDKT_VERSION=<tag> bash install.sh"
+    fi
+    err "failed to download $ZIP"
+  fi
+
+  # Resolve checksum: prefer the standalone release checksum asset; fall back
+  # to the embedded sdkt.sha256 inside the zip. Verification is never skipped.
+  SDKT_SHA256="$TMP/sdkt.sha256"
+  if curl -fsSL "$BASE/$CHECKSUM" -o "$TMP/$CHECKSUM" 2>/dev/null; then
+    info "using standalone checksum asset: $CHECKSUM"
+    cp "$TMP/$CHECKSUM" "$SDKT_SHA256"
+  else
+    info "standalone $CHECKSUM not found; using embedded sdkt.sha256 from zip"
+    extract_embedded_checksum "$TMP/$ZIP" "$SDKT_SHA256" \
+      || err "no $CHECKSUM asset and zip has no embedded sdkt.sha256 — cannot verify"
+  fi
+
+  # Extract sdkt.exe from the zip into a dedicated directory (no tar
+  # guarantee on Windows). Extracting into $TMP itself would overwrite
+  # $SDKT_SHA256 ($TMP/sdkt.sha256), which holds the standalone checksum
+  # used for verification — the checksum stays outside the extraction dir.
+  EXTRACT_DIR="$TMP/extract"
+  info "extracting $ZIP ..."
+  extract_zip "$TMP/$ZIP" "$EXTRACT_DIR"
+
+  # Verify checksum BEFORE touching the installed binary.
+  info "verifying checksum ($SHASUM)..."
+  ( cd "$EXTRACT_DIR" && $SHASUM -c "$SDKT_SHA256" ) \
+    || err "checksum verification FAILED — aborting install."
+
+  # Install sdkt.exe.
+  mkdir -p "$INSTALL_DIR"
+  install -m 0755 "$EXTRACT_DIR/sdkt.exe" "$INSTALL_DIR/sdkt.exe"
+  info "installed sdkt.exe to $INSTALL_DIR/sdkt.exe"
+
+  # -------------------------------------------------------------------------
+  # PATH guidance
+  # -------------------------------------------------------------------------
+  case ":$PATH:" in
+    *":$INSTALL_DIR:"*) ;;
+    *)
+      echo
+      echo "NOTE: $INSTALL_DIR is not on your PATH."
+      echo "Add it to your shell profile, e.g.:"
+      echo "  echo 'export PATH=\"\$HOME/.local/bin:\$PATH\"' >> \"\$HOME/.${SHELL##*/}rc\""
+      echo "Then restart your shell or run: export PATH=\"\$HOME/.local/bin:\$PATH\""
+      ;;
+  esac
+
+  echo
+  echo "Done. Verify with:"
+  echo "  sdkt.exe --version"
+  echo "  sdkt.exe --help"
+  exit 0
+fi
+
+# ---------------------------------------------------------------------------
+# 4. Download archive + resolve checksum (no execution yet)
+# ---------------------------------------------------------------------------
 info "downloading $TARBALL ..."
 # Distinguish "this release has no asset for your platform" from a transport
 # failure. Older tags predate a platform's release asset, and a bare curl 404
@@ -208,21 +469,21 @@ else
 fi
 
 # ---------------------------------------------------------------------------
-# 4. Verify checksum BEFORE touching the installed binary
+# 5. Verify checksum BEFORE touching the installed binary
 # ---------------------------------------------------------------------------
 info "verifying checksum ($SHASUM)..."
 verify_binary "$TMP/$TARBALL" "$TMP/sdkt.sha256" \
   || err "checksum verification FAILED — aborting install."
 
 # ---------------------------------------------------------------------------
-# 5. Install
+# 6. Install
 # ---------------------------------------------------------------------------
 mkdir -p "$INSTALL_DIR"
 install -m 0755 "$TMP/sdkt" "$INSTALL_DIR/$BINARY_NAME"
 info "installed $BINARY_NAME to $INSTALL_DIR/$BINARY_NAME"
 
 # ---------------------------------------------------------------------------
-# 6. PATH guidance
+# 7. PATH guidance
 # ---------------------------------------------------------------------------
 case ":$PATH:" in
   *":$INSTALL_DIR:"*) ;;
