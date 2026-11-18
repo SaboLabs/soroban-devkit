@@ -430,6 +430,48 @@ fn dry_run_with_skip_deployed_marks_live_contract_skipped() {
 }
 
 #[test]
+fn dry_run_does_not_need_the_secret_key() {
+    // Regression test (CodeRabbit review on PR #569): the dry run must
+    // resolve the source account from the stored public key without ever
+    // loading the secret. With the secret_key line stripped from the
+    // identity file, the dry run still succeeds.
+    let project = TempDir::new().unwrap();
+    let project_dir = project.path();
+    setup_project(project_dir);
+    generate_default_identity(project_dir);
+
+    let identity_file = project_dir.join("identity").join("alice.toml");
+    let content = std::fs::read_to_string(&identity_file).unwrap();
+    assert!(
+        content.contains("secret_key"),
+        "fixture must have a secret to strip"
+    );
+    let stripped: String = content
+        .lines()
+        .filter(|l| !l.trim_start().starts_with("secret_key"))
+        .map(|l| format!("{l}\n"))
+        .collect();
+    assert!(
+        stripped.contains("public_key"),
+        "stripped file must keep the public key"
+    );
+    std::fs::write(&identity_file, stripped).unwrap();
+
+    let mock = MockServer::start(false);
+    let mut args = deploy_base_args(&mock);
+    args.push("--dry-run".into());
+    args.push("--salt".into());
+    args.push(SALT_HEX.into());
+    sdkt(project_dir)
+        .current_dir(project_dir)
+        .args(&args)
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("No transactions submitted."));
+    assert_eq!(mock.send_count(), 0, "dry run must not submit");
+}
+
+#[test]
 fn dry_run_predictions_match_a_real_deploy_with_the_same_salt() {
     let project = TempDir::new().unwrap();
     let project_dir = project.path();

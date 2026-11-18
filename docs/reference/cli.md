@@ -391,12 +391,16 @@ or git logic is duplicated; the same `compute_dependency_integrity` /
 │   contract's address and WASM hash offline (same derivation as the
 │   single-contract `sdkt deploy --dry-run`), and prints the plan — one
 │   section per contract plus a totals line. It never signs, never touches
-│   private key material (the source account is read from the identity
-│   store only), and never writes `.sdkt-deployments.json`. With
-│   `--skip-deployed`, aliases whose recorded contract still exists on-chain
-│   are marked skipped instead of predicted. `--format json` emits one
-│   object per contract (`alias`, `contractId`, `wasmHash`, `salt`,
-│   `skipped`) with top-level `status: "dry_run"` and `submitted: false`.
+│   private key material (the source account comes from the `public_key`
+│   stored in the identity file; the secret is never loaded), and never
+│   writes `.sdkt-deployments.json`. Identities created before public keys
+│   were stored cannot be resolved for a dry run — refresh one with
+│   `sdkt identity delete <name>` followed by
+│   `sdkt identity import <name> -`. With `--skip-deployed`, aliases whose
+│   recorded contract still exists on-chain are marked skipped instead of
+│   predicted. `--format json` emits one object per contract (`alias`,
+│   `contractId`, `wasmHash`, `salt`, `skipped`) with top-level
+│   `status: "dry_run"` and `submitted: false`.
 │   Example:
 │
 │     sdkt project deploy --dry-run --salt 000102030405060708090a0b0c0d0e0f10111213

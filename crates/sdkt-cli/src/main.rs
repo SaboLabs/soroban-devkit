@@ -3701,13 +3701,15 @@ async fn project_deploy_dry_run(
     let record_path = Path::new(sdkt_core::deployment::DEPLOYMENT_RECORD_FILE);
     let record_file = sdkt_core::deployment::DeploymentRecordFile::read(record_path)?;
 
-    // Source account only: resolve the identity's public key. The signing
-    // key is deliberately never loaded on this path.
+    // Source account only: resolve the identity's public key without
+    // loading the secret. The signing key is deliberately never loaded
+    // on this path — `resolve_public_identity` reads only the stored
+    // `public_key` line, never `secret_key`.
     let identity_store = sdkt_storage::IdentityStore::new()
         .map_err(|e| format!("Failed to access identity store: {}", e))?;
     let identity_obj = identity_store
-        .resolve_signing_identity(identity)
-        .map_err(|e| format!("Failed to resolve signing identity: {}", e))?;
+        .resolve_public_identity(identity)
+        .map_err(|e| format!("Failed to resolve identity public key: {}", e))?;
     let source_account = identity_obj.public_key.clone();
 
     // The RPC client is only needed for the --skip-deployed existence
