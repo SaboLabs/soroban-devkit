@@ -6,10 +6,11 @@ use sdkt_core::{ContractConfig, DevKitConfig, OutputFormat};
 use sdkt_rpc::inspect::StorageSummary;
 use sdkt_rpc::wasm::get_wasm_bytecode;
 use sdkt_rpc::{
-    estimate_dynamic_fee, extend_footprint, first_topic_filter, get_contract_events_filtered,
-    get_next_sequence, get_ttl_info_for_keys, get_wasm_metadata, inspect_account, inspect_contract,
-    inspect_transaction, read_contract_state, restore_footprint, simulate_transaction,
-    SorobanRpcClient, StorageKeyInfo, TtlInfoSummary,
+    estimate_dynamic_fee, extend_footprint, first_topic_filter, get_contract_events_page,
+    get_contract_events_paginated, get_next_sequence, get_ttl_info_for_keys, get_wasm_metadata,
+    inspect_account, inspect_contract, inspect_transaction, read_contract_state, restore_footprint,
+    simulate_transaction, GetEventsPagination, PaginationOptions, SorobanRpcClient, StorageKeyInfo,
+    TtlInfoSummary,
 };
 use sdkt_storage::WasmCache;
 use sdkt_storage::{
@@ -356,6 +357,22 @@ enum Commands {
         /// symbol. Case-sensitive; filtered server-side by the RPC.
         #[arg(long, value_name = "SYMBOL")]
         topic: Option<String>,
+        /// Maximum events per page, sent as getEvents `pagination.limit`.
+        /// The RPC applies its own default cap when omitted.
+        #[arg(long, value_name = "N")]
+        limit: Option<u32>,
+        /// Resume from a pagination cursor returned by a previous
+        /// `sdkt events` run, sent as getEvents `pagination.cursor`.
+        /// Cannot be combined with `--start-ledger` / `--end-ledger`:
+        /// a cursor-only request resumes from the token.
+        #[arg(long, value_name = "CURSOR")]
+        cursor: Option<String>,
+        /// Follow the getEvents cursor until the pages are exhausted.
+        /// Bounded: at most N pages (default 10 when no value is given);
+        /// `--all-pages 25` raises the cap. Without this flag only one
+        /// page is fetched and a page-boundary notice is printed instead.
+        #[arg(long, value_name = "N", num_args = 0..=1, default_missing_value = "10")]
+        all_pages: Option<usize>,
         #[command(flatten)]
         net: NetworkArgs,
     },
@@ -7868,6 +7885,9 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
             abi,
             abi_contract,
             topic,
+            limit,
+            cursor,
+            all_pages,
             net,
         } => {
             let fmt = parse_format_str(&format);
@@ -7919,117 +7939,202 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
                 }
             }
 
-            match get_contract_events_filtered(
-                &client,
-                &contract_id,
-                start_ledger,
-                end_ledger,
-                topic_filters,
-            )
-            .await
-            {
-                Ok(events) => {
-                    if let Some(spec) = contract_spec {
-                        // ABI-aware decoding: topics[0] is the event symbol,
-                        // remaining topics + the data value carry the payload.
-                        if fmt == OutputFormat::Json {
-                            let decoded_events: Vec<serde_json::Value> = events
-                                .iter()
-                                .map(|ev| {
-                                    let topic_scvals: Vec<stellar_xdr::ScVal> = ev
-                                        .topics
-                                        .iter()
-                                        .filter_map(|t| sdkt_xdr::scval_from_base64(t))
-                                        .collect();
-                                    let data_scvals: Vec<stellar_xdr::ScVal> = ev
-                                        .value
-                                        .as_deref()
-                                        .and_then(sdkt_xdr::scval_from_base64)
-                                        .into_iter()
-                                        .collect();
-                                    let decoded =
-                                        decode_event_topics(&spec, &topic_scvals, &data_scvals);
-                                    serde_json::json!({
-                                        "contract_id": ev.contract_id,
-                                        "ledger": ev.ledger,
-                                        "topics": ev.topics,
-                                        "value": ev.value,
-                                        "decoded": decoded.iter().map(|d| serde_json::json!({
-                                            "raw": d.raw,
-                                            "label": d.label,
-                                            "matched_type": d.matched_type,
-                                            "fields": d.fields
-                                        })).collect::<Vec<_>>()
-                                    })
-                                })
-                                .collect();
-                            let json_str = serde_json::to_string(&decoded_events)?;
-                            println!("{}", json_str);
-                        } else {
-                            println!("Contract Events (ABI-decoded):");
-                            if events.is_empty() {
-                                println!("No events found.");
-                            } else {
-                                for (i, ev) in events.iter().enumerate() {
-                                    println!("\nEvent #{}", i + 1);
-                                    println!(
-                                        "Ledger: {}",
-                                        ev.ledger.map_or("Unknown".to_string(), |v| v.to_string())
-                                    );
-                                    println!("Topics: {:?}", ev.topics);
-                                    println!("Value: {}", ev.value.as_deref().unwrap_or("N/A"));
+            // A cursor positions the query on its own: the RPC requires a
+            // cursor-only request, so reject the combination before any
+            // RPC call. A page size / page cap of 0 is rejected the same way.
+            if cursor.is_some() && (start_ledger.is_some() || end_ledger.is_some()) {
+                eprintln!(
+                    "Error: --cursor cannot be combined with --start-ledger/--end-ledger: \
+                     resume with the cursor alone (a request carrying a cursor must omit \
+                     the ledger range)"
+                );
+                process::exit(1);
+            }
+            if let Some(0) = limit {
+                eprintln!("Error: --limit must be at least 1");
+                process::exit(1);
+            }
+            if let Some(0) = all_pages {
+                eprintln!("Error: --all-pages must be at least 1");
+                process::exit(1);
+            }
 
-                                    // Decode with ABI using the real topics/value
-                                    let topic_scvals: Vec<stellar_xdr::ScVal> = ev
-                                        .topics
-                                        .iter()
-                                        .filter_map(|t| sdkt_xdr::scval_from_base64(t))
-                                        .collect();
-                                    let data_scvals: Vec<stellar_xdr::ScVal> = ev
-                                        .value
-                                        .as_deref()
-                                        .and_then(sdkt_xdr::scval_from_base64)
-                                        .into_iter()
-                                        .collect();
-                                    let decoded =
-                                        decode_event_topics(&spec, &topic_scvals, &data_scvals);
-                                    for d in decoded {
-                                        println!("  Decoded: {}", d.label);
-                                        if let Some(fields) = d.fields {
-                                            for (k, v) in fields {
-                                                println!("    {}: {}", k, v);
-                                            }
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                    } else {
-                        // Original raw output
-                        if fmt == OutputFormat::Json {
-                            let json_str = serde_json::to_string(&events)?;
-                            println!("{}", json_str);
-                        } else {
-                            println!("Contract Events:");
-                            if events.is_empty() {
-                                println!("No events found.");
+            // Fetch the events, then render them below. The default path
+            // fetches exactly one page (the historical behaviour) and
+            // reports the continuation cursor as a page-boundary notice;
+            // --all-pages follows the cursor up to its explicit cap.
+            let (events, page_notice) = if let Some(max_pages) = all_pages {
+                match get_contract_events_paginated(
+                    &client,
+                    &contract_id,
+                    start_ledger,
+                    end_ledger,
+                    topic_filters,
+                    PaginationOptions {
+                        cursor: cursor.clone(),
+                        limit,
+                        max_pages,
+                    },
+                )
+                .await
+                {
+                    Ok(paged) => {
+                        let notice = paged.next_cursor.as_ref().map(|next_cursor| {
+                            if paged.pages_fetched >= max_pages {
+                                format!(
+                                    "Stopped after {} page(s): the page cap was reached. Resume with: sdkt events {} --cursor {}",
+                                    paged.pages_fetched, contract_id, next_cursor
+                                )
                             } else {
-                                for (i, ev) in events.iter().enumerate() {
-                                    println!("\nEvent #{}", i + 1);
-                                    println!(
-                                        "Ledger: {}",
-                                        ev.ledger.map_or("Unknown".to_string(), |v| v.to_string())
-                                    );
-                                    println!("Topics: {:?}", ev.topics);
-                                    println!("Value: {}", ev.value.as_deref().unwrap_or("N/A"));
+                                format!(
+                                    "Stopped after {} page(s): the latest ledger was passed. Resume with: sdkt events {} --cursor {}",
+                                    paged.pages_fetched, contract_id, next_cursor
+                                )
+                            }
+                        });
+                        (paged.events, notice)
+                    }
+                    Err(e) => {
+                        eprintln!("Error fetching events: {e}");
+                        process::exit(1);
+                    }
+                }
+            } else {
+                let pagination = if cursor.is_some() || limit.is_some() {
+                    Some(GetEventsPagination {
+                        cursor: cursor.clone(),
+                        limit,
+                    })
+                } else {
+                    None
+                };
+                match get_contract_events_page(
+                    &client,
+                    &contract_id,
+                    start_ledger,
+                    end_ledger,
+                    topic_filters,
+                    pagination,
+                )
+                .await
+                {
+                    Ok(paged) => {
+                        let notice = paged.next_cursor.as_ref().map(|next_cursor| {
+                            format!(
+                                "More events are available (page boundary reached). Continue with: sdkt events {contract_id} --cursor {next_cursor}"
+                            )
+                        });
+                        (paged.events, notice)
+                    }
+                    Err(e) => {
+                        eprintln!("Error fetching events: {e}");
+                        process::exit(1);
+                    }
+                }
+            };
+
+            if let Some(spec) = contract_spec {
+                // ABI-aware decoding: topics[0] is the event symbol,
+                // remaining topics + the data value carry the payload.
+                if fmt == OutputFormat::Json {
+                    let decoded_events: Vec<serde_json::Value> = events
+                        .iter()
+                        .map(|ev| {
+                            let topic_scvals: Vec<stellar_xdr::ScVal> = ev
+                                .topics
+                                .iter()
+                                .filter_map(|t| sdkt_xdr::scval_from_base64(t))
+                                .collect();
+                            let data_scvals: Vec<stellar_xdr::ScVal> = ev
+                                .value
+                                .as_deref()
+                                .and_then(sdkt_xdr::scval_from_base64)
+                                .into_iter()
+                                .collect();
+                            let decoded = decode_event_topics(&spec, &topic_scvals, &data_scvals);
+                            serde_json::json!({
+                                "contract_id": ev.contract_id,
+                                "ledger": ev.ledger,
+                                "topics": ev.topics,
+                                "value": ev.value,
+                                "decoded": decoded.iter().map(|d| serde_json::json!({
+                                    "raw": d.raw,
+                                    "label": d.label,
+                                    "matched_type": d.matched_type,
+                                    "fields": d.fields
+                                })).collect::<Vec<_>>()
+                            })
+                        })
+                        .collect();
+                    let json_str = serde_json::to_string(&decoded_events)?;
+                    println!("{}", json_str);
+                } else {
+                    println!("Contract Events (ABI-decoded):");
+                    if events.is_empty() {
+                        println!("No events found.");
+                    } else {
+                        for (i, ev) in events.iter().enumerate() {
+                            println!("\nEvent #{}", i + 1);
+                            println!(
+                                "Ledger: {}",
+                                ev.ledger.map_or("Unknown".to_string(), |v| v.to_string())
+                            );
+                            println!("Topics: {:?}", ev.topics);
+                            println!("Value: {}", ev.value.as_deref().unwrap_or("N/A"));
+
+                            // Decode with ABI using the real topics/value
+                            let topic_scvals: Vec<stellar_xdr::ScVal> = ev
+                                .topics
+                                .iter()
+                                .filter_map(|t| sdkt_xdr::scval_from_base64(t))
+                                .collect();
+                            let data_scvals: Vec<stellar_xdr::ScVal> = ev
+                                .value
+                                .as_deref()
+                                .and_then(sdkt_xdr::scval_from_base64)
+                                .into_iter()
+                                .collect();
+                            let decoded = decode_event_topics(&spec, &topic_scvals, &data_scvals);
+                            for d in decoded {
+                                println!("  Decoded: {}", d.label);
+                                if let Some(fields) = d.fields {
+                                    for (k, v) in fields {
+                                        println!("    {}: {}", k, v);
+                                    }
                                 }
                             }
                         }
                     }
                 }
-                Err(e) => {
-                    eprintln!("Error fetching events: {}", e);
-                    process::exit(1);
+            } else {
+                // Original raw output
+                if fmt == OutputFormat::Json {
+                    let json_str = serde_json::to_string(&events)?;
+                    println!("{}", json_str);
+                } else {
+                    println!("Contract Events:");
+                    if events.is_empty() {
+                        println!("No events found.");
+                    } else {
+                        for (i, ev) in events.iter().enumerate() {
+                            println!("\nEvent #{}", i + 1);
+                            println!(
+                                "Ledger: {}",
+                                ev.ledger.map_or("Unknown".to_string(), |v| v.to_string())
+                            );
+                            println!("Topics: {:?}", ev.topics);
+                            println!("Value: {}", ev.value.as_deref().unwrap_or("N/A"));
+                        }
+                    }
+                }
+            }
+            // The page-boundary notice goes to stderr for JSON output
+            // so stdout stays parseable, and to stdout otherwise.
+            if let Some(notice) = page_notice {
+                if fmt == OutputFormat::Json {
+                    eprintln!("{notice}");
+                } else {
+                    println!("{notice}");
                 }
             }
         }
