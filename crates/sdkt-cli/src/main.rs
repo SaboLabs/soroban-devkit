@@ -9323,6 +9323,43 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
                     println!("SHA-256 Hash: {}", metadata.hash);
                     println!("Version: {}", metadata.version);
 
+                    // Size breakdown (issue #516): per-section file spans,
+                    // in file order. The entries account for every byte
+                    // except the 8-byte module header, which is not a
+                    // section — the total line makes that explicit so the
+                    // numbers reconcile with `Size` above.
+                    println!(
+                        "\nSize Breakdown ({} {}):",
+                        metadata.section_sizes.len(),
+                        if metadata.section_sizes.len() == 1 {
+                            "section"
+                        } else {
+                            "sections"
+                        }
+                    );
+                    if metadata.section_sizes.is_empty() {
+                        println!("  (none)");
+                    }
+                    for section in &metadata.section_sizes {
+                        let pct = if metadata.size_bytes > 0 {
+                            section.size_bytes as f64 / metadata.size_bytes as f64 * 100.0
+                        } else {
+                            0.0
+                        };
+                        println!(
+                            "  - {}: {} bytes ({:.1}%)",
+                            section.name, section.size_bytes, pct
+                        );
+                    }
+                    if !metadata.section_sizes.is_empty() {
+                        let sections_total: usize =
+                            metadata.section_sizes.iter().map(|s| s.size_bytes).sum();
+                        println!(
+                            "  Total in sections: {} bytes + 8 bytes module header = {} bytes",
+                            sections_total, metadata.size_bytes
+                        );
+                    }
+
                     println!("\nCustom Sections ({}):", metadata.custom_sections.len());
                     for section in &metadata.custom_sections {
                         println!("  - {}", section);
