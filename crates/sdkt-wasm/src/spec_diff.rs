@@ -200,7 +200,7 @@ pub fn diff_specs(
         match old_fns.get(name) {
             None => diff.added_functions.push((**nf).clone()),
             Some(of) => {
-                if of.parameters != nf.parameters || of.outputs != nf.outputs {
+                if !function_signature_eq(of, nf) {
                     diff.changed_functions.push(FunctionSignatureChange {
                         name: (*name).to_string(),
                         old: (*of).clone(),
@@ -311,6 +311,54 @@ fn type_ref_eq(a: &ContractType, b: &ContractType) -> bool {
 /// Compare two member type lists by identity (name + kind), ignoring docs.
 fn member_types_eq(a: &[ContractType], b: &[ContractType]) -> bool {
     a.len() == b.len() && a.iter().zip(b.iter()).all(|(x, y)| type_ref_eq(x, y))
+}
+
+/// Compare two function signatures, ignoring doc comments (docs are not ABI).
+///
+/// A doc-only change to the function or any of its parameters must not be
+/// reported as a signature change — the same rule already applied to events
+/// (`event_signature_eq`) and custom types (`type_definition_eq`). A change
+/// of parameter name, type, or order, or of any output type, is a signature
+/// change. The name itself is compared as well for defence-in-depth, even
+/// though callers only compare functions already matched by name.
+fn function_signature_eq(a: &ContractFunction, b: &ContractFunction) -> bool {
+    a.name == b.name
+        && a.parameters.len() == b.parameters.len()
+        && a.parameters
+            .iter()
+            .zip(b.parameters.iter())
+            .all(|(x, y)| x.name == y.name && contract_type_eq(&x.type_, &y.type_))
+        && a.outputs.len() == b.outputs.len()
+        && a.outputs
+            .iter()
+            .zip(b.outputs.iter())
+            .all(|(x, y)| contract_type_eq(x, y))
+}
+
+/// Compare two [`ContractType`] values by structure, ignoring `doc` at every
+/// level (the type itself, its members, and its type arguments). Docs are
+/// not ABI: a type produced by the spec parser carries no doc at all, but a
+/// hand-built spec (or a future parser change) must not turn a doc-only edit
+/// into a breaking change either.
+fn contract_type_eq(a: &ContractType, b: &ContractType) -> bool {
+    a.name == b.name
+        && a.kind == b.kind
+        && a.bytes_n == b.bytes_n
+        && a.type_args.len() == b.type_args.len()
+        && a.type_args
+            .iter()
+            .zip(b.type_args.iter())
+            .all(|(x, y)| contract_type_eq(x, y))
+        && a.members.len() == b.members.len()
+        && a.members.iter().zip(b.members.iter()).all(|(x, y)| {
+            x.name == y.name
+                && x.value == y.value
+                && x.types.len() == y.types.len()
+                && x.types
+                    .iter()
+                    .zip(y.types.iter())
+                    .all(|(t, u)| contract_type_eq(t, u))
+        })
 }
 
 /// Compare two event signatures, ignoring doc comments (docs are not ABI).
@@ -743,6 +791,112 @@ mod tests {
         assert_eq!(d.changed_functions[0].name, "f");
         assert_eq!(d.changed_functions[0].old.parameters[0].type_.name, "u32");
         assert_eq!(d.changed_functions[0].new.parameters[0].type_.name, "u64");
+    }
+
+    /// Like `func_entry`, but with doc comments on the function and on each
+    /// input parameter, and with declared output types.
+    fn func_entry_with_doc(
+        name: &str,
+        doc: &str,
+        inputs: Vec<(String, ScSpecTypeDef, &str)>,
+        outputs: Vec<ScSpecTypeDef>,
+    ) -> stellar_xdr::ScSpecEntry {
+        use stellar_xdr::{ScSpecEntry, ScSpecFunctionInputV0, ScSpecFunctionV0};
+        ScSpecEntry::FunctionV0(ScSpecFunctionV0 {
+            doc: doc.try_into().unwrap(),
+            name: crate::spec::tests::symbol_e(name),
+            inputs: inputs
+                .into_iter()
+                .map(|(n, t, d)| ScSpecFunctionInputV0 {
+                    doc: d.try_into().unwrap(),
+                    name: n.try_into().unwrap(),
+                    type_: t,
+                })
+                .collect::<Vec<_>>()
+                .try_into()
+                .unwrap(),
+            outputs: outputs.try_into().unwrap(),
+        })
+    }
+
+    #[test]
+    fn doc_only_function_change_is_not_a_signature_change() {
+        // Same function, only the docs differ — on the function itself and
+        // on its parameter. Docs are not ABI, so this must not be reported
+        // as a changed signature (#388).
+        let old = spec_section(&[func_entry_with_doc(
+            "f",
+            "Old docs for f.",
+            vec![("x".into(), ScSpecTypeDef::U32, "Old docs for x.")],
+            vec![ScSpecTypeDef::U32],
+        )]);
+        let new = spec_section(&[func_entry_with_doc(
+            "f",
+            "New docs for f, rewritten.",
+            vec![("x".into(), ScSpecTypeDef::U32, "New docs for x.")],
+            vec![ScSpecTypeDef::U32],
+        )]);
+        let d = diff_wasm(&old, &new).unwrap();
+        assert!(d.changed_functions.is_empty());
+        assert!(d.is_identical());
+        assert_eq!(d.total_changes(), 0);
+        assert!(upgrade_safety_wasm(&old, &new).unwrap().compatible);
+
+        // Real signature changes must still be detected: parameter type,
+        // parameter name, parameter order, and output type.
+        let old = spec_section(&[func_entry_with_doc(
+            "f",
+            "Docs.",
+            vec![
+                ("x".into(), ScSpecTypeDef::U32, ""),
+                ("y".into(), ScSpecTypeDef::String, ""),
+            ],
+            vec![ScSpecTypeDef::U32],
+        )]);
+        // Parameter type change: u32 -> u64.
+        let new = spec_section(&[func_entry_with_doc(
+            "f",
+            "Docs.",
+            vec![
+                ("x".into(), ScSpecTypeDef::U64, ""),
+                ("y".into(), ScSpecTypeDef::String, ""),
+            ],
+            vec![ScSpecTypeDef::U32],
+        )]);
+        assert_eq!(diff_wasm(&old, &new).unwrap().changed_functions.len(), 1);
+        // Parameter rename: x -> z.
+        let new = spec_section(&[func_entry_with_doc(
+            "f",
+            "Docs.",
+            vec![
+                ("z".into(), ScSpecTypeDef::U32, ""),
+                ("y".into(), ScSpecTypeDef::String, ""),
+            ],
+            vec![ScSpecTypeDef::U32],
+        )]);
+        assert_eq!(diff_wasm(&old, &new).unwrap().changed_functions.len(), 1);
+        // Parameter reorder: (x, y) -> (y, x).
+        let new = spec_section(&[func_entry_with_doc(
+            "f",
+            "Docs.",
+            vec![
+                ("y".into(), ScSpecTypeDef::String, ""),
+                ("x".into(), ScSpecTypeDef::U32, ""),
+            ],
+            vec![ScSpecTypeDef::U32],
+        )]);
+        assert_eq!(diff_wasm(&old, &new).unwrap().changed_functions.len(), 1);
+        // Output type change: u32 -> u64.
+        let new = spec_section(&[func_entry_with_doc(
+            "f",
+            "Docs.",
+            vec![
+                ("x".into(), ScSpecTypeDef::U32, ""),
+                ("y".into(), ScSpecTypeDef::String, ""),
+            ],
+            vec![ScSpecTypeDef::U64],
+        )]);
+        assert_eq!(diff_wasm(&old, &new).unwrap().changed_functions.len(), 1);
     }
 
     #[test]
