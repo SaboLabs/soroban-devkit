@@ -363,12 +363,47 @@ or git logic is duplicated; the same `compute_dependency_integrity` /
 `git_cache_key` primitives are reused.
 
 ├── project
+│   ├── add <ALIAS> --path <DIR> [--depends-on <ALIAS>]... [--ctor-arg <TYPE:VALUE>]...
+│   │                         Register an existing contract in `.sdkt.toml`
+│   │                         under `[contracts.<alias>]`, validated before writing
+│   ├── status                Show deployments recorded for the selected network profile
 │   └── deploy                Deploy all contracts defined in the workspace (.sdkt.toml),
 │                             applying topological dependency sorting
+│
+│   `project add` validates the entry before anything is written: the alias
+│   must match `[A-Za-z0-9_-]+` and not already exist, `--path` must be a
+│   directory containing a `Cargo.toml`, every `--depends-on` must name an
+│   alias already in `[contracts]`, and every `--ctor-arg` must parse as
+│   `TYPE:VALUE` (same format as `sdkt deploy --arg`). The write is atomic
+│   and every other section of `.sdkt.toml` survives byte-for-byte; when no
+│   `.sdkt.toml` exists yet, a minimal one containing only the new entry is
+│   created. Example:
+│
+│     sdkt project add token --path ./contracts/token --ctor-arg u32:100
+│     sdkt project add vault --path ./contracts/vault --depends-on token
 │
 │   `--timeout <SECONDS>` (default 60) and `--interval <SECONDS>` (default 1)
 │   control how long each contract deployment waits for settlement and how
 │   often it polls; both are validated before any network or identity work.
+│
+│   `project deploy --dry-run` previews a workspace deployment without
+│   submitting anything: it resolves the deploy order, predicts each
+│   contract's address and WASM hash offline (same derivation as the
+│   single-contract `sdkt deploy --dry-run`), and prints the plan — one
+│   section per contract plus a totals line. It never signs, never touches
+│   private key material (the source account comes from the `public_key`
+│   stored in the identity file; the secret is never loaded), and never
+│   writes `.sdkt-deployments.json`. Identities created before public keys
+│   were stored cannot be resolved for a dry run — refresh one with
+│   `sdkt identity delete <name>` followed by
+│   `sdkt identity import <name> -`. With `--skip-deployed`, aliases whose
+│   recorded contract still exists on-chain are marked skipped instead of
+│   predicted. `--format json` emits one object per contract (`alias`,
+│   `contractId`, `wasmHash`, `salt`, `skipped`) with top-level
+│   `status: "dry_run"` and `submitted: false`.
+│   Example:
+│
+│     sdkt project deploy --dry-run --salt 000102030405060708090a0b0c0d0e0f10111213
 │
 │   Contracts declare dependencies via `depends_on` (canonical) or the
 │   legacy `deploy_after` field in `[contracts.<alias>]`; both are merged. Build,

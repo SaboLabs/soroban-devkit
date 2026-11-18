@@ -2,7 +2,7 @@ use clap::{Args, CommandFactory, Parser, Subcommand};
 use clap_complete::Shell;
 use sdkt_core::fee::{FeeConfig, FeeEstimator, LedgerFeeSample, NetworkKind};
 use sdkt_core::fetch::DependencyFetcher;
-use sdkt_core::{DevKitConfig, OutputFormat};
+use sdkt_core::{ContractConfig, DevKitConfig, OutputFormat};
 use sdkt_rpc::inspect::StorageSummary;
 use sdkt_rpc::wasm::get_wasm_bytecode;
 use sdkt_rpc::{
@@ -1135,6 +1135,29 @@ enum TxAction {
 
 #[derive(Subcommand)]
 enum ProjectCommand {
+    /// Register an existing contract in `.sdkt.toml` under
+    /// `[contracts.<alias>]`. The entry is validated before anything is
+    /// written: the alias must be new, `--path` must be a directory
+    /// containing a `Cargo.toml`, every `--depends-on` must name an alias
+    /// already in `[contracts]`, and every `--ctor-arg` must parse as
+    /// `TYPE:VALUE`. Never overwrites an existing alias and never drops
+    /// any other section of `.sdkt.toml`.
+    Add {
+        /// Alias for the contract in `[contracts.<alias>]`.
+        alias: String,
+        /// Path to the contract source directory.
+        #[arg(long)]
+        path: String,
+        /// Alias of a contract that must deploy before this one (repeatable).
+        #[arg(long)]
+        depends_on: Vec<String>,
+        /// Constructor argument in TYPE:VALUE format, as in `sdkt deploy
+        /// --arg` (repeatable).
+        #[arg(long)]
+        ctor_arg: Vec<String>,
+        #[arg(short, long, default_value = "pretty")]
+        format: String,
+    },
     /// Show deployments recorded for the selected network profile.
     Status {
         #[arg(short, long, default_value = "pretty")]
@@ -1153,6 +1176,12 @@ enum ProjectCommand {
         /// without re-deploying (and re-paying for) what already succeeded.
         #[arg(long)]
         skip_deployed: bool,
+        /// Preview the deployment without submitting anything: resolve the
+        /// deploy order, predict each contract's address and WASM hash
+        /// offline, and print the plan. Never signs, never touches private
+        /// key material, and never writes a deployment record.
+        #[arg(long)]
+        dry_run: bool,
         /// Identity name to sign and pay for each contract deployment. Defaults to "default".
         #[arg(short = 'I', long, default_value = "default")]
         identity: String,
@@ -3610,6 +3639,217 @@ mod encode_tests {
     }
 }
 
+/// One contract in a `project deploy --dry-run` plan.
+struct DryRunContract {
+    alias: String,
+    /// Predicted contract ID, or the recorded one when skipped.
+    contract_id: String,
+    /// SHA-256 of the WASM artifact (hex), or the recorded hash when skipped.
+    wasm_hash: String,
+    /// Salt used for the prediction (hex), or the recorded salt when skipped.
+    salt: String,
+    skipped: bool,
+}
+
+/// Preview a multi-contract deployment without submitting anything.
+///
+/// Resolves the workspace deploy order, predicts each contract's address
+/// and WASM hash offline with the same derivation the single-deploy dry run
+/// and the real deploy path use (`sdkt_xdr::derive_contract_id`), and
+/// prints the plan. With `--skip-deployed`, aliases whose recorded contract
+/// still exists on-chain (verified read-only via `getLedgerEntries`, the
+/// same check the real path uses) are marked skipped instead of predicted.
+///
+/// This path never signs, never loads a signing key (the source account is
+/// the identity's public key, read from the identity store only), never
+/// submits, and never writes `.sdkt-deployments.json`. Without
+/// `--skip-deployed` it makes no RPC calls at all.
+#[allow(clippy::too_many_arguments)]
+async fn project_deploy_dry_run(
+    config: &DevKitConfig,
+    salt_bytes: Option<[u8; 20]>,
+    skip_deployed: bool,
+    identity: &str,
+    net: &NetworkArgs,
+    fmt: OutputFormat,
+) -> Result<(), String> {
+    // 4.1 — advisory lock check, same as the real path (read-only).
+    let lock_report = sdkt_core::lock::verify_lock(Path::new("."), config);
+    if lock_report.present && !lock_report.consistent && fmt != OutputFormat::Json {
+        eprintln!("⚠ Warning: sdkt.lock is stale — run `sdkt build` to refresh it.");
+    }
+
+    let network_config = resolve_network_config(
+        net.rpc_url.clone(),
+        net.network_passphrase.clone(),
+        net.network_profile.clone(),
+    )?;
+    let network = match network_config.passphrase.as_str() {
+        "Test SDF Network ; September 2015" => sdkt_xdr::sign::Network::Testnet,
+        "Public Global Stellar Network ; September 2015" => sdkt_xdr::sign::Network::Mainnet,
+        "Test SDF Future Network ; October 2022" => sdkt_xdr::sign::Network::Futurenet,
+        other => sdkt_xdr::sign::Network::Custom(other.to_string()),
+    };
+    let network_key = sdkt_core::deployment::network_key(
+        if net.network_passphrase.is_some() {
+            None
+        } else {
+            net.network_profile.as_deref()
+        },
+        &network_config.passphrase,
+    );
+    let record_path = Path::new(sdkt_core::deployment::DEPLOYMENT_RECORD_FILE);
+    let record_file = sdkt_core::deployment::DeploymentRecordFile::read(record_path)?;
+
+    // Source account only: resolve the identity's public key without
+    // loading the secret. The signing key is deliberately never loaded
+    // on this path — `resolve_public_identity` reads only the stored
+    // `public_key` line, never `secret_key`.
+    let identity_store = sdkt_storage::IdentityStore::new()
+        .map_err(|e| format!("Failed to access identity store: {}", e))?;
+    let identity_obj = identity_store
+        .resolve_public_identity(identity)
+        .map_err(|e| format!("Failed to resolve identity public key: {}", e))?;
+    let source_account = identity_obj.public_key.clone();
+
+    // The RPC client is only needed for the --skip-deployed existence
+    // check (read-only); without it the dry run is fully offline.
+    let client = if skip_deployed {
+        Some(resolve_rpc_client(
+            net.rpc_url.clone(),
+            net.network_passphrase.clone(),
+            net.network_profile.clone(),
+        ))
+    } else {
+        None
+    };
+
+    let salt_generated = salt_bytes.is_none();
+    let salt = salt_bytes.unwrap_or_else(sdkt_rpc::deploy::generate_salt);
+    let salt_hex = hex::encode(salt);
+
+    let resolved = sdkt_core::project::resolve_project(config)
+        .map_err(|e| format!("Error resolving project: {}", e))?;
+
+    let mut plan: Vec<DryRunContract> = Vec::new();
+    for contract in &resolved {
+        // --skip-deployed: honor the record only when the recorded contract
+        // still exists on-chain — the same rule as the real deploy path.
+        if skip_deployed {
+            if let Some(record) = record_file.record_for(&network_key, &contract.alias) {
+                let client = client.as_ref().expect("skip-deployed builds a client");
+                match sdkt_rpc::storage::contract_exists(client, &record.contract_id).await {
+                    Ok(true) => {
+                        plan.push(DryRunContract {
+                            alias: contract.alias.clone(),
+                            contract_id: record.contract_id.clone(),
+                            wasm_hash: record.wasm_hash.clone(),
+                            salt: record.salt.clone().unwrap_or_default(),
+                            skipped: true,
+                        });
+                        continue;
+                    }
+                    Ok(false) => {
+                        if fmt != OutputFormat::Json {
+                            eprintln!(
+                                "    ⚠ Recorded contract for '{}' is no longer on-chain; would re-deploy.",
+                                contract.alias
+                            );
+                        }
+                    }
+                    Err(e) => {
+                        return Err(format!(
+                            "Failed to verify recorded contract for '{}': {}",
+                            contract.alias, e
+                        ));
+                    }
+                }
+            }
+        }
+
+        let wasm_bytes = fs::read(&contract.wasm_artifact)
+            .map_err(|e| format!("Failed to read WASM for '{}': {}", contract.alias, e))?;
+        let wasm_digest: [u8; 32] = Sha256::digest(&wasm_bytes).into();
+        let contract_id = sdkt_xdr::derive_contract_id(
+            &network.network_id(),
+            &source_account,
+            &salt,
+            &wasm_digest,
+        )
+        .map_err(|e| format!("Failed to derive predicted contract ID: {}", e))?;
+        plan.push(DryRunContract {
+            alias: contract.alias.clone(),
+            contract_id,
+            wasm_hash: hex::encode(wasm_digest),
+            salt: salt_hex.clone(),
+            skipped: false,
+        });
+    }
+
+    let to_deploy = plan.iter().filter(|c| !c.skipped).count();
+    let skipped = plan.len() - to_deploy;
+
+    if fmt == OutputFormat::Json {
+        let contracts: Vec<_> = plan
+            .iter()
+            .map(|c| {
+                serde_json::json!({
+                    "alias": c.alias,
+                    "contractId": c.contract_id,
+                    "wasmHash": c.wasm_hash,
+                    "salt": c.salt,
+                    "skipped": c.skipped,
+                })
+            })
+            .collect();
+        println!(
+            "{}",
+            serde_json::to_string(&serde_json::json!({
+                "status": "dry_run",
+                "submitted": false,
+                "network": network_key,
+                "salt": salt_hex,
+                "contracts": contracts,
+                "contracts_to_deploy": to_deploy,
+                "contracts_skipped": skipped,
+            }))
+            .unwrap()
+        );
+    } else {
+        println!(
+            "Project deployment plan (dry run, network: {}):",
+            network_key
+        );
+        for c in &plan {
+            if c.skipped {
+                println!("  {} (skipped — already deployed)", c.alias);
+                println!("    Contract ID: {}", c.contract_id);
+                println!("    WASM hash:   {}", c.wasm_hash);
+                if !c.salt.is_empty() {
+                    println!("    Salt:        {}", c.salt);
+                }
+            } else {
+                println!("  {}", c.alias);
+                println!("    Contract ID: {} (predicted)", c.contract_id);
+                println!("    WASM hash:   {}", c.wasm_hash);
+                println!("    Salt:        {}", c.salt);
+            }
+        }
+        println!(
+            "Totals: {} contract(s) to deploy, {} skipped.",
+            to_deploy, skipped
+        );
+        if salt_generated {
+            println!(
+                "Salt was auto-generated ({}). Pass --salt {} to the real deploy to land these addresses.",
+                salt_hex, salt_hex
+            );
+        }
+        println!("No transactions submitted.");
+    }
+    Ok(())
+}
+
 fn load_config() -> DevKitConfig {
     match DevKitConfig::from_file(".sdkt.toml") {
         Ok(c) => c,
@@ -3617,6 +3857,499 @@ fn load_config() -> DevKitConfig {
             eprintln!("Error loading .sdkt.toml: {}", e);
             process::exit(1);
         }
+    }
+}
+
+/// Validate a `sdkt project add` entry, in order, failing fast with a
+/// one-line error. Nothing is written when any check fails. On success
+/// returns the [`ContractConfig`] to persist.
+fn validate_project_add(
+    alias: &str,
+    path: &str,
+    depends_on: &[String],
+    ctor_args: &[String],
+    config: &DevKitConfig,
+) -> Result<ContractConfig, String> {
+    if alias.is_empty()
+        || !alias
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || b == b'_' || b == b'-')
+    {
+        return Err(format!(
+            "invalid alias '{alias}': use only letters, digits, '_' and '-'"
+        ));
+    }
+    if config.contracts.contains_key(alias) {
+        return Err(format!("contract '{alias}' already exists in .sdkt.toml"));
+    }
+    let dir = Path::new(path);
+    if !dir.exists() {
+        return Err(format!("path '{path}' does not exist"));
+    }
+    if !dir.is_dir() {
+        return Err(format!("path '{path}' is not a directory"));
+    }
+    if !dir.join("Cargo.toml").is_file() {
+        return Err(format!("path '{path}' does not contain a Cargo.toml"));
+    }
+    // A repeated dependency would save cleanly and then fail
+    // `resolve_deploy_order` with DuplicateDependency, blocking project
+    // graph consumers until the file is hand-fixed — reject it here.
+    let mut seen_deps: std::collections::HashSet<&str> = std::collections::HashSet::new();
+    for dep in depends_on {
+        if !config.contracts.contains_key(dep) {
+            return Err(format!(
+                "unknown dependency '{dep}': no contract with that alias in .sdkt.toml"
+            ));
+        }
+        if !seen_deps.insert(dep.as_str()) {
+            return Err(format!(
+                "duplicate dependency '{dep}': list each dependency only once"
+            ));
+        }
+    }
+    // Strict parse: an untyped value (e.g. `nope`) or an unknown type must
+    // fail here, not pass through as a pre-encoded ScVal. The stored form
+    // stays the original TYPE:VALUE string, as in `deploy --arg`.
+    if let Err(e) = parse_typed_args(ctor_args, true) {
+        return Err(format!("invalid --ctor-arg: {e}"));
+    }
+    Ok(ContractConfig {
+        path: path.to_string(),
+        deploy_after: Vec::new(),
+        depends_on: depends_on.to_vec(),
+        ctor_args: ctor_args.to_vec(),
+    })
+}
+
+/// Persist one new `[contracts.<alias>]` entry to `.sdkt.toml`.
+///
+/// The entry is grafted into the original TOML document with `toml_edit`,
+/// so every other section of an existing file survives byte-for-byte
+/// (comments, key order, and sections the config struct does not model are
+/// all untouched). A `[contracts]` table written as an inline table (which
+/// cannot take a `[contracts.<alias>]` header) is converted to a standard
+/// table in place — its entries survive, only that one item is re-rendered.
+/// A file that does not exist yet is created minimal, containing only the
+/// new entry. The result is verified by re-parsing it through
+/// [`DevKitConfig`] before the write lands; if the document cannot be
+/// updated without losing content (unparseable file, `contracts` defined
+/// as a non-table value, or a failed round-trip check), this returns an
+/// error and the file is left unchanged — there is no lossy fallback.
+///
+/// The write is atomic (temp file in the same directory + rename),
+/// mirroring [`sdkt_core::deployment::DeploymentRecordFile::write`].
+fn save_project_contract(
+    config_path: &Path,
+    config: &DevKitConfig,
+    alias: &str,
+    entry: &ContractConfig,
+) -> Result<(), String> {
+    use std::io::Write as _;
+
+    let existing = match fs::read_to_string(config_path) {
+        Ok(text) => Some(text),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => None,
+        Err(e) => {
+            return Err(format!("Failed to read {}: {e}", config_path.display()));
+        }
+    };
+
+    let mut doc: toml_edit::DocumentMut = match &existing {
+        Some(text) => text.parse().map_err(|e| {
+            format!(
+                "Failed to parse {} as TOML: {e}; the file was left unchanged",
+                config_path.display()
+            )
+        })?,
+        None => toml_edit::DocumentMut::new(),
+    };
+
+    // Serialize the new entry with `toml` (the same shape the loader
+    // expects), then graft its fields into a fresh table.
+    let entry_toml =
+        toml::to_string(entry).map_err(|e| format!("Failed to serialize new entry: {e}"))?;
+    let entry_doc: toml_edit::DocumentMut = entry_toml
+        .parse()
+        .map_err(|e| format!("Failed to serialize new entry: {e}"))?;
+    let alias_table = entry_doc.as_table().clone();
+
+    // Resolve the `contracts` table. An inline table cannot take a
+    // `[contracts.<alias>]` header, so convert it to a standard table
+    // first; the conversion rewrites only that one item.
+    match doc.as_table_mut().entry("contracts") {
+        toml_edit::Entry::Occupied(mut occupied) => {
+            let item = occupied.get_mut();
+            if let toml_edit::Item::Value(toml_edit::Value::InlineTable(inline)) = item {
+                let converted = inline_table_to_table(inline);
+                *item = toml_edit::Item::Table(converted);
+            }
+            if item.as_table().is_none() {
+                return Err(format!(
+                    "Cannot add contract '{alias}': '.sdkt.toml' defines 'contracts' as a non-table value; the file was left unchanged"
+                ));
+            }
+        }
+        toml_edit::Entry::Vacant(vacant) => {
+            vacant.insert(toml_edit::Item::Table(toml_edit::Table::new()));
+        }
+    }
+    let contracts = doc
+        .as_table_mut()
+        .get_mut("contracts")
+        .and_then(|item| item.as_table_mut())
+        .expect("contracts is a table here");
+    contracts.insert(alias, toml_edit::Item::Table(alias_table));
+
+    let new_text = doc.to_string();
+
+    // Verify the result round-trips through DevKitConfig serde with the
+    // new entry present and every previous entry intact.
+    let round_trips = DevKitConfig::from_toml(&new_text)
+        .map(|parsed| {
+            parsed.contracts.get(alias) == Some(entry)
+                && config
+                    .contracts
+                    .iter()
+                    .all(|(a, c)| parsed.contracts.get(a) == Some(c))
+        })
+        .unwrap_or(false);
+    if !round_trips {
+        return Err(format!(
+            "Cannot add contract '{alias}': the updated .sdkt.toml would not load; the file was left unchanged"
+        ));
+    }
+
+    let parent = config_path.parent().unwrap_or_else(|| Path::new("."));
+    let tmp_path = parent.join(format!(".sdkt.toml.tmp.{}", std::process::id()));
+    let mut tmp_file = fs::File::create(&tmp_path).map_err(|e| {
+        format!(
+            "Failed to create temp config file {}: {e}",
+            tmp_path.display()
+        )
+    })?;
+    tmp_file.write_all(new_text.as_bytes()).map_err(|e| {
+        format!(
+            "Failed to write temp config file {}: {e}",
+            tmp_path.display()
+        )
+    })?;
+    tmp_file.sync_all().map_err(|e| {
+        format!(
+            "Failed to sync temp config file {}: {e}",
+            tmp_path.display()
+        )
+    })?;
+    drop(tmp_file);
+    fs::rename(&tmp_path, config_path)
+        .map_err(|e| format!("Failed to write {}: {e}", config_path.display()))?;
+    Ok(())
+}
+
+/// Convert an inline table to an equivalent standard table, preserving
+/// every entry (nested inline tables become sub-tables recursively).
+fn inline_table_to_table(inline: &toml_edit::InlineTable) -> toml_edit::Table {
+    let mut table = toml_edit::Table::new();
+    for (key, value) in inline.iter() {
+        let converted = match value {
+            toml_edit::Value::InlineTable(inner) => {
+                toml_edit::Item::Table(inline_table_to_table(inner))
+            }
+            other => toml_edit::Item::Value(other.clone()),
+        };
+        table.insert(key, converted);
+    }
+    table
+}
+
+#[cfg(test)]
+mod project_add_tests {
+    use super::{save_project_contract, validate_project_add};
+    use sdkt_core::config::{ContractConfig, DevKitConfig};
+
+    fn scratch_dir(tag: &str) -> std::path::PathBuf {
+        let dir =
+            std::env::temp_dir().join(format!("sdkt-project-add-{tag}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    fn contract_dir(parent: &std::path::Path, name: &str) -> std::path::PathBuf {
+        let dir = parent.join(name);
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("Cargo.toml"), "[package]\nname = \"x\"\n").unwrap();
+        dir
+    }
+
+    fn config_with(alias: &str, path: &str) -> DevKitConfig {
+        let mut config = DevKitConfig::default();
+        config.contracts.insert(
+            alias.to_string(),
+            ContractConfig {
+                path: path.to_string(),
+                deploy_after: Vec::new(),
+                depends_on: Vec::new(),
+                ctor_args: Vec::new(),
+            },
+        );
+        config
+    }
+
+    #[test]
+    fn bad_alias_is_rejected() {
+        let config = DevKitConfig::default();
+        for alias in ["", "has space", "has.dot", "has/slash", "has:colon"] {
+            let err = validate_project_add(alias, ".", &[], &[], &config).unwrap_err();
+            assert!(err.contains("invalid alias"), "{err}");
+        }
+        // A valid alias passes the alias check and reaches the path check.
+        let err = validate_project_add("ok-alias_1", "no/such/dir", &[], &[], &config).unwrap_err();
+        assert!(err.contains("does not exist"), "{err}");
+    }
+
+    #[test]
+    fn duplicate_alias_is_rejected() {
+        let dir = scratch_dir("dup");
+        let token = contract_dir(&dir, "token");
+        let config = config_with("token", token.to_str().unwrap());
+        let err =
+            validate_project_add("token", token.to_str().unwrap(), &[], &[], &config).unwrap_err();
+        assert!(err.contains("already exists"), "{err}");
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn missing_path_is_rejected() {
+        let config = DevKitConfig::default();
+        let err = validate_project_add("token", "no/such/dir", &[], &[], &config).unwrap_err();
+        assert!(err.contains("does not exist"), "{err}");
+    }
+
+    #[test]
+    fn path_must_be_a_directory_with_cargo_toml() {
+        let dir = scratch_dir("path");
+        let file = dir.join("not-a-dir");
+        std::fs::write(&file, "x").unwrap();
+        let config = DevKitConfig::default();
+        let err =
+            validate_project_add("token", file.to_str().unwrap(), &[], &[], &config).unwrap_err();
+        assert!(err.contains("not a directory"), "{err}");
+
+        let empty = dir.join("empty");
+        std::fs::create_dir_all(&empty).unwrap();
+        let err =
+            validate_project_add("token", empty.to_str().unwrap(), &[], &[], &config).unwrap_err();
+        assert!(err.contains("Cargo.toml"), "{err}");
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn unknown_depends_on_is_rejected_and_names_the_alias() {
+        let dir = scratch_dir("dep");
+        let token = contract_dir(&dir, "token");
+        let config = DevKitConfig::default();
+        let err = validate_project_add(
+            "token",
+            token.to_str().unwrap(),
+            &["missing-alias".to_string()],
+            &[],
+            &config,
+        )
+        .unwrap_err();
+        assert!(err.contains("missing-alias"), "{err}");
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn duplicate_depends_on_is_rejected() {
+        // Regression test (CodeRabbit review on PR #569): a repeated
+        // dependency used to save cleanly and then fail
+        // `resolve_deploy_order` with DuplicateDependency.
+        let dir = scratch_dir("dupdep");
+        let token = contract_dir(&dir, "token");
+        let vault = contract_dir(&dir, "vault");
+        let config = config_with("token", token.to_str().unwrap());
+        let err = validate_project_add(
+            "vault",
+            vault.to_str().unwrap(),
+            &["token".to_string(), "token".to_string()],
+            &[],
+            &config,
+        )
+        .unwrap_err();
+        assert!(err.contains("duplicate dependency 'token'"), "{err}");
+        // A single dependency stays valid.
+        let entry = validate_project_add(
+            "vault",
+            vault.to_str().unwrap(),
+            &["token".to_string()],
+            &[],
+            &config,
+        )
+        .unwrap();
+        assert_eq!(entry.depends_on, vec!["token".to_string()]);
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn malformed_ctor_arg_is_rejected() {
+        let dir = scratch_dir("ctor");
+        let token = contract_dir(&dir, "token");
+        let config = DevKitConfig::default();
+        for bad in ["nope", "u32:not-a-number", "wat:1"] {
+            let err = validate_project_add(
+                "token",
+                token.to_str().unwrap(),
+                &[],
+                &[bad.to_string()],
+                &config,
+            )
+            .unwrap_err();
+            assert!(err.contains("invalid --ctor-arg"), "{err}");
+        }
+        // Valid typed args pass.
+        let entry = validate_project_add(
+            "token",
+            token.to_str().unwrap(),
+            &[],
+            &["u32:100".to_string()],
+            &config,
+        )
+        .unwrap();
+        assert_eq!(entry.ctor_args, vec!["u32:100".to_string()]);
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn save_creates_minimal_file_when_none_exists() {
+        let dir = scratch_dir("new");
+        let path = dir.join(".sdkt.toml");
+        let config = DevKitConfig::default();
+        let entry = ContractConfig {
+            path: "./contracts/token".to_string(),
+            deploy_after: Vec::new(),
+            depends_on: Vec::new(),
+            ctor_args: vec!["u32:100".to_string()],
+        };
+        save_project_contract(&path, &config, "token", &entry).unwrap();
+        let text = std::fs::read_to_string(&path).unwrap();
+        assert!(
+            !text.contains("[network]") && !text.contains("[decode]"),
+            "new file must contain only the new entry:\n{text}"
+        );
+        let back = DevKitConfig::from_file(&path).unwrap();
+        assert_eq!(back.contracts.get("token"), Some(&entry));
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn save_preserves_other_sections_byte_for_byte() {
+        let dir = scratch_dir("append");
+        let path = dir.join(".sdkt.toml");
+        let before = "# Operator comment, must survive\n[network]\nrpc_url = \"http://localhost:8000\"\npassphrase = \"Standalone Network\"\n\n[contracts.token]\npath = \"contracts/token\"\n";
+        std::fs::write(&path, before).unwrap();
+        let config = DevKitConfig::from_file(&path).unwrap();
+        let entry = ContractConfig {
+            path: "./contracts/vault".to_string(),
+            deploy_after: Vec::new(),
+            depends_on: vec!["token".to_string()],
+            ctor_args: Vec::new(),
+        };
+        save_project_contract(&path, &config, "vault", &entry).unwrap();
+        let after = std::fs::read_to_string(&path).unwrap();
+        assert!(
+            after.starts_with(before),
+            "existing content must survive byte-for-byte:\n--- before ---\n{before}\n--- after ---\n{after}"
+        );
+        let back = DevKitConfig::from_file(&path).unwrap();
+        assert_eq!(back.contracts.get("vault"), Some(&entry));
+        assert_eq!(back.network.rpc_url, "http://localhost:8000");
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn save_with_inline_empty_contracts_preserves_unmodeled_sections() {
+        // Regression test (CodeRabbit review on PR #569): a file whose
+        // `contracts` is an inline table used to fall back to serializing
+        // only DevKitConfig, silently dropping unmodeled sections and
+        // comments. The edit must preserve them instead.
+        let dir = scratch_dir("inline-empty");
+        let path = dir.join(".sdkt.toml");
+        let before = "# Operator comment, must survive\n[tool]\nname = \"external-tool\"\n\ncontracts = {}\n";
+        std::fs::write(&path, before).unwrap();
+        let config = DevKitConfig::from_file(&path).unwrap();
+        let entry = ContractConfig {
+            path: "./contracts/token".to_string(),
+            deploy_after: Vec::new(),
+            depends_on: Vec::new(),
+            ctor_args: Vec::new(),
+        };
+        save_project_contract(&path, &config, "token", &entry).unwrap();
+        let after = std::fs::read_to_string(&path).unwrap();
+        assert!(
+            after.contains("# Operator comment, must survive"),
+            "comment must survive:\n{after}"
+        );
+        assert!(
+            after.contains("[tool]\nname = \"external-tool\""),
+            "unmodeled [tool] section must survive:\n{after}"
+        );
+        let back = DevKitConfig::from_file(&path).unwrap();
+        assert_eq!(back.contracts.get("token"), Some(&entry));
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn save_with_inline_contracts_entry_preserves_existing_entry() {
+        let dir = scratch_dir("inline-entry");
+        let path = dir.join(".sdkt.toml");
+        let before = "# Keep me\ncontracts = { token = { path = \"contracts/token\" } }\n";
+        std::fs::write(&path, before).unwrap();
+        let config = DevKitConfig::from_file(&path).unwrap();
+        let entry = ContractConfig {
+            path: "./contracts/vault".to_string(),
+            deploy_after: Vec::new(),
+            depends_on: vec!["token".to_string()],
+            ctor_args: Vec::new(),
+        };
+        save_project_contract(&path, &config, "vault", &entry).unwrap();
+        let after = std::fs::read_to_string(&path).unwrap();
+        assert!(
+            after.contains("# Keep me"),
+            "comment must survive:\n{after}"
+        );
+        let back = DevKitConfig::from_file(&path).unwrap();
+        assert_eq!(
+            back.contracts.get("token").map(|c| c.path.as_str()),
+            Some("contracts/token"),
+            "inline-table entry must survive:\n{after}"
+        );
+        assert_eq!(back.contracts.get("vault"), Some(&entry));
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn save_refuses_non_table_contracts_and_leaves_file_unchanged() {
+        let dir = scratch_dir("non-table");
+        let path = dir.join(".sdkt.toml");
+        let before = "contracts = \"not-a-table\"\n";
+        std::fs::write(&path, before).unwrap();
+        let config = DevKitConfig::from_file(&path).unwrap_or_default();
+        let entry = ContractConfig {
+            path: "./contracts/token".to_string(),
+            deploy_after: Vec::new(),
+            depends_on: Vec::new(),
+            ctor_args: Vec::new(),
+        };
+        let err = save_project_contract(&path, &config, "token", &entry).unwrap_err();
+        assert!(err.contains("non-table"), "{err}");
+        assert_eq!(
+            std::fs::read_to_string(&path).unwrap(),
+            before,
+            "a refused save must leave the file unchanged"
+        );
+        let _ = std::fs::remove_dir_all(dir);
     }
 }
 
@@ -8986,6 +9719,97 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
             }
         },
         Commands::Project { action, net } => match action {
+            ProjectCommand::Add {
+                alias,
+                path,
+                depends_on,
+                ctor_arg,
+                format,
+            } => {
+                let fmt = parse_format_str(&format);
+                // Serialize concurrent `project add` runs: without a lock,
+                // two overlapping invocations can both read the same
+                // `.sdkt.toml` and the last rename silently drops the
+                // other's entry. The lock is a sidecar file (never
+                // `.sdkt.toml` itself, which the save replaces by rename),
+                // acquired before the config is loaded and held through
+                // validation and save; it is released when the guard drops
+                // (or the process exits). The critical section is short,
+                // so a contending run just waits briefly.
+                let lock_path = Path::new(".sdkt.toml.lock");
+                let lock_file = match fs::OpenOptions::new()
+                    .create(true)
+                    .truncate(false)
+                    .write(true)
+                    .open(lock_path)
+                {
+                    Ok(f) => f,
+                    Err(e) => {
+                        eprintln!(
+                            "Error: cannot open lock file {}: {}",
+                            lock_path.display(),
+                            e
+                        );
+                        process::exit(1);
+                    }
+                };
+                let mut config_lock = fd_lock::RwLock::new(lock_file);
+                let _config_guard = match config_lock.write() {
+                    Ok(guard) => guard,
+                    Err(e) => {
+                        eprintln!("Error: cannot lock .sdkt.toml for writing: {e}");
+                        process::exit(1);
+                    }
+                };
+                // Missing file is fine (a minimal one is created); a
+                // present-but-unparseable file is an error, never a silent
+                // fallback to an empty config.
+                let config = match DevKitConfig::from_file(".sdkt.toml") {
+                    Ok(c) => c,
+                    Err(e) => {
+                        eprintln!("Error loading .sdkt.toml: {}", e);
+                        process::exit(1);
+                    }
+                };
+                let entry =
+                    match validate_project_add(&alias, &path, &depends_on, &ctor_arg, &config) {
+                        Ok(entry) => entry,
+                        Err(msg) => {
+                            eprintln!("Error: {}", msg);
+                            process::exit(1);
+                        }
+                    };
+                if let Err(e) =
+                    save_project_contract(Path::new(".sdkt.toml"), &config, &alias, &entry)
+                {
+                    eprintln!("Error: {}", e);
+                    process::exit(1);
+                }
+                if fmt == OutputFormat::Json {
+                    println!(
+                        "{}",
+                        serde_json::to_string(&serde_json::json!({
+                            "status": "added",
+                            "alias": alias,
+                            "path": entry.path,
+                            "depends_on": entry.depends_on,
+                            "ctor_args": entry.ctor_args,
+                        }))
+                        .unwrap()
+                    );
+                } else {
+                    println!("✓ Added contract '{alias}' to .sdkt.toml:");
+                    println!("  path: {}", entry.path);
+                    if !entry.depends_on.is_empty() {
+                        println!("  depends_on: {}", entry.depends_on.join(", "));
+                    }
+                    if !entry.ctor_args.is_empty() {
+                        println!("  ctor_args: {}", entry.ctor_args.join(", "));
+                    }
+                    println!();
+                    println!("Next steps: sdkt build, then sdkt project deploy");
+                }
+            }
             ProjectCommand::Status { format } => {
                 let fmt = parse_format_str(&format);
                 let network_config = match resolve_network_config(
@@ -9070,6 +9894,7 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
             ProjectCommand::Deploy {
                 salt,
                 skip_deployed,
+                dry_run,
                 identity,
                 timeout,
                 interval,
@@ -9085,6 +9910,27 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
                 // Validate the salt before any network or identity work (fail fast).
                 let salt_bytes = salt.as_deref().map(parse_salt_hex).transpose()?;
                 let config = load_config();
+
+                // Dry run branches before any signing key is loaded, before
+                // the mutating RPC client is built, and before any record is
+                // touched: the plan path only reads the identity's public key
+                // and (with --skip-deployed) read-only ledger entries.
+                if dry_run {
+                    if let Err(e) = project_deploy_dry_run(
+                        &config,
+                        salt_bytes,
+                        skip_deployed,
+                        &identity,
+                        &net,
+                        fmt,
+                    )
+                    .await
+                    {
+                        eprintln!("Error: {}", e);
+                        process::exit(1);
+                    }
+                    return Ok(());
+                }
 
                 // 4.1 — advisory lock check. If an `sdkt.lock` exists, warn
                 // (non-fatally) when it has drifted from the current artifacts.

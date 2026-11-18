@@ -414,31 +414,65 @@ impl ExpectedSnapshot {
     }
 
     /// Reconstruct the runtime expectation for replay.
-    pub fn to_expected(&self) -> Expected {
-        Expected {
-            behavior: match &self.behavior {
-                BehaviorSnapshot::Success { expect_return } => ExpectedBehavior::Success {
-                    expect_return: expect_return.as_deref().and_then(unhex_xdr),
+    ///
+    /// Fails with [`FuzzError::InvalidArtifact`] naming the field when any
+    /// hex/XDR field cannot be decoded. The artifact is user-supplied input:
+    /// a malformed field must be rejected, never silently repaired — a
+    /// substituted value or a dropped entry could turn a real
+    /// `STATE_MISMATCH` / `EVENT_MISMATCH` into a `Pass`.
+    pub fn to_expected(&self) -> Result<Expected, FuzzError> {
+        let behavior = match &self.behavior {
+            BehaviorSnapshot::Success { expect_return } => ExpectedBehavior::Success {
+                expect_return: match expect_return.as_deref() {
+                    Some(hex_str) => Some(unhex_xdr(hex_str).ok_or_else(|| {
+                        FuzzError::InvalidArtifact(
+                            "expected return value did not decode as ScVal XDR".to_string(),
+                        )
+                    })?),
+                    None => None,
                 },
-                BehaviorSnapshot::Error { error_type, code } => ExpectedBehavior::Error {
-                    error_type: error_type.clone(),
-                    code: *code,
-                },
-                BehaviorSnapshot::Any => ExpectedBehavior::Any,
             },
-            state: self.state.as_ref().map(|entries| {
-                entries
-                    .iter()
-                    .filter_map(|e| Some((unhex(&e.key_xdr)?, unhex(&e.value_xdr)?)))
-                    .collect::<BTreeMap<Vec<u8>, Vec<u8>>>()
-            }),
-            events: self
-                .events
-                .as_ref()
-                .map(|ev| ev.iter().map(restore_event).collect()),
+            BehaviorSnapshot::Error { error_type, code } => ExpectedBehavior::Error {
+                error_type: error_type.clone(),
+                code: *code,
+            },
+            BehaviorSnapshot::Any => ExpectedBehavior::Any,
+        };
+        let state = match &self.state {
+            Some(entries) => {
+                let mut map = BTreeMap::new();
+                for e in entries {
+                    let key = unhex(&e.key_xdr).ok_or_else(|| {
+                        FuzzError::InvalidArtifact(
+                            "expected state entry key_xdr is not valid hex".to_string(),
+                        )
+                    })?;
+                    let value = unhex(&e.value_xdr).ok_or_else(|| {
+                        FuzzError::InvalidArtifact(
+                            "expected state entry value_xdr is not valid hex".to_string(),
+                        )
+                    })?;
+                    map.insert(key, value);
+                }
+                Some(map)
+            }
+            None => None,
+        };
+        let events = match &self.events {
+            Some(ev) => Some(
+                ev.iter()
+                    .map(restore_event)
+                    .collect::<Result<Vec<_>, FuzzError>>()?,
+            ),
+            None => None,
+        };
+        Ok(Expected {
+            behavior,
+            state,
+            events,
             auth_required: self.auth_required,
             resource_limit_is_finding: self.resource_limit_is_finding,
-        }
+        })
     }
 }
 
@@ -451,13 +485,31 @@ fn snapshot_event(e: &EventRecord) -> EventSnapshot {
     }
 }
 
-fn restore_event(e: &EventSnapshot) -> EventRecord {
-    EventRecord {
-        contract_id: e.contract_id.as_deref().and_then(unhex_32),
+fn restore_event(e: &EventSnapshot) -> Result<EventRecord, FuzzError> {
+    let contract_id = match e.contract_id.as_deref() {
+        Some(hex_str) => Some(unhex_32(hex_str).ok_or_else(|| {
+            FuzzError::InvalidArtifact("event contract_id is not 32 bytes of hex".to_string())
+        })?),
+        None => None,
+    };
+    let topics = e
+        .topics_xdr
+        .iter()
+        .map(|t| {
+            unhex_xdr(t).ok_or_else(|| {
+                FuzzError::InvalidArtifact("event topic did not decode as ScVal XDR".to_string())
+            })
+        })
+        .collect::<Result<Vec<_>, FuzzError>>()?;
+    let data = unhex_xdr(&e.data_xdr).ok_or_else(|| {
+        FuzzError::InvalidArtifact("event data_xdr did not decode as ScVal XDR".to_string())
+    })?;
+    Ok(EventRecord {
+        contract_id,
         event_type: e.event_type.clone(),
-        topics: e.topics_xdr.iter().filter_map(|t| unhex_xdr(t)).collect(),
-        data: unhex_xdr(&e.data_xdr).unwrap_or(soroban_env_host::xdr::ScVal::Void),
-    }
+        topics,
+        data,
+    })
 }
 
 /// Serializable minimization record.
@@ -576,7 +628,11 @@ impl FindingArtifact {
     }
 
     /// The declared expectation that was violated.
-    pub fn expected(&self) -> Expected {
+    ///
+    /// Fails when any expectation field cannot be decoded (see
+    /// [`ExpectedSnapshot::to_expected`]); callers surface this as an
+    /// invalid-artifact error, never as a repaired expectation.
+    pub fn expected(&self) -> Result<Expected, FuzzError> {
         self.expected.to_expected()
     }
 

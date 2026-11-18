@@ -3642,6 +3642,7 @@ dependencies = [
  "base64 0.23.1",
  "clap",
  "clap_complete",
+ "fd-lock",
  "hex",
  "jsonschema",
  "predicates",
@@ -3660,6 +3661,8 @@ dependencies = [
  "stellar-xdr",
  "tempfile",
  "tokio",
+ "toml 1.1.6+spec-1.1.0",
+ "toml_edit",
 ]
 
 [[package]]
@@ -4585,6 +4588,7 @@ dependencies = [
  "indexmap 2.14.0",
  "toml_datetime 1.1.1+spec-1.1.0",
  "toml_parser",
+ "toml_writer",
  "winnow 1.0.4",
 ]
 

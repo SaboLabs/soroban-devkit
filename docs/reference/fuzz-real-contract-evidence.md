@@ -296,6 +296,12 @@ All pilot findings are **declaration mismatches**:
 - `RETURN_MISMATCH` — a declared error expectation met a successful return.
 - `UNEXPECTED_ERROR` — a declared success expectation met a host error.
 
+These are the two instances the pilot produced; each reason code covers a
+second case as well (a declared success met a different return value is also
+`RETURN_MISMATCH`, and a declared error met a *different* host error is also
+`UNEXPECTED_ERROR`). The full predicate for every reason code is documented
+in the oracle module (`crates/sdkt-fuzz/src/oracle.rs`).
+
 They are evidence that the oracle, minimizer, artifact, and replay machinery
 behave as designed. **They are not vulnerabilities**, and the audited example
 contracts are not claimed to be defective.
