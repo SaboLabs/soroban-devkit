@@ -171,13 +171,18 @@ runs:
         echo "$INSTALL_DIR" >> "$GITHUB_PATH"
         "$INSTALL_DIR/sdkt" --version
 
-    - name: Ensure jq
+    - name: Ensure jq (upgrade-safety and release-assurance gates)
+      # Skipped for `audit`: that gate runs on the CLI's --fail-on exit code and
+      # must not depend on jq being installable on the runner.
+      if: ${{ inputs.command == 'upgrade-safety' || inputs.command == 'release-assurance' }}
       shell: bash
       run: |
         set -euo pipefail
-        # The gate steps below parse sdkt's JSON output with jq. jq is
-        # preinstalled on ubuntu runners but NOT on macOS or Windows runners,
-        # so it is provisioned here rather than assumed.
+        # `sdkt audit` gates through the CLI's own --fail-on flag, so the audit
+        # path needs no jq. The upgrade-safety and release-assurance steps below
+        # still parse sdkt's JSON output with jq; jq is preinstalled on ubuntu
+        # runners but NOT on macOS or Windows runners, so it is provisioned here
+        # rather than assumed.
         if command -v jq >/dev/null 2>&1; then
           echo "jq present: $(jq --version)"
           exit 0
@@ -206,23 +211,21 @@ runs:
           echo "::error::audit command requires 'target' (path to a .rs source file)"
           exit 1
         fi
-        echo "Running: sdkt audit $SDKT_TARGET --format json"
-        OUT=$(sdkt audit "$SDKT_TARGET" --format json)
-        echo "$OUT"
-        CRIT=$(echo "$OUT" | jq '.summary.critical')
-        WARN=$(echo "$OUT" | jq '.summary.warning')
-        INFO=$(echo "$OUT" | jq '.summary.info')
-        echo "Findings -> critical=$CRIT warning=$WARN info=$INFO (threshold=$SDKT_THRESHOLD)"
-        FAIL=0
-        case "$SDKT_THRESHOLD" in
-          critical) [ "${CRIT:-0}" -gt 0 ] && FAIL=1 ;;
-          warning)  [ "${CRIT:-0}" -gt 0 ] || [ "${WARN:-0}" -gt 0 ] && FAIL=1 ;;
-          info)     [ "${CRIT:-0}" -gt 0 ] || [ "${WARN:-0}" -gt 0 ] || [ "${INFO:-0}" -gt 0 ] && FAIL=1 ;;
-          *) echo "::error::invalid severity-threshold '$SDKT_THRESHOLD'"; exit 1 ;;
-        esac
-        if [ "$FAIL" -eq 1 ]; then
-          echo "::error::sdkt audit found findings at or above threshold '$SDKT_THRESHOLD'"
-          exit 1
+        echo "Running: sdkt audit $SDKT_TARGET --format json --fail-on $SDKT_THRESHOLD"
+        # The CLI owns the gate: --fail-on maps the already-computed severity
+        # summary to the exit code (1 = a finding at or above the threshold,
+        # 2 = usage error such as an unknown level) after printing the full
+        # JSON report. Branching on the exit code keeps one implementation of
+        # the threshold semantics and needs no jq.
+        RC=0
+        sdkt audit "$SDKT_TARGET" --format json --fail-on "$SDKT_THRESHOLD" || RC=$?
+        if [ "$RC" -eq 2 ]; then
+          echo "::error::sdkt audit rejected the invocation (exit 2) -- check 'severity-threshold' (critical | warning | info); see the error above"
+          exit 2
+        fi
+        if [ "$RC" -ne 0 ]; then
+          echo "::error::sdkt audit found findings at or above threshold '$SDKT_THRESHOLD' (exit $RC)"
+          exit "$RC"
         fi
         echo "sdkt audit passed (nothing at or above threshold '$SDKT_THRESHOLD')."
 

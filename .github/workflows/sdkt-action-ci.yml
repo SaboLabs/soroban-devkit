@@ -16,6 +16,66 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
+      # Audit gate - POSITIVE: audit_critical.rs has an unguarded privileged
+      # state write, which AUTH-001 reports as a critical finding. The default
+      # severity-threshold (critical) is forwarded to the CLI as --fail-on, so
+      # this step MUST fail.
+      - name: Audit should FAIL on a critical finding
+        id: audit_critical
+        continue-on-error: true
+        uses: ./.github/actions/sdkt
+        with:
+          command: audit
+          target: crates/sdkt-cli/tests/fixtures/audit_critical.rs
+
+      - name: Assert critical finding failed the audit gate
+        shell: bash
+        run: |
+          if [ "${{ steps.audit_critical.outcome }}" != "failure" ]; then
+            echo "::error::expected audit to FAIL on a critical finding, but outcome was '${{ steps.audit_critical.outcome }}' - the Action may not be forwarding severity-threshold as --fail-on"
+            exit 1
+          fi
+          echo "OK: a critical finding failed the audit gate."
+
+      # Audit gate - NEGATIVE: audit_clean.rs has no findings, so the same
+      # default threshold MUST pass.
+      - name: Audit should PASS on a clean contract
+        id: audit_clean
+        uses: ./.github/actions/sdkt
+        with:
+          command: audit
+          target: crates/sdkt-cli/tests/fixtures/audit_clean.rs
+
+      - name: Assert clean audit passed
+        shell: bash
+        run: |
+          if [ "${{ steps.audit_clean.outcome }}" != "success" ]; then
+            echo "::error::expected audit to PASS on a clean contract, but outcome was '${{ steps.audit_clean.outcome }}'"
+            exit 1
+          fi
+          echo "OK: a clean audit passed the gate."
+
+      # Audit gate - INVALID LEVEL: the CLI rejects an unknown --fail-on level
+      # as a usage error (exit 2) before any analysis runs. The step MUST fail
+      # rather than treat the threshold as a no-op.
+      - name: Audit should FAIL on an invalid severity threshold
+        id: audit_bad_threshold
+        continue-on-error: true
+        uses: ./.github/actions/sdkt
+        with:
+          command: audit
+          target: crates/sdkt-cli/tests/fixtures/audit_clean.rs
+          severity-threshold: bogus
+
+      - name: Assert invalid severity threshold was rejected
+        shell: bash
+        run: |
+          if [ "${{ steps.audit_bad_threshold.outcome }}" != "failure" ]; then
+            echo "::error::expected audit to FAIL on an invalid severity-threshold, but outcome was '${{ steps.audit_bad_threshold.outcome }}'"
+            exit 1
+          fi
+          echo "OK: an invalid severity-threshold was rejected."
+
       # Breaking upgrade: us_old.wasm -> us_new.wasm is NOT backwards-compatible.
       # The upgrade-safety mode MUST fail this step.
       - name: Upgrade-safety should FAIL on breaking change

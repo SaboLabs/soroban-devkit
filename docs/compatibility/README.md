@@ -31,6 +31,14 @@ mode, and fails the step when the check does not pass.
 
 **Threshold semantics:** only findings at or above `severity-threshold` fail
 the build. The default `critical` means `MOVE-001` (Warning) never breaks CI.
+The Action forwards the input as the CLI's own flag —
+`sdkt audit <target> --format json --fail-on "$severity-threshold"` — and gates
+on the exit code, so the CLI is the single source of truth for the mapping:
+exit `1` means a finding at or above the threshold, and the full JSON report is
+still printed first. An unknown level is rejected by the CLI as a usage error
+(exit `2`), which fails the step with a clear message instead of silently
+running as a no-op. No threshold logic is reimplemented in shell, and the audit
+gate does not need `jq`.
 
 **Release-assurance semantics:** the aggregated `release_status` gates the
 step. `FAIL` blocks (step exits 1); `PASS`, `REVIEW`, and `SKIPPED`-only
@@ -148,7 +156,9 @@ a **breaking** diff (committed fixtures `us_old.wasm` → `us_new.wasm`) is
 asserted to **fail**, an **identical** diff is asserted to **pass**, a
 release-assurance run against that same breaking baseline is asserted to
 **fail** (`release_status=FAIL`), and a candidate-only run is asserted to
-**pass** (`release_status=REVIEW`).
+**pass** (`release_status=REVIEW`). The audit gate is asserted both ways too: a
+fixture with a critical finding must fail, a clean fixture must pass, and an
+unknown `severity-threshold` must be rejected.
 
 ## Notes
 
@@ -160,6 +170,9 @@ release-assurance run against that same breaking baseline is asserted to
 - `upgrade-safety` requires the **baseline** WASM to be supplied explicitly
   (`old-wasm`); it does not fetch the on-chain deployed contract. Provide your
   previously-deployed `.wasm` as the baseline artifact.
-- JSON output of `sdkt audit`, `sdkt diff --upgrade-safety`, and
-  `sdkt release-assurance` is the stable contract the Action parses; all are
-  additive and serde-derived.
+- JSON output of `sdkt diff --upgrade-safety` and `sdkt release-assurance` is
+  the stable contract the Action parses (both are additive and serde-derived);
+  those two gates are also why the Action still provisions `jq`; the
+  provisioning step is skipped entirely when `command` is `audit`. `sdkt audit`
+  is gated by the CLI's exit code through `--fail-on`, so the audit path does
+  not run `jq` at all.
