@@ -3913,15 +3913,18 @@ fn validate_project_add(
 
 /// Persist one new `[contracts.<alias>]` entry to `.sdkt.toml`.
 ///
-/// The new entry is serialized with `toml` and appended as its own table,
+/// The entry is grafted into the original TOML document with `toml_edit`,
 /// so every other section of an existing file survives byte-for-byte
-/// (comments, key order, and sections the config struct would re-emit with
-/// defaults are all untouched). A file that does not exist yet is created
-/// minimal, containing only the new entry. The result is verified by
-/// re-parsing it through [`DevKitConfig`] before the write lands; if the
-/// append cannot round-trip (e.g. the file defines `[contracts]` as an
-/// inline table, which cannot take a `[contracts.<alias>]` header), the
-/// helper falls back to serializing the whole config.
+/// (comments, key order, and sections the config struct does not model are
+/// all untouched). A `[contracts]` table written as an inline table (which
+/// cannot take a `[contracts.<alias>]` header) is converted to a standard
+/// table in place — its entries survive, only that one item is re-rendered.
+/// A file that does not exist yet is created minimal, containing only the
+/// new entry. The result is verified by re-parsing it through
+/// [`DevKitConfig`] before the write lands; if the document cannot be
+/// updated without losing content (unparseable file, `contracts` defined
+/// as a non-table value, or a failed round-trip check), this returns an
+/// error and the file is left unchanged — there is no lossy fallback.
 ///
 /// The write is atomic (temp file in the same directory + rename),
 /// mirroring [`sdkt_core::deployment::DeploymentRecordFile::write`].
@@ -3933,10 +3936,6 @@ fn save_project_contract(
 ) -> Result<(), String> {
     use std::io::Write as _;
 
-    let entry_toml =
-        toml::to_string(entry).map_err(|e| format!("Failed to serialize new entry: {e}"))?;
-    let table = format!("[contracts.{alias}]\n{entry_toml}");
-
     let existing = match fs::read_to_string(config_path) {
         Ok(text) => Some(text),
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => None,
@@ -3945,22 +3944,55 @@ fn save_project_contract(
         }
     };
 
-    let mut new_text = match &existing {
-        Some(text) => {
-            let mut out = text.clone();
-            if !out.is_empty() && !out.ends_with('\n') {
-                out.push('\n');
-            }
-            if !out.is_empty() {
-                out.push('\n');
-            }
-            out.push_str(&table);
-            out
-        }
-        None => table,
+    let mut doc: toml_edit::DocumentMut = match &existing {
+        Some(text) => text.parse().map_err(|e| {
+            format!(
+                "Failed to parse {} as TOML: {e}; the file was left unchanged",
+                config_path.display()
+            )
+        })?,
+        None => toml_edit::DocumentMut::new(),
     };
 
-    // Verify the append round-trips through DevKitConfig serde with the
+    // Serialize the new entry with `toml` (the same shape the loader
+    // expects), then graft its fields into a fresh table.
+    let entry_toml =
+        toml::to_string(entry).map_err(|e| format!("Failed to serialize new entry: {e}"))?;
+    let entry_doc: toml_edit::DocumentMut = entry_toml
+        .parse()
+        .map_err(|e| format!("Failed to serialize new entry: {e}"))?;
+    let alias_table = entry_doc.as_table().clone();
+
+    // Resolve the `contracts` table. An inline table cannot take a
+    // `[contracts.<alias>]` header, so convert it to a standard table
+    // first; the conversion rewrites only that one item.
+    match doc.as_table_mut().entry("contracts") {
+        toml_edit::Entry::Occupied(mut occupied) => {
+            let item = occupied.get_mut();
+            if let toml_edit::Item::Value(toml_edit::Value::InlineTable(inline)) = item {
+                let converted = inline_table_to_table(inline);
+                *item = toml_edit::Item::Table(converted);
+            }
+            if item.as_table().is_none() {
+                return Err(format!(
+                    "Cannot add contract '{alias}': '.sdkt.toml' defines 'contracts' as a non-table value; the file was left unchanged"
+                ));
+            }
+        }
+        toml_edit::Entry::Vacant(vacant) => {
+            vacant.insert(toml_edit::Item::Table(toml_edit::Table::new()));
+        }
+    }
+    let contracts = doc
+        .as_table_mut()
+        .get_mut("contracts")
+        .and_then(|item| item.as_table_mut())
+        .expect("contracts is a table here");
+    contracts.insert(alias, toml_edit::Item::Table(alias_table));
+
+    let new_text = doc.to_string();
+
+    // Verify the result round-trips through DevKitConfig serde with the
     // new entry present and every previous entry intact.
     let round_trips = DevKitConfig::from_toml(&new_text)
         .map(|parsed| {
@@ -3972,10 +4004,9 @@ fn save_project_contract(
         })
         .unwrap_or(false);
     if !round_trips {
-        let mut full = config.clone();
-        full.contracts.insert(alias.to_string(), entry.clone());
-        new_text =
-            toml::to_string(&full).map_err(|e| format!("Failed to serialize .sdkt.toml: {e}"))?;
+        return Err(format!(
+            "Cannot add contract '{alias}': the updated .sdkt.toml would not load; the file was left unchanged"
+        ));
     }
 
     let parent = config_path.parent().unwrap_or_else(|| Path::new("."));
@@ -4002,6 +4033,22 @@ fn save_project_contract(
     fs::rename(&tmp_path, config_path)
         .map_err(|e| format!("Failed to write {}: {e}", config_path.display()))?;
     Ok(())
+}
+
+/// Convert an inline table to an equivalent standard table, preserving
+/// every entry (nested inline tables become sub-tables recursively).
+fn inline_table_to_table(inline: &toml_edit::InlineTable) -> toml_edit::Table {
+    let mut table = toml_edit::Table::new();
+    for (key, value) in inline.iter() {
+        let converted = match value {
+            toml_edit::Value::InlineTable(inner) => {
+                toml_edit::Item::Table(inline_table_to_table(inner))
+            }
+            other => toml_edit::Item::Value(other.clone()),
+        };
+        table.insert(key, converted);
+    }
+    table
 }
 
 #[cfg(test)]
@@ -4176,6 +4223,90 @@ mod project_add_tests {
         let back = DevKitConfig::from_file(&path).unwrap();
         assert_eq!(back.contracts.get("vault"), Some(&entry));
         assert_eq!(back.network.rpc_url, "http://localhost:8000");
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn save_with_inline_empty_contracts_preserves_unmodeled_sections() {
+        // Regression test (CodeRabbit review on PR #569): a file whose
+        // `contracts` is an inline table used to fall back to serializing
+        // only DevKitConfig, silently dropping unmodeled sections and
+        // comments. The edit must preserve them instead.
+        let dir = scratch_dir("inline-empty");
+        let path = dir.join(".sdkt.toml");
+        let before = "# Operator comment, must survive\n[tool]\nname = \"external-tool\"\n\ncontracts = {}\n";
+        std::fs::write(&path, before).unwrap();
+        let config = DevKitConfig::from_file(&path).unwrap();
+        let entry = ContractConfig {
+            path: "./contracts/token".to_string(),
+            deploy_after: Vec::new(),
+            depends_on: Vec::new(),
+            ctor_args: Vec::new(),
+        };
+        save_project_contract(&path, &config, "token", &entry).unwrap();
+        let after = std::fs::read_to_string(&path).unwrap();
+        assert!(
+            after.contains("# Operator comment, must survive"),
+            "comment must survive:\n{after}"
+        );
+        assert!(
+            after.contains("[tool]\nname = \"external-tool\""),
+            "unmodeled [tool] section must survive:\n{after}"
+        );
+        let back = DevKitConfig::from_file(&path).unwrap();
+        assert_eq!(back.contracts.get("token"), Some(&entry));
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn save_with_inline_contracts_entry_preserves_existing_entry() {
+        let dir = scratch_dir("inline-entry");
+        let path = dir.join(".sdkt.toml");
+        let before = "# Keep me\ncontracts = { token = { path = \"contracts/token\" } }\n";
+        std::fs::write(&path, before).unwrap();
+        let config = DevKitConfig::from_file(&path).unwrap();
+        let entry = ContractConfig {
+            path: "./contracts/vault".to_string(),
+            deploy_after: Vec::new(),
+            depends_on: vec!["token".to_string()],
+            ctor_args: Vec::new(),
+        };
+        save_project_contract(&path, &config, "vault", &entry).unwrap();
+        let after = std::fs::read_to_string(&path).unwrap();
+        assert!(
+            after.contains("# Keep me"),
+            "comment must survive:\n{after}"
+        );
+        let back = DevKitConfig::from_file(&path).unwrap();
+        assert_eq!(
+            back.contracts.get("token").map(|c| c.path.as_str()),
+            Some("contracts/token"),
+            "inline-table entry must survive:\n{after}"
+        );
+        assert_eq!(back.contracts.get("vault"), Some(&entry));
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn save_refuses_non_table_contracts_and_leaves_file_unchanged() {
+        let dir = scratch_dir("non-table");
+        let path = dir.join(".sdkt.toml");
+        let before = "contracts = \"not-a-table\"\n";
+        std::fs::write(&path, before).unwrap();
+        let config = DevKitConfig::from_file(&path).unwrap_or_default();
+        let entry = ContractConfig {
+            path: "./contracts/token".to_string(),
+            deploy_after: Vec::new(),
+            depends_on: Vec::new(),
+            ctor_args: Vec::new(),
+        };
+        let err = save_project_contract(&path, &config, "token", &entry).unwrap_err();
+        assert!(err.contains("non-table"), "{err}");
+        assert_eq!(
+            std::fs::read_to_string(&path).unwrap(),
+            before,
+            "a refused save must leave the file unchanged"
+        );
         let _ = std::fs::remove_dir_all(dir);
     }
 }
