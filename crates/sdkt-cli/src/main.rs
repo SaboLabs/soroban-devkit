@@ -1176,6 +1176,12 @@ enum ProjectCommand {
         /// without re-deploying (and re-paying for) what already succeeded.
         #[arg(long)]
         skip_deployed: bool,
+        /// Preview the deployment without submitting anything: resolve the
+        /// deploy order, predict each contract's address and WASM hash
+        /// offline, and print the plan. Never signs, never touches private
+        /// key material, and never writes a deployment record.
+        #[arg(long)]
+        dry_run: bool,
         /// Identity name to sign and pay for each contract deployment. Defaults to "default".
         #[arg(short = 'I', long, default_value = "default")]
         identity: String,
@@ -3631,6 +3637,215 @@ mod encode_tests {
             }
         }
     }
+}
+
+/// One contract in a `project deploy --dry-run` plan.
+struct DryRunContract {
+    alias: String,
+    /// Predicted contract ID, or the recorded one when skipped.
+    contract_id: String,
+    /// SHA-256 of the WASM artifact (hex), or the recorded hash when skipped.
+    wasm_hash: String,
+    /// Salt used for the prediction (hex), or the recorded salt when skipped.
+    salt: String,
+    skipped: bool,
+}
+
+/// Preview a multi-contract deployment without submitting anything.
+///
+/// Resolves the workspace deploy order, predicts each contract's address
+/// and WASM hash offline with the same derivation the single-deploy dry run
+/// and the real deploy path use (`sdkt_xdr::derive_contract_id`), and
+/// prints the plan. With `--skip-deployed`, aliases whose recorded contract
+/// still exists on-chain (verified read-only via `getLedgerEntries`, the
+/// same check the real path uses) are marked skipped instead of predicted.
+///
+/// This path never signs, never loads a signing key (the source account is
+/// the identity's public key, read from the identity store only), never
+/// submits, and never writes `.sdkt-deployments.json`. Without
+/// `--skip-deployed` it makes no RPC calls at all.
+#[allow(clippy::too_many_arguments)]
+async fn project_deploy_dry_run(
+    config: &DevKitConfig,
+    salt_bytes: Option<[u8; 20]>,
+    skip_deployed: bool,
+    identity: &str,
+    net: &NetworkArgs,
+    fmt: OutputFormat,
+) -> Result<(), String> {
+    // 4.1 — advisory lock check, same as the real path (read-only).
+    let lock_report = sdkt_core::lock::verify_lock(Path::new("."), config);
+    if lock_report.present && !lock_report.consistent && fmt != OutputFormat::Json {
+        eprintln!("⚠ Warning: sdkt.lock is stale — run `sdkt build` to refresh it.");
+    }
+
+    let network_config = resolve_network_config(
+        net.rpc_url.clone(),
+        net.network_passphrase.clone(),
+        net.network_profile.clone(),
+    )?;
+    let network = match network_config.passphrase.as_str() {
+        "Test SDF Network ; September 2015" => sdkt_xdr::sign::Network::Testnet,
+        "Public Global Stellar Network ; September 2015" => sdkt_xdr::sign::Network::Mainnet,
+        "Test SDF Future Network ; October 2022" => sdkt_xdr::sign::Network::Futurenet,
+        other => sdkt_xdr::sign::Network::Custom(other.to_string()),
+    };
+    let network_key = sdkt_core::deployment::network_key(
+        if net.network_passphrase.is_some() {
+            None
+        } else {
+            net.network_profile.as_deref()
+        },
+        &network_config.passphrase,
+    );
+    let record_path = Path::new(sdkt_core::deployment::DEPLOYMENT_RECORD_FILE);
+    let record_file = sdkt_core::deployment::DeploymentRecordFile::read(record_path)?;
+
+    // Source account only: resolve the identity's public key. The signing
+    // key is deliberately never loaded on this path.
+    let identity_store = sdkt_storage::IdentityStore::new()
+        .map_err(|e| format!("Failed to access identity store: {}", e))?;
+    let identity_obj = identity_store
+        .resolve_signing_identity(identity)
+        .map_err(|e| format!("Failed to resolve signing identity: {}", e))?;
+    let source_account = identity_obj.public_key.clone();
+
+    // The RPC client is only needed for the --skip-deployed existence
+    // check (read-only); without it the dry run is fully offline.
+    let client = if skip_deployed {
+        Some(resolve_rpc_client(
+            net.rpc_url.clone(),
+            net.network_passphrase.clone(),
+            net.network_profile.clone(),
+        ))
+    } else {
+        None
+    };
+
+    let salt_generated = salt_bytes.is_none();
+    let salt = salt_bytes.unwrap_or_else(sdkt_rpc::deploy::generate_salt);
+    let salt_hex = hex::encode(salt);
+
+    let resolved = sdkt_core::project::resolve_project(config)
+        .map_err(|e| format!("Error resolving project: {}", e))?;
+
+    let mut plan: Vec<DryRunContract> = Vec::new();
+    for contract in &resolved {
+        // --skip-deployed: honor the record only when the recorded contract
+        // still exists on-chain — the same rule as the real deploy path.
+        if skip_deployed {
+            if let Some(record) = record_file.record_for(&network_key, &contract.alias) {
+                let client = client.as_ref().expect("skip-deployed builds a client");
+                match sdkt_rpc::storage::contract_exists(client, &record.contract_id).await {
+                    Ok(true) => {
+                        plan.push(DryRunContract {
+                            alias: contract.alias.clone(),
+                            contract_id: record.contract_id.clone(),
+                            wasm_hash: record.wasm_hash.clone(),
+                            salt: record.salt.clone().unwrap_or_default(),
+                            skipped: true,
+                        });
+                        continue;
+                    }
+                    Ok(false) => {
+                        if fmt != OutputFormat::Json {
+                            eprintln!(
+                                "    ⚠ Recorded contract for '{}' is no longer on-chain; would re-deploy.",
+                                contract.alias
+                            );
+                        }
+                    }
+                    Err(e) => {
+                        return Err(format!(
+                            "Failed to verify recorded contract for '{}': {}",
+                            contract.alias, e
+                        ));
+                    }
+                }
+            }
+        }
+
+        let wasm_bytes = fs::read(&contract.wasm_artifact)
+            .map_err(|e| format!("Failed to read WASM for '{}': {}", contract.alias, e))?;
+        let wasm_digest: [u8; 32] = Sha256::digest(&wasm_bytes).into();
+        let contract_id = sdkt_xdr::derive_contract_id(
+            &network.network_id(),
+            &source_account,
+            &salt,
+            &wasm_digest,
+        )
+        .map_err(|e| format!("Failed to derive predicted contract ID: {}", e))?;
+        plan.push(DryRunContract {
+            alias: contract.alias.clone(),
+            contract_id,
+            wasm_hash: hex::encode(wasm_digest),
+            salt: salt_hex.clone(),
+            skipped: false,
+        });
+    }
+
+    let to_deploy = plan.iter().filter(|c| !c.skipped).count();
+    let skipped = plan.len() - to_deploy;
+
+    if fmt == OutputFormat::Json {
+        let contracts: Vec<_> = plan
+            .iter()
+            .map(|c| {
+                serde_json::json!({
+                    "alias": c.alias,
+                    "contractId": c.contract_id,
+                    "wasmHash": c.wasm_hash,
+                    "salt": c.salt,
+                    "skipped": c.skipped,
+                })
+            })
+            .collect();
+        println!(
+            "{}",
+            serde_json::to_string(&serde_json::json!({
+                "status": "dry_run",
+                "submitted": false,
+                "network": network_key,
+                "salt": salt_hex,
+                "contracts": contracts,
+                "contracts_to_deploy": to_deploy,
+                "contracts_skipped": skipped,
+            }))
+            .unwrap()
+        );
+    } else {
+        println!(
+            "Project deployment plan (dry run, network: {}):",
+            network_key
+        );
+        for c in &plan {
+            if c.skipped {
+                println!("  {} (skipped — already deployed)", c.alias);
+                println!("    Contract ID: {}", c.contract_id);
+                println!("    WASM hash:   {}", c.wasm_hash);
+                if !c.salt.is_empty() {
+                    println!("    Salt:        {}", c.salt);
+                }
+            } else {
+                println!("  {}", c.alias);
+                println!("    Contract ID: {} (predicted)", c.contract_id);
+                println!("    WASM hash:   {}", c.wasm_hash);
+                println!("    Salt:        {}", c.salt);
+            }
+        }
+        println!(
+            "Totals: {} contract(s) to deploy, {} skipped.",
+            to_deploy, skipped
+        );
+        if salt_generated {
+            println!(
+                "Salt was auto-generated ({}). Pass --salt {} to the real deploy to land these addresses.",
+                salt_hex, salt_hex
+            );
+        }
+        println!("No transactions submitted.");
+    }
+    Ok(())
 }
 
 fn load_config() -> DevKitConfig {
@@ -9472,6 +9687,7 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
             ProjectCommand::Deploy {
                 salt,
                 skip_deployed,
+                dry_run,
                 identity,
                 timeout,
                 interval,
@@ -9487,6 +9703,27 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
                 // Validate the salt before any network or identity work (fail fast).
                 let salt_bytes = salt.as_deref().map(parse_salt_hex).transpose()?;
                 let config = load_config();
+
+                // Dry run branches before any signing key is loaded, before
+                // the mutating RPC client is built, and before any record is
+                // touched: the plan path only reads the identity's public key
+                // and (with --skip-deployed) read-only ledger entries.
+                if dry_run {
+                    if let Err(e) = project_deploy_dry_run(
+                        &config,
+                        salt_bytes,
+                        skip_deployed,
+                        &identity,
+                        &net,
+                        fmt,
+                    )
+                    .await
+                    {
+                        eprintln!("Error: {}", e);
+                        process::exit(1);
+                    }
+                    return Ok(());
+                }
 
                 // 4.1 — advisory lock check. If an `sdkt.lock` exists, warn
                 // (non-fatally) when it has drifted from the current artifacts.

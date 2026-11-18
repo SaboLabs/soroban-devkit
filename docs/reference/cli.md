@@ -386,6 +386,21 @@ or git logic is duplicated; the same `compute_dependency_integrity` /
 │   control how long each contract deployment waits for settlement and how
 │   often it polls; both are validated before any network or identity work.
 │
+│   `project deploy --dry-run` previews a workspace deployment without
+│   submitting anything: it resolves the deploy order, predicts each
+│   contract's address and WASM hash offline (same derivation as the
+│   single-contract `sdkt deploy --dry-run`), and prints the plan — one
+│   section per contract plus a totals line. It never signs, never touches
+│   private key material (the source account is read from the identity
+│   store only), and never writes `.sdkt-deployments.json`. With
+│   `--skip-deployed`, aliases whose recorded contract still exists on-chain
+│   are marked skipped instead of predicted. `--format json` emits one
+│   object per contract (`alias`, `contractId`, `wasmHash`, `salt`,
+│   `skipped`) with top-level `status: "dry_run"` and `submitted: false`.
+│   Example:
+│
+│     sdkt project deploy --dry-run --salt 000102030405060708090a0b0c0d0e0f10111213
+│
 │   Contracts declare dependencies via `depends_on` (canonical) or the
 │   legacy `deploy_after` field in `[contracts.<alias>]`; both are merged. Build,
 │   deploy, and `sdkt lock generate` share one resolver, so order is deterministic.

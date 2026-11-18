@@ -905,13 +905,13 @@ const CAPABILITIES: [Capability; CAP_COUNT] = [
         id: "project.deploy",
         command: &["project", "deploy"],
         summary: "Deploy a whole multi-contract project in resolved dependency order.",
-        optional_args: &["--identity", "--network-profile", "--format"],
+        optional_args: &["--identity", "--network-profile", "--format", "--dry-run"],
         formats: PRETTY_JSON,
         safety: Safety::Mutating,
         requires_confirmation: true,
         network: NetworkRequirement::Both,
         evidence: Evidence::Unverified,
-        notes: Some("Fan-out of deploy transactions; highest blast radius in the toolkit."),
+        notes: Some("Fan-out of deploy transactions; highest blast radius in the toolkit. --dry-run previews the plan without signing or submitting."),
         ..Capability::BASE
     },
     Capability {
