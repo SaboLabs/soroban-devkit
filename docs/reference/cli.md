@@ -534,6 +534,20 @@ output keeps the existing `profile`, `rpc_url`, `reachable`, `status`,
 unhealthy endpoint causes a non-zero exit; failure of the optional identity
 query does not.
 
+### Capturing a network profile
+
+`sdkt network capture [--network testnet] [--out network-profile.json]` captures the live
+network configuration (protocol version, ledger sequence, cost tables, and resource limits)
+into a fuzz `NetworkProfile` JSON file that `sdkt fuzz campaign --profile` can later consume.
+It resolves its target exactly like `diagnose` (`--network`, or `--rpc-url` /
+`--network-profile` / `.sdkt.toml` defaults), fetches the configuration with read-only RPC
+calls, converts it, validates it, and writes the file. The command never signs, submits, or
+deploys. A partial capture is still written with status `INCOMPLETE` (naming the unavailable
+parameters) and exit 0 — the downstream consumer is what refuses incomplete profiles. An
+unreachable endpoint or RPC error fails with a non-zero exit and writes no file. `--format json`
+prints the same status report (network, protocol version, ledger sequence, status,
+unavailable parameters) as JSON.
+
 Every RPC command (`inspect`, `verify`, `health`, `storage`, `events`, `account`,
 `tx`, `fee`, `wasm`, `deploy`, `project deploy`) accepts the same three optional
 flags for selecting / overriding the network endpoint:
