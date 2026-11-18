@@ -363,8 +363,24 @@ or git logic is duplicated; the same `compute_dependency_integrity` /
 `git_cache_key` primitives are reused.
 
 ├── project
+│   ├── add <ALIAS> --path <DIR> [--depends-on <ALIAS>]... [--ctor-arg <TYPE:VALUE>]...
+│   │                         Register an existing contract in `.sdkt.toml`
+│   │                         under `[contracts.<alias>]`, validated before writing
+│   ├── status                Show deployments recorded for the selected network profile
 │   └── deploy                Deploy all contracts defined in the workspace (.sdkt.toml),
 │                             applying topological dependency sorting
+│
+│   `project add` validates the entry before anything is written: the alias
+│   must match `[A-Za-z0-9_-]+` and not already exist, `--path` must be a
+│   directory containing a `Cargo.toml`, every `--depends-on` must name an
+│   alias already in `[contracts]`, and every `--ctor-arg` must parse as
+│   `TYPE:VALUE` (same format as `sdkt deploy --arg`). The write is atomic
+│   and every other section of `.sdkt.toml` survives byte-for-byte; when no
+│   `.sdkt.toml` exists yet, a minimal one containing only the new entry is
+│   created. Example:
+│
+│     sdkt project add token --path ./contracts/token --ctor-arg u32:100
+│     sdkt project add vault --path ./contracts/vault --depends-on token
 │
 │   `--timeout <SECONDS>` (default 60) and `--interval <SECONDS>` (default 1)
 │   control how long each contract deployment waits for settlement and how

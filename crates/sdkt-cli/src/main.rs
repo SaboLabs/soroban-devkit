@@ -2,7 +2,7 @@ use clap::{Args, CommandFactory, Parser, Subcommand};
 use clap_complete::Shell;
 use sdkt_core::fee::{FeeConfig, FeeEstimator, LedgerFeeSample, NetworkKind};
 use sdkt_core::fetch::DependencyFetcher;
-use sdkt_core::{DevKitConfig, OutputFormat};
+use sdkt_core::{ContractConfig, DevKitConfig, OutputFormat};
 use sdkt_rpc::inspect::StorageSummary;
 use sdkt_rpc::wasm::get_wasm_bytecode;
 use sdkt_rpc::{
@@ -1135,6 +1135,29 @@ enum TxAction {
 
 #[derive(Subcommand)]
 enum ProjectCommand {
+    /// Register an existing contract in `.sdkt.toml` under
+    /// `[contracts.<alias>]`. The entry is validated before anything is
+    /// written: the alias must be new, `--path` must be a directory
+    /// containing a `Cargo.toml`, every `--depends-on` must name an alias
+    /// already in `[contracts]`, and every `--ctor-arg` must parse as
+    /// `TYPE:VALUE`. Never overwrites an existing alias and never drops
+    /// any other section of `.sdkt.toml`.
+    Add {
+        /// Alias for the contract in `[contracts.<alias>]`.
+        alias: String,
+        /// Path to the contract source directory.
+        #[arg(long)]
+        path: String,
+        /// Alias of a contract that must deploy before this one (repeatable).
+        #[arg(long)]
+        depends_on: Vec<String>,
+        /// Constructor argument in TYPE:VALUE format, as in `sdkt deploy
+        /// --arg` (repeatable).
+        #[arg(long)]
+        ctor_arg: Vec<String>,
+        #[arg(short, long, default_value = "pretty")]
+        format: String,
+    },
     /// Show deployments recorded for the selected network profile.
     Status {
         #[arg(short, long, default_value = "pretty")]
@@ -3617,6 +3640,328 @@ fn load_config() -> DevKitConfig {
             eprintln!("Error loading .sdkt.toml: {}", e);
             process::exit(1);
         }
+    }
+}
+
+/// Validate a `sdkt project add` entry, in order, failing fast with a
+/// one-line error. Nothing is written when any check fails. On success
+/// returns the [`ContractConfig`] to persist.
+fn validate_project_add(
+    alias: &str,
+    path: &str,
+    depends_on: &[String],
+    ctor_args: &[String],
+    config: &DevKitConfig,
+) -> Result<ContractConfig, String> {
+    if alias.is_empty()
+        || !alias
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || b == b'_' || b == b'-')
+    {
+        return Err(format!(
+            "invalid alias '{alias}': use only letters, digits, '_' and '-'"
+        ));
+    }
+    if config.contracts.contains_key(alias) {
+        return Err(format!("contract '{alias}' already exists in .sdkt.toml"));
+    }
+    let dir = Path::new(path);
+    if !dir.exists() {
+        return Err(format!("path '{path}' does not exist"));
+    }
+    if !dir.is_dir() {
+        return Err(format!("path '{path}' is not a directory"));
+    }
+    if !dir.join("Cargo.toml").is_file() {
+        return Err(format!("path '{path}' does not contain a Cargo.toml"));
+    }
+    for dep in depends_on {
+        if !config.contracts.contains_key(dep) {
+            return Err(format!(
+                "unknown dependency '{dep}': no contract with that alias in .sdkt.toml"
+            ));
+        }
+    }
+    // Strict parse: an untyped value (e.g. `nope`) or an unknown type must
+    // fail here, not pass through as a pre-encoded ScVal. The stored form
+    // stays the original TYPE:VALUE string, as in `deploy --arg`.
+    if let Err(e) = parse_typed_args(ctor_args, true) {
+        return Err(format!("invalid --ctor-arg: {e}"));
+    }
+    Ok(ContractConfig {
+        path: path.to_string(),
+        deploy_after: Vec::new(),
+        depends_on: depends_on.to_vec(),
+        ctor_args: ctor_args.to_vec(),
+    })
+}
+
+/// Persist one new `[contracts.<alias>]` entry to `.sdkt.toml`.
+///
+/// The new entry is serialized with `toml` and appended as its own table,
+/// so every other section of an existing file survives byte-for-byte
+/// (comments, key order, and sections the config struct would re-emit with
+/// defaults are all untouched). A file that does not exist yet is created
+/// minimal, containing only the new entry. The result is verified by
+/// re-parsing it through [`DevKitConfig`] before the write lands; if the
+/// append cannot round-trip (e.g. the file defines `[contracts]` as an
+/// inline table, which cannot take a `[contracts.<alias>]` header), the
+/// helper falls back to serializing the whole config.
+///
+/// The write is atomic (temp file in the same directory + rename),
+/// mirroring [`sdkt_core::deployment::DeploymentRecordFile::write`].
+fn save_project_contract(
+    config_path: &Path,
+    config: &DevKitConfig,
+    alias: &str,
+    entry: &ContractConfig,
+) -> Result<(), String> {
+    use std::io::Write as _;
+
+    let entry_toml =
+        toml::to_string(entry).map_err(|e| format!("Failed to serialize new entry: {e}"))?;
+    let table = format!("[contracts.{alias}]\n{entry_toml}");
+
+    let existing = match fs::read_to_string(config_path) {
+        Ok(text) => Some(text),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => None,
+        Err(e) => {
+            return Err(format!("Failed to read {}: {e}", config_path.display()));
+        }
+    };
+
+    let mut new_text = match &existing {
+        Some(text) => {
+            let mut out = text.clone();
+            if !out.is_empty() && !out.ends_with('\n') {
+                out.push('\n');
+            }
+            if !out.is_empty() {
+                out.push('\n');
+            }
+            out.push_str(&table);
+            out
+        }
+        None => table,
+    };
+
+    // Verify the append round-trips through DevKitConfig serde with the
+    // new entry present and every previous entry intact.
+    let round_trips = DevKitConfig::from_toml(&new_text)
+        .map(|parsed| {
+            parsed.contracts.get(alias) == Some(entry)
+                && config
+                    .contracts
+                    .iter()
+                    .all(|(a, c)| parsed.contracts.get(a) == Some(c))
+        })
+        .unwrap_or(false);
+    if !round_trips {
+        let mut full = config.clone();
+        full.contracts.insert(alias.to_string(), entry.clone());
+        new_text =
+            toml::to_string(&full).map_err(|e| format!("Failed to serialize .sdkt.toml: {e}"))?;
+    }
+
+    let parent = config_path.parent().unwrap_or_else(|| Path::new("."));
+    let tmp_path = parent.join(format!(".sdkt.toml.tmp.{}", std::process::id()));
+    let mut tmp_file = fs::File::create(&tmp_path).map_err(|e| {
+        format!(
+            "Failed to create temp config file {}: {e}",
+            tmp_path.display()
+        )
+    })?;
+    tmp_file.write_all(new_text.as_bytes()).map_err(|e| {
+        format!(
+            "Failed to write temp config file {}: {e}",
+            tmp_path.display()
+        )
+    })?;
+    tmp_file.sync_all().map_err(|e| {
+        format!(
+            "Failed to sync temp config file {}: {e}",
+            tmp_path.display()
+        )
+    })?;
+    drop(tmp_file);
+    fs::rename(&tmp_path, config_path)
+        .map_err(|e| format!("Failed to write {}: {e}", config_path.display()))?;
+    Ok(())
+}
+
+#[cfg(test)]
+mod project_add_tests {
+    use super::{save_project_contract, validate_project_add};
+    use sdkt_core::config::{ContractConfig, DevKitConfig};
+
+    fn scratch_dir(tag: &str) -> std::path::PathBuf {
+        let dir =
+            std::env::temp_dir().join(format!("sdkt-project-add-{tag}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    fn contract_dir(parent: &std::path::Path, name: &str) -> std::path::PathBuf {
+        let dir = parent.join(name);
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("Cargo.toml"), "[package]\nname = \"x\"\n").unwrap();
+        dir
+    }
+
+    fn config_with(alias: &str, path: &str) -> DevKitConfig {
+        let mut config = DevKitConfig::default();
+        config.contracts.insert(
+            alias.to_string(),
+            ContractConfig {
+                path: path.to_string(),
+                deploy_after: Vec::new(),
+                depends_on: Vec::new(),
+                ctor_args: Vec::new(),
+            },
+        );
+        config
+    }
+
+    #[test]
+    fn bad_alias_is_rejected() {
+        let config = DevKitConfig::default();
+        for alias in ["", "has space", "has.dot", "has/slash", "has:colon"] {
+            let err = validate_project_add(alias, ".", &[], &[], &config).unwrap_err();
+            assert!(err.contains("invalid alias"), "{err}");
+        }
+        // A valid alias passes the alias check and reaches the path check.
+        let err = validate_project_add("ok-alias_1", "no/such/dir", &[], &[], &config).unwrap_err();
+        assert!(err.contains("does not exist"), "{err}");
+    }
+
+    #[test]
+    fn duplicate_alias_is_rejected() {
+        let dir = scratch_dir("dup");
+        let token = contract_dir(&dir, "token");
+        let config = config_with("token", token.to_str().unwrap());
+        let err =
+            validate_project_add("token", token.to_str().unwrap(), &[], &[], &config).unwrap_err();
+        assert!(err.contains("already exists"), "{err}");
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn missing_path_is_rejected() {
+        let config = DevKitConfig::default();
+        let err = validate_project_add("token", "no/such/dir", &[], &[], &config).unwrap_err();
+        assert!(err.contains("does not exist"), "{err}");
+    }
+
+    #[test]
+    fn path_must_be_a_directory_with_cargo_toml() {
+        let dir = scratch_dir("path");
+        let file = dir.join("not-a-dir");
+        std::fs::write(&file, "x").unwrap();
+        let config = DevKitConfig::default();
+        let err =
+            validate_project_add("token", file.to_str().unwrap(), &[], &[], &config).unwrap_err();
+        assert!(err.contains("not a directory"), "{err}");
+
+        let empty = dir.join("empty");
+        std::fs::create_dir_all(&empty).unwrap();
+        let err =
+            validate_project_add("token", empty.to_str().unwrap(), &[], &[], &config).unwrap_err();
+        assert!(err.contains("Cargo.toml"), "{err}");
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn unknown_depends_on_is_rejected_and_names_the_alias() {
+        let dir = scratch_dir("dep");
+        let token = contract_dir(&dir, "token");
+        let config = DevKitConfig::default();
+        let err = validate_project_add(
+            "token",
+            token.to_str().unwrap(),
+            &["missing-alias".to_string()],
+            &[],
+            &config,
+        )
+        .unwrap_err();
+        assert!(err.contains("missing-alias"), "{err}");
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn malformed_ctor_arg_is_rejected() {
+        let dir = scratch_dir("ctor");
+        let token = contract_dir(&dir, "token");
+        let config = DevKitConfig::default();
+        for bad in ["nope", "u32:not-a-number", "wat:1"] {
+            let err = validate_project_add(
+                "token",
+                token.to_str().unwrap(),
+                &[],
+                &[bad.to_string()],
+                &config,
+            )
+            .unwrap_err();
+            assert!(err.contains("invalid --ctor-arg"), "{err}");
+        }
+        // Valid typed args pass.
+        let entry = validate_project_add(
+            "token",
+            token.to_str().unwrap(),
+            &[],
+            &["u32:100".to_string()],
+            &config,
+        )
+        .unwrap();
+        assert_eq!(entry.ctor_args, vec!["u32:100".to_string()]);
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn save_creates_minimal_file_when_none_exists() {
+        let dir = scratch_dir("new");
+        let path = dir.join(".sdkt.toml");
+        let config = DevKitConfig::default();
+        let entry = ContractConfig {
+            path: "./contracts/token".to_string(),
+            deploy_after: Vec::new(),
+            depends_on: Vec::new(),
+            ctor_args: vec!["u32:100".to_string()],
+        };
+        save_project_contract(&path, &config, "token", &entry).unwrap();
+        let text = std::fs::read_to_string(&path).unwrap();
+        assert!(
+            !text.contains("[network]") && !text.contains("[decode]"),
+            "new file must contain only the new entry:\n{text}"
+        );
+        let back = DevKitConfig::from_file(&path).unwrap();
+        assert_eq!(back.contracts.get("token"), Some(&entry));
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn save_preserves_other_sections_byte_for_byte() {
+        let dir = scratch_dir("append");
+        let path = dir.join(".sdkt.toml");
+        let before = "# Operator comment, must survive\n[network]\nrpc_url = \"http://localhost:8000\"\npassphrase = \"Standalone Network\"\n\n[contracts.token]\npath = \"contracts/token\"\n";
+        std::fs::write(&path, before).unwrap();
+        let config = DevKitConfig::from_file(&path).unwrap();
+        let entry = ContractConfig {
+            path: "./contracts/vault".to_string(),
+            deploy_after: Vec::new(),
+            depends_on: vec!["token".to_string()],
+            ctor_args: Vec::new(),
+        };
+        save_project_contract(&path, &config, "vault", &entry).unwrap();
+        let after = std::fs::read_to_string(&path).unwrap();
+        assert!(
+            after.starts_with(before),
+            "existing content must survive byte-for-byte:\n--- before ---\n{before}\n--- after ---\n{after}"
+        );
+        let back = DevKitConfig::from_file(&path).unwrap();
+        assert_eq!(back.contracts.get("vault"), Some(&entry));
+        assert_eq!(back.network.rpc_url, "http://localhost:8000");
+        let _ = std::fs::remove_dir_all(dir);
     }
 }
 
@@ -8986,6 +9331,63 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
             }
         },
         Commands::Project { action, net } => match action {
+            ProjectCommand::Add {
+                alias,
+                path,
+                depends_on,
+                ctor_arg,
+                format,
+            } => {
+                let fmt = parse_format_str(&format);
+                // Missing file is fine (a minimal one is created); a
+                // present-but-unparseable file is an error, never a silent
+                // fallback to an empty config.
+                let config = match DevKitConfig::from_file(".sdkt.toml") {
+                    Ok(c) => c,
+                    Err(e) => {
+                        eprintln!("Error loading .sdkt.toml: {}", e);
+                        process::exit(1);
+                    }
+                };
+                let entry =
+                    match validate_project_add(&alias, &path, &depends_on, &ctor_arg, &config) {
+                        Ok(entry) => entry,
+                        Err(msg) => {
+                            eprintln!("Error: {}", msg);
+                            process::exit(1);
+                        }
+                    };
+                if let Err(e) =
+                    save_project_contract(Path::new(".sdkt.toml"), &config, &alias, &entry)
+                {
+                    eprintln!("Error: {}", e);
+                    process::exit(1);
+                }
+                if fmt == OutputFormat::Json {
+                    println!(
+                        "{}",
+                        serde_json::to_string(&serde_json::json!({
+                            "status": "added",
+                            "alias": alias,
+                            "path": entry.path,
+                            "depends_on": entry.depends_on,
+                            "ctor_args": entry.ctor_args,
+                        }))
+                        .unwrap()
+                    );
+                } else {
+                    println!("✓ Added contract '{alias}' to .sdkt.toml:");
+                    println!("  path: {}", entry.path);
+                    if !entry.depends_on.is_empty() {
+                        println!("  depends_on: {}", entry.depends_on.join(", "));
+                    }
+                    if !entry.ctor_args.is_empty() {
+                        println!("  ctor_args: {}", entry.ctor_args.join(", "));
+                    }
+                    println!();
+                    println!("Next steps: sdkt build, then sdkt project deploy");
+                }
+            }
             ProjectCommand::Status { format } => {
                 let fmt = parse_format_str(&format);
                 let network_config = match resolve_network_config(
