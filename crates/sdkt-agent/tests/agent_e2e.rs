@@ -673,6 +673,7 @@ fn named_unsupported_formats_are_refused_and_never_executed() {
 
     for request in [
         "audit src/lib.rs with sarif format",
+        "audit src/lib.rs with sarif format.",
         "audit src/lib.rs with xml format",
         "audit src/lib.rs with csv format",
         "audit src/lib.rs with yaml format",
@@ -714,8 +715,20 @@ fn prose_format_success_paths_preserve_argv() {
             vec!["audit", "src/lib.rs", "--format", "json"],
         ),
         (
+            "audit src/lib.rs with json format please",
+            vec!["audit", "src/lib.rs", "--format", "json"],
+        ),
+        (
             "audit src/lib.rs with pretty format",
             vec!["audit", "src/lib.rs"],
+        ),
+        (
+            "audit src/lib.rs with pretty format.",
+            vec!["audit", "src/lib.rs"],
+        ),
+        (
+            "audit src/lib.rs, check the format module",
+            vec!["audit", "src/lib.rs", "--format", "json"],
         ),
     ] {
         let out = agent(&fx, request, true);

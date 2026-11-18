@@ -665,45 +665,75 @@ fn extract_args(request: &str) -> IntentArgs {
 /// Extract a format named in prose, such as "with sarif format" or
 /// "format json". Unknown values are retained for the planner to refuse.
 fn extract_prose_format(tokens: &[&str]) -> Option<String> {
-    const CONNECTORS: &[&str] = &[
-        "a", "an", "as", "for", "in", "is", "of", "the", "to", "with",
-    ];
+    const INTRODUCERS: &[&str] = &["as", "in", "using", "with"];
+    const KNOWN_FORMATS: &[&str] = &["csv", "json", "pretty", "sarif", "xml", "yaml"];
+    const DETERMINERS: &[&str] = &["a", "an", "the"];
 
     for (index, token) in tokens.iter().enumerate() {
-        if !trim_punct(token).eq_ignore_ascii_case("format") {
+        if !trim_format_punct(token).eq_ignore_ascii_case("format") {
             continue;
         }
 
-        let next = tokens
-            .get(index + 1)
-            .map(|token| trim_punct(token))
-            .filter(|token| !token.starts_with('-'));
-        let next = match next {
-            Some(connector) if CONNECTORS.contains(&connector.to_ascii_lowercase().as_str()) => {
-                tokens
-                    .get(index + 2)
-                    .map(|token| trim_punct(token))
-                    .filter(|token| !token.starts_with('-'))
-            }
-            other => other,
-        };
-        if let Some(value) = next.filter(|value| {
-            !value.is_empty() && !CONNECTORS.contains(&value.to_ascii_lowercase().as_str())
-        }) {
-            return Some(value.to_ascii_lowercase());
-        }
+        let previous = index
+            .checked_sub(1)
+            .and_then(|i| tokens.get(i))
+            .map(|token| trim_format_punct(token));
+        let previous_word = previous.map(str::to_ascii_lowercase);
 
-        if let Some(previous) = index.checked_sub(1).and_then(|i| tokens.get(i)) {
-            let value = trim_punct(previous);
-            if !value.is_empty()
+        // Prefer the explicit "with NAME format" shape so trailing prose
+        // after "format" cannot replace NAME.
+        if let (Some(introducer), Some(value)) =
+            (index.checked_sub(2).and_then(|i| tokens.get(i)), previous)
+        {
+            if INTRODUCERS.contains(&trim_format_punct(introducer).to_ascii_lowercase().as_str())
+                && !value.is_empty()
                 && !value.starts_with('-')
-                && !CONNECTORS.contains(&value.to_ascii_lowercase().as_str())
             {
                 return Some(value.to_ascii_lowercase());
             }
         }
+
+        let after = tokens
+            .get(index + 1)
+            .map(|token| trim_format_punct(token))
+            .filter(|token| !token.starts_with('-'));
+        let after = if after.is_some_and(|word| word.eq_ignore_ascii_case("as")) {
+            tokens
+                .get(index + 2)
+                .map(|token| trim_format_punct(token))
+                .filter(|token| !token.starts_with('-'))
+        } else {
+            after
+        };
+        let Some(value) = after.filter(|value| !value.is_empty()) else {
+            continue;
+        };
+
+        // A bare mention such as "the format module" is not a request. Accept
+        // unknown values only in an output-format context; known format names
+        // remain supported in the concise "format NAME" form.
+        let output_context = index == 0
+            || matches!(
+                previous_word.as_deref(),
+                Some("output" | "as" | "with" | "using" | "in")
+            )
+            || previous.is_some_and(|word| word.ends_with(".rs"));
+        let is_determiner = previous_word
+            .as_deref()
+            .is_some_and(|word| DETERMINERS.contains(&word));
+        if !is_determiner
+            && (output_context || KNOWN_FORMATS.contains(&value.to_ascii_lowercase().as_str()))
+        {
+            return Some(value.to_ascii_lowercase());
+        }
     }
     None
+}
+
+/// Strip sentence punctuation for format recognition without changing how
+/// paths and other request arguments are tokenized.
+fn trim_format_punct(token: &str) -> &str {
+    trim_punct(token).trim_matches(|c: char| matches!(c, '.' | '!' | '?'))
 }
 
 /// Record an artifact path once (a flag-supplied value must not double-count
@@ -1227,11 +1257,14 @@ mod tests {
     fn prose_format_names_are_captured_for_planner_validation() {
         for (request, expected) in [
             ("audit src/lib.rs with sarif format", "sarif"),
+            ("audit src/lib.rs with sarif format.", "sarif"),
             ("audit src/lib.rs with xml format", "xml"),
             ("audit src/lib.rs with csv format", "csv"),
             ("audit src/lib.rs with yaml format", "yaml"),
             ("audit src/lib.rs with json format", "json"),
+            ("audit src/lib.rs with json format please", "json"),
             ("audit src/lib.rs with pretty format", "pretty"),
+            ("audit src/lib.rs format sarif", "sarif"),
         ] {
             let intent = parse(request).unwrap();
             assert_eq!(
@@ -1240,6 +1273,9 @@ mod tests {
                 "{request}"
             );
         }
+
+        let intent = parse("audit src/lib.rs, check the format module").unwrap();
+        assert_eq!(intent.args.flag_value("--format"), None);
     }
 
     #[test]

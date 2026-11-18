@@ -959,14 +959,21 @@ mod tests {
     fn prose_json_and_pretty_match_existing_format_argv() {
         let no_format = plan_ok("inspect wasm a.wasm");
         let json = plan_ok("inspect wasm a.wasm with json format");
+        let json_with_trailing_prose = plan_ok("inspect wasm a.wasm with json format please");
         let pretty = plan_ok("inspect wasm a.wasm with pretty format");
+        let prose_about_format_module = plan_ok("audit src/lib.rs, check the format module");
 
         assert_eq!(
             no_format.argv,
             vec!["wasm", "inspect", "a.wasm", "--format", "json"]
         );
         assert_eq!(json.argv, no_format.argv);
+        assert_eq!(json_with_trailing_prose.argv, no_format.argv);
         assert_eq!(pretty.argv, vec!["wasm", "inspect", "a.wasm"]);
+        assert_eq!(
+            prose_about_format_module.argv,
+            vec!["audit", "src/lib.rs", "--format", "json"]
+        );
     }
 
     #[test]
