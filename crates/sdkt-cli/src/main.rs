@@ -3892,10 +3892,19 @@ fn validate_project_add(
     if !dir.join("Cargo.toml").is_file() {
         return Err(format!("path '{path}' does not contain a Cargo.toml"));
     }
+    // A repeated dependency would save cleanly and then fail
+    // `resolve_deploy_order` with DuplicateDependency, blocking project
+    // graph consumers until the file is hand-fixed — reject it here.
+    let mut seen_deps: std::collections::HashSet<&str> = std::collections::HashSet::new();
     for dep in depends_on {
         if !config.contracts.contains_key(dep) {
             return Err(format!(
                 "unknown dependency '{dep}': no contract with that alias in .sdkt.toml"
+            ));
+        }
+        if !seen_deps.insert(dep.as_str()) {
+            return Err(format!(
+                "duplicate dependency '{dep}': list each dependency only once"
             ));
         }
     }
@@ -4149,6 +4158,37 @@ mod project_add_tests {
         )
         .unwrap_err();
         assert!(err.contains("missing-alias"), "{err}");
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn duplicate_depends_on_is_rejected() {
+        // Regression test (CodeRabbit review on PR #569): a repeated
+        // dependency used to save cleanly and then fail
+        // `resolve_deploy_order` with DuplicateDependency.
+        let dir = scratch_dir("dupdep");
+        let token = contract_dir(&dir, "token");
+        let vault = contract_dir(&dir, "vault");
+        let config = config_with("token", token.to_str().unwrap());
+        let err = validate_project_add(
+            "vault",
+            vault.to_str().unwrap(),
+            &["token".to_string(), "token".to_string()],
+            &[],
+            &config,
+        )
+        .unwrap_err();
+        assert!(err.contains("duplicate dependency 'token'"), "{err}");
+        // A single dependency stays valid.
+        let entry = validate_project_add(
+            "vault",
+            vault.to_str().unwrap(),
+            &["token".to_string()],
+            &[],
+            &config,
+        )
+        .unwrap();
+        assert_eq!(entry.depends_on, vec!["token".to_string()]);
         let _ = std::fs::remove_dir_all(dir);
     }
 
