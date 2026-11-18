@@ -465,9 +465,8 @@ fn build_argv(cap: &Capability, args: &intent::IntentArgs) -> Result<Vec<String>
         }
     }
 
-    // A `--format` the parser could not capture a value for (`--format`
-    // followed by prose) must refuse rather than default to json: the user
-    // asked for a format and dropping the word silently would change the
+    // A `--format` without a value must refuse rather than default to json:
+    // the user asked for a format and dropping the flag would change the
     // request.
     if args.has_flag("--format") && args.flag_value("--format").is_none() {
         return Err(PlanError::Parse(ParseError::UnsupportedArgument {
@@ -477,15 +476,16 @@ fn build_argv(cap: &Capability, args: &intent::IntentArgs) -> Result<Vec<String>
     }
     // JSON output: request it when the registry says it exists, unless the
     // request explicitly asked for pretty. A `--format` value the registry
-    // cannot back is refused here rather than dropped, so `--format yaml`
-    // never runs as a silent `--format json`.
+    // cannot back is refused here rather than dropped, so a named format
+    // never runs as a silent `--format json`. Use the same refusal wording
+    // for explicit and prose format requests.
     let asked = args.flag_value("--format");
     if let Some(v) = asked {
         let ok = (v == "json" && cap.formats.json) || (v == "pretty" && cap.formats.pretty);
         if !ok {
             return Err(PlanError::Parse(ParseError::UnsupportedArgument {
                 capability_id: cap.id,
-                arguments: format!("--format {v}"),
+                arguments: "--format <json|pretty>".to_string(),
             }));
         }
     }
@@ -934,16 +934,46 @@ mod tests {
 
     #[test]
     fn unsupported_format_value_is_refused_not_dropped() {
-        // `--format yaml` would otherwise vanish and the agent would emit
-        // `--format json` on its own — a different request than the user made.
-        let e = plan_err("inspect wasm a.wasm --format yaml");
-        assert_eq!(e.code(), "unsupported_argument", "{e:?}");
+        for request in [
+            "inspect wasm a.wasm --format yaml",
+            "inspect wasm a.wasm with sarif format",
+            "inspect wasm a.wasm with xml format",
+        ] {
+            let e = plan_err(request);
+            assert_eq!(e.code(), "unsupported_argument", "{e:?}");
+            assert!(
+                e.message().contains("--format <json|pretty>"),
+                "{}",
+                e.message()
+            );
+        }
     }
 
     #[test]
     fn pretty_format_suppresses_the_json_default() {
         let p = plan_ok("inspect wasm a.wasm --format pretty");
         assert!(!p.argv.contains(&"--format".to_string()), "{:?}", p.argv);
+    }
+
+    #[test]
+    fn prose_json_and_pretty_match_existing_format_argv() {
+        let no_format = plan_ok("inspect wasm a.wasm");
+        let json = plan_ok("inspect wasm a.wasm with json format");
+        let json_with_trailing_prose = plan_ok("inspect wasm a.wasm with json format please");
+        let pretty = plan_ok("inspect wasm a.wasm with pretty format");
+        let prose_about_format_module = plan_ok("audit src/lib.rs, check the format module");
+
+        assert_eq!(
+            no_format.argv,
+            vec!["wasm", "inspect", "a.wasm", "--format", "json"]
+        );
+        assert_eq!(json.argv, no_format.argv);
+        assert_eq!(json_with_trailing_prose.argv, no_format.argv);
+        assert_eq!(pretty.argv, vec!["wasm", "inspect", "a.wasm"]);
+        assert_eq!(
+            prose_about_format_module.argv,
+            vec!["audit", "src/lib.rs", "--format", "json"]
+        );
     }
 
     #[test]

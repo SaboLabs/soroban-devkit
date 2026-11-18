@@ -122,8 +122,7 @@ const TYPED_ARG_PREFIXES: &[&str] = &[
 const CANDIDATE_MARKERS: &[&str] = &["candidate", "new", "current", "to"];
 /// Words that mark an artifact as the baseline.
 const BASELINE_MARKERS: &[&str] = &["previous", "baseline", "old", "from"];
-/// Format words the CLI accepts as `--format` values (not shapeful, so they
-/// need spelling out — prose words must never be swallowed as values).
+/// Format values the agent can currently plan from the registry.
 const FORMAT_WORDS: &[&str] = &["json", "pretty"];
 
 /// Why a request could not be turned into an intent.
@@ -512,9 +511,9 @@ fn extract_args(request: &str) -> IntentArgs {
             };
             // A flag's value is either spelled into the token, quoted (a
             // quoted value may contain spaces — passphrases do), or a
-            // shapeful/known-word token following it. Ordinary prose is never
-            // swallowed, so a value the parser cannot trust stays absent and
-            // the planner refuses rather than guessing.
+            // shapeful/known-word token following it. `--format` is
+            // unambiguous: its next token is the requested format, including
+            // an unsupported one that the planner must refuse.
             let mut value = eq_value;
             // Tokens consumed by this flag: 1 = flag alone.
             let mut advance = 1usize;
@@ -527,7 +526,8 @@ fn extract_args(request: &str) -> IntentArgs {
                         let n = trim_punct(next);
                         if !n.is_empty()
                             && !n.starts_with('-')
-                            && (looks_like_value(n)
+                            && (flag == "--format"
+                                || looks_like_value(n)
                                 || FORMAT_WORDS.contains(&n.to_ascii_lowercase().as_str()))
                         {
                             value = Some(n.to_string());
@@ -618,6 +618,13 @@ fn extract_args(request: &str) -> IntentArgs {
         i += 1;
     }
 
+    if !args.has_flag("--format") {
+        if let Some(value) = extract_prose_format(&raw_tokens) {
+            args.explicit_flags
+                .push(("--format".to_string(), Some(value)));
+        }
+    }
+
     // Flag-carried values: `--base-fees <v>` supplies samples; `--rpc` (the
     // bare flag) asks for live statistics; `--rpc-url <v>` supplies an
     // endpoint; `--envelope <v>` and repeated `--args <v>` carry their data.
@@ -653,6 +660,80 @@ fn extract_args(request: &str) -> IntentArgs {
         args.function = extract_function(&raw_tokens);
     }
     args
+}
+
+/// Extract a format named in prose, such as "with sarif format" or
+/// "format json". Unknown values are retained for the planner to refuse.
+fn extract_prose_format(tokens: &[&str]) -> Option<String> {
+    const INTRODUCERS: &[&str] = &["as", "in", "using", "with"];
+    const KNOWN_FORMATS: &[&str] = &["csv", "json", "pretty", "sarif", "xml", "yaml"];
+    const DETERMINERS: &[&str] = &["a", "an", "the"];
+
+    for (index, token) in tokens.iter().enumerate() {
+        if !trim_format_punct(token).eq_ignore_ascii_case("format") {
+            continue;
+        }
+
+        let previous = index
+            .checked_sub(1)
+            .and_then(|i| tokens.get(i))
+            .map(|token| trim_format_punct(token));
+        let previous_word = previous.map(str::to_ascii_lowercase);
+
+        // Prefer the explicit "with NAME format" shape so trailing prose
+        // after "format" cannot replace NAME.
+        if let (Some(introducer), Some(value)) =
+            (index.checked_sub(2).and_then(|i| tokens.get(i)), previous)
+        {
+            if INTRODUCERS.contains(&trim_format_punct(introducer).to_ascii_lowercase().as_str())
+                && !value.is_empty()
+                && !value.starts_with('-')
+            {
+                return Some(value.to_ascii_lowercase());
+            }
+        }
+
+        let after = tokens
+            .get(index + 1)
+            .map(|token| trim_format_punct(token))
+            .filter(|token| !token.starts_with('-'));
+        let after = if after.is_some_and(|word| word.eq_ignore_ascii_case("as")) {
+            tokens
+                .get(index + 2)
+                .map(|token| trim_format_punct(token))
+                .filter(|token| !token.starts_with('-'))
+        } else {
+            after
+        };
+        let Some(value) = after.filter(|value| !value.is_empty()) else {
+            continue;
+        };
+
+        // A bare mention such as "the format module" is not a request. Accept
+        // unknown values only in an output-format context; known format names
+        // remain supported in the concise "format NAME" form.
+        let output_context = index == 0
+            || matches!(
+                previous_word.as_deref(),
+                Some("output" | "as" | "with" | "using" | "in")
+            )
+            || previous.is_some_and(|word| word.ends_with(".rs"));
+        let is_determiner = previous_word
+            .as_deref()
+            .is_some_and(|word| DETERMINERS.contains(&word));
+        if !is_determiner
+            && (output_context || KNOWN_FORMATS.contains(&value.to_ascii_lowercase().as_str()))
+        {
+            return Some(value.to_ascii_lowercase());
+        }
+    }
+    None
+}
+
+/// Strip sentence punctuation for format recognition without changing how
+/// paths and other request arguments are tokenized.
+fn trim_format_punct(token: &str) -> &str {
+    trim_punct(token).trim_matches(|c: char| matches!(c, '.' | '!' | '?'))
 }
 
 /// Record an artifact path once (a flag-supplied value must not double-count
@@ -1170,6 +1251,31 @@ mod tests {
             .unwrap();
         assert_eq!(i.args.wasm.as_deref(), Some("cand.wasm"));
         assert_eq!(i.args.previous_wasm.as_deref(), Some("base.wasm"));
+    }
+
+    #[test]
+    fn prose_format_names_are_captured_for_planner_validation() {
+        for (request, expected) in [
+            ("audit src/lib.rs with sarif format", "sarif"),
+            ("audit src/lib.rs with sarif format.", "sarif"),
+            ("audit src/lib.rs with xml format", "xml"),
+            ("audit src/lib.rs with csv format", "csv"),
+            ("audit src/lib.rs with yaml format", "yaml"),
+            ("audit src/lib.rs with json format", "json"),
+            ("audit src/lib.rs with json format please", "json"),
+            ("audit src/lib.rs with pretty format", "pretty"),
+            ("audit src/lib.rs format sarif", "sarif"),
+        ] {
+            let intent = parse(request).unwrap();
+            assert_eq!(
+                intent.args.flag_value("--format"),
+                Some(expected),
+                "{request}"
+            );
+        }
+
+        let intent = parse("audit src/lib.rs, check the format module").unwrap();
+        assert_eq!(intent.args.flag_value("--format"), None);
     }
 
     #[test]
