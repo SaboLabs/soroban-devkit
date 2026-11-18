@@ -33,6 +33,10 @@ sdkt-audit-example-rule = { version = "2.7.0", path = "../sdkt-audit-example-rul
 stellar-xdr = { version = "30.0.0", features = ["std", "arbitrary", "serde"] }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
+# Cross-platform advisory file locking for `project add` (flock on
+# Unix, LockFileEx on Windows). Already in the workspace lockfile as a
+# transitive dependency; promoted to a direct dependency here.
+fd-lock = "4"
 toml = "1.1"
 toml_edit = "0.25"
 tokio = { version = "1", features = ["rt-multi-thread", "macros"] }

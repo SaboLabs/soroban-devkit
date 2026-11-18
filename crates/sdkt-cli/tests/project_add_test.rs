@@ -203,3 +203,42 @@ fn add_json_output_is_one_parsable_object() {
     assert_eq!(value["path"], "./contracts/token");
     assert_eq!(value["ctor_args"], serde_json::json!(["u32:100"]));
 }
+
+#[test]
+fn concurrent_adds_both_persist() {
+    // Regression test (CodeRabbit review on PR #569): two overlapping
+    // `project add` runs used to race on the read-modify-write of
+    // `.sdkt.toml`, and the last rename could silently drop the other's
+    // entry. The sidecar lock serializes them, so both entries persist.
+    let project = TempDir::new().unwrap();
+    let dir = project.path();
+    contract_dir(dir, "token");
+    contract_dir(dir, "vault");
+
+    std::thread::scope(|s| {
+        let token = s.spawn(|| {
+            sdkt(dir)
+                .args(["project", "add", "token", "--path", "./contracts/token"])
+                .assert()
+                .success();
+        });
+        let vault = s.spawn(|| {
+            sdkt(dir)
+                .args(["project", "add", "vault", "--path", "./contracts/vault"])
+                .assert()
+                .success();
+        });
+        token.join().unwrap();
+        vault.join().unwrap();
+    });
+
+    let config = DevKitConfig::from_file(dir.join(".sdkt.toml")).unwrap();
+    assert!(
+        config.contracts.contains_key("token"),
+        "token entry must survive a concurrent add"
+    );
+    assert!(
+        config.contracts.contains_key("vault"),
+        "vault entry must survive a concurrent add"
+    );
+}

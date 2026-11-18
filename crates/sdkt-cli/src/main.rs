@@ -9727,6 +9727,40 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
                 format,
             } => {
                 let fmt = parse_format_str(&format);
+                // Serialize concurrent `project add` runs: without a lock,
+                // two overlapping invocations can both read the same
+                // `.sdkt.toml` and the last rename silently drops the
+                // other's entry. The lock is a sidecar file (never
+                // `.sdkt.toml` itself, which the save replaces by rename),
+                // acquired before the config is loaded and held through
+                // validation and save; it is released when the guard drops
+                // (or the process exits). The critical section is short,
+                // so a contending run just waits briefly.
+                let lock_path = Path::new(".sdkt.toml.lock");
+                let lock_file = match fs::OpenOptions::new()
+                    .create(true)
+                    .truncate(false)
+                    .write(true)
+                    .open(lock_path)
+                {
+                    Ok(f) => f,
+                    Err(e) => {
+                        eprintln!(
+                            "Error: cannot open lock file {}: {}",
+                            lock_path.display(),
+                            e
+                        );
+                        process::exit(1);
+                    }
+                };
+                let mut config_lock = fd_lock::RwLock::new(lock_file);
+                let _config_guard = match config_lock.write() {
+                    Ok(guard) => guard,
+                    Err(e) => {
+                        eprintln!("Error: cannot lock .sdkt.toml for writing: {e}");
+                        process::exit(1);
+                    }
+                };
                 // Missing file is fine (a minimal one is created); a
                 // present-but-unparseable file is an error, never a silent
                 // fallback to an empty config.
