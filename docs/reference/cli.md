@@ -123,6 +123,7 @@ sdkt
 │   ├── simulate <xdr>        [--format] [--abi <wasm>] [--abi-contract <id>] (RPC; surfaces restore preambles, costs, state changes; ABI-aware result decoding. `--abi-contract` fetches the deployed contract's on-chain WASM for decoding)
 │   ├── sign                  [--input <xdr|file>] [--output <file>] [--identity <name>] [--network <testnet|mainnet|futurenet|custom:<p>>] [--format] (offline ED25519 signing)
 │   ├── submit <xdr>          [--wait] [--timeout <s>] [--interval <s>] [--format] (RPC)
+│   ├── status <hash>         [--wait] [--timeout <s>] [--interval <s>] [--format] [--abi <wasm>] [--abi-contract <id>] (RPC; read-only lookup, exit 0 SUCCESS/PENDING, 1 FAILED, 2 NOT_FOUND/usage error)
 │   └── build                 [--source --sequence --contract --function --fee* --arg* --output --memo-text <text> --memo-id <id>]
 │                             Offline by default: the envelope carries only the
 │                             base inclusion fee (100 stroops) and prints a
@@ -446,6 +447,13 @@ or git logic is duplicated; the same `compute_dependency_integrity` /
 │   deploys it fresh, replacing the stale record. The default identity (see
 │   `sdkt identity`) is used to sign all deployments.
 │
+│   Each deployed contract is verified after it settles: its on-chain WASM
+│   hash is compared against the artifact bytes already in memory (see the
+│   `deploy` section below for the `Verified:` line, the JSON `verification`
+│   object, and exit code 3 on verification failure). `--no-verify` skips
+│   the check for every contract. Contracts skipped via `--skip-deployed`
+│   are not re-verified.
+│
 │   **Constructor arguments**: contracts requiring initialization parameters at
 │   create time declare them in `.sdkt.toml` via the `ctor_args` field:
 │
@@ -488,6 +496,8 @@ or git logic is duplicated; the same `compute_dependency_integrity` /
     │                           create transactions; default 60)
     ├── --interval <SECONDS>   (poll interval while waiting; default 1)
     ├── --arg <TYPE:VALUE>...  (constructor arguments)
+    ├── --no-verify            (skip the post-deploy on-chain WASM hash
+    │                           verification; see below)
     └── --network-profile <NAME> / --rpc-url <URL> / --network-passphrase <P>
 
 `--wasm-hash` skips the upload transaction and submits only contract creation,
@@ -495,6 +505,27 @@ which is useful to resume after an upload succeeded but creation failed.
 Prediction-only options (`--dry-run`, `--show-address`) and
 `--deny-breaking` are rejected with `--wasm-hash`, because these operations
 require the local WASM bytes.
+
+After a successful deploy, sdkt verifies the deployed contract by comparing
+its on-chain WASM hash against the artifact bytes already in memory (the same
+read-only check `sdkt verify` runs; no second file read, no new RPC calls
+beyond what `verify` already makes). Pretty output prints
+`Verified: on-chain WASM hash matches local artifact ✓`; `--format json`
+gains an additive `verification` object
+(`{"status": "verified", "onChainWasmHash": "...", "localWasmHash": "..."}`).
+A failed verification is NOT a deploy failure — the upload and create
+transactions have settled — but it is loud and machine-catchable: a hard
+warning on stderr naming both hashes, `"verification": {"status": "failed",
+"reason": ...}` in JSON, and exit code **3** (distinct from 0 success, 1
+deploy/IO failure, 2 usage error). The same applies when the contract cannot
+be read on-chain yet (e.g. not yet visible); re-run
+`sdkt verify <contract-id> --wasm <file>` to re-check. `--no-verify` skips
+the check entirely — behavior identical to before, with no extra RPC
+round-trip — and reports `"verification": {"status": "skipped"}` in JSON.
+`sdkt project deploy` verifies every contract it deploys the same way
+(one `verification` entry per deployed alias; contracts skipped via
+`--skip-deployed` are not re-verified) and also exits 3 when any
+verification fails after an otherwise successful deploy.
 
 ├── plugin                    Manage local audit plugins (install/remove/list/show/update)
 │   ├── init <name>           [--force] [--format]  Scaffold a new audit rule crate
@@ -626,6 +657,72 @@ Exit codes:
 - `1` — at least one check failed (e.g. invalid config, missing WASM target)
 
 Warnings are never fatal. The JSON output contains no secret material.
+
+## tx status
+
+`sdkt tx status <HASH>` looks up a transaction by hash and reports its
+settlement status. It is read-only: it never signs, submits, or re-submits
+anything. Without `--wait` it performs exactly one `getTransaction` lookup;
+with `--wait` it polls until settlement, with the same `--timeout` /
+`--interval` semantics as `tx submit --wait`.
+
+Exit codes: `0` when the status is `SUCCESS` (or `PENDING` without
+`--wait`), `1` when `FAILED`, `2` when `NOT_FOUND` or on a usage error
+(malformed hash, unreadable response, wait timeout).
+
+```bash
+# Success: prints the status, the hash, and the decoded TransactionResult.
+sdkt tx status aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+# Status: SUCCESS
+# Hash: aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+# Ledger: 100
+# Result:
+#   {
+#     "fee_charged": "100",
+#     "result": { "tx_success": [...] },
+#     ...
+#   }
+
+# Failed: exit 1, with the error code and the failure diagnostic events
+# from the result metadata where present.
+sdkt tx status bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+# Status: FAILED
+# Hash: bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+# Ledger: 101
+# Error: tx_failed
+# Result:
+#   ...
+# Diagnostics:
+#   AAAA...
+
+# Not found: exit 2.
+sdkt tx status cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc
+# Status: NOT_FOUND
+# Hash: cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc
+
+# Pending without --wait: exit 0 — the transaction has not failed, the
+# operator only asked whether it settled yet. With --wait the command
+# returns once the transaction settles and reports the settled status.
+sdkt tx status dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd
+# Status: PENDING
+# Hash: dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd
+
+# JSON output: one object with hash, status, and the decoded result
+# (result_meta where present).
+sdkt tx status aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa --format json
+# {"hash":"aaaa...","status":"SUCCESS","result":{...},"result_meta":{...}}
+
+# ABI-aware decoding of the invoke return value, reusing the tx simulate
+# path (--abi and --abi-contract are mutually exclusive).
+sdkt tx status aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa --abi ./contract.wasm
+# Status: SUCCESS
+# ...
+# Decoded Result: u32(42)
+```
+
+A malformed hash (anything other than 64 hexadecimal characters) exits 2
+naming the problem before any RPC call is made. A corrupt `result_xdr` is
+an error naming the hash, never a silent empty result.
 
 ## Encode
 
@@ -915,7 +1012,15 @@ Store root precedence (lowest → highest): `<cwd>/.sdkt/plugins`,
 
 - `--format json` is supported on all read-style commands, every `plugin` subcommand, and on `diff`, `audit`, `deploy`, `init` for scripting / CI.
 - `diff --upgrade-safety` and `deploy --deny-breaking` implement the Upgrade Safety Guard (see `ROADMAP.md`).
-- **WASM size policy (opt-in).** `diff` and `release-assurance` accept `--max-size-bytes <N>` (absolute ceiling on the candidate artifact) and `--max-growth-pct <N>` (growth over the baseline). Thresholds are **operator-supplied policy** — SDKT hardcodes no Stellar network limit, and passing a threshold does not assert network-limit compliance. `diff` measures growth against `--old-wasm`; `release-assurance` requires `--previous-wasm` for a growth check and fails with an explicit error when it is missing rather than silently skipping. Violations exit non-zero: `diff` prints the violation on stderr after the report, and `release-assurance` marks the artifact section `FAIL` (so `release_status` becomes `FAIL`). Boundaries are inclusive — a size exactly at the limit or growth exactly at the cap passes. `diff --format json` also reports `size_delta_bytes` (signed) and `size_delta_pct` (one decimal, `null` when the old artifact is zero bytes). Size policy is independent of ABI compatibility: it is refused in combination with `diff --upgrade-safety`, and a size violation never changes an upgrade-safety verdict.
+- **Diffing deployed contracts.** `sdkt diff` accepts `--old-contract <C...>` / `--new-contract <C...>` in place of `--old-wasm` / `--new-wasm`: each contract side fetches its on-chain WASM over RPC (the same `inspect` → `getLedgerEntries` composition `verify --upgrade-safety` uses) and the fetched bytes are diffed by the existing `diff_wasm` path. The two sides are independent — a file side and a contract side can be mixed. Contract-ID sides require a network (`--network testnet|mainnet|futurenet`, `--rpc-url <URL>`, or `--network-profile <NAME>`); `--old-contract` conflicts with `--old-wasm` (same for `--new-*`), and each side needs at least one source. A contract ID that does not exist on the network fails with a clear "contract not found" error. Pretty output is unchanged; `--format json` records each side's origin in the additive `old_source` / `new_source` fields (`{"kind": "file", "path": ...}` or `{"kind": "contract", "contract_id": ...}`), which are absent for the classic two-file diff. `--upgrade-safety`, `--max-growth-pct`, and `--max-size-bytes` work with contract-ID sides exactly as with files.
+
+  ```bash
+  sdkt diff --old-contract CAE3U7JKESRWZHPEQ72DVNGOQ6WPA7HSPQZL5YV46NPCE4TMUPAGYMEC \
+      --new-contract CDLZFC3SYJYDZT7K67VZ75HPJVIEUVNIXF47ZG2FB2RMQQVU2HHGCYSC \
+      --network testnet --format json
+  ```
+
+- **WASM size policy (opt-in).** `diff` and `release-assurance` accept `--max-size-bytes <N>` (absolute ceiling on the candidate artifact) and `--max-growth-pct <N>` (growth over the baseline). Thresholds are **operator-supplied policy** — SDKT hardcodes no Stellar network limit, and passing a threshold does not assert network-limit compliance. `diff` measures growth against the old side (file or contract); `release-assurance` requires `--previous-wasm` for a growth check and fails with an explicit error when it is missing rather than silently skipping. Violations exit non-zero: `diff` prints the violation on stderr after the report, and `release-assurance` marks the artifact section `FAIL` (so `release_status` becomes `FAIL`). Boundaries are inclusive — a size exactly at the limit or growth exactly at the cap passes. `diff --format json` also reports `size_delta_bytes` (signed) and `size_delta_pct` (one decimal, `null` when the old artifact is zero bytes). Size policy is independent of ABI compatibility: it is refused in combination with `diff --upgrade-safety`, and a size violation never changes an upgrade-safety verdict.
 
   ```bash
   # Report size change alongside the ABI diff (always on, no flags needed):
@@ -930,7 +1035,7 @@ Store root precedence (lowest → highest): `<cwd>/.sdkt/plugins`,
       --max-growth-pct 10 --max-size-bytes 131072
   ```
 
-- `audit` implements the static-analysis rules (AUTH-001/002/003/004, MOVE-001, MATH-001, CEI-001).
+- `audit` implements the static-analysis rules (AUTH-001/002/003/004, MOVE-001, MATH-001, CEI-001). Nested modules are scanned recursively: functions inside `mod` blocks (including a `mod` inside a `mod` and `impl` blocks inside a `mod`) are checked the same as top-level functions, with findings located by their qualified path (e.g. `inner::initialize`). Only modules declared inline in the audited file are scanned; `mod foo;` pointing at another file and `use` declarations are not followed.
 - **AUTH-001/AUTH-004 severity follows observed behavior, not the name.** Both rules start from a privileged-name heuristic (`initialize`/`init`, `set_*`/`grant_*`/`revoke_*` prefixes, and the substrings `admin`, `mint`, `burn`, `pause`, `unpause`, `upgrade`, `withdraw`, `configure`, `freeze`, `ban`, `drain`, `set_admin`, `owner_set`, `transfer_ownership`, `change_owner`, `set_auth`), then decide severity from what the function actually does:
   - a method of a `#[contractimpl]` block that performs a recognized state write or an external call and never calls `require_auth()` → **critical** (the unguarded-privilege case);
   - a function that is **not** a `#[contractimpl]` method (a plain `fn` or a method of an un-annotated impl) → **info**: external callers cannot reach it, so authorization is the responsibility of the entrypoint that calls it;

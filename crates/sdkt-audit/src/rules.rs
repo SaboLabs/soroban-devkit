@@ -128,7 +128,12 @@ impl AuditRule for Auth004 {
     }
     fn check(&self, scans: &[FnScan], _ctx: &AuditContext, report: &mut AuditReport) {
         for s in scans {
-            let name = s.fn_name.to_lowercase();
+            // Match on the unqualified name so a transfer-style function
+            // inside a module (`inner::transfer`) or an impl block
+            // (`Vault::transfer`) is treated exactly like a top-level
+            // `transfer`; the location/message below still carry the
+            // qualified name.
+            let name = crate::audit::unqualified(&s.fn_name).to_lowercase();
             let is_transfer = matches!(
                 name.as_str(),
                 "transfer" | "transfer_from" | "transferfrom" | "withdraw" | "burn"

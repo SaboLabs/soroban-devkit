@@ -18,7 +18,7 @@ pub use spec::{
 pub use spec_diff::{
     diff_specs, diff_wasm, event_sig, size_delta_bytes, size_delta_pct, type_sig, upgrade_safety,
     upgrade_safety_wasm, ChangeKind, EventSignatureChange, FunctionSignatureChange, SpecDiff,
-    TypeDefinitionChange, UpgradeVerdict, VerdictChange, WasmSummary,
+    TypeDefinitionChange, UpgradeVerdict, VerdictChange, WasmSource, WasmSummary,
 };
 
 #[derive(Error, Debug)]
