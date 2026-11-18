@@ -755,6 +755,19 @@ enum FuzzAction {
         #[arg(long, value_name = "WASM")]
         wasm: String,
     },
+    /// Compare two campaign evidence files and report new, fixed, and
+    /// persisting findings (read-only; exits 1 when new findings exist)
+    Compare {
+        /// Path to the baseline campaign evidence JSON
+        #[arg(long, value_name = "FILE")]
+        baseline: String,
+        /// Path to the new campaign evidence JSON
+        #[arg(long, value_name = "FILE")]
+        new: String,
+        /// Output format (pretty | json)
+        #[arg(short, long, default_value = "pretty")]
+        format: String,
+    },
 }
 
 #[derive(Subcommand)]
@@ -9953,6 +9966,22 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
                 match commands::fuzz::run_replay(&artifact, &wasm, "pretty") {
                     Ok(true) => {}
                     Ok(false) => process::exit(1),
+                    Err(e) => {
+                        eprintln!("Error: {e}");
+                        process::exit(2);
+                    }
+                }
+            }
+            FuzzAction::Compare {
+                baseline,
+                new,
+                format,
+            } => {
+                match commands::fuzz::run_compare(&baseline, &new, &format) {
+                    // New findings exist → exit 1 (CI gate).
+                    Ok(true) => process::exit(1),
+                    Ok(false) => {}
+                    // Usage/input error → exit 2, distinct from findings.
                     Err(e) => {
                         eprintln!("Error: {e}");
                         process::exit(2);

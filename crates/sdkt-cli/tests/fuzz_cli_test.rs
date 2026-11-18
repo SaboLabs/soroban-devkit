@@ -456,3 +456,171 @@ fn cli_campaign_wrong_auth_guarded_success_rule_reports_findings() {
     .code(0)
     .stdout(predicate::str::contains("REPRODUCED"));
 }
+
+// ---------------------------------------------------------------------------
+// Issue #536: `sdkt fuzz compare` — new / fixed / persisting findings
+// ---------------------------------------------------------------------------
+
+use sdkt_fuzz::evidence::FindingEvidence;
+use sdkt_fuzz::{CampaignConfig, CampaignEvidence};
+use std::collections::BTreeMap;
+
+fn compare_evidence_file(
+    dir: &std::path::Path,
+    name: &str,
+    wasm_sha256: &str,
+    findings: Vec<(&str, &str, &str, &str)>,
+) -> PathBuf {
+    let evidence = CampaignEvidence {
+        campaign_completed: true,
+        config: CampaignConfig {
+            wasm_sha256: wasm_sha256.to_string(),
+            ..CampaignConfig::default()
+        },
+        case_count: findings.len(),
+        passed: 0,
+        expected_errors: 0,
+        findings: findings
+            .into_iter()
+            .map(|(case_id, function, reason_code, artifact_hash)| FindingEvidence {
+                case_id: case_id.to_string(),
+                function: function.to_string(),
+                reason_code: reason_code.to_string(),
+                artifact_hash: artifact_hash.to_string(),
+                minimized: false,
+            })
+            .collect(),
+        minimized_findings: 0,
+        artifacts_available: false,
+        replay: BTreeMap::new(),
+        deterministic: true,
+    };
+    let path = dir.join(name);
+    std::fs::write(
+        &path,
+        serde_json::to_string_pretty(&evidence).unwrap(),
+    )
+    .unwrap();
+    path
+}
+
+fn fuzz_compare(baseline: &PathBuf, new: &PathBuf, extra: &[&str]) -> Command {
+    let mut args = vec![
+        "compare",
+        "--baseline",
+        baseline.to_str().unwrap(),
+        "--new",
+        new.to_str().unwrap(),
+    ];
+    args.extend_from_slice(extra);
+    fuzz(&args)
+}
+
+#[test]
+fn cli_fuzz_compare_new_finding_exits_one() {
+    let dir = temp_dir("compare-new");
+    let baseline = compare_evidence_file(
+        &dir,
+        "baseline.json",
+        "aaaa",
+        vec![("case0001", "increment", "RETURN_MISMATCH", "h1")],
+    );
+    let new = compare_evidence_file(
+        &dir,
+        "new.json",
+        "aaaa",
+        vec![
+            ("case0001", "increment", "RETURN_MISMATCH", "h1"),
+            ("case0003", "decrement", "RETURN_MISMATCH", "h3"),
+        ],
+    );
+
+    fuzz_compare(&baseline, &new, &[])
+        .assert()
+        .failure()
+        .code(1)
+        .stdout(predicate::str::contains("New: 1 | Fixed: 0 | Persisting: 1"))
+        .stdout(predicate::str::contains("h3"));
+}
+
+#[test]
+fn cli_fuzz_compare_all_fixed_exits_zero() {
+    let dir = temp_dir("compare-fixed");
+    let baseline = compare_evidence_file(
+        &dir,
+        "baseline.json",
+        "aaaa",
+        vec![("case0001", "increment", "RETURN_MISMATCH", "h1")],
+    );
+    let new = compare_evidence_file(&dir, "new.json", "aaaa", vec![]);
+
+    fuzz_compare(&baseline, &new, &[])
+        .assert()
+        .success()
+        .code(0)
+        .stdout(predicate::str::contains("New: 0 | Fixed: 1 | Persisting: 0"));
+}
+
+#[test]
+fn cli_fuzz_compare_json_output() {
+    let dir = temp_dir("compare-json");
+    let baseline = compare_evidence_file(
+        &dir,
+        "baseline.json",
+        "aaaa",
+        vec![("case0001", "increment", "RETURN_MISMATCH", "h1")],
+    );
+    let new = compare_evidence_file(
+        &dir,
+        "new.json",
+        "aaaa",
+        vec![
+            ("case0001", "increment", "RETURN_MISMATCH", "h1"),
+            ("case0003", "decrement", "RETURN_MISMATCH", "h3"),
+        ],
+    );
+
+    let output = fuzz_compare(&baseline, &new, &["--format", "json"])
+        .assert()
+        .failure()
+        .code(1)
+        .get_output()
+        .stdout
+        .clone();
+    let v: Value = serde_json::from_slice(&output).unwrap();
+    assert_eq!(v["baseline_wasm_sha256"], "aaaa");
+    assert_eq!(v["new_wasm_sha256"], "aaaa");
+    assert_eq!(v["new"].as_array().unwrap().len(), 1);
+    assert_eq!(v["new"][0]["artifact_hash"], "h3");
+    assert_eq!(v["new"][0]["case_id"], "case0003");
+    assert_eq!(v["fixed"].as_array().unwrap().len(), 0);
+    assert_eq!(v["persisting"].as_array().unwrap().len(), 1);
+    assert_eq!(v["persisting"][0]["artifact_hash"], "h1");
+}
+
+#[test]
+fn cli_fuzz_compare_wasm_mismatch_exits_two() {
+    let dir = temp_dir("compare-mismatch");
+    let baseline = compare_evidence_file(&dir, "baseline.json", "aaaa", vec![]);
+    let new = compare_evidence_file(&dir, "new.json", "bbbb", vec![]);
+
+    fuzz_compare(&baseline, &new, &[])
+        .assert()
+        .failure()
+        .code(2)
+        .stderr(predicate::str::contains("aaaa"))
+        .stderr(predicate::str::contains("bbbb"));
+}
+
+#[test]
+fn cli_fuzz_compare_unreadable_file_exits_two() {
+    let dir = temp_dir("compare-missing");
+    let missing = dir.join("no-such-baseline.json");
+    let new = compare_evidence_file(&dir, "new.json", "aaaa", vec![]);
+
+    fuzz_compare(&missing, &new, &[])
+        .assert()
+        .failure()
+        .code(2)
+        .stderr(predicate::str::contains("no-such-baseline.json"));
+}

@@ -829,6 +829,39 @@ sdkt fuzz replay ./sdkt-fuzz-artifacts/contract-increment-case0042.json \
 
 If `--replay` was used during the campaign, every artifact was automatically replayed to verify determinism. A `REPRODUCED` verdict confirms that the finding can be independently re-executed with the exact same inputs and produce the same result.
 
+### Compare
+
+`sdkt fuzz compare --baseline <BASELINE.json> --new <NEW.json>` diffs two campaign
+evidence files (`campaign-evidence.json`, written next to the artifacts by
+`sdkt fuzz campaign`) and reports which findings are new, which are fixed, and
+which persist — so CI can gate on regressions instead of judging each run in
+isolation.
+
+```bash
+sdkt fuzz compare --baseline last-week/campaign-evidence.json \
+  --new this-week/campaign-evidence.json
+# exit 1 when the new run introduced a finding; use it as a CI gate:
+#   sdkt fuzz compare --baseline baseline.json --new new.json || exit 1
+```
+
+Findings are matched by `artifact_hash` only; a finding in `--new` but not in
+`--baseline` is NEW, in `--baseline` but not in `--new` is FIXED, and in both
+is PERSISTING. The report groups findings by `reason_code` and `function` and
+names each by `case_id`, `function`, and `reason_code`. Differences in seed or
+case count are informational (printed in the header), not errors. The two
+campaigns must target the same artifact — a different `config.wasm_sha256` is
+an error naming both hashes. `--format json` emits one object with `new`,
+`fixed`, and `persisting` arrays plus both `wasm_sha256` values.
+
+| Exit code | Meaning |
+|-----------|---------|
+| `0` | No new findings (including the all-fixed case) |
+| `1` | At least one new finding exists |
+| `2` | Usage error: unreadable or unparseable evidence file, WASM mismatch |
+
+The command is read-only: it never writes, modifies, or deletes either
+evidence file, and it does not run a campaign.
+
 ### Artifact directory layout
 
 By default, artifacts are written to `./sdkt-fuzz-artifacts` with this structure:

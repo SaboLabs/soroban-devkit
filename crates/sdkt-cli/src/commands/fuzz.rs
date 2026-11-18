@@ -125,6 +125,120 @@ pub fn run_replay(artifact: &str, wasm: &str, format: &str) -> Result<bool, Stri
     Ok(outcome.is_reproduced())
 }
 
+/// Compare two campaign evidence files and render the verdict.
+///
+/// `Ok(true)` = the new run introduced at least one finding (exit 1);
+/// `Ok(false)` = no new findings, including the all-fixed case (exit 0);
+/// `Err(_)` = usage/input error: unreadable or unparseable evidence file,
+/// or campaigns for different WASM artifacts (exit 2).
+///
+/// Read-only: neither evidence file is written, modified, or deleted.
+pub fn run_compare(baseline: &str, new: &str, format: &str) -> Result<bool, String> {
+    let fmt = parse_format(format)
+        .ok_or_else(|| format!("invalid format '{format}' (expected pretty, json, or jsonl)"))?;
+    // `jsonl` has no meaning for a comparison report; treat it as `json`.
+    let fmt = match fmt {
+        FuzzFormat::Jsonl => FuzzFormat::Json,
+        other => other,
+    };
+
+    let baseline_evidence = read_evidence(baseline)?;
+    let new_evidence = read_evidence(new)?;
+    let comparison =
+        sdkt_fuzz::compare_evidence(&baseline_evidence, &new_evidence).map_err(|e| e)?;
+
+    match fmt {
+        FuzzFormat::Pretty => print_comparison_pretty(
+            baseline,
+            &baseline_evidence,
+            new,
+            &new_evidence,
+            &comparison,
+        ),
+        FuzzFormat::Json => print_comparison_json(&comparison),
+        FuzzFormat::Jsonl => unreachable!("jsonl is normalized to json above"),
+    }
+
+    Ok(comparison.has_new_findings())
+}
+
+/// Read and parse one campaign evidence file, naming the file on failure.
+fn read_evidence(path: &str) -> Result<sdkt_fuzz::CampaignEvidence, String> {
+    let text = std::fs::read_to_string(path)
+        .map_err(|e| format!("cannot read evidence file '{path}': {e}"))?;
+    serde_json::from_str(&text)
+        .map_err(|e| format!("cannot parse evidence file '{path}' as CampaignEvidence: {e}"))
+}
+
+fn print_comparison_pretty(
+    baseline_path: &str,
+    baseline: &sdkt_fuzz::CampaignEvidence,
+    new_path: &str,
+    new: &sdkt_fuzz::CampaignEvidence,
+    comparison: &sdkt_fuzz::EvidenceComparison,
+) {
+    let (new_count, fixed_count, persisting_count) = comparison.counts();
+    println!("Fuzz compare");
+    println!(
+        "  Baseline: {} (wasm_sha256 {}, cases {}, seed {})",
+        baseline_path, baseline.config.wasm_sha256, baseline.config.cases, baseline.config.seed_hex
+    );
+    println!(
+        "  New:      {} (wasm_sha256 {}, cases {}, seed {})",
+        new_path, new.config.wasm_sha256, new.config.cases, new.config.seed_hex
+    );
+    println!("  New: {new_count} | Fixed: {fixed_count} | Persisting: {persisting_count}");
+    print_comparison_findings("New findings", &comparison.new);
+    print_comparison_findings("Fixed findings", &comparison.fixed);
+    if !comparison.persisting.is_empty() {
+        println!();
+        println!("Persisting findings ({}):", comparison.persisting.len());
+        for f in &comparison.persisting {
+            println!(
+                "  - {} {} {} ({})",
+                f.case_id, f.function, f.reason_code, f.artifact_hash
+            );
+        }
+    }
+}
+
+fn print_comparison_findings(
+    heading: &str,
+    findings: &[sdkt_fuzz::evidence::FindingEvidence],
+) {
+    if findings.is_empty() {
+        return;
+    }
+    println!();
+    println!("{heading} ({}):", findings.len());
+    for f in findings {
+        println!(
+            "  - {} {} {} ({})",
+            f.case_id, f.function, f.reason_code, f.artifact_hash
+        );
+    }
+}
+
+fn print_comparison_json(comparison: &sdkt_fuzz::EvidenceComparison) {
+    let (new_count, fixed_count, persisting_count) = comparison.counts();
+    let json = serde_json::json!({
+        "baseline_wasm_sha256": comparison.baseline_wasm_sha256,
+        "new_wasm_sha256": comparison.new_wasm_sha256,
+        "summary": {
+            "new": new_count,
+            "fixed": fixed_count,
+            "persisting": persisting_count,
+        },
+        "new": comparison.new,
+        "fixed": comparison.fixed,
+        "persisting": comparison.persisting,
+    });
+    println!(
+        "{}",
+        serde_json::to_string(&json).expect("comparison view serializes")
+    );
+}
+
 /// Render a campaign report.
 fn print_report(report: &sdkt_fuzz::FuzzReport, fmt: &FuzzFormat) {
     match fmt {
