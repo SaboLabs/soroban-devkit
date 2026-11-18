@@ -874,11 +874,9 @@ mod tests {
 
     #[test]
     fn declared_valueless_flags_are_forwarded() {
+        let metadata_request = format!("show wasm metadata for contract {CID} --refresh");
         for (request, flag) in [
-            (
-                &format!("show wasm metadata for contract {CID} --refresh"),
-                "--refresh",
-            ),
+            (metadata_request.as_str(), "--refresh"),
             ("audit --no-plugins src/lib.rs", "--no-plugins"),
             ("run plugin doctor --all", "--all"),
             (
