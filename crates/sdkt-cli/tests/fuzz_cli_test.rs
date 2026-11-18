@@ -11,7 +11,7 @@
 use assert_cmd::Command;
 use predicates::prelude::*;
 use serde_json::Value;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 fn fuzz(args: &[&str]) -> Command {
     let mut cmd = Command::cargo_bin("sdkt").expect("built binary");
@@ -482,13 +482,15 @@ fn compare_evidence_file(
         expected_errors: 0,
         findings: findings
             .into_iter()
-            .map(|(case_id, function, reason_code, artifact_hash)| FindingEvidence {
-                case_id: case_id.to_string(),
-                function: function.to_string(),
-                reason_code: reason_code.to_string(),
-                artifact_hash: artifact_hash.to_string(),
-                minimized: false,
-            })
+            .map(
+                |(case_id, function, reason_code, artifact_hash)| FindingEvidence {
+                    case_id: case_id.to_string(),
+                    function: function.to_string(),
+                    reason_code: reason_code.to_string(),
+                    artifact_hash: artifact_hash.to_string(),
+                    minimized: false,
+                },
+            )
             .collect(),
         minimized_findings: 0,
         artifacts_available: false,
@@ -496,15 +498,11 @@ fn compare_evidence_file(
         deterministic: true,
     };
     let path = dir.join(name);
-    std::fs::write(
-        &path,
-        serde_json::to_string_pretty(&evidence).unwrap(),
-    )
-    .unwrap();
+    std::fs::write(&path, serde_json::to_string_pretty(&evidence).unwrap()).unwrap();
     path
 }
 
-fn fuzz_compare(baseline: &PathBuf, new: &PathBuf, extra: &[&str]) -> Command {
+fn fuzz_compare(baseline: &Path, new: &Path, extra: &[&str]) -> Command {
     let mut args = vec![
         "compare",
         "--baseline",
@@ -539,7 +537,9 @@ fn cli_fuzz_compare_new_finding_exits_one() {
         .assert()
         .failure()
         .code(1)
-        .stdout(predicate::str::contains("New: 1 | Fixed: 0 | Persisting: 1"))
+        .stdout(predicate::str::contains(
+            "New: 1 | Fixed: 0 | Persisting: 1",
+        ))
         .stdout(predicate::str::contains("h3"));
 }
 
@@ -558,7 +558,9 @@ fn cli_fuzz_compare_all_fixed_exits_zero() {
         .assert()
         .success()
         .code(0)
-        .stdout(predicate::str::contains("New: 0 | Fixed: 1 | Persisting: 0"));
+        .stdout(predicate::str::contains(
+            "New: 0 | Fixed: 1 | Persisting: 0",
+        ));
 }
 
 #[test]

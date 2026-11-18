@@ -144,8 +144,7 @@ pub fn run_compare(baseline: &str, new: &str, format: &str) -> Result<bool, Stri
 
     let baseline_evidence = read_evidence(baseline)?;
     let new_evidence = read_evidence(new)?;
-    let comparison =
-        sdkt_fuzz::compare_evidence(&baseline_evidence, &new_evidence).map_err(|e| e)?;
+    let comparison = sdkt_fuzz::compare_evidence(&baseline_evidence, &new_evidence)?;
 
     match fmt {
         FuzzFormat::Pretty => print_comparison_pretty(
@@ -202,10 +201,7 @@ fn print_comparison_pretty(
     }
 }
 
-fn print_comparison_findings(
-    heading: &str,
-    findings: &[sdkt_fuzz::evidence::FindingEvidence],
-) {
+fn print_comparison_findings(heading: &str, findings: &[sdkt_fuzz::evidence::FindingEvidence]) {
     if findings.is_empty() {
         return;
     }

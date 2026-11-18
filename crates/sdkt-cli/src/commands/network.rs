@@ -579,9 +579,7 @@ pub(crate) fn capture_to_profile(
         ),
         max_contract_size_bytes: pair_u32(&captured.max_contract_size_bytes),
         tx_max_size_bytes: pair_u32(&captured.tx_max_size_bytes),
-        tx_max_contract_events_size_bytes: pair_u32(
-            &captured.tx_max_contract_events_size_bytes,
-        ),
+        tx_max_contract_events_size_bytes: pair_u32(&captured.tx_max_contract_events_size_bytes),
         fee_contract_events_1kb: pair_i64(&captured.fee_contract_events_1kb),
         cpu_cost_params,
         mem_cost_params,
@@ -767,8 +765,7 @@ pub(crate) async fn run_network_action(
                 .duration_since(std::time::UNIX_EPOCH)
                 .map(|d| d.as_secs())
                 .unwrap_or(0);
-            let profile =
-                capture_to_profile(&captured, &target.config.rpc_url, captured_at_unix);
+            let profile = capture_to_profile(&captured, &target.config.rpc_url, captured_at_unix);
             if let Err(e) = profile.validate(Some(profile.ledger_sequence)) {
                 eprintln!("Error: captured profile failed validation: {e}");
                 process::exit(1);
@@ -1080,8 +1077,7 @@ mod tests {
         write_captured_profile(&profile, out.to_str().unwrap()).unwrap();
 
         let text = std::fs::read_to_string(&out).unwrap();
-        let back: sdkt_fuzz::network_profile::NetworkProfile =
-            serde_json::from_str(&text).unwrap();
+        let back: sdkt_fuzz::network_profile::NetworkProfile = serde_json::from_str(&text).unwrap();
         assert_eq!(back, profile);
         back.validate(Some(back.ledger_sequence))
             .expect("written file validates");

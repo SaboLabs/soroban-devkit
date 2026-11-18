@@ -433,6 +433,11 @@ enum Commands {
         #[command(flatten)]
         net: NetworkArgs,
     },
+    /// Token-focused contract inspection (SEP-41)
+    Token {
+        #[command(subcommand)]
+        action: TokenAction,
+    },
     /// Manage Soroban identities (keys)
     Identity {
         #[command(subcommand)]
@@ -705,6 +710,29 @@ enum Commands {
     /// Generate typed clients and other artifacts from contract interfaces
     #[command(subcommand)]
     Generate(GenerateAction),
+}
+
+#[derive(Subcommand)]
+enum TokenAction {
+    /// Inspect a deployed contract as a SEP-41 token: method presence from
+    /// its spec plus the four metadata values (read-only simulation).
+    ///
+    /// Presence comes from the contract spec only — never from a simulation
+    /// result. `balance`, `allowance`, and the state-changing methods are
+    /// never simulated. A value whose simulation fails is reported as
+    /// `unavailable` and never changes the presence verdict or `is_token`.
+    /// Exit 2 when the contract's WASM cannot be fetched or its spec
+    /// cannot be parsed (never reported as "not a token").
+    Info {
+        /// Stellar contract ID (C... StrKey format)
+        #[arg(value_name = "CONTRACT_ID")]
+        contract_id: String,
+        /// Output format (pretty or json)
+        #[arg(short, long, default_value = "pretty")]
+        format: String,
+        #[command(flatten)]
+        net: NetworkArgs,
+    },
 }
 
 #[derive(Subcommand)]
@@ -9989,6 +10017,15 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
                 }
             }
         },
+        Commands::Token { action } => match action {
+            TokenAction::Info {
+                contract_id,
+                format,
+                net,
+            } => {
+                run_token_info(&contract_id, &format, &net).await?;
+            }
+        },
         Commands::Generate(action) => match action {
             GenerateAction::Client {
                 wasm,
@@ -10004,6 +10041,239 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
     }
 
     Ok(())
+}
+
+/// One metadata value from a read-only simulation: either the decoded
+/// value, or `unavailable` with the reason. A failed simulation never
+/// changes a presence verdict or `is_token`.
+#[derive(Debug, Clone, serde::Serialize)]
+struct TokenMetadataValue {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    value: Option<serde_json::Value>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    error: Option<String>,
+}
+
+impl TokenMetadataValue {
+    fn ok(value: serde_json::Value) -> Self {
+        Self {
+            value: Some(value),
+            error: None,
+        }
+    }
+
+    fn unavailable(reason: String) -> Self {
+        Self {
+            value: None,
+            error: Some(reason),
+        }
+    }
+}
+
+/// Execute `sdkt token info`: classify a deployed contract against the
+/// SEP-41 interface from its spec, then read the four metadata values by
+/// read-only simulation.
+///
+/// Presence comes from the spec only. The seven methods that need address
+/// arguments or authorization (`balance`, `allowance`, `transfer`,
+/// `transfer_from`, `approve`, `burn`, `mint`) are never simulated. No
+/// signing, no submission, no state change. Exit 2 when the contract's
+/// WASM cannot be fetched or its spec cannot be parsed.
+async fn run_token_info(
+    contract_id: &str,
+    format: &str,
+    net: &NetworkArgs,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let fmt = parse_format_str(format);
+    let client = resolve_rpc_client(
+        net.rpc_url.clone(),
+        net.network_passphrase.clone(),
+        net.network_profile.clone(),
+    );
+
+    // Reuse the inspect composition (inspect_contract -> get_wasm_bytecode
+    // -> parse_contract_spec). Any failure here means the contract cannot
+    // be classified at all: exit 2, never "not a token".
+    let inspection = match inspect_contract(&client, contract_id).await {
+        Ok(i) => i,
+        Err(e) => {
+            eprintln!("Error: cannot inspect contract '{contract_id}': {e}");
+            process::exit(2);
+        }
+    };
+    let wasm_bytes = match get_wasm_bytecode(&client, &inspection.wasm_hash).await {
+        Ok(b) => b,
+        Err(e) => {
+            eprintln!(
+                "Error: cannot fetch WASM for contract '{contract_id}' (wasm_hash {}): {e}",
+                inspection.wasm_hash
+            );
+            process::exit(2);
+        }
+    };
+    let spec = match parse_contract_spec(&wasm_bytes) {
+        Ok(s) => s,
+        Err(e) => {
+            eprintln!("Error: cannot parse contract spec for '{contract_id}': {e}");
+            process::exit(2);
+        }
+    };
+
+    let methods = sdkt_wasm::classify_all(&spec);
+    let is_token = sdkt_wasm::is_token(&spec);
+
+    // Metadata values: only the four no-arg, no-auth methods, only when
+    // present with a matching signature, each by read-only simulation.
+    let mut metadata: Vec<(String, TokenMetadataValue)> = Vec::new();
+    for name in sdkt_wasm::METADATA_METHODS {
+        let presence = methods
+            .iter()
+            .find(|(m, _)| m.name == *name)
+            .map(|(_, p)| *p)
+            .unwrap_or(sdkt_wasm::MethodPresence::Absent);
+        let value = match presence {
+            sdkt_wasm::MethodPresence::Present => {
+                simulate_metadata_value(&client, contract_id, name).await
+            }
+            sdkt_wasm::MethodPresence::Absent => {
+                TokenMetadataValue::unavailable("method absent from contract spec".to_string())
+            }
+            sdkt_wasm::MethodPresence::SignatureMismatch => TokenMetadataValue::unavailable(
+                "method signature does not match the SEP-41 signature".to_string(),
+            ),
+        };
+        metadata.push((name.to_string(), value));
+    }
+
+    if fmt == OutputFormat::Json {
+        let methods_json: Vec<serde_json::Value> = methods
+            .iter()
+            .map(|(m, p)| serde_json::json!({"name": m.name, "presence": p.as_str()}))
+            .collect();
+        let metadata_json: serde_json::Map<String, serde_json::Value> = metadata
+            .iter()
+            .map(|(name, v)| {
+                (
+                    name.clone(),
+                    serde_json::to_value(v).expect("metadata value serializes"),
+                )
+            })
+            .collect();
+        let json = serde_json::json!({
+            "contract": contract_id,
+            "is_token": is_token,
+            "methods": methods_json,
+            "metadata": metadata_json,
+        });
+        println!("{}", serde_json::to_string(&json)?);
+    } else {
+        println!("Token info for {contract_id}");
+        println!("  is_token: {is_token}");
+        println!();
+        println!("  SEP-41 methods:");
+        for (m, p) in &methods {
+            println!("    {:<14}{}", m.name, p.as_str());
+        }
+        println!();
+        println!("  Metadata:");
+        for (name, v) in &metadata {
+            match (&v.value, &v.error) {
+                (Some(value), _) => println!("    {name:<14}{}", render_metadata_json(value)),
+                (None, Some(err)) => println!("    {name:<14}unavailable ({err})"),
+                (None, None) => println!("    {name:<14}unavailable"),
+            }
+        }
+    }
+
+    Ok(())
+}
+
+/// Render a metadata JSON value the way the pretty printer shows it:
+/// strings quoted, numbers bare.
+fn render_metadata_json(value: &serde_json::Value) -> String {
+    match value {
+        serde_json::Value::String(s) => format!("\"{s}\""),
+        other => other.to_string(),
+    }
+}
+
+/// Simulate one no-arg, no-auth metadata call (`name`, `symbol`,
+/// `decimals`, `total_supply`) read-only, reusing the `sdkt call`
+/// pattern: a zero-fake source account, sequence 0, fee 0, simulation
+/// only — never signed, never submitted. Any failure is reported as
+/// `unavailable` with the reason.
+async fn simulate_metadata_value(
+    client: &SorobanRpcClient,
+    contract_id: &str,
+    function: &str,
+) -> TokenMetadataValue {
+    use sdkt_rpc::simulate_transaction;
+    use sdkt_xdr::scval_from_base64;
+
+    let params = sdkt_xdr::builder::InvokeTransactionParams {
+        source_account: "GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF".into(),
+        sequence: 0,
+        fee: 0,
+        contract_id: contract_id.to_string(),
+        function: function.to_string(),
+        args: vec![],
+        memo: None,
+    };
+    let envelope = match sdkt_xdr::builder::build_invoke_transaction(&params) {
+        Ok(e) => e,
+        Err(e) => {
+            return TokenMetadataValue::unavailable(format!(
+                "failed to build invoke transaction: {e}"
+            ));
+        }
+    };
+    let resp = match simulate_transaction(client, &envelope).await {
+        Ok(r) => r,
+        Err(e) => return TokenMetadataValue::unavailable(format!("simulation failed: {e}")),
+    };
+    if let Some(err) = &resp.error {
+        return TokenMetadataValue::unavailable(format!("simulation error: {err}"));
+    }
+    let raw = match resp.results.first() {
+        Some(r) => r.xdr.clone(),
+        None => {
+            return TokenMetadataValue::unavailable("simulation returned no result".to_string());
+        }
+    };
+    let scval = match scval_from_base64(&raw) {
+        Some(v) => v,
+        None => {
+            return TokenMetadataValue::unavailable(
+                "simulation result is not a decodable ScVal".to_string(),
+            );
+        }
+    };
+    match function {
+        "name" | "symbol" => match scval {
+            stellar_xdr::ScVal::String(s) => {
+                TokenMetadataValue::ok(serde_json::Value::String(s.to_utf8_string_lossy()))
+            }
+            other => TokenMetadataValue::unavailable(format!(
+                "unexpected return type: expected string, got {other:?}"
+            )),
+        },
+        "decimals" => match scval {
+            stellar_xdr::ScVal::U32(n) => TokenMetadataValue::ok(serde_json::Value::from(n)),
+            other => TokenMetadataValue::unavailable(format!(
+                "unexpected return type: expected u32, got {other:?}"
+            )),
+        },
+        "total_supply" => match scval {
+            // i128 as a decimal string: JSON numbers cannot hold it safely.
+            stellar_xdr::ScVal::I128(p) => {
+                TokenMetadataValue::ok(serde_json::Value::String(p.to_string()))
+            }
+            other => TokenMetadataValue::unavailable(format!(
+                "unexpected return type: expected i128, got {other:?}"
+            )),
+        },
+        _ => TokenMetadataValue::unavailable(format!("unknown metadata method '{function}'")),
+    }
 }
 
 /// Execute `sdkt generate client`: parse the ContractSpec from a local WASM

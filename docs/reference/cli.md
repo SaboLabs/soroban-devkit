@@ -510,6 +510,11 @@ require the local WASM bytes.
 │   └── client <wasm>         Generate typed Rust client from ContractSpec
 │       ├── --output <file>               Output file (prints to stdout if omitted)
 │       └── --skip-unsupported            Skip unsupported functions instead of aborting
+│
+├── token                     SEP-41 token inspection (read-only)
+│   └── info <contract-id>    Classify a deployed contract against SEP-41
+│       ├── --format <pretty|json>        Output format (default: pretty)
+│       └── [network flags inherited from network-profile resolution]
 
 ```
 
@@ -569,6 +574,58 @@ explicit --rpc-url / --network-passphrase
 
 `tx sign` is excluded — it is offline signing and takes only `--network` for the
 signature hash. Commands invoked without these flags behave exactly as before.
+
+## Token inspection
+
+`sdkt token info <CONTRACT_ID> [--format json]` inspects a deployed contract
+as a SEP-41 token. It fetches the contract's WASM (via `inspect` +
+`getWasmBytecode`) and classifies each of the 11 SEP-41 methods
+(`name`, `symbol`, `decimals`, `total_supply`, `balance`, `allowance`,
+`transfer`, `transfer_from`, `approve`, `burn`, `mint`) from the contract
+spec by name **and** signature (account parameters are `address`, amounts
+are `i128`, `approve` takes `expiration_ledger: u32`). The presence of a
+method is `present`, `absent`, or `signature_mismatch` (right name, wrong
+signature) — presence comes from the spec only, never from a simulation
+result.
+
+`is_token` is true only when the four metadata methods (`name`, `symbol`,
+`decimals`, `total_supply`) are present with matching signatures. Their
+values are read by read-only simulation (no-arg, no-auth calls, never
+signed or submitted). The other seven methods are never simulated — not
+`balance`/`allowance`, and not the state-changing methods. A metadata
+value whose simulation fails is reported as `unavailable` with the reason;
+that never changes the presence verdict or `is_token`.
+
+Exit codes: 0 for a classified contract (token or not), 2 when the
+contract's WASM cannot be fetched or its spec cannot be parsed — an
+undecodable or missing contract is never reported as "not a token".
+
+```bash
+sdkt token info CAAA... --network testnet
+# Token info for CAAA...
+#   is_token: true
+#   SEP-41 methods:
+#     name           present
+#     symbol         present
+#     decimals       present
+#     total_supply   present
+#     balance        present
+#     ...
+#   Metadata:
+#     name:          "My Token"
+#     symbol:        "MTK"
+#     decimals:      7
+#     total_supply:  1000000000
+
+sdkt token info CAAA... --network testnet --format json
+# {"contract":"CAAA...","is_token":true,"methods":[{"name":"name","presence":"present"},...],
+#  "metadata":{"name":{"value":"My Token"},"symbol":{"value":"MTK"},
+#  "decimals":{"value":7},"total_supply":{"value":"1000000000"}}}
+```
+
+`total_supply` is emitted as a decimal string in JSON because an `i128`
+does not fit a JSON number safely. The command takes a bare contract ID;
+`@alias` resolution is not supported.
 
 ## Shell completions
 

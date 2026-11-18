@@ -90,13 +90,8 @@ pub fn compare_evidence(
         .collect();
 
     // Deterministic grouping: reason_code, then function, then case_id.
-    let sort_key = |f: &FindingEvidence| {
-        (
-            f.reason_code.clone(),
-            f.function.clone(),
-            f.case_id.clone(),
-        )
-    };
+    let sort_key =
+        |f: &FindingEvidence| (f.reason_code.clone(), f.function.clone(), f.case_id.clone());
     new_findings.sort_by_key(sort_key);
     fixed.sort_by_key(sort_key);
     persisting.sort_by_key(sort_key);
@@ -171,7 +166,10 @@ mod tests {
     #[test]
     fn empty_baseline_means_everything_is_new() {
         let baseline = evidence("aa", vec![]);
-        let new = evidence("aa", vec![finding("case0001", "f", "RETURN_MISMATCH", "h1")]);
+        let new = evidence(
+            "aa",
+            vec![finding("case0001", "f", "RETURN_MISMATCH", "h1")],
+        );
         let cmp = compare_evidence(&baseline, &new).unwrap();
         assert_eq!(cmp.counts(), (1, 0, 0));
         assert!(cmp.has_new_findings());
@@ -179,7 +177,10 @@ mod tests {
 
     #[test]
     fn empty_new_means_everything_is_fixed() {
-        let baseline = evidence("aa", vec![finding("case0001", "f", "RETURN_MISMATCH", "h1")]);
+        let baseline = evidence(
+            "aa",
+            vec![finding("case0001", "f", "RETURN_MISMATCH", "h1")],
+        );
         let new = evidence("aa", vec![]);
         let cmp = compare_evidence(&baseline, &new).unwrap();
         assert_eq!(cmp.counts(), (0, 1, 0));

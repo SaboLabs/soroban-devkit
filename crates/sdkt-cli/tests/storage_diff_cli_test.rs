@@ -591,7 +591,10 @@ fn extend_line(stdout: &str) -> Option<String> {
 fn extend_plan_removed_only_prints_restore_not_extend() {
     let stdout = extend_plan_stdout(&[("removedKey==", 50_000)], &[], false);
 
-    assert!(!stdout.contains("Ready-to-run:"), "removed-only plan must not print a ready-to-run extend command:\n{stdout}");
+    assert!(
+        !stdout.contains("Ready-to-run:"),
+        "removed-only plan must not print a ready-to-run extend command:\n{stdout}"
+    );
     assert!(extend_line(&stdout).is_none());
     assert!(stdout.contains("sdkt storage restore"));
     assert!(stdout.contains("removedKey=="));
@@ -617,7 +620,10 @@ fn extend_plan_mixed_separates_extendable_and_removed() {
     // The extend command covers only the expiring key.
     let line = extend_line(&stdout).expect("mixed plan must print an extend command");
     assert!(line.contains("expiringKey=="), "extend line: {line}");
-    assert!(!line.contains("removedKey=="), "extend line must not cover the removed key: {line}");
+    assert!(
+        !line.contains("removedKey=="),
+        "extend line must not cover the removed key: {line}"
+    );
     // The removed key is routed to restore instead.
     assert!(stdout.contains("sdkt storage restore"));
     assert!(stdout.contains("removedKey=="));
@@ -629,18 +635,28 @@ fn extend_plan_mixed_separates_extendable_and_removed() {
     );
     let v: serde_json::Value = serde_json::from_str(&json_out).unwrap();
     let plan = &v["extend_plan"];
-    assert_eq!(plan["extendable_keys"], serde_json::json!(["expiringKey=="]));
+    assert_eq!(
+        plan["extendable_keys"],
+        serde_json::json!(["expiringKey=="])
+    );
     assert_eq!(plan["removed_keys"], serde_json::json!(["removedKey=="]));
 }
 
 #[test]
 fn extend_plan_expiring_only_is_unchanged() {
-    let stdout = extend_plan_stdout(&[("expiringKey==", 50_000)], &[("expiringKey==", 3_000)], false);
+    let stdout = extend_plan_stdout(
+        &[("expiringKey==", 50_000)],
+        &[("expiringKey==", 3_000)],
+        false,
+    );
 
     let line = extend_line(&stdout).expect("expiring-only plan must print an extend command");
-    assert!(line.contains(&format!(
-        "sdkt storage extend --contract '{CONTRACT}' --ledgers 521400 --key 'expiringKey=='"
-    )), "extend line: {line}");
+    assert!(
+        line.contains(&format!(
+            "sdkt storage extend --contract '{CONTRACT}' --ledgers 521400 --key 'expiringKey=='"
+        )),
+        "extend line: {line}"
+    );
     assert!(!stdout.contains("sdkt storage restore"));
     assert!(!stdout.contains("Removed keys"));
 }
