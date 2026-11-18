@@ -658,8 +658,31 @@ pub fn remove(id: &str) -> Result<(), StoreError> {
     Ok(())
 }
 
+/// True when `path` names a `.sdktplugin` bundle (case-insensitive extension).
+fn is_bundle_path(path: &Path) -> bool {
+    path.extension()
+        .and_then(|e| e.to_str())
+        .is_some_and(|e| e.eq_ignore_ascii_case("sdktplugin"))
+}
+
 /// Update an installed plugin from a new local artifact (local-only).
 pub fn update(id: &str, local_source: &Path) -> Result<PluginMeta, StoreError> {
+    update_with_key(id, local_source, None)
+}
+
+/// Like [`update`], but when `local_source` is a `.sdktplugin` bundle the
+/// bundle is verified first (signature/integrity, same rules as
+/// [`install_bundle_with_key`]) and only then committed. When `verifying_key`
+/// is given the bundle must be signed by that key, exactly as for bundle
+/// install — an update must not be able to downgrade signature enforcement.
+/// A failed verification leaves the previously installed plugin untouched:
+/// verification and extraction happen in staging, before anything is
+/// committed to the store. Bare-artifact updates behave exactly as before.
+pub fn update_with_key(
+    id: &str,
+    local_source: &Path,
+    verifying_key: Option<&VerifyingKey>,
+) -> Result<PluginMeta, StoreError> {
     if local_source.to_string_lossy().starts_with("http://")
         || local_source.to_string_lossy().starts_with("https://")
     {
@@ -670,7 +693,12 @@ pub fn update(id: &str, local_source: &Path) -> Result<PluginMeta, StoreError> {
         id: Some(id.to_string()),
         force: true,
     };
-    install(local_source, &opts)
+    if is_bundle_path(local_source) {
+        let verified = install_bundle_with_key(local_source, &opts, verifying_key)?;
+        Ok(verified.metadata)
+    } else {
+        install(local_source, &opts)
+    }
 }
 
 #[cfg(test)]
@@ -718,6 +746,23 @@ mod list_tests {
 mod bundle_tests {
     use super::*;
     use std::fs;
+    use std::sync::Mutex;
+
+    /// `SDKT_PLUGIN_DIR` is process-global: tests that install/update through
+    /// it serialize on this lock, mirroring `tests/plugin_store_test.rs`.
+    static ENV_LOCK: Mutex<()> = Mutex::new(());
+
+    fn set_store_root(dir: &Path) {
+        std::env::set_var("SDKT_PLUGIN_DIR", dir);
+    }
+
+    fn meta_v(version: &str, artifact: &str) -> PluginMeta {
+        PluginMeta {
+            version: version.into(),
+            artifact: artifact.into(),
+            ..meta()
+        }
+    }
 
     fn meta() -> PluginMeta {
         PluginMeta {
@@ -824,5 +869,141 @@ mod bundle_tests {
             install_bundle_with_key(&bundle, &InstallOpts::default(), Some(&key.verifying_key()))
                 .unwrap_err();
         assert!(err.to_string().contains("bundle is not signed"), "{err}");
+    }
+
+    /// Install v1 from a bundle into a fresh temp store; returns the store root.
+    fn install_v1_bundle(tmp: &Path) -> PathBuf {
+        let store = tmp.join("store");
+        fs::create_dir_all(&store).unwrap();
+        set_store_root(&store);
+        let artifact = tmp.join("rule.wasm");
+        fs::write(&artifact, b"v1-bytes").unwrap();
+        let bundle = tmp.join("v1.sdktplugin");
+        pack_bundle(&bundle, &meta(), &artifact, None).unwrap();
+        let installed = install_bundle(&bundle, &InstallOpts::default()).expect("install v1");
+        assert_eq!(installed.metadata.version, "1.0.0");
+        store
+    }
+
+    fn pack_v2_bundle(
+        tmp: &Path,
+        tag: &str,
+        version: &str,
+        artifact: &str,
+        key: Option<&SigningKey>,
+    ) -> PathBuf {
+        let meta = meta_v(version, artifact);
+        let artifact_path = tmp.join(artifact);
+        fs::write(&artifact_path, b"v2-bytes").unwrap();
+        let bundle = tmp.join(format!("v2-{tag}-{version}-{artifact}.sdktplugin"));
+        pack_bundle(&bundle, &meta, &artifact_path, key).unwrap();
+        bundle
+    }
+
+    #[test]
+    fn update_from_bundle_bumps_version() {
+        let _g = ENV_LOCK.lock().unwrap();
+        let tmp = tempfile::tempdir().unwrap();
+        let store = install_v1_bundle(tmp.path());
+
+        let v2_bundle = pack_v2_bundle(tmp.path(), "plain", "2.0.0", "rule.wasm", None);
+        let updated = update("example-rule", &v2_bundle).expect("update from bundle");
+        assert_eq!(updated.version, "2.0.0");
+        assert_eq!(updated.artifact, "rule.wasm");
+
+        let plugin_dir = store.join("example-rule");
+        assert_eq!(fs::read(plugin_dir.join("rule.wasm")).unwrap(), b"v2-bytes");
+        assert_eq!(show("example-rule").unwrap().version, "2.0.0");
+        assert_eq!(
+            resolve("example-rule").unwrap(),
+            plugin_dir.join("rule.wasm")
+        );
+    }
+
+    #[test]
+    fn update_from_bundle_requires_matching_key() {
+        let _g = ENV_LOCK.lock().unwrap();
+        let tmp = tempfile::tempdir().unwrap();
+        let store = install_v1_bundle(tmp.path());
+        let plugin_dir = store.join("example-rule");
+
+        let key = SigningKey::from_bytes(&[7u8; 32]);
+        let wrong = SigningKey::from_bytes(&[8u8; 32]);
+        let signed_v2 = pack_v2_bundle(tmp.path(), "signed", "2.0.0", "rule.wasm", Some(&key));
+
+        // Wrong key: rejected, old plugin intact.
+        let err =
+            update_with_key("example-rule", &signed_v2, Some(&wrong.verifying_key())).unwrap_err();
+        assert!(matches!(err, StoreError::InvalidSignature), "{err}");
+        assert_eq!(show("example-rule").unwrap().version, "1.0.0");
+        assert_eq!(fs::read(plugin_dir.join("rule.wasm")).unwrap(), b"v1-bytes");
+
+        // Unsigned bundle: rejected when a key is required, old plugin intact.
+        let unsigned_v2 = pack_v2_bundle(tmp.path(), "unsigned", "2.0.0", "rule.wasm", None);
+        let err =
+            update_with_key("example-rule", &unsigned_v2, Some(&key.verifying_key())).unwrap_err();
+        assert!(err.to_string().contains("bundle is not signed"), "{err}");
+        assert_eq!(show("example-rule").unwrap().version, "1.0.0");
+
+        // Correct key: succeeds and bumps the version.
+        let updated = update_with_key("example-rule", &signed_v2, Some(&key.verifying_key()))
+            .expect("update with matching key");
+        assert_eq!(updated.version, "2.0.0");
+        assert_eq!(fs::read(plugin_dir.join("rule.wasm")).unwrap(), b"v2-bytes");
+    }
+
+    #[test]
+    fn update_from_corrupt_bundle_leaves_installed_plugin_intact() {
+        let _g = ENV_LOCK.lock().unwrap();
+        let tmp = tempfile::tempdir().unwrap();
+        let store = install_v1_bundle(tmp.path());
+        let plugin_dir = store.join("example-rule");
+
+        let v2_bundle = pack_v2_bundle(tmp.path(), "plain", "2.0.0", "rule.wasm", None);
+        // Corrupt the artifact payload inside the tar (same technique as
+        // `tampered_bundle_fails_before_extraction`): flip one hex digit of
+        // the artifact digest recorded in the manifest.
+        let mut bytes = fs::read(&v2_bundle).unwrap();
+        let digest = digest_hex(b"v2-bytes").into_bytes();
+        let offset = bytes
+            .windows(digest.len())
+            .position(|window| window == digest)
+            .unwrap();
+        bytes[offset] = if bytes[offset] == b'0' { b'1' } else { b'0' };
+        fs::write(&v2_bundle, bytes).unwrap();
+
+        let err = update("example-rule", &v2_bundle).unwrap_err();
+        assert!(matches!(err, StoreError::InvalidBundle(_)), "{err}");
+        assert_eq!(show("example-rule").unwrap().version, "1.0.0");
+        assert_eq!(fs::read(plugin_dir.join("rule.wasm")).unwrap(), b"v1-bytes");
+    }
+
+    #[test]
+    fn update_from_bundle_removes_stale_artifact_on_rename() {
+        let _g = ENV_LOCK.lock().unwrap();
+        let tmp = tempfile::tempdir().unwrap();
+        let store = install_v1_bundle(tmp.path());
+        let plugin_dir = store.join("example-rule");
+        assert!(plugin_dir.join("rule.wasm").exists());
+
+        // v2 renames the artifact file (parity with #114 for bare updates).
+        let v2_bundle = pack_v2_bundle(tmp.path(), "plain", "2.0.0", "rule-v2.wasm", None);
+        let updated = update("example-rule", &v2_bundle).expect("update from bundle");
+        assert_eq!(updated.version, "2.0.0");
+        assert_eq!(updated.artifact, "rule-v2.wasm");
+
+        assert!(plugin_dir.join("rule-v2.wasm").exists());
+        assert!(
+            !plugin_dir.join("rule.wasm").exists(),
+            "stale rule.wasm should have been removed"
+        );
+        assert_eq!(
+            fs::read(plugin_dir.join("rule-v2.wasm")).unwrap(),
+            b"v2-bytes"
+        );
+        assert_eq!(
+            resolve("example-rule").unwrap(),
+            plugin_dir.join("rule-v2.wasm")
+        );
     }
 }

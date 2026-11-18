@@ -975,11 +975,16 @@ enum PluginAction {
         #[arg(short, long, default_value = "pretty")]
         format: String,
     },
-    /// Update an installed plugin from a new local artifact (local-only)
+    /// Update an installed plugin from a new local artifact, or from a
+    /// `.sdktplugin` bundle (verified before anything is updated)
     Update {
         id: String,
-        /// Path to the new local artifact
+        /// Path to the new local artifact or `.sdktplugin` bundle
         source: String,
+        /// Require the bundle to be signed by this Ed25519 public key file (32 bytes, raw);
+        /// unsigned bundles are refused. Only applies to `.sdktplugin` bundles.
+        #[arg(long)]
+        public_key: Option<String>,
         /// Output format (pretty or json)
         #[arg(short, long, default_value = "pretty")]
         format: String,
@@ -5345,6 +5350,15 @@ fn path_contains_command(path_var: &std::ffi::OsStr, program: &str) -> bool {
 /// Look for a runnable program on PATH (name only; no output capture).
 fn command_on_path(program: &str) -> bool {
     path_contains_command(&std::env::var_os("PATH").unwrap_or_default(), program)
+}
+
+/// True when `path` names a `.sdktplugin` bundle (case-insensitive extension).
+/// Single predicate shared by the plugin install and update paths so the two
+/// cannot drift apart.
+fn is_sdktplugin_bundle(path: &std::path::Path) -> bool {
+    path.extension()
+        .and_then(|e| e.to_str())
+        .is_some_and(|e| e.eq_ignore_ascii_case("sdktplugin"))
 }
 
 /// Read a raw 32-byte Ed25519 public key file, exiting with a clear error on failure.
@@ -11749,10 +11763,7 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
                 let fmt = parse_format_str(&format);
                 let opts = sdkt_audit::plugin_store::InstallOpts { id, force };
                 let path = std::path::Path::new(&source);
-                let is_bundle = path
-                    .extension()
-                    .and_then(|e| e.to_str())
-                    .is_some_and(|e| e.eq_ignore_ascii_case("sdktplugin"));
+                let is_bundle = is_sdktplugin_bundle(path);
                 if public_key.is_some() && !is_bundle {
                     eprintln!("Error: --public-key only applies to .sdktplugin bundles");
                     process::exit(1);
@@ -11813,9 +11824,28 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
                     println!("Removed plugin '{}' (if it was installed).", id);
                 }
             }
-            PluginAction::Update { id, source, format } => {
+            PluginAction::Update {
+                id,
+                source,
+                public_key,
+                format,
+            } => {
                 let fmt = parse_format_str(&format);
-                match sdkt_audit::plugin_store::update(&id, std::path::Path::new(&source)) {
+                let path = std::path::Path::new(&source);
+                let is_bundle = is_sdktplugin_bundle(path);
+                if public_key.is_some() && !is_bundle {
+                    eprintln!("Error: --public-key only applies to .sdktplugin bundles");
+                    process::exit(1);
+                }
+                // Bundle updates verify (signature/integrity) before anything
+                // is committed, with the same key rules as bundle install.
+                let result = if is_bundle {
+                    let pubkey = public_key.as_deref().map(read_public_key_or_exit);
+                    sdkt_audit::plugin_store::update_with_key(&id, path, pubkey.as_ref())
+                } else {
+                    sdkt_audit::plugin_store::update(&id, path)
+                };
+                match result {
                     Ok(meta) => {
                         if meta.kind == "native" {
                             eprintln!(
