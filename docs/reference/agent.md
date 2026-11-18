@@ -176,6 +176,14 @@ capability cannot express (or more artifact paths than it accepts) refuses the
 whole request instead of being dropped, so a partial request can never run and
 report success as if it were complete.
 
+Registry-declared valueless flags are passed through bare. This currently
+includes `--refresh`, `--no-plugins`, `--upgrade-safety`, `--all`,
+`--dry-run`, `--minimal`, `--force`, `--skip-unsupported`, `--check`, `--id`,
+`--deny-breaking`, `--build-only`, and `--json`. They are still accepted only
+for capabilities that declare them. Other declared flags are treated as
+value-taking by the planner and must have a captured value; undeclared flags
+are refused with `unsupported_argument`.
+
 Output format follows the same rule. The agent plans `json` or `pretty` only
 when the capability registry advertises that format. A named but unadvertised
 format is refused with `unsupported_argument`; it is never replaced with the

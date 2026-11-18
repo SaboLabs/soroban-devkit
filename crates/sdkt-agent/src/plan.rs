@@ -304,10 +304,8 @@ fn build_argv(cap: &Capability, args: &intent::IntentArgs) -> Result<Vec<String>
     let mut argv: Vec<String> = cap.command.iter().map(|s| (*s).to_string()).collect();
 
     // Flags the registry declares for this capability but the planner does
-    // not map itself (`--audit <path>`, `--max-size-bytes <N>`, `--key-xdr`):
-    // passed through verbatim, with the value the request supplied. A
-    // declared flag with no value is refused rather than emitted bare, which
-    // the CLI would answer with a usage error.
+    // not map itself are passed through verbatim. Value-taking flags still
+    // require a captured value; known valueless flags are emitted bare.
     for (flag, value) in &args.explicit_flags {
         if PLANNER_MANAGED_FLAGS.contains(&flag.as_str()) {
             continue;
@@ -319,6 +317,9 @@ fn build_argv(cap: &Capability, args: &intent::IntentArgs) -> Result<Vec<String>
             Some(v) => {
                 argv.push(flag.clone());
                 argv.push(v.clone());
+            }
+            None if intent::VALUELESS_FLAGS.contains(&flag.as_str()) => {
+                argv.push(flag.clone());
             }
             None => {
                 return Err(PlanError::Parse(ParseError::MissingArgument {
@@ -869,6 +870,35 @@ mod tests {
         let shown = p.display();
         assert!(shown.contains("--audit src/lib.rs"), "{shown}");
         assert!(shown.contains("--max-size-bytes 131072"), "{shown}");
+    }
+
+    #[test]
+    fn declared_valueless_flags_are_forwarded() {
+        for (request, flag) in [
+            (
+                &format!("show wasm metadata for contract {CID} --refresh"),
+                "--refresh",
+            ),
+            ("audit --no-plugins src/lib.rs", "--no-plugins"),
+            ("run plugin doctor --all", "--all"),
+            (
+                "diff baseline old.wasm candidate new.wasm --upgrade-safety",
+                "--upgrade-safety",
+            ),
+        ] {
+            let p = plan_ok(request);
+            assert!(
+                p.argv.iter().any(|arg| arg == flag),
+                "{request}: {:?}",
+                p.argv
+            );
+        }
+    }
+
+    #[test]
+    fn missing_value_for_declared_value_taking_flag_still_refuses() {
+        let e = plan_err("audit src/lib.rs --rules");
+        assert_eq!(e.code(), "missing_argument", "{e:?}");
     }
 
     #[test]

@@ -125,6 +125,24 @@ const BASELINE_MARKERS: &[&str] = &["previous", "baseline", "old", "from"];
 /// Format values the agent can currently plan from the registry.
 const FORMAT_WORDS: &[&str] = &["json", "pretty"];
 
+/// Registry-declared switches known to take no value. The registry does not
+/// consistently encode flag arity, so these must not consume the next token.
+pub(crate) const VALUELESS_FLAGS: &[&str] = &[
+    "--refresh",
+    "--no-plugins",
+    "--upgrade-safety",
+    "--all",
+    "--dry-run",
+    "--minimal",
+    "--force",
+    "--skip-unsupported",
+    "--check",
+    "--id",
+    "--deny-breaking",
+    "--build-only",
+    "--json",
+];
+
 /// Why a request could not be turned into an intent.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ParseError {
@@ -517,7 +535,7 @@ fn extract_args(request: &str) -> IntentArgs {
             let mut value = eq_value;
             // Tokens consumed by this flag: 1 = flag alone.
             let mut advance = 1usize;
-            if value.is_none() {
+            if value.is_none() && !VALUELESS_FLAGS.contains(&flag.as_str()) {
                 if let Some(next) = raw_tokens.get(i + 1) {
                     if let Some((quoted, used)) = quoted_value(&raw_tokens[i + 1..]) {
                         value = Some(quoted);
