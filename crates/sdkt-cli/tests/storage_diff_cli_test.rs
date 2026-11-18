@@ -211,7 +211,7 @@ fn storage_diff_cli_shell_quoting_regression_test() {
     let injection_key = format!("BKEYB==; touch {pwn_file} space $(id)");
 
     create_snapshot_file(&old_path, CONTRACT, &[(&injection_key, 50_000)]);
-    create_snapshot_file(&new_path, CONTRACT, &[]);
+    create_snapshot_file(&new_path, CONTRACT, &[(&injection_key, 3_000)]);
 
     let mut cmd = sdkt();
     cmd.arg("storage")
@@ -225,6 +225,9 @@ fn storage_diff_cli_shell_quoting_regression_test() {
     let assert = cmd.assert().success();
     let stdout = String::from_utf8(assert.get_output().stdout.clone()).unwrap();
 
+    // Expiring-soon (not removed): the key is extendable, so the
+    // ready-to-run extend command must still carry it, shell-quoted.
+    // (A removed-only plan prints no extend command at all — issue #377.)
     assert!(stdout.contains("Ready-to-run:"));
     assert!(stdout.contains(&format!("--key '{}'", injection_key)));
 
@@ -548,4 +551,96 @@ fn storage_diff_cli_pretty_output_prints_unlabeled_unchanged_entries() {
     assert!(stdout.contains("Unchanged entries (2):"));
     assert!(stdout.contains("[unchanged] key=unlabeledKey1=="));
     assert!(stdout.contains("[unchanged] key=unlabeledKey2=="));
+}
+
+// ---------------------------------------------------------------------------
+// Issue #377: removed entries must never appear in a ready-to-run extend
+// command — they need `sdkt storage restore`, not `sdkt storage extend`.
+// ---------------------------------------------------------------------------
+
+fn extend_plan_stdout(old: &[(&str, u32)], new: &[(&str, u32)], json: bool) -> String {
+    let dir = tempdir().unwrap();
+    let old_path = dir.path().join("old.json");
+    let new_path = dir.path().join("new.json");
+    create_snapshot_file(&old_path, CONTRACT, old);
+    create_snapshot_file(&new_path, CONTRACT, new);
+
+    let mut cmd = sdkt();
+    cmd.arg("storage")
+        .arg("storage-diff")
+        .arg("--old")
+        .arg(&old_path)
+        .arg("--new")
+        .arg(&new_path)
+        .arg("--extend-plan");
+    if json {
+        cmd.arg("--format").arg("json");
+    }
+    let assert = cmd.assert().success();
+    String::from_utf8(assert.get_output().stdout.clone()).unwrap()
+}
+
+fn extend_line(stdout: &str) -> Option<String> {
+    stdout
+        .lines()
+        .find(|l| l.contains("sdkt storage extend"))
+        .map(str::to_string)
+}
+
+#[test]
+fn extend_plan_removed_only_prints_restore_not_extend() {
+    let stdout = extend_plan_stdout(&[("removedKey==", 50_000)], &[], false);
+
+    assert!(!stdout.contains("Ready-to-run:"), "removed-only plan must not print a ready-to-run extend command:\n{stdout}");
+    assert!(extend_line(&stdout).is_none());
+    assert!(stdout.contains("sdkt storage restore"));
+    assert!(stdout.contains("removedKey=="));
+    assert!(stdout.contains("envelope"));
+
+    // JSON: the per-class split is additive; legacy `keys` keeps its meaning.
+    let json_out = extend_plan_stdout(&[("removedKey==", 50_000)], &[], true);
+    let v: serde_json::Value = serde_json::from_str(&json_out).unwrap();
+    let plan = &v["extend_plan"];
+    assert_eq!(plan["keys"], serde_json::json!(["removedKey=="]));
+    assert_eq!(plan["extendable_keys"], serde_json::json!([]));
+    assert_eq!(plan["removed_keys"], serde_json::json!(["removedKey=="]));
+}
+
+#[test]
+fn extend_plan_mixed_separates_extendable_and_removed() {
+    let stdout = extend_plan_stdout(
+        &[("expiringKey==", 50_000), ("removedKey==", 50_000)],
+        &[("expiringKey==", 3_000)],
+        false,
+    );
+
+    // The extend command covers only the expiring key.
+    let line = extend_line(&stdout).expect("mixed plan must print an extend command");
+    assert!(line.contains("expiringKey=="), "extend line: {line}");
+    assert!(!line.contains("removedKey=="), "extend line must not cover the removed key: {line}");
+    // The removed key is routed to restore instead.
+    assert!(stdout.contains("sdkt storage restore"));
+    assert!(stdout.contains("removedKey=="));
+
+    let json_out = extend_plan_stdout(
+        &[("expiringKey==", 50_000), ("removedKey==", 50_000)],
+        &[("expiringKey==", 3_000)],
+        true,
+    );
+    let v: serde_json::Value = serde_json::from_str(&json_out).unwrap();
+    let plan = &v["extend_plan"];
+    assert_eq!(plan["extendable_keys"], serde_json::json!(["expiringKey=="]));
+    assert_eq!(plan["removed_keys"], serde_json::json!(["removedKey=="]));
+}
+
+#[test]
+fn extend_plan_expiring_only_is_unchanged() {
+    let stdout = extend_plan_stdout(&[("expiringKey==", 50_000)], &[("expiringKey==", 3_000)], false);
+
+    let line = extend_line(&stdout).expect("expiring-only plan must print an extend command");
+    assert!(line.contains(&format!(
+        "sdkt storage extend --contract '{CONTRACT}' --ledgers 521400 --key 'expiringKey=='"
+    )), "extend line: {line}");
+    assert!(!stdout.contains("sdkt storage restore"));
+    assert!(!stdout.contains("Removed keys"));
 }

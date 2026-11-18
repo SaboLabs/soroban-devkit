@@ -4398,7 +4398,13 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
                         }
                         println!("  Suggested --ledgers: {}", plan.suggested_ledgers);
                         println!("  Reason:              {}", plan.suggested_ledgers_reason);
-                        if !plan.keys.is_empty() {
+                        // Issue #377: the ready-to-run extend command covers
+                        // ONLY the extendable (expiring-soon) keys. Removed
+                        // keys are gone from the ledger — `ExtendFootprintTtl`
+                        // cannot bring them back — so they are never listed
+                        // in an extend command. When there are no extendable
+                        // keys, no extend command is printed at all.
+                        if !plan.extendable_keys.is_empty() {
                             println!();
                             println!("  Ready-to-run:");
                             let mut net_args = String::new();
@@ -4417,7 +4423,7 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
                             }
 
                             let key_args: String = plan
-                                .keys
+                                .extendable_keys
                                 .iter()
                                 .map(|k| format!(" --key {}", shell_quote(k)))
                                 .collect::<Vec<_>>()
@@ -4429,6 +4435,23 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
                                 net_args,
                                 key_args
                             );
+                        }
+                        if !plan.removed_keys.is_empty() {
+                            println!();
+                            println!(
+                                "  Removed keys ({}) cannot be extended — they are gone from",
+                                plan.removed_keys.len()
+                            );
+                            println!("  the ledger. Restore them with:");
+                            println!(
+                                "    sdkt storage restore --contract {} --envelope <ENVELOPE>",
+                                shell_quote(&plan.contract_id)
+                            );
+                            println!("  where <ENVELOPE> is the invocation envelope that failed");
+                            println!("  on archived state for these keys:");
+                            for (i, k) in plan.removed_keys.iter().enumerate() {
+                                println!("    #{} {}", i + 1, k);
+                            }
                         }
                     }
                 } else if fmt == OutputFormat::Json {
