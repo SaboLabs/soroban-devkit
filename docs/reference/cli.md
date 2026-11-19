@@ -157,6 +157,9 @@ sdkt
 │   ├── --start-ledger <START_LEDGER> (start ledger sequence number for event search)
 │   ├── --end-ledger <END_LEDGER>     (end ledger sequence number for event search)
 │   ├── --topic <SYMBOL>              (filter by first topic/event name; server-side filtering)
+│   ├── --limit <N>                   (max events per page; sent as getEvents pagination.limit)
+│   ├── --cursor <CURSOR>             (resume from a previous run's cursor; cannot combine with --start-ledger; --end-ledger is allowed as a client-side bound)
+│   ├── --all-pages [N]               (follow the cursor until exhausted; at most N pages, default 10)
 │   ├── --abi <wasm>                  (ABI-aware decode from a local WASM)
 │   ├── --abi-contract <id>           (ABI-aware decode using deployed contract's on-chain WASM)
 │   ├── --network-profile <NAME> / --rpc-url <URL> / --network-passphrase <P>
@@ -290,6 +293,35 @@ sdkt
 │   │                         (lock sha256 + per-dependency integrity; read-only).
 │   └── publish               Validate publish readiness (`--dry-run` only, read-only);
 │                             detects missing cache, lock drift, integrity mismatch.
+
+### Event pagination (`sdkt events`)
+
+`soroban-rpc`'s `getEvents` caps every response and returns a top-level
+`cursor` for continuation. By default `sdkt events` fetches exactly one page
+— the historical behaviour, with the same wire request and output shape as
+before — and, when that page stops at a page boundary, prints a notice with
+the cursor needed to continue (stdout for pretty output, stderr for `--format
+json` so stdout stays parseable JSON).
+
+```bash
+sdkt events <contract-id> --start-ledger 1000 --end-ledger 2000
+# Scan checkpoint reached (page not full; more events may or may not exist). Continue with:
+#   sdkt events <contract-id> --end-ledger 2000 --cursor <cursor>
+```
+
+- `--limit <N>` caps the page size (sent as `pagination.limit`).
+- `--cursor <CURSOR>` resumes from a previous run's cursor. A cursor-only
+  request must omit `--start-ledger`; combining them is rejected before
+  any RPC call. `--end-ledger` may still be given: it is a client-side
+  bound, enforced locally and never sent on the wire with a cursor.
+- `--all-pages [N]` follows the cursor until the pages are exhausted, a
+  caller-supplied page cap is reached, or an event passes the RPC's
+  `latestLedger`. The cap is explicit and bounded (default 10 pages when no
+  value is given, e.g. `--all-pages 25`). When fetching stops at the cap, the
+  notice prints the cursor so the run can be resumed later.
+
+Pagination is strictly additive: no change to event decoding, topic
+filtering, or ABI-aware value formatting.
 
 ### Synchronizing dependencies
 

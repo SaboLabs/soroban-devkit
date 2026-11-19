@@ -25,6 +25,25 @@ No hosted registry or central trust root is required. A caller that has an
 expected author key can pass it to `verify_bundle`; signed bundles whose
 embedded key differs are rejected.
 
+## Lifecycle
+
+The bundle is the unit of distribution: `pack` → `verify-bundle` →
+`install`, and once a plugin is installed, `update` applies a new bundle
+version. Updating from a bundle verifies it first — integrity and, when a
+key is given, the signature — with exactly the same rules as bundle install:
+a signed bundle must be signed by the given key, and an unsigned bundle is
+refused when a key is provided. A failed verification leaves the installed
+plugin untouched. When the new bundle renames the artifact file, the stale
+artifact is removed after the new one is committed. Updating from a bare
+artifact keeps working exactly as before; `plugin remove` + `plugin install`
+is not needed to apply a new version.
+
+```bash
+# Update an installed plugin from a new bundle version
+sdkt plugin update my-plugin my-plugin-v2.sdktplugin
+sdkt plugin update my-plugin my-plugin-v2.sdktplugin --public-key ./public.key
+```
+
 ## CLI
 
 ```bash
@@ -42,6 +61,11 @@ sdkt plugin verify-bundle my-plugin.sdktplugin --public-key ./public.key
 # reports whether the bundle was signed (`"signed": true|false` in JSON).
 sdkt plugin install my-plugin.sdktplugin
 sdkt plugin install my-plugin.sdktplugin --public-key ./public.key
+
+# Update an installed plugin from a new bundle version (verified first,
+# same signature rules as install)
+sdkt plugin update my-plugin my-plugin-v2.sdktplugin
+sdkt plugin update my-plugin my-plugin-v2.sdktplugin --public-key ./public.key
 
 # Run full diagnostics and self-check on a bundle
 sdkt plugin doctor my-plugin.sdktplugin
