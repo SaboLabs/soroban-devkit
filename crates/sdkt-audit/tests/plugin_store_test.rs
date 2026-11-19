@@ -18,6 +18,13 @@ static ENV_LOCK: Mutex<()> = Mutex::new(());
 
 fn set_store_root(dir: &std::path::Path) {
     std::env::set_var("SDKT_PLUGIN_DIR", dir);
+    std::env::set_var("SDKT_TEST_SKIP_PLUGIN_DRY_RUN", "1");
+}
+
+fn env_lock() -> std::sync::MutexGuard<'static, ()> {
+    ENV_LOCK
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
 }
 
 fn meta_toml(kind: &str, abi_major: u32, artifact: &str) -> String {
@@ -59,7 +66,7 @@ fn bad_kind_rejected() {
 
 #[test]
 fn store_root_precedence_env_over_config_and_cwd() {
-    let _g = ENV_LOCK.lock().unwrap();
+    let _g = env_lock();
     let tmp = tempfile::tempdir().unwrap();
     set_store_root(tmp.path());
     let root = sdkt_audit::plugin_store::resolve_store_root();
@@ -69,7 +76,7 @@ fn store_root_precedence_env_over_config_and_cwd() {
 
 #[test]
 fn install_list_show_resolve_remove_lifecycle() {
-    let _g = ENV_LOCK.lock().unwrap();
+    let _g = env_lock();
     let tmp = tempfile::tempdir().unwrap();
     set_store_root(tmp.path());
 
@@ -98,7 +105,7 @@ fn install_list_show_resolve_remove_lifecycle() {
 
 #[test]
 fn install_with_id_override_preserves_identity_across_lifecycle() {
-    let _g = ENV_LOCK.lock().unwrap();
+    let _g = env_lock();
     let tmp = tempfile::tempdir().unwrap();
     set_store_root(tmp.path());
 
@@ -136,8 +143,33 @@ fn install_with_id_override_preserves_identity_across_lifecycle() {
 }
 
 #[test]
+fn genuinely_unloadable_artifact_is_rejected_without_test_escape() {
+    let _g = env_lock();
+    let tmp = tempfile::tempdir().unwrap();
+    set_store_root(tmp.path());
+    std::env::remove_var("SDKT_TEST_SKIP_PLUGIN_DRY_RUN");
+
+    let src = tmp.path().join("broken.wasm");
+    std::fs::write(&src, b"not a wasm module").unwrap();
+    std::fs::write(
+        tmp.path().join("plugin.toml"),
+        meta_toml("wasm", SDKT_AUDIT_ABI_MAJOR, "broken.wasm"),
+    )
+    .unwrap();
+
+    let result = install(&src, &InstallOpts::default());
+    #[cfg(feature = "wasm-plugins")]
+    assert!(matches!(result, Err(StoreError::DryRunLoad(_))));
+    #[cfg(not(feature = "wasm-plugins"))]
+    assert!(
+        result.is_ok(),
+        "default builds do not have a loader: {result:?}"
+    );
+}
+
+#[test]
 fn kind_extension_mismatch_rejected() {
-    let _g = ENV_LOCK.lock().unwrap();
+    let _g = env_lock();
     let tmp = tempfile::tempdir().unwrap();
     set_store_root(tmp.path());
     let src = tmp.path().join("ex.so");
@@ -161,7 +193,7 @@ fn kind_extension_mismatch_rejected() {
 /// expected `sdkt/plugins` suffix.
 #[test]
 fn store_root_fallback_without_env() {
-    let _g = ENV_LOCK.lock().unwrap();
+    let _g = env_lock();
     // Remove the env var to exercise the fallback path
     std::env::remove_var("SDKT_PLUGIN_DIR");
 
@@ -185,7 +217,7 @@ fn store_root_fallback_without_env() {
 /// remove the previously-managed artifact file, leaving only the new one.
 #[test]
 fn update_with_renamed_artifact_removes_stale_file() {
-    let _g = ENV_LOCK.lock().unwrap();
+    let _g = env_lock();
     let tmp = tempfile::tempdir().unwrap();
     set_store_root(tmp.path());
 
@@ -250,7 +282,7 @@ fn update_with_renamed_artifact_removes_stale_file() {
 /// delete the (still-referenced) artifact.
 #[test]
 fn update_with_unchanged_artifact_keeps_file() {
-    let _g = ENV_LOCK.lock().unwrap();
+    let _g = env_lock();
     let tmp = tempfile::tempdir().unwrap();
     set_store_root(tmp.path());
 

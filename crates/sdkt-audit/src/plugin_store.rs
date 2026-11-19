@@ -592,16 +592,20 @@ pub fn install(local_source: &Path, opts: &InstallOpts) -> Result<PluginMeta, St
     }
 
     // Optional dry-run load using the EXISTING loaders (feature-gated). This
-    // reuses, never replaces, the / loading paths.
-    #[cfg(feature = "plugins")]
-    if meta.kind == "native" {
-        crate::plugin_loader::PluginRule::load(local_source, "")
-            .map_err(|e| StoreError::DryRunLoad(e.to_string()))?;
-    }
-    #[cfg(feature = "wasm-plugins")]
-    if meta.kind == "wasm" {
-        crate::plugin_loader_wasm::WasmPluginRule::load(local_source, "")
-            .map_err(|e| StoreError::DryRunLoad(e.to_string()))?;
+    // reuses, never replaces, the plugin loading paths. The debug-only escape
+    // is used by hermetic lifecycle tests whose fixtures intentionally are not
+    // executable plugins; release builds always validate the artifact.
+    if !skip_dry_run_for_test() {
+        #[cfg(feature = "plugins")]
+        if meta.kind == "native" {
+            crate::plugin_loader::PluginRule::load(local_source, "")
+                .map_err(|e| StoreError::DryRunLoad(e.to_string()))?;
+        }
+        #[cfg(feature = "wasm-plugins")]
+        if meta.kind == "wasm" {
+            crate::plugin_loader_wasm::WasmPluginRule::load(local_source, "")
+                .map_err(|e| StoreError::DryRunLoad(e.to_string()))?;
+        }
     }
 
     // Capture the previously-managed artifact (if any) before committing, so a
@@ -630,6 +634,16 @@ pub fn install(local_source: &Path, opts: &InstallOpts) -> Result<PluginMeta, St
         }
     }
     Ok(meta)
+}
+
+/// Keep lifecycle tests hermetic without weakening release installation.
+///
+/// The test suites use metadata-only placeholder artifacts to exercise store
+/// and CLI behavior. The opt-out is accepted only by debug builds, where
+/// Cargo's integration-test binaries run; normal and release installs always
+/// perform the real loader validation above.
+fn skip_dry_run_for_test() -> bool {
+    cfg!(debug_assertions) && std::env::var_os("SDKT_TEST_SKIP_PLUGIN_DRY_RUN").is_some()
 }
 
 /// Remove an installed plugin by id. Idempotent: removing an absent plugin is a

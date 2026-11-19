@@ -35,7 +35,8 @@ fn dummy_src(store: &std::path::Path) -> std::path::PathBuf {
 }
 
 fn fixture_plugin(store: &std::path::Path) -> std::path::PathBuf {
-    // Dummy artifact (not a real loadable plugin; default build skips dry-run load).
+    // Metadata-only fixture; the debug-only test escape keeps lifecycle tests
+    // independent of a separately built WASM plugin artifact.
     let src = store.join("ex_rule.wasm");
     fs::write(&src, b"dummy-wasm-bytes").unwrap();
     fs::write(
@@ -79,6 +80,7 @@ fn plugin_install_list_show_remove_lifecycle() {
     // install
     sdkt()
         .env("SDKT_PLUGIN_DIR", &store)
+        .env("SDKT_TEST_SKIP_PLUGIN_DRY_RUN", "1")
         .args(["plugin", "install", src.to_str().unwrap()])
         .assert()
         .success()
@@ -100,14 +102,22 @@ fn plugin_install_list_show_remove_lifecycle() {
         .success()
         .stdout(predicate::str::contains("kind: wasm"));
 
-    // audit --rules <id> resolves the id (default build: hits wasm-plugins feature branch)
+    // audit --rules <id> resolves the id. Default builds report the missing
+    // loader feature; all-features builds load and skip the invalid fixture.
     let src = dummy_src(&store);
-    sdkt()
+    let audit = sdkt()
         .env("SDKT_PLUGIN_DIR", &store)
         .args(["audit", src.to_str().unwrap(), "--rules", "example-rule"])
-        .assert()
-        .failure()
-        .stderr(predicate::str::contains("wasm-plugins"));
+        .assert();
+    if cfg!(feature = "wasm-plugins") {
+        audit
+            .success()
+            .stderr(predicate::str::contains("wasm runtime error"));
+    } else {
+        audit
+            .failure()
+            .stderr(predicate::str::contains("wasm-plugins"));
+    }
 
     // remove
     sdkt()
@@ -155,6 +165,7 @@ fn plugin_install_with_id_override_uses_effective_identity() {
 
     sdkt()
         .env("SDKT_PLUGIN_DIR", store.path())
+        .env("SDKT_TEST_SKIP_PLUGIN_DRY_RUN", "1")
         .args(["plugin", "install", source, "--id", "override-name"])
         .assert()
         .success()
@@ -175,7 +186,7 @@ fn plugin_install_with_id_override_uses_effective_identity() {
         .stdout(predicate::str::contains("id: override-name"));
 
     let contract = dummy_src(store.path());
-    sdkt()
+    let audit = sdkt()
         .env("SDKT_PLUGIN_DIR", store.path())
         .args([
             "audit",
@@ -183,9 +194,16 @@ fn plugin_install_with_id_override_uses_effective_identity() {
             "--rules",
             "override-name",
         ])
-        .assert()
-        .failure()
-        .stderr(predicate::str::contains("wasm-plugins"));
+        .assert();
+    if cfg!(feature = "wasm-plugins") {
+        audit
+            .success()
+            .stderr(predicate::str::contains("wasm runtime error"));
+    } else {
+        audit
+            .failure()
+            .stderr(predicate::str::contains("wasm-plugins"));
+    }
 
     sdkt()
         .env("SDKT_PLUGIN_DIR", store.path())
@@ -211,6 +229,7 @@ fn plugin_json_output_lifecycle() {
     let run = |args: &[&str]| {
         sdkt()
             .env("SDKT_PLUGIN_DIR", store.path())
+            .env("SDKT_TEST_SKIP_PLUGIN_DRY_RUN", "1")
             .args(args)
             .assert()
     };
@@ -283,7 +302,7 @@ fn audit_raw_path_still_works_backward_compat() {
     fs::write(&fake_src, b"not a real plugin").unwrap();
     let src = dummy_src(&store);
 
-    sdkt()
+    let audit = sdkt()
         .env("SDKT_PLUGIN_DIR", &store)
         .args([
             "audit",
@@ -291,10 +310,17 @@ fn audit_raw_path_still_works_backward_compat() {
             "--rules",
             fake_src.to_str().unwrap(),
         ])
-        .assert()
-        .failure()
-        // hits the loader branch for a raw path (not "does not exist")
-        .stderr(predicate::str::contains("wasm-plugins"));
+        .assert();
+    if cfg!(feature = "wasm-plugins") {
+        audit
+            .success()
+            .stderr(predicate::str::contains("wasm runtime error"));
+    } else {
+        // Default builds hit the feature guard for a raw plugin path.
+        audit
+            .failure()
+            .stderr(predicate::str::contains("wasm-plugins"));
+    }
 
     let _ = fs::remove_dir_all(&store);
 }

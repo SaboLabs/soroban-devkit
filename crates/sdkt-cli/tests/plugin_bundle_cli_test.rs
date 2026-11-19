@@ -28,6 +28,7 @@ fn sdkt() -> Command {
     let dir = TempDir::new().unwrap();
     cmd.env("SDKT_PLUGIN_DIR", dir.path());
     cmd.env("SDKT_NETWORK_DIR", dir.path());
+    cmd.env("SDKT_TEST_SKIP_PLUGIN_DRY_RUN", "1");
     cmd
 }
 
@@ -305,6 +306,7 @@ fn sdkt_in(store: &std::path::Path) -> Command {
     let mut cmd = Command::cargo_bin("sdkt").expect("sdkt binary built");
     cmd.env("SDKT_PLUGIN_DIR", store);
     cmd.env("SDKT_NETWORK_DIR", store);
+    cmd.env("SDKT_TEST_SKIP_PLUGIN_DRY_RUN", "1");
     cmd
 }
 
