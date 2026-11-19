@@ -258,7 +258,9 @@ sdkt
 │   1 with a valid report. Never signs, submits, or deploys.
 
 ├── build                     Compile Rust contracts in the workspace into WASM artifacts
-│   └── --format <json|pretty>   (default: pretty)
+│   ├── --format <json|pretty>   (default: pretty)
+│   └── --package <ALIAS>...     Build only the named contract(s) plus their
+│                                transitive dependencies (repeatable)
 
 ├── lock                      Generate or inspect `sdkt.lock`
 │   ├── generate              Write `sdkt.lock` from current build artifacts (run `sdkt build` first)
@@ -583,6 +585,32 @@ verification fails after an otherwise successful deploy.
 │       └── [network flags inherited from network-profile resolution]
 
 ```
+
+## Building selected packages
+
+`sdkt build --package <ALIAS>` restricts the build to an allow-list. The build
+set is each named alias plus every alias it transitively `depends_on` /
+`deploy_after`, in the workspace's resolved build order; an unselected contract
+is never built and its WASM artifact is never touched. The flag is repeatable.
+An unknown alias fails before any build starts, naming the alias and the known
+aliases. Pretty mode prints the selected set (in build order) before building;
+`--format json` includes it as `selected`.
+
+```bash
+# token has no dependencies, so only token is built
+sdkt build --package token
+
+# router depends on vault, and vault depends on token: the closure
+# builds token -> vault -> router, in that order
+sdkt build --package router
+
+# repeat the flag to select more than one root
+sdkt build --package token --package oracle
+```
+
+A `--package` build regenerates `sdkt.lock` from the built subset and says so.
+Entries for unselected contracts already in an existing lock are preserved, so a
+partial build never silently drops them.
 
 ## Network Profiles
 

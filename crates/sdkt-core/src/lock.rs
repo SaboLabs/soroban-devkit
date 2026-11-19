@@ -233,6 +233,42 @@ pub fn generate_lock(base_dir: &Path, config: &DevKitConfig) -> Result<LockFile,
     })
 }
 
+/// Generate a [`LockFile`] covering only `aliases` (a `--package` build subset).
+///
+/// `aliases` is expected in resolved build order; the returned lock's
+/// `deploy_order` and per-entry `order` follow it. Callers that must preserve
+/// unselected contracts' entries merge an existing lock themselves.
+pub fn generate_lock_subset(
+    base_dir: &Path,
+    config: &DevKitConfig,
+    aliases: &[String],
+) -> Result<LockFile, LockError> {
+    let mut contracts = Vec::with_capacity(aliases.len());
+    for (order, alias) in aliases.iter().enumerate() {
+        let cfg = config
+            .contracts
+            .get(alias)
+            .ok_or_else(|| LockError::ArtifactNotFound(alias.clone()))?;
+        let artifact = find_artifact(base_dir, &cfg.path)
+            .ok_or_else(|| LockError::ArtifactNotFound(alias.clone()))?;
+        let sha256 = compute_sha256(&artifact)?;
+        contracts.push(LockEntry {
+            alias: alias.clone(),
+            path: cfg.path.clone(),
+            artifact: artifact.to_string_lossy().to_string(),
+            sha256,
+            order,
+        });
+    }
+
+    Ok(LockFile {
+        version: LOCK_VERSION,
+        deploy_order: aliases.to_vec(),
+        contracts,
+        dependencies: lock_dependencies(base_dir, &config.dependencies),
+    })
+}
+
 /// Build [`DependencyLock`] entries from a `.sdkt.toml` dependency map.
 ///
 /// Pure: does not fetch. For Git deps it records the URL + requested

@@ -35,6 +35,11 @@ pub enum BuildError {
     StellarCliUnsupported {
         version: String,
     },
+    /// A `--package` alias is not configured in `.sdkt.toml`.
+    UnknownPackage {
+        alias: String,
+        known: Vec<String>,
+    },
 }
 
 impl fmt::Display for BuildError {
@@ -66,6 +71,18 @@ impl fmt::Display for BuildError {
                  (found {}).",
                 version, STELLAR_CLI_MIN_VERSION.0, STELLAR_CLI_MIN_VERSION.1, version
             ),
+            BuildError::UnknownPackage { alias, known } => {
+                if known.is_empty() {
+                    write!(f, "Unknown package '{}'. Known packages: (none)", alias)
+                } else {
+                    write!(
+                        f,
+                        "Unknown package '{}'. Known packages: {}",
+                        alias,
+                        known.join(", ")
+                    )
+                }
+            }
         }
     }
 }
@@ -193,6 +210,83 @@ pub fn build_workspace(config: &DevKitConfig) -> Result<Vec<BuildResult>, BuildE
     let ordered = crate::project::resolve_deploy_order(config)
         .map_err(|e| BuildError::InvalidProject(e.to_string()))?;
 
+    build_ordered(config, ordered, false)
+}
+
+/// Build only the `--package` subset named by [`resolve_build_selection`].
+///
+/// `selected` is the named aliases plus their transitive dependencies, in the
+/// workspace's resolved build order. Aliases outside the selection are never
+/// built and their artifacts are never touched.
+pub fn build_workspace_selected(
+    config: &DevKitConfig,
+    selected: &[String],
+) -> Result<Vec<BuildResult>, BuildError> {
+    if config.contracts.is_empty() {
+        return Err(BuildError::MissingConfig);
+    }
+    build_ordered(config, selected.to_vec(), true)
+}
+
+/// Resolve the repeatable `--package` allow-list into the concrete build set.
+///
+/// The set is every named alias plus every alias it transitively depends on
+/// (`depends_on` or legacy `deploy_after`), returned in the workspace's
+/// resolved build order. An unknown alias is rejected before any build starts,
+/// naming both the alias and the known aliases.
+pub fn resolve_build_selection(
+    config: &DevKitConfig,
+    packages: &[String],
+) -> Result<Vec<String>, BuildError> {
+    let known: Vec<String> = {
+        let mut known: Vec<String> = config.contracts.keys().cloned().collect();
+        known.sort();
+        known
+    };
+    for alias in packages {
+        if !config.contracts.contains_key(alias) {
+            return Err(BuildError::UnknownPackage {
+                alias: alias.clone(),
+                known,
+            });
+        }
+    }
+
+    let ordered = crate::project::resolve_deploy_order(config)
+        .map_err(|e| BuildError::InvalidProject(e.to_string()))?;
+
+    // Dependencies always precede their dependents in the resolved order, so a
+    // single reverse pass expands the transitive closure from each selection
+    // down through everything it depends on.
+    let mut selected: std::collections::HashSet<String> = packages.iter().cloned().collect();
+    for alias in ordered.iter().rev() {
+        if !selected.contains(alias) {
+            continue;
+        }
+        let contract_cfg = config
+            .contracts
+            .get(alias)
+            .expect("alias from resolved order");
+        for dep in contract_cfg
+            .depends_on
+            .iter()
+            .chain(contract_cfg.deploy_after.iter())
+        {
+            selected.insert(dep.clone());
+        }
+    }
+
+    Ok(ordered
+        .into_iter()
+        .filter(|alias| selected.contains(alias))
+        .collect())
+}
+
+fn build_ordered(
+    config: &DevKitConfig,
+    ordered: Vec<String>,
+    partial: bool,
+) -> Result<Vec<BuildResult>, BuildError> {
     let mut results = Vec::new();
 
     for alias in &ordered {
@@ -294,6 +388,10 @@ pub fn build_workspace(config: &DevKitConfig) -> Result<Vec<BuildResult>, BuildE
     // artifact's SHA-256 and the deterministic deploy order. Advisory only:
     // if lock generation fails (e.g. an artifact vanished between build and
     // hashing), surface a warning but do not fail the build.
+    if partial {
+        write_selected_lock(config, &ordered);
+        return Ok(results);
+    }
     if let Ok(lock) = crate::lock::generate_lock(Path::new("."), config) {
         match crate::lock::write_lock(Path::new("."), &lock) {
             Ok(path) => {
@@ -313,6 +411,68 @@ pub fn build_workspace(config: &DevKitConfig) -> Result<Vec<BuildResult>, BuildE
     Ok(results)
 }
 
+/// Write `sdkt.lock` for a `--package` build.
+///
+/// The lock is regenerated from the built subset only — and says so — while
+/// every entry for an unselected contract in an existing lock is preserved: a
+/// partial build must never silently drop contracts it did not touch.
+fn write_selected_lock(config: &DevKitConfig, selected: &[String]) {
+    let mut lock = match crate::lock::generate_lock_subset(Path::new("."), config, selected) {
+        Ok(lock) => lock,
+        Err(e) => {
+            eprintln!("Warning: could not write sdkt.lock: {}", e);
+            return;
+        }
+    };
+
+    let mut preserved = 0usize;
+    if let Ok(existing) = crate::lock::read_lock(Path::new(".")) {
+        let selected_set: std::collections::HashSet<&str> =
+            selected.iter().map(String::as_str).collect();
+        let mut order = existing.deploy_order;
+        for alias in selected {
+            if !order.contains(alias) {
+                order.push(alias.clone());
+            }
+        }
+
+        let mut contracts: Vec<crate::lock::LockEntry> = Vec::new();
+        for entry in existing.contracts {
+            if !selected_set.contains(entry.alias.as_str()) {
+                preserved += 1;
+                contracts.push(entry);
+            }
+        }
+        for mut entry in lock.contracts {
+            entry.order = order
+                .iter()
+                .position(|alias| alias == &entry.alias)
+                .unwrap_or(entry.order);
+            contracts.push(entry);
+        }
+        contracts.sort_by_key(|entry| entry.order);
+        lock.deploy_order = order;
+        lock.contracts = contracts;
+    }
+
+    match crate::lock::write_lock(Path::new("."), &lock) {
+        Ok(path) => {
+            eprintln!(
+                "✓ Wrote {} (partial build: lock regenerated from {} selected contract(s); \
+                 preserved {} unselected entr{})",
+                path.display(),
+                selected.len(),
+                preserved,
+                if preserved == 1 { "y" } else { "ies" }
+            );
+            if let Ok(toml) = crate::lock::lock_to_toml(&lock) {
+                eprintln!("{}", toml);
+            }
+        }
+        Err(e) => eprintln!("Warning: could not write sdkt.lock: {}", e),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -324,6 +484,67 @@ mod tests {
         let config = DevKitConfig::default();
         let res = build_workspace(&config);
         assert!(matches!(res, Err(BuildError::MissingConfig)));
+    }
+
+    fn config_with_contracts(pairs: &[(&str, &[&str])]) -> DevKitConfig {
+        let mut contracts = HashMap::new();
+        for (alias, deps) in pairs {
+            contracts.insert(
+                alias.to_string(),
+                ContractConfig {
+                    path: format!("contracts/{}", alias),
+                    deploy_after: vec![],
+                    depends_on: deps.iter().map(|dep| dep.to_string()).collect(),
+                    ctor_args: vec![],
+                },
+            );
+        }
+        DevKitConfig {
+            contracts,
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn package_selection_includes_transitive_dependencies_in_build_order() {
+        let config = config_with_contracts(&[
+            ("token", &[]),
+            ("vault", &["token"]),
+            ("router", &["vault"]),
+            ("oracle", &[]),
+        ]);
+
+        // A selected alias always pulls in its whole dependency chain first.
+        assert_eq!(
+            resolve_build_selection(&config, &["router".to_string()]).unwrap(),
+            vec!["token", "vault", "router"]
+        );
+        // A leaf selection builds nothing else.
+        assert_eq!(
+            resolve_build_selection(&config, &["token".to_string()]).unwrap(),
+            vec!["token"]
+        );
+        // A sibling branch is not pulled in.
+        assert_eq!(
+            resolve_build_selection(&config, &["oracle".to_string()]).unwrap(),
+            vec!["oracle"]
+        );
+        // Repeated flags union their closures, in build order.
+        assert_eq!(
+            resolve_build_selection(&config, &["router".to_string(), "oracle".to_string()])
+                .unwrap(),
+            vec!["oracle", "token", "vault", "router"]
+        );
+    }
+
+    #[test]
+    fn package_selection_rejects_unknown_alias_before_building() {
+        let config = config_with_contracts(&[("token", &[]), ("vault", &["token"])]);
+        let err = resolve_build_selection(&config, &["missing".to_string()]).unwrap_err();
+        let msg = err.to_string();
+        assert!(msg.contains("missing"), "must name the alias: {msg}");
+        assert!(msg.contains("token"), "must list known aliases: {msg}");
+        assert!(msg.contains("vault"), "must list known aliases: {msg}");
     }
 
     #[test]

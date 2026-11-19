@@ -577,6 +577,10 @@ enum Commands {
         /// Output format (pretty or json)
         #[arg(short, long, default_value = "pretty")]
         format: String,
+        /// Build only the named contract(s) plus their workspace dependencies
+        /// (repeatable)
+        #[arg(long = "package", value_name = "ALIAS")]
+        packages: Vec<String>,
     },
     /// Invoke a contract function (read-only, no signing/submission)
     Call {
@@ -3018,6 +3022,23 @@ fn parse_format_str(s: &str) -> OutputFormat {
             process::exit(2);
         }
     }
+}
+
+/// Report a build failure in the requested format and exit non-zero.
+fn build_error_exit(e: &sdkt_core::build::BuildError, fmt: OutputFormat) -> ! {
+    if fmt == OutputFormat::Json {
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&serde_json::json!({
+                "success": false,
+                "error": e.to_string(),
+            }))
+            .expect("serialize build error")
+        );
+    } else {
+        eprintln!("Error building workspace: {}", e);
+    }
+    std::process::exit(1);
 }
 
 /// Validate a `(timeout, interval)` wait pair before any transaction is
@@ -9990,10 +10011,37 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
                 }
             }
         }
-        Commands::Build { format } => {
+        Commands::Build { format, packages } => {
             let fmt = parse_format_str(&format);
             let config = load_config();
-            match sdkt_core::build::build_workspace(&config) {
+
+            // `--package` resolves to the named aliases plus their transitive
+            // dependencies before anything is built, so pretty mode can print
+            // the selected build set first and an unknown alias fails before
+            // any build starts.
+            let selection = if packages.is_empty() {
+                None
+            } else {
+                match sdkt_core::build::resolve_build_selection(&config, &packages) {
+                    Ok(selected) => {
+                        if fmt == OutputFormat::Pretty {
+                            println!(
+                                "Building selected packages (build order): {}",
+                                selected.join(", ")
+                            );
+                        }
+                        Some(selected)
+                    }
+                    Err(e) => build_error_exit(&e, fmt),
+                }
+            };
+
+            let built = match &selection {
+                Some(selected) => sdkt_core::build::build_workspace_selected(&config, selected),
+                None => sdkt_core::build::build_workspace(&config),
+            };
+
+            match built {
                 Ok(results) => {
                     if fmt == OutputFormat::Json {
                         // Deterministic, additive machine-readable result: the
@@ -10009,13 +10057,14 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
                                 })
                             })
                             .collect();
-                        println!(
-                            "{}",
-                            serde_json::to_string_pretty(&serde_json::json!({
-                                "success": true,
-                                "artifacts": artifacts,
-                            }))?
-                        );
+                        let mut doc = serde_json::json!({
+                            "success": true,
+                            "artifacts": artifacts,
+                        });
+                        if let Some(selected) = &selection {
+                            doc["selected"] = serde_json::json!(selected);
+                        }
+                        println!("{}", serde_json::to_string_pretty(&doc)?);
                     } else {
                         println!("✓ Workspace built successfully");
                         for res in results {
@@ -10023,23 +10072,7 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
                         }
                     }
                 }
-                Err(e) => {
-                    if fmt == OutputFormat::Json {
-                        // Error envelope on stdout with a non-zero exit, so an
-                        // agent can parse the failure deterministically instead
-                        // of reading stderr text. Mirrors `package validate`.
-                        println!(
-                            "{}",
-                            serde_json::to_string_pretty(&serde_json::json!({
-                                "success": false,
-                                "error": e.to_string(),
-                            }))?
-                        );
-                        std::process::exit(1);
-                    }
-                    eprintln!("Error building workspace: {}", e);
-                    std::process::exit(1);
-                }
+                Err(e) => build_error_exit(&e, fmt),
             }
         }
         Commands::Call {
