@@ -983,3 +983,270 @@ fn audit_external_mod_declaration_and_use_not_followed() {
         .success()
         .stdout(predicates::str::contains("No issues found."));
 }
+
+// ── Baseline reports and new-findings-only gating ──────────────────────────
+
+#[test]
+fn audit_save_baseline_persists_documented_format() {
+    let dir = TempDir::new().unwrap();
+    let contract = write_fixture(&dir, "token.rs", UNGUARDED_MINTER);
+    let baseline = dir.path().join("audit-baseline.json");
+
+    sdkt()
+        .args([
+            "audit",
+            contract.to_str().unwrap(),
+            "--save-baseline",
+            baseline.to_str().unwrap(),
+        ])
+        .assert()
+        .success()
+        .stdout(predicates::str::contains("Report saved"));
+
+    assert!(baseline.exists(), "baseline file should be created");
+    let raw = std::fs::read_to_string(&baseline).unwrap();
+    let v: serde_json::Value = serde_json::from_str(&raw).expect("valid baseline JSON");
+    assert!(v["sdkt_version"].is_string());
+    assert!(v["rules"].is_array());
+    assert!(!v["rules"].as_array().unwrap().is_empty());
+    assert_eq!(v["findings"].as_array().unwrap().len(), 1);
+    assert_eq!(v["findings"][0]["rule_id"], "AUTH-001");
+    assert_eq!(v["summary"]["total"], 1);
+}
+
+#[test]
+fn audit_baseline_identical_and_subset_exit_zero_new_violation_exits_nonzero() {
+    let dir = TempDir::new().unwrap();
+    let contract = write_fixture(
+        &dir,
+        "token.rs",
+        "#[contractimpl]\nimpl Token {\n    pub fn mint(env: Env, to: Address) { env.storage().instance().set(&K, &to); }\n    pub fn quote(env: Env, a: i128, b: i128) -> i128 { a / 10_000 * b }\n}\n",
+    );
+    let baseline = dir.path().join("audit-baseline.json");
+
+    // 1. Save baseline with 2 known findings (AUTH-001 + MATH-001).
+    sdkt()
+        .args([
+            "audit",
+            contract.to_str().unwrap(),
+            "--save-baseline",
+            baseline.to_str().unwrap(),
+        ])
+        .assert()
+        .success();
+
+    // 2. Identical findings against baseline -> exit 0 (ratchet case).
+    sdkt()
+        .args([
+            "audit",
+            contract.to_str().unwrap(),
+            "--baseline",
+            baseline.to_str().unwrap(),
+        ])
+        .assert()
+        .success()
+        .stdout(predicates::str::contains("Baseline: 2 known findings"))
+        .stdout(predicates::str::contains("New findings: 0"))
+        .stdout(predicates::str::contains("Resolved: 0"));
+
+    // 3. Resolve one violation (subset of baseline) -> exit 0 and reports Resolved: 1.
+    std::fs::write(
+        &contract,
+        "#[contractimpl]\nimpl Token {\n    pub fn mint(env: Env, to: Address) { env.storage().instance().set(&K, &to); }\n}\n",
+    )
+    .unwrap();
+    sdkt()
+        .args([
+            "audit",
+            contract.to_str().unwrap(),
+            "--baseline",
+            baseline.to_str().unwrap(),
+        ])
+        .assert()
+        .success()
+        .stdout(predicates::str::contains("Baseline: 2 known findings"))
+        .stdout(predicates::str::contains("New findings: 0"))
+        .stdout(predicates::str::contains("Resolved: 1"));
+
+    // 4. Introduce a new violation (AUTH-003 on initialize_admin) -> exit non-zero and names it.
+    std::fs::write(
+        &contract,
+        "#[contractimpl]\nimpl Token {\n    pub fn mint(env: Env, to: Address) { env.storage().instance().set(&K, &to); }\n    pub fn initialize_admin(env: Env, admin: Address) { env.storage().instance().set(&K, &admin); }\n}\n",
+    )
+    .unwrap();
+    sdkt()
+        .args([
+            "audit",
+            contract.to_str().unwrap(),
+            "--baseline",
+            baseline.to_str().unwrap(),
+        ])
+        .assert()
+        .failure()
+        .code(1)
+        .stdout(predicates::str::contains("Baseline: 2 known findings"))
+        .stdout(predicates::str::contains("New findings:"))
+        .stdout(predicates::str::contains("AUTH-003"))
+        .stdout(predicates::str::contains("initialize_admin"));
+}
+
+#[test]
+fn audit_baseline_json_output_reports_new_and_resolved() {
+    let dir = TempDir::new().unwrap();
+    let contract = write_fixture(&dir, "token.rs", UNGUARDED_MINTER);
+    let baseline = dir.path().join("audit-baseline.json");
+
+    sdkt()
+        .args([
+            "audit",
+            contract.to_str().unwrap(),
+            "--save-baseline",
+            baseline.to_str().unwrap(),
+        ])
+        .assert()
+        .success();
+
+    // Introduce a new finding and resolve the old one
+    std::fs::write(
+        &contract,
+        "#[contractimpl]\nimpl Token {\n    pub fn initialize_admin(env: Env, admin: Address) { env.storage().instance().set(&K, &admin); }\n}\n",
+    )
+    .unwrap();
+
+    let out = sdkt()
+        .args([
+            "audit",
+            contract.to_str().unwrap(),
+            "--baseline",
+            baseline.to_str().unwrap(),
+            "--format",
+            "json",
+        ])
+        .assert()
+        .failure()
+        .code(1)
+        .get_output()
+        .stdout
+        .clone();
+
+    let v: serde_json::Value = serde_json::from_slice(&out).expect("valid JSON");
+    assert_eq!(v["baseline_total"], 1);
+    let new_findings = v["new_findings"].as_array().expect("new_findings array");
+    assert!(new_findings.iter().any(|f| f["rule_id"] == "AUTH-003"));
+    let resolved = v["resolved_findings"]
+        .as_array()
+        .expect("resolved_findings array");
+    assert_eq!(resolved.len(), 1);
+    assert_eq!(resolved[0]["rule_id"], "AUTH-001");
+}
+
+#[test]
+fn audit_stale_ruleset_or_version_baseline_triggers_warning() {
+    let dir = TempDir::new().unwrap();
+    let contract = write_fixture(&dir, "token.rs", UNGUARDED_MINTER);
+    let baseline = dir.path().join("audit-baseline.json");
+
+    // Save baseline with all rules enabled
+    sdkt()
+        .args([
+            "audit",
+            contract.to_str().unwrap(),
+            "--save-baseline",
+            baseline.to_str().unwrap(),
+        ])
+        .assert()
+        .success();
+
+    // Running against the baseline with a different active rule set (--disable MOVE-001)
+    // must trigger a stale rule-set warning while still exiting 0 when no new findings exist.
+    sdkt()
+        .args([
+            "audit",
+            contract.to_str().unwrap(),
+            "--baseline",
+            baseline.to_str().unwrap(),
+            "--disable",
+            "MOVE-001",
+        ])
+        .assert()
+        .success()
+        .stderr(predicates::str::contains("Warning:"))
+        .stderr(predicates::str::contains("stale baseline"))
+        .stderr(predicates::str::contains("rule set changed"));
+
+    // Modify the saved baseline's sdkt_version to simulate a stale version
+    let raw = std::fs::read_to_string(&baseline).unwrap();
+    let mut doc: serde_json::Value = serde_json::from_str(&raw).unwrap();
+    doc["sdkt_version"] = serde_json::Value::String("0.0.1-old".to_string());
+    std::fs::write(&baseline, serde_json::to_string_pretty(&doc).unwrap()).unwrap();
+
+    sdkt()
+        .args([
+            "audit",
+            contract.to_str().unwrap(),
+            "--baseline",
+            baseline.to_str().unwrap(),
+        ])
+        .assert()
+        .success()
+        .stderr(predicates::str::contains("Warning:"))
+        .stderr(predicates::str::contains("stale baseline"))
+        .stderr(predicates::str::contains("0.0.1-old"));
+}
+
+#[test]
+fn audit_baseline_multi_file_and_duplicate_counting() {
+    let dir = TempDir::new().unwrap();
+    let _file_a = write_fixture(&dir, "a.rs", UNGUARDED_MINTER);
+    let baseline = dir.path().join("audit-baseline.json");
+
+    // 1. Save baseline for directory containing a.rs (multi-file mode by directory input)
+    sdkt()
+        .args([
+            "audit",
+            dir.path().to_str().unwrap(),
+            "--save-baseline",
+            baseline.to_str().unwrap(),
+        ])
+        .assert()
+        .success();
+
+    // 2. Add b.rs with identical finding into the same directory
+    let _file_b = write_fixture(&dir, "b.rs", UNGUARDED_MINTER);
+
+    // 3. Audit directory with --baseline:
+    // a.rs is unchanged, b.rs is a new finding (even though rule_id, message, location are identical!)
+    let out = sdkt()
+        .args([
+            "audit",
+            dir.path().to_str().unwrap(),
+            "--baseline",
+            baseline.to_str().unwrap(),
+            "--format",
+            "json",
+        ])
+        .assert()
+        .failure()
+        .code(1)
+        .get_output()
+        .stdout
+        .clone();
+
+    let v: serde_json::Value = serde_json::from_slice(&out).expect("valid JSON");
+    assert_eq!(v["baseline_total"], 1);
+    let new_findings = v["new_findings"].as_array().expect("new_findings");
+    assert_eq!(new_findings.len(), 1);
+    let new_file = new_findings[0]["file"].as_str().expect("file present");
+    assert!(
+        new_file.contains("b.rs"),
+        "new finding should come from b.rs, got: {new_file}"
+    );
+
+    let unchanged = v["unchanged_findings"].as_array().expect("unchanged_findings");
+    assert_eq!(unchanged.len(), 1);
+    let unchanged_file = unchanged[0]["file"].as_str().expect("file present");
+    assert!(
+        unchanged_file.contains("a.rs"),
+        "unchanged finding should come from a.rs, got: {unchanged_file}"
+    );
+}

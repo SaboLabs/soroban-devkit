@@ -4,7 +4,7 @@
 //! `--save-baseline <path>` and gate subsequent runs on *new* findings only
 //! with `--baseline <path>`.
 
-use std::collections::{BTreeSet, HashSet};
+use std::collections::{BTreeSet, HashMap};
 use std::path::Path;
 
 use serde::{Deserialize, Serialize};
@@ -44,9 +44,10 @@ pub struct BaselineReport {
 pub type AuditBaseline = BaselineReport;
 
 /// Composite key identifying a finding across audit runs:
-/// `(rule_id, location, message)`.
+/// `(file, rule_id, location, message)`.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct FindingKey {
+    pub file: Option<String>,
     pub rule_id: String,
     pub location: Option<String>,
     pub message: String,
@@ -56,6 +57,7 @@ impl FindingKey {
     /// Extract the comparison key from a [`Finding`].
     pub fn from_finding(finding: &Finding) -> Self {
         Self {
+            file: finding.file.clone(),
             rule_id: finding.rule_id.clone(),
             location: finding.location.clone(),
             message: finding.message.clone(),
@@ -133,36 +135,43 @@ impl BaselineReport {
     }
 
     /// Compare `current` findings against this baseline, keyed on
-    /// `(rule_id, location, message)`.
+    /// `(file, rule_id, location, message)` with multiplicity preserved.
     pub fn compare(&self, current: &AuditReport) -> BaselineComparison {
-        let baseline_keys: HashSet<FindingKey> =
-            self.findings.iter().map(FindingKey::from_finding).collect();
-        let current_keys: HashSet<FindingKey> = current
-            .findings
-            .iter()
-            .map(FindingKey::from_finding)
-            .collect();
+        let mut baseline_counts: HashMap<FindingKey, usize> = HashMap::new();
+        for f in &self.findings {
+            *baseline_counts.entry(FindingKey::from_finding(f)).or_insert(0) += 1;
+        }
 
-        let new_findings: Vec<Finding> = current
-            .findings
-            .iter()
-            .filter(|f| !baseline_keys.contains(&FindingKey::from_finding(f)))
-            .cloned()
-            .collect();
+        let mut current_counts: HashMap<FindingKey, usize> = HashMap::new();
+        for f in &current.findings {
+            *current_counts.entry(FindingKey::from_finding(f)).or_insert(0) += 1;
+        }
 
-        let resolved_findings: Vec<Finding> = self
-            .findings
-            .iter()
-            .filter(|f| !current_keys.contains(&FindingKey::from_finding(f)))
-            .cloned()
-            .collect();
+        let mut new_findings = Vec::new();
+        let mut unchanged_findings = Vec::new();
+        for f in &current.findings {
+            let key = FindingKey::from_finding(f);
+            if let Some(count) = baseline_counts.get_mut(&key) {
+                if *count > 0 {
+                    *count -= 1;
+                    unchanged_findings.push(f.clone());
+                    continue;
+                }
+            }
+            new_findings.push(f.clone());
+        }
 
-        let unchanged_findings: Vec<Finding> = current
-            .findings
-            .iter()
-            .filter(|f| baseline_keys.contains(&FindingKey::from_finding(f)))
-            .cloned()
-            .collect();
+        let mut resolved_findings = Vec::new();
+        for f in &self.findings {
+            let key = FindingKey::from_finding(f);
+            if let Some(count) = current_counts.get_mut(&key) {
+                if *count > 0 {
+                    *count -= 1;
+                    continue;
+                }
+            }
+            resolved_findings.push(f.clone());
+        }
 
         BaselineComparison {
             baseline_total: self.findings.len(),
@@ -406,5 +415,104 @@ mod tests {
         let rule_warnings = baseline.check_staleness("2.4.0", &fewer_rules);
         assert_eq!(rule_warnings.len(), 1);
         assert!(rule_warnings[0].contains("rule set changed"));
+    }
+
+    #[test]
+    fn comparison_identical_findings_in_different_source_files() {
+        let f_a = Finding {
+            rule_id: "AUTH-001".to_string(),
+            severity: Severity::Critical,
+            message: "missing auth".to_string(),
+            file: Some("contracts/a.rs".to_string()),
+            location: Some("mint".to_string()),
+        };
+        let f_b = Finding {
+            rule_id: "AUTH-001".to_string(),
+            severity: Severity::Critical,
+            message: "missing auth".to_string(),
+            file: Some("contracts/b.rs".to_string()),
+            location: Some("mint".to_string()),
+        };
+
+        let mut base_report = AuditReport::default();
+        base_report.add(f_a.clone());
+        let baseline = BaselineReport::from_report(&base_report, "2.5.0", &default_rules());
+
+        let mut current_report = AuditReport::default();
+        current_report.add(f_a.clone());
+        current_report.add(f_b.clone());
+
+        let cmp = baseline.compare(&current_report);
+        assert!(cmp.has_new_findings());
+        assert_eq!(cmp.baseline_total, 1);
+        assert_eq!(cmp.new_findings, vec![f_b.clone()]);
+        assert_eq!(cmp.unchanged_findings, vec![f_a.clone()]);
+        assert!(cmp.resolved_findings.is_empty());
+
+        // When b replaces a, a is resolved and b is new
+        let mut replaced_report = AuditReport::default();
+        replaced_report.add(f_b.clone());
+        let cmp_replaced = baseline.compare(&replaced_report);
+        assert!(cmp_replaced.has_new_findings());
+        assert_eq!(cmp_replaced.new_findings, vec![f_b]);
+        assert_eq!(cmp_replaced.resolved_findings, vec![f_a]);
+        assert!(cmp_replaced.unchanged_findings.is_empty());
+    }
+
+    #[test]
+    fn comparison_duplicate_identical_findings_where_current_contains_more_than_baseline() {
+        let f = sample_finding("AUTH-001", Severity::Critical, "mint", "missing auth");
+
+        let mut base_report = AuditReport::default();
+        base_report.add(f.clone());
+        let baseline = BaselineReport::from_report(&base_report, "2.5.0", &default_rules());
+
+        // Current report has 2 occurrences of the same finding
+        let mut current_report = AuditReport::default();
+        current_report.add(f.clone());
+        current_report.add(f.clone());
+
+        let cmp = baseline.compare(&current_report);
+        assert!(cmp.has_new_findings());
+        assert_eq!(cmp.baseline_total, 1);
+        assert_eq!(cmp.new_findings, vec![f.clone()]);
+        assert_eq!(cmp.unchanged_findings, vec![f.clone()]);
+        assert!(cmp.resolved_findings.is_empty());
+    }
+
+    #[test]
+    fn comparison_resolved_findings_with_multiplicity_and_identity() {
+        let f_a = Finding {
+            rule_id: "AUTH-001".to_string(),
+            severity: Severity::Critical,
+            message: "missing auth".to_string(),
+            file: Some("contracts/a.rs".to_string()),
+            location: Some("mint".to_string()),
+        };
+        let f_b = Finding {
+            rule_id: "AUTH-001".to_string(),
+            severity: Severity::Critical,
+            message: "missing auth".to_string(),
+            file: Some("contracts/b.rs".to_string()),
+            location: Some("mint".to_string()),
+        };
+
+        // Baseline has 2 occurrences in a.rs and 1 in b.rs
+        let mut base_report = AuditReport::default();
+        base_report.add(f_a.clone());
+        base_report.add(f_a.clone());
+        base_report.add(f_b.clone());
+        let baseline = BaselineReport::from_report(&base_report, "2.5.0", &default_rules());
+
+        // Current report has only 1 occurrence in a.rs and 0 in b.rs
+        let mut current_report = AuditReport::default();
+        current_report.add(f_a.clone());
+
+        let cmp = baseline.compare(&current_report);
+        assert!(!cmp.has_new_findings());
+        assert_eq!(cmp.baseline_total, 3);
+        assert!(cmp.new_findings.is_empty());
+        assert_eq!(cmp.unchanged_findings, vec![f_a.clone()]);
+        assert_eq!(cmp.resolved_findings, vec![f_a.clone(), f_b.clone()]);
     }
 }
