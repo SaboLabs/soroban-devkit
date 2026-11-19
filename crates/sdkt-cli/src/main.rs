@@ -1624,6 +1624,9 @@ enum StorageAction {
     /// entries, and a suggested `--ledgers` value.  Nothing is signed or
     /// submitted.
     ///
+    /// Duplicate ledger keys within a single snapshot are rejected with an
+    /// error rather than silently dropped.
+    ///
     /// Exit codes: 0 in all non-error cases (including an empty plan).
     #[command(name = "storage-diff", alias = "diff")]
     StorageDiff {
