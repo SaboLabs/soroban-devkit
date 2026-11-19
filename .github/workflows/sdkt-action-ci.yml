@@ -221,3 +221,189 @@ jobs:
             exit 1
           fi
           echo "OK: a CLI error with no JSON report still failed the step."
+
+  validate-health:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      # Health gate - PASS (healthy contract, no --wasm): prints the health
+      # report and passes without performing any WASM hash comparison.
+      - name: Health should PASS on a healthy testnet contract
+        id: health_pass
+        uses: ./.github/actions/sdkt
+        with:
+          command: health
+          contract: CCJUD55AG6W5HAI5LRVNKAE5WDP5XGZBUDS5WNTIVDU7O264UZZE7BRD
+          network: testnet
+
+      - name: Assert healthy testnet contract passed
+        shell: bash
+        run: |
+          if [ "${{ steps.health_pass.outcome }}" != "success" ]; then
+            echo "::error::expected health to PASS on a healthy testnet contract, but outcome was '${{ steps.health_pass.outcome }}'"
+            exit 1
+          fi
+          echo "OK: healthy testnet contract passed the health gate."
+
+      # Health gate - THRESHOLD PASS (healthy posture with health-threshold=at_risk):
+      # Pin ttl_warning_days = 0 in .sdkt.toml so expiring_soon_ledgers = 0
+      # (no u32 TTL can be < 0) and the contract posture is deterministically
+      # `healthy` regardless of the live Testnet contract's changing TTL state.
+      - name: Configure deterministic healthy TTL posture
+        shell: bash
+        run: |
+          printf '[storage]\nttl_warning_days = 0\n' > .sdkt.toml
+
+      - name: Health should PASS on a healthy contract with health-threshold=at_risk
+        id: health_threshold_pass
+        uses: ./.github/actions/sdkt
+        with:
+          command: health
+          contract: CCJUD55AG6W5HAI5LRVNKAE5WDP5XGZBUDS5WNTIVDU7O264UZZE7BRD
+          network: testnet
+          health-threshold: at_risk
+
+      - name: Assert healthy contract passed under health-threshold=at_risk
+        shell: bash
+        run: |
+          if [ "${{ steps.health_threshold_pass.outcome }}" != "success" ]; then
+            echo "::error::expected health to PASS on a healthy contract with health-threshold=at_risk, but outcome was '${{ steps.health_threshold_pass.outcome }}'"
+            exit 1
+          fi
+          echo "OK: healthy contract passed under health-threshold=at_risk."
+
+      # Health gate - THRESHOLD BEHAVIOR (at_risk posture passes at default
+      # health-threshold=critical, fails when health-threshold=at_risk):
+      # Pin ttl_warning_days = 250000 in .sdkt.toml so expiring_soon_ledgers
+      # saturates to u32::MAX (above Soroban's protocol max TTL) and the posture
+      # is deterministically `at_risk` regardless of live Testnet TTL changes.
+      - name: Configure deterministic at_risk TTL posture
+        shell: bash
+        run: |
+          printf '[storage]\nttl_warning_days = 250000\n' > .sdkt.toml
+
+      - name: Health should PASS on an at_risk contract at default threshold (critical)
+        id: health_at_risk_default
+        uses: ./.github/actions/sdkt
+        with:
+          command: health
+          contract: CAE3U7JKESRWZHPEQ72DVNGOQ6WPA7HSPQZL5YV46NPCE4TMUPAGYMEC
+          network: testnet
+
+      - name: Assert at_risk contract passed at default threshold
+        shell: bash
+        run: |
+          if [ "${{ steps.health_at_risk_default.outcome }}" != "success" ]; then
+            echo "::error::expected health to PASS on an at_risk contract at default health-threshold=critical, but outcome was '${{ steps.health_at_risk_default.outcome }}'"
+            exit 1
+          fi
+          echo "OK: at_risk contract passed at default health-threshold=critical."
+
+      - name: Health should FAIL on an at_risk contract with health-threshold=at_risk
+        id: health_at_risk_strict
+        continue-on-error: true
+        uses: ./.github/actions/sdkt
+        with:
+          command: health
+          contract: CAE3U7JKESRWZHPEQ72DVNGOQ6WPA7HSPQZL5YV46NPCE4TMUPAGYMEC
+          network: testnet
+          health-threshold: at_risk
+
+      - name: Assert at_risk contract failed under health-threshold=at_risk
+        shell: bash
+        run: |
+          rm -f .sdkt.toml
+          if [ "${{ steps.health_at_risk_strict.outcome }}" != "failure" ]; then
+            echo "::error::expected health to FAIL on an at_risk contract with health-threshold=at_risk, but outcome was '${{ steps.health_at_risk_strict.outcome }}'"
+            exit 1
+          fi
+          echo "OK: at_risk contract failed under health-threshold=at_risk."
+
+      # Health gate - INVALID THRESHOLD: an unknown health-threshold value is
+      # rejected before any sdkt invocation runs.
+      - name: Health should FAIL on an invalid health-threshold
+        id: health_bad_threshold
+        continue-on-error: true
+        uses: ./.github/actions/sdkt
+        with:
+          command: health
+          contract: CCJUD55AG6W5HAI5LRVNKAE5WDP5XGZBUDS5WNTIVDU7O264UZZE7BRD
+          network: testnet
+          health-threshold: bogus
+
+      - name: Assert invalid health-threshold was rejected
+        shell: bash
+        run: |
+          if [ "${{ steps.health_bad_threshold.outcome }}" != "failure" ]; then
+            echo "::error::expected health to FAIL on an invalid health-threshold, but outcome was '${{ steps.health_bad_threshold.outcome }}'"
+            exit 1
+          fi
+          echo "OK: invalid health-threshold was rejected before any sdkt invocation."
+
+      # Health gate - HASH MISMATCH: supplying a local --wasm whose hash does
+      # not match the deployed contract produces verified=false and health=critical,
+      # which MUST fail the step naming the hash mismatch.
+      - name: Health should FAIL on a WASM hash mismatch
+        id: health_mismatch
+        continue-on-error: true
+        uses: ./.github/actions/sdkt
+        with:
+          command: health
+          contract: CCJUD55AG6W5HAI5LRVNKAE5WDP5XGZBUDS5WNTIVDU7O264UZZE7BRD
+          network: testnet
+          wasm: crates/sdkt-cli/tests/fixtures/us_old.wasm
+
+      - name: Assert WASM hash mismatch failed the health gate
+        shell: bash
+        run: |
+          if [ "${{ steps.health_mismatch.outcome }}" != "failure" ]; then
+            echo "::error::expected health to FAIL on a WASM hash mismatch, but outcome was '${{ steps.health_mismatch.outcome }}'"
+            exit 1
+          fi
+          echo "OK: WASM hash mismatch failed the health gate."
+
+      # Health gate - UNKNOWN CONTRACT: a nonexistent contract ID fails with the
+      # CLI's "not found" error and no jq parse error.
+      - name: Health should FAIL on a nonexistent contract ID
+        id: health_unknown_contract
+        continue-on-error: true
+        uses: ./.github/actions/sdkt
+        with:
+          command: health
+          contract: CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAD2KM
+          network: testnet
+
+      - name: Assert nonexistent contract ID failed the health gate
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ "${{ steps.health_unknown_contract.outcome }}" != "failure" ]; then
+            echo "::error::expected health to FAIL on a nonexistent contract ID, but outcome was '${{ steps.health_unknown_contract.outcome }}'"
+            exit 1
+          fi
+          # Execute the actual `Run sdkt health` script block from action.yml,
+          # capture stderr, require the CLI's not-found diagnostic, and fail if
+          # stderr contains a jq parse error.
+          HEALTH_SCRIPT="$(awk '/- name: Run sdkt health/{flag=1} flag && /run: \|/{run=1; next} run{sub(/^        /, ""); print}' .github/actions/sdkt/action.yml)"
+          STDERR_FILE="$(mktemp)"
+          trap 'rm -f "$STDERR_FILE"' EXIT
+          if SDKT_CONTRACT="CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAD2KM" \
+             SDKT_NETWORK="testnet" \
+             SDKT_WASM="" \
+             SDKT_HEALTH_THRESHOLD="critical" \
+             bash -c "$HEALTH_SCRIPT" 2>"$STDERR_FILE"; then
+            echo "::error::expected Run sdkt health block to fail on a nonexistent contract ID"
+            exit 1
+          fi
+          STDERR_OUT="$(cat "$STDERR_FILE")"
+          echo "$STDERR_OUT" >&2
+          if ! printf '%s\n' "$STDERR_OUT" | grep -qi "not found on testnet"; then
+            echo "::error::expected CLI 'not found on testnet' diagnostic on stderr, got: $STDERR_OUT"
+            exit 1
+          fi
+          if printf '%s\n' "$STDERR_OUT" | grep -Eqi "jq:.*error|parse error"; then
+            echo "::error::unexpected jq parse error on stderr: $STDERR_OUT"
+            exit 1
+          fi
+          echo "OK: nonexistent contract ID failed cleanly with CLI not-found diagnostic and no jq parse error."
