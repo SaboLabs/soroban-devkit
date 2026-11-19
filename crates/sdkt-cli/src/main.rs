@@ -25,7 +25,7 @@ use sdkt_xdr::{
 use sha2::{Digest, Sha256};
 use std::fs;
 use std::io::{self, Write};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::process;
 use std::time::Duration;
 
@@ -1455,15 +1455,21 @@ enum StorageAction {
     /// Extend the TTL of a contract's footprint via `ExtendFootprintTtl`.
     Extend {
         /// Contract whose storage footprint should have TTL extended.
-        #[arg(long)]
-        contract: String,
+        #[arg(long, conflicts_with = "plan")]
+        contract: Option<String>,
         /// Minimum TTL in ledgers: entries will live at least this many ledgers past the current ledger.
         #[arg(short, long)]
-        ledgers: u32,
+        ledgers: Option<u32>,
         /// Repeatable: extra ledger keys (base64 XDR or hex XDR) to include in
         /// the footprint. The contract instance key is always included.
-        #[arg(long, value_name = "KEY")]
+        #[arg(long, value_name = "KEY", conflicts_with = "plan")]
         key: Vec<String>,
+        /// Path to a JSON plan file. Mutually exclusive with --contract and --key.
+        #[arg(long, conflicts_with = "contract", conflicts_with = "key")]
+        plan: Option<PathBuf>,
+        /// Dry-run: show what would be extended without submitting.
+        #[arg(long)]
+        dry_run: bool,
         /// Identity name to sign the extend transaction. Defaults to "default".
         #[arg(short = 'I', long, default_value = "default")]
         identity: String,
@@ -5226,6 +5232,16 @@ fn collect_rust_sources(path: &std::path::Path) -> Result<Vec<std::path::PathBuf
     Ok(files)
 }
 
+
+fn load_and_validate_plan(plan_path: &Path) -> Result<(String, Vec<String>, u32), String> {
+    let plan_str = fs::read_to_string(plan_path).map_err(|e| format!("Failed to read plan file: {e}"))?;
+    let plan: sdkt_storage::ExtendPlan = serde_json::from_str(&plan_str).map_err(|e| format!("Failed to parse plan file: {e}"))?;
+    if plan.keys.is_empty() {
+        return Err("nothing to extend (plan contains no keys)".to_string());
+    }
+    Ok((plan.contract_id, plan.keys, plan.suggested_ledgers))
+}
+
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Windows debug builds overflow the default 1 MB main-thread stack
     // (introduced by the invoke command's deeper async call chain). Unix
@@ -6075,6 +6091,8 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
                     contract,
                     ledgers,
                     key,
+                    plan,
+                    dry_run,
                     identity,
                     timeout,
                     interval,
@@ -6086,14 +6104,30 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
                         process::exit(2);
                     }
 
-                    if contract.trim().is_empty() {
-                        eprintln!("Error: --contract / contract id must not be empty");
-                        process::exit(1);
+                    let (contract, key, ledgers) = if let Some(plan_path) = plan {
+                        let (c, k, suggested) = load_and_validate_plan(&plan_path).map_err(|e| format!("{e}")).unwrap_or_else(|e| { eprintln!("Error: {}", e); process::exit(1); });
+                        (c, k, ledgers.unwrap_or(suggested))
+                    } else {
+                        let c = contract.ok_or_else(|| "Error: --contract is required").unwrap_or_else(|e| { eprintln!("{}", e); process::exit(1); });
+                        let l = ledgers.ok_or_else(|| "Error: --ledgers is required").unwrap_or_else(|e| { eprintln!("{}", e); process::exit(1); });
+                        if c.trim().is_empty() {
+                            eprintln!("Error: --contract / contract id must not be empty");
+                            process::exit(1);
+                        }
+                        if l == 0 {
+                            eprintln!("Error: --ledgers must be greater than 0");
+                            process::exit(1);
+                        }
+                        (c, key, l)
+                    };
+
+                    if dry_run {
+                        println!("Contract: {}", contract);
+                        println!("Keys: {:?}", key);
+                        println!("Ledgers: {}", ledgers);
+                        process::exit(0);
                     }
-                    if ledgers == 0 {
-                        eprintln!("Error: --ledgers must be greater than 0");
-                        process::exit(1);
-                    }
+
                     if let Err(e) = sdkt_rpc::collect_extend_keys(&contract, &key) {
                         let err_str = e.to_string();
                         let msg = match &e {

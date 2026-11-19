@@ -28,7 +28,7 @@ sdkt
 │   ├── estimate <wasm-path>  [--ledgers <N>] [--format <pretty|json>]
 │   ├── storage-diff --old <snapshot-a.json> --new <snapshot-b.json> [--extend-plan] [--format <pretty|json>]
 │   ├── read --contract <contract-id> --key-xdr <BASE64_XDR> [--abi <wasm>] [--format]
-│   ├── extend --contract <contract-id> --ledgers <N> [--key <xdr>]... [--identity <name>] [--timeout <s>] [--interval <s>] [--format]
+│   ├── extend [--contract <contract-id> --ledgers <N> [--key <xdr>]... | --plan <FILE>] [--dry-run] [--identity <name>] [--timeout <s>] [--interval <s>] [--format]
 │   └── restore --contract <contract-id> --envelope <xdr> [--dry-run] [--identity <name>] [--timeout <s>] [--interval <s>] [--format]
 │
 │   `estimate` performs an offline calculation of storage rent over a specified
