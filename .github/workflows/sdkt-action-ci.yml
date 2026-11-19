@@ -246,8 +246,15 @@ jobs:
           fi
           echo "OK: healthy testnet contract passed the health gate."
 
-      # Health gate - THRESHOLD PASS (healthy contract with health-threshold=at_risk):
-      # a healthy contract satisfies the stricter at_risk threshold.
+      # Health gate - THRESHOLD PASS (healthy posture with health-threshold=at_risk):
+      # Pin ttl_warning_days = 0 in .sdkt.toml so expiring_soon_ledgers = 0
+      # (no u32 TTL can be < 0) and the contract posture is deterministically
+      # `healthy` regardless of the live Testnet contract's changing TTL state.
+      - name: Configure deterministic healthy TTL posture
+        shell: bash
+        run: |
+          printf '[storage]\nttl_warning_days = 0\n' > .sdkt.toml
+
       - name: Health should PASS on a healthy contract with health-threshold=at_risk
         id: health_threshold_pass
         uses: ./.github/actions/sdkt
@@ -266,8 +273,16 @@ jobs:
           fi
           echo "OK: healthy contract passed under health-threshold=at_risk."
 
-      # Health gate - THRESHOLD BEHAVIOR (at_risk contract passes at default
-      # health-threshold=critical, fails when health-threshold=at_risk).
+      # Health gate - THRESHOLD BEHAVIOR (at_risk posture passes at default
+      # health-threshold=critical, fails when health-threshold=at_risk):
+      # Pin ttl_warning_days = 250000 in .sdkt.toml so expiring_soon_ledgers
+      # saturates to u32::MAX (above Soroban's protocol max TTL) and the posture
+      # is deterministically `at_risk` regardless of live Testnet TTL changes.
+      - name: Configure deterministic at_risk TTL posture
+        shell: bash
+        run: |
+          printf '[storage]\nttl_warning_days = 250000\n' > .sdkt.toml
+
       - name: Health should PASS on an at_risk contract at default threshold (critical)
         id: health_at_risk_default
         uses: ./.github/actions/sdkt
@@ -298,6 +313,7 @@ jobs:
       - name: Assert at_risk contract failed under health-threshold=at_risk
         shell: bash
         run: |
+          rm -f .sdkt.toml
           if [ "${{ steps.health_at_risk_strict.outcome }}" != "failure" ]; then
             echo "::error::expected health to FAIL on an at_risk contract with health-threshold=at_risk, but outcome was '${{ steps.health_at_risk_strict.outcome }}'"
             exit 1
@@ -361,8 +377,33 @@ jobs:
       - name: Assert nonexistent contract ID failed the health gate
         shell: bash
         run: |
+          set -euo pipefail
           if [ "${{ steps.health_unknown_contract.outcome }}" != "failure" ]; then
             echo "::error::expected health to FAIL on a nonexistent contract ID, but outcome was '${{ steps.health_unknown_contract.outcome }}'"
             exit 1
           fi
-          echo "OK: nonexistent contract ID failed cleanly without a jq parse error."
+          # Execute the actual `Run sdkt health` script block from action.yml,
+          # capture stderr, require the CLI's not-found diagnostic, and fail if
+          # stderr contains a jq parse error.
+          HEALTH_SCRIPT="$(awk '/- name: Run sdkt health/{flag=1} flag && /run: \|/{run=1; next} run{sub(/^        /, ""); print}' .github/actions/sdkt/action.yml)"
+          STDERR_FILE="$(mktemp)"
+          trap 'rm -f "$STDERR_FILE"' EXIT
+          if SDKT_CONTRACT="CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAD2KM" \
+             SDKT_NETWORK="testnet" \
+             SDKT_WASM="" \
+             SDKT_HEALTH_THRESHOLD="critical" \
+             bash -c "$HEALTH_SCRIPT" 2>"$STDERR_FILE"; then
+            echo "::error::expected Run sdkt health block to fail on a nonexistent contract ID"
+            exit 1
+          fi
+          STDERR_OUT="$(cat "$STDERR_FILE")"
+          echo "$STDERR_OUT" >&2
+          if ! printf '%s\n' "$STDERR_OUT" | grep -qi "not found on testnet"; then
+            echo "::error::expected CLI 'not found on testnet' diagnostic on stderr, got: $STDERR_OUT"
+            exit 1
+          fi
+          if printf '%s\n' "$STDERR_OUT" | grep -Eqi "jq:.*error|parse error"; then
+            echo "::error::unexpected jq parse error on stderr: $STDERR_OUT"
+            exit 1
+          fi
+          echo "OK: nonexistent contract ID failed cleanly with CLI not-found diagnostic and no jq parse error."
