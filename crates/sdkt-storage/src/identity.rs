@@ -118,6 +118,53 @@ impl IdentityStore {
         })
     }
 
+    /// Load an identity's public key by name, without loading its secret.
+    ///
+    /// Unlike [`IdentityStore::get`], this never reads `secret_key`: the
+    /// public key comes from the `public_key` line written by
+    /// [`IdentityStore::generate`] / [`IdentityStore::import`]. It is the
+    /// lookup for read-only paths (e.g. `project deploy --dry-run`) that
+    /// must resolve a source account without touching private key material.
+    ///
+    /// # Errors
+    /// Returns the [`IdentityStore::get`] "not found" error for a missing
+    /// identity, and a refresh-guidance error for an identity created
+    /// before public keys were stored.
+    pub fn get_public_key(&self, name: &str) -> Result<Identity, StorageError> {
+        let path = self.dir.join(format!("{}.toml", name));
+        if !path.exists() {
+            return Err(StorageError::Io(std::io::Error::new(
+                std::io::ErrorKind::NotFound,
+                format!("Identity '{}' not found", name),
+            )));
+        }
+        let public_key = self.load_public_key(&path, name)?;
+        Ok(Identity {
+            name: name.to_string(),
+            public_key,
+        })
+    }
+
+    /// Resolve the public key for a CLI `--identity` value, without loading
+    /// any secret.
+    ///
+    /// Mirrors [`IdentityStore::resolve_signing_identity`] for the
+    /// [`DEFAULT_IDENTITY_NAME`] sentinel, but returns the identity via the
+    /// public-key-only lookup — the resolver for read-only paths. Only a
+    /// missing default maps to [`StorageError::NoDefaultIdentity`]; a
+    /// configured default that fails the public-key lookup (e.g. a legacy
+    /// identity) keeps its own error so the refresh guidance survives.
+    pub fn resolve_public_identity(&self, name: &str) -> Result<Identity, StorageError> {
+        if name == DEFAULT_IDENTITY_NAME {
+            let default_name = match self.default_name() {
+                Ok(n) => n,
+                Err(_) => return Err(StorageError::NoDefaultIdentity),
+            };
+            return self.get_public_key(&default_name);
+        }
+        self.get_public_key(name)
+    }
+
     /// Resolve the signing identity named by a CLI `--identity` value.
     ///
     /// The signing commands default `--identity` to the reserved literal
@@ -216,6 +263,13 @@ impl IdentityStore {
 
     /// Load the default identity.
     pub fn get_default(&self) -> Result<Identity, StorageError> {
+        let name = self.default_name()?;
+        self.get(&name)
+    }
+
+    /// Resolve the name of the configured default identity (the target of
+    /// the `default` symlink).
+    fn default_name(&self) -> Result<String, StorageError> {
         let default_path = self.dir.join("default");
         if !default_path.exists() {
             return Err(StorageError::Io(std::io::Error::new(
@@ -225,12 +279,11 @@ impl IdentityStore {
         }
 
         let target_path = fs::read_link(&default_path).map_err(StorageError::Io)?;
-        let name = target_path
+        Ok(target_path
             .file_stem()
             .and_then(|s| s.to_str())
-            .unwrap_or("unknown");
-
-        self.get(name)
+            .unwrap_or("unknown")
+            .to_string())
     }
 
     /// Load the signing key (`ed25519_dalek::SigningKey`) for a named identity.
@@ -279,9 +332,20 @@ impl IdentityStore {
         .as_str()
         .to_string();
 
+        let pub_key_str = Strkey::PublicKeyEd25519(stellar_strkey::ed25519::PublicKey(
+            signing_key.verifying_key().to_bytes(),
+        ))
+        .to_string()
+        .as_str()
+        .to_string();
+
+        // The public key is stored alongside the secret so read-only paths
+        // (e.g. `project deploy --dry-run`) can resolve the source account
+        // without ever loading the secret. The public key is public by
+        // definition; storing it in the same 0600 file leaks nothing.
         let toml_content = format!(
-            "# Soroban Identity: {}\nsecret_key = \"{}\"\n",
-            name, secret_str
+            "# Soroban Identity: {}\nsecret_key = \"{}\"\npublic_key = \"{}\"\n",
+            name, secret_str, pub_key_str
         );
 
         // Strict permissions 0600
@@ -296,17 +360,52 @@ impl IdentityStore {
         file.write_all(toml_content.as_bytes())
             .map_err(StorageError::Io)?;
 
-        let pub_key_str = Strkey::PublicKeyEd25519(stellar_strkey::ed25519::PublicKey(
-            signing_key.verifying_key().to_bytes(),
-        ))
-        .to_string()
-        .as_str()
-        .to_string();
-
         Ok(Identity {
             name: name.to_string(),
             public_key: pub_key_str,
         })
+    }
+
+    /// Read only the stored public key for an identity file, without
+    /// touching `secret_key`.
+    ///
+    /// Returns an error with refresh guidance when the file predates
+    /// public-key storage (identities created before this field existed).
+    fn load_public_key(&self, path: &Path, name: &str) -> Result<String, StorageError> {
+        let content = fs::read_to_string(path).map_err(StorageError::Io)?;
+
+        let mut public = None;
+        for line in content.lines() {
+            let line = line.trim();
+            if line.starts_with("public_key") {
+                let parts: Vec<&str> = line.split('=').collect();
+                if parts.len() == 2 {
+                    public = Some(parts[1].trim().trim_matches('"').to_string());
+                }
+            }
+        }
+
+        let public = public.ok_or_else(|| {
+            StorageError::Io(std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                format!(
+                    "identity '{name}' was created before public keys were stored; \
+                     run `sdkt identity delete {name}` and re-import it \
+                     (`sdkt identity import {name} -`) to enable public-key-only lookups"
+                ),
+            ))
+        })?;
+
+        // Reject a malformed stored value now, with the identity named,
+        // rather than letting a garbage source account fail downstream.
+        stellar_strkey::ed25519::PublicKey::from_string(&public).map_err(|e| {
+            StorageError::Io(std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                format!("Invalid stored public key for identity '{name}': {e}"),
+            ))
+        })?;
+
+        Ok(public)
     }
 
     fn load_key(&self, path: &Path) -> Result<SigningKey, StorageError> {
@@ -476,6 +575,125 @@ mod tests {
 
         // A missing explicit name keeps the plain `get` error, name included.
         let err = store.resolve_signing_identity("ghost").unwrap_err();
+        assert!(
+            err.to_string().contains("Identity 'ghost' not found"),
+            "unexpected error: {err}"
+        );
+    }
+
+    #[test]
+    fn test_get_public_key_matches_generated_identity() {
+        let dir = tempdir().unwrap();
+        let store = IdentityStore::with_dir(dir.path()).unwrap();
+        let alice = store.generate("alice").unwrap();
+
+        let public = store.get_public_key("alice").unwrap();
+        assert_eq!(public.name, "alice");
+        assert_eq!(public.public_key, alice.public_key);
+
+        // The file now stores the public key alongside the secret.
+        let content = std::fs::read_to_string(dir.path().join("alice.toml")).unwrap();
+        assert!(
+            content.contains(&format!("public_key = \"{}\"", alice.public_key)),
+            "identity file must store the public key:\n{content}"
+        );
+    }
+
+    #[test]
+    fn test_get_public_key_works_with_secret_removed() {
+        // The public-key lookup must never read the secret: with the
+        // secret_key line stripped from the file, the lookup still works
+        // while the signing lookup fails.
+        let dir = tempdir().unwrap();
+        let store = IdentityStore::with_dir(dir.path()).unwrap();
+        let alice = store.generate("alice").unwrap();
+
+        let path = dir.path().join("alice.toml");
+        let content = std::fs::read_to_string(&path).unwrap();
+        let stripped: String = content
+            .lines()
+            .filter(|l| !l.trim_start().starts_with("secret_key"))
+            .map(|l| format!("{l}\n"))
+            .collect();
+        assert!(stripped.contains("public_key"));
+        std::fs::write(&path, stripped).unwrap();
+
+        let public = store.get_public_key("alice").unwrap();
+        assert_eq!(public.public_key, alice.public_key);
+        assert!(store.get("alice").is_err(), "get() must need the secret");
+    }
+
+    #[test]
+    fn test_get_public_key_legacy_identity_errors_with_refresh_guidance() {
+        // An identity file written before public keys were stored (secret
+        // only) errors with a message telling the user how to refresh it —
+        // the lookup must not silently fall back to loading the secret.
+        let dir = tempdir().unwrap();
+        let store = IdentityStore::with_dir(dir.path()).unwrap();
+        let alice = store.generate("alice").unwrap();
+
+        let path = dir.path().join("alice.toml");
+        let content = std::fs::read_to_string(&path).unwrap();
+        let legacy: String = content
+            .lines()
+            .filter(|l| !l.trim_start().starts_with("public_key"))
+            .map(|l| format!("{l}\n"))
+            .collect();
+        std::fs::write(&path, legacy).unwrap();
+
+        let err = store.get_public_key("alice").unwrap_err().to_string();
+        assert!(
+            err.contains("before public keys were stored"),
+            "unexpected error: {err}"
+        );
+        assert!(
+            err.contains("sdkt identity delete alice"),
+            "error must say how to refresh: {err}"
+        );
+        // The signing path is unaffected by the missing public key line.
+        assert_eq!(store.get("alice").unwrap().public_key, alice.public_key);
+    }
+
+    #[test]
+    fn test_get_public_key_rejects_malformed_stored_key() {
+        let dir = tempdir().unwrap();
+        let store = IdentityStore::with_dir(dir.path()).unwrap();
+        std::fs::write(
+            dir.path().join("alice.toml"),
+            "# Soroban Identity: alice\nsecret_key = \"SAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAABSUO\"\npublic_key = \"not-a-key\"\n",
+        )
+        .unwrap();
+
+        let err = store.get_public_key("alice").unwrap_err().to_string();
+        assert!(
+            err.contains("Invalid stored public key for identity 'alice'"),
+            "unexpected error: {err}"
+        );
+    }
+
+    #[test]
+    fn test_resolve_public_identity_honors_default_sentinel() {
+        let dir = tempdir().unwrap();
+        let store = IdentityStore::with_dir(dir.path()).unwrap();
+        let alice = store.generate("alice").unwrap();
+
+        match store.resolve_public_identity(DEFAULT_IDENTITY_NAME) {
+            Err(StorageError::NoDefaultIdentity) => {}
+            other => panic!("expected NoDefaultIdentity, got {other:?}"),
+        }
+
+        store.set_default("alice").unwrap();
+        let resolved = store
+            .resolve_public_identity(DEFAULT_IDENTITY_NAME)
+            .expect("sentinel resolves once a default is set");
+        assert_eq!(resolved.name, "alice");
+        assert_eq!(resolved.public_key, alice.public_key);
+
+        // An explicit name resolves verbatim, and a missing name keeps the
+        // plain "not found" error.
+        let explicit = store.resolve_public_identity("alice").unwrap();
+        assert_eq!(explicit.public_key, alice.public_key);
+        let err = store.resolve_public_identity("ghost").unwrap_err();
         assert!(
             err.to_string().contains("Identity 'ghost' not found"),
             "unexpected error: {err}"

@@ -6,14 +6,20 @@
 //!
 //! Findable conditions and their exact triggers:
 //!
-//! - [`ReasonCode::ReturnMismatch`] — declared [`Expected::Success`] with an
-//!   expected return value, and the call succeeded with a different value.
+//! - [`ReasonCode::ReturnMismatch`] — the call's outcome differs from the
+//!   declared expectation in the *return* direction: declared
+//!   [`Expected::Success`] with an expected return value, and the call
+//!   succeeded with a different value — or declared an error, and the call
+//!   succeeded instead of failing.
 //! - [`ReasonCode::StateMismatch`] — declared expected state differs from
 //!   the observed state (byte-exact XDR comparison).
 //! - [`ReasonCode::EventMismatch`] — declared expected events differ from
 //!   the observed events.
-//! - [`ReasonCode::UnexpectedError`] — declared `Success` (or `SuccessWith`)
-//!   and the execution produced an error.
+//! - [`ReasonCode::UnexpectedError`] — the execution produced an error the
+//!   declaration did not anticipate: declared `Success` (or `SuccessWith`)
+//!   and the execution produced an error — or declared a specific error
+//!   (`Error { type, code }`) and the execution produced a *different*
+//!   error.
 //! - [`ReasonCode::AuthorizationBypass`] — only when the oracle declares
 //!   `auth_required = true` AND the host enforced authorization AND the
 //!   execution succeeded anyway.
@@ -163,7 +169,8 @@ impl Oracle {
                         return Classification::ExpectedError;
                     }
                     // Declared a specific error but got a different one:
-                    // the declaration was violated. UnexpectedError.
+                    // the execution produced an error the declaration did
+                    // not anticipate. UnexpectedError.
                     return Classification::Finding(ReasonCode::UnexpectedError);
                 }
                 if matches!(self.expected.behavior, ExpectedBehavior::Any) {
@@ -178,9 +185,11 @@ impl Oracle {
             ExecutionStatus::Void | ExecutionStatus::Returned(_) => {
                 if expected_error {
                     // Declared an error but the call produced a result: the
-                    // outcome differs from the declared expectation. Not
-                    // UNEXPECTED_ERROR — that reason code is reserved (per
-                    // contract) for errors raised where Success was declared.
+                    // outcome differs from the declared expectation in the
+                    // return direction. ReturnMismatch — not
+                    // UNEXPECTED_ERROR, which is reserved for errors the
+                    // declaration did not anticipate (and no error was
+                    // raised here at all).
                     return Classification::Finding(ReasonCode::ReturnMismatch);
                 }
                 if matches!(self.expected.behavior, ExpectedBehavior::Any) {
@@ -255,4 +264,115 @@ pub fn changed_keys(obs: &Observation) -> Vec<&StateEntry> {
         .iter()
         .filter(|e| e.change != StateChange::Unchanged)
         .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::observation::BudgetUsage;
+
+    fn obs(status: ExecutionStatus) -> Observation {
+        Observation {
+            case_id: "case0000".to_string(),
+            function: "hello".to_string(),
+            status,
+            state: vec![],
+            events: vec![],
+            budget: BudgetUsage::default(),
+        }
+    }
+
+    fn declared_error(error_type: &str, code: u32) -> Expected {
+        Expected {
+            behavior: ExpectedBehavior::Error {
+                error_type: error_type.to_string(),
+                code,
+            },
+            ..Default::default()
+        }
+    }
+
+    /// Issue #367, case 1: a declared error that receives a *different*
+    /// error is an error the declaration did not anticipate —
+    /// UNEXPECTED_ERROR, not a silent match.
+    #[test]
+    fn declared_error_receiving_different_error_is_unexpected_error() {
+        let oracle = Oracle::new(declared_error("Contract", 1));
+        let observed = obs(ExecutionStatus::ContractError {
+            error_type: "Auth".to_string(),
+            code: 6,
+        });
+        assert_eq!(
+            oracle.classify(&observed),
+            Classification::Finding(ReasonCode::UnexpectedError)
+        );
+    }
+
+    /// Issue #367, case 2: a declared error that succeeds is a return
+    /// mismatch — the call produced a result where the declaration said it
+    /// must fail.
+    #[test]
+    fn declared_error_that_succeeds_is_return_mismatch() {
+        let oracle = Oracle::new(declared_error("Auth", 1));
+        let observed = obs(ExecutionStatus::Returned(ScVal::U32(42)));
+        assert_eq!(
+            oracle.classify(&observed),
+            Classification::Finding(ReasonCode::ReturnMismatch)
+        );
+        // A void success is the same outcome direction.
+        let observed = obs(ExecutionStatus::Void);
+        assert_eq!(
+            oracle.classify(&observed),
+            Classification::Finding(ReasonCode::ReturnMismatch)
+        );
+    }
+
+    /// Control: a declared error that matches the actual error is
+    /// EXPECTED_ERROR, never a finding.
+    #[test]
+    fn declared_error_matching_is_expected_error() {
+        let oracle = Oracle::new(declared_error("Auth", 6));
+        let observed = obs(ExecutionStatus::ContractError {
+            error_type: "Auth".to_string(),
+            code: 6,
+        });
+        assert_eq!(oracle.classify(&observed), Classification::ExpectedError);
+    }
+
+    /// Control: the documented ReturnMismatch case — declared Success with
+    /// an expected return value, call succeeded with a different value.
+    #[test]
+    fn declared_success_with_wrong_return_is_return_mismatch() {
+        let oracle = Oracle::new(Expected {
+            behavior: ExpectedBehavior::Success {
+                expect_return: Some(ScVal::U32(43)),
+            },
+            ..Default::default()
+        });
+        let observed = obs(ExecutionStatus::Returned(ScVal::U32(42)));
+        assert_eq!(
+            oracle.classify(&observed),
+            Classification::Finding(ReasonCode::ReturnMismatch)
+        );
+    }
+
+    /// Control: the documented UnexpectedError case — declared Success,
+    /// execution produced an error.
+    #[test]
+    fn declared_success_that_errors_is_unexpected_error() {
+        let oracle = Oracle::new(Expected {
+            behavior: ExpectedBehavior::Success {
+                expect_return: None,
+            },
+            ..Default::default()
+        });
+        let observed = obs(ExecutionStatus::ContractError {
+            error_type: "Contract".to_string(),
+            code: 1,
+        });
+        assert_eq!(
+            oracle.classify(&observed),
+            Classification::Finding(ReasonCode::UnexpectedError)
+        );
+    }
 }

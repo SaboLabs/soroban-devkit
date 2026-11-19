@@ -801,6 +801,17 @@ const CAPABILITIES: [Capability; CAP_COUNT] = [
         notes: Some("Not executed by this audit; read-only."),
         ..Capability::BASE
     },
+    Capability {
+        id: "project.add",
+        command: &["project", "add"],
+        summary: "Register an existing contract in .sdkt.toml under [contracts.<alias>].",
+        required_args: &["<alias>", "--path <dir>"],
+        optional_args: &["--depends-on", "--ctor-arg", "--format"],
+        formats: PRETTY_JSON,
+        safety: Safety::LocalWrite,
+        evidence: Evidence::VerifiedLocal,
+        ..Capability::BASE
+    },
     // ---- Mutating capabilities: never agent-executable without confirmation ---
     Capability {
         id: "deploy",
@@ -894,13 +905,13 @@ const CAPABILITIES: [Capability; CAP_COUNT] = [
         id: "project.deploy",
         command: &["project", "deploy"],
         summary: "Deploy a whole multi-contract project in resolved dependency order.",
-        optional_args: &["--identity", "--network-profile", "--format"],
+        optional_args: &["--identity", "--network-profile", "--format", "--dry-run"],
         formats: PRETTY_JSON,
         safety: Safety::Mutating,
         requires_confirmation: true,
         network: NetworkRequirement::Both,
         evidence: Evidence::Unverified,
-        notes: Some("Fan-out of deploy transactions; highest blast radius in the toolkit."),
+        notes: Some("Fan-out of deploy transactions; highest blast radius in the toolkit. --dry-run previews the plan without signing or submitting."),
         ..Capability::BASE
     },
     Capability {
@@ -921,7 +932,7 @@ const CAPABILITIES: [Capability; CAP_COUNT] = [
 
 /// Number of described capabilities; kept as a const so the array length is
 /// checked by the compiler against every entry.
-const CAP_COUNT: usize = 53;
+const CAP_COUNT: usize = 54;
 
 #[cfg(test)]
 mod tests {
@@ -1069,6 +1080,7 @@ mod tests {
             "tx.simulate",
             "tx.build",
             "project.status",
+            "project.add",
             "deploy",
             "invoke",
             "tx.sign",

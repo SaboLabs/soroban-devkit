@@ -7,6 +7,7 @@ pub mod abi_decode;
 pub mod client_gen;
 pub mod spec;
 pub mod spec_diff;
+pub mod token;
 pub use abi_decode::{find_event_abi, find_type_abi, format_scval_abi, DecodedValue};
 pub use client_gen::{
     generate_client, generate_client_with_options, ClientGenError, GenerateOptions,
@@ -18,7 +19,11 @@ pub use spec::{
 pub use spec_diff::{
     diff_specs, diff_wasm, event_sig, size_delta_bytes, size_delta_pct, type_sig, upgrade_safety,
     upgrade_safety_wasm, ChangeKind, EventSignatureChange, FunctionSignatureChange, SpecDiff,
-    TypeDefinitionChange, UpgradeVerdict, VerdictChange, WasmSummary,
+    TypeDefinitionChange, UpgradeVerdict, VerdictChange, WasmSource, WasmSummary,
+};
+pub use token::{
+    classify_all, classify_method, is_token, MethodPresence, Sep41Method, METADATA_METHODS,
+    SEP41_METHODS,
 };
 
 #[derive(Error, Debug)]

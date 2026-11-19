@@ -93,7 +93,7 @@ fn artifact_is_self_contained_for_replay() {
     let env = art.environment();
     assert_eq!(env, sdkt_fuzz::Environment::default());
     assert_eq!(
-        art.expected().behavior,
+        art.expected().unwrap().behavior,
         ExpectedBehavior::Success {
             expect_return: Some(ScVal::U32(43))
         }
@@ -354,4 +354,92 @@ fn unreadable_artifact_still_names_the_artifact_path() {
         "{msg}"
     );
     let _ = std::fs::remove_dir_all(dir);
+}
+
+// ---------------------------------------------------------------------------
+// G. malformed artifact fields are rejected, never silently repaired (#496)
+// ---------------------------------------------------------------------------
+
+#[test]
+fn corrupt_event_data_is_rejected() {
+    let (_, artifacts) = campaign([41u8; 32]);
+    let mut art = artifacts[0].clone();
+    art.expected.events = Some(vec![sdkt_fuzz::artifact::EventSnapshot {
+        contract_id: None,
+        event_type: "Contract".to_string(),
+        topics_xdr: vec![],
+        data_xdr: "not-valid-hex!!".to_string(),
+    }]);
+    let err = replay(&art, COUNTER_WASM).unwrap_err();
+    assert!(
+        matches!(err, sdkt_fuzz::ReplayError::InvalidArtifact(_)),
+        "corrupt event data must be an invalid-artifact error, got {err:?}"
+    );
+    let msg = err.to_string();
+    assert!(msg.contains("data_xdr"), "error must name the field: {msg}");
+}
+
+#[test]
+fn corrupt_expected_state_entry_is_rejected() {
+    let (_, artifacts) = campaign([42u8; 32]);
+
+    // Corrupt key.
+    let mut art = artifacts[0].clone();
+    art.expected.state = Some(vec![sdkt_fuzz::artifact::StateExpectation {
+        key_xdr: "zz".to_string(),
+        value_xdr: "00".to_string(),
+    }]);
+    let err = replay(&art, COUNTER_WASM).unwrap_err();
+    assert!(
+        matches!(err, sdkt_fuzz::ReplayError::InvalidArtifact(_)),
+        "corrupt state key must be an invalid-artifact error, got {err:?}"
+    );
+    assert!(
+        err.to_string().contains("state entry"),
+        "error must name the field: {err}"
+    );
+
+    // Corrupt value.
+    let mut art = artifacts[0].clone();
+    art.expected.state = Some(vec![sdkt_fuzz::artifact::StateExpectation {
+        key_xdr: "00".to_string(),
+        value_xdr: "zz".to_string(),
+    }]);
+    let err = replay(&art, COUNTER_WASM).unwrap_err();
+    assert!(
+        matches!(err, sdkt_fuzz::ReplayError::InvalidArtifact(_)),
+        "corrupt state value must be an invalid-artifact error, got {err:?}"
+    );
+    assert!(
+        err.to_string().contains("state entry"),
+        "error must name the field: {err}"
+    );
+}
+
+#[test]
+fn well_formed_expected_state_and_events_still_replay() {
+    let (_, artifacts) = campaign([43u8; 32]);
+    let mut art = artifacts[0].clone();
+    // Copy the recorded observation's own state/events into the expectation:
+    // valid hex, matching values — replay must still reproduce the finding.
+    art.expected.state = Some(
+        art.observation
+            .state
+            .iter()
+            .filter_map(|s| {
+                s.value_xdr
+                    .as_ref()
+                    .map(|v| sdkt_fuzz::artifact::StateExpectation {
+                        key_xdr: s.key_xdr.clone(),
+                        value_xdr: v.clone(),
+                    })
+            })
+            .collect(),
+    );
+    art.expected.events = Some(art.observation.events.clone());
+    let outcome = replay(&art, COUNTER_WASM).expect("well-formed artifact still replays");
+    assert!(
+        outcome.is_reproduced(),
+        "well-formed artifact must still reproduce: {outcome:?}"
+    );
 }
