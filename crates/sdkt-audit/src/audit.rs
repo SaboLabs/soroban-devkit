@@ -378,16 +378,32 @@ impl<'a> FnVisitor<'a> {
 
 /// Scan every function in the AST into a `FnScan` per function.
 ///
-/// Covers both top-level `fn` items and methods inside `impl` blocks
-/// (Soroban contract entrypoints are `impl` methods). Methods of an impl
-/// block annotated with `#[contractimpl]` are marked as entrypoints; every
-/// other function is treated as an internal helper.
+/// Covers top-level `fn` items, methods inside `impl` blocks (Soroban
+/// contract entrypoints are `impl` methods), and — recursively — every `fn`
+/// and `impl` method inside `mod` blocks declared inline in the scanned
+/// file. Functions inside a module keep their qualified path in
+/// [`FnScan::fn_name`] (e.g. `inner::initialize`, `a::b::Vault::mint`), so
+/// findings name the module they came from. External modules (`mod foo;`
+/// pointing at another file) have no content in this AST and are skipped;
+/// `use` declarations are never followed into other files. Methods of an
+/// impl block annotated with `#[contractimpl]` are marked as entrypoints;
+/// every other function is treated as an internal helper.
 pub fn scan_all_functions(ast: &syn::File) -> Vec<FnScan> {
     let mut out = Vec::new();
-    for item in &ast.items {
+    scan_items(&ast.items, "", &mut out);
+    out
+}
+
+/// Recursively scan `items`, prefixing scanned function names with the
+/// enclosing module path (`prefix`, empty at the top level).
+fn scan_items(items: &[Item], prefix: &str, out: &mut Vec<FnScan>) {
+    for item in items {
         match item {
             Item::Fn(f) => {
-                let scan = fn_scan(&f.sig, &f.block);
+                let mut scan = fn_scan(&f.sig, &f.block);
+                if !prefix.is_empty() {
+                    scan.fn_name = format!("{}::{}", prefix, scan.fn_name);
+                }
                 out.push(scan);
             }
             Item::Impl(imp) => {
@@ -409,6 +425,11 @@ pub fn scan_all_functions(ast: &syn::File) -> Vec<FnScan> {
                         } else {
                             format!("{}::{}", type_name, m.sig.ident)
                         };
+                        let qual = if prefix.is_empty() {
+                            qual
+                        } else {
+                            format!("{}::{}", prefix, qual)
+                        };
                         let mut scan = fn_scan(&m.sig, &m.block);
                         scan.fn_name = qual;
                         scan.is_entrypoint = is_contract_impl;
@@ -416,10 +437,22 @@ pub fn scan_all_functions(ast: &syn::File) -> Vec<FnScan> {
                     }
                 }
             }
+            Item::Mod(m) => {
+                // Only inline modules declared in this file carry content;
+                // `mod foo;` (external file) has none and is skipped, so the
+                // scanner never leaves the audited file.
+                if let Some((_, content)) = &m.content {
+                    let mod_prefix = if prefix.is_empty() {
+                        m.ident.to_string()
+                    } else {
+                        format!("{}::{}", prefix, m.ident)
+                    };
+                    scan_items(content, &mod_prefix, out);
+                }
+            }
             _ => {}
         }
     }
-    out
 }
 
 /// True when the attribute list contains `#[contractimpl]`

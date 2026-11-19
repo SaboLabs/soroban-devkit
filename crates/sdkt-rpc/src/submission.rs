@@ -79,6 +79,45 @@ pub fn extract_contract_events(result_meta_xdr: Option<&str>) -> Vec<String> {
         .collect()
 }
 
+/// Extract diagnostic-event XDR entries from a settled `resultMetaXdr` value.
+///
+/// Unlike [`extract_contract_events`], this reads only the diagnostic
+/// entries: `SorobanTransactionMeta.diagnostic_events` (V3) or the
+/// top-level `TransactionMetaV4.diagnostic_events` (V4). Ordinary contract
+/// events are never diagnostics, so they are not returned here.
+pub fn extract_diagnostic_events(result_meta_xdr: Option<&str>) -> Vec<String> {
+    let Some(encoded) = result_meta_xdr else {
+        return Vec::new();
+    };
+    let Ok(raw) = base64::engine::general_purpose::STANDARD.decode(encoded) else {
+        return Vec::new();
+    };
+    let Ok(meta) = TransactionMeta::from_xdr(
+        &raw,
+        Limits {
+            depth: 64,
+            len: 1_048_576,
+        },
+    ) else {
+        return Vec::new();
+    };
+
+    let events = match meta {
+        TransactionMeta::V3(meta) => meta
+            .soroban_meta
+            .map(|soroban| soroban.diagnostic_events.into_iter().collect())
+            .unwrap_or_default(),
+        TransactionMeta::V4(meta) => meta.diagnostic_events.into_iter().collect(),
+        TransactionMeta::V0(_) | TransactionMeta::V1(_) | TransactionMeta::V2(_) => Vec::new(),
+    };
+
+    events
+        .into_iter()
+        .filter_map(|event| event.to_xdr(Limits::none()).ok())
+        .map(|event| base64::engine::general_purpose::STANDARD.encode(event))
+        .collect()
+}
+
 /// Helper to deserialize either a string or an integer into an Option<String>.
 fn deserialize_optional_string_or_int<'de, D>(deserializer: D) -> Result<Option<String>, D::Error>
 where
@@ -147,6 +186,19 @@ impl TransactionStatus {
             _ => TransactionStatus::Pending,
         }
     }
+
+    /// Strict parse of the wire status: `None` for a missing, blank, or
+    /// unknown value. Callers that report a status to the operator use this
+    /// so an unreadable RPC response is an error, never a silent `Pending`.
+    fn from_wire_str(s: &str) -> Option<Self> {
+        match s.trim().to_ascii_lowercase().as_str() {
+            "success" => Some(TransactionStatus::Success),
+            "failed" | "error" => Some(TransactionStatus::Failed),
+            "not_found" => Some(TransactionStatus::NotFound),
+            "pending" => Some(TransactionStatus::Pending),
+            _ => None,
+        }
+    }
 }
 
 /// Response from `getTransaction` during polling.
@@ -155,6 +207,10 @@ impl TransactionStatus {
 pub struct TransactionStatusResponse {
     #[serde(default)]
     pub status: String,
+    /// Inclusion ledger: the ledger the transaction settled in. Present
+    /// only on settled responses; absent for PENDING / NOT_FOUND.
+    #[serde(default, deserialize_with = "deserialize_optional_string_or_int")]
+    pub ledger: Option<String>,
     /// Accepts both string and integer values from Testnet.
     #[serde(default, deserialize_with = "deserialize_optional_string_or_int")]
     pub latest_ledger: Option<String>,
@@ -177,12 +233,36 @@ pub struct TransactionStatusResponse {
     pub result_meta_xdr: Option<String>,
     #[serde(default)]
     pub error: Option<String>,
+    /// Diagnostic events the RPC reports for this transaction
+    /// (`diagnosticEventsXdr`): base64 `DiagnosticEvent` XDR, retained
+    /// verbatim. Absent when the RPC reports none.
+    #[serde(default)]
+    pub diagnostic_events_xdr: Option<Vec<String>>,
 }
 
 impl TransactionStatusResponse {
     pub fn status_enum(&self) -> TransactionStatus {
         TransactionStatus::from_str(&self.status)
     }
+
+    /// Strict wire-status parse: `None` when the RPC response carries a
+    /// missing, blank, or unknown status string.
+    pub fn wire_status(&self) -> Option<TransactionStatus> {
+        TransactionStatus::from_wire_str(&self.status)
+    }
+}
+
+/// Diagnostic events for a `getTransaction` response: the RPC's own
+/// `diagnosticEventsXdr` when present, otherwise the `DiagnosticEvent`
+/// entries carried by the result metadata. Ordinary contract events are
+/// never diagnostics, so they are not returned here.
+pub fn response_diagnostic_events(res: &TransactionStatusResponse) -> Vec<String> {
+    if let Some(events) = res.diagnostic_events_xdr.as_ref() {
+        if !events.is_empty() {
+            return events.clone();
+        }
+    }
+    extract_diagnostic_events(res.result_meta_xdr.as_deref())
 }
 
 /// Final result of the submission lifecycle.
@@ -194,11 +274,21 @@ pub struct SubmissionResult {
     pub status: TransactionStatus,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub result_xdr: Option<String>,
+    /// Raw base64 result metadata XDR from the settling `getTransaction`
+    /// response, so callers (e.g. `tx status --wait`) can decode the invoke
+    /// return value without a second lookup. Not serialized: it is a
+    /// transport detail, not part of the submission report.
+    #[serde(skip)]
+    pub result_meta_xdr: Option<String>,
     /// Raw base64 ContractEvent XDR emitted by a successful Soroban transaction.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub events: Vec<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub latest_ledger: Option<String>,
+    /// Inclusion ledger, when the transaction settled. Not serialized:
+    /// kept out of the submission report to preserve its shape.
+    #[serde(skip)]
+    pub ledger: Option<String>,
     /// Error code when status == Failed: the immediate-rejection code from
     /// sendTransaction, or the settled on-chain code from `getTransaction`.
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -277,8 +367,10 @@ pub async fn submit_and_wait(
             hash,
             status: TransactionStatus::Failed,
             result_xdr: None,
+            result_meta_xdr: None,
             events: Vec::new(),
             latest_ledger: sent.latest_ledger,
+            ledger: None,
             error_code: sent.error_result,
             error_result_xdr: sent.error_result_xdr,
             diagnostic_events: sent.diagnostic_events,
@@ -290,8 +382,10 @@ pub async fn submit_and_wait(
             hash,
             status: TransactionStatus::Pending,
             result_xdr: None,
+            result_meta_xdr: None,
             events: Vec::new(),
             latest_ledger: None,
+            ledger: None,
             error_code: None,
             error_result_xdr: None,
             diagnostic_events: Vec::new(),
@@ -304,7 +398,9 @@ pub async fn submit_and_wait(
 /// transaction: the network's own `error` string when present, otherwise the
 /// deepest code decoded from the settled `result_xdr` `TransactionResult`.
 /// Falls back to `"tx_failed"` so the field is never empty on this path.
-fn settled_error_code(res: &TransactionStatusResponse) -> String {
+/// Public so `tx status` point-in-time lookups derive the same code as the
+/// polling path instead of omitting `error` when the RPC gives no string.
+pub fn settled_error_code(res: &TransactionStatusResponse) -> String {
     if let Some(err) = res.error.as_deref() {
         let err = err.trim();
         if !err.is_empty() {
@@ -428,25 +524,58 @@ fn describe_operation_result(op: &OperationResult) -> Option<String> {
 }
 
 /// Poll `getTransaction` until the transaction settles or the timeout elapses.
+///
+/// One deadline governs the whole poll: a request is never started once the
+/// budget is spent, a terminal response that only arrives after the deadline
+/// counts as a timeout, and each sleep is capped at the remaining time — so
+/// the call never overruns `--timeout` by a whole request plus a sleep.
+/// A missing or unknown wire status is an error, never a silent `Pending`.
 pub async fn poll_transaction(
     client: &SorobanRpcClient,
     hash: &str,
     config: &PollConfig,
 ) -> Result<SubmissionResult, RpcError> {
     let start = std::time::Instant::now();
+    let deadline = start + config.timeout;
+    let timeout_error = || {
+        RpcError::Rpc(format!(
+            "Transaction polling timed out after {}s (hash: {})",
+            config.timeout.as_secs(),
+            hash
+        ))
+    };
 
     loop {
+        if start.elapsed() >= config.timeout {
+            return Err(timeout_error());
+        }
         let res = get_transaction_status(client, hash).await?;
-        let status = res.status_enum();
+        let status = match res.wire_status() {
+            Some(status) => status,
+            None => {
+                return Err(RpcError::Rpc(format!(
+                    "Unrecognized transaction status '{}' for transaction {hash}",
+                    res.status
+                )))
+            }
+        };
+        // A terminal response that only arrives after the deadline has
+        // expired is a timeout, not a settlement inside the budget.
+        if start.elapsed() > config.timeout {
+            return Err(timeout_error());
+        }
 
         match status {
             TransactionStatus::Success => {
+                let events = extract_contract_events(res.result_meta_xdr.as_deref());
                 return Ok(SubmissionResult {
                     hash: hash.to_string(),
                     status,
                     result_xdr: res.result_xdr,
-                    events: extract_contract_events(res.result_meta_xdr.as_deref()),
+                    result_meta_xdr: res.result_meta_xdr,
+                    events,
                     latest_ledger: res.latest_ledger,
+                    ledger: res.ledger,
                     error_code: None,
                     error_result_xdr: None,
                     diagnostic_events: Vec::new(),
@@ -454,26 +583,26 @@ pub async fn poll_transaction(
             }
             TransactionStatus::Failed => {
                 let error_code = settled_error_code(&res);
+                let diagnostic_events = response_diagnostic_events(&res);
                 return Ok(SubmissionResult {
                     hash: hash.to_string(),
                     status,
                     result_xdr: res.result_xdr.clone(),
+                    result_meta_xdr: res.result_meta_xdr.clone(),
                     events: Vec::new(),
                     latest_ledger: res.latest_ledger,
+                    ledger: res.ledger,
                     error_code: Some(error_code),
                     error_result_xdr: res.result_xdr,
-                    diagnostic_events: extract_contract_events(res.result_meta_xdr.as_deref()),
+                    diagnostic_events,
                 });
             }
             TransactionStatus::NotFound | TransactionStatus::Pending => {
                 if start.elapsed() >= config.timeout {
-                    return Err(RpcError::Rpc(format!(
-                        "Transaction polling timed out after {}s (hash: {})",
-                        config.timeout.as_secs(),
-                        hash
-                    )));
+                    return Err(timeout_error());
                 }
-                tokio::time::sleep(config.interval).await;
+                let remaining = deadline.saturating_duration_since(std::time::Instant::now());
+                tokio::time::sleep(std::cmp::min(config.interval, remaining)).await;
             }
         }
     }
@@ -543,8 +672,10 @@ mod tests {
             hash: "abc".to_string(),
             status: TransactionStatus::Success,
             result_xdr: Some("xdr".to_string()),
+            result_meta_xdr: None,
             events: Vec::new(),
             latest_ledger: Some("100".to_string()),
+            ledger: None,
             error_code: None,
             error_result_xdr: None,
             diagnostic_events: Vec::new(),
@@ -631,6 +762,57 @@ mod tests {
     fn empty_or_invalid_meta_has_no_events() {
         assert!(extract_contract_events(None).is_empty());
         assert!(extract_contract_events(Some("not-xdr")).is_empty());
+    }
+
+    #[test]
+    fn diagnostic_events_come_only_from_diagnostic_entries() {
+        // V3 meta with one contract event and one diagnostic event: only
+        // the diagnostic event is returned, as base64 DiagnosticEvent XDR.
+        let (meta_b64, event_b64, diagnostic_b64) = meta_with_one_event();
+        let found = extract_diagnostic_events(Some(&meta_b64));
+        assert_eq!(found, vec![diagnostic_b64]);
+        assert!(!found.contains(&event_b64));
+        assert!(extract_diagnostic_events(None).is_empty());
+        assert!(extract_diagnostic_events(Some("not-xdr")).is_empty());
+    }
+
+    #[test]
+    fn diagnostic_events_extracted_from_v4_meta() {
+        use stellar_xdr::{ContractEvent, DiagnosticEvent, TransactionMetaV4};
+        let diagnostic = DiagnosticEvent {
+            in_successful_contract_call: false,
+            event: ContractEvent::default(),
+        };
+        let meta = TransactionMeta::V4(TransactionMetaV4 {
+            diagnostic_events: vec![diagnostic.clone()].try_into().unwrap(),
+            ..Default::default()
+        });
+        let encoded =
+            base64::engine::general_purpose::STANDARD.encode(meta.to_xdr(Limits::none()).unwrap());
+        let expected = base64::engine::general_purpose::STANDARD
+            .encode(diagnostic.to_xdr(Limits::none()).unwrap());
+        assert_eq!(extract_diagnostic_events(Some(&encoded)), vec![expected]);
+    }
+
+    #[test]
+    fn wire_status_rejects_missing_or_unknown_status() {
+        let missing: TransactionStatusResponse =
+            serde_json::from_value(serde_json::json!({"latestLedger": "100"})).unwrap();
+        assert_eq!(missing.wire_status(), None);
+        assert_eq!(missing.status_enum(), TransactionStatus::Pending);
+        let unknown: TransactionStatusResponse =
+            serde_json::from_value(serde_json::json!({"status": "WEIRD"})).unwrap();
+        assert_eq!(unknown.wire_status(), None);
+        let pending: TransactionStatusResponse =
+            serde_json::from_value(serde_json::json!({"status": "PENDING"})).unwrap();
+        assert_eq!(pending.wire_status(), Some(TransactionStatus::Pending));
+        let settled: TransactionStatusResponse = serde_json::from_value(
+            serde_json::json!({"status": "SUCCESS", "ledger": 100, "latestLedger": "120"}),
+        )
+        .unwrap();
+        assert_eq!(settled.wire_status(), Some(TransactionStatus::Success));
+        assert_eq!(settled.ledger.as_deref(), Some("100"));
+        assert_eq!(settled.latest_ledger.as_deref(), Some("120"));
     }
 
     #[test]
@@ -726,12 +908,22 @@ mod tests {
         ))
     }
 
-    fn meta_with_one_event() -> (String, String) {
-        use stellar_xdr::{ContractEvent, SorobanTransactionMeta, TransactionMetaV3};
+    /// Meta carrying one ordinary contract event AND one diagnostic event,
+    /// plus each event's own base64 XDR. Diagnostics must report only the
+    /// `DiagnosticEvent` — the contract event is not a diagnostic.
+    fn meta_with_one_event() -> (String, String, String) {
+        use stellar_xdr::{
+            ContractEvent, DiagnosticEvent, SorobanTransactionMeta, TransactionMetaV3,
+        };
         let event = ContractEvent::default();
+        let diagnostic = DiagnosticEvent {
+            in_successful_contract_call: false,
+            event: ContractEvent::default(),
+        };
         let meta = TransactionMeta::V3(TransactionMetaV3 {
             soroban_meta: Some(SorobanTransactionMeta {
                 events: vec![event.clone()].try_into().unwrap(),
+                diagnostic_events: vec![diagnostic.clone()].try_into().unwrap(),
                 ..Default::default()
             }),
             ..Default::default()
@@ -740,7 +932,9 @@ mod tests {
             base64::engine::general_purpose::STANDARD.encode(meta.to_xdr(Limits::none()).unwrap());
         let event_b64 =
             base64::engine::general_purpose::STANDARD.encode(event.to_xdr(Limits::none()).unwrap());
-        (meta_b64, event_b64)
+        let diagnostic_b64 = base64::engine::general_purpose::STANDARD
+            .encode(diagnostic.to_xdr(Limits::none()).unwrap());
+        (meta_b64, event_b64, diagnostic_b64)
     }
 
     async fn poll_once_against(result_body: serde_json::Value) -> SubmissionResult {
@@ -798,7 +992,7 @@ mod tests {
     #[tokio::test]
     async fn poll_failed_decodes_invoke_trap_and_keeps_meta_events() {
         let trapped = trapped_invoke_xdr();
-        let (meta_b64, event_b64) = meta_with_one_event();
+        let (meta_b64, event_b64, diagnostic_b64) = meta_with_one_event();
         let res = poll_once_against(serde_json::json!({
             "jsonrpc": "2.0", "id": 1,
             "result": {
@@ -815,7 +1009,10 @@ mod tests {
         );
         assert_eq!(res.error_result_xdr.as_deref(), Some(trapped.as_str()));
         assert_eq!(res.result_xdr.as_deref(), Some(trapped.as_str()));
-        assert_eq!(res.diagnostic_events, vec![event_b64]);
+        // Only the DiagnosticEvent is reported as a diagnostic; the
+        // ordinary contract event from the same meta is not.
+        assert_eq!(res.diagnostic_events, vec![diagnostic_b64]);
+        assert!(!res.diagnostic_events.contains(&event_b64));
     }
 
     #[tokio::test]
