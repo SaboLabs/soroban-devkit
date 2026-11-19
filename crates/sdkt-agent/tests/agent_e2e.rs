@@ -149,6 +149,47 @@ fn c_upgrade_safety_plans_old_and_new() {
 }
 
 #[test]
+fn declared_valueless_flags_reach_the_executed_cli() {
+    let tmp = tempfile::tempdir().unwrap();
+    let fx = FakeCli {
+        echo_args: true,
+        ..FakeCli::ok()
+    }
+    .write(tmp.path());
+
+    for (request, flag) in [
+        (
+            format!("show wasm metadata for contract {CID} --refresh"),
+            "--refresh",
+        ),
+        ("audit --no-plugins src/lib.rs".to_string(), "--no-plugins"),
+        ("run plugin doctor --all".to_string(), "--all"),
+        (
+            "diff baseline old.wasm candidate new.wasm --upgrade-safety".to_string(),
+            "--upgrade-safety",
+        ),
+    ] {
+        let out = agent(&fx, &request, true);
+        let v = parse_json(&out);
+        assert_eq!(v["status"], "success", "{request}: {v}");
+        assert_eq!(v["evidence"]["command_executed"], true, "{request}: {v}");
+        assert!(
+            v["argv"].as_array().unwrap().iter().any(|arg| arg == flag),
+            "{request}: {:?}",
+            v["argv"]
+        );
+        assert!(
+            v["stdout_text"]
+                .as_str()
+                .unwrap()
+                .contains(&format!("{flag}|")),
+            "{request}: argv did not reach fake CLI: {}",
+            v["stdout_text"]
+        );
+    }
+}
+
+#[test]
 fn c_diff_base_route_plans_diff_separately_from_upgrade_safety() {
     let tmp = tempfile::tempdir().unwrap();
     let fx = FakeCli {
@@ -365,11 +406,13 @@ fn f_missing_argument_is_clarified_and_never_executed() {
     }
     .write(tmp.path());
 
-    let out = agent(&fx, "check health of the contract", true);
-    let v = parse_json(&out);
-    assert_eq!(v["status"], "needs_clarification");
-    assert_eq!(v["error_code"], "missing_argument");
-    assert!(!marker.exists());
+    for request in ["check health of the contract", "audit src/lib.rs --rules"] {
+        let out = agent(&fx, request, true);
+        let v = parse_json(&out);
+        assert_eq!(v["status"], "needs_clarification", "{request}");
+        assert_eq!(v["error_code"], "missing_argument", "{request}");
+        assert!(!marker.exists(), "{request}: nothing may execute");
+    }
 }
 
 // ---------------------------------------------------------------- case G ---
@@ -657,6 +700,91 @@ fn unsupported_argument_is_refused_and_never_executed() {
         assert_eq!(v["error_code"], "unsupported_argument", "{request:?}");
         assert!(v["argv"].as_array().unwrap().is_empty(), "{request:?}");
         assert!(!marker.exists(), "{request:?}: nothing may be executed");
+    }
+}
+
+#[test]
+fn named_unsupported_formats_are_refused_and_never_executed() {
+    let tmp = tempfile::tempdir().unwrap();
+    let marker = tmp.path().join("ran");
+    let fx = FakeCli {
+        stdout: "{}\n".into(),
+        marker: Some(marker.clone()),
+        ..FakeCli::ok()
+    }
+    .write(tmp.path());
+
+    for request in [
+        "audit src/lib.rs with sarif format",
+        "audit src/lib.rs with sarif format.",
+        "audit src/lib.rs with xml format",
+        "audit src/lib.rs with csv format",
+        "audit src/lib.rs with yaml format",
+        "audit src/lib.rs --format yaml",
+    ] {
+        let out = agent(&fx, request, true);
+        let v = parse_json(&out);
+        assert_eq!(v["status"], "needs_clarification", "{request:?}");
+        assert_eq!(v["error_code"], "unsupported_argument", "{request:?}");
+        assert!(
+            v["explanation"].as_str().unwrap().contains(
+                "audit cannot use --format <json|pretty>; refusing to run a partial request"
+            ),
+            "{request:?}: {}",
+            v["explanation"]
+        );
+        assert!(v["argv"].as_array().unwrap().is_empty(), "{request:?}");
+        assert_eq!(v["evidence"]["command_executed"], false, "{request:?}");
+        assert!(!marker.exists(), "{request:?}: nothing may be executed");
+    }
+}
+
+#[test]
+fn prose_format_success_paths_preserve_argv() {
+    let tmp = tempfile::tempdir().unwrap();
+    let fx = FakeCli {
+        stdout: "{}\n".into(),
+        ..FakeCli::ok()
+    }
+    .write(tmp.path());
+
+    for (request, expected) in [
+        (
+            "audit src/lib.rs",
+            vec!["audit", "src/lib.rs", "--format", "json"],
+        ),
+        (
+            "audit src/lib.rs with json format",
+            vec!["audit", "src/lib.rs", "--format", "json"],
+        ),
+        (
+            "audit src/lib.rs with json format please",
+            vec!["audit", "src/lib.rs", "--format", "json"],
+        ),
+        (
+            "audit src/lib.rs with pretty format",
+            vec!["audit", "src/lib.rs"],
+        ),
+        (
+            "audit src/lib.rs with pretty format.",
+            vec!["audit", "src/lib.rs"],
+        ),
+        (
+            "audit src/lib.rs, check the format module",
+            vec!["audit", "src/lib.rs", "--format", "json"],
+        ),
+    ] {
+        let out = agent(&fx, request, true);
+        let v = parse_json(&out);
+        assert_eq!(v["status"], "success", "{request:?}");
+        let argv = v["argv"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|arg| arg.as_str().unwrap())
+            .collect::<Vec<_>>();
+        assert_eq!(argv, expected, "{request:?}");
+        assert_eq!(v["evidence"]["command_executed"], true, "{request:?}");
     }
 }
 
