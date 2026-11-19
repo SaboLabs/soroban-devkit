@@ -73,8 +73,10 @@ pub fn first_topic_filter(first_topic_b64: impl Into<String>) -> TopicFilter {
 #[serde(rename_all = "camelCase")]
 pub struct GetEventsPagination {
     /// Opaque continuation token returned by a previous `getEvents` response.
-    /// A request carrying a `cursor` must omit `startLedger`/`endLedger`
+    /// A request carrying a `cursor` must omit `startLedger`
     /// (see [`validate_pagination_request`]); the RPC resumes from the token.
+    /// An `endLedger` may still be given alongside a cursor, but it is a
+    /// client-side-only bound and is never sent on the wire.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub cursor: Option<String>,
     /// Maximum events per page. Omitted when unset; the RPC applies its own
@@ -105,6 +107,13 @@ impl GetEventsPagination {
 /// follow loop never issues more than this many `getEvents` requests unless
 /// the caller supplies a larger explicit cap.
 pub const DEFAULT_ALL_PAGES_MAX: usize = 10;
+
+/// Maximum number of ledgers the Stellar RPC scans in a single `getEvents`
+/// request (v30). An empty page therefore means the RPC scanned a full
+/// window of this size without finding a match — it does not mean the query
+/// is exhausted. The follow loop tracks the scan frontier in units of this
+/// window to tell a terminal empty page from a mid-scan one.
+pub const RPC_MAX_LEDGERS_PER_GET_EVENTS_REQUEST: u32 = 10_000;
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
@@ -171,22 +180,26 @@ impl Default for PaginationOptions {
 
 /// Validate a cursor/limit combination before any RPC call.
 ///
-/// A request carrying a pagination `cursor` must omit `startLedger` and
-/// `endLedger`: the cursor already positions the query, and the Soroban RPC
-/// requires a cursor-only request for resumption. A `limit` of 0 is rejected
-/// the same way.
+/// A request carrying a pagination `cursor` must omit `startLedger`: the
+/// cursor already positions the query, and the Soroban RPC requires a
+/// cursor-only request for resumption. An `endLedger` is allowed alongside
+/// a cursor as a client-side-only bound — it is never sent on the wire,
+/// the caller enforces it by dropping events past it (see
+/// [`get_contract_events_paginated`] and [`get_contract_events_page`]).
+/// A `limit` of 0 is rejected the same way.
 pub fn validate_pagination_request(
     start_ledger: Option<u32>,
-    end_ledger: Option<u32>,
+    _end_ledger: Option<u32>,
     pagination: Option<&GetEventsPagination>,
 ) -> Result<(), RpcError> {
     if let Some(pagination) = pagination {
         if let Some(cursor) = &pagination.cursor {
-            if start_ledger.is_some() || end_ledger.is_some() {
+            if start_ledger.is_some() {
                 return Err(RpcError::Rpc(format!(
-                    "getEvents pagination cursor ({cursor}) cannot be combined with a ledger range: \
-                     a request carrying --cursor must omit --start-ledger and --end-ledger; \
-                     resume with the cursor alone"
+                    "getEvents pagination cursor ({cursor}) cannot be combined with --start-ledger: \
+                     a request carrying --cursor must omit --start-ledger; resume with the \
+                     cursor alone (an --end-ledger bound may still be given; it is enforced \
+                     client-side)"
                 )));
             }
         }
@@ -353,10 +366,11 @@ async fn resolve_events_range(
 }
 
 /// Fetch a single page for a fresh query (no cursor) or a resumed query.
-/// When `pagination` carries a cursor, `start_ledger`/`end_ledger` must be
-/// `None` and no ledger-range resolution happens; otherwise the range is
-/// resolved exactly as the historical single-request path did. The
-/// cursor/range combination is validated before any RPC call.
+/// When `pagination` carries a cursor, `start_ledger` must be `None` and no
+/// ledger-range resolution happens; an `end_ledger` given with a cursor is
+/// a client-side-only bound and is likewise never sent on the wire.
+/// Otherwise the range is resolved exactly as the historical single-request
+/// path did. The cursor/start combination is validated before any RPC call.
 async fn fetch_events_page_for_query(
     client: &SorobanRpcClient,
     contract_id: &str,
@@ -418,7 +432,11 @@ pub async fn get_contract_events_filtered(
 /// [`PaginatedEvents::next_cursor`] is `Some` exactly when the RPC returned a
 /// cursor, i.e. the page stopped at a page boundary and more events remain.
 /// Pass `pagination` to resume from a cursor (`--cursor`) or to cap the page
-/// size (`--limit`); a cursor must not be combined with a ledger range.
+/// size (`--limit`); a cursor must not be combined with `--start-ledger`.
+/// An `--end-ledger` may be combined with a cursor as a client-side-only
+/// bound: the wire request stays cursor-only and events past the bound are
+/// dropped here, with the continuation cursor suppressed when any was
+/// dropped (later pages can only be further past the bound).
 pub async fn get_contract_events_page(
     client: &SorobanRpcClient,
     contract_id: &str,
@@ -436,9 +454,18 @@ pub async fn get_contract_events_page(
         pagination,
     )
     .await?;
+    let mut events = page.events;
+    let mut next_cursor = page.next_cursor;
+    if let Some(end) = end_ledger {
+        let kept = events.len();
+        events.retain(|event| event.ledger.is_none_or(|ledger| ledger <= end));
+        if events.len() < kept {
+            next_cursor = None;
+        }
+    }
     Ok(PaginatedEvents {
-        events: page.events,
-        next_cursor: page.next_cursor,
+        events,
+        next_cursor,
         latest_ledger: page.latest_ledger,
         pages_fetched: 1,
     })
@@ -448,9 +475,11 @@ pub async fn get_contract_events_page(
 ///
 /// The loop terminates on the first of:
 /// - no further cursor (the RPC returned no `cursor`): the pages are exhausted;
-/// - an empty page: the RPC scanned the rest of the window and found
-///   nothing, so the query boundary is exhausted even when the RPC still
-///   returns a (nonempty) cursor;
+/// - an empty page **only when the scan frontier has reached the query
+///   boundary** (the caller-supplied inclusive end ledger, else the RPC's
+///   latest ledger). The RPC scans at most 10,000 ledgers per request, so
+///   an empty page before the boundary is a mid-scan gap: the loop follows
+///   the returned cursor and keeps scanning instead of dropping it;
 /// - an event past the caller-supplied inclusive end ledger: the bound is
 ///   enforced client-side because follow-up pages are cursor-only and the
 ///   RPC no longer applies it — the offending event is dropped and the
@@ -487,11 +516,33 @@ pub async fn get_contract_events_paginated(
         ));
     }
 
+    // Validate the cursor/start/limit combination before any RPC call:
+    // follow-up pages are cursor-only, so a start ledger combined with a
+    // cursor never reaches the wire — reject it here instead of letting
+    // the loop silently drop it. (An end ledger with a cursor is allowed
+    // as a client-side-only bound; see `validate_pagination_request`.)
+    validate_pagination_request(
+        start_ledger,
+        end_ledger,
+        Some(&GetEventsPagination {
+            cursor: options.cursor.clone(),
+            limit: options.limit,
+        }),
+    )?;
+
     // Client-side end bound: the user-supplied inclusive end ledger.
     // Follow-up pages are cursor-only, so the RPC no longer applies the
     // bound — enforce it here. `None` means the query has no explicit end
     // and is bounded by the RPC's latest ledger instead (see below).
     let inclusive_end = end_ledger;
+
+    // Scan frontier: the furthest ledger the RPC is known to have scanned.
+    // A fresh query starts at its start ledger; a resumed query starts
+    // from an unknown cursor position, so the frontier stays `None` until
+    // an event (or a resolved lookback, below) gives the scan a position.
+    // Each request scans at most `RPC_MAX_LEDGERS_PER_GET_EVENTS_REQUEST`
+    // ledgers, so an empty page advances the frontier by a full window.
+    let mut scan_frontier: Option<u32> = start_ledger;
 
     let mut events = Vec::new();
     let mut next_cursor = options.cursor.clone();
@@ -511,8 +562,10 @@ pub async fn get_contract_events_paginated(
             }),
         };
         // Only the first page may carry the ledger range; every later page
-        // resumes from the cursor alone.
-        let (range_start, range_end) = if pages_fetched == 0 {
+        // resumes from the cursor alone. When resuming from a cursor the
+        // end ledger, if given, is a client-side bound only: the wire
+        // request stays cursor-only and the bound is enforced below.
+        let (range_start, range_end) = if pages_fetched == 0 && options.cursor.is_none() {
             (start_ledger, end_ledger)
         } else {
             (None, None)
@@ -528,6 +581,19 @@ pub async fn get_contract_events_paginated(
         .await?;
         pages_fetched += 1;
         latest_ledger = page.latest_ledger;
+
+        // Derive the frontier for a fresh query whose start ledger was
+        // resolved by the RPC layer (see `resolve_ledger_range`): the
+        // lookback is 1000 ledgers from the end bound, or from the latest
+        // ledger when no end was given. A resumed query has no resolved
+        // start, so its frontier stays unknown until an event positions it.
+        if scan_frontier.is_none() && options.cursor.is_none() {
+            scan_frontier = match (end_ledger, latest_ledger) {
+                (Some(end), _) => Some(end.saturating_sub(1000).max(1)),
+                (None, Some(latest)) => Some(latest.saturating_sub(1000).max(1)),
+                (None, None) => None,
+            };
+        }
 
         // Drop events past the inclusive end bound. Ledgers arrive in
         // order, so once such an event appears the scan has passed the
@@ -549,16 +615,40 @@ pub async fn get_contract_events_paginated(
             None => false,
         };
 
-        // An empty page means the RPC scanned the rest of the window and
-        // found nothing: the query boundary is exhausted even when the RPC
-        // still returns a (nonempty) cursor.
+        // Advance the scan frontier: an empty page means the RPC scanned a
+        // full window without a match, so the frontier moves a whole window
+        // forward; a page with events means the scan reached at least the
+        // last event's ledger.
         let empty_page = page_events.is_empty();
+        if empty_page {
+            if let Some(frontier) = scan_frontier {
+                scan_frontier =
+                    Some(frontier.saturating_add(RPC_MAX_LEDGERS_PER_GET_EVENTS_REQUEST));
+            }
+        } else if let Some(last_ledger) = page_events.iter().filter_map(|e| e.ledger).max() {
+            scan_frontier = Some(scan_frontier.map_or(last_ledger, |f| f.max(last_ledger)));
+        }
+
+        // An empty page is terminal only when the scan is proven to have
+        // reached the query boundary (the inclusive end ledger, else the
+        // RPC's latest ledger). An empty page before the boundary is a
+        // mid-scan gap — the RPC scanned a full window without a match —
+        // and the loop follows its cursor instead of dropping it. When the
+        // frontier is unknown (resumed query, no events seen yet) the
+        // boundary cannot be proven reached, so the loop continues; the
+        // page cap still bounds it.
+        let boundary = inclusive_end.or(latest_ledger);
+        let scan_reached_boundary = match (scan_frontier, boundary) {
+            (Some(frontier), Some(boundary)) => frontier >= boundary,
+            _ => false,
+        };
 
         let cursor_after = page.next_cursor.clone();
 
         // Exhaustion takes precedence over the replay check below: a
         // terminal page stops cleanly, it is not an error.
-        let exhausted = cursor_after.is_none() || passed_end_bound || empty_page;
+        let exhausted =
+            cursor_after.is_none() || passed_end_bound || (empty_page && scan_reached_boundary);
         if !exhausted && !passed_latest {
             if let (Some(requested), Some(returned)) = (&request_cursor, &cursor_after) {
                 if requested == returned {
@@ -883,18 +973,18 @@ mod tests {
     }
 
     #[test]
-    fn test_validate_pagination_request_rejects_cursor_with_ledger_range() {
+    fn test_validate_pagination_request_rejects_cursor_with_start_ledger() {
         let pagination = GetEventsPagination::with_cursor("abc");
-        for (start, end) in [(Some(100), None), (None, Some(200))] {
-            let err = validate_pagination_request(start, end, Some(&pagination)).unwrap_err();
-            match err {
-                RpcError::Rpc(msg) => assert!(msg.contains("cannot be combined"), "{msg}"),
-                other => panic!("Unexpected error variant: {other:?}"),
-            }
+        let err = validate_pagination_request(Some(100), None, Some(&pagination)).unwrap_err();
+        match err {
+            RpcError::Rpc(msg) => assert!(msg.contains("cannot be combined"), "{msg}"),
+            other => panic!("Unexpected error variant: {other:?}"),
         }
 
-        // A cursor alone, and no pagination at all, are fine.
+        // A cursor alone, a cursor with an end ledger (a client-side-only
+        // bound, never sent on the wire), and no pagination at all are fine.
         assert!(validate_pagination_request(None, None, Some(&pagination)).is_ok());
+        assert!(validate_pagination_request(None, Some(200), Some(&pagination)).is_ok());
         assert!(validate_pagination_request(Some(100), Some(200), None).is_ok());
     }
 
@@ -918,6 +1008,13 @@ mod tests {
     /// - "beyond": 1 event (ledger 999, past latestLedger 500), cursor "page-2"
     /// - "cap-N": 1 event (ledger 100), cursor "cap-{N+1}" (always advances)
     /// - "empty-1": no events, cursor "empty-2" (exhausted window)
+    /// - fresh query with `startLedger` 300: no events, cursor "scan-2"
+    ///   (the 300..400 window is shorter than one 10,000-ledger scan
+    ///   window, so the empty page is terminal)
+    /// - fresh query with `startLedger` 1000: no events, cursor "scan-2";
+    ///   "scan-2": no events, cursor "scan-3"; "scan-3": one event
+    ///   (ledger 300), no cursor (two empty pages before the 25,000
+    ///   boundary, so both are followed)
     async fn spawn_mock_paged_events_server() -> String {
         use tokio::io::{AsyncReadExt, AsyncWriteExt};
         use tokio::net::TcpListener;
@@ -981,23 +1078,38 @@ mod tests {
                         let cursor = request["params"]["pagination"]["cursor"]
                             .as_str()
                             .unwrap_or("");
+                        let start_ledger = request["params"]["startLedger"].as_u64();
                         let event_json = |ledger: u32| {
                             format!(
                                 r#"{{"ledger":{ledger},"contractId":"{CONTRACT}","topic":[],"value":"AAAA"}}"#
                             )
                         };
                         // Each arm returns (events JSON fragment, cursor JSON).
-                        let (events_json, cursor_json) = match cursor {
-                            "page-2" => (event_json(200), r#""page-3""#.to_string()),
-                            "page-3" => (event_json(201), "null".to_string()),
-                            "loop" => (event_json(100), r#""loop""#.to_string()),
-                            "beyond" => (event_json(999), r#""page-2""#.to_string()),
-                            "empty-1" => (String::new(), r#""empty-2""#.to_string()),
-                            _ if cursor.starts_with("cap-") => {
-                                let n: u32 = cursor[4..].parse().unwrap_or(1);
-                                (event_json(100), format!(r#""cap-{}""#, n + 1))
+                        // Fresh queries (no cursor) key on the requested
+                        // start ledger; resumed queries key on the cursor.
+                        let (events_json, cursor_json) = if cursor.is_empty() {
+                            match start_ledger {
+                                // The first scan window holds no matching event.
+                                Some(300) | Some(1000) => {
+                                    (String::new(), r#""scan-2""#.to_string())
+                                }
+                                _ => (event_json(100), r#""page-2""#.to_string()),
                             }
-                            _ => (event_json(100), r#""page-2""#.to_string()),
+                        } else {
+                            match cursor {
+                                "page-2" => (event_json(200), r#""page-3""#.to_string()),
+                                "page-3" => (event_json(201), "null".to_string()),
+                                "loop" => (event_json(100), r#""loop""#.to_string()),
+                                "beyond" => (event_json(999), r#""page-2""#.to_string()),
+                                "empty-1" => (String::new(), r#""empty-2""#.to_string()),
+                                "scan-2" => (String::new(), r#""scan-3""#.to_string()),
+                                "scan-3" => (event_json(300), "null".to_string()),
+                                _ if cursor.starts_with("cap-") => {
+                                    let n: u32 = cursor[4..].parse().unwrap_or(1);
+                                    (event_json(100), format!(r#""cap-{}""#, n + 1))
+                                }
+                                _ => (event_json(100), r#""page-2""#.to_string()),
+                            }
                         };
                         format!(
                             r#"{{"jsonrpc":"2.0","id":1,"result":{{"events":[{events_json}],"cursor":{cursor_json},"latestLedger":500}}}}"#
@@ -1037,6 +1149,45 @@ mod tests {
         assert_eq!(page.next_cursor.as_deref(), Some("page-2"));
         assert_eq!(page.latest_ledger, Some(500));
         assert_eq!(page.pages_fetched, 1);
+    }
+
+    #[tokio::test]
+    async fn test_get_contract_events_page_applies_end_bound_to_resumed_query() {
+        let url = spawn_mock_paged_events_server().await;
+        let client = SorobanRpcClient::new(&url);
+        // Resuming from "page-2" returns one event at ledger 200. With an
+        // end bound of 150 the event is past the bound: it is dropped and
+        // the continuation cursor is suppressed (later pages can only be
+        // further past the bound).
+        let page = get_contract_events_page(
+            &client,
+            "CA3D5KRYM6CB7OWQ6TWYRR3Z4T7GNZLKERYNZGGA5CWVMOMG2P3T2YYW",
+            None,
+            Some(150),
+            None,
+            Some(GetEventsPagination::with_cursor("page-2")),
+        )
+        .await
+        .unwrap();
+        assert_eq!(page.events.len(), 0);
+        assert_eq!(page.next_cursor, None);
+        assert_eq!(page.pages_fetched, 1);
+
+        // With an end bound of 250 the same event is in range and the
+        // cursor is kept.
+        let page = get_contract_events_page(
+            &client,
+            "CA3D5KRYM6CB7OWQ6TWYRR3Z4T7GNZLKERYNZGGA5CWVMOMG2P3T2YYW",
+            None,
+            Some(250),
+            None,
+            Some(GetEventsPagination::with_cursor("page-2")),
+        )
+        .await
+        .unwrap();
+        assert_eq!(page.events.len(), 1);
+        assert_eq!(page.events[0].ledger, Some(200));
+        assert_eq!(page.next_cursor.as_deref(), Some("page-3"));
     }
 
     #[tokio::test]
@@ -1162,8 +1313,71 @@ mod tests {
         }
     }
 
+    // The old behaviour stopped on any empty page. That is wrong: the RPC
+    // scans at most 10,000 ledgers per request, so an empty page before the
+    // boundary is a mid-scan gap and its cursor must be followed. An empty
+    // page is terminal only when the scan frontier has reached the
+    // boundary. A resumed query has no known frontier, so an empty page
+    // there is followed too (bounded by the page cap).
     #[tokio::test]
-    async fn test_get_contract_events_paginated_stops_on_empty_final_page() {
+    async fn test_get_contract_events_paginated_stops_on_empty_page_at_boundary() {
+        let url = spawn_mock_paged_events_server().await;
+        let client = SorobanRpcClient::new(&url);
+        let paged = get_contract_events_paginated(
+            &client,
+            "CA3D5KRYM6CB7OWQ6TWYRR3Z4T7GNZLKERYNZGGA5CWVMOMG2P3T2YYW",
+            Some(300),
+            Some(400),
+            None,
+            PaginationOptions {
+                cursor: None,
+                limit: None,
+                max_pages: 10,
+            },
+        )
+        .await
+        .unwrap();
+        // The first window (300..10300) already covers the whole 300..400
+        // query, so the empty page is terminal: the loop stops after one
+        // page even though the RPC returned a cursor.
+        assert_eq!(paged.events.len(), 0);
+        assert_eq!(paged.pages_fetched, 1);
+        assert_eq!(paged.next_cursor, None);
+        assert_eq!(paged.latest_ledger, Some(500));
+    }
+
+    #[tokio::test]
+    async fn test_get_contract_events_paginated_continues_after_empty_page_before_boundary() {
+        let url = spawn_mock_paged_events_server().await;
+        let client = SorobanRpcClient::new(&url);
+        let paged = get_contract_events_paginated(
+            &client,
+            "CA3D5KRYM6CB7OWQ6TWYRR3Z4T7GNZLKERYNZGGA5CWVMOMG2P3T2YYW",
+            Some(1000),
+            Some(25000),
+            None,
+            PaginationOptions {
+                cursor: None,
+                limit: None,
+                max_pages: 10,
+            },
+        )
+        .await
+        .unwrap();
+        // Frontier after the empty pages: 1000 -> 11000 -> 21000, still
+        // short of the 25000 boundary, so both empty pages are followed
+        // and the event on the third page is found. (The mock's
+        // latestLedger is fixed at 500, so the event ledger is kept small;
+        // the test exercises the window arithmetic.)
+        assert_eq!(paged.events.len(), 1);
+        assert_eq!(paged.events[0].ledger, Some(300));
+        assert_eq!(paged.pages_fetched, 3);
+        assert_eq!(paged.next_cursor, None);
+        assert_eq!(paged.latest_ledger, Some(500));
+    }
+
+    #[tokio::test]
+    async fn test_get_contract_events_paginated_continues_after_empty_page_with_unknown_frontier() {
         let url = spawn_mock_paged_events_server().await;
         let client = SorobanRpcClient::new(&url);
         let paged = get_contract_events_paginated(
@@ -1180,11 +1394,12 @@ mod tests {
         )
         .await
         .unwrap();
-        // The final page is empty but still carries a nonempty cursor:
-        // the window is exhausted, so the loop stops after one page and
-        // reports the pagination complete instead of fetching to the cap.
-        assert_eq!(paged.events.len(), 0);
-        assert_eq!(paged.pages_fetched, 1);
+        // A resumed query has no known scan frontier, so an empty page
+        // cannot be proven terminal: the loop follows the cursor
+        // ("empty-2" -> the default arm) instead of silently reporting
+        // zero events.
+        assert_eq!(paged.events.len(), 3);
+        assert_eq!(paged.pages_fetched, 4);
         assert_eq!(paged.next_cursor, None);
         assert_eq!(paged.latest_ledger, Some(500));
     }

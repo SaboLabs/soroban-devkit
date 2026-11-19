@@ -189,12 +189,23 @@ pub fn parse_metadata(wasm_bytes: &[u8]) -> Result<WasmMetadata, WasmError> {
             if range.end > section_cursor {
                 let name = match &payload {
                     Payload::CustomSection(reader) => reader.name().to_string(),
-                    // Component section ids collide with module section
-                    // ids (a core-module section reports id 1, i.e.
-                    // "type"), so name component sections from the
-                    // payload instead of the id.
+                    // Component section ids collide with core-module section
+                    // ids (a component import section reports id 10, i.e.
+                    // "code"; a core-instance section reports id 2, i.e.
+                    // "import"), so name component sections from the
+                    // payload variant instead of the id. Core-module
+                    // payloads keep their id-derived names below.
                     Payload::ModuleSection { .. } => "module".to_string(),
                     Payload::ComponentSection { .. } => "component".to_string(),
+                    Payload::CoreTypeSection(_) => "core type".to_string(),
+                    Payload::InstanceSection(_) => "core instance".to_string(),
+                    Payload::ComponentInstanceSection(_) => "instance".to_string(),
+                    Payload::ComponentAliasSection(_) => "alias".to_string(),
+                    Payload::ComponentTypeSection(_) => "type".to_string(),
+                    Payload::ComponentCanonicalSection(_) => "canonical".to_string(),
+                    Payload::ComponentStartSection { .. } => "start".to_string(),
+                    Payload::ComponentImportSection(_) => "import".to_string(),
+                    Payload::ComponentExportSection(_) => "export".to_string(),
                     _ => section_name(id),
                 };
                 meta.section_sizes.push(WasmSectionSize {
@@ -287,6 +298,7 @@ fn section_name(id: u8) -> String {
         10 => "code".to_string(),
         11 => "data".to_string(),
         12 => "data count".to_string(),
+        13 => "tag".to_string(),
         _ => format!("unknown ({id})"),
     }
 }
@@ -498,6 +510,41 @@ mod tests {
         assert_eq!(meta.section_sizes[0].id, 1);
         assert_eq!(meta.section_sizes[0].name, "module");
         assert_eq!(meta.section_sizes[0].size_bytes, 26);
+        assert_eq!(section_sizes_sum(&meta) + 8, meta.size_bytes);
+    }
+
+    #[test]
+    fn test_section_sizes_component_import_section_named_import() {
+        // A component with an empty import section (id 10, size 1, 0
+        // items): the id collides with the core-module code section, so
+        // the name must come from the payload variant, not the id.
+        let component: &[u8] = &[
+            0x00, 0x61, 0x73, 0x6d, 0x0d, 0x00, 0x01, 0x00, // component header
+            0x0a, 0x01, 0x00, // import section, empty
+        ];
+        assert_eq!(component.len(), 11);
+        let meta = parse_metadata(component).unwrap();
+        assert_eq!(meta.section_sizes.len(), 1);
+        assert_eq!(meta.section_sizes[0].id, 10);
+        assert_eq!(meta.section_sizes[0].name, "import");
+        assert_eq!(meta.section_sizes[0].size_bytes, 3);
+        assert_eq!(section_sizes_sum(&meta) + 8, meta.size_bytes);
+    }
+
+    #[test]
+    fn test_section_sizes_tag_section_named_tag() {
+        // A core module with an empty tag section (id 13, size 1, 0
+        // items): it must be named "tag", not "unknown (13)".
+        let wasm_bytes: &[u8] = &[
+            0x00, 0x61, 0x73, 0x6d, 0x01, 0x00, 0x00, 0x00, // header
+            0x0d, 0x01, 0x00, // tag section, empty
+        ];
+        assert_eq!(wasm_bytes.len(), 11);
+        let meta = parse_metadata(wasm_bytes).unwrap();
+        assert_eq!(meta.section_sizes.len(), 1);
+        assert_eq!(meta.section_sizes[0].id, 13);
+        assert_eq!(meta.section_sizes[0].name, "tag");
+        assert_eq!(meta.section_sizes[0].size_bytes, 3);
         assert_eq!(section_sizes_sum(&meta) + 8, meta.size_bytes);
     }
 

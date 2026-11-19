@@ -91,6 +91,10 @@ fn mock_events_rpc(latest_ledger: u32) -> (String, Arc<Mutex<MockRpcSeen>>) {
 ///   (always advances, for page-cap tests)
 /// - "cursor-empty-final": no events, cursor "cursor-empty-next"
 ///   (exhausted window that still carries a cursor)
+/// - fresh query with `startLedger` 300 or 1000: no events, cursor
+///   "cursor-scan-2" (the first scan window holds no matching event)
+/// - "cursor-scan-2": no events, cursor "cursor-scan-3"
+/// - "cursor-scan-3": 1 event (ledger 2000), no cursor
 fn mock_events_rpc_paged(latest_ledger: u32) -> (String, Arc<Mutex<MockRpcSeen>>) {
     let listener = TcpListener::bind("127.0.0.1:0").unwrap();
     let url = format!("http://{}", listener.local_addr().unwrap());
@@ -120,6 +124,7 @@ fn mock_events_rpc_paged(latest_ledger: u32) -> (String, Arc<Mutex<MockRpcSeen>>
                 .as_str()
                 .unwrap_or("")
                 .to_string();
+            let start_ledger = json_body["params"]["startLedger"].as_u64();
 
             {
                 let mut s = seen_thread.lock().unwrap();
@@ -130,18 +135,34 @@ fn mock_events_rpc_paged(latest_ledger: u32) -> (String, Arc<Mutex<MockRpcSeen>>
                 "getLatestLedger" => format!(
                     r#"{{"jsonrpc":"2.0","id":1,"result":{{"id":"mock","protocolVersion":22,"sequence":{latest_ledger}}}}}"#
                 ),
-                "getEvents" => match cursor.as_str() {
-                    "cursor-page-2" => page_body(event(2001), "null"),
-                    "cursor-loop" => page_body(event(2000), r#""cursor-loop""#),
-                    "cursor-empty-final" => {
-                        page_body(String::new(), r#""cursor-empty-next""#)
+                "getEvents" => {
+                    if cursor.is_empty() {
+                        // Fresh query: key on the requested start ledger.
+                        match start_ledger {
+                            Some(300) | Some(1000) => {
+                                page_body(String::new(), r#""cursor-scan-2""#)
+                            }
+                            _ => page_body(event(2000), r#""cursor-page-2""#),
+                        }
+                    } else {
+                        match cursor.as_str() {
+                            "cursor-page-2" => page_body(event(2001), "null"),
+                            "cursor-loop" => page_body(event(2000), r#""cursor-loop""#),
+                            "cursor-empty-final" => {
+                                page_body(String::new(), r#""cursor-empty-next""#)
+                            }
+                            "cursor-scan-2" => {
+                                page_body(String::new(), r#""cursor-scan-3""#)
+                            }
+                            "cursor-scan-3" => page_body(event(2000), "null"),
+                            _ if cursor.starts_with("cursor-cap-") => {
+                                let n: u32 = cursor["cursor-cap-".len()..].parse().unwrap_or(1);
+                                page_body(event(2000), &format!(r#""cursor-cap-{}""#, n + 1))
+                            }
+                            _ => page_body(event(2000), r#""cursor-page-2""#),
+                        }
                     }
-                    _ if cursor.starts_with("cursor-cap-") => {
-                        let n: u32 = cursor["cursor-cap-".len()..].parse().unwrap_or(1);
-                        page_body(event(2000), &format!(r#""cursor-cap-{}""#, n + 1))
-                    }
-                    _ => page_body(event(2000), r#""cursor-page-2""#),
-                },
+                }
                 _ => {
                     r#"{"jsonrpc":"2.0","id":1,"error":{"code":-32601,"message":"method not found"}}"#.to_string()
                 }
@@ -740,7 +761,11 @@ fn test_events_page_boundary_notice_pretty() {
     cmd.arg("events")
         .arg(CONTRACT_ID)
         .arg("--rpc-url")
-        .arg(&rpc_url);
+        .arg(&rpc_url)
+        // --limit 1 with one event: the page is full, so the cursor proves
+        // the query stopped early and more events exist.
+        .arg("--limit")
+        .arg("1");
 
     cmd.assert()
         .success()
@@ -749,6 +774,24 @@ fn test_events_page_boundary_notice_pretty() {
         // same RPC endpoint and the new cursor, shell-quoted.
         .stdout(predicate::str::contains("--rpc-url"))
         .stdout(predicate::str::contains(&rpc_url))
+        .stdout(predicate::str::contains("--cursor 'cursor-page-2'"));
+}
+
+#[test]
+fn test_events_page_boundary_notice_labels_partial_page_as_checkpoint() {
+    let (rpc_url, _seen) = mock_events_rpc_paged(2500);
+    let mut cmd = Command::cargo_bin("sdkt").unwrap();
+    cmd.arg("events")
+        .arg(CONTRACT_ID)
+        .arg("--rpc-url")
+        .arg(&rpc_url);
+
+    // One event, no --limit: the page is not full, so the returned cursor
+    // is a scan checkpoint, not proof that more events exist.
+    cmd.assert()
+        .success()
+        .stdout(predicate::str::contains("Scan checkpoint reached"))
+        .stdout(predicate::str::contains("More events are available").not())
         .stdout(predicate::str::contains("--cursor 'cursor-page-2'"));
 }
 
@@ -762,15 +805,17 @@ fn test_events_page_boundary_notice_preserves_topic_and_limit() {
         .arg(&rpc_url)
         .arg("--topic")
         .arg("transfer")
+        // --limit 1 with one event: a full page, so the cursor proves more
+        // events exist.
         .arg("--limit")
-        .arg("5");
+        .arg("1");
 
     cmd.assert()
         .success()
         .stdout(predicate::str::contains("More events are available"))
         .stdout(predicate::str::contains("--rpc-url"))
         .stdout(predicate::str::contains("--topic 'transfer'"))
-        .stdout(predicate::str::contains("--limit 5"))
+        .stdout(predicate::str::contains("--limit 1"))
         .stdout(predicate::str::contains("--cursor 'cursor-page-2'"));
 }
 
@@ -807,9 +852,33 @@ fn test_events_cursor_with_ledger_range_rejected() {
         .arg("1000");
 
     cmd.assert().failure().stderr(predicate::str::contains(
-        "--cursor cannot be combined with --start-ledger/--end-ledger",
+        "--cursor cannot be combined with --start-ledger",
     ));
     assert!(seen.lock().unwrap().requests.is_empty());
+
+    // The same rejection must happen before `--abi-contract` resolves the
+    // ABI over the network: with the flag, the mock still receives no
+    // request at all.
+    let (rpc_url, seen) = mock_events_rpc_paged(2500);
+    let mut cmd = Command::cargo_bin("sdkt").unwrap();
+    cmd.arg("events")
+        .arg(CONTRACT_ID)
+        .arg("--rpc-url")
+        .arg(&rpc_url)
+        .arg("--cursor")
+        .arg("cursor-page-2")
+        .arg("--start-ledger")
+        .arg("1000")
+        .arg("--abi-contract")
+        .arg(CONTRACT_ID);
+
+    cmd.assert().failure().stderr(predicate::str::contains(
+        "--cursor cannot be combined with --start-ledger",
+    ));
+    assert!(
+        seen.lock().unwrap().requests.is_empty(),
+        "no RPC request (not even the ABI fetch) may be issued for a rejected flag combination"
+    );
 }
 
 #[test]
@@ -861,8 +930,70 @@ fn test_events_non_advancing_cursor_errors() {
         .stderr(predicate::str::contains("did not advance"));
 }
 
+// The old behaviour stopped on any empty page. That is wrong: the RPC
+// scans at most 10,000 ledgers per request, so an empty page before the
+// boundary is a mid-scan gap and its cursor must be followed. An empty
+// page is terminal only when the scan frontier has reached the boundary.
 #[test]
-fn test_events_all_pages_stops_on_empty_final_page() {
+fn test_events_all_pages_stops_on_empty_page_at_boundary() {
+    let (rpc_url, seen) = mock_events_rpc_paged(2500);
+    let mut cmd = Command::cargo_bin("sdkt").unwrap();
+    cmd.arg("events")
+        .arg(CONTRACT_ID)
+        .arg("--rpc-url")
+        .arg(&rpc_url)
+        .arg("--start-ledger")
+        .arg("300")
+        .arg("--end-ledger")
+        .arg("400")
+        .arg("--all-pages")
+        .arg("10")
+        .arg("--format")
+        .arg("json");
+
+    let assert = cmd.assert().success();
+    let stdout = assert.get_output().stdout.clone();
+    let stderr = String::from_utf8_lossy(&assert.get_output().stderr).to_string();
+    let json: serde_json::Value = serde_json::from_slice(&stdout).unwrap();
+    // The first window (300..10300) already covers the whole 300..400
+    // query, so the empty page is terminal: only one request is issued
+    // and the pagination reports complete (no "Stopped after" notice).
+    assert_eq!(json.as_array().unwrap().len(), 0);
+    assert_eq!(events_requests(&seen).len(), 1);
+    assert!(!stderr.contains("Stopped after"), "{stderr}");
+}
+
+#[test]
+fn test_events_all_pages_continues_after_empty_page_before_boundary() {
+    let (rpc_url, seen) = mock_events_rpc_paged(2500);
+    let mut cmd = Command::cargo_bin("sdkt").unwrap();
+    cmd.arg("events")
+        .arg(CONTRACT_ID)
+        .arg("--rpc-url")
+        .arg(&rpc_url)
+        .arg("--start-ledger")
+        .arg("1000")
+        .arg("--end-ledger")
+        .arg("25000")
+        .arg("--all-pages")
+        .arg("10")
+        .arg("--format")
+        .arg("json");
+
+    let assert = cmd.assert().success();
+    let stdout = assert.get_output().stdout.clone();
+    let stderr = String::from_utf8_lossy(&assert.get_output().stderr).to_string();
+    let json: serde_json::Value = serde_json::from_slice(&stdout).unwrap();
+    // Frontier after the empty pages: 1000 -> 11000 -> 21000, still short
+    // of the 25000 boundary, so both empty pages are followed and the
+    // event on the third page is found.
+    assert_eq!(json.as_array().unwrap().len(), 1);
+    assert_eq!(events_requests(&seen).len(), 3);
+    assert!(!stderr.contains("Stopped after"), "{stderr}");
+}
+
+#[test]
+fn test_events_all_pages_continues_after_empty_page_with_unknown_frontier() {
     let (rpc_url, seen) = mock_events_rpc_paged(2500);
     let mut cmd = Command::cargo_bin("sdkt").unwrap();
     cmd.arg("events")
@@ -880,12 +1011,80 @@ fn test_events_all_pages_stops_on_empty_final_page() {
     let stdout = assert.get_output().stdout.clone();
     let stderr = String::from_utf8_lossy(&assert.get_output().stderr).to_string();
     let json: serde_json::Value = serde_json::from_slice(&stdout).unwrap();
-    // The final page is empty but still carries a nonempty cursor: the
-    // window is exhausted, so only one request is issued and the
-    // pagination reports complete (no "Stopped after" notice).
-    assert_eq!(json.as_array().unwrap().len(), 0);
-    assert_eq!(events_requests(&seen).len(), 1);
+    // A resumed query has no known scan frontier, so the empty first page
+    // cannot be proven terminal: the loop follows its cursor and finds the
+    // events on the following pages.
+    assert_eq!(json.as_array().unwrap().len(), 2);
+    assert_eq!(events_requests(&seen).len(), 3);
     assert!(!stderr.contains("Stopped after"), "{stderr}");
+}
+
+#[test]
+fn test_events_resume_command_keeps_end_ledger() {
+    let (rpc_url, seen) = mock_events_rpc_paged(2500);
+    let bin_path = Command::cargo_bin("sdkt")
+        .unwrap()
+        .get_program()
+        .to_string_lossy()
+        .to_string();
+    let mut cmd = Command::cargo_bin("sdkt").unwrap();
+    cmd.arg("events")
+        .arg(CONTRACT_ID)
+        .arg("--rpc-url")
+        .arg(&rpc_url)
+        .arg("--start-ledger")
+        .arg("1500")
+        .arg("--end-ledger")
+        .arg("2000")
+        .arg("--limit")
+        .arg("1")
+        .arg("--all-pages")
+        .arg("1")
+        .arg("--format")
+        .arg("json");
+
+    let assert = cmd.assert().success();
+    let stderr = String::from_utf8_lossy(&assert.get_output().stderr).to_string();
+    // The printed resume command must keep the original end ledger and
+    // drop the start ledger.
+    let resume = stderr
+        .lines()
+        .find(|line| line.contains("Resume with: "))
+        .expect("resume notice in stderr");
+    let resume_cmd = resume.split_once("Resume with: ").unwrap().1;
+    assert!(resume_cmd.contains("--end-ledger 2000"), "{resume_cmd}");
+    assert!(
+        resume_cmd.contains("--cursor 'cursor-page-2'"),
+        "{resume_cmd}"
+    );
+    assert!(!resume_cmd.contains("--start-ledger"), "{resume_cmd}");
+
+    // Run the printed command verbatim (with the binary path substituted
+    // for `sdkt`) and check it returns no events past the original end:
+    // the resumed page holds the ledger-2001 event, which is dropped.
+    let resume_cmd = resume_cmd.replacen("sdkt", &format!("'{bin_path}'"), 1);
+    let out = std::process::Command::new("sh")
+        .arg("-c")
+        .arg(&resume_cmd)
+        .output()
+        .unwrap();
+    assert!(out.status.success(), "resume command failed: {out:?}");
+    let json: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
+    assert_eq!(json.as_array().unwrap().len(), 0);
+
+    // The resumed request is cursor-only on the wire: no ledger range.
+    let requests = events_requests(&seen);
+    assert_eq!(requests.len(), 2);
+    assert!(
+        requests[1]["params"]["startLedger"].is_null(),
+        "{:?}",
+        requests[1]
+    );
+    assert!(
+        requests[1]["params"]["endLedger"].is_null(),
+        "{:?}",
+        requests[1]
+    );
 }
 
 #[test]

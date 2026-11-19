@@ -652,9 +652,16 @@ fn install_with_meta(
 
     // Remove the stale artifact only after the new one is committed, and only
     // when the filename actually changed. Guard against path traversal so we
-    // never delete outside the plugin directory.
+    // never delete outside the plugin directory. The comparison uses
+    // normalized path components: "bin//rule.wasm" and "bin/rule.wasm"
+    // name the same file, and deleting on a spelling difference would
+    // remove the artifact that was just installed (leaving `resolve`
+    // returning `None` for an update that reported success).
     if let Some(old_artifact) = previous_artifact {
-        if old_artifact != meta.artifact {
+        let same_artifact = Path::new(&old_artifact)
+            .components()
+            .eq(Path::new(&meta.artifact).components());
+        if !same_artifact {
             let old_path = dir.join(&old_artifact);
             if old_path.is_file() && is_safe_relative_path(Path::new(&old_artifact)) {
                 std::fs::remove_file(&old_path)?;
@@ -899,13 +906,25 @@ mod bundle_tests {
         assert!(err.to_string().contains("bundle is not signed"), "{err}");
     }
 
+    /// A real, loadable WASM plugin fixture: the release build of the
+    /// `sdkt-audit-example-rule` crate, which implements the WASM plugin
+    /// ABI (`sdkt_plugin_abi_version` etc.). Bundle install/update dry-run
+    /// loads the artifact through the Extism loader when the
+    /// `wasm-plugins` feature is on, so placeholder bytes such as
+    /// `b"v1-bytes"` fail the load with `DryRunLoad` and the install
+    /// panics; the fixture keeps those tests meaningful in every feature
+    /// configuration. Rebuild it with:
+    /// `cargo build --release -p sdkt-audit-example-rule --target
+    /// wasm32-wasip1 --features wasm-plugins`.
+    const EXAMPLE_WASM: &[u8] = include_bytes!("../tests/fixtures/example-rule.wasm");
+
     /// Install v1 from a bundle into a fresh temp store; returns the store root.
     fn install_v1_bundle(tmp: &Path) -> PathBuf {
         let store = tmp.join("store");
         fs::create_dir_all(&store).unwrap();
         set_store_root(&store);
         let artifact = tmp.join("rule.wasm");
-        fs::write(&artifact, b"v1-bytes").unwrap();
+        fs::write(&artifact, EXAMPLE_WASM).unwrap();
         let bundle = tmp.join("v1.sdktplugin");
         pack_bundle(&bundle, &meta(), &artifact, None).unwrap();
         let installed = install_bundle(&bundle, &InstallOpts::default()).expect("install v1");
@@ -925,7 +944,7 @@ mod bundle_tests {
         if let Some(parent) = artifact_path.parent() {
             fs::create_dir_all(parent).unwrap();
         }
-        fs::write(&artifact_path, b"v2-bytes").unwrap();
+        fs::write(&artifact_path, EXAMPLE_WASM).unwrap();
         let bundle = tmp.join(format!(
             "v2-{tag}-{version}-{}.sdktplugin",
             artifact.replace('/', "-")
@@ -946,7 +965,10 @@ mod bundle_tests {
         assert_eq!(updated.artifact, "rule.wasm");
 
         let plugin_dir = store.join("example-rule");
-        assert_eq!(fs::read(plugin_dir.join("rule.wasm")).unwrap(), b"v2-bytes");
+        assert_eq!(
+            fs::read(plugin_dir.join("rule.wasm")).unwrap(),
+            EXAMPLE_WASM
+        );
         assert_eq!(show("example-rule").unwrap().version, "2.0.0");
         assert_eq!(
             resolve("example-rule").unwrap(),
@@ -970,7 +992,10 @@ mod bundle_tests {
             update_with_key("example-rule", &signed_v2, Some(&wrong.verifying_key())).unwrap_err();
         assert!(matches!(err, StoreError::InvalidSignature), "{err}");
         assert_eq!(show("example-rule").unwrap().version, "1.0.0");
-        assert_eq!(fs::read(plugin_dir.join("rule.wasm")).unwrap(), b"v1-bytes");
+        assert_eq!(
+            fs::read(plugin_dir.join("rule.wasm")).unwrap(),
+            EXAMPLE_WASM
+        );
 
         // Unsigned bundle: rejected when a key is required, old plugin intact.
         let unsigned_v2 = pack_v2_bundle(tmp.path(), "unsigned", "2.0.0", "rule.wasm", None);
@@ -983,7 +1008,10 @@ mod bundle_tests {
         let updated = update_with_key("example-rule", &signed_v2, Some(&key.verifying_key()))
             .expect("update with matching key");
         assert_eq!(updated.version, "2.0.0");
-        assert_eq!(fs::read(plugin_dir.join("rule.wasm")).unwrap(), b"v2-bytes");
+        assert_eq!(
+            fs::read(plugin_dir.join("rule.wasm")).unwrap(),
+            EXAMPLE_WASM
+        );
     }
 
     #[test]
@@ -998,7 +1026,7 @@ mod bundle_tests {
         // `tampered_bundle_fails_before_extraction`): flip one hex digit of
         // the artifact digest recorded in the manifest.
         let mut bytes = fs::read(&v2_bundle).unwrap();
-        let digest = digest_hex(b"v2-bytes").into_bytes();
+        let digest = digest_hex(EXAMPLE_WASM).into_bytes();
         let offset = bytes
             .windows(digest.len())
             .position(|window| window == digest)
@@ -1009,7 +1037,10 @@ mod bundle_tests {
         let err = update("example-rule", &v2_bundle).unwrap_err();
         assert!(matches!(err, StoreError::InvalidBundle(_)), "{err}");
         assert_eq!(show("example-rule").unwrap().version, "1.0.0");
-        assert_eq!(fs::read(plugin_dir.join("rule.wasm")).unwrap(), b"v1-bytes");
+        assert_eq!(
+            fs::read(plugin_dir.join("rule.wasm")).unwrap(),
+            EXAMPLE_WASM
+        );
     }
 
     #[test]
@@ -1031,7 +1062,7 @@ mod bundle_tests {
         assert!(plugin_dir.join("bin").join("rule.wasm").exists());
         assert_eq!(
             fs::read(plugin_dir.join("bin").join("rule.wasm")).unwrap(),
-            b"v2-bytes"
+            EXAMPLE_WASM
         );
         // The flat v1 artifact is stale once the artifact path changed.
         assert!(
@@ -1066,11 +1097,53 @@ mod bundle_tests {
         );
         assert_eq!(
             fs::read(plugin_dir.join("rule-v2.wasm")).unwrap(),
-            b"v2-bytes"
+            EXAMPLE_WASM
         );
         assert_eq!(
             resolve("example-rule").unwrap(),
             plugin_dir.join("rule-v2.wasm")
         );
+    }
+
+    #[test]
+    fn update_from_bundle_keeps_artifact_when_path_spelling_differs() {
+        let _g = ENV_LOCK.lock().unwrap();
+        let tmp = tempfile::tempdir().unwrap();
+
+        // v1 installs the artifact spelled "bin//rule.wasm" — the same
+        // file as "bin/rule.wasm" with a redundant separator. A bundle
+        // cannot spell it that way (its manifest verification rejects the
+        // entry), so v1 is installed through the bare-artifact path.
+        let store = tmp.path().join("store");
+        fs::create_dir_all(&store).unwrap();
+        set_store_root(&store);
+        let v1_artifact = tmp.path().join("bin").join("rule.wasm");
+        fs::create_dir_all(v1_artifact.parent().unwrap()).unwrap();
+        fs::write(&v1_artifact, EXAMPLE_WASM).unwrap();
+        install_with_meta(
+            &v1_artifact,
+            &InstallOpts::default(),
+            meta_v("1.0.0", "bin//rule.wasm"),
+        )
+        .expect("install v1");
+        let plugin_dir = store.join("example-rule");
+        assert!(plugin_dir.join("bin").join("rule.wasm").exists());
+
+        // v2 spells the same artifact "bin/rule.wasm": the update must
+        // not treat the spelling difference as a rename and delete the
+        // file it just installed.
+        let v2_bundle = pack_v2_bundle(tmp.path(), "spelling", "2.0.0", "bin/rule.wasm", None);
+        let updated = update("example-rule", &v2_bundle).expect("update from bundle");
+        assert_eq!(updated.version, "2.0.0");
+        assert_eq!(updated.artifact, "bin/rule.wasm");
+        assert!(
+            plugin_dir.join("bin").join("rule.wasm").exists(),
+            "the artifact must survive an update that only respells its path"
+        );
+        assert_eq!(
+            resolve("example-rule").unwrap(),
+            plugin_dir.join("bin").join("rule.wasm")
+        );
+        assert_eq!(show("example-rule").unwrap().version, "2.0.0");
     }
 }

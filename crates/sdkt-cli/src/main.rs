@@ -7919,6 +7919,32 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
                 None => None,
             };
 
+            // Validate the pagination flags before resolving the ABI: a
+            // rejected combination must fail fast without waiting on the
+            // ABI fetch (notably `--abi-contract`, which hits the network)
+            // and without issuing any RPC request. A cursor positions the
+            // query on its own, so it cannot be combined with
+            // `--start-ledger`; an `--end-ledger` is allowed alongside a
+            // cursor as a client-side-only bound (it is never sent on the
+            // wire). A page size / page cap of 0 is rejected the same way.
+            if cursor.is_some() && start_ledger.is_some() {
+                eprintln!(
+                    "Error: --cursor cannot be combined with --start-ledger: \
+                     resume with the cursor alone (a request carrying a cursor must omit \
+                     --start-ledger; an --end-ledger bound may still be given, it is \
+                     enforced client-side)"
+                );
+                process::exit(1);
+            }
+            if let Some(0) = limit {
+                eprintln!("Error: --limit must be at least 1");
+                process::exit(1);
+            }
+            if let Some(0) = all_pages {
+                eprintln!("Error: --all-pages must be at least 1");
+                process::exit(1);
+            }
+
             // Resolve the ABI ContractSpec from one of two sources (mutually
             // exclusive): a local WASM file (`--abi`) or a deployed contract's
             // on-chain WASM fetched via the path (`--abi-contract`).
@@ -7939,30 +7965,12 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
                 }
             }
 
-            // A cursor positions the query on its own: the RPC requires a
-            // cursor-only request, so reject the combination before any
-            // RPC call. A page size / page cap of 0 is rejected the same way.
-            if cursor.is_some() && (start_ledger.is_some() || end_ledger.is_some()) {
-                eprintln!(
-                    "Error: --cursor cannot be combined with --start-ledger/--end-ledger: \
-                     resume with the cursor alone (a request carrying a cursor must omit \
-                     the ledger range)"
-                );
-                process::exit(1);
-            }
-            if let Some(0) = limit {
-                eprintln!("Error: --limit must be at least 1");
-                process::exit(1);
-            }
-            if let Some(0) = all_pages {
-                eprintln!("Error: --all-pages must be at least 1");
-                process::exit(1);
-            }
-
             // Rebuild the invocation for the resume notices below: the
             // same network, topic, limit, ABI and output options as this
-            // run, plus the new cursor. The ledger range is deliberately
-            // omitted — a cursor-only request resumes from the token.
+            // run, plus the new cursor. The start ledger is deliberately
+            // omitted — a cursor-only request resumes from the token — but
+            // the end ledger is carried: it is a client-side-only bound
+            // that keeps a resumed bounded query inside its original end.
             // Every value is shell-quoted so the notice is safe to paste
             // back into a shell.
             let mut resume_cmd = format!("sdkt events {}", shell_quote(&contract_id));
@@ -7983,6 +7991,9 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
             }
             if let Some(n) = limit {
                 resume_cmd.push_str(&format!(" --limit {n}"));
+            }
+            if let Some(end) = end_ledger {
+                resume_cmd.push_str(&format!(" --end-ledger {end}"));
             }
             if let Some(path) = &abi {
                 resume_cmd.push_str(&format!(" --abi {}", shell_quote(path)));
@@ -8054,12 +8065,26 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
                 .await
                 {
                     Ok(paged) => {
+                        // A returned cursor on its own does not prove more
+                        // events exist: the RPC may return a cursor for a
+                        // page that reached the scan tip without filling
+                        // up. Only a full page proves the query stopped
+                        // early; anything else is a scan checkpoint.
+                        let page_is_full = paged.events.len() == (limit.unwrap_or(100) as usize);
                         let notice = paged.next_cursor.as_ref().map(|next_cursor| {
-                            format!(
-                                "More events are available (page boundary reached). Continue with: {} --cursor {}",
-                                resume_cmd,
-                                shell_quote(next_cursor)
-                            )
+                            if page_is_full {
+                                format!(
+                                    "More events are available (page boundary reached). Continue with: {} --cursor {}",
+                                    resume_cmd,
+                                    shell_quote(next_cursor)
+                                )
+                            } else {
+                                format!(
+                                    "Scan checkpoint reached (page not full; more events may or may not exist). Continue with: {} --cursor {}",
+                                    resume_cmd,
+                                    shell_quote(next_cursor)
+                                )
+                            }
                         });
                         (paged.events, notice)
                     }
