@@ -7959,6 +7959,41 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
                 process::exit(1);
             }
 
+            // Rebuild the invocation for the resume notices below: the
+            // same network, topic, limit, ABI and output options as this
+            // run, plus the new cursor. The ledger range is deliberately
+            // omitted — a cursor-only request resumes from the token.
+            // Every value is shell-quoted so the notice is safe to paste
+            // back into a shell.
+            let mut resume_cmd = format!("sdkt events {}", shell_quote(&contract_id));
+            if let Some(profile) = &net.network_profile {
+                resume_cmd.push_str(&format!(" --network-profile {}", shell_quote(profile)));
+            }
+            if let Some(url) = &net.rpc_url {
+                resume_cmd.push_str(&format!(" --rpc-url {}", shell_quote(url)));
+            }
+            if let Some(passphrase) = &net.network_passphrase {
+                resume_cmd.push_str(&format!(
+                    " --network-passphrase {}",
+                    shell_quote(passphrase)
+                ));
+            }
+            if let Some(symbol) = &topic {
+                resume_cmd.push_str(&format!(" --topic {}", shell_quote(symbol)));
+            }
+            if let Some(n) = limit {
+                resume_cmd.push_str(&format!(" --limit {n}"));
+            }
+            if let Some(path) = &abi {
+                resume_cmd.push_str(&format!(" --abi {}", shell_quote(path)));
+            }
+            if let Some(id) = &abi_contract {
+                resume_cmd.push_str(&format!(" --abi-contract {}", shell_quote(id)));
+            }
+            if format != "pretty" {
+                resume_cmd.push_str(&format!(" --format {}", shell_quote(&format)));
+            }
+
             // Fetch the events, then render them below. The default path
             // fetches exactly one page (the historical behaviour) and
             // reports the continuation cursor as a page-boundary notice;
@@ -7982,13 +8017,13 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
                         let notice = paged.next_cursor.as_ref().map(|next_cursor| {
                             if paged.pages_fetched >= max_pages {
                                 format!(
-                                    "Stopped after {} page(s): the page cap was reached. Resume with: sdkt events {} --cursor {}",
-                                    paged.pages_fetched, contract_id, next_cursor
+                                    "Stopped after {} page(s): the page cap was reached. Resume with: {} --cursor {} --all-pages {}",
+                                    paged.pages_fetched, resume_cmd, shell_quote(next_cursor), max_pages
                                 )
                             } else {
                                 format!(
-                                    "Stopped after {} page(s): the latest ledger was passed. Resume with: sdkt events {} --cursor {}",
-                                    paged.pages_fetched, contract_id, next_cursor
+                                    "Stopped after {} page(s): the latest ledger was passed. Resume with: {} --cursor {}",
+                                    paged.pages_fetched, resume_cmd, shell_quote(next_cursor)
                                 )
                             }
                         });
@@ -8021,7 +8056,9 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
                     Ok(paged) => {
                         let notice = paged.next_cursor.as_ref().map(|next_cursor| {
                             format!(
-                                "More events are available (page boundary reached). Continue with: sdkt events {contract_id} --cursor {next_cursor}"
+                                "More events are available (page boundary reached). Continue with: {} --cursor {}",
+                                resume_cmd,
+                                shell_quote(next_cursor)
                             )
                         });
                         (paged.events, notice)

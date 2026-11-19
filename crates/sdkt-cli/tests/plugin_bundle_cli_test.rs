@@ -409,6 +409,61 @@ fn bundle_update_from_bundle_bumps_version() {
 }
 
 #[test]
+fn bundle_update_from_bundle_with_nested_artifact() {
+    let root = TempDir::new().unwrap();
+    let store = TempDir::new().unwrap();
+    let src_dir = make_plugin_dir(&root, "wasm", "wasm");
+    let v1 = root.path().join("v1.sdktplugin");
+    pack(&src_dir, &v1, None);
+
+    sdkt_in(store.path())
+        .args(["plugin", "install", v1.to_str().unwrap()])
+        .assert()
+        .success();
+    assert_eq!(installed_ids(store.path()), vec!["myrule".to_string()]);
+
+    // v2: same plugin id, bumped version, artifact nested under bin/.
+    // The bundle manifest lives at the bundle root, so the update must
+    // not look for bin/plugin.toml next to the nested artifact.
+    let toml = src_dir.join("plugin.toml");
+    let text = fs::read_to_string(&toml).unwrap();
+    fs::write(
+        &toml,
+        text.replace("1.0.0", "2.0.0")
+            .replace("rule.wasm", "bin/rule.wasm"),
+    )
+    .unwrap();
+    let nested = src_dir.join("bin");
+    fs::create_dir_all(&nested).unwrap();
+    fs::rename(src_dir.join("rule.wasm"), nested.join("rule.wasm")).unwrap();
+    fs::write(nested.join("rule.wasm"), b"v2-nested-artifact-content").unwrap();
+    let v2 = root.path().join("v2.sdktplugin");
+    pack(&src_dir, &v2, None);
+
+    sdkt_in(store.path())
+        .args(["plugin", "update", "myrule", v2.to_str().unwrap()])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains(
+            "Updated plugin 'myrule' to v2.0.0",
+        ));
+
+    let shown = stdout_json(
+        &sdkt_in(store.path())
+            .args(["plugin", "show", "myrule", "--format", "json"])
+            .assert()
+            .success(),
+    );
+    assert_eq!(shown["version"], "2.0.0");
+    assert_eq!(shown["artifact"], "bin/rule.wasm");
+    assert_eq!(
+        fs::read(store.path().join("myrule").join("bin").join("rule.wasm")).unwrap(),
+        b"v2-nested-artifact-content"
+    );
+    assert!(!store.path().join("myrule").join("rule.wasm").exists());
+}
+
+#[test]
 fn bundle_install_json_reports_signed_field() {
     let root = TempDir::new().unwrap();
     let src_dir = make_plugin_dir(&root, "wasm", "wasm");

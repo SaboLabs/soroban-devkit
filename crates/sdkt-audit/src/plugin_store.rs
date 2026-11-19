@@ -385,7 +385,11 @@ pub fn install_bundle_with_key(
             ));
         }
         let source = staging.join(&verified.metadata.artifact);
-        verified.metadata = install(&source, opts)?;
+        // Pass the verified metadata explicitly: the bundle manifest lives
+        // at the staging root, not next to the artifact, so a nested
+        // artifact path (e.g. `bin/rule.wasm`) must not make install look
+        // for `bin/plugin.toml`.
+        verified.metadata = install_with_meta(&source, opts, verified.metadata)?;
         Ok(verified)
     })();
     let _ = std::fs::remove_dir_all(&staging);
@@ -576,11 +580,30 @@ pub fn install(local_source: &Path, opts: &InstallOpts) -> Result<PluginMeta, St
     let raw = std::fs::read_to_string(&toml_path).map_err(|_| {
         StoreError::InvalidMetadata("plugin.toml not found next to the artifact".into())
     })?;
-    let mut meta = parse_meta(&raw)?;
+    let meta = parse_meta(&raw)?;
+    install_with_meta(local_source, opts, meta)
+}
+
+/// Install a plugin from a local artifact path with caller-provided
+/// metadata. Bundle install/update use this: the bundle manifest lives at
+/// the bundle root, so the metadata must NOT be derived from the artifact's
+/// parent directory — a nested artifact such as `bin/rule.wasm` would
+/// otherwise look for `bin/plugin.toml` and fail even though bundle
+/// verification passed.
+fn install_with_meta(
+    local_source: &Path,
+    opts: &InstallOpts,
+    mut meta: PluginMeta,
+) -> Result<PluginMeta, StoreError> {
+    if local_source.to_string_lossy().starts_with("http://")
+        || local_source.to_string_lossy().starts_with("https://")
+    {
+        return Err(StoreError::RemoteUnsupported);
+    }
     if let Some(id) = &opts.id {
         meta.id = id.clone();
-        meta.validate()?;
     }
+    meta.validate()?;
 
     let id = meta.id.clone();
     validate_kind_ext(&meta, local_source)?;
@@ -616,8 +639,13 @@ pub fn install(local_source: &Path, opts: &InstallOpts) -> Result<PluginMeta, St
 
     // Commit: create dir, copy artifact + the effective metadata. Persisting
     // the override keeps list/show/remove/discovery aligned with the directory.
+    // A nested artifact (e.g. `bin/rule.wasm`) needs its parent directories
+    // inside the plugin dir created first.
     std::fs::create_dir_all(&dir)?;
     let dest_artifact = dir.join(&meta.artifact);
+    if let Some(parent) = dest_artifact.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
     std::fs::copy(local_source, &dest_artifact)?;
     let stored_meta = toml::to_string(&meta).map_err(|e| StoreError::Toml(e.to_string()))?;
     std::fs::write(dir.join("plugin.toml"), stored_meta)?;
@@ -894,8 +922,14 @@ mod bundle_tests {
     ) -> PathBuf {
         let meta = meta_v(version, artifact);
         let artifact_path = tmp.join(artifact);
+        if let Some(parent) = artifact_path.parent() {
+            fs::create_dir_all(parent).unwrap();
+        }
         fs::write(&artifact_path, b"v2-bytes").unwrap();
-        let bundle = tmp.join(format!("v2-{tag}-{version}-{artifact}.sdktplugin"));
+        let bundle = tmp.join(format!(
+            "v2-{tag}-{version}-{}.sdktplugin",
+            artifact.replace('/', "-")
+        ));
         pack_bundle(&bundle, &meta, &artifact_path, key).unwrap();
         bundle
     }
@@ -976,6 +1010,39 @@ mod bundle_tests {
         assert!(matches!(err, StoreError::InvalidBundle(_)), "{err}");
         assert_eq!(show("example-rule").unwrap().version, "1.0.0");
         assert_eq!(fs::read(plugin_dir.join("rule.wasm")).unwrap(), b"v1-bytes");
+    }
+
+    #[test]
+    fn update_from_bundle_with_nested_artifact_path() {
+        let _g = ENV_LOCK.lock().unwrap();
+        let tmp = tempfile::tempdir().unwrap();
+        let store = install_v1_bundle(tmp.path());
+        let plugin_dir = store.join("example-rule");
+        assert!(plugin_dir.join("rule.wasm").exists());
+
+        // v2 nests the artifact under bin/: verification passes (the
+        // manifest covers bin/rule.wasm), and the update must use the
+        // bundle-root metadata instead of looking for bin/plugin.toml.
+        let v2_bundle = pack_v2_bundle(tmp.path(), "nested", "2.0.0", "bin/rule.wasm", None);
+        let updated = update("example-rule", &v2_bundle).expect("update from nested bundle");
+        assert_eq!(updated.version, "2.0.0");
+        assert_eq!(updated.artifact, "bin/rule.wasm");
+
+        assert!(plugin_dir.join("bin").join("rule.wasm").exists());
+        assert_eq!(
+            fs::read(plugin_dir.join("bin").join("rule.wasm")).unwrap(),
+            b"v2-bytes"
+        );
+        // The flat v1 artifact is stale once the artifact path changed.
+        assert!(
+            !plugin_dir.join("rule.wasm").exists(),
+            "stale rule.wasm should have been removed"
+        );
+        assert_eq!(
+            resolve("example-rule").unwrap(),
+            plugin_dir.join("bin").join("rule.wasm")
+        );
+        assert_eq!(show("example-rule").unwrap().version, "2.0.0");
     }
 
     #[test]

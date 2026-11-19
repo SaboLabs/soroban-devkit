@@ -332,6 +332,17 @@ code, kbd, pre { font-family: var(--mono); }
 .size-bar-fill { height: 100%; background: var(--accent); border-radius: 999px; }
 .size-bar-value { font-family: var(--mono); font-size: 0.8rem; color: var(--dim); white-space: nowrap; }
 
+/* Narrow screens (320–375px): the fixed 11rem label column plus the
+   nowrap value is wider than the row, and the excess is clipped by
+   .result-section's overflow hidden. Stack the label on its own row
+   and keep the track and value on a second row; the 3-column layout
+   above is unchanged on wider screens. */
+@media (max-width: 480px) {
+  .size-bar-row { grid-template-columns: minmax(0, 1fr) auto; row-gap: 0.25rem; }
+  .size-bar-label { grid-column: 1 / -1; }
+  .size-bar-value { white-space: normal; overflow-wrap: anywhere; }
+}
+
 /* ---------- contract specification ---------- */
 /* Signatures are short, so a full-width column on a wide viewport is mostly
    empty space. Cap the whole group — heading, count, divider and entries share
