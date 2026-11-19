@@ -7,6 +7,7 @@ pub mod abi_decode;
 pub mod client_gen;
 pub mod spec;
 pub mod spec_diff;
+pub mod token;
 pub use abi_decode::{find_event_abi, find_type_abi, format_scval_abi, DecodedValue};
 pub use client_gen::{
     generate_client, generate_client_with_options, ClientGenError, GenerateOptions,
@@ -19,6 +20,10 @@ pub use spec_diff::{
     diff_specs, diff_wasm, event_sig, size_delta_bytes, size_delta_pct, type_sig, upgrade_safety,
     upgrade_safety_wasm, ChangeKind, EventSignatureChange, FunctionSignatureChange, SpecDiff,
     TypeDefinitionChange, UpgradeVerdict, VerdictChange, WasmSummary,
+};
+pub use token::{
+    classify_all, classify_method, is_token, MethodPresence, Sep41Method, METADATA_METHODS,
+    SEP41_METHODS,
 };
 
 #[derive(Error, Debug)]
@@ -172,18 +177,34 @@ pub fn parse_metadata(wasm_bytes: &[u8]) -> Result<WasmMetadata, WasmError> {
         // consumes the payload. `as_section` yields the range of the
         // section's contents; the span from the previous section's end
         // adds the section's id byte and LEB128 size prefix.
+        //
+        // Nested sections share bytes with their enclosing section:
+        // `parse_all` reports a component's core-module section and then
+        // the sections inside it, whose ranges end at or before the
+        // enclosing range's end. Recording them would count the same
+        // bytes twice and move the cursor backwards, so only a span that
+        // extends past everything counted so far is recorded. Every byte
+        // after the header is then counted exactly once.
         if let Some((id, range)) = payload.as_section() {
-            let name = match &payload {
-                Payload::CustomSection(reader) => reader.name().to_string(),
-                _ => section_name(id),
-            };
-            meta.section_sizes.push(WasmSectionSize {
-                id,
-                name,
-                size_bytes: usize::try_from(range.end.saturating_sub(section_cursor))
-                    .unwrap_or(usize::MAX),
-            });
-            section_cursor = range.end;
+            if range.end > section_cursor {
+                let name = match &payload {
+                    Payload::CustomSection(reader) => reader.name().to_string(),
+                    // Component section ids collide with module section
+                    // ids (a core-module section reports id 1, i.e.
+                    // "type"), so name component sections from the
+                    // payload instead of the id.
+                    Payload::ModuleSection { .. } => "module".to_string(),
+                    Payload::ComponentSection { .. } => "component".to_string(),
+                    _ => section_name(id),
+                };
+                meta.section_sizes.push(WasmSectionSize {
+                    id,
+                    name,
+                    size_bytes: usize::try_from(range.end.saturating_sub(section_cursor))
+                        .unwrap_or(usize::MAX),
+                });
+                section_cursor = range.end;
+            }
         }
         match payload {
             Payload::Version { num, .. } => {
@@ -450,6 +471,33 @@ mod tests {
         assert_eq!(meta.section_sizes[0].id, 0);
         assert_eq!(meta.section_sizes[0].name, "contractspecv0");
         assert_eq!(meta.section_sizes[0].size_bytes, 190);
+        assert_eq!(section_sizes_sum(&meta) + 8, meta.size_bytes);
+    }
+
+    #[test]
+    fn test_section_sizes_component_counts_each_byte_once() {
+        // A component wrapping a module with type, function and code
+        // sections. `parse_all` reports the enclosing core-module section
+        // and then the nested sections, whose ranges lie inside it;
+        // without the top-level-only rule the nested bytes were counted
+        // twice (the total exceeded `size_bytes - 8`).
+        let component: &[u8] = &[
+            0x00, 0x61, 0x73, 0x6d, 0x0d, 0x00, 0x01, 0x00, // component header
+            0x01, 0x18, // core module section (id 1), size 24
+            0x00, 0x61, 0x73, 0x6d, 0x01, 0x00, 0x00, 0x00, // nested module header
+            0x01, 0x04, 0x01, 0x60, 0x00, 0x00, // type section
+            0x03, 0x02, 0x01, 0x00, // function section
+            0x0a, 0x04, 0x01, 0x02, 0x00, 0x0b, // code section
+        ];
+        assert_eq!(component.len(), 34);
+        let meta = parse_metadata(component).unwrap();
+        assert_eq!(meta.size_bytes, 34);
+        // Only the enclosing module section is recorded; the nested
+        // type/function/code sections share its bytes.
+        assert_eq!(meta.section_sizes.len(), 1);
+        assert_eq!(meta.section_sizes[0].id, 1);
+        assert_eq!(meta.section_sizes[0].name, "module");
+        assert_eq!(meta.section_sizes[0].size_bytes, 26);
         assert_eq!(section_sizes_sum(&meta) + 8, meta.size_bytes);
     }
 

@@ -448,18 +448,31 @@ pub async fn get_contract_events_page(
 ///
 /// The loop terminates on the first of:
 /// - no further cursor (the RPC returned no `cursor`): the pages are exhausted;
+/// - an empty page: the RPC scanned the rest of the window and found
+///   nothing, so the query boundary is exhausted even when the RPC still
+///   returns a (nonempty) cursor;
+/// - an event past the caller-supplied inclusive end ledger: the bound is
+///   enforced client-side because follow-up pages are cursor-only and the
+///   RPC no longer applies it — the offending event is dropped and the
+///   pagination is complete within the bound (`next_cursor` is `None`);
 /// - the caller-supplied page cap (`options.max_pages`) is reached — the
 ///   returned [`PaginatedEvents::next_cursor`] still holds the cursor so the
 ///   caller can resume later;
 /// - an event whose ledger passes the RPC's `latestLedger`: the page set is
 ///   inconsistent with the ledger the RPC reported, so fetching stops instead
-///   of following the cursor into unbounded pages.
+///   of following the cursor into unbounded pages (the cursor is still
+///   returned so the caller can resume if it chooses).
+///
+/// A response cursor that does not advance past the request cursor is a
+/// replayed page, not a new one: after the exhaustion checks above, the
+/// loop returns an error instead of appending the replayed page.
 ///
 /// The first page starts from the ledger range (`start_ledger`/`end_ledger`,
 /// resolved as in [`get_contract_events_filtered`]) unless
 /// `options.cursor` is set, in which case the request is cursor-only and no
-/// ledger range is sent. Every later page is cursor-only. Returns the
-/// accumulated events plus the final cursor (see `PaginatedEvents`).
+/// ledger range is sent. Every later page is cursor-only, and ledger bounds
+/// are never sent on a cursor request. Returns the accumulated events plus
+/// the final cursor (see `PaginatedEvents`).
 pub async fn get_contract_events_paginated(
     client: &SorobanRpcClient,
     contract_id: &str,
@@ -474,12 +487,19 @@ pub async fn get_contract_events_paginated(
         ));
     }
 
+    // Client-side end bound: the user-supplied inclusive end ledger.
+    // Follow-up pages are cursor-only, so the RPC no longer applies the
+    // bound — enforce it here. `None` means the query has no explicit end
+    // and is bounded by the RPC's latest ledger instead (see below).
+    let inclusive_end = end_ledger;
+
     let mut events = Vec::new();
     let mut next_cursor = options.cursor.clone();
     let mut latest_ledger = None;
     let mut pages_fetched = 0;
 
     for _ in 0..options.max_pages {
+        let request_cursor = next_cursor.clone();
         // Only send a `pagination` object when a cursor or a limit was
         // actually requested; otherwise the request stays byte-identical
         // to the historical single-request wire format.
@@ -509,20 +529,54 @@ pub async fn get_contract_events_paginated(
         pages_fetched += 1;
         latest_ledger = page.latest_ledger;
 
+        // Drop events past the inclusive end bound. Ledgers arrive in
+        // order, so once such an event appears the scan has passed the
+        // bound and no later page can contribute an in-range event.
+        let mut page_events = page.events;
+        let mut passed_end_bound = false;
+        if let Some(end) = inclusive_end {
+            let kept = page_events.len();
+            page_events.retain(|event| event.ledger.is_none_or(|ledger| ledger <= end));
+            passed_end_bound = page_events.len() < kept;
+        }
+
         // Termination: an event past the RPC's latest ledger means the page
         // set is inconsistent; stop instead of following the cursor further.
         let passed_latest = match latest_ledger {
-            Some(latest) => page
-                .events
+            Some(latest) => page_events
                 .iter()
                 .any(|event| event.ledger.is_some_and(|ledger| ledger > latest)),
             None => false,
         };
 
+        // An empty page means the RPC scanned the rest of the window and
+        // found nothing: the query boundary is exhausted even when the RPC
+        // still returns a (nonempty) cursor.
+        let empty_page = page_events.is_empty();
+
         let cursor_after = page.next_cursor.clone();
-        events.extend(page.events);
+
+        // Exhaustion takes precedence over the replay check below: a
+        // terminal page stops cleanly, it is not an error.
+        let exhausted = cursor_after.is_none() || passed_end_bound || empty_page;
+        if !exhausted && !passed_latest {
+            if let (Some(requested), Some(returned)) = (&request_cursor, &cursor_after) {
+                if requested == returned {
+                    return Err(RpcError::Rpc(format!(
+                        "getEvents pagination cursor did not advance (cursor {returned} \
+                         returned again); refusing to replay the same page"
+                    )));
+                }
+            }
+        }
+
+        events.extend(page_events);
+        if exhausted {
+            next_cursor = None;
+            break;
+        }
         next_cursor = cursor_after;
-        if next_cursor.is_none() || passed_latest {
+        if passed_latest {
             break;
         }
     }
@@ -858,9 +912,12 @@ mod tests {
     /// reports sequence 500. `getEvents` answers by the `pagination.cursor`
     /// in the request:
     /// - no cursor: 1 event (ledger 100), cursor "page-2", latestLedger 500
-    /// - "page-2": 1 event (ledger 200), no cursor, latestLedger 500
+    /// - "page-2": 1 event (ledger 200), cursor "page-3", latestLedger 500
+    /// - "page-3": 1 event (ledger 201), no cursor, latestLedger 500
     /// - "loop": 1 event (ledger 100), cursor "loop", latestLedger 500
     /// - "beyond": 1 event (ledger 999, past latestLedger 500), cursor "page-2"
+    /// - "cap-N": 1 event (ledger 100), cursor "cap-{N+1}" (always advances)
+    /// - "empty-1": no events, cursor "empty-2" (exhausted window)
     async fn spawn_mock_paged_events_server() -> String {
         use tokio::io::{AsyncReadExt, AsyncWriteExt};
         use tokio::net::TcpListener;
@@ -924,14 +981,26 @@ mod tests {
                         let cursor = request["params"]["pagination"]["cursor"]
                             .as_str()
                             .unwrap_or("");
-                        let (ledger, cursor_json) = match cursor {
-                            "page-2" => (200, "null"),
-                            "loop" => (100, r#""loop""#),
-                            "beyond" => (999, r#""page-2""#),
-                            _ => (100, r#""page-2""#),
+                        let event_json = |ledger: u32| {
+                            format!(
+                                r#"{{"ledger":{ledger},"contractId":"{CONTRACT}","topic":[],"value":"AAAA"}}"#
+                            )
+                        };
+                        // Each arm returns (events JSON fragment, cursor JSON).
+                        let (events_json, cursor_json) = match cursor {
+                            "page-2" => (event_json(200), r#""page-3""#.to_string()),
+                            "page-3" => (event_json(201), "null".to_string()),
+                            "loop" => (event_json(100), r#""loop""#.to_string()),
+                            "beyond" => (event_json(999), r#""page-2""#.to_string()),
+                            "empty-1" => (String::new(), r#""empty-2""#.to_string()),
+                            _ if cursor.starts_with("cap-") => {
+                                let n: u32 = cursor[4..].parse().unwrap_or(1);
+                                (event_json(100), format!(r#""cap-{}""#, n + 1))
+                            }
+                            _ => (event_json(100), r#""page-2""#.to_string()),
                         };
                         format!(
-                            r#"{{"jsonrpc":"2.0","id":1,"result":{{"events":[{{"ledger":{ledger},"contractId":"{CONTRACT}","topic":[],"value":"AAAA"}}],"cursor":{cursor_json},"latestLedger":500}}}}"#
+                            r#"{{"jsonrpc":"2.0","id":1,"result":{{"events":[{events_json}],"cursor":{cursor_json},"latestLedger":500}}}}"#
                         )
                     } else {
                         r#"{"jsonrpc":"2.0","id":1,"error":{"code":-32601,"message":"method not found"}}"#
@@ -997,7 +1066,46 @@ mod tests {
                 .collect::<Vec<_>>(),
             vec![Some(100), Some(200)]
         );
-        assert_eq!(paged.pages_fetched, 2);
+        // The third page returns an event at ledger 201, past the end
+        // bound of 200: it is fetched, dropped, and the loop stops, so the
+        // pagination is complete within the bound.
+        assert_eq!(paged.pages_fetched, 3);
+        assert_eq!(paged.next_cursor, None);
+        assert_eq!(paged.latest_ledger, Some(500));
+    }
+
+    #[tokio::test]
+    async fn test_get_contract_events_paginated_enforces_end_ledger_bound() {
+        let url = spawn_mock_paged_events_server().await;
+        let client = SorobanRpcClient::new(&url);
+        // The reported repro: start=100, end=200, limit=1. The first page
+        // carries endLedger=201; the cursor-only follow-ups do not, so the
+        // bound must be enforced client-side.
+        let paged = get_contract_events_paginated(
+            &client,
+            "CA3D5KRYM6CB7OWQ6TWYRR3Z4T7GNZLKERYNZGGA5CWVMOMG2P3T2YYW",
+            Some(100),
+            Some(200),
+            None,
+            PaginationOptions {
+                cursor: None,
+                limit: Some(1),
+                max_pages: 10,
+            },
+        )
+        .await
+        .unwrap();
+        // Before the bound (100), exactly at it (200), and past it (201,
+        // fetched then dropped): only the first two survive.
+        assert_eq!(
+            paged
+                .events
+                .iter()
+                .map(|event| event.ledger)
+                .collect::<Vec<_>>(),
+            vec![Some(100), Some(200)]
+        );
+        assert_eq!(paged.pages_fetched, 3);
         assert_eq!(paged.next_cursor, None);
         assert_eq!(paged.latest_ledger, Some(500));
     }
@@ -1013,17 +1121,72 @@ mod tests {
             None,
             None,
             PaginationOptions {
-                cursor: Some("loop".to_string()),
+                cursor: Some("cap-1".to_string()),
                 limit: None,
                 max_pages: 3,
             },
         )
         .await
         .unwrap();
-        // The mock never runs out of pages; the cap must stop the loop.
+        // The mock advances the cursor on every page (cap-1 -> cap-2 ->
+        // cap-3 -> cap-4); the cap must stop the loop.
         assert_eq!(paged.events.len(), 3);
         assert_eq!(paged.pages_fetched, 3);
-        assert_eq!(paged.next_cursor.as_deref(), Some("loop"));
+        assert_eq!(paged.next_cursor.as_deref(), Some("cap-4"));
+    }
+
+    #[tokio::test]
+    async fn test_get_contract_events_paginated_rejects_non_advancing_cursor() {
+        let url = spawn_mock_paged_events_server().await;
+        let client = SorobanRpcClient::new(&url);
+        let result = get_contract_events_paginated(
+            &client,
+            "CA3D5KRYM6CB7OWQ6TWYRR3Z4T7GNZLKERYNZGGA5CWVMOMG2P3T2YYW",
+            None,
+            None,
+            None,
+            PaginationOptions {
+                cursor: Some("loop".to_string()),
+                limit: None,
+                max_pages: 10,
+            },
+        )
+        .await;
+        // The mock returns the same cursor and the same event forever;
+        // following it would replay the page until the cap. Fail instead,
+        // before appending the replayed page.
+        let err = result.unwrap_err();
+        match err {
+            RpcError::Rpc(msg) => assert!(msg.contains("did not advance"), "{msg}"),
+            other => panic!("Unexpected error variant: {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn test_get_contract_events_paginated_stops_on_empty_final_page() {
+        let url = spawn_mock_paged_events_server().await;
+        let client = SorobanRpcClient::new(&url);
+        let paged = get_contract_events_paginated(
+            &client,
+            "CA3D5KRYM6CB7OWQ6TWYRR3Z4T7GNZLKERYNZGGA5CWVMOMG2P3T2YYW",
+            None,
+            None,
+            None,
+            PaginationOptions {
+                cursor: Some("empty-1".to_string()),
+                limit: None,
+                max_pages: 10,
+            },
+        )
+        .await
+        .unwrap();
+        // The final page is empty but still carries a nonempty cursor:
+        // the window is exhausted, so the loop stops after one page and
+        // reports the pagination complete instead of fetching to the cap.
+        assert_eq!(paged.events.len(), 0);
+        assert_eq!(paged.pages_fetched, 1);
+        assert_eq!(paged.next_cursor, None);
+        assert_eq!(paged.latest_ledger, Some(500));
     }
 
     #[tokio::test]
