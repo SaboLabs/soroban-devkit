@@ -139,12 +139,16 @@ impl BaselineReport {
     pub fn compare(&self, current: &AuditReport) -> BaselineComparison {
         let mut baseline_counts: HashMap<FindingKey, usize> = HashMap::new();
         for f in &self.findings {
-            *baseline_counts.entry(FindingKey::from_finding(f)).or_insert(0) += 1;
+            *baseline_counts
+                .entry(FindingKey::from_finding(f))
+                .or_insert(0) += 1;
         }
 
         let mut current_counts: HashMap<FindingKey, usize> = HashMap::new();
         for f in &current.findings {
-            *current_counts.entry(FindingKey::from_finding(f)).or_insert(0) += 1;
+            *current_counts
+                .entry(FindingKey::from_finding(f))
+                .or_insert(0) += 1;
         }
 
         let mut new_findings = Vec::new();

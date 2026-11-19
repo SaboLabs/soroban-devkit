@@ -1242,7 +1242,9 @@ fn audit_baseline_multi_file_and_duplicate_counting() {
         "new finding should come from b.rs, got: {new_file}"
     );
 
-    let unchanged = v["unchanged_findings"].as_array().expect("unchanged_findings");
+    let unchanged = v["unchanged_findings"]
+        .as_array()
+        .expect("unchanged_findings");
     assert_eq!(unchanged.len(), 1);
     let unchanged_file = unchanged[0]["file"].as_str().expect("file present");
     assert!(

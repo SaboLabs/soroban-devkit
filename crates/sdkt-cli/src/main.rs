@@ -9014,8 +9014,7 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
                             audit_fmt == AuditFormat::Json,
                         )
                     });
-                    let warnings =
-                        loaded.check_staleness(sdkt_version_string(), &active_rule_ids);
+                    let warnings = loaded.check_staleness(sdkt_version_string(), &active_rule_ids);
                     for w in &warnings {
                         eprintln!("Warning: {}", w);
                     }
