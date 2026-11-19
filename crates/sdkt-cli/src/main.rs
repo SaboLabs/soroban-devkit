@@ -25,7 +25,7 @@ use sdkt_xdr::{
 use sha2::{Digest, Sha256};
 use std::fs;
 use std::io::{self, Write};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::process;
 use std::time::Duration;
 
@@ -845,6 +845,32 @@ enum GenerateAction {
         /// Skip functions with unsupported types instead of aborting
         #[arg(long)]
         skip_unsupported: bool,
+    },
+    /// Generate a Markdown API reference set: one page per contract plus an
+    /// index, from a local WASM, a deployed contract, or the whole workspace
+    #[command(group(
+        clap::ArgGroup::new("source")
+            .required(true)
+            .args(["wasm", "contract", "project"])
+    ))]
+    Docs {
+        /// Path to a compiled contract WASM file
+        #[arg(long, value_name = "FILE")]
+        wasm: Option<String>,
+        /// Stellar contract ID (C... StrKey); fetches the on-chain WASM
+        #[arg(long, value_name = "CONTRACT_ID")]
+        contract: Option<String>,
+        /// Every contract in the workspace (resolved via .sdkt.toml)
+        #[arg(long)]
+        project: bool,
+        /// Output directory
+        #[arg(long, value_name = "DIR", default_value = "./docs/api")]
+        out: String,
+        /// Overwrite existing files
+        #[arg(long)]
+        force: bool,
+        #[command(flatten)]
+        net: NetworkArgs,
     },
 }
 
@@ -12017,6 +12043,28 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
                     process::exit(1);
                 }
             }
+            GenerateAction::Docs {
+                wasm,
+                contract,
+                project,
+                out,
+                force,
+                net,
+            } => {
+                if let Err(e) = run_generate_docs(
+                    wasm.as_deref(),
+                    contract.as_deref(),
+                    project,
+                    &out,
+                    force,
+                    &net,
+                )
+                .await
+                {
+                    eprintln!("Error: {e}");
+                    process::exit(1);
+                }
+            }
         },
     }
 
@@ -12276,6 +12324,167 @@ fn run_generate_client(
         None => print!("{}", code),
     }
     Ok(())
+}
+
+/// One page of the generated Markdown API reference set.
+struct DocsPage {
+    /// Page file stem and index link text: the workspace alias for
+    /// `--project`, the WASM file stem for `--wasm`, the contract ID for
+    /// `--contract`.
+    identifier: String,
+    function_count: usize,
+    content: String,
+}
+
+/// Render one reference page: a one-line title naming the contract, then the
+/// exact body `sdkt inspect --interface --format markdown` prints for the same
+/// spec (that command prints `render_contract_interface(&spec, true)` plus a
+/// newline). The body is produced by `render_contract_interface` — there is no
+/// second interface renderer.
+fn render_docs_page(title: &str, spec: &sdkt_wasm::ContractSpec) -> String {
+    format!("# {title}\n\n{}\n", render_contract_interface(spec, true))
+}
+
+fn docs_page_for(identifier: &str, spec: &sdkt_wasm::ContractSpec) -> DocsPage {
+    DocsPage {
+        identifier: identifier.to_string(),
+        function_count: spec.functions.len(),
+        content: render_docs_page(identifier, spec),
+    }
+}
+
+/// Render `index.md`, linking every page and listing its identifier and
+/// function count.
+fn render_docs_index(pages: &[DocsPage]) -> String {
+    let mut out = String::from("# Contract API Reference\n\n");
+    for page in pages {
+        out.push_str(&format!(
+            "- [{}]({}.md) — {} function{}\n",
+            page.identifier,
+            page.identifier,
+            page.function_count,
+            if page.function_count == 1 { "" } else { "s" }
+        ));
+    }
+    out
+}
+
+/// Execute `sdkt generate docs`: render one Markdown page per contract plus an
+/// index into `out_dir`, refusing to overwrite existing files unless `force`.
+/// Page bodies come from `render_contract_interface`; sources reuse the
+/// existing spec parser, project resolver, and on-chain WASM fetch.
+async fn run_generate_docs(
+    wasm: Option<&str>,
+    contract: Option<&str>,
+    project: bool,
+    out_dir: &str,
+    force: bool,
+    net: &NetworkArgs,
+) -> Result<(), String> {
+    let mut pages: Vec<DocsPage> = Vec::new();
+
+    if let Some(path) = wasm {
+        let bytes = fs::read(path).map_err(|e| format!("cannot read WASM '{path}': {e}"))?;
+        let spec = parse_contract_spec(&bytes).map_err(|e| format!("{path}: {e}"))?;
+        let stem = Path::new(path)
+            .file_stem()
+            .and_then(|s| s.to_str())
+            .ok_or_else(|| format!("cannot derive a page name from '{path}'"))?;
+        pages.push(docs_page_for(stem, &spec));
+    } else if let Some(contract_id) = contract {
+        let target = resolve_target_network(None, net)?;
+        let (bytes, _wasm_hash) =
+            fetch_deployed_contract_wasm(&target.client, contract_id, &target.network_name).await?;
+        let spec = parse_contract_spec(&bytes).map_err(|e| format!("{contract_id}: {e}"))?;
+        pages.push(docs_page_for(contract_id, &spec));
+    } else if project {
+        let config = DevKitConfig::from_file(".sdkt.toml")
+            .map_err(|e| format!("Error loading .sdkt.toml: {e}"))?;
+        let resolved = sdkt_core::project::resolve_project(&config)
+            .map_err(|e| format!("Error resolving project: {e}"))?;
+        for resolved_contract in &resolved {
+            let bytes = fs::read(&resolved_contract.wasm_artifact).map_err(|e| {
+                format!(
+                    "Failed to read WASM for '{}': {}",
+                    resolved_contract.alias, e
+                )
+            })?;
+            let spec = parse_contract_spec(&bytes)
+                .map_err(|e| format!("{}: {e}", resolved_contract.wasm_artifact.display()))?;
+            pages.push(docs_page_for(&resolved_contract.alias, &spec));
+        }
+    } else {
+        return Err(
+            "pass one of --wasm <FILE>, --contract <CONTRACT_ID>, or --project".to_string(),
+        );
+    }
+
+    let out = Path::new(out_dir);
+    let mut files: Vec<(PathBuf, String)> = pages
+        .iter()
+        .map(|page| {
+            (
+                out.join(format!("{}.md", page.identifier)),
+                page.content.clone(),
+            )
+        })
+        .collect();
+    files.push((out.join("index.md"), render_docs_index(&pages)));
+
+    // Refuse before writing anything: the first existing file is named.
+    if !force {
+        if let Some((path, _)) = files.iter().find(|(path, _)| path.exists()) {
+            return Err(format!(
+                "refusing to overwrite existing file '{}' (pass --force to replace it)",
+                path.display()
+            ));
+        }
+    }
+
+    fs::create_dir_all(out).map_err(|e| format!("cannot create '{}': {e}", out.display()))?;
+    for (path, content) in &files {
+        fs::write(path, content).map_err(|e| format!("cannot write '{}': {e}", path.display()))?;
+    }
+
+    println!(
+        "✓ Generated {} contract page(s) plus an index -> {}",
+        pages.len(),
+        out.display()
+    );
+    Ok(())
+}
+
+#[cfg(test)]
+mod generate_docs_unit_tests {
+    use super::*;
+
+    const TEST_WASM: &[u8] = include_bytes!("../tests/fixtures/us_new.wasm");
+
+    #[test]
+    fn page_body_matches_inspect_interface_markdown_output() {
+        let spec = parse_contract_spec(TEST_WASM).expect("fixture carries a contract spec");
+        // `sdkt inspect --interface --format markdown` prints exactly
+        // `render_contract_interface(&spec, true)` followed by a newline.
+        let inspect_output = format!("{}\n", render_contract_interface(&spec, true));
+
+        let page = render_docs_page("us_new", &spec);
+        let body = page
+            .strip_prefix("# us_new\n\n")
+            .expect("page starts with a one-line title header");
+        assert_eq!(body, inspect_output);
+        assert!(page.starts_with("# us_new\n\n# Contract Interface\n"));
+    }
+
+    #[test]
+    fn index_links_every_page_with_its_function_count() {
+        let spec = parse_contract_spec(TEST_WASM).expect("fixture carries a contract spec");
+        let index = render_docs_index(&[docs_page_for("token", &spec)]);
+        assert!(index.starts_with("# Contract API Reference\n\n"));
+        assert!(index.contains(&format!(
+            "- [token](token.md) — {} functions",
+            spec.functions.len()
+        )));
+    }
 }
 
 #[cfg(test)]
