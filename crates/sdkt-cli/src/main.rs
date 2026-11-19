@@ -430,6 +430,14 @@ enum Commands {
         /// Without this flag sdkt audit always exits 0 on findings.
         #[arg(long, value_name = "SEVERITY")]
         fail_on: Option<String>,
+        /// Persist the current audit report (plus version and active rule set)
+        /// as a baseline JSON file at PATH.
+        #[arg(long, value_name = "PATH")]
+        save_baseline: Option<String>,
+        /// Load a saved baseline JSON file from PATH, compare current findings
+        /// against it, and exit non-zero when new findings are introduced.
+        #[arg(long, value_name = "PATH")]
+        baseline: Option<String>,
         #[command(flatten)]
         net: NetworkArgs,
     },
@@ -7271,6 +7279,8 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
             abi,
             abi_contract,
             fail_on,
+            save_baseline,
+            baseline,
             net,
         } => {
             // Validate --fail-on before any analysis runs so an invalid level
@@ -7959,21 +7969,60 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
                 }
             }
 
-            if audit_fmt == AuditFormat::Sarif {
-                let mut rules_info: Vec<sdkt_audit::RuleInfo> = sdkt_audit::registered_rule_info();
-                if multi_file {
-                    // Merge per-file local registry rule infos (covers plugin
-                    // rules; global registry only has built-ins). Dedup by rule ID.
-                    let mut seen: std::collections::HashSet<String> =
-                        rules_info.iter().map(|r| r.id.clone()).collect();
-                    for local_infos in &multi_file_local_rule_infos {
-                        for info in local_infos {
-                            if seen.insert(info.id.clone()) {
-                                rules_info.push(info.clone());
-                            }
+            let mut all_rules_info: Vec<sdkt_audit::RuleInfo> = sdkt_audit::registered_rule_info();
+            if multi_file {
+                let mut seen: std::collections::HashSet<String> =
+                    all_rules_info.iter().map(|r| r.id.clone()).collect();
+                for local_infos in &multi_file_local_rule_infos {
+                    for info in local_infos {
+                        if seen.insert(info.id.clone()) {
+                            all_rules_info.push(info.clone());
                         }
                     }
                 }
+            }
+            let active_rule_ids: Vec<String> = all_rules_info
+                .iter()
+                .filter(|r| !disabled_refs.contains(&r.id.as_str()))
+                .map(|r| r.id.clone())
+                .collect();
+
+            let baseline_comparison: Option<sdkt_audit::BaselineComparison> =
+                if let Some(ref baseline_path) = baseline {
+                    let loaded = sdkt_audit::load_baseline(baseline_path).unwrap_or_else(|e| {
+                        fail_cli(
+                            format!("Failed to load baseline '{}': {}", baseline_path, e),
+                            audit_fmt == AuditFormat::Json,
+                        )
+                    });
+                    let warnings =
+                        loaded.check_staleness(sdkt_version_string(), &active_rule_ids);
+                    for w in &warnings {
+                        eprintln!("Warning: {}", w);
+                    }
+                    let mut cmp = loaded.compare(&aggregate);
+                    cmp.warnings = warnings;
+                    Some(cmp)
+                } else {
+                    None
+                };
+
+            if let Some(ref save_path) = save_baseline {
+                if let Err(e) = sdkt_audit::save_baseline(
+                    save_path,
+                    &aggregate,
+                    sdkt_version_string(),
+                    &active_rule_ids,
+                ) {
+                    fail_cli(
+                        format!("Failed to save baseline '{}': {}", save_path, e),
+                        audit_fmt == AuditFormat::Json,
+                    );
+                }
+            }
+
+            if audit_fmt == AuditFormat::Sarif {
+                let rules_info = all_rules_info;
                 if multi_file {
                     let sarif_str = sdkt_audit::sarif::report_to_sarif_string_multi_file(
                         &aggregate,
@@ -7993,12 +8042,37 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
                     .map_err(|e| e.to_string())?;
                     println!("{}", sarif_str);
                 }
-                apply_audit_gate(fail_on_level, &aggregate.summary);
+                if let Some(ref cmp) = baseline_comparison {
+                    if let Some(level) = fail_on_level {
+                        apply_audit_gate(Some(level), &cmp.new_findings_summary());
+                    } else if cmp.has_new_findings() {
+                        process::exit(1);
+                    }
+                } else {
+                    apply_audit_gate(fail_on_level, &aggregate.summary);
+                }
                 return Ok(());
             }
 
             if fmt == OutputFormat::Json {
-                if multi_file {
+                if let Some(ref cmp) = baseline_comparison {
+                    let mut out = serde_json::to_value(cmp)?;
+                    out["findings"] = serde_json::to_value(&aggregate.findings)?;
+                    out["spec_correlated"] = serde_json::Value::Bool(audit_spec.is_some());
+                    if multi_file {
+                        let files: Vec<serde_json::Value> = per_file
+                            .iter()
+                            .map(|(path, report)| {
+                                serde_json::json!({
+                                    "file": path.display().to_string(),
+                                    "report": report,
+                                })
+                            })
+                            .collect();
+                        out["files"] = serde_json::Value::Array(files);
+                    }
+                    println!("{}", serde_json::to_string(&out)?);
+                } else if multi_file {
                     #[derive(serde::Serialize)]
                     struct MultiFileAuditReport {
                         files: Vec<serde_json::Value>,
@@ -8028,6 +8102,36 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
                     let mut report = serde_json::to_value(&aggregate)?;
                     report["spec_correlated"] = serde_json::Value::Bool(audit_spec.is_some());
                     println!("{}", serde_json::to_string(&report)?);
+                }
+            } else if let Some(ref cmp) = baseline_comparison {
+                println!("Baseline: {} known findings", cmp.baseline_total);
+                println!("New findings: {}", cmp.new_findings.len());
+                for f in &cmp.new_findings {
+                    let loc = f
+                        .location
+                        .as_ref()
+                        .map(|l| format!(" [{}]", l))
+                        .unwrap_or_default();
+                    println!("  [{}] {}{}: {}", f.severity, f.rule_id, loc, f.message);
+                }
+                println!("Resolved: {}", cmp.resolved_findings.len());
+                for f in &cmp.resolved_findings {
+                    let loc = f
+                        .location
+                        .as_ref()
+                        .map(|l| format!(" [{}]", l))
+                        .unwrap_or_default();
+                    println!("  [{}] {}{}: {}", f.severity, f.rule_id, loc, f.message);
+                }
+                if let Some(ref save_path) = save_baseline {
+                    println!(
+                        "Report saved ({} findings: {} critical, {} warning, {} info) to {}",
+                        aggregate.summary.total,
+                        aggregate.summary.critical,
+                        aggregate.summary.warning,
+                        aggregate.summary.info,
+                        save_path
+                    );
                 }
             } else {
                 for (idx, (path, report)) in per_file.iter().enumerate() {
@@ -8098,13 +8202,33 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
                         aggregate.summary.total
                     );
                 }
+
+                if let Some(ref save_path) = save_baseline {
+                    println!(
+                        "Report saved ({} findings: {} critical, {} warning, {} info) to {}",
+                        aggregate.summary.total,
+                        aggregate.summary.critical,
+                        aggregate.summary.warning,
+                        aggregate.summary.info,
+                        save_path
+                    );
+                }
             }
 
-            // Opt-in CI gate (issue #298): without --fail-on the command
-            // always exits 0 on findings; file errors still exit 1 below.
-            // The gate runs at every exit path — including the SARIF
-            // early-return above — so no output format can bypass it.
-            apply_audit_gate(fail_on_level, &aggregate.summary);
+            // Opt-in CI gate (issue #298) and baseline ratchet gate:
+            // - With --baseline, exit non-zero when new findings are introduced
+            //   (or when new findings meet --fail-on threshold if also supplied).
+            // - Without --baseline and without --fail-on, the command exits 0
+            //   on findings; file errors still exit 1 below.
+            if let Some(ref cmp) = baseline_comparison {
+                if let Some(level) = fail_on_level {
+                    apply_audit_gate(Some(level), &cmp.new_findings_summary());
+                } else if cmp.has_new_findings() {
+                    process::exit(1);
+                }
+            } else {
+                apply_audit_gate(fail_on_level, &aggregate.summary);
+            }
             if had_file_errors {
                 process::exit(1);
             }

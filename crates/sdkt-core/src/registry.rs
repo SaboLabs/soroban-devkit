@@ -309,6 +309,8 @@ const CAPABILITIES: [Capability; CAP_COUNT] = [
             "--no-plugins",
             "--list-rules",
             "--fail-on",
+            "--save-baseline",
+            "--baseline",
         ],
         formats: PRETTY_JSON,
         evidence: Evidence::VerifiedLocal,
