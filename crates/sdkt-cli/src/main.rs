@@ -1270,9 +1270,9 @@ enum TxAction {
         /// Identity name to sign with. Defaults to "default".
         #[arg(short = 'I', long, default_value = "default")]
         identity: String,
-        /// Network: testnet | mainnet | futurenet | custom:<passphrase>
-        #[arg(short, long, default_value = "testnet")]
-        network: String,
+        /// Network: testnet | mainnet | futurenet | custom:<passphrase> (mutually exclusive with --network-profile; defaults to testnet)
+        #[arg(short, long, conflicts_with = "network_profile")]
+        network: Option<String>,
         /// Output format
         #[arg(short, long, default_value = "pretty")]
         format: String,
@@ -5124,6 +5124,38 @@ mod project_add_tests {
     }
 }
 
+/// Resolve the signing [`Network`] for `sdkt tx sign` from either `--network`
+/// or `--network-profile` (mutually exclusive; defaults to `Network::Testnet`).
+fn resolve_sign_network(
+    network: Option<&str>,
+    network_profile: Option<&str>,
+) -> Result<Network, String> {
+    match (network, network_profile) {
+        (Some(_), Some(_)) => {
+            Err("cannot use --network and --network-profile together; specify only one".to_string())
+        }
+        (None, Some(profile_name)) => {
+            let store =
+                NetworkStore::new().map_err(|e| format!("cannot open network store: {}", e))?;
+            let profile = store
+                .get(profile_name)
+                .map_err(|e| format!("network profile '{}' not found: {}", profile_name, e))?;
+            Ok(Network::from_passphrase(&profile.network_passphrase))
+        }
+        (Some(net_str), None) => match net_str.trim().to_ascii_lowercase().as_str() {
+            "testnet" => Ok(Network::Testnet),
+            "mainnet" => Ok(Network::Mainnet),
+            "futurenet" => Ok(Network::Futurenet),
+            other if other.starts_with("custom:") => Ok(Network::parse(other)),
+            _ => Err(format!(
+                "invalid network '{}' (expected testnet|mainnet|futurenet|custom:<passphrase>)",
+                net_str
+            )),
+        },
+        (None, None) => Ok(Network::Testnet),
+    }
+}
+
 /// Resolve a transaction envelope argument (`--input` / `--envelope`) to
 /// envelope text.
 ///
@@ -7888,17 +7920,14 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
             } => {
                 let fmt = parse_format_str(&format);
 
-                // --- Network resolution (strict; reject unknown labels) ---
-                let network = match network.trim().to_ascii_lowercase().as_str() {
-                    "testnet" => Network::Testnet,
-                    "mainnet" => Network::Mainnet,
-                    "futurenet" => Network::Futurenet,
-                    other if other.starts_with("custom:") => Network::parse(other),
-                    _ => {
-                        eprintln!(
-                            "Error: invalid network '{}' (expected testnet|mainnet|futurenet|custom:<passphrase>)",
-                            network
-                        );
+                // --- Network resolution (strict; reject unknown labels / profiles) ---
+                let network = match resolve_sign_network(
+                    network.as_deref(),
+                    net.network_profile.as_deref(),
+                ) {
+                    Ok(n) => n,
+                    Err(e) => {
+                        eprintln!("Error: {}", e);
                         process::exit(1);
                     }
                 };
