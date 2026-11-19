@@ -324,6 +324,14 @@ code, kbd, pre { font-family: var(--mono); }
 }
 .kv .k { color: var(--dim); }
 
+/* ---------- size breakdown (issue #516) ---------- */
+.size-breakdown { padding: 0.7rem 1rem; display: flex; flex-direction: column; gap: 0.45rem; }
+.size-bar-row { display: grid; grid-template-columns: 11rem 1fr auto; align-items: center; gap: 0.7rem; }
+.size-bar-label { font-family: var(--mono); font-size: 0.84rem; color: var(--fg); overflow-wrap: anywhere; }
+.size-bar-track { height: 0.6rem; background: var(--line-soft); border-radius: 999px; overflow: hidden; }
+.size-bar-fill { height: 100%; background: var(--accent); border-radius: 999px; }
+.size-bar-value { font-family: var(--mono); font-size: 0.8rem; color: var(--dim); white-space: nowrap; }
+
 /* ---------- contract specification ---------- */
 /* Signatures are short, so a full-width column on a wide viewport is mostly
    empty space. Cap the whole group — heading, count, divider and entries share

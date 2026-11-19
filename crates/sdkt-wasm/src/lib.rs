@@ -76,6 +76,32 @@ pub struct WasmMetadata {
     /// Number of data segments declared in the module.
     #[serde(default)]
     pub data_segment_count: u32,
+    /// Per-section byte sizes, in file order (issue #516).
+    ///
+    /// Each entry is the full file span of one section — its id byte, its
+    /// LEB128 size prefix, and its contents — so the entries account for
+    /// every byte of the module except the 8-byte module header, which is
+    /// not a section: `section_sizes.iter().map(|s| s.size_bytes).sum::<usize>() + 8 == size_bytes`.
+    /// A module with no sections has an empty breakdown. The field has a
+    /// serde default so payloads serialized before it existed still parse.
+    #[serde(default)]
+    pub section_sizes: Vec<WasmSectionSize>,
+}
+
+/// The byte size of one WASM section, in file order.
+///
+/// `name` is the canonical section name (`"type"`, `"code"`, `"data"`, …);
+/// for a custom section (id 0) it is the custom section's own name, e.g.
+/// `"contractspecv0"` or `"contractmetav0"`.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct WasmSectionSize {
+    /// Numeric section id (`0` for a custom section).
+    pub id: u8,
+    /// Section name; the custom section name for id `0`.
+    pub name: String,
+    /// Byte size of the section in the file, including its id byte and its
+    /// LEB128 size prefix.
+    pub size_bytes: usize,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -131,11 +157,35 @@ pub fn parse_metadata(wasm_bytes: &[u8]) -> Result<WasmMetadata, WasmError> {
         table_count: 0,
         global_count: 0,
         data_segment_count: 0,
+        section_sizes: Vec::new(),
     };
+
+    // Byte offset just past the 8-byte module header; sections are
+    // contiguous, so each section's file span runs from the end of the
+    // previous section to the end of its own byte range.
+    let mut section_cursor: u64 = 8;
 
     let parser = Parser::new(0);
     for payload in parser.parse_all(wasm_bytes) {
-        match payload? {
+        let payload = payload?;
+        // Record the file span of every section before the match below
+        // consumes the payload. `as_section` yields the range of the
+        // section's contents; the span from the previous section's end
+        // adds the section's id byte and LEB128 size prefix.
+        if let Some((id, range)) = payload.as_section() {
+            let name = match &payload {
+                Payload::CustomSection(reader) => reader.name().to_string(),
+                _ => section_name(id),
+            };
+            meta.section_sizes.push(WasmSectionSize {
+                id,
+                name,
+                size_bytes: usize::try_from(range.end.saturating_sub(section_cursor))
+                    .unwrap_or(usize::MAX),
+            });
+            section_cursor = range.end;
+        }
+        match payload {
             Payload::Version { num, .. } => {
                 meta.version = num;
             }
@@ -197,6 +247,27 @@ pub fn parse_metadata(wasm_bytes: &[u8]) -> Result<WasmMetadata, WasmError> {
     }
 
     Ok(meta)
+}
+
+/// Canonical name for a WASM section id. Custom sections (id `0`) are
+/// named by the caller from the section's own name instead.
+fn section_name(id: u8) -> String {
+    match id {
+        0 => "custom".to_string(),
+        1 => "type".to_string(),
+        2 => "import".to_string(),
+        3 => "function".to_string(),
+        4 => "table".to_string(),
+        5 => "memory".to_string(),
+        6 => "global".to_string(),
+        7 => "export".to_string(),
+        8 => "start".to_string(),
+        9 => "element".to_string(),
+        10 => "code".to_string(),
+        11 => "data".to_string(),
+        12 => "data count".to_string(),
+        _ => format!("unknown ({id})"),
+    }
 }
 
 fn export_kind_str(kind: wasmparser::ExternalKind) -> &'static str {
@@ -342,5 +413,67 @@ mod tests {
         assert_eq!(meta.exports.len(), 1);
         assert_eq!(meta.exports[0].name, "exp");
         assert_eq!(meta.exports[0].kind, "func");
+    }
+
+    // Issue #516: the per-section breakdown. Section sizes are file spans
+    // (id byte + LEB128 size prefix + contents), so they account for every
+    // byte except the 8-byte module header, which is not a section.
+    fn section_sizes_sum(meta: &WasmMetadata) -> usize {
+        meta.section_sizes.iter().map(|s| s.size_bytes).sum()
+    }
+
+    #[test]
+    fn test_section_sizes_empty_wasm() {
+        // A module with no sections shows an empty breakdown, not a crash.
+        let meta = parse_metadata(VALID_EMPTY_WASM).unwrap();
+        assert!(meta.section_sizes.is_empty());
+        assert_eq!(meta.size_bytes, 8);
+    }
+
+    #[test]
+    fn test_section_sizes_export_fixture() {
+        // Header (8) + export section: id byte + 1-byte size + 1 content byte.
+        let meta = parse_metadata(WASM_WITH_EXPORTS).unwrap();
+        assert_eq!(meta.section_sizes.len(), 1);
+        assert_eq!(meta.section_sizes[0].id, 7);
+        assert_eq!(meta.section_sizes[0].name, "export");
+        assert_eq!(meta.section_sizes[0].size_bytes, 3);
+        assert_eq!(section_sizes_sum(&meta) + 8, meta.size_bytes);
+    }
+
+    #[test]
+    fn test_section_sizes_us_old() {
+        let wasm_bytes = include_bytes!("../../sdkt-cli/tests/fixtures/us_old.wasm");
+        let meta = parse_metadata(wasm_bytes).unwrap();
+        assert_eq!(meta.size_bytes, 198);
+        assert_eq!(meta.section_sizes.len(), 1);
+        assert_eq!(meta.section_sizes[0].id, 0);
+        assert_eq!(meta.section_sizes[0].name, "contractspecv0");
+        assert_eq!(meta.section_sizes[0].size_bytes, 190);
+        assert_eq!(section_sizes_sum(&meta) + 8, meta.size_bytes);
+    }
+
+    #[test]
+    fn test_section_sizes_us_new() {
+        let wasm_bytes = include_bytes!("../../sdkt-cli/tests/fixtures/us_new.wasm");
+        let meta = parse_metadata(wasm_bytes).unwrap();
+        assert_eq!(meta.size_bytes, 530);
+        let names: Vec<&str> = meta.section_sizes.iter().map(|s| s.name.as_str()).collect();
+        assert_eq!(
+            names,
+            [
+                "type",
+                "import",
+                "function",
+                "memory",
+                "export",
+                "code",
+                "contractspecv0",
+                "contractenvmetav0",
+                "contractmetav0",
+                "contractmetav0",
+            ]
+        );
+        assert_eq!(section_sizes_sum(&meta) + 8, meta.size_bytes);
     }
 }

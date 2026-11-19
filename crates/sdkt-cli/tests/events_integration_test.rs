@@ -82,6 +82,71 @@ fn mock_events_rpc(latest_ledger: u32) -> (String, Arc<Mutex<MockRpcSeen>>) {
     (url, seen)
 }
 
+/// Multi-page variant of [`mock_events_rpc`]: `getEvents` answers by the
+/// `pagination.cursor` in the request, as recorded fixtures for #296.
+/// - no cursor: 1 event (ledger 2000), cursor "cursor-page-2"
+/// - "cursor-page-2": 1 event (ledger 2001), no cursor (last page)
+/// - "cursor-loop": 1 event (ledger 2000), cursor "cursor-loop" (never ends)
+fn mock_events_rpc_paged(latest_ledger: u32) -> (String, Arc<Mutex<MockRpcSeen>>) {
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let url = format!("http://{}", listener.local_addr().unwrap());
+    let seen = Arc::new(Mutex::new(MockRpcSeen::default()));
+    let seen_thread = seen.clone();
+
+    thread::spawn(move || {
+        for conn in listener.incoming() {
+            let Ok(mut sock) = conn else { break };
+            let req = read_request(&mut sock);
+            let body = req.split_once("\r\n\r\n").map(|(_, b)| b).unwrap_or("");
+            let json_body: serde_json::Value =
+                serde_json::from_str(body).unwrap_or_else(|_| serde_json::json!({}));
+            let method = json_body["method"].as_str().unwrap_or("").to_string();
+            let cursor = json_body["params"]["pagination"]["cursor"]
+                .as_str()
+                .unwrap_or("")
+                .to_string();
+
+            {
+                let mut s = seen_thread.lock().unwrap();
+                s.requests.push(json_body);
+            }
+
+            let resp_body = match method.as_str() {
+                "getLatestLedger" => format!(
+                    r#"{{"jsonrpc":"2.0","id":1,"result":{{"id":"mock","protocolVersion":22,"sequence":{latest_ledger}}}}}"#
+                ),
+                "getEvents" => match cursor.as_str() {
+                    "cursor-page-2" => r#"{"jsonrpc":"2.0","id":1,"result":{"events":[{"ledger":2001,"contractId":"CCVVW7N4R3KNY72QJQKQY3T753C2H34E6XJIVJQOQSQE3C3M3U72QJQK","topic":["AAAAAwAAACo=","AAAAAwAAAAc="],"value":"AAAAAwAAAAc="}],"latestLedger":2500}}"#.to_string(),
+                    "cursor-loop" => r#"{"jsonrpc":"2.0","id":1,"result":{"events":[{"ledger":2000,"contractId":"CCVVW7N4R3KNY72QJQKQY3T753C2H34E6XJIVJQOQSQE3C3M3U72QJQK","topic":["AAAAAwAAACo=","AAAAAwAAAAc="],"value":"AAAAAwAAACo="}],"cursor":"cursor-loop","latestLedger":2500}}"#.to_string(),
+                    _ => r#"{"jsonrpc":"2.0","id":1,"result":{"events":[{"ledger":2000,"contractId":"CCVVW7N4R3KNY72QJQKQY3T753C2H34E6XJIVJQOQSQE3C3M3U72QJQK","topic":["AAAAAwAAACo=","AAAAAwAAAAc="],"value":"AAAAAwAAACo="}],"cursor":"cursor-page-2","latestLedger":2500}}"#.to_string(),
+                },
+                _ => {
+                    r#"{"jsonrpc":"2.0","id":1,"error":{"code":-32601,"message":"method not found"}}"#.to_string()
+                }
+            };
+
+            let header = format!(
+                "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+                resp_body.len(),
+                resp_body
+            );
+            let _ = sock.write_all(header.as_bytes());
+        }
+    });
+
+    (url, seen)
+}
+
+fn events_requests(seen: &Arc<Mutex<MockRpcSeen>>) -> Vec<serde_json::Value> {
+    seen.lock()
+        .unwrap()
+        .requests
+        .iter()
+        .filter(|r| r["method"] == "getEvents")
+        .cloned()
+        .collect()
+}
+
 #[test]
 fn test_events_format_json() {
     let (rpc_url, _seen) = mock_events_rpc(2500);
@@ -545,4 +610,194 @@ fn test_events_topic_without_abi_does_not_warn() {
     cmd.assert()
         .success()
         .stderr(predicate::str::contains("Warning").not());
+}
+
+// ── `getEvents` cursor pagination (#296) ──
+//
+// Recorded multi-page fixture: `mock_events_rpc_paged` above. Page 1
+// returns one event (ledger 2000) plus cursor "cursor-page-2"; page 2
+// returns one event (ledger 2001) with no cursor. Prior context: issue
+// #172 described this gap and was closed, but the work never landed on
+// `main` — this change implements the pagination itself.
+
+#[test]
+fn test_events_all_pages_accumulates_pages() {
+    let (rpc_url, seen) = mock_events_rpc_paged(2500);
+    let mut cmd = Command::cargo_bin("sdkt").unwrap();
+    cmd.arg("events")
+        .arg(CONTRACT_ID)
+        .arg("--rpc-url")
+        .arg(&rpc_url)
+        .arg("--all-pages")
+        .arg("--format")
+        .arg("json");
+
+    let output = cmd.assert().success().get_output().stdout.clone();
+    let json: serde_json::Value = serde_json::from_slice(&output).unwrap();
+    let events = json.as_array().unwrap();
+    assert_eq!(events.len(), 2);
+    assert_eq!(events[0]["ledger"], 2000);
+    assert_eq!(events[1]["ledger"], 2001);
+
+    let requests = events_requests(&seen);
+    assert_eq!(requests.len(), 2);
+    // The first page is a plain range query (default lookback from latest 2500).
+    assert_eq!(requests[0]["params"]["startLedger"], 1500);
+    assert!(requests[0]["params"].get("pagination").is_none());
+    // The second page resumes from the cursor alone: no ledger range.
+    assert_eq!(
+        requests[1]["params"]["pagination"]["cursor"],
+        "cursor-page-2"
+    );
+    assert!(requests[1]["params"].get("startLedger").is_none());
+    assert!(requests[1]["params"].get("endLedger").is_none());
+}
+
+#[test]
+fn test_events_cursor_resumes_from_cursor() {
+    let (rpc_url, seen) = mock_events_rpc_paged(2500);
+    let mut cmd = Command::cargo_bin("sdkt").unwrap();
+    cmd.arg("events")
+        .arg(CONTRACT_ID)
+        .arg("--rpc-url")
+        .arg(&rpc_url)
+        .arg("--cursor")
+        .arg("cursor-page-2")
+        .arg("--format")
+        .arg("json");
+
+    let output = cmd.assert().success().get_output().stdout.clone();
+    let json: serde_json::Value = serde_json::from_slice(&output).unwrap();
+    let events = json.as_array().unwrap();
+    assert_eq!(events.len(), 1);
+    assert_eq!(events[0]["ledger"], 2001);
+
+    let requests = events_requests(&seen);
+    assert_eq!(requests.len(), 1);
+    assert_eq!(
+        requests[0]["params"]["pagination"]["cursor"],
+        "cursor-page-2"
+    );
+    assert!(requests[0]["params"].get("startLedger").is_none());
+    assert!(requests[0]["params"].get("endLedger").is_none());
+    // Resuming from a cursor never needs the latest ledger.
+    assert!(
+        seen.lock()
+            .unwrap()
+            .requests
+            .iter()
+            .all(|r| r["method"] != "getLatestLedger"),
+        "no getLatestLedger call expected for a cursor resume"
+    );
+}
+
+#[test]
+fn test_events_limit_sends_pagination_limit() {
+    let (rpc_url, seen) = mock_events_rpc_paged(2500);
+    let mut cmd = Command::cargo_bin("sdkt").unwrap();
+    cmd.arg("events")
+        .arg(CONTRACT_ID)
+        .arg("--rpc-url")
+        .arg(&rpc_url)
+        .arg("--limit")
+        .arg("5")
+        .arg("--format")
+        .arg("json");
+
+    cmd.assert().success();
+
+    let requests = events_requests(&seen);
+    assert_eq!(requests.len(), 1);
+    assert_eq!(requests[0]["params"]["pagination"]["limit"], 5);
+}
+
+#[test]
+fn test_events_page_boundary_notice_pretty() {
+    let (rpc_url, _seen) = mock_events_rpc_paged(2500);
+    let mut cmd = Command::cargo_bin("sdkt").unwrap();
+    cmd.arg("events")
+        .arg(CONTRACT_ID)
+        .arg("--rpc-url")
+        .arg(&rpc_url);
+
+    cmd.assert()
+        .success()
+        .stdout(predicate::str::contains("More events are available"))
+        .stdout(predicate::str::contains("cursor-page-2"));
+}
+
+#[test]
+fn test_events_page_boundary_notice_json_keeps_stdout_pure() {
+    let (rpc_url, _seen) = mock_events_rpc_paged(2500);
+    let mut cmd = Command::cargo_bin("sdkt").unwrap();
+    cmd.arg("events")
+        .arg(CONTRACT_ID)
+        .arg("--rpc-url")
+        .arg(&rpc_url)
+        .arg("--format")
+        .arg("json");
+
+    let assert = cmd.assert().success();
+    let stdout = assert.get_output().stdout.clone();
+    let stderr = String::from_utf8_lossy(&assert.get_output().stderr).to_string();
+    let json: serde_json::Value = serde_json::from_slice(&stdout).unwrap();
+    assert_eq!(json.as_array().unwrap().len(), 1);
+    assert!(stderr.contains("cursor-page-2"), "{stderr}");
+}
+
+#[test]
+fn test_events_cursor_with_ledger_range_rejected() {
+    let (rpc_url, seen) = mock_events_rpc_paged(2500);
+    let mut cmd = Command::cargo_bin("sdkt").unwrap();
+    cmd.arg("events")
+        .arg(CONTRACT_ID)
+        .arg("--rpc-url")
+        .arg(&rpc_url)
+        .arg("--cursor")
+        .arg("cursor-page-2")
+        .arg("--start-ledger")
+        .arg("1000");
+
+    cmd.assert().failure().stderr(predicate::str::contains(
+        "--cursor cannot be combined with --start-ledger/--end-ledger",
+    ));
+    assert!(seen.lock().unwrap().requests.is_empty());
+}
+
+#[test]
+fn test_events_all_pages_cap() {
+    let (rpc_url, seen) = mock_events_rpc_paged(2500);
+    let mut cmd = Command::cargo_bin("sdkt").unwrap();
+    cmd.arg("events")
+        .arg(CONTRACT_ID)
+        .arg("--rpc-url")
+        .arg(&rpc_url)
+        .arg("--cursor")
+        .arg("cursor-loop")
+        .arg("--all-pages")
+        .arg("2")
+        .arg("--format")
+        .arg("json");
+
+    let assert = cmd.assert().success();
+    let stdout = assert.get_output().stdout.clone();
+    let stderr = String::from_utf8_lossy(&assert.get_output().stderr).to_string();
+    let json: serde_json::Value = serde_json::from_slice(&stdout).unwrap();
+    // The mock never runs out of pages; the cap of 2 must stop the loop.
+    assert_eq!(json.as_array().unwrap().len(), 2);
+    assert_eq!(events_requests(&seen).len(), 2);
+    assert!(stderr.contains("Stopped after 2 page(s)"), "{stderr}");
+    assert!(stderr.contains("cursor-loop"), "{stderr}");
+}
+
+#[test]
+fn test_events_help_shows_paging_flags() {
+    let mut cmd = Command::cargo_bin("sdkt").unwrap();
+    cmd.arg("events").arg("--help");
+
+    cmd.assert()
+        .success()
+        .stdout(predicate::str::contains("--limit"))
+        .stdout(predicate::str::contains("--cursor"))
+        .stdout(predicate::str::contains("--all-pages"));
 }
