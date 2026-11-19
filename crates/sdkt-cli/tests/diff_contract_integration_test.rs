@@ -499,3 +499,76 @@ fn diff_upgrade_safety_with_contract_sides() {
         "verdict printed, got: {stdout}"
     );
 }
+
+#[test]
+fn diff_blank_network_is_usage_error() {
+    let dir = tempdir().unwrap();
+    let (new_contract_id, _) = new_contract_id();
+    // A blank --network value is not a network selection: it must not
+    // satisfy the presence check and then silently resolve to the default.
+    let output = sdkt_isolated(dir.path())
+        .args([
+            "diff",
+            "--old-contract",
+            OLD_CONTRACT_ID,
+            "--new-contract",
+            &new_contract_id,
+            "--network",
+            " ",
+        ])
+        .output()
+        .unwrap();
+    assert_eq!(output.status.code(), Some(2), "blank --network must exit 2");
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("must not be blank"),
+        "blank network named, got: {stderr}"
+    );
+}
+
+#[test]
+fn diff_upgrade_safety_json_keeps_contract_sources() {
+    let dir = tempdir().unwrap();
+    let (new_contract_id, _) = new_contract_id();
+    let verdict = diff_json(
+        dir.path(),
+        &[
+            "--old-contract",
+            OLD_CONTRACT_ID,
+            "--new-contract",
+            &new_contract_id,
+            "--upgrade-safety",
+            "--format",
+            "json",
+        ],
+    );
+    assert_eq!(verdict["old_source"]["kind"], "contract");
+    assert_eq!(verdict["old_source"]["contract_id"], OLD_CONTRACT_ID);
+    assert_eq!(verdict["new_source"]["kind"], "contract");
+    assert_eq!(verdict["new_source"]["contract_id"], new_contract_id);
+
+    // The classic two-file verdict JSON is unchanged: no source fields.
+    let output = sdkt_isolated(dir.path())
+        .args([
+            "diff",
+            "--old-wasm",
+            &fixture("us_old.wasm"),
+            "--new-wasm",
+            &fixture("us_new.wasm"),
+            "--upgrade-safety",
+            "--format",
+            "json",
+        ])
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "two-file upgrade-safety must succeed, stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let file_verdict: serde_json::Value = serde_json::from_str(&stdout)
+        .unwrap_or_else(|e| panic!("stdout is not JSON: {e}\n{stdout}"));
+    assert!(file_verdict.get("old_source").is_none());
+    assert!(file_verdict.get("new_source").is_none());
+}

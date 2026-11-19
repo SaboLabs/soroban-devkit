@@ -151,6 +151,18 @@ fn is_instance_key(key: &str) -> bool {
     )
 }
 
+/// Hex of the contract address a contract-instance ledger key addresses, if
+/// the key decodes as one.
+fn instance_contract_hex(key: &str) -> Option<String> {
+    match sdkt_xdr::decode_ledger_key(key) {
+        Ok(stellar_xdr::LedgerKey::ContractData(entry)) => match entry.contract {
+            ScAddress::Contract(ContractId(Hash(bytes))) => Some(hex::encode(bytes)),
+            _ => None,
+        },
+        _ => None,
+    }
+}
+
 /// Which on-chain WASM hash the mock serves for contract-instance lookups.
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum ServedHash {
@@ -160,6 +172,10 @@ enum ServedHash {
     Drift,
     /// No instance entry: the contract is not (yet) visible on-chain.
     NotFound,
+    /// Per-contract: the first distinct contract address seen gets `Drift`,
+    /// every later one gets `Match` — for multi-contract project deploys
+    /// where one contract drifts and the rest verify.
+    PerContract,
 }
 
 /// Mock JSON-RPC server for the deploy + verify flow.
@@ -185,6 +201,11 @@ impl MockRpc {
         let verify_calls_thread = verify_calls.clone();
         let instance_match = instance_entry_xdr(US_NEW_HASH);
         let instance_drift = instance_entry_xdr(OTHER_HASH);
+        // Distinct contract addresses seen, in first-seen order, for the
+        // `PerContract` mode (first contract drifts, later ones match).
+        let seen_contracts: Arc<std::sync::Mutex<Vec<String>>> =
+            Arc::new(std::sync::Mutex::new(Vec::new()));
+        let seen_contracts_thread = seen_contracts.clone();
 
         thread::spawn(move || {
             for conn in listener.incoming() {
@@ -207,7 +228,28 @@ impl MockRpc {
                                 r#"{{"jsonrpc":"2.0","id":1,"result":{{"entries":[{{"key":"AAAAAA==","xdr":"{ACCOUNT_ENTRY_XDR}","lastModifiedLedgerSeq":1}}],"latestLedger":100}}}}"#
                             )
                         } else if has_instance {
-                            match served {
+                            let served_for_key = if served == ServedHash::PerContract {
+                                let hex = keys
+                                    .iter()
+                                    .find_map(|k| instance_contract_hex(k))
+                                    .unwrap_or_default();
+                                let mut seen = seen_contracts_thread.lock().unwrap();
+                                let idx = match seen.iter().position(|h| *h == hex) {
+                                    Some(i) => i,
+                                    None => {
+                                        seen.push(hex);
+                                        seen.len() - 1
+                                    }
+                                };
+                                if idx == 0 {
+                                    ServedHash::Drift
+                                } else {
+                                    ServedHash::Match
+                                }
+                            } else {
+                                served
+                            };
+                            match served_for_key {
                                 ServedHash::Match => format!(
                                     r#"{{"jsonrpc":"2.0","id":1,"result":{{"entries":[{{"key":"AAAAAA==","xdr":"{instance_match}","lastModifiedLedgerSeq":1}}],"latestLedger":100}}}}"#
                                 ),
@@ -218,6 +260,9 @@ impl MockRpc {
                                     r#"{"jsonrpc":"2.0","id":1,"result":{"entries":[],"latestLedger":100}}"#
                                         .to_string()
                                 }
+                                // Resolved to Drift/Match above; never
+                                // reaches the match.
+                                ServedHash::PerContract => unreachable!(),
                             }
                         } else {
                             r#"{"jsonrpc":"2.0","id":1,"result":{"entries":[],"latestLedger":100}}"#
@@ -399,6 +444,10 @@ fn deploy_mismatched_hash_warns_and_exits_three() {
         stderr.contains(OTHER_HASH) && stderr.contains(US_NEW_HASH),
         "warning names both hashes: {stderr}"
     );
+    assert!(
+        stderr.contains("sdkt verify --contract") && stderr.contains("--wasm"),
+        "warning gives a recheck command that compares the artifact: {stderr}"
+    );
     assert_eq!(mock.verify_call_count(), 1);
 }
 
@@ -520,6 +569,10 @@ fn deploy_from_hash_mismatch_exits_three() {
     assert_eq!(output.status.code(), Some(3));
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(stderr.contains("Warning: post-deploy verification FAILED"));
+    assert!(
+        stderr.contains("--wasm-hash") && stderr.contains(US_NEW_HASH),
+        "hash-only warning tells the operator to compare against the original --wasm-hash: {stderr}"
+    );
 }
 
 // --- project deploy ---
@@ -670,4 +723,85 @@ fn deploy_help_lists_no_verify() {
         .assert()
         .success()
         .stdout(predicate::str::contains("--no-verify"));
+}
+
+/// Set up a two-contract project (token ← vault), both built from the same
+/// `us_new.wasm` fixture.
+fn setup_two_contract_project(dir: &Path) {
+    let manifest = r#"
+[contracts.token]
+path = "contracts/token"
+
+[contracts.vault]
+path = "contracts/vault"
+depends_on = ["token"]
+"#;
+    std::fs::write(dir.join(".sdkt.toml"), manifest).unwrap();
+    for alias in ["token", "vault"] {
+        let target = dir
+            .join("contracts")
+            .join(alias)
+            .join("target")
+            .join(sdkt_core::build::WASM_BUILD_TARGET)
+            .join("release");
+        std::fs::create_dir_all(&target).unwrap();
+        std::fs::write(
+            target.join(format!("{alias}.wasm")),
+            std::fs::read(us_new_path()).unwrap(),
+        )
+        .unwrap();
+    }
+}
+
+#[test]
+fn project_deploy_multi_contract_reports_each_verification() {
+    // First contract drifts, second verifies: both must still deploy, both
+    // must appear in the JSON output, and the command exits 3.
+    let dir = TempDir::new().unwrap();
+    setup_two_contract_project(dir.path());
+    generate_default_identity(dir.path());
+    let mock = MockRpc::start(ServedHash::PerContract);
+
+    let output = project_deploy(dir.path(), &mock, &["--format", "json"]);
+
+    assert_eq!(
+        output.status.code(),
+        Some(3),
+        "one failed verification must exit 3 even though both deploys settled"
+    );
+    let json = stdout_json(&output);
+    assert_eq!(json["status"], "success");
+    for alias in ["token", "vault"] {
+        assert!(
+            !json["contracts_deployed"][alias]
+                .as_str()
+                .unwrap_or_default()
+                .is_empty(),
+            "{alias} must be deployed: {json}"
+        );
+    }
+    assert_eq!(
+        json["verification"]["token"]["status"], "failed",
+        "first contract drifts: {json}"
+    );
+    assert_eq!(
+        json["verification"]["token"]["onChainWasmHash"], OTHER_HASH,
+        "{json}"
+    );
+    assert_eq!(
+        json["verification"]["vault"]["status"], "verified",
+        "second contract verifies: {json}"
+    );
+    assert_eq!(
+        json["verification"]["vault"]["onChainWasmHash"], US_NEW_HASH,
+        "{json}"
+    );
+    assert_eq!(
+        mock.verify_call_count(),
+        2,
+        "one verification lookup per deployed contract"
+    );
+    // In JSON mode the failure is reported in the `verification` object
+    // above (the loud stderr warning is a pretty-mode path, covered by
+    // `project_deploy_mismatch_warns_and_exits_three`).
 }

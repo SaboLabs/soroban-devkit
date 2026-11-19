@@ -171,7 +171,11 @@ impl AuditRule for Move001 {
     }
     fn check(&self, scans: &[FnScan], _ctx: &AuditContext, report: &mut AuditReport) {
         for s in scans {
-            for (name, count) in &s.usage {
+            // `usage` is a HashMap, so iterate a name-sorted snapshot:
+            // finding order must be deterministic across runs (#309).
+            let mut usage: Vec<(&String, &usize)> = s.usage.iter().collect();
+            usage.sort_by(|a, b| a.0.cmp(b.0));
+            for (name, count) in usage {
                 if *count >= 2 {
                     report.add(Finding {
                         file: None,
