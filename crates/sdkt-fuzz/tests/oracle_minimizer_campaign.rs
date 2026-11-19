@@ -10,9 +10,10 @@
 use std::collections::BTreeMap;
 
 use sdkt_fuzz::{
-    run_campaign, Classification, Environment, EventRecord, ExecutionStatus, Executor, Expected,
-    ExpectedBehavior, FunctionCall, GenerationCaps, MinimizationTarget, Mutation, Operator, Oracle,
-    ReasonCode,
+    replay, run_campaign, run_campaign_artifacts, sequence_case_counts, Classification,
+    Environment, EventRecord, ExecutionStatus, Executor, Expected, ExpectedBehavior, FunctionCall,
+    FuzzRunOptions, GenerationCaps, MinimizationTarget, Mutation, Operator, Oracle, ReasonCode,
+    ReplayOptions,
 };
 use soroban_env_host::xdr::ScVal;
 
@@ -641,6 +642,147 @@ fn mutation_and_generation_identity_is_stable_and_seed_bound() {
         "id must be pure hex"
     );
     assert!(g1.generation_id.chars().all(|c| c.is_ascii_hexdigit()));
+}
+
+// ---------------------------------------------------------------------------
+// U. campaign sequence execution (sequence_every > 0): state carry, multi-step
+//    artifact recording, determinism, and replay reproduction
+// ---------------------------------------------------------------------------
+
+#[test]
+fn campaign_with_sequence_every_produces_multistep_artifacts_that_replay() {
+    let mut input = sdkt_fuzz::CampaignInput::new(COUNTER_WASM, [29u8; 32]).unwrap();
+    input.cases = 4;
+    input.function = Some("increment".to_string());
+    input.sequence_length = 3;
+    input.sequence_every = 2;
+
+    // `increment()` starts from 0 on each fresh case and adds 1 to instance
+    // storage per call. Declaring `expect_return = Some(U32(1))` means:
+    // - single-step cases (case0001, case0003) return U32(1) -> PASS;
+    // - 3-step sequence cases (case0000, case0002) carry state across steps
+    //   and return U32(3) -> FINDING (RETURN_MISMATCH), which minimizes to a
+    //   2-step sequence `[increment, increment]` returning U32(2) (removing
+    //   step 1 would return U32(1) and lose the finding).
+    let mut expectations = BTreeMap::new();
+    expectations.insert(
+        "increment".to_string(),
+        Expected {
+            behavior: ExpectedBehavior::Success {
+                expect_return: Some(ScVal::U32(1)),
+            },
+            ..Default::default()
+        },
+    );
+
+    let (result, artifacts) = run_campaign_artifacts(&input, &expectations).unwrap();
+    assert_eq!(result.executed, 4);
+    assert_eq!(
+        sequence_case_counts(result.executed, input.sequence_length, input.sequence_every),
+        (2, 2)
+    );
+    assert_eq!(
+        result.passed,
+        vec!["case0001".to_string(), "case0003".to_string()],
+        "single-step cases return 1 and pass"
+    );
+    assert_eq!(
+        result.findings.len(),
+        2,
+        "only the multi-step sequence cases violate expect_return=1"
+    );
+    assert_eq!(artifacts.len(), 2);
+
+    for (idx, art) in artifacts.iter().enumerate() {
+        let expected_case_id = format!("case{:04}", idx * 2);
+        assert_eq!(art.case_id, expected_case_id);
+        assert_eq!(art.reason_code, "RETURN_MISMATCH");
+        assert_eq!(art.campaign.sequence_length, 3);
+        assert_eq!(art.campaign.sequence_every, 2);
+        assert_eq!(
+            art.sequence.len(),
+            2,
+            "artifact must record the multi-step sequence that carries state"
+        );
+        assert!(art.sequence.iter().all(|s| s.function == "increment"));
+        assert_eq!(art.steps().unwrap().len(), 2);
+
+        let outcome = replay(art, COUNTER_WASM).expect("multi-step artifact replays");
+        assert!(
+            outcome.is_reproduced(),
+            "replay must reproduce the multi-step sequence finding: {outcome:?}"
+        );
+    }
+
+    // Determinism: running the same sequence-enabled campaign again yields
+    // byte-identical artifacts and canonical hashes.
+    let (_, artifacts_again) = run_campaign_artifacts(&input, &expectations).unwrap();
+    assert_eq!(artifacts, artifacts_again);
+}
+
+#[test]
+fn runner_writes_and_replays_multistep_artifacts_when_sequence_enabled() {
+    // Patch the overflow check in `COUNTER_WASM`'s `increment()` from
+    // `u32::MAX` (`42 ff ff ff ff 0f`) to `1` (`42 81 80 80 80 00`, same
+    // 6-byte LEB128 width) so the first call succeeds (0 -> 1) and the second
+    // call in a sequence traps on the carried state (1 == 1 -> unreachable).
+    let needle = [0x42, 0xff, 0xff, 0xff, 0xff, 0x0f];
+    let replacement = [0x42, 0x81, 0x80, 0x80, 0x80, 0x00];
+    let mut stateful_wasm = COUNTER_WASM.to_vec();
+    let pos = stateful_wasm
+        .windows(needle.len())
+        .position(|w| w == needle)
+        .expect("counter overflow check present in fixture");
+    stateful_wasm[pos..pos + needle.len()].copy_from_slice(&replacement);
+
+    let dir = std::env::temp_dir().join(format!("sdkt-fuzz-seq-runner-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let wasm_path = dir.join("stateful_counter.wasm");
+    std::fs::write(&wasm_path, &stateful_wasm).unwrap();
+    let artifact_dir = dir.join("artifacts");
+
+    let options = FuzzRunOptions {
+        wasm: wasm_path.clone(),
+        seed: 7,
+        cases: 4,
+        function: Some("increment".to_string()),
+        artifact_dir: Some(artifact_dir.clone()),
+        auth_mode: sdkt_fuzz::AuthMode::NoAuth,
+        expect_success: vec!["increment".to_string()],
+        expect_error: Vec::new(),
+        sequence_length: 3,
+        sequence_every: 2,
+        replay: true,
+    };
+
+    let report = sdkt_fuzz::run_fuzz(&options).expect("sequence campaign runs");
+    assert_eq!(
+        report.summary,
+        "executed=4 passed=2 expected_errors=0 findings=2 skipped=0 sequences=2 single_step=2"
+    );
+    assert!(report.evidence.deterministic);
+    assert_eq!(report.evidence.config.sequence_length, 3);
+    assert_eq!(report.evidence.config.sequence_every, 2);
+    assert_eq!(report.artifacts.len(), 2);
+    assert!(report.evidence.all_reproduced());
+
+    for (file_name, _) in &report.artifacts {
+        let art_path = artifact_dir.join(file_name);
+        let art = sdkt_fuzz::load_artifact(&art_path).expect("artifact loads from disk");
+        assert_eq!(art.sequence.len(), 2, "multi-step sequence written to disk");
+        assert_eq!(art.campaign.sequence_length, 3);
+        assert_eq!(art.campaign.sequence_every, 2);
+
+        let replay_outcome = sdkt_fuzz::run_replay(&ReplayOptions {
+            artifact: art_path,
+            wasm: wasm_path.clone(),
+        })
+        .expect("disk replay succeeds");
+        assert!(replay_outcome.is_reproduced());
+    }
+
+    let _ = std::fs::remove_dir_all(&dir);
 }
 
 /// Unused-binding guard for optional imports.

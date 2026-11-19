@@ -767,6 +767,14 @@ enum FuzzAction {
         /// (repeatable), e.g. --expect-error bump:Auth:6
         #[arg(long, value_name = "FN:TYPE:CODE", action = clap::ArgAction::Append)]
         expect_error: Vec<String>,
+        /// Number of invocations in each generated multi-step sequence (>= 2;
+        /// requires --sequence-every)
+        #[arg(long, value_name = "N")]
+        sequence_length: Option<usize>,
+        /// Execute every N-th case as a multi-step sequence (>= 1; requires
+        /// --sequence-length)
+        #[arg(long, value_name = "N")]
+        sequence_every: Option<usize>,
         /// Replay every written artifact to verify determinism
         #[arg(long)]
         replay: bool,
@@ -10810,6 +10818,8 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
                 auth,
                 expect_success,
                 expect_error,
+                sequence_length,
+                sequence_every,
                 replay,
                 format,
             } => {
@@ -10822,6 +10832,8 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
                     &auth,
                     expect_success,
                     expect_error,
+                    sequence_length,
+                    sequence_every,
                     replay,
                     &format,
                 ) {

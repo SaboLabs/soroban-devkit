@@ -43,6 +43,46 @@ pub fn parse_auth(mode: &str) -> Option<AuthMode> {
     }
 }
 
+/// Validate `--sequence-length` and `--sequence-every` as a pair.
+///
+/// Rules:
+/// - Omitting both flags keeps the default single-step behavior
+///   (`sequence_length = 2`, `sequence_every = 0`).
+/// - Supplying only one of the two flags is a usage error.
+/// - `sequence_length` must be `>= 2` (a sequence needs at least 2 steps to
+///   carry state between invocations).
+/// - `sequence_every` must be `>= 1` (`0` is the internal disabled sentinel
+///   and cannot be passed on the CLI).
+pub fn validate_sequence_flags(
+    sequence_length: Option<usize>,
+    sequence_every: Option<usize>,
+) -> Result<(usize, usize), String> {
+    if let Some(len) = sequence_length {
+        if len < 2 {
+            return Err(format!(
+                "invalid --sequence-length {len}: must be >= 2 (a sequence requires at least 2 steps; pass both --sequence-length <N> (>= 2) and --sequence-every <N> (>= 1))"
+            ));
+        }
+    }
+    if let Some(every) = sequence_every {
+        if every < 1 {
+            return Err(format!(
+                "invalid --sequence-every {every}: must be >= 1 (pass both --sequence-length <N> (>= 2) and --sequence-every <N> (>= 1))"
+            ));
+        }
+    }
+    match (sequence_length, sequence_every) {
+        (None, None) => Ok((2, 0)),
+        (Some(_), None) => Err(
+            "--sequence-length requires --sequence-every (pass both --sequence-length <N> (>= 2) and --sequence-every <N> (>= 1), or omit both)".to_string(),
+        ),
+        (None, Some(_)) => Err(
+            "--sequence-every requires --sequence-length (pass both --sequence-length <N> (>= 2) and --sequence-every <N> (>= 1), or omit both)".to_string(),
+        ),
+        (Some(len), Some(every)) => Ok((len, every)),
+    }
+}
+
 /// Build campaign options from the CLI flags.
 #[allow(clippy::too_many_arguments)]
 pub fn options_from(
@@ -54,11 +94,15 @@ pub fn options_from(
     auth: &str,
     expect_success: Vec<String>,
     expect_error: Vec<String>,
+    sequence_length: Option<usize>,
+    sequence_every: Option<usize>,
     replay: bool,
 ) -> Result<FuzzRunOptions, String> {
     let auth_mode = parse_auth(auth).ok_or_else(|| {
         format!("invalid auth mode '{auth}' (expected no-auth, correct-auth, wrong-auth)")
     })?;
+    let (sequence_length, sequence_every) =
+        validate_sequence_flags(sequence_length, sequence_every)?;
     Ok(FuzzRunOptions {
         wasm: std::path::PathBuf::from(wasm),
         seed,
@@ -68,6 +112,8 @@ pub fn options_from(
         auth_mode,
         expect_success,
         expect_error,
+        sequence_length,
+        sequence_every,
         replay,
     })
 }
@@ -87,6 +133,8 @@ pub fn run(
     auth: &str,
     expect_success: Vec<String>,
     expect_error: Vec<String>,
+    sequence_length: Option<usize>,
+    sequence_every: Option<usize>,
     replay: bool,
     format: &str,
 ) -> Result<bool, String> {
@@ -99,6 +147,8 @@ pub fn run(
         auth,
         expect_success,
         expect_error,
+        sequence_length,
+        sequence_every,
         replay,
     )?;
     let fmt = parse_format(format)

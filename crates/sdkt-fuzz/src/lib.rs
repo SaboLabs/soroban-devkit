@@ -87,7 +87,9 @@ pub mod state_compare;
 
 pub use artifact::{CampaignConfig, FindingArtifact, SCHEMA_VERSION};
 pub use auth::AuthMode;
-pub use campaign::{run_campaign, run_campaign_artifacts, CampaignInput, CampaignResult};
+pub use campaign::{
+    run_campaign, run_campaign_artifacts, sequence_case_counts, CampaignInput, CampaignResult,
+};
 pub use case::{FunctionCall, FuzzCase};
 pub use compare::{compare_evidence, EvidenceComparison};
 pub use config::{BudgetConfig, FuzzConfig, LedgerConfig, PROTOCOL_VERSION};

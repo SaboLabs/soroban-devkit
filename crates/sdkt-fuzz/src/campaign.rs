@@ -436,6 +436,25 @@ fn hex(bytes: &[u8]) -> String {
     bytes.iter().map(|b| format!("{b:02x}")).collect()
 }
 
+/// Count `(sequence_cases, single_step_cases)` for an executed campaign.
+///
+/// Matches the `is_sequence` branch in [`run_campaign`]: when
+/// `sequence_every > 0` and `sequence_length > 1`, every case whose 0-based
+/// index is a multiple of `sequence_every` executes as a sequence and the
+/// remaining cases execute as single-step calls.
+pub fn sequence_case_counts(
+    executed: usize,
+    sequence_length: usize,
+    sequence_every: usize,
+) -> (usize, usize) {
+    if sequence_every > 0 && sequence_length > 1 {
+        let sequences = (0..executed).filter(|c| c % sequence_every == 0).count();
+        (sequences, executed.saturating_sub(sequences))
+    } else {
+        (0, executed)
+    }
+}
+
 /// Convenience: a one-line summary (logging only).
 pub fn summarize(result: &CampaignResult) -> String {
     format!(
