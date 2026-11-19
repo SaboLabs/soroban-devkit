@@ -1,3 +1,5 @@
+use std::collections::HashSet;
+
 use serde::{Deserialize, Serialize};
 
 use crate::client::SorobanRpcClient;
@@ -149,6 +151,13 @@ pub struct PaginatedEvents {
     /// Cursor for the next page, if the RPC returned one and fetching stopped
     /// before the pages were exhausted (page cap reached or `latestLedger`
     /// passed). `None` when the pages are exhausted.
+    ///
+    /// A `Some` cursor is a scan checkpoint, not proof that more matching
+    /// events exist: Stellar RPC v30 returns a cursor when a page scans to
+    /// the end of its window, even with no matches left. Client-side
+    /// end-bound filtering can also clear a wire cursor (see
+    /// [`get_contract_events_page`]), so a wire cursor is not guaranteed
+    /// to survive filtering.
     pub next_cursor: Option<String>,
     /// Latest ledger reported by the RPC on the last fetched page.
     pub latest_ledger: Option<u32>,
@@ -430,7 +439,10 @@ pub async fn get_contract_events_filtered(
 /// This is [`get_contract_events_filtered`] plus the continuation token: the
 /// wire request is identical when `pagination` is `None`, and the returned
 /// [`PaginatedEvents::next_cursor`] is `Some` exactly when the RPC returned a
-/// cursor, i.e. the page stopped at a page boundary and more events remain.
+/// cursor and it survived client-side filtering. A cursor is a scan
+/// checkpoint, not proof that more events remain: the RPC may return one
+/// for a page that scanned to the tip without filling up, and end-bound
+/// filtering below can clear it when an event past the bound is dropped.
 /// Pass `pagination` to resume from a cursor (`--cursor`) or to cap the page
 /// size (`--limit`); a cursor must not be combined with `--start-ledger`.
 /// An `--end-ledger` may be combined with a cursor as a client-side-only
@@ -480,6 +492,8 @@ pub async fn get_contract_events_page(
 ///   latest ledger). The RPC scans at most 10,000 ledgers per request, so
 ///   an empty page before the boundary is a mid-scan gap: the loop follows
 ///   the returned cursor and keeps scanning instead of dropping it;
+///   an empty page that returns the request cursor unchanged is also
+///   terminal: it is a confirmed end-of-ledger checkpoint at the tip;
 /// - an event past the caller-supplied inclusive end ledger: the bound is
 ///   enforced client-side because follow-up pages are cursor-only and the
 ///   RPC no longer applies it — the offending event is dropped and the
@@ -492,9 +506,13 @@ pub async fn get_contract_events_page(
 ///   of following the cursor into unbounded pages (the cursor is still
 ///   returned so the caller can resume if it chooses).
 ///
-/// A response cursor that does not advance past the request cursor is a
-/// replayed page, not a new one: after the exhaustion checks above, the
-/// loop returns an error instead of appending the replayed page.
+/// A response cursor that does not advance past the request cursor on a
+/// non-empty page is a replayed page, not a new one: after the exhaustion
+/// checks above, the loop returns an error instead of appending the
+/// replayed page. An empty page returning the same cursor is different:
+/// it is a confirmed end-of-ledger checkpoint at the tip, so the loop
+/// stops cleanly. A returned cursor that repeats any cursor already used
+/// in this run is a cycle and is likewise rejected.
 ///
 /// The first page starts from the ledger range (`start_ledger`/`end_ledger`,
 /// resolved as in [`get_contract_events_filtered`]) unless
@@ -536,13 +554,32 @@ pub async fn get_contract_events_paginated(
     // and is bounded by the RPC's latest ledger instead (see below).
     let inclusive_end = end_ledger;
 
+    // Resolve the ledger range once, before the loop, and carry the actual
+    // resolved start as the scan frontier. Re-deriving the start from a
+    // later response tip would overstate it: if `getLatestLedger` reports
+    // 11000 the request starts at 10000, but a `getEvents` response that
+    // reaches a node at 21000 would re-derive start=20000 and report
+    // exhaustion for ledgers the scan never reached (a match at 20500
+    // would be lost). The first page is fetched with this resolved range;
+    // every later page is cursor-only.
+    let resolved_range: Option<(u32, Option<u32>)> = if options.cursor.is_none() {
+        Some(resolve_events_range(client, start_ledger, end_ledger).await?)
+    } else {
+        None
+    };
+
     // Scan frontier: the furthest ledger the RPC is known to have scanned.
-    // A fresh query starts at its start ledger; a resumed query starts
-    // from an unknown cursor position, so the frontier stays `None` until
-    // an event (or a resolved lookback, below) gives the scan a position.
-    // Each request scans at most `RPC_MAX_LEDGERS_PER_GET_EVENTS_REQUEST`
-    // ledgers, so an empty page advances the frontier by a full window.
-    let mut scan_frontier: Option<u32> = start_ledger;
+    // A fresh query starts at its resolved start ledger; a resumed query
+    // starts from an unknown cursor position, so the frontier stays `None`
+    // until an event gives the scan a position. Each request scans at most
+    // `RPC_MAX_LEDGERS_PER_GET_EVENTS_REQUEST` ledgers, so an empty page
+    // advances the frontier to the last ledger of that window.
+    let mut scan_frontier: Option<u32> = resolved_range.map(|(start, _)| start);
+
+    // Cursors already used as a request cursor in this run, including the
+    // initial resume cursor: a returned cursor that repeats one of them is
+    // a cycle (A -> B -> A), not progress, and is rejected below.
+    let mut seen_cursors: HashSet<String> = HashSet::new();
 
     let mut events = Vec::new();
     let mut next_cursor = options.cursor.clone();
@@ -551,6 +588,9 @@ pub async fn get_contract_events_paginated(
 
     for _ in 0..options.max_pages {
         let request_cursor = next_cursor.clone();
+        if let Some(requested) = &request_cursor {
+            seen_cursors.insert(requested.clone());
+        }
         // Only send a `pagination` object when a cursor or a limit was
         // actually requested; otherwise the request stays byte-identical
         // to the historical single-request wire format.
@@ -561,39 +601,20 @@ pub async fn get_contract_events_paginated(
                 limit,
             }),
         };
-        // Only the first page may carry the ledger range; every later page
-        // resumes from the cursor alone. When resuming from a cursor the
-        // end ledger, if given, is a client-side bound only: the wire
-        // request stays cursor-only and the bound is enforced below.
-        let (range_start, range_end) = if pages_fetched == 0 && options.cursor.is_none() {
-            (start_ledger, end_ledger)
+        // Only the first page may carry the ledger range (the range
+        // resolved once above); every later page resumes from the cursor
+        // alone. When resuming from a cursor the end ledger, if given, is
+        // a client-side bound only: the wire request stays cursor-only
+        // and the bound is enforced below.
+        let range = if pages_fetched == 0 {
+            resolved_range
         } else {
-            (None, None)
+            None
         };
-        let page = fetch_events_page_for_query(
-            client,
-            contract_id,
-            range_start,
-            range_end,
-            topics.clone(),
-            pagination,
-        )
-        .await?;
+        let request = build_events_request(contract_id, range, topics.clone(), pagination)?;
+        let page = fetch_events_page(client, request).await?;
         pages_fetched += 1;
         latest_ledger = page.latest_ledger;
-
-        // Derive the frontier for a fresh query whose start ledger was
-        // resolved by the RPC layer (see `resolve_ledger_range`): the
-        // lookback is 1000 ledgers from the end bound, or from the latest
-        // ledger when no end was given. A resumed query has no resolved
-        // start, so its frontier stays unknown until an event positions it.
-        if scan_frontier.is_none() && options.cursor.is_none() {
-            scan_frontier = match (end_ledger, latest_ledger) {
-                (Some(end), _) => Some(end.saturating_sub(1000).max(1)),
-                (None, Some(latest)) => Some(latest.saturating_sub(1000).max(1)),
-                (None, None) => None,
-            };
-        }
 
         // Drop events past the inclusive end bound. Ledgers arrive in
         // order, so once such an event appears the scan has passed the
@@ -616,14 +637,17 @@ pub async fn get_contract_events_paginated(
         };
 
         // Advance the scan frontier: an empty page means the RPC scanned a
-        // full window without a match, so the frontier moves a whole window
-        // forward; a page with events means the scan reached at least the
-        // last event's ledger.
+        // full window without a match, so the frontier moves to the last
+        // ledger of that window (start + window - 1): the first unscanned
+        // ledger must not be counted as complete — with start 1000 and
+        // end 11000 the RPC scans through 10999, and a match at 11000
+        // still needs another page. A page with events means the scan
+        // reached at least the last event's ledger.
         let empty_page = page_events.is_empty();
         if empty_page {
             if let Some(frontier) = scan_frontier {
                 scan_frontier =
-                    Some(frontier.saturating_add(RPC_MAX_LEDGERS_PER_GET_EVENTS_REQUEST));
+                    Some(frontier.saturating_add(RPC_MAX_LEDGERS_PER_GET_EVENTS_REQUEST - 1));
             }
         } else if let Some(last_ledger) = page_events.iter().filter_map(|e| e.ledger).max() {
             scan_frontier = Some(scan_frontier.map_or(last_ledger, |f| f.max(last_ledger)));
@@ -645,16 +669,39 @@ pub async fn get_contract_events_paginated(
 
         let cursor_after = page.next_cursor.clone();
 
-        // Exhaustion takes precedence over the replay check below: a
+        // An empty page that returns the request cursor unchanged is a
+        // confirmed end-of-ledger checkpoint at the tip: the RPC scanned
+        // forward from the checkpoint and found nothing new, so there is
+        // nothing left to scan right now. This is terminal, not a replay
+        // — otherwise resuming at the node tip would fail with a replay
+        // error and the CLI would exit 1. (A non-empty page with an
+        // unchanged cursor is still a replay; see below.)
+        let cursor_unchanged =
+            matches!((&request_cursor, &cursor_after), (Some(a), Some(b)) if a == b);
+
+        // Exhaustion takes precedence over the replay/cycle checks below: a
         // terminal page stops cleanly, it is not an error.
-        let exhausted =
-            cursor_after.is_none() || passed_end_bound || (empty_page && scan_reached_boundary);
+        let exhausted = cursor_after.is_none()
+            || passed_end_bound
+            || (empty_page && scan_reached_boundary)
+            || (empty_page && cursor_unchanged);
         if !exhausted && !passed_latest {
             if let (Some(requested), Some(returned)) = (&request_cursor, &cursor_after) {
                 if requested == returned {
                     return Err(RpcError::Rpc(format!(
                         "getEvents pagination cursor did not advance (cursor {returned} \
                          returned again); refusing to replay the same page"
+                    )));
+                }
+                // A returned cursor that repeats any cursor already used
+                // in this run is a cycle (A -> B -> A), not progress:
+                // adjacent tokens always differ, so the check above
+                // cannot catch it. Reject it before appending the page,
+                // or the loop would return duplicate events.
+                if seen_cursors.contains(returned) {
+                    return Err(RpcError::Rpc(format!(
+                        "getEvents pagination cursor cycle detected (cursor {returned} \
+                         was already used in this run); refusing to fetch the same page again"
                     )));
                 }
             }
@@ -1008,6 +1055,12 @@ mod tests {
     /// - "beyond": 1 event (ledger 999, past latestLedger 500), cursor "page-2"
     /// - "cap-N": 1 event (ledger 100), cursor "cap-{N+1}" (always advances)
     /// - "empty-1": no events, cursor "empty-2" (exhausted window)
+    /// - "edge-2": one event (ledger 12000), no cursor (the match just
+    ///   past a 10,000-ledger window starting at 2000)
+    /// - "tip-stuck": no events, same cursor "tip-stuck" (checkpoint
+    ///   already at the node tip)
+    /// - "cyc-a": one event (ledger 100), cursor "cyc-b"; "cyc-b": one
+    ///   event (ledger 101), cursor "cyc-a" (a two-cursor cycle)
     /// - fresh query with `startLedger` 300: no events, cursor "scan-2"
     ///   (the 300..400 window is shorter than one 10,000-ledger scan
     ///   window, so the empty page is terminal)
@@ -1093,6 +1146,10 @@ mod tests {
                                 Some(300) | Some(1000) => {
                                     (String::new(), r#""scan-2""#.to_string())
                                 }
+                                // Window 2000..11999 holds no match; the only
+                                // match sits at 12000, the first unscanned
+                                // ledger of the next window.
+                                Some(2000) => (String::new(), r#""edge-2""#.to_string()),
                                 _ => (event_json(100), r#""page-2""#.to_string()),
                             }
                         } else {
@@ -1104,6 +1161,10 @@ mod tests {
                                 "empty-1" => (String::new(), r#""empty-2""#.to_string()),
                                 "scan-2" => (String::new(), r#""scan-3""#.to_string()),
                                 "scan-3" => (event_json(300), "null".to_string()),
+                                "edge-2" => (event_json(12000), "null".to_string()),
+                                "tip-stuck" => (String::new(), r#""tip-stuck""#.to_string()),
+                                "cyc-a" => (event_json(100), r#""cyc-b""#.to_string()),
+                                "cyc-b" => (event_json(101), r#""cyc-a""#.to_string()),
                                 _ if cursor.starts_with("cap-") => {
                                     let n: u32 = cursor[4..].parse().unwrap_or(1);
                                     (event_json(100), format!(r#""cap-{}""#, n + 1))
@@ -1113,6 +1174,103 @@ mod tests {
                         };
                         format!(
                             r#"{{"jsonrpc":"2.0","id":1,"result":{{"events":[{events_json}],"cursor":{cursor_json},"latestLedger":500}}}}"#
+                        )
+                    } else {
+                        r#"{"jsonrpc":"2.0","id":1,"error":{"code":-32601,"message":"method not found"}}"#
+                            .to_string()
+                    };
+                    let header = format!(
+                        "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+                        resp_body.len(),
+                        resp_body
+                    );
+                    let _ = sock.write_all(header.as_bytes()).await;
+                });
+            }
+        });
+        url
+    }
+
+    /// Mock for the stale-tip regression: `getLatestLedger` reports 11000
+    /// (so a fresh query with no bounds resolves start=10000), but the
+    /// `getEvents` responses report a node at 21000. The first page is
+    /// empty with cursor "tip-2" (the scan reached only 19999); the
+    /// second page holds the match at 20500.
+    async fn spawn_mock_tip_advance_server() -> String {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        use tokio::net::TcpListener;
+
+        const CONTRACT: &str = "CA3D5KRYM6CB7OWQ6TWYRR3Z4T7GNZLKERYNZGGA5CWVMOMG2P3T2YYW";
+
+        fn find_subslice(haystack: &[u8], needle: &[u8]) -> Option<usize> {
+            haystack
+                .windows(needle.len())
+                .position(|window| window == needle)
+        }
+
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let url = format!("http://{}", listener.local_addr().unwrap());
+        tokio::spawn(async move {
+            loop {
+                let Ok((mut sock, _)) = listener.accept().await else {
+                    break;
+                };
+                tokio::spawn(async move {
+                    let mut buf = Vec::new();
+                    let mut chunk = [0u8; 4096];
+                    let mut header_end = None;
+                    let mut content_length = 0usize;
+                    loop {
+                        let Ok(n) = sock.read(&mut chunk).await else {
+                            return;
+                        };
+                        if n == 0 {
+                            return;
+                        }
+                        buf.extend_from_slice(&chunk[..n]);
+                        if header_end.is_none() {
+                            if let Some(pos) = find_subslice(&buf, b"\r\n\r\n") {
+                                header_end = Some(pos + 4);
+                                let headers = String::from_utf8_lossy(&buf[..pos]).to_string();
+                                for line in headers.lines() {
+                                    if let Some((key, value)) = line.split_once(':') {
+                                        if key.trim().eq_ignore_ascii_case("content-length") {
+                                            content_length = value.trim().parse().unwrap_or(0);
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                        if let Some(end) = header_end {
+                            if buf.len() >= end + content_length {
+                                break;
+                            }
+                        }
+                    }
+                    let Some(end) = header_end else { return };
+                    let body = String::from_utf8_lossy(&buf[end..]).to_string();
+                    let request: serde_json::Value =
+                        serde_json::from_str(&body).unwrap_or_default();
+                    let method = request["method"].as_str().unwrap_or("");
+                    let resp_body = if method == "getLatestLedger" {
+                        r#"{"jsonrpc":"2.0","id":1,"result":{"id":"mock","protocolVersion":22,"sequence":11000}}"#
+                            .to_string()
+                    } else if method == "getEvents" {
+                        let cursor = request["params"]["pagination"]["cursor"]
+                            .as_str()
+                            .unwrap_or("");
+                        let event_json = |ledger: u32| {
+                            format!(
+                                r#"{{"ledger":{ledger},"contractId":"{CONTRACT}","topic":[],"value":"AAAA"}}"#
+                            )
+                        };
+                        let (events_json, cursor_json) = if cursor == "tip-2" {
+                            (event_json(20500), "null".to_string())
+                        } else {
+                            (String::new(), r#""tip-2""#.to_string())
+                        };
+                        format!(
+                            r#"{{"jsonrpc":"2.0","id":1,"result":{{"events":[{events_json}],"cursor":{cursor_json},"latestLedger":21000}}}}"#
                         )
                     } else {
                         r#"{"jsonrpc":"2.0","id":1,"error":{"code":-32601,"message":"method not found"}}"#
@@ -1309,6 +1467,157 @@ mod tests {
         let err = result.unwrap_err();
         match err {
             RpcError::Rpc(msg) => assert!(msg.contains("did not advance"), "{msg}"),
+            other => panic!("Unexpected error variant: {other:?}"),
+        }
+    }
+
+    // Regression: the resolved start must be carried from resolution
+    // time, not re-derived from a newer response tip. getLatestLedger
+    // reports 11000 (start 10000) but the getEvents responses report a
+    // node at 21000; the empty first page confirms a scan only through
+    // 19999, so the match at 20500 must still be found on the next page.
+    #[tokio::test]
+    async fn test_get_contract_events_paginated_carries_resolved_start() {
+        let url = spawn_mock_tip_advance_server().await;
+        let client = SorobanRpcClient::new(&url);
+        let paged = get_contract_events_paginated(
+            &client,
+            "CA3D5KRYM6CB7OWQ6TWYRR3Z4T7GNZLKERYNZGGA5CWVMOMG2P3T2YYW",
+            None,
+            None,
+            None,
+            PaginationOptions {
+                cursor: None,
+                limit: None,
+                max_pages: 10,
+            },
+        )
+        .await
+        .unwrap();
+        assert_eq!(paged.events.len(), 1);
+        assert_eq!(paged.events[0].ledger, Some(20500));
+        assert_eq!(paged.pages_fetched, 2);
+        assert_eq!(paged.next_cursor, None);
+        assert_eq!(paged.latest_ledger, Some(21000));
+    }
+
+    // Regression: the first scan window (2000..11999) holds no match and
+    // the only match sits at 12000, the first unscanned ledger. The old
+    // frontier arithmetic counted 12000 as complete and stopped after
+    // one page; the loop must follow the cursor and find the match.
+    #[tokio::test]
+    async fn test_get_contract_events_paginated_does_not_skip_first_unscanned_ledger() {
+        let url = spawn_mock_paged_events_server().await;
+        let client = SorobanRpcClient::new(&url);
+        let paged = get_contract_events_paginated(
+            &client,
+            "CA3D5KRYM6CB7OWQ6TWYRR3Z4T7GNZLKERYNZGGA5CWVMOMG2P3T2YYW",
+            Some(2000),
+            Some(12000),
+            None,
+            PaginationOptions {
+                cursor: None,
+                limit: None,
+                max_pages: 10,
+            },
+        )
+        .await
+        .unwrap();
+        assert_eq!(paged.events.len(), 1);
+        assert_eq!(paged.events[0].ledger, Some(12000));
+        assert_eq!(paged.pages_fetched, 2);
+        assert_eq!(paged.next_cursor, None);
+
+        // The exact-boundary case is complete after one window: with end
+        // 11999 the same empty first page is terminal.
+        let paged = get_contract_events_paginated(
+            &client,
+            "CA3D5KRYM6CB7OWQ6TWYRR3Z4T7GNZLKERYNZGGA5CWVMOMG2P3T2YYW",
+            Some(2000),
+            Some(11999),
+            None,
+            PaginationOptions {
+                cursor: None,
+                limit: None,
+                max_pages: 10,
+            },
+        )
+        .await
+        .unwrap();
+        assert_eq!(paged.events.len(), 0);
+        assert_eq!(paged.pages_fetched, 1);
+        assert_eq!(paged.next_cursor, None);
+    }
+
+    // Resuming from a checkpoint already at the node tip returns an empty
+    // page with the same cursor. That is a confirmed terminal checkpoint,
+    // not a replay: the loop stops cleanly with zero events instead of
+    // erroring and making the CLI exit 1. The same holds for a bounded
+    // query whose end lies ahead of the tip.
+    #[tokio::test]
+    async fn test_get_contract_events_paginated_accepts_empty_terminal_response_at_tip() {
+        let url = spawn_mock_paged_events_server().await;
+        let client = SorobanRpcClient::new(&url);
+        let paged = get_contract_events_paginated(
+            &client,
+            "CA3D5KRYM6CB7OWQ6TWYRR3Z4T7GNZLKERYNZGGA5CWVMOMG2P3T2YYW",
+            None,
+            None,
+            None,
+            PaginationOptions {
+                cursor: Some("tip-stuck".to_string()),
+                limit: None,
+                max_pages: 10,
+            },
+        )
+        .await
+        .unwrap();
+        assert_eq!(paged.events.len(), 0);
+        assert_eq!(paged.pages_fetched, 1);
+        assert_eq!(paged.next_cursor, None);
+
+        let paged = get_contract_events_paginated(
+            &client,
+            "CA3D5KRYM6CB7OWQ6TWYRR3Z4T7GNZLKERYNZGGA5CWVMOMG2P3T2YYW",
+            None,
+            Some(5000),
+            None,
+            PaginationOptions {
+                cursor: Some("tip-stuck".to_string()),
+                limit: None,
+                max_pages: 10,
+            },
+        )
+        .await
+        .unwrap();
+        assert_eq!(paged.events.len(), 0);
+        assert_eq!(paged.pages_fetched, 1);
+        assert_eq!(paged.next_cursor, None);
+    }
+
+    // A faulty endpoint cycling A -> B -> A -> B must be rejected before
+    // the loop returns duplicate events: adjacent tokens always differ,
+    // so the non-advancing check cannot catch it.
+    #[tokio::test]
+    async fn test_get_contract_events_paginated_rejects_cursor_cycle() {
+        let url = spawn_mock_paged_events_server().await;
+        let client = SorobanRpcClient::new(&url);
+        let result = get_contract_events_paginated(
+            &client,
+            "CA3D5KRYM6CB7OWQ6TWYRR3Z4T7GNZLKERYNZGGA5CWVMOMG2P3T2YYW",
+            None,
+            None,
+            None,
+            PaginationOptions {
+                cursor: Some("cyc-a".to_string()),
+                limit: None,
+                max_pages: 10,
+            },
+        )
+        .await;
+        let err = result.unwrap_err();
+        match err {
+            RpcError::Rpc(msg) => assert!(msg.contains("cycle"), "{msg}"),
             other => panic!("Unexpected error variant: {other:?}"),
         }
     }

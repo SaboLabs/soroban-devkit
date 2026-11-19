@@ -363,8 +363,10 @@ enum Commands {
         limit: Option<u32>,
         /// Resume from a pagination cursor returned by a previous
         /// `sdkt events` run, sent as getEvents `pagination.cursor`.
-        /// Cannot be combined with `--start-ledger` / `--end-ledger`:
-        /// a cursor-only request resumes from the token.
+        /// Cannot be combined with `--start-ledger`: a cursor-only
+        /// request resumes from the token. `--end-ledger` is still
+        /// allowed as a client-side bound — it is enforced locally
+        /// and never sent on the wire with a cursor.
         #[arg(long, value_name = "CURSOR")]
         cursor: Option<String>,
         /// Follow the getEvents cursor until the pages are exhausted.
@@ -2963,6 +2965,16 @@ fn parse_salt_hex(s: &str) -> Result<[u8; 20], String> {
 
 fn shell_quote(s: &str) -> String {
     format!("'{}'", s.replace('\'', "'\\''"))
+}
+
+/// True when an RPC URL may carry credentials, so it must never be printed
+/// in a resume command: a userinfo part (`scheme://user:pass@host`), or a
+/// query string / fragment, where API tokens commonly live. A plain
+/// endpoint without any of those is safe to print verbatim.
+fn rpc_url_may_contain_credentials(url: &str) -> bool {
+    let rest = url.split("://").nth(1).unwrap_or(url);
+    let authority_end = rest.find(['/', '?', '#']).unwrap_or(rest.len());
+    rest[..authority_end].contains('@') || rest.contains(['?', '#'])
 }
 
 /// Warning for `sdkt events --topic` when `symbol` will not match the event's
@@ -7973,12 +7985,23 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
             // that keeps a resumed bounded query inside its original end.
             // Every value is shell-quoted so the notice is safe to paste
             // back into a shell.
+            let mut resume_url_note = "";
             let mut resume_cmd = format!("sdkt events {}", shell_quote(&contract_id));
             if let Some(profile) = &net.network_profile {
                 resume_cmd.push_str(&format!(" --network-profile {}", shell_quote(profile)));
             }
             if let Some(url) = &net.rpc_url {
-                resume_cmd.push_str(&format!(" --rpc-url {}", shell_quote(url)));
+                // A credential-bearing --rpc-url (an API token in the
+                // query string, or userinfo) must never be printed: the
+                // resume notice goes to stderr in JSON mode and stdout
+                // in pretty mode, so the token would land in logs.
+                // Omit it and tell the user to add it back (or use
+                // --network-profile) instead.
+                if rpc_url_may_contain_credentials(url) {
+                    resume_url_note = " Note: --rpc-url was omitted from the resume command because it may contain credentials; add it back when resuming, or use --network-profile.";
+                } else {
+                    resume_cmd.push_str(&format!(" --rpc-url {}", shell_quote(url)));
+                }
             }
             if let Some(passphrase) = &net.network_passphrase {
                 resume_cmd.push_str(&format!(
@@ -8028,13 +8051,13 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
                         let notice = paged.next_cursor.as_ref().map(|next_cursor| {
                             if paged.pages_fetched >= max_pages {
                                 format!(
-                                    "Stopped after {} page(s): the page cap was reached. Resume with: {} --cursor {} --all-pages {}",
-                                    paged.pages_fetched, resume_cmd, shell_quote(next_cursor), max_pages
+                                    "Stopped after {} page(s): the page cap was reached. Resume with: {} --cursor {} --all-pages {}{}",
+                                    paged.pages_fetched, resume_cmd, shell_quote(next_cursor), max_pages, resume_url_note
                                 )
                             } else {
                                 format!(
-                                    "Stopped after {} page(s): the latest ledger was passed. Resume with: {} --cursor {}",
-                                    paged.pages_fetched, resume_cmd, shell_quote(next_cursor)
+                                    "Stopped after {} page(s): the latest ledger was passed. Resume with: {} --cursor {}{}",
+                                    paged.pages_fetched, resume_cmd, shell_quote(next_cursor), resume_url_note
                                 )
                             }
                         });
@@ -8068,22 +8091,28 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
                         // A returned cursor on its own does not prove more
                         // events exist: the RPC may return a cursor for a
                         // page that reached the scan tip without filling
-                        // up. Only a full page proves the query stopped
-                        // early; anything else is a scan checkpoint.
-                        let page_is_full = paged.events.len() == (limit.unwrap_or(100) as usize);
+                        // up. Only an explicit limit that was reached
+                        // proves the page stopped at the requested size —
+                        // and even then the next page may hold no further
+                        // match, so the notice reports the limit without
+                        // promising more events. Without an explicit limit
+                        // there is no known page size to compare against
+                        // (the RPC applies its own default cap), so the
+                        // cursor is only a scan checkpoint.
                         let notice = paged.next_cursor.as_ref().map(|next_cursor| {
-                            if page_is_full {
-                                format!(
-                                    "More events are available (page boundary reached). Continue with: {} --cursor {}",
+                            match limit.filter(|n| paged.events.len() == *n as usize) {
+                                Some(n) => format!(
+                                    "Page limit of {n} reached. Continue with: {} --cursor {}{}",
                                     resume_cmd,
-                                    shell_quote(next_cursor)
-                                )
-                            } else {
-                                format!(
-                                    "Scan checkpoint reached (page not full; more events may or may not exist). Continue with: {} --cursor {}",
+                                    shell_quote(next_cursor),
+                                    resume_url_note
+                                ),
+                                None => format!(
+                                    "Scan checkpoint reached (page not full; more events may or may not exist). Continue with: {} --cursor {}{}",
                                     resume_cmd,
-                                    shell_quote(next_cursor)
-                                )
+                                    shell_quote(next_cursor),
+                                    resume_url_note
+                                ),
                             }
                         });
                         (paged.events, notice)

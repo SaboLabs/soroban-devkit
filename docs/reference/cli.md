@@ -158,7 +158,7 @@ sdkt
 │   ├── --end-ledger <END_LEDGER>     (end ledger sequence number for event search)
 │   ├── --topic <SYMBOL>              (filter by first topic/event name; server-side filtering)
 │   ├── --limit <N>                   (max events per page; sent as getEvents pagination.limit)
-│   ├── --cursor <CURSOR>             (resume from a previous run's cursor; cannot combine with --start-ledger/--end-ledger)
+│   ├── --cursor <CURSOR>             (resume from a previous run's cursor; cannot combine with --start-ledger; --end-ledger is allowed as a client-side bound)
 │   ├── --all-pages [N]               (follow the cursor until exhausted; at most N pages, default 10)
 │   ├── --abi <wasm>                  (ABI-aware decode from a local WASM)
 │   ├── --abi-contract <id>           (ABI-aware decode using deployed contract's on-chain WASM)
@@ -299,14 +299,15 @@ json` so stdout stays parseable JSON).
 
 ```bash
 sdkt events <contract-id> --start-ledger 1000 --end-ledger 2000
-# More events are available (page boundary reached). Continue with:
-#   sdkt events <contract-id> --cursor <cursor>
+# Scan checkpoint reached (page not full; more events may or may not exist). Continue with:
+#   sdkt events <contract-id> --end-ledger 2000 --cursor <cursor>
 ```
 
 - `--limit <N>` caps the page size (sent as `pagination.limit`).
 - `--cursor <CURSOR>` resumes from a previous run's cursor. A cursor-only
-  request must omit `--start-ledger` / `--end-ledger`; combining them is
-  rejected before any RPC call.
+  request must omit `--start-ledger`; combining them is rejected before
+  any RPC call. `--end-ledger` may still be given: it is a client-side
+  bound, enforced locally and never sent on the wire with a cursor.
 - `--all-pages [N]` follows the cursor until the pages are exhausted, a
   caller-supplied page cap is reached, or an event passes the RPC's
   `latestLedger`. The cap is explicit and bounded (default 10 pages when no

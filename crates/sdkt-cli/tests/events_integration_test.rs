@@ -8,6 +8,13 @@ use predicates::prelude::*;
 
 const CONTRACT_ID: &str = "CCVVW7N4R3KNY72QJQKQY3T753C2H34E6XJIVJQOQSQE3C3M3U72QJQK";
 
+/// POSIX shell quoting, the same rule the CLI uses for its resume
+/// commands: wrap in single quotes, escaping an embedded apostrophe as
+/// `'\''` so paths containing one still parse.
+fn shell_quote(s: &str) -> String {
+    format!("'{}'", s.replace('\'', "'\\''"))
+}
+
 fn read_request(sock: &mut TcpStream) -> String {
     let mut data = Vec::new();
     let mut buf = [0u8; 4096];
@@ -762,14 +769,14 @@ fn test_events_page_boundary_notice_pretty() {
         .arg(CONTRACT_ID)
         .arg("--rpc-url")
         .arg(&rpc_url)
-        // --limit 1 with one event: the page is full, so the cursor proves
-        // the query stopped early and more events exist.
+        // --limit 1 with one event: the page reached the explicit limit.
+        // That reports the limit, not a promise that more events exist.
         .arg("--limit")
         .arg("1");
 
     cmd.assert()
         .success()
-        .stdout(predicate::str::contains("More events are available"))
+        .stdout(predicate::str::contains("Page limit of 1 reached"))
         // The resume command must reproduce the original invocation:
         // same RPC endpoint and the new cursor, shell-quoted.
         .stdout(predicate::str::contains("--rpc-url"))
@@ -791,7 +798,7 @@ fn test_events_page_boundary_notice_labels_partial_page_as_checkpoint() {
     cmd.assert()
         .success()
         .stdout(predicate::str::contains("Scan checkpoint reached"))
-        .stdout(predicate::str::contains("More events are available").not())
+        .stdout(predicate::str::contains("Page limit of").not())
         .stdout(predicate::str::contains("--cursor 'cursor-page-2'"));
 }
 
@@ -805,14 +812,13 @@ fn test_events_page_boundary_notice_preserves_topic_and_limit() {
         .arg(&rpc_url)
         .arg("--topic")
         .arg("transfer")
-        // --limit 1 with one event: a full page, so the cursor proves more
-        // events exist.
+        // --limit 1 with one event: the page reached the explicit limit.
         .arg("--limit")
         .arg("1");
 
     cmd.assert()
         .success()
-        .stdout(predicate::str::contains("More events are available"))
+        .stdout(predicate::str::contains("Page limit of 1 reached"))
         .stdout(predicate::str::contains("--rpc-url"))
         .stdout(predicate::str::contains("--topic 'transfer'"))
         .stdout(predicate::str::contains("--limit 1"))
@@ -836,6 +842,44 @@ fn test_events_page_boundary_notice_json_keeps_stdout_pure() {
     let json: serde_json::Value = serde_json::from_slice(&stdout).unwrap();
     assert_eq!(json.as_array().unwrap().len(), 1);
     assert!(stderr.contains("cursor-page-2"), "{stderr}");
+}
+
+#[test]
+fn test_events_resume_command_redacts_credential_bearing_rpc_url() {
+    let (rpc_url, _seen) = mock_events_rpc_paged(2500);
+    // An API token in the --rpc-url query string must appear in neither
+    // output stream: the resume notice goes to stderr in JSON mode and
+    // to stdout in pretty mode, so the token would otherwise land in
+    // logs. The notice instead says the URL was omitted.
+    let credential_url = format!("{rpc_url}?api-key=SECRET-TOKEN-123");
+    for format in ["json", "pretty"] {
+        let mut cmd = Command::cargo_bin("sdkt").unwrap();
+        cmd.arg("events")
+            .arg(CONTRACT_ID)
+            .arg("--rpc-url")
+            .arg(&credential_url)
+            .arg("--format")
+            .arg(format);
+
+        let assert = cmd.assert().success();
+        let stdout = String::from_utf8_lossy(&assert.get_output().stdout).to_string();
+        let stderr = String::from_utf8_lossy(&assert.get_output().stderr).to_string();
+        assert!(
+            !stdout.contains("SECRET-TOKEN-123"),
+            "{format} stdout leaked token: {stdout}"
+        );
+        assert!(
+            !stderr.contains("SECRET-TOKEN-123"),
+            "{format} stderr leaked token: {stderr}"
+        );
+        assert!(
+            stdout.contains("--rpc-url was omitted") || stderr.contains("--rpc-url was omitted"),
+            "omission note missing ({format}): stdout={stdout} stderr={stderr}"
+        );
+        // The resume command itself must not carry the URL either.
+        let combined = format!("{stdout}{stderr}");
+        assert!(!combined.contains("--rpc-url '"), "{combined}");
+    }
 }
 
 #[test]
@@ -1062,7 +1106,9 @@ fn test_events_resume_command_keeps_end_ledger() {
     // Run the printed command verbatim (with the binary path substituted
     // for `sdkt`) and check it returns no events past the original end:
     // the resumed page holds the ledger-2001 event, which is dropped.
-    let resume_cmd = resume_cmd.replacen("sdkt", &format!("'{bin_path}'"), 1);
+    // The binary path is POSIX-quoted like the resume arguments, so a
+    // workspace path containing an apostrophe still parses.
+    let resume_cmd = resume_cmd.replacen("sdkt", &shell_quote(&bin_path), 1);
     let out = std::process::Command::new("sh")
         .arg("-c")
         .arg(&resume_cmd)
