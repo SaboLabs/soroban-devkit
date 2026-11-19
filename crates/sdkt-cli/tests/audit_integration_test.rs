@@ -879,3 +879,107 @@ fn audit_fail_on_directory_uses_aggregate_summary() {
         .assert()
         .success();
 }
+
+// Issue #309: functions inside `mod` blocks must be scanned exactly like
+// top-level functions, with findings located by their qualified path.
+
+const MOD_ONLY: &str =
+    "pub mod inner {\n    pub fn initialize(admin: u32) {}\n    pub fn mint_token(to: u32) {}\n}\n";
+const TOP_LEVEL_SAME_FNS: &str =
+    "pub fn initialize(admin: u32) {}\npub fn mint_token(to: u32) {}\n";
+const MOD_IN_MOD: &str =
+    "pub mod outer {\n    pub mod deep {\n        pub fn initialize(admin: u32) {}\n    }\n}\n";
+const MOD_WITH_IMPL: &str = "pub mod inner {\n    pub struct Vault;\n    #[contractimpl]\n    impl Vault {\n        pub fn mint_token(&self, to: u32) {}\n    }\n}\n";
+const EXTERNAL_MOD_AND_USE: &str =
+    "mod other;\npub use other::mint_token;\npub fn balance_of(who: u32) -> u32 { 0 }\n";
+
+/// Run `sdkt audit <path> --format json` and return stdout.
+fn audit_json_stdout(path: &std::path::Path) -> String {
+    let output = sdkt()
+        .args(["audit", path.to_str().unwrap(), "--format", "json"])
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "audit failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    String::from_utf8(output.stdout).unwrap()
+}
+
+fn count_rule(json: &str, rule_id: &str) -> usize {
+    json.matches(&format!("\"rule_id\":\"{rule_id}\"")).count()
+}
+
+#[test]
+fn audit_mod_functions_report_same_findings_as_top_level() {
+    let dir = TempDir::new().unwrap();
+    let mod_path = write_fixture(&dir, "mod_only.rs", MOD_ONLY);
+    let top_path = write_fixture(&dir, "top.rs", TOP_LEVEL_SAME_FNS);
+
+    let mod_json = audit_json_stdout(&mod_path);
+    let top_json = audit_json_stdout(&top_path);
+
+    // Identical findings modulo the qualified location prefix: the same two
+    // privileged functions yield AUTH-001 x2 and AUTH-003 x1 either way.
+    for rule_id in ["AUTH-001", "AUTH-003"] {
+        assert_eq!(
+            count_rule(&mod_json, rule_id),
+            count_rule(&top_json, rule_id),
+            "rule {rule_id} count differs between mod and top-level shape"
+        );
+    }
+    assert_eq!(count_rule(&mod_json, "AUTH-001"), 2);
+    assert_eq!(count_rule(&mod_json, "AUTH-003"), 1);
+
+    // Findings name the module they came from.
+    assert!(mod_json.contains("\"location\":\"inner::initialize\""));
+    assert!(mod_json.contains("\"location\":\"inner::mint_token\""));
+    assert!(top_json.contains("\"location\":\"initialize\""));
+    assert!(top_json.contains("\"location\":\"mint_token\""));
+}
+
+#[test]
+fn audit_mod_in_mod_scanned_with_qualified_location() {
+    let dir = TempDir::new().unwrap();
+    let path = write_fixture(&dir, "deep.rs", MOD_IN_MOD);
+    let json = audit_json_stdout(&path);
+    assert_eq!(count_rule(&json, "AUTH-003"), 1);
+    assert!(json.contains("\"location\":\"outer::deep::initialize\""));
+}
+
+#[test]
+fn audit_mod_containing_impl_block_scanned() {
+    let dir = TempDir::new().unwrap();
+    let path = write_fixture(&dir, "vault.rs", MOD_WITH_IMPL);
+    let json = audit_json_stdout(&path);
+    assert_eq!(count_rule(&json, "AUTH-001"), 1);
+    assert!(json.contains("\"location\":\"inner::Vault::mint_token\""));
+}
+
+#[test]
+fn audit_mod_transfer_triggers_auth004_with_qualified_location() {
+    // Locks the AUTH-004 name handling in rules.rs: a transfer-style
+    // function inside a module must be treated exactly like a top-level
+    // `transfer` (same rule, same severity), located by qualified path.
+    let dir = TempDir::new().unwrap();
+    let path = write_fixture(
+        &dir,
+        "transfer.rs",
+        "pub mod inner {\n    pub fn transfer(from: u32, to: u32) {}\n}\n",
+    );
+    let json = audit_json_stdout(&path);
+    assert_eq!(count_rule(&json, "AUTH-004"), 1);
+    assert!(json.contains("\"location\":\"inner::transfer\""));
+}
+
+#[test]
+fn audit_external_mod_declaration_and_use_not_followed() {
+    let dir = TempDir::new().unwrap();
+    let path = write_fixture(&dir, "external.rs", EXTERNAL_MOD_AND_USE);
+    sdkt()
+        .args(["audit", path.to_str().unwrap()])
+        .assert()
+        .success()
+        .stdout(predicates::str::contains("No issues found."));
+}
