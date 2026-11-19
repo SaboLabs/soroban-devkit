@@ -31,6 +31,7 @@ impl AuditRule for Auth001 {
                         s.fn_name
                     ),
                     location: Some(s.fn_name.clone()),
+                    line: s.line,
                 });
             }
         }
@@ -62,6 +63,7 @@ impl AuditRule for Auth002 {
                         s.fn_name
                     ),
                     location: Some(s.fn_name.clone()),
+                    line: s.line,
                 });
             }
         }
@@ -107,6 +109,7 @@ impl AuditRule for Auth003 {
                         s.fn_name
                     ),
                     location: Some(s.fn_name.clone()),
+                    line: s.line,
                 });
             }
         }
@@ -150,6 +153,7 @@ impl AuditRule for Auth004 {
                         s.fn_name
                     ),
                     location: Some(s.fn_name.clone()),
+                    line: s.line,
                 });
             }
         }
@@ -186,6 +190,7 @@ impl AuditRule for Move001 {
                             name, s.fn_name, count
                         ),
                         location: Some(format!("{}:{}", s.fn_name, name)),
+                        line: s.line,
                     });
                 }
             }
@@ -218,6 +223,7 @@ impl AuditRule for Math001 {
                         scan.fn_name
                     ),
                     location: Some(scan.fn_name.clone()),
+                    line: scan.line,
                 });
             }
         }
@@ -303,6 +309,7 @@ impl AuditRule for Cei001 {
                         scan.fn_name
                     ),
                     location: Some(scan.fn_name.clone()),
+                    line: scan.line,
                 });
             }
         }
@@ -322,6 +329,7 @@ mod tests {
     fn auth001_flags_mint_without_auth() {
         let scans = vec![FnScan {
             fn_name: "mint_token".into(),
+            line: None,
             require_auth: 0,
             invoke_contract: 0,
             bound: Default::default(),
@@ -454,6 +462,7 @@ mod tests {
     fn auth002_does_not_flag_without_invoke_contract() {
         let scans = vec![FnScan {
             fn_name: "local_call".into(),
+            line: None,
             require_auth: 0,
             invoke_contract: 0,
             bound: Default::default(),
@@ -498,6 +507,7 @@ mod tests {
     fn auth003_flags_init_token_without_auth() {
         let scans = vec![FnScan {
             fn_name: "init_token".into(),
+            line: None,
             require_auth: 0,
             invoke_contract: 0,
             bound: Default::default(),
@@ -614,6 +624,7 @@ mod tests {
     fn move001_does_not_flag_no_usage() {
         let scans = vec![FnScan {
             fn_name: "do_nothing".into(),
+            line: None,
             require_auth: 0,
             invoke_contract: 0,
             bound: Default::default(),
@@ -635,6 +646,7 @@ mod tests {
     fn auth004_flags_transfer_from_without_auth() {
         let scans = vec![FnScan {
             fn_name: "transfer_from".into(),
+            line: None,
             require_auth: 0,
             invoke_contract: 0,
             bound: Default::default(),
@@ -703,6 +715,7 @@ mod tests {
         // transfer — it must not trigger AUTH-004.
         let scans = vec![FnScan {
             fn_name: "transfer_ownership".into(),
+            line: None,
             require_auth: 0,
             invoke_contract: 0,
             bound: Default::default(),
@@ -747,6 +760,7 @@ mod tests {
     fn cei001_flags_external_call_before_state_write() {
         let scans = vec![FnScan {
             fn_name: "swap".into(),
+            line: None,
             require_auth: 0,
             invoke_contract: 1,
             bound: Default::default(),
@@ -769,6 +783,7 @@ mod tests {
     fn cei001_does_not_flag_state_write_before_external_call() {
         let scans = vec![FnScan {
             fn_name: "swap_safe".into(),
+            line: None,
             require_auth: 0,
             invoke_contract: 1,
             bound: Default::default(),
@@ -791,6 +806,7 @@ mod tests {
     fn cei001_does_not_flag_only_external_call() {
         let scans = vec![FnScan {
             fn_name: "relay".into(),
+            line: None,
             require_auth: 0,
             invoke_contract: 1,
             bound: Default::default(),
@@ -813,6 +829,7 @@ mod tests {
     fn cei001_does_not_flag_only_state_write() {
         let scans = vec![FnScan {
             fn_name: "set_state".into(),
+            line: None,
             require_auth: 0,
             invoke_contract: 0,
             bound: Default::default(),
@@ -838,6 +855,7 @@ mod tests {
     fn scan(name: &str, writes: usize, entry: bool, returns: bool) -> FnScan {
         FnScan {
             fn_name: name.into(),
+            line: None,
             require_auth: 0,
             invoke_contract: 0,
             bound: Default::default(),

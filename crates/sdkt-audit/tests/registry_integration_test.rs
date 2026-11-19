@@ -31,6 +31,7 @@ impl AuditRule for Probe {
             severity: Severity::Info,
             message: "probe fired".into(),
             location: None,
+            line: None,
         });
     }
 }
