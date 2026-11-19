@@ -2830,6 +2830,7 @@ async fn run_release_security(audit_paths: &[String], disable: &[String]) -> Sec
                     severity: sdkt_audit::Severity::Critical,
                     message: format!("Failed to read source: {}", e),
                     location: None,
+                    line: None,
                     file: Some(source_path.display().to_string()),
                 });
                 continue;
@@ -2848,6 +2849,7 @@ async fn run_release_security(audit_paths: &[String], disable: &[String]) -> Sec
                     severity: sdkt_audit::Severity::Critical,
                     message: "Failed to parse Rust source".to_string(),
                     location: None,
+                    line: None,
                     file: Some(source_path.display().to_string()),
                 });
             }
@@ -9197,6 +9199,7 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
                             severity: sdkt_audit::Severity::Critical,
                             message: format!("Failed to read source: {}", e),
                             location: None,
+                            line: None,
                             file: Some(source_path.display().to_string()),
                         };
 
@@ -9400,6 +9403,7 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
                             severity: sdkt_audit::Severity::Critical,
                             message: format!("Failed to audit source: {}", e),
                             location: None,
+                            line: None,
                             file: Some(source_path.display().to_string()),
                         };
 

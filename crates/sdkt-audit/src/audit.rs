@@ -49,6 +49,8 @@ enum OrderEvent {
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct FnScan {
     pub fn_name: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub line: Option<usize>,
     pub require_auth: usize,
     pub invoke_contract: usize,
     /// Local bindings (let-bindings + parameters) eligible for move tracking.
@@ -92,6 +94,7 @@ impl FnScan {
     fn new(fn_name: String) -> Self {
         Self {
             fn_name,
+            line: None,
             require_auth: 0,
             invoke_contract: 0,
             bound: HashSet::new(),
@@ -486,6 +489,7 @@ fn signature_returns_value(sig: &syn::Signature) -> bool {
 /// Build a `FnScan` for one function signature + body.
 fn fn_scan(sig: &syn::Signature, block: &syn::Block) -> FnScan {
     let mut scan = FnScan::new(sig.ident.to_string());
+    scan.line = Some(sig.ident.span().start().line);
     scan.returns_value = signature_returns_value(sig);
     for input in &sig.inputs {
         if let FnArg::Typed(pt) = input {
@@ -639,6 +643,7 @@ mod tests {
                     severity: Severity::Info,
                     message: "stub fired".into(),
                     location: None,
+                    line: None,
                 });
             }
         }
@@ -648,6 +653,18 @@ mod tests {
         reg.register_rule(Box::new(Stub { id: "REG-TEST" }) as crate::registry::BoxedRule);
         let rep = audit_source_with_registry("pub fn mint() { }", &reg, &["AUTH-001"]).unwrap();
         assert!(rep.findings.iter().any(|f| f.rule_id == "REG-TEST"));
+    }
+
+    #[test]
+    #[test]
+    fn scanner_records_function_signature_start_line() {
+        let src = "pub fn first() {}\n\npub fn mint_token(to: Address) { require_auth(); }";
+        let scans = scan_all_functions_str(src).unwrap();
+        let mint = scans
+            .iter()
+            .find(|scan| scan.fn_name == "mint_token")
+            .unwrap();
+        assert_eq!(mint.line, Some(3));
     }
 
     #[test]

@@ -764,6 +764,8 @@ fn campaign_summary_reports_counts() {
         expected_errors: vec![],
         findings: vec![],
         skipped_functions: vec![],
+        evaluated_functions: vec![],
+        evaluated_declarations: vec![],
     };
     let summary = sdkt_fuzz::campaign::summarize(&result);
     assert_eq!(
