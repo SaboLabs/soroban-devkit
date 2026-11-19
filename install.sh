@@ -39,6 +39,86 @@ BINARY_NAME="sdkt"
 err() { echo "error: $*" >&2; exit 1; }
 info() { echo "==> $*"; }
 
+# _powershell_bin
+# Prints the PowerShell executable to use (pwsh preferred, Windows PowerShell
+# 5.1's `powershell` as fallback). Returns non-zero if neither is available.
+_powershell_bin() {
+  if command -v pwsh >/dev/null 2>&1; then
+    printf 'pwsh'
+  elif command -v powershell >/dev/null 2>&1; then
+    printf 'powershell'
+  else
+    return 1
+  fi
+}
+
+# download_asset <asset>
+# Downloads <asset> from the release BASE URL into "$TMP/<asset>".
+# On failure, the "no asset for this platform" guidance is emitted only when a
+# HEAD request confirms HTTP 404. A 503 or other transport/server failure is
+# reported as a generic download failure instead of a misleading 404 message.
+download_asset() {
+  local asset="$1" status="000"
+  local url="$BASE/$asset"
+  if curl -fsSL "$url" -o "$TMP/$asset"; then
+    return 0
+  fi
+
+  # First confirm the release tag exists, then inspect the asset URL's HTTP
+  # status explicitly. Only a confirmed 404 means the asset is genuinely
+  # absent from an otherwise valid release.
+  if curl -fsSL -o /dev/null \
+    "https://api.github.com/repos/${REPO}/releases/tags/${VERSION}" 2>/dev/null; then
+    status="$(curl -sS -o /dev/null -I -L -w '%{http_code}' "$url" 2>/dev/null)" \
+      || status="000"
+    if [[ "$status" == "404" ]]; then
+      err "release ${VERSION} has no ${asset} asset for this platform.
+       Build from source instead:
+         git clone https://github.com/${REPO}
+         cd soroban-devkit && cargo install --path crates/sdkt-cli
+       Or install an older/newer release that ships this target:
+         SDKT_VERSION=<tag> bash install.sh"
+    fi
+  fi
+  err "failed to download ${asset} (HTTP status: ${status})"
+}
+
+# print_path_guidance
+# If INSTALL_DIR is not already on PATH, print commands for adding it.
+# INSTALL_DIR is shell-escaped with printf %q so the printed commands are safe
+# to paste even when the directory contains spaces, quotes or metacharacters.
+# Both interactive and login-shell startup files are named because shells read
+# different files depending on how they are launched.
+print_path_guidance() {
+  case ":$PATH:" in
+    *":$INSTALL_DIR:"*) return 0 ;;
+  esac
+
+  local dir_q shell_name="${SHELL:-/bin/sh}"
+  printf -v dir_q '%q' "$INSTALL_DIR"
+
+  echo
+  echo "NOTE: $INSTALL_DIR is not on your PATH."
+  case "${shell_name##*/}" in
+    zsh)
+      echo "Add it to ~/.zshrc (interactive shells) or ~/.zprofile (login shells):"
+      ;;
+    bash)
+      echo "Add it to ~/.bashrc (interactive shells) or ~/.bash_profile / ~/.profile (login shells):"
+      ;;
+    *)
+      echo "Add it to your shell startup file (e.g. ~/.profile, or your shell's login equivalent):"
+      ;;
+  esac
+  echo
+  # shellcheck disable=SC2016  # $PATH is intentionally literal in the printed guidance
+  printf '  export PATH=%s:$PATH\n' "$dir_q"
+  echo
+  echo "Then restart your shell, or run this now:"
+  # shellcheck disable=SC2016  # $PATH is intentionally literal in the printed guidance
+  printf '  export PATH=%s:$PATH\n' "$dir_q"
+}
+
 # ---------------------------------------------------------------------------
 # Checksum helpers (kept pure so they can be unit-tested offline)
 # ---------------------------------------------------------------------------
@@ -80,7 +160,9 @@ verify_binary() {
 # Paths are converted with cygpath -m and passed as bound parameters to a
 # parameterized PowerShell script invoked via -File (never interpolated into
 # command text), so paths with spaces or backslashes are handled safely.
-# Works with both Windows PowerShell 5.1 and PowerShell 7.
+# -LiteralPath treats valid paths containing wildcard characters (e.g. [ ])
+# literally, and -ErrorAction Stop makes extraction failures return a nonzero
+# status. Works with both Windows PowerShell 5.1 and PowerShell 7.
 extract_zip() {
   local zip="$1" out="$2" winzip winout ps ps_script win_script
   winzip="$(cygpath -m "$zip" 2>/dev/null)" || winzip="$zip"
@@ -88,16 +170,11 @@ extract_zip() {
   ps_script="$TMP/sdkt-extract-$$.ps1"
   cat > "$ps_script" <<'EOF'
 param([string]$Path, [string]$DestinationPath)
-Expand-Archive -Path $Path -DestinationPath $DestinationPath -Force
+Expand-Archive -LiteralPath $Path -DestinationPath $DestinationPath -Force -ErrorAction Stop
 EOF
   win_script="$(cygpath -m "$ps_script" 2>/dev/null)" || win_script="$ps_script"
-  if command -v pwsh >/dev/null 2>&1; then
-    ps="pwsh"
-  elif command -v powershell >/dev/null 2>&1; then
-    ps="powershell"
-  else
-    err "PowerShell (pwsh or powershell) is required to extract the Windows ZIP but was not found."
-  fi
+  ps="$(_powershell_bin)" \
+    || err "PowerShell (pwsh or powershell) is required to extract the Windows ZIP but was not found."
   "$ps" -NoProfile -ExecutionPolicy Bypass -File "$win_script" -Path "$winzip" -DestinationPath "$winout" >/dev/null 2>&1 \
     && return 0
   err "failed to extract ZIP archive with PowerShell."
@@ -108,7 +185,7 @@ EOF
 # Paths are converted with cygpath -m and passed as bound parameters to a
 # parameterized PowerShell script invoked via -File (never interpolated into
 # command text). Returns 0 on success, non-zero if the sdkt.sha256 entry is
-# absent. Works with both Windows PowerShell 5.1 and PowerShell 7.
+# absent or extraction fails. Works with both Windows PowerShell 5.1 and 7.
 extract_embedded_checksum() {
   local zip="$1" out="$2" winzip winout ps ps_script win_script result=1
   winzip="$(cygpath -m "$zip" 2>/dev/null)" || winzip="$zip"
@@ -117,24 +194,26 @@ extract_embedded_checksum() {
   cat > "$ps_script" <<'EOF'
 param([string]$Path, [string]$DestinationPath)
 Add-Type -AssemblyName System.IO.Compression.FileSystem
-$z = [System.IO.Compression.ZipFile]::OpenRead($Path)
-$e = $z.Entries | Where-Object { $_.Name -eq "sdkt.sha256" }
-if ($e) {
-  [System.IO.Compression.ZipFileExtensions]::ExtractToFile($e, $DestinationPath, $true)
-  $z.Dispose()
-  exit 0
+$result = 1
+$z = $null
+try {
+    $z = [System.IO.Compression.ZipFile]::OpenRead($Path)
+    $e = $z.Entries | Where-Object { $_.Name -eq 'sdkt.sha256' } | Select-Object -First 1
+    if ($null -ne $e) {
+        [System.IO.Compression.ZipFileExtensions]::ExtractToFile($e, $DestinationPath, $true)
+        $result = 0
+    }
 }
-$z.Dispose()
-exit 1
+catch {
+    $result = 1
+}
+finally {
+    if ($null -ne $z) { $z.Dispose() }
+}
+exit $result
 EOF
   win_script="$(cygpath -m "$ps_script" 2>/dev/null)" || win_script="$ps_script"
-  if command -v pwsh >/dev/null 2>&1; then
-    ps="pwsh"
-  elif command -v powershell >/dev/null 2>&1; then
-    ps="powershell"
-  else
-    return 1
-  fi
+  ps="$(_powershell_bin)" || return 1
   "$ps" -NoProfile -ExecutionPolicy Bypass -File "$win_script" -Path "$winzip" -DestinationPath "$winout" >/dev/null 2>&1 \
     && result=0
   return $result
@@ -162,6 +241,25 @@ _selftest_windows_target() {
       ;;
   esac
   printf '%s' "$target"
+}
+
+# _selftest_make_zip <srcdir> <zipfile>
+# Builds a ZIP fixture from the contents of <srcdir> using PowerShell's
+# Compress-Archive. Git Bash does not ship `zip`, so the Windows extraction
+# helpers cannot be exercised without building the fixture this way.
+_selftest_make_zip() {
+  local src="$1" zipfile="$2" win_src win_zip ps ps_script win_script
+  win_src="$(cygpath -m "$src" 2>/dev/null)" || win_src="$src"
+  win_zip="$(cygpath -m "$zipfile" 2>/dev/null)" || win_zip="$zipfile"
+  ps="$(_powershell_bin)" || return 1
+  ps_script="$TMP/sdkt-makezip-$$.ps1"
+  cat > "$ps_script" <<'EOF'
+param([string]$SourceDir, [string]$DestinationPath)
+Compress-Archive -Path (Join-Path $SourceDir '*') -DestinationPath $DestinationPath -Force -ErrorAction Stop
+EOF
+  win_script="$(cygpath -m "$ps_script" 2>/dev/null)" || win_script="$ps_script"
+  "$ps" -NoProfile -ExecutionPolicy Bypass -File "$win_script" \
+    -SourceDir "$win_src" -DestinationPath "$win_zip" >/dev/null 2>&1
 }
 
 selftest() {
@@ -206,37 +304,57 @@ selftest() {
   done
   info "SELFTEST C (Windows OS detection) PASS"
 
- # Case D: Windows ZIP extraction (only when PowerShell and zip are both
- # available; skipped on Linux CI runners where PowerShell is not installed).
- # Verifies extraction with a path that contains spaces, exercising both the
- # standalone-checksum path and the embedded-checksum fallback.
-  if command -v pwsh >/dev/null 2>&1 || command -v powershell >/dev/null 2>&1; then
-    if command -v zip >/dev/null 2>&1; then
-      local wd; wd="$(mktemp -d)"
-      mkdir -p "$wd/path with spaces"
-      echo "fake-sdkt-exe" > "$wd/path with spaces/sdkt.exe"
-      ( cd "$wd" && $SHASUM "path with spaces/sdkt.exe" > sdkt.sha256 )
-      local zip_path; zip_path="$wd/sdkt-x86_64-pc-windows-msvc.zip"
-      ( cd "$wd" && zip -r -q "$zip_path" "path with spaces/sdkt.exe" sdkt.sha256 )
+ # Case D: Windows ZIP extraction (only when PowerShell is available; skipped
+ # on Linux CI runners). The workspace, ZIP, extraction directory and checksum
+ # output paths all contain spaces, exercising both PowerShell helpers with
+ # spaces in every path. The real SHA-256 digest of sdkt.exe is verified
+ # against both the standalone and embedded checksum paths.
+ #
+ # NOTE: this exercises only the PowerShell helpers under Git Bash; it does not
+ # perform a full installer run against GitHub Releases.
+  if _powershell_bin >/dev/null 2>&1; then
+    local ws; ws="$TMP/sdkt selftest workspace"
+    local src; src="$ws/src"
+    mkdir -p "$src"
+    echo "fake-sdkt-exe" > "$src/sdkt.exe"
+    ( cd "$src" && $SHASUM sdkt.exe > sdkt.sha256 )
 
-      # ZIP extraction with standalone checksum present.
-      extract_zip "$zip_path" "$wd/extracted"
-      [[ -f "$wd/extracted/path with spaces/sdkt.exe" ]] \
-        || err "SELFTEST D: sdkt.exe not extracted from ZIP"
-      info "SELFTEST D (ZIP extraction, path with spaces) PASS"
+    local zip_path; zip_path="$ws/sdkt x86_64-pc-windows-msvc.zip"
+    _selftest_make_zip "$src" "$zip_path" \
+      || err "SELFTEST D: could not build ZIP fixture"
 
-      # Embedded checksum fallback: standalone missing -> extract sdkt.sha256.
-      rm -f "$wd/sdkt.sha256"
-      extract_embedded_checksum "$zip_path" "$wd/embedded.sha256" \
-        || err "SELFTEST D: embedded sdkt.sha256 not extracted from ZIP"
-      [[ -s "$wd/embedded.sha256" ]] \
-        || err "SELFTEST D: embedded sdkt.sha256 is empty"
-      info "SELFTEST D (embedded checksum from ZIP) PASS"
+    # Standalone checksum asset = copy of the checksum shipped in the ZIP.
+    local standalone; standalone="$ws/standalone checksum.sha256"
+    cp "$src/sdkt.sha256" "$standalone"
 
-      rm -rf "$wd"
-    else
-      info "SELFTEST D skipped: 'zip' not available to build test archive"
+    # (1) Extract via PowerShell into a directory whose path has spaces, then
+    #     verify the actual digest against the standalone checksum.
+    local extract_dir; extract_dir="$ws/extract dir"
+    extract_zip "$zip_path" "$extract_dir"
+    ( cd "$extract_dir" && $SHASUM -c "$standalone" ) \
+      || err "SELFTEST D: standalone checksum verification FAILED"
+    info "SELFTEST D (ZIP extraction + standalone digest, paths with spaces) PASS"
+
+    # (2) Extract the embedded checksum via PowerShell into a path with spaces,
+    #     then verify the same binary's digest against it.
+    local embedded; embedded="$ws/embedded checksum.sha256"
+    extract_embedded_checksum "$zip_path" "$embedded" \
+      || err "SELFTEST D: embedded sdkt.sha256 not extracted from ZIP"
+    ( cd "$extract_dir" && $SHASUM -c "$embedded" ) \
+      || err "SELFTEST D: embedded checksum verification FAILED"
+    info "SELFTEST D (embedded checksum digest, paths with spaces) PASS"
+
+    # (3) A ZIP without an embedded sdkt.sha256 must return a nonzero status.
+    local no_sum_src; no_sum_src="$ws/src without checksum"
+    local no_sum_zip; no_sum_zip="$ws/no embedded checksum.zip"
+    mkdir -p "$no_sum_src"
+    echo "fake-sdkt-exe" > "$no_sum_src/sdkt.exe"
+    _selftest_make_zip "$no_sum_src" "$no_sum_zip" \
+      || err "SELFTEST D: could not build no-checksum ZIP fixture"
+    if extract_embedded_checksum "$no_sum_zip" "$ws/should not exist.sha256"; then
+      err "SELFTEST D: missing embedded checksum unexpectedly returned success"
     fi
+    info "SELFTEST D (missing embedded checksum returns nonzero) PASS"
   else
     info "SELFTEST D skipped: PowerShell not available on this runner."
   fi
@@ -367,22 +485,7 @@ if [[ "$OS" == "Windows" ]]; then
   ZIP="sdkt-${TARGET}.zip"
 
   info "downloading $ZIP ..."
-  # Distinguish "this release has no asset for your platform" from a transport
-  # failure. Older tags predate a platform's release asset, and a bare curl 404
-  # reads as a broken installer rather than a missing (but supported) target.
-  if ! curl -fsSL "$BASE/$ZIP" -o "$TMP/$ZIP"; then
-    if curl -fsSL -o /dev/null \
-      "https://api.github.com/repos/${REPO}/releases/tags/${VERSION}" 2>/dev/null \
-      && ! curl -fsSL -o /dev/null -I "$BASE/$ZIP" 2>/dev/null; then
-      err "release ${VERSION} has no ${ZIP} asset for this platform.
-         Build from source instead:
-           git clone https://github.com/${REPO}
-           cd soroban-devkit && cargo install --path crates/sdkt-cli
-         Or install an older/newer release that ships this target:
-           SDKT_VERSION=<tag> bash install.sh"
-    fi
-    err "failed to download $ZIP"
-  fi
+  download_asset "$ZIP"
 
   # Resolve checksum: prefer the standalone release checksum asset; fall back
   # to the embedded sdkt.sha256 inside the zip. Verification is never skipped.
@@ -417,16 +520,7 @@ if [[ "$OS" == "Windows" ]]; then
   # -------------------------------------------------------------------------
   # PATH guidance
   # -------------------------------------------------------------------------
-  case ":$PATH:" in
-    *":$INSTALL_DIR:"*) ;;
-    *)
-      echo
-      echo "NOTE: $INSTALL_DIR is not on your PATH."
-      echo "Add it to your shell profile, e.g.:"
-      echo "  echo 'export PATH=\"\$HOME/.local/bin:\$PATH\"' >> \"\$HOME/.${SHELL##*/}rc\""
-      echo "Then restart your shell or run: export PATH=\"\$HOME/.local/bin:\$PATH\""
-      ;;
-  esac
+  print_path_guidance
 
   echo
   echo "Done. Verify with:"
@@ -439,22 +533,7 @@ fi
 # 4. Download archive + resolve checksum (no execution yet)
 # ---------------------------------------------------------------------------
 info "downloading $TARBALL ..."
-# Distinguish "this release has no asset for your platform" from a transport
-# failure. Older tags predate a platform's release asset, and a bare curl 404
-# reads as a broken installer rather than a missing (but supported) target.
-if ! curl -fsSL "$BASE/$TARBALL" -o "$TMP/$TARBALL"; then
-  if curl -fsSL -o /dev/null \
-    "https://api.github.com/repos/${REPO}/releases/tags/${VERSION}" 2>/dev/null \
-    && ! curl -fsSL -o /dev/null -I "$BASE/$TARBALL" 2>/dev/null; then
-    err "release ${VERSION} has no ${TARBALL} asset for this platform.
-       Build from source instead:
-         git clone https://github.com/${REPO}
-         cd soroban-devkit && cargo install --path crates/sdkt-cli
-       Or install an older/newer release that ships this target:
-         SDKT_VERSION=<tag> bash install.sh"
-  fi
-  err "failed to download $TARBALL"
-fi
+download_asset "$TARBALL"
 
 # Prefer the standalone release checksum asset; fall back to the embedded
 # sdkt.sha256 inside the tarball when the standalone asset is absent (e.g.
@@ -485,16 +564,7 @@ info "installed $BINARY_NAME to $INSTALL_DIR/$BINARY_NAME"
 # ---------------------------------------------------------------------------
 # 7. PATH guidance
 # ---------------------------------------------------------------------------
-case ":$PATH:" in
-  *":$INSTALL_DIR:"*) ;;
-  *)
-    echo
-    echo "NOTE: $INSTALL_DIR is not on your PATH."
-    echo "Add it to your shell profile, e.g.:"
-    echo "  echo 'export PATH=\"\$HOME/.local/bin:\$PATH\"' >> \"\$HOME/.${SHELL##*/}rc\""
-    echo "Then restart your shell or run: export PATH=\"\$HOME/.local/bin:\$PATH\""
-    ;;
-esac
+print_path_guidance
 
 echo
 echo "Done. Verify with:"
