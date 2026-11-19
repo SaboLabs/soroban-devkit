@@ -118,6 +118,7 @@ mod tests {
             reason_code: reason_code.to_string(),
             artifact_hash: hash.to_string(),
             minimized: false,
+            minimization: None,
         }
     }
 

@@ -280,15 +280,19 @@ fn replay_json_value(outcome: &sdkt_fuzz::ReplayOutcome) -> serde_json::Value {
             reason_code,
             observation_hash,
             artifact_hash,
+            minimization,
         } => {
             v["result"] = serde_json::json!("reproduced");
             v["reason_code"] = serde_json::json!(reason_code.name());
             v["artifact_hash"] = serde_json::json!(artifact_hash);
             v["observation_hash"] = serde_json::json!(observation_hash);
+            v["minimization"] =
+                serde_json::to_value(minimization).expect("minimization snapshot serializes");
         }
         Mismatch {
             expected,
             actual,
+            minimization,
             observation_hash,
             artifact_hash,
         } => {
@@ -300,4 +304,37 @@ fn replay_json_value(outcome: &sdkt_fuzz::ReplayOutcome) -> serde_json::Value {
         }
     }
     v
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use sdkt_fuzz::artifact::{MinimizationSnapshot, ReductionSnapshot};
+    use sdkt_fuzz::ReplayOutcome;
+
+    #[test]
+    fn replay_json_includes_minimization_reductions() {
+        let minimization = MinimizationSnapshot {
+            attempted: true,
+            strategy: "deterministically minimized under the configured strategy".to_string(),
+            original_complexity: 10,
+            minimized_complexity: 7,
+            preserved: true,
+            reductions: vec![ReductionSnapshot {
+                kind: "arg".to_string(),
+                detail: "zero argument 0".to_string(),
+                complexity_after: 7,
+            }],
+        };
+        let outcome = ReplayOutcome::Reproduced {
+            reason_code: sdkt_fuzz::ReasonCode::ReturnMismatch,
+            minimization,
+            observation_hash: "observation".to_string(),
+            artifact_hash: "artifact".to_string(),
+        };
+
+        let json = replay_json_value(&outcome);
+        assert_eq!(json["minimization"]["reductions"][0]["kind"], "arg");
+        assert_eq!(json["minimization"]["reductions"][0]["complexity_after"], 7);
+    }
 }

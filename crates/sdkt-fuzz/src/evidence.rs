@@ -80,6 +80,9 @@ pub struct FindingEvidence {
     pub artifact_hash: String,
     /// True when minimization preserved the finding.
     pub minimized: bool,
+    /// Minimization snapshot, including the accepted reduction trace.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub minimization: Option<crate::artifact::MinimizationSnapshot>,
 }
 
 impl CampaignEvidence {
@@ -99,9 +102,13 @@ impl CampaignEvidence {
         // The artifact hash is the canonical hash of the serialized finding,
         // not the wasm hash; match artifacts to findings by case id
         // (artifacts are produced in finding order).
-        let mut by_case: BTreeMap<String, String> = BTreeMap::new();
+        let mut by_case: BTreeMap<String, (String, crate::artifact::MinimizationSnapshot)> =
+            BTreeMap::new();
         for a in artifacts {
-            by_case.insert(a.case_id.clone(), a.canonical_hash());
+            by_case.insert(
+                a.case_id.clone(),
+                (a.canonical_hash(), a.minimization.clone()),
+            );
         }
         let findings: Vec<FindingEvidence> = result
             .findings
@@ -112,9 +119,12 @@ impl CampaignEvidence {
                 reason_code: f.reason_code.name().to_string(),
                 artifact_hash: by_case
                     .get(&f.identity.case_id)
-                    .cloned()
+                    .map(|(hash, _)| hash.clone())
                     .unwrap_or_default(),
                 minimized: f.minimization.attempted && f.minimization.preserved,
+                minimization: by_case
+                    .get(&f.identity.case_id)
+                    .map(|(_, minimization)| minimization.clone()),
             })
             .collect();
 

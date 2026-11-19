@@ -93,6 +93,10 @@ impl FuzzReport {
                 f.reason_code.name(),
                 f.minimization.minimized_complexity
             ));
+            out.push_str(&reduction_trace_lines(
+                &f.identity.case_id,
+                &f.minimization.reductions,
+            ));
         }
         for (name, hash) in &self.artifacts {
             out.push_str(&format!("artifact {name} canonical_hash={hash}\n"));
@@ -129,6 +133,17 @@ impl FuzzReport {
                 "auth_mode": f.identity.auth_mode,
                 "mutation_id": f.identity.mutation_id,
                 "minimized": f.minimization.attempted && f.minimization.preserved,
+                "minimization": {
+                    "attempted": f.minimization.attempted,
+                    "original_complexity": f.minimization.original_complexity,
+                    "minimized_complexity": f.minimization.minimized_complexity,
+                    "preserved": f.minimization.preserved,
+                    "reductions": f.minimization.reductions.iter().map(|r| serde_json::json!({
+                        "kind": r.kind,
+                        "detail": r.detail,
+                        "complexity_after": r.complexity_after,
+                    })).collect::<Vec<_>>(),
+                },
             });
             out.push_str(
                 &serde_json::to_string(&projection)
@@ -262,6 +277,18 @@ pub fn run(options: &FuzzRunOptions) -> Result<FuzzReport, FuzzError> {
     })
 }
 
+fn reduction_trace_lines(case_id: &str, reductions: &[crate::minimizer::Reduction]) -> String {
+    reductions
+        .iter()
+        .map(|reduction| {
+            format!(
+                "REDUCTION case={case_id} kind={} detail={} complexity_after={}\n",
+                reduction.kind, reduction.detail, reduction.complexity_after
+            )
+        })
+        .collect()
+}
+
 /// Replay one artifact against a WASM file.
 pub fn run_replay(options: &ReplayOptions) -> Result<ReplayOutcome, ReplayError> {
     let json = std::fs::read(&options.artifact).map_err(|e| {
@@ -283,20 +310,40 @@ pub fn replay_line(outcome: &ReplayOutcome) -> String {
             reason_code,
             observation_hash,
             artifact_hash,
-        } => format!(
+            minimization,
+        } => {
+            let mut line = format!(
             "REPRODUCED reason={} artifact_hash={artifact_hash} observation_hash={observation_hash} canonical={}",
             reason_code.name(),
             outcome.canonical_hash()
-        ),
+            );
+            for reduction in &minimization.reductions {
+                line.push_str(&format!(
+                    "\nREDUCTION kind={} detail={} complexity_after={}",
+                    reduction.kind, reduction.detail, reduction.complexity_after
+                ));
+            }
+            line
+        }
         ReplayOutcome::Mismatch {
             expected,
             actual,
             artifact_hash,
             observation_hash,
-        } => format!(
+            minimization,
+        } => {
+            let mut line = format!(
             "MISMATCH expected={expected:?} actual={actual:?} artifact_hash={artifact_hash} observation_hash={observation_hash} canonical={}",
             outcome.canonical_hash()
-        ),
+            );
+            for reduction in &minimization.reductions {
+                line.push_str(&format!(
+                    "\nREDUCTION kind={} detail={} complexity_after={}",
+                    reduction.kind, reduction.detail, reduction.complexity_after
+                ));
+            }
+            line
+        }
     }
 }
 
@@ -419,6 +466,28 @@ pub fn load_artifact(path: &Path) -> Result<FindingArtifact, ReplayError> {
     let json = std::fs::read(path)
         .map_err(|e| ReplayError::Malformed(format!("reading {}: {e}", path.display())))?;
     parse_artifact(&json)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::minimizer::Reduction;
+
+    #[test]
+    fn reduction_trace_is_rendered_only_when_non_empty() {
+        assert_eq!(reduction_trace_lines("case0001", &[]), "");
+
+        let trace = reduction_trace_lines(
+            "case0001",
+            &[Reduction {
+                kind: "arg".to_string(),
+                detail: "zero argument 0".to_string(),
+                complexity_after: 7,
+            }],
+        );
+        assert!(trace.contains("REDUCTION case=case0001 kind=arg"));
+        assert!(trace.contains("complexity_after=7"));
+    }
 }
 
 /// Convenience for CLI/tests: the ScVal hex of a U32 (expected-return
