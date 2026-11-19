@@ -382,6 +382,45 @@
     metaSec.appendChild(metaTable);
     results.appendChild(metaSec);
 
+    // 1a. Size breakdown (issue #516): one horizontal bar per section, in
+    // file order, with name, bytes, and percentage of the total — the same
+    // `metadata.section_sizes` array the CLI prints in `wasm inspect`.
+    // Payloads serialized before the field existed have no `section_sizes`
+    // (serde default), so the section degrades to an explicit empty state.
+    const sizes = (meta.section_sizes || []).slice();
+    const sbSec = section('Size breakdown',
+      sizes.length + (sizes.length === 1 ? ' section' : ' sections'));
+    if (sizes.length && meta.size_bytes) {
+      const wrap = document.createElement('div');
+      wrap.className = 'size-breakdown';
+      sizes.forEach((s) => {
+        const pct = (s.size_bytes / meta.size_bytes) * 100;
+        const row = document.createElement('div');
+        row.className = 'size-bar-row';
+        const label = document.createElement('span');
+        label.className = 'size-bar-label';
+        label.textContent = s.name;
+        const track = document.createElement('div');
+        track.className = 'size-bar-track';
+        const fill = document.createElement('div');
+        fill.className = 'size-bar-fill';
+        fill.style.width = Math.max(pct, 0) + '%';
+        track.appendChild(fill);
+        const value = document.createElement('span');
+        value.className = 'size-bar-value';
+        value.textContent = fmtSize(s.size_bytes) + ' (' + s.size_bytes +
+          ' bytes, ' + pct.toFixed(1) + '%)';
+        row.appendChild(label);
+        row.appendChild(track);
+        row.appendChild(value);
+        wrap.appendChild(row);
+      });
+      sbSec.appendChild(wrap);
+    } else {
+      sbSec.appendChild(kvTable([['Sections', 'none']]));
+    }
+    results.appendChild(sbSec);
+
     // 1b. Contract metadata (contractmetav0). Rendered verbatim from the
     // decoded `SCMetaV0` entries — the same `metadata.contract_meta` array the
     // CLI prints as `Contract Metadata (n):`, in section order, duplicates and
