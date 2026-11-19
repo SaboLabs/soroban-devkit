@@ -616,6 +616,11 @@ enum Commands {
         #[command(subcommand)]
         action: PackageCommand,
     },
+    /// Display the effective resolved project configuration (read-only).
+    Config {
+        #[command(subcommand)]
+        action: ConfigCommand,
+    },
     /// Manage multi-contract projects
     Project {
         #[command(subcommand)]
@@ -1312,6 +1317,19 @@ enum PackageCommand {
         /// Actually publish. Opt-in only; requires a configured registry source.
         #[arg(long)]
         broadcast: bool,
+    },
+}
+
+#[derive(Subcommand)]
+enum ConfigCommand {
+    /// Show the effective configuration for the current directory.
+    Show {
+        /// Output format (pretty or json).
+        #[arg(short, long, default_value = "pretty")]
+        format: String,
+        /// Include values that are still at their built-in defaults.
+        #[arg(long)]
+        show_defaults: bool,
     },
 }
 
@@ -3898,6 +3916,122 @@ fn load_config() -> DevKitConfig {
             eprintln!("Error loading .sdkt.toml: {}", e);
             process::exit(1);
         }
+    }
+}
+
+/// Return a JSON view containing only values that differ from the built-in
+/// configuration defaults. The resolved config is serialized through the
+/// public config type, so this cannot accidentally expose identity material.
+fn config_without_defaults(
+    resolved: serde_json::Value,
+    defaults: &serde_json::Value,
+) -> (serde_json::Value, usize) {
+    match (resolved, defaults) {
+        (resolved, defaults) if resolved == *defaults => (serde_json::Value::Null, 1),
+        (serde_json::Value::Object(values), serde_json::Value::Object(defaults)) => {
+            let mut kept = serde_json::Map::new();
+            let mut omitted = 0;
+            for (key, value) in values {
+                let default = defaults.get(&key).unwrap_or(&serde_json::Value::Null);
+                let (filtered, count) = config_without_defaults(value, default);
+                if !filtered.is_null() {
+                    kept.insert(key, filtered);
+                } else {
+                    omitted += count;
+                }
+            }
+            (serde_json::Value::Object(kept), omitted)
+        }
+        (resolved, _) => (resolved, 0),
+    }
+}
+
+fn show_config(format: &str, show_defaults: bool) -> Result<(), String> {
+    let path = Path::new(".sdkt.toml");
+    let found = path.is_file();
+    let resolved =
+        DevKitConfig::from_file(path).map_err(|e| format!("Error loading .sdkt.toml: {e}"))?;
+    let resolved_json = serde_json::to_value(&resolved).map_err(|e| e.to_string())?;
+    let defaults_json = serde_json::to_value(DevKitConfig::default()).map_err(|e| e.to_string())?;
+    // A missing file is still useful diagnostically: show the complete
+    // built-in configuration rather than an empty diff.
+    let show_all = show_defaults || !found;
+    let (display, omitted) = if show_all {
+        (resolved_json, 0)
+    } else {
+        config_without_defaults(resolved_json, &defaults_json)
+    };
+
+    match parse_format_str(format) {
+        OutputFormat::Json => println!("{}", serde_json::to_string_pretty(&display).unwrap()),
+        _ => {
+            if !found {
+                println!("No .sdkt.toml found; showing built-in defaults.");
+            }
+            let object = display
+                .as_object()
+                .ok_or("configuration is not an object")?;
+            for section in [
+                "network",
+                "decode",
+                "storage",
+                "contracts",
+                "package",
+                "dependencies",
+            ] {
+                if let Some(value) = object.get(section) {
+                    if !value.is_null()
+                        && (!value.is_object() || !value.as_object().unwrap().is_empty())
+                    {
+                        println!("[{section}]");
+                        println!("{}", serde_json::to_string_pretty(value).unwrap());
+                    }
+                }
+            }
+            if !show_all {
+                println!("{omitted} value(s) are at built-in defaults; use --show-defaults to include them.");
+            }
+        }
+    }
+    Ok(())
+}
+
+#[cfg(test)]
+mod config_show_tests {
+    use super::*;
+
+    #[test]
+    fn default_values_are_omitted_but_custom_profile_values_remain() {
+        let resolved = DevKitConfig::from_toml(
+            r#"
+                [network]
+                rpc_url = "https://example.test/rpc"
+                passphrase = "Example Network"
+                timeout_secs = 15
+                pool_max_idle_per_host = 100
+
+                [decode]
+                max_depth = 42
+            "#,
+        )
+        .unwrap();
+        let resolved_json = serde_json::to_value(resolved).unwrap();
+        let defaults_json = serde_json::to_value(DevKitConfig::default()).unwrap();
+        let (filtered, omitted) = config_without_defaults(resolved_json, &defaults_json);
+
+        assert_eq!(filtered["network"]["rpc_url"], "https://example.test/rpc");
+        assert_eq!(filtered["network"]["passphrase"], "Example Network");
+        assert_eq!(filtered["decode"]["max_depth"], 42);
+        assert!(filtered["network"].get("timeout_secs").is_none());
+        assert!(omitted > 0);
+    }
+
+    #[test]
+    fn resolved_json_contains_no_identity_or_secret_fields() {
+        let json = serde_json::to_value(DevKitConfig::default()).unwrap();
+        let text = serde_json::to_string(&json).unwrap().to_lowercase();
+        assert!(!text.contains("private"));
+        assert!(!text.contains("secret"));
     }
 }
 
@@ -9779,6 +9913,17 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
                         eprintln!("Error evaluating publish readiness: {}", e);
                         std::process::exit(1);
                     }
+                }
+            }
+        },
+        Commands::Config { action } => match action {
+            ConfigCommand::Show {
+                format,
+                show_defaults,
+            } => {
+                if let Err(e) = show_config(&format, show_defaults) {
+                    eprintln!("{e}");
+                    process::exit(1);
                 }
             }
         },

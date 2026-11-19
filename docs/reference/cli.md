@@ -6,6 +6,9 @@ The `sdkt-cli` crate uses `clap` (derive API) for command routing. Every command
 
 ```text
 sdkt
+├── config show
+│   ├── --format <pretty|json>
+│   └── --show-defaults
 ├── decode <xdr>
 │   ├── --type <ScVal|TransactionEnvelope|TransactionResult|ContractEvent>
 │   ├── --format <json|pretty>
@@ -317,6 +320,22 @@ fixed `tag` / `branch` / `rev`:
 git = "https://github.com/org/math"
 version = ">=1.0, <2"
 ```
+
+### `sdkt config show`
+
+Prints the resolved `DevKitConfig` for the current directory without writing
+files or accessing identities. Pretty output is grouped by configuration
+section; JSON output is suitable for scripts. By default, values equal to the
+built-in defaults are omitted. Pass `--show-defaults` to print the complete
+resolved configuration.
+
+```sh
+sdkt config show --format json
+sdkt config show --show-defaults
+```
+
+When `.sdkt.toml` is absent, the command exits successfully, prints the
+built-in defaults, and notes that no configuration file was found.
 
 When `version` is set **without** an explicit ref, `sdkt package fetch` / `sdkt package
 update` resolve the **highest remote tag that satisfies the constraint** (via
