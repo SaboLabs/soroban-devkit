@@ -388,13 +388,37 @@ pub fn diff_snapshots(
 /// The plan identifies which ledger keys need TTL extension and suggests a
 /// `--ledgers` value the operator can pass directly to `sdkt storage extend`.
 /// **Nothing is signed or submitted.**
+///
+/// The actionable entries are split by class: only `ExpiringSoon` entries
+/// can be extended (`extendable_keys`); `Removed` entries are gone from the
+/// ledger and cannot be brought back by `ExtendFootprintTtl` — they need
+/// `sdkt storage restore` with the invocation envelope that failed on
+/// archived state (`removed_keys`). The legacy `keys` field keeps its
+/// historical meaning (every actionable key, both classes) so existing
+/// consumers are unaffected.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ExtendPlan {
     /// Contract whose storage needs remediation.
     pub contract_id: String,
     /// Ledger keys (base64 XDR) that should be included in the extend footprint.
     /// Empty when there is nothing to remediate.
+    ///
+    /// Historical meaning, kept unchanged: every actionable key, i.e. the
+    /// union of [`ExtendPlan::extendable_keys`] and
+    /// [`ExtendPlan::removed_keys`]. Callers that render a ready-to-run
+    /// extend command must use `extendable_keys`, not this field.
     pub keys: Vec<String>,
+    /// Ledger keys that are still live and can be extended: the
+    /// `ExpiringSoon` entries. These are the only keys a ready-to-run
+    /// `sdkt storage extend` command may cover.
+    #[serde(default)]
+    pub extendable_keys: Vec<String>,
+    /// Ledger keys that disappeared from the ledger: the `Removed` entries.
+    /// `ExtendFootprintTtl` cannot restore them; they need
+    /// `sdkt storage restore` with the invocation envelope that failed on
+    /// archived state.
+    #[serde(default)]
+    pub removed_keys: Vec<String>,
     /// Suggested value for `--ledgers` (relative TTL extension).
     ///
     /// When there are actionable entries the suggestion is
@@ -436,6 +460,8 @@ pub fn derive_extend_plan(diff: &SnapshotDiff) -> ExtendPlan {
         return ExtendPlan {
             contract_id: diff.contract_id.clone(),
             keys: vec![],
+            extendable_keys: vec![],
+            removed_keys: vec![],
             suggested_ledgers: DEFAULT_SUGGESTED_LEDGERS,
             suggested_ledgers_reason: "No actionable entries; nothing to extend.".into(),
         };
@@ -443,6 +469,20 @@ pub fn derive_extend_plan(diff: &SnapshotDiff) -> ExtendPlan {
 
     // Collect the keys for the plan.
     let keys: Vec<String> = actionable.iter().map(|e| e.key.clone()).collect();
+
+    // Split the actionable keys by class. Only live, expiring-soon entries
+    // can be extended; removed entries are gone from the ledger and need
+    // restoration instead (see `ExtendPlan` docs).
+    let extendable_keys: Vec<String> = actionable
+        .iter()
+        .filter(|e| e.status == DiffStatus::ExpiringSoon)
+        .map(|e| e.key.clone())
+        .collect();
+    let removed_keys: Vec<String> = actionable
+        .iter()
+        .filter(|e| e.status == DiffStatus::Removed)
+        .map(|e| e.key.clone())
+        .collect();
 
     // Derive suggested ledgers from the minimum remaining TTL of expiring-soon
     // entries.  Removed entries have no remaining TTL and are excluded.
@@ -482,6 +522,8 @@ pub fn derive_extend_plan(diff: &SnapshotDiff) -> ExtendPlan {
     ExtendPlan {
         contract_id: diff.contract_id.clone(),
         keys,
+        extendable_keys,
+        removed_keys,
         suggested_ledgers,
         suggested_ledgers_reason,
     }
@@ -960,6 +1002,8 @@ mod tests {
         let plan = ExtendPlan {
             contract_id: CONTRACT.to_string(),
             keys: vec!["k1".to_string(), "k2".to_string()],
+            extendable_keys: vec!["k1".to_string()],
+            removed_keys: vec!["k2".to_string()],
             suggested_ledgers: 518_400,
             suggested_ledgers_reason: "test".to_string(),
         };
@@ -970,6 +1014,91 @@ mod tests {
         assert!(v["keys"].is_array());
         assert_eq!(v["keys"].as_array().unwrap().len(), 2);
         assert!(v["suggested_ledgers_reason"].is_string());
+        // Additive per-class breakdown (issue #377): the new fields carry
+        // the split without changing the legacy fields above.
+        assert_eq!(v["extendable_keys"], serde_json::json!(["k1"]));
+        assert_eq!(v["removed_keys"], serde_json::json!(["k2"]));
+    }
+
+    #[test]
+    fn plan_split_removed_only() {
+        // Issue #377: a removed-only plan must not hand the operator an
+        // extend command covering the removed key — nothing is extendable.
+        let diff = SnapshotDiff {
+            contract_id: CONTRACT.to_string(),
+            entries: vec![DiffEntry {
+                key: "k1".to_string(),
+                label: None,
+                status: DiffStatus::Removed,
+                old_ttl: Some(50_000),
+                new_ttl: None,
+                normalized_old_ttl: None,
+                old_value: None,
+                new_value: None,
+            }],
+            ..Default::default()
+        };
+        let plan = derive_extend_plan(&diff);
+        // Legacy `keys` keeps its meaning (all actionable keys).
+        assert_eq!(plan.keys, vec!["k1"]);
+        assert!(plan.extendable_keys.is_empty());
+        assert_eq!(plan.removed_keys, vec!["k1"]);
+    }
+
+    #[test]
+    fn plan_split_mixed() {
+        let diff = SnapshotDiff {
+            contract_id: CONTRACT.to_string(),
+            entries: vec![
+                DiffEntry {
+                    key: "expiring".to_string(),
+                    label: None,
+                    status: DiffStatus::ExpiringSoon,
+                    old_ttl: Some(50_000),
+                    new_ttl: Some(5_000),
+                    normalized_old_ttl: None,
+                    old_value: None,
+                    new_value: None,
+                },
+                DiffEntry {
+                    key: "removed".to_string(),
+                    label: None,
+                    status: DiffStatus::Removed,
+                    old_ttl: Some(50_000),
+                    new_ttl: None,
+                    normalized_old_ttl: None,
+                    old_value: None,
+                    new_value: None,
+                },
+            ],
+            ..Default::default()
+        };
+        let plan = derive_extend_plan(&diff);
+        assert_eq!(plan.keys, vec!["expiring", "removed"]);
+        assert_eq!(plan.extendable_keys, vec!["expiring"]);
+        assert_eq!(plan.removed_keys, vec!["removed"]);
+    }
+
+    #[test]
+    fn plan_split_expiring_only() {
+        let diff = SnapshotDiff {
+            contract_id: CONTRACT.to_string(),
+            entries: vec![DiffEntry {
+                key: "k1".to_string(),
+                label: None,
+                status: DiffStatus::ExpiringSoon,
+                old_ttl: Some(50_000),
+                new_ttl: Some(5_000),
+                normalized_old_ttl: None,
+                old_value: None,
+                new_value: None,
+            }],
+            ..Default::default()
+        };
+        let plan = derive_extend_plan(&diff);
+        assert_eq!(plan.keys, vec!["k1"]);
+        assert_eq!(plan.extendable_keys, vec!["k1"]);
+        assert!(plan.removed_keys.is_empty());
     }
 
     #[test]

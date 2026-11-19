@@ -63,6 +63,7 @@ pub mod artifact;
 pub mod auth;
 pub mod campaign;
 mod case;
+pub mod compare;
 mod config;
 pub mod differential;
 pub mod environment;
@@ -88,6 +89,7 @@ pub use artifact::{CampaignConfig, FindingArtifact, SCHEMA_VERSION};
 pub use auth::AuthMode;
 pub use campaign::{run_campaign, run_campaign_artifacts, CampaignInput, CampaignResult};
 pub use case::{FunctionCall, FuzzCase};
+pub use compare::{compare_evidence, EvidenceComparison};
 pub use config::{BudgetConfig, FuzzConfig, LedgerConfig, PROTOCOL_VERSION};
 pub use differential::{
     compare as compare_differential, DifferentialOutcome, DifferentialRecord,
