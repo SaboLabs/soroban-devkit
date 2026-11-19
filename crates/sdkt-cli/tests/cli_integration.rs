@@ -1614,6 +1614,24 @@ fn make_pack_repo() -> (std::path::PathBuf, String) {
     (dir, url)
 }
 
+/// Depth-first lookup of a file by name, skipping `.git` object stores.
+fn find_named(dir: &std::path::Path, name: &str) -> Option<std::path::PathBuf> {
+    for entry in std::fs::read_dir(dir).ok()? {
+        let path = entry.ok()?.path();
+        if path.is_dir() {
+            if path.file_name().map(|f| f == ".git").unwrap_or(false) {
+                continue;
+            }
+            if let Some(found) = find_named(&path, name) {
+                return Some(found);
+            }
+        } else if path.file_name().map(|f| f == name).unwrap_or(false) {
+            return Some(path);
+        }
+    }
+    None
+}
+
 fn write_pack_manifest(tmp: &std::path::Path, url: &str) {
     write_manifest(
         tmp,
@@ -1794,7 +1812,9 @@ fn package_pack_format_handling() {
 
 #[test]
 fn package_pack_roundtrip_preserves_lock_and_integrity() {
-    // pack (tar.zst) → unpack → reconstructed tree reproduces lock + integrity.
+    // pack (tar.zst) → `package unpack --verify` reproduces lock + integrity,
+    // driven entirely through the CLI so the documented workflow is what is
+    // guarded (no library calls).
     let (src, url) = make_pack_repo();
     let tmp = std::env::temp_dir().join(format!(
         "sdkt-it-m38-rt-{}-{}",
@@ -1834,15 +1854,139 @@ fn package_pack_roundtrip_preserves_lock_and_integrity() {
         tb.expect("tarball produced")
     };
 
-    // Reconstruct + verify using the public library API (no double-pack).
-    use sdkt_core::package::{unpack, verify_bundle_equivalence, PackageBundle};
-    let reconstruct = tmp.join("reconstruct");
-    unpack(&tarball, &reconstruct).expect("unpack ok");
-    let desc = std::fs::read_to_string(reconstruct.join("package.json")).unwrap();
-    let bundle: PackageBundle = serde_json::from_str(&desc).unwrap();
+    let out = Command::cargo_bin("sdkt")
+        .expect("sdkt binary built")
+        .current_dir(&tmp)
+        .args([
+            "package",
+            "unpack",
+            tarball.to_str().unwrap(),
+            "--dest",
+            "reconstruct",
+            "--verify",
+            "--format",
+            "json",
+        ])
+        .output()
+        .unwrap();
     assert!(
-        verify_bundle_equivalence(&reconstruct, &bundle).unwrap(),
-        "round-trip must preserve lock + integrity"
+        out.status.success(),
+        "unpack --verify must succeed: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let report: serde_json::Value =
+        serde_json::from_slice(&out.stdout).expect("unpack emits a json report");
+    assert_eq!(report["verified"], serde_json::json!(true));
+    assert_eq!(report["name"], "m38-app");
+    assert_eq!(report["version"], "0.3.0");
+    assert_eq!(report["dependencies"], 1);
+    assert!(
+        report["lock_sha256"]
+            .as_str()
+            .unwrap_or_default()
+            .starts_with("sha256:"),
+        "report carries the lock hash: {report}"
+    );
+
+    // The reconstructed tree is the documented bundle contents.
+    let reconstruct = tmp.join("reconstruct");
+    for rel in [".sdkt.toml", "sdkt.lock", "package.json", ".sdkt-cache/git"] {
+        assert!(
+            reconstruct.join(rel).exists(),
+            "unpacked tree is missing {rel}"
+        );
+    }
+
+    let _ = std::fs::remove_dir_all(&tmp);
+    let _ = std::fs::remove_dir_all(&src);
+}
+
+#[test]
+fn package_unpack_verify_detects_mutated_tree() {
+    // A pristine unpacked bundle verifies; editing a cached checkout file must
+    // fail with a clear non-zero exit (`HEAD^{tree}` alone would not see it).
+    let (src, url) = make_pack_repo();
+    let tmp = std::env::temp_dir().join(format!(
+        "sdkt-it-m38-mut-{}-{}",
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos()
+    ));
+    let _ = std::fs::remove_dir_all(&tmp);
+    write_pack_manifest(&tmp, &url);
+    Command::cargo_bin("sdkt")
+        .expect("sdkt binary built")
+        .current_dir(&tmp)
+        .arg("package")
+        .arg("fetch")
+        .assert()
+        .success();
+
+    let out_dir = tmp.join("dist");
+    Command::cargo_bin("sdkt")
+        .expect("sdkt binary built")
+        .current_dir(&tmp)
+        .args(["package", "pack", "--out", "dist"])
+        .assert()
+        .success();
+    let tarball = {
+        let mut tb = None;
+        for entry in std::fs::read_dir(&out_dir).unwrap() {
+            let p = entry.unwrap().path();
+            if p.to_string_lossy().ends_with(".tar.zst") {
+                tb = Some(p);
+            }
+        }
+        tb.expect("tarball produced")
+    };
+
+    Command::cargo_bin("sdkt")
+        .expect("sdkt binary built")
+        .current_dir(&tmp)
+        .args([
+            "package",
+            "unpack",
+            tarball.to_str().unwrap(),
+            "--dest",
+            "out",
+        ])
+        .assert()
+        .success();
+
+    let pristine = Command::cargo_bin("sdkt")
+        .expect("sdkt binary built")
+        .current_dir(&tmp)
+        .args(["package", "verify-bundle", "out"])
+        .output()
+        .unwrap();
+    assert!(
+        pristine.status.success(),
+        "pristine unpacked tree must verify: {}",
+        String::from_utf8_lossy(&pristine.stderr)
+    );
+
+    // Mutate one cached dependency source file (the issue's example).
+    let cached_lib = find_named(&tmp.join("out").join(".sdkt-cache"), "lib.rs")
+        .expect("cached lib.rs in the unpacked tree");
+    std::fs::write(&cached_lib, "pub fn answer() -> u32 { 41 }\n").unwrap();
+
+    let bad = Command::cargo_bin("sdkt")
+        .expect("sdkt binary built")
+        .current_dir(&tmp)
+        .args(["package", "verify-bundle", "out", "--format", "json"])
+        .output()
+        .unwrap();
+    assert!(!bad.status.success(), "mutated tree must fail verification");
+    let report: serde_json::Value =
+        serde_json::from_slice(&bad.stdout).expect("verification still prints its report");
+    assert_eq!(report["verified"], serde_json::json!(false));
+    let stderr = String::from_utf8_lossy(&bad.stderr);
+    assert!(
+        stderr.contains("verification failed"),
+        "error should say verification failed: {}",
+        stderr
     );
 
     let _ = std::fs::remove_dir_all(&tmp);

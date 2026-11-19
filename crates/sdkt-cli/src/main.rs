@@ -666,7 +666,7 @@ enum Commands {
         #[command(subcommand)]
         action: LockCommand,
     },
-    /// Validate and inspect local package manifests ()
+    /// Validate, bundle, unpack, and inspect local package manifests
     Package {
         #[command(subcommand)]
         action: PackageCommand,
@@ -1377,13 +1377,46 @@ enum PackageCommand {
     },
     /// Bundle the resolved project into a portable offline artifact: the
     /// manifest, the lockfile, and the cached git dependency checkouts. The
-    /// artifact can be unpacked on another machine and rebuilt without network.
+    /// artifact can be unpacked on another machine with `sdkt package unpack`
+    /// and rebuilt without network.
     Pack {
         /// Output directory for the artifact (default: `./dist`).
         #[arg(short, long, default_value = "dist")]
         out: String,
         /// Artifact format: `tar.zst` (compressed tarball) or `dir` (directory tree).
         #[arg(long, default_value = "tar.zst")]
+        format: String,
+    },
+    /// Reconstruct a packed bundle into a buildable tree (the other half of the
+    /// `pack` round-trip). Offline: the artifact is self-contained. `--verify`
+    /// checks the reconstructed tree against the bundle's `package.json`
+    /// descriptor (lock sha256 + per-git-dependency integrity) and exits
+    /// non-zero on any mismatch.
+    Unpack {
+        /// Packed artifact: a `.tar.zst` / `.tgz` bundle or a `--format dir`
+        /// bundle directory.
+        #[arg(value_name = "ARTIFACT")]
+        artifact: String,
+        /// Destination directory for the reconstructed tree (created if absent).
+        #[arg(short, long, default_value = "unpacked")]
+        dest: String,
+        /// Verify the reconstructed tree against the bundle descriptor.
+        #[arg(long)]
+        verify: bool,
+        #[arg(short, long, default_value = "pretty")]
+        format: String,
+    },
+    /// Verify an unpacked bundle against its descriptor: the bundled `sdkt.lock`
+    /// sha256 and every per-git-dependency integrity must match, and each
+    /// checkout must have no modified tracked files. Read-only.
+    VerifyBundle {
+        /// Unpacked bundle directory (contains `sdkt.lock` + `package.json`).
+        #[arg(value_name = "DIR")]
+        dir: String,
+        /// Descriptor to verify against (default: `<DIR>/package.json`).
+        #[arg(long, value_name = "PACKAGE_JSON")]
+        descriptor: Option<String>,
+        #[arg(short, long, default_value = "pretty")]
         format: String,
     },
     /// Validate publish readiness (read-only): manifest valid, lock consistent,
@@ -3028,6 +3061,63 @@ fn apply_audit_gate(level: Option<sdkt_audit::Severity>, summary: &sdkt_audit::A
         summary.critical, summary.warning, summary.info
     );
     process::exit(1);
+}
+
+/// Report the result of `package unpack` / `package verify-bundle`: the bundle
+/// descriptor summary plus, when requested, the round-trip verdict.
+fn print_bundle_result(
+    fmt: OutputFormat,
+    bundle: &sdkt_core::package::PackageBundle,
+    tree: &Path,
+    artifact: Option<&Path>,
+    descriptor: &Path,
+    verified: Option<bool>,
+) {
+    let git_deps = bundle.entries.iter().filter(|e| e.source == "git").count();
+    if fmt == OutputFormat::Json {
+        let mut doc = serde_json::json!({
+            "tree": tree.display().to_string(),
+            "descriptor": descriptor.display().to_string(),
+            "schema": bundle.schema,
+            "name": bundle.name,
+            "version": bundle.version,
+            "format": bundle.format,
+            "lock_sha256": bundle.lock_sha256,
+            "dependencies": bundle.entries.len(),
+            "verified": verified,
+        });
+        if let Some(a) = artifact {
+            doc["artifact"] = serde_json::json!(a.display().to_string());
+        }
+        println!("{}", serde_json::to_string_pretty(&doc).unwrap());
+        return;
+    }
+
+    match artifact {
+        Some(a) => {
+            println!("Unpacked {} v{}", bundle.name, bundle.version);
+            println!("  artifact:     {}", a.display());
+        }
+        None => println!("Bundle {} v{}", bundle.name, bundle.version),
+    }
+    println!("  tree:         {}", tree.display());
+    println!("  descriptor:   {}", descriptor.display());
+    println!("  lock sha256:  {}", bundle.lock_sha256);
+    println!(
+        "  dependencies: {} ({} git)",
+        bundle.entries.len(),
+        git_deps
+    );
+    match verified {
+        Some(true) => println!(
+            "  verification: OK — sdkt.lock sha256 and {} git checkout(s) match the descriptor",
+            git_deps
+        ),
+        Some(false) => {
+            println!("  verification: MISMATCH — the tree does not reproduce the descriptor")
+        }
+        None => {}
+    }
 }
 
 fn parse_format_str(s: &str) -> OutputFormat {
@@ -11124,6 +11214,91 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
                         eprintln!("Error packing package: {}", e);
                         std::process::exit(1);
                     }
+                }
+            }
+            PackageCommand::Unpack {
+                artifact,
+                dest,
+                verify,
+                format,
+            } => {
+                let fmt = parse_format_str(&format);
+                let artifact_path = Path::new(&artifact);
+                let tree = match sdkt_core::package::unpack(artifact_path, Path::new(&dest)) {
+                    Ok(tree) => tree,
+                    Err(e) => {
+                        eprintln!("Error unpacking package bundle: {}", e);
+                        std::process::exit(1);
+                    }
+                };
+                let descriptor_path = tree.join("package.json");
+                let bundle = match sdkt_core::package::read_bundle_descriptor(&descriptor_path) {
+                    Ok(bundle) => bundle,
+                    Err(e) => {
+                        eprintln!(
+                            "Error reading bundle descriptor (is this a `sdkt package pack` artifact?): {}",
+                            e
+                        );
+                        std::process::exit(1);
+                    }
+                };
+                let verified = if verify {
+                    match sdkt_core::package::verify_bundle_equivalence(&tree, &bundle) {
+                        Ok(ok) => Some(ok),
+                        Err(e) => {
+                            eprintln!("Error verifying bundle: {}", e);
+                            std::process::exit(1);
+                        }
+                    }
+                } else {
+                    None
+                };
+                print_bundle_result(
+                    fmt,
+                    &bundle,
+                    &tree,
+                    Some(artifact_path),
+                    &descriptor_path,
+                    verified,
+                );
+                if verified == Some(false) {
+                    eprintln!(
+                        "Error: bundle verification failed: the unpacked tree does not reproduce the descriptor's sdkt.lock sha256 / dependency integrity"
+                    );
+                    std::process::exit(1);
+                }
+            }
+            PackageCommand::VerifyBundle {
+                dir,
+                descriptor,
+                format,
+            } => {
+                let fmt = parse_format_str(&format);
+                let tree = Path::new(&dir);
+                let descriptor_path = match &descriptor {
+                    Some(d) => Path::new(d).to_path_buf(),
+                    None => tree.join("package.json"),
+                };
+                let bundle = match sdkt_core::package::read_bundle_descriptor(&descriptor_path) {
+                    Ok(bundle) => bundle,
+                    Err(e) => {
+                        eprintln!("Error reading bundle descriptor: {}", e);
+                        std::process::exit(1);
+                    }
+                };
+                let verified = match sdkt_core::package::verify_bundle_equivalence(tree, &bundle) {
+                    Ok(ok) => ok,
+                    Err(e) => {
+                        eprintln!("Error verifying bundle: {}", e);
+                        std::process::exit(1);
+                    }
+                };
+                print_bundle_result(fmt, &bundle, tree, None, &descriptor_path, Some(verified));
+                if !verified {
+                    eprintln!(
+                        "Error: bundle verification failed: the tree does not reproduce the descriptor's sdkt.lock sha256 / dependency integrity"
+                    );
+                    std::process::exit(1);
                 }
             }
             PackageCommand::Publish { dry_run, broadcast } => {
