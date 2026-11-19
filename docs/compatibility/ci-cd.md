@@ -13,7 +13,7 @@ mode, and fails the step when the check does not pass.
 
 | Input | Required | Default | Meaning |
 |-------|----------|---------|---------|
-| `command` | yes | — | `audit`, `upgrade-safety`, or `release-assurance` |
+| `command` | yes | — | `audit`, `upgrade-safety`, `release-assurance`, or `fuzz` |
 | `sdkt-version` | no | `v2.7.0` | Pinned `sdkt` git tag to install |
 | `install-from-source` | no | `"false"` | Build sdkt from the pinned git tag instead of downloading the prebuilt release asset. Slower (~4-5 min) but resolves: unsupported kernel, missing prebuilt asset for the runner OS/arch, missing release asset for the version, missing checksum, or missing `sha256sum`/`shasum` tool. |
 | `target` | for `audit` | `""` | Path to the `.rs` source to audit |
@@ -28,6 +28,9 @@ mode, and fails the step when the check does not pass.
 | `network` | no | `""` | `testnet` \| `mainnet` \| `futurenet` for the on-chain checks |
 | `max-size-bytes` | for `release-assurance` | `""` | Fail the release when the candidate artifact exceeds N bytes (forwards `--max-size-bytes`) |
 | `max-growth-pct` | for `release-assurance` | `""` | Fail the release when the candidate grew more than N percent over `previous-wasm` (forwards `--max-growth-pct`) |
+| `cases` | for `fuzz` | `100` | Number of fuzz cases to run (forwards `--cases`) |
+| `seed` | for `fuzz` | `0` | Seed for the fuzz campaign (forwards `--seed`) |
+| `artifact-dir` | for `fuzz` | `""` | Directory to save fuzz campaign artifacts |
 
 **Threshold semantics:** only findings at or above `severity-threshold` fail
 the build. The default `critical` means `MOVE-001` (Warning) never breaks CI.
@@ -141,12 +144,34 @@ jobs:
           disable: MOVE-001
 ```
 
-`wasm` is required. `previous-wasm`, `audit`, `disable`, `contract`, and
-`network` are optional: `previous-wasm` supplies the offline upgrade baseline,
-`audit`/`disable` drive the static security section, and `contract`/`network`
-add the on-chain verification and health sections (skipped entirely when
-`contract` is empty). Adding `contract` and `network` performs read-only RPC
-reads only.
+## Example 5 — Run a fuzz campaign
+
+Assess the candidate artifact by running a fuzz campaign. The step fails when the campaign reports findings.
+
+```yaml
+# .github/workflows/sdkt-fuzz.yml
+name: sdkt Fuzz Campaign
+
+on:
+  push:
+    branches: [main]
+
+jobs:
+  fuzz:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Run fuzz campaign
+        uses: SaboLabs/soroban-devkit/.github/actions/sdkt@main
+        with:
+          command: fuzz
+          wasm: builds/candidate.wasm
+          cases: 500
+          seed: 1234
+          artifact-dir: fuzz-artifacts
+```
+
+`wasm` is required. `cases` and `seed` are optional, defaulting to `100` and `0` respectively. `artifact-dir` is optional.
 
 ## Example 4 — Self-validating the Action (this repo)
 
