@@ -252,6 +252,7 @@ impl AuditRule for PluginRule {
                     self.id, code
                 ),
                 location: None,
+                line: None,
             });
             return;
         }
@@ -284,6 +285,7 @@ impl AuditRule for PluginRule {
                 },
                 message,
                 location,
+                line: None,
             });
         }
     }

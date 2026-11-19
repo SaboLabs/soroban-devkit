@@ -298,6 +298,7 @@ impl AuditRule for WasmPluginRule {
                 severity: wf.severity_enum(),
                 message: wf.message.clone(),
                 location: wf.location.clone(),
+                line: None,
             });
         }
     }
