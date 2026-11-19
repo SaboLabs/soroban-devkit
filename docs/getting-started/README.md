@@ -99,6 +99,13 @@ These need a configured network. Set it once:
 sdkt init my-project --minimal   # scaffolds a project + .sdkt.toml
 ```
 
+`sdkt init my-project` uses the default `hello` template, which is the smallest
+possible contract and is useful for learning the project layout. Use
+`sdkt init my-token --template token` for a minimal fungible-token starter with
+administrator-controlled minting, transfers, balances, and metadata getters.
+The token template is educational scaffolding, not a production or audited
+token, and it does not claim SEP-41 compliance.
+
 ### Inspect a contract's ABI and storage
 
 ```bash
