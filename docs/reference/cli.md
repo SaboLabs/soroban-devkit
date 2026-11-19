@@ -9,7 +9,9 @@ sdkt
 ├── decode <xdr>
 │   ├── --type <ScVal|TransactionEnvelope|TransactionResult|ContractEvent>
 │   ├── --format <json|pretty>
-│   └── --file <path>
+│   ├── --file <path>
+│   ├── --abi <wasm>                  (ABI-aware decode from a local WASM)
+│   └── --abi-contract <id>           (ABI-aware decode using deployed contract's on-chain WASM)
 │
 ├── encode <TYPE:VALUE>...
 │   │   (fully offline: encode typed values to base64 XDR)
@@ -704,6 +706,36 @@ Exit codes:
 - `1` — at least one check failed (e.g. invalid config, missing WASM target)
 
 Warnings are never fatal. The JSON output contains no secret material.
+
+## Decode (`--abi` / `--abi-contract`)
+
+`sdkt decode` converts a base64 (or hex) XDR payload to JSON. Pass `--abi <WASM>` (local contract WASM) or `--abi-contract <CONTRACT_ID>` (deployed contract's on-chain WASM fetched via RPC; mutually exclusive with `--abi`) to decode an `ScVal` against the contract's `ContractSpec` custom types using `decode_with_abi`:
+
+```bash
+# Generic decode (without --abi) renders the raw XDR Map entries positionally:
+sdkt decode AAAA...
+# {
+#   "map": [
+#     { "key": { "symbol": "x" }, "val": { "i32": 10 } },
+#     { "key": { "symbol": "y" }, "val": { "i32": 20 } }
+#   ]
+# }
+
+# ABI-aware decode renders the matched custom struct type and named fields:
+sdkt decode AAAA... --abi target/wasm32v1-none/release/my_contract.wasm
+# {
+#   "fields": {
+#     "x": "i32(10)",
+#     "y": "i32(20)"
+#   },
+#   "label": "Point { x: i32(10), y: i32(20) }",
+#   "matched_type": "udt:Point",
+#   "raw": "...",
+#   "type": "Point"
+# }
+```
+
+When the decoded value matches no custom type in the contract's ABI, `sdkt decode` emits a one-line note on stderr and falls back to the generic decoded JSON (exit code `0`).
 
 ## Encode
 

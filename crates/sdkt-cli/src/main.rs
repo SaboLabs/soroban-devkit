@@ -217,6 +217,15 @@ enum Commands {
         /// Read the XDR payload from a file instead of the positional argument.
         #[arg(short = 'i', long, value_name = "FILE")]
         file: Option<String>,
+        /// Path to contract WASM for ABI-aware decoding
+        #[arg(long, value_name = "WASM")]
+        abi: Option<String>,
+        /// Use the ABI of a deployed contract (fetched on-chain via path) for
+        /// decoding. Mutually exclusive with `--abi`.
+        #[arg(long, value_name = "CONTRACT_ID")]
+        abi_contract: Option<String>,
+        #[command(flatten)]
+        net: NetworkArgs,
     },
     /// Encode typed values (TYPE:VALUE) to base64 XDR (reverse of decode)
     Encode {
@@ -4948,6 +4957,115 @@ fn run_doctor(fmt: OutputFormat) {
     }
 }
 
+/// Result of decoding an XDR payload when an optional ABI [`sdkt_wasm::ContractSpec`] is supplied.
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct AbiDecodeResult {
+    /// Formatted output string (pretty or compact JSON).
+    output: String,
+    /// Optional advisory note (e.g. when no custom type in the ABI matched).
+    note: Option<String>,
+}
+
+fn decode_payload_with_optional_abi(
+    input: &str,
+    type_hint: Option<&str>,
+    fmt: OutputFormat,
+    max_depth: u32,
+    allow_fallback_hex: bool,
+    contract_spec: Option<&sdkt_wasm::ContractSpec>,
+) -> Result<AbiDecodeResult, String> {
+    let generic_json =
+        match decode_with_config(input, type_hint, fmt, max_depth, allow_fallback_hex) {
+            Ok(j) => j,
+            Err(e) => {
+                return if contract_spec.is_some() {
+                    Err(format!(
+                        "Failed to decode XDR input '{}': {}",
+                        input.trim(),
+                        e
+                    ))
+                } else {
+                    Err(e.to_string())
+                };
+            }
+        };
+
+    let Some(spec) = contract_spec else {
+        return Ok(AbiDecodeResult {
+            output: generic_json,
+            note: None,
+        });
+    };
+
+    let is_scval_compatible = matches!(
+        type_hint.map(|t| t.to_ascii_lowercase()).as_deref(),
+        None | Some("auto") | Some("scval")
+    );
+    let scval = if is_scval_compatible {
+        sdkt_xdr::scval_from_base64(input)
+            .or_else(|| serde_json::from_str::<stellar_xdr::ScVal>(&generic_json).ok())
+    } else {
+        None
+    };
+
+    if let Some(scval) = scval {
+        let decoded = sdkt_xdr::abi_decode::decode_with_abi(spec, &scval, None);
+        if let Some(matched_type) = &decoded.matched_type {
+            let type_name = matched_type.strip_prefix("udt:").unwrap_or(matched_type);
+            let named_fields: serde_json::Map<String, serde_json::Value> = decoded
+                .fields
+                .as_ref()
+                .map(|fields| {
+                    fields
+                        .iter()
+                        .map(|(k, v)| {
+                            let clean_key = k
+                                .trim_matches('"')
+                                .trim_start_matches("sym(\"")
+                                .trim_end_matches("\")")
+                                .to_string();
+                            (clean_key, serde_json::Value::String(v.clone()))
+                        })
+                        .collect()
+                })
+                .unwrap_or_default();
+            let clean_label = if !named_fields.is_empty() {
+                format!(
+                    "{} {{ {} }}",
+                    type_name,
+                    named_fields
+                        .iter()
+                        .map(|(k, v)| format!("{}: {}", k, v.as_str().unwrap_or_default()))
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                )
+            } else {
+                decoded.label.clone()
+            };
+            let abi_json_val = serde_json::json!({
+                "type": type_name,
+                "matched_type": matched_type,
+                "label": clean_label,
+                "fields": named_fields,
+                "raw": decoded.raw,
+            });
+            let formatted = sdkt_xdr::format_json(&abi_json_val, fmt).map_err(|e| e.to_string())?;
+            return Ok(AbiDecodeResult {
+                output: formatted,
+                note: None,
+            });
+        }
+    }
+
+    Ok(AbiDecodeResult {
+        output: generic_json,
+        note: Some(
+            "Note: no custom type in ABI matched the decoded value; showing generic decoding."
+                .to_string(),
+        ),
+    })
+}
+
 async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
     let cli = Cli::parse();
 
@@ -4957,8 +5075,42 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
             r#type,
             format,
             file,
+            abi,
+            abi_contract,
+            net,
         } => {
+            if let Err(e) =
+                commands::abi::check_abi_mutual_exclusion(abi.as_ref(), abi_contract.as_ref())
+            {
+                eprintln!("Error: {e}");
+                process::exit(1);
+            }
+
             let json_mode = parse_format_str(&format) == OutputFormat::Json;
+            let contract_spec: Option<sdkt_wasm::ContractSpec> = if abi.is_some()
+                || abi_contract.is_some()
+            {
+                let client = resolve_rpc_client(
+                    net.rpc_url.clone(),
+                    net.network_passphrase.clone(),
+                    net.network_profile.clone(),
+                );
+                match commands::abi::resolve_abi_spec(abi.as_ref(), abi_contract.as_ref(), &client)
+                    .await
+                {
+                    Ok(spec) => spec,
+                    Err(e) => {
+                        let msg = match abi.as_deref() {
+                            Some(path) if !e.contains(path) => format!("Error: {path}: {e}"),
+                            _ => format!("Error: {e}"),
+                        };
+                        fail_cli(msg, json_mode);
+                    }
+                }
+            } else {
+                None
+            };
+
             let input = match (file, payload) {
                 (Some(path), _) => fs::read_to_string(&path).unwrap_or_else(|e| {
                     fail_cli(
@@ -4978,17 +5130,21 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
             if let Err(e) = cfg.validate() {
                 fail_cli(e, json_mode);
             }
-            let json = match decode_with_config(
+            let decoded = match decode_payload_with_optional_abi(
                 &input,
                 r#type.as_deref(),
                 fmt,
                 cfg.decode.max_depth,
                 cfg.decode.allow_fallback_hex,
+                contract_spec.as_ref(),
             ) {
-                Ok(j) => j,
-                Err(e) => fail_cli(e.to_string(), json_mode),
+                Ok(d) => d,
+                Err(e) => fail_cli(e, json_mode),
             };
-            println!("{}", json);
+            if let Some(note) = decoded.note {
+                eprintln!("{note}");
+            }
+            println!("{}", decoded.output);
         }
         Commands::Encode { values } => match run_encode(&values) {
             Ok(b64) => println!("{}", b64),
@@ -11917,5 +12073,118 @@ mod project_deploy_salt_tests {
         assert!(parse_salt_hex(&"z".repeat(40))
             .unwrap_err()
             .contains("not a hex digit"));
+    }
+}
+
+#[cfg(test)]
+mod decode_abi_unit_tests {
+    use super::*;
+    use sdkt_wasm::spec::TypeMember;
+    use stellar_xdr::{ScMap, ScMapEntry, ScSymbol, ScVal, VecM};
+
+    fn point_scval_b64() -> String {
+        let val = ScVal::Map(Some(ScMap(
+            VecM::try_from(vec![
+                ScMapEntry {
+                    key: ScVal::Symbol(ScSymbol("x".try_into().unwrap())),
+                    val: ScVal::I32(10),
+                },
+                ScMapEntry {
+                    key: ScVal::Symbol(ScSymbol("y".try_into().unwrap())),
+                    val: ScVal::I32(20),
+                },
+            ])
+            .unwrap(),
+        )));
+        sdkt_xdr::scval_to_base64(&val).unwrap()
+    }
+
+    fn fixture_point_spec() -> sdkt_wasm::ContractSpec {
+        let mut spec =
+            parse_contract_spec(include_bytes!("../tests/fixtures/us_old.wasm")).unwrap();
+        assert_eq!(spec.custom_types[0].name, "Point");
+        assert_eq!(spec.custom_types[0].kind, "struct");
+        spec.custom_types[0].members = vec![
+            TypeMember {
+                name: "x".into(),
+                doc: String::new(),
+                types: vec![],
+                value: None,
+            },
+            TypeMember {
+                name: "y".into(),
+                doc: String::new(),
+                types: vec![],
+                value: None,
+            },
+        ];
+        spec
+    }
+
+    #[test]
+    fn struct_value_decodes_with_field_names_under_abi_and_positionally_without_it() {
+        let b64 = point_scval_b64();
+        let spec = fixture_point_spec();
+
+        // Without --abi: generic positional map array decoding
+        let without_abi =
+            decode_payload_with_optional_abi(&b64, None, OutputFormat::Pretty, 500, true, None)
+                .unwrap();
+        assert!(without_abi.note.is_none());
+        let generic_val: serde_json::Value = serde_json::from_str(&without_abi.output).unwrap();
+        assert!(
+            generic_val["map"].is_array(),
+            "expected positional map array without --abi, got: {}",
+            without_abi.output
+        );
+        assert!(generic_val.get("type").is_none());
+        assert!(generic_val.get("fields").is_none());
+
+        // With --abi: matched custom type and named fields
+        let with_abi = decode_payload_with_optional_abi(
+            &b64,
+            None,
+            OutputFormat::Pretty,
+            500,
+            true,
+            Some(&spec),
+        )
+        .unwrap();
+        assert!(with_abi.note.is_none());
+        let abi_val: serde_json::Value = serde_json::from_str(&with_abi.output).unwrap();
+        assert_eq!(abi_val["type"], "Point");
+        assert_eq!(abi_val["matched_type"], "udt:Point");
+        assert_eq!(abi_val["fields"]["x"], "i32(10)");
+        assert_eq!(abi_val["fields"]["y"], "i32(20)");
+        assert!(abi_val["label"]
+            .as_str()
+            .unwrap()
+            .contains("Point { x: i32(10), y: i32(20) }"));
+    }
+
+    #[test]
+    fn unmatched_value_falls_back_to_generic_with_no_match_note() {
+        let b64 = sdkt_xdr::scval_to_base64(&ScVal::U32(42)).unwrap();
+        let spec = fixture_point_spec();
+
+        let without_abi =
+            decode_payload_with_optional_abi(&b64, None, OutputFormat::Json, 500, true, None)
+                .unwrap();
+        let with_abi = decode_payload_with_optional_abi(
+            &b64,
+            None,
+            OutputFormat::Json,
+            500,
+            true,
+            Some(&spec),
+        )
+        .unwrap();
+
+        assert_eq!(with_abi.output, without_abi.output);
+        assert!(with_abi
+            .note
+            .as_deref()
+            .unwrap_or_default()
+            .contains("no custom type"));
     }
 }
