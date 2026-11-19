@@ -54,9 +54,10 @@ pub use storage::{
     RestoreResult, StateReadResult, TtlEntry, TtlInfo,
 };
 pub use submission::{
-    extract_contract_events, get_transaction_status, poll_transaction, send_transaction,
-    submit_and_wait, PollConfig, SendTransactionRequest, SendTransactionResponse, SubmissionResult,
-    TransactionStatus, TransactionStatusResponse,
+    extract_contract_events, extract_diagnostic_events, get_transaction_status, poll_transaction,
+    response_diagnostic_events, send_transaction, settled_error_code, submit_and_wait, PollConfig,
+    SendTransactionRequest, SendTransactionResponse, SubmissionResult, TransactionStatus,
+    TransactionStatusResponse,
 };
 pub use transaction::{inspect_transaction, TransactionInspection};
 pub use wasm::get_wasm_metadata;
