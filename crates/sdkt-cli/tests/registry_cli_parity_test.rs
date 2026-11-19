@@ -300,19 +300,12 @@ fn updated_tx_entries_resolve_against_real_cli() {
 /// [`every_cli_subcommand_in_guarded_families_is_registered`]; if a command is
 /// deliberately unregistered it must be added to that test with a reason.
 const GUARDED_FAMILIES: &[&str] = &[
-    "plugin",
-    "storage",
-    "tx",
-    "wasm",
-    "lock",
-    "package",
-    "identity",
+    "plugin", "storage", "tx", "wasm", "lock", "package", "identity",
 ];
 
 /// Subcommand names listed in `sdkt <family> --help`'s `Commands:` block.
 fn subcommands_in_help(family: &str) -> Vec<String> {
-    let help =
-        help_for(&[family]).unwrap_or_else(|| panic!("`sdkt {family} --help` failed"));
+    let help = help_for(&[family]).unwrap_or_else(|| panic!("`sdkt {family} --help` failed"));
     let mut names = Vec::new();
     let mut in_commands = false;
     for line in help.lines() {
