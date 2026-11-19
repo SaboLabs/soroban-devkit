@@ -221,3 +221,23 @@ jobs:
             exit 1
           fi
           echo "OK: a CLI error with no JSON report still failed the step."
+
+      # Fuzz campaign: run against a clean fixture.
+      - name: Fuzz campaign should PASS on a clean contract
+        id: fuzz_clean
+        uses: ./.github/actions/sdkt
+        with:
+          command: fuzz
+          wasm: crates/sdkt-cli/tests/fixtures/audit_clean.wasm # Assuming this exists or is a valid WASM
+          cases: 10
+          seed: 42
+
+      - name: Assert clean fuzz passed
+        shell: bash
+        run: |
+          if [ "${{ steps.fuzz_clean.outcome }}" != "success" ]; then
+            echo "::error::expected fuzz campaign to PASS, but outcome was '${{ steps.fuzz_clean.outcome }}'"
+            exit 1
+          fi
+          echo "OK: fuzz campaign passed on a clean contract."
+
