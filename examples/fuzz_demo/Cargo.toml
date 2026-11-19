@@ -1,0 +1,19 @@
+[package]
+name = "fuzz_demo"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+soroban-sdk = "=27.0.6"
+
+[lib]
+crate-type = ["cdylib"]
+
+[profile.release]
+opt-level = "z"
+
+# Kept out of the parent workspace (`soroban-devkit/Cargo.toml`) so that
+# `cargo build --workspace` stays a pure native build and this example is a
+# self-contained, standalone contract crate (the buildable-example pattern:
+# standard soroban-sdk contract, `cdylib` crate type).
+[workspace]
