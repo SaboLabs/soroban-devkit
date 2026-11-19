@@ -730,3 +730,50 @@ fn network_diagnose_testnet_and_futurenet_defaults_still_resolve() {
         "futurenet must keep its built-in default: {combined}"
     );
 }
+
+// ---------------------------------------------------------------------------
+// Issue #507: `sdkt network capture`
+// ---------------------------------------------------------------------------
+
+/// A closed port: bind a listener, take its port, drop it. The capture
+/// must fail cleanly (non-zero exit, one-line error) and write no file.
+fn closed_port() -> u16 {
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let port = listener.local_addr().unwrap().port();
+    drop(listener);
+    port
+}
+
+#[test]
+fn network_capture_unreachable_endpoint_fails_without_file() {
+    let dir = tempdir().unwrap();
+    let out = dir.path().join("network-profile.json");
+    let url = format!("http://127.0.0.1:{}", closed_port());
+
+    let assert = sdkt(dir.path())
+        .args(["network", "capture", "--rpc-url", &url])
+        .arg("--out")
+        .arg(&out)
+        .assert()
+        .failure();
+    let output = assert.get_output();
+    assert_ne!(output.status.code(), Some(0));
+    assert!(
+        !out.exists(),
+        "a failed capture must not leave a partial file behind"
+    );
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(!stderr.trim().is_empty(), "failure must print an error");
+}
+
+#[test]
+fn network_capture_help_documents_out_and_target_flags() {
+    let dir = tempdir().unwrap();
+    sdkt(dir.path())
+        .args(["network", "capture", "--help"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("--out"))
+        .stdout(predicate::str::contains("--network"))
+        .stdout(predicate::str::contains("--rpc-url"));
+}

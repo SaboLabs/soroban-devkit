@@ -227,6 +227,8 @@ fn extend_plan_json_has_stable_field_names() {
     let plan = ExtendPlan {
         contract_id: CONTRACT.to_string(),
         keys: vec!["k1".to_string(), "k2".to_string()],
+        extendable_keys: vec!["k1".to_string()],
+        removed_keys: vec!["k2".to_string()],
         suggested_ledgers: DEFAULT_SUGGESTED_LEDGERS,
         suggested_ledgers_reason: "test".to_string(),
     };
@@ -245,6 +247,40 @@ fn extend_plan_json_has_stable_field_names() {
         v["suggested_ledgers_reason"].is_string(),
         "suggested_ledgers_reason field"
     );
+    // Additive per-class breakdown (issue #377).
+    assert_eq!(v["extendable_keys"], serde_json::json!(["k1"]));
+    assert_eq!(v["removed_keys"], serde_json::json!(["k2"]));
+}
+
+// ---------------------------------------------------------------------------
+// Plan derivation — per-class split (issue #377)
+// ---------------------------------------------------------------------------
+
+#[test]
+fn plan_splits_extendable_and_removed_keys() {
+    let old = snap(vec![("k_expiring", 500_000), ("k_removed", 500_000)]);
+    let new = snap(vec![("k_expiring", EXPIRING_SOON_LEDGERS - 1)]);
+    let diff = diff_snapshots(&old, &new).unwrap();
+    let plan = derive_extend_plan(&diff);
+
+    // Legacy `keys` keeps its meaning: all actionable keys.
+    assert_eq!(plan.keys.len(), 2);
+    // The split is what the CLI renders: only the expiring key may appear
+    // in a ready-to-run extend command; the removed key needs restore.
+    assert_eq!(plan.extendable_keys, vec!["k_expiring"]);
+    assert_eq!(plan.removed_keys, vec!["k_removed"]);
+}
+
+#[test]
+fn plan_removed_only_has_no_extendable_keys() {
+    let old = snap(vec![("k_removed", 50_000)]);
+    let new = snap(vec![]);
+    let diff = diff_snapshots(&old, &new).unwrap();
+    let plan = derive_extend_plan(&diff);
+
+    assert_eq!(plan.keys, vec!["k_removed"]);
+    assert!(plan.extendable_keys.is_empty());
+    assert_eq!(plan.removed_keys, vec!["k_removed"]);
 }
 
 #[test]
