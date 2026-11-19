@@ -528,6 +528,7 @@ fn compare_evidence_file(
                     reason_code: reason_code.to_string(),
                     artifact_hash: artifact_hash.to_string(),
                     minimized: false,
+                    minimization: None,
                 },
             )
             .collect(),

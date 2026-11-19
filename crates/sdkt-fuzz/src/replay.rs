@@ -55,6 +55,7 @@ pub enum ReplayOutcome {
     /// The recorded classification and reason reproduced exactly.
     Reproduced {
         reason_code: ReasonCode,
+        minimization: crate::artifact::MinimizationSnapshot,
         observation_hash: String,
         /// The artifact's canonical hash (identity of the replayed input).
         artifact_hash: String,
@@ -62,6 +63,7 @@ pub enum ReplayOutcome {
     /// The artifact is valid but the re-execution disagreed.
     Mismatch {
         expected: ReasonCode,
+        minimization: crate::artifact::MinimizationSnapshot,
         actual: Classification,
         observation_hash: String,
         artifact_hash: String,
@@ -83,6 +85,7 @@ impl ReplayOutcome {
                 reason_code,
                 observation_hash,
                 artifact_hash,
+                ..
             } => {
                 h.update(b"reproduced");
                 h.update(reason_code.name().as_bytes());
@@ -94,6 +97,7 @@ impl ReplayOutcome {
                 actual,
                 observation_hash,
                 artifact_hash,
+                ..
             } => {
                 h.update(b"mismatch");
                 h.update(expected.name().as_bytes());
@@ -238,11 +242,13 @@ pub fn replay(artifact: &FindingArtifact, wasm: &[u8]) -> Result<ReplayOutcome, 
     Ok(match actual {
         Classification::Finding(reason) if reason == expected_reason => ReplayOutcome::Reproduced {
             reason_code: reason,
+            minimization: artifact.minimization.clone(),
             observation_hash,
             artifact_hash,
         },
         other => ReplayOutcome::Mismatch {
             expected: expected_reason,
+            minimization: artifact.minimization.clone(),
             actual: other,
             observation_hash,
             artifact_hash,

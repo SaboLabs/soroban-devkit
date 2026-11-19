@@ -1046,6 +1046,8 @@ sdkt fuzz campaign contract.wasm \
 
 - `--expect-success <FN>` — declare that a function must always return successfully. If a case returns an error or value mismatch, it produces a finding.
 - `--expect-error <FN:TYPE:CODE>` — declare that a function must fail with a specific error. Format: `FunctionName:ErrorType:ErrorCode`. Example: `--expect-error transfer:Auth:6` means the `transfer` function must fail with `ContractError{Auth, 6}`.
+
+When minimization accepts reductions, campaign output includes a `REDUCTION` line with `kind`, `detail`, and `complexity_after`. JSON and JSONL findings include a `minimization.reductions` array using the same fields. Replay output includes the same `minimization` block from the finding artifact. Each reduction is an accepted step; `kind` identifies the reduction family and `complexity_after` is the complexity after that accepted step. A finding without accepted reductions omits the pretty trace lines and reports an empty `reductions` array where a minimization snapshot is available.
 - A function may have only one expectation; declaring it with both flags is a usage error (exit 2).
 - Malformed declarations are usage errors (exit 2).
 
