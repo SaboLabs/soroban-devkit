@@ -95,8 +95,14 @@ fn generate_default_identity(dir: &Path) {
 }
 
 /// Base64 XDR for a live contract instance entry — the shape `contract_exists`
-/// treats as "the recorded contract is on-chain".
+/// treats as "the recorded contract is on-chain". The executable hash is the
+/// SHA-256 of the deployed artifact, so a post-deploy verification against
+/// this mock actually matches: an entry with a zero hash would make every
+/// real deploy in this file fail verification (exit 3) even though the
+/// deploy itself succeeded.
 fn contract_instance_entry_xdr() -> String {
+    let mut hash = [0u8; 32];
+    hash.copy_from_slice(&Sha256::digest(CONTRACT_WASM));
     let entry = LedgerEntry {
         last_modified_ledger_seq: 1,
         data: LedgerEntryData::ContractData(ContractDataEntry {
@@ -105,7 +111,7 @@ fn contract_instance_entry_xdr() -> String {
             key: ScVal::LedgerKeyContractInstance,
             durability: ContractDataDurability::Persistent,
             val: ScVal::ContractInstance(ScContractInstance {
-                executable: ContractExecutable::Wasm(Hash([0; 32])),
+                executable: ContractExecutable::Wasm(Hash(hash)),
                 storage: None,
             }),
         }),
@@ -477,7 +483,12 @@ fn dry_run_predictions_match_a_real_deploy_with_the_same_salt() {
     let project_dir = project.path();
     setup_project(project_dir);
     generate_default_identity(project_dir);
-    let mock = MockServer::start(false);
+    // The mock must report the deployed instances as live: the real deploy
+    // verifies each contract on-chain right after creating it, and an
+    // instance entry that never appears makes verification fail with
+    // "Contract not found on the network" (exit 3) even though the deploy
+    // itself succeeded — that is exactly how this test failed in CI.
+    let mock = MockServer::start(true);
 
     // Real deploy against the mock with a fixed salt; the record file holds
     // the addresses the deploy path derived.

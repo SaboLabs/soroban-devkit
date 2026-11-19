@@ -34,6 +34,11 @@ use tempfile::TempDir;
 /// A real contractspecv0 WASM fixture (also used by the ABI contract tests).
 static CONTRACT_WASM: &[u8] = include_bytes!("fixtures/us_new.wasm");
 
+/// SHA-256 of the `us_new.wasm` fixture (the on-chain hash the mock serves
+/// for contract-instance lookups, so the post-deploy verification (#89) sees
+/// a match for the contracts this mock deploys).
+const US_NEW_HASH: &str = "551c5a9c7fd4c4a71e57e9c8a0ece1e7bd506ea065993c63db2dc35516406775";
+
 /// LedgerEntry XDR for an account with seq_num 41 (so next sequence = 42).
 const ACCOUNT_ENTRY_XDR: &str =
     "AAAAAQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAO5rKAAAAAAAAAAApAAAAAAAAAAAAAAAAAAAAAAEBAQEAAAAAAAAAAAAAAAA=";
@@ -114,8 +119,12 @@ fn generate_default_identity(dir: &Path) {
 }
 
 /// Base64 XDR for a live contract instance entry — the shape `contract_exists`
-/// treats as "the recorded contract is on-chain".
+/// treats as "the recorded contract is on-chain". Carries the fixture hash,
+/// so the post-deploy verification (#89) of a freshly deployed contract
+/// matches the artifact that was just deployed.
 fn contract_instance_entry_xdr() -> String {
+    let mut hash = [0u8; 32];
+    hex::decode_to_slice(US_NEW_HASH, &mut hash).unwrap();
     let entry = LedgerEntry {
         last_modified_ledger_seq: 1,
         data: LedgerEntryData::ContractData(ContractDataEntry {
@@ -124,7 +133,7 @@ fn contract_instance_entry_xdr() -> String {
             key: ScVal::LedgerKeyContractInstance,
             durability: ContractDataDurability::Persistent,
             val: ScVal::ContractInstance(ScContractInstance {
-                executable: ContractExecutable::Wasm(Hash([0; 32])),
+                executable: ContractExecutable::Wasm(Hash(hash)),
                 storage: None,
             }),
         }),
@@ -134,6 +143,15 @@ fn contract_instance_entry_xdr() -> String {
     let mut l = Limited::new(&mut buf, Limits::none());
     entry.write_xdr(&mut l).unwrap();
     STANDARD.encode(&buf)
+}
+
+/// Hex form of the stale recorded contract (see `STALE_RECORDED_CONTRACT`):
+/// the one contract this mock reports as absent from the ledger.
+fn stale_contract_hex() -> String {
+    match stellar_strkey::Strkey::from_string(STALE_RECORDED_CONTRACT).unwrap() {
+        stellar_strkey::Strkey::Contract(c) => hex::encode(c.0),
+        _ => panic!("stale recorded contract must be a C... strkey"),
+    }
 }
 
 /// Read one complete HTTP request from `sock`: all headers plus the number of
@@ -198,11 +216,22 @@ fn is_account_key(key: &str) -> bool {
     )
 }
 
+fn is_instance_key(key: &str) -> bool {
+    matches!(
+        sdkt_xdr::decode_ledger_key(key),
+        Ok(stellar_xdr::LedgerKey::ContractData(_))
+    )
+}
+
 /// Mock JSON-RPC server for the `project deploy` flow.
 ///
-/// - `getLedgerEntries`: the account key always returns an account entry; the
-///   contract instance key returns a live contract entry when `instance_live`
-///   is true, empty entries otherwise (record-file-only resume).
+/// - `getLedgerEntries`: the account key always returns an account entry; a
+///   contract-instance key returns a live contract entry carrying the
+///   fixture hash — except the stale recorded contract's key, which returns
+///   no entries (the record-file-only resume case). Any other key returns no
+///   entries. This lets the post-deploy verification (#89) of freshly
+///   deployed contracts match while `--skip-deployed` still distrusts the
+///   stale record.
 /// - `simulateTransaction`: succeeds until the `fail_on_sim`-th call
 ///   (1-indexed across all deployments), which returns a simulation error so
 ///   the current contract's deploy fails.
@@ -213,7 +242,7 @@ struct MockServer {
 }
 
 impl MockServer {
-    fn start(instance_live: bool, fail_on_sim: Option<usize>) -> Self {
+    fn start(fail_on_sim: Option<usize>) -> Self {
         let listener = TcpListener::bind("127.0.0.1:0").unwrap();
         let addr = listener.local_addr().unwrap();
         let url = format!("http://{addr}");
@@ -221,6 +250,10 @@ impl MockServer {
         let sim_count = Arc::new(AtomicUsize::new(0));
         let sim_count_thread = sim_count.clone();
         let instance_xdr = contract_instance_entry_xdr();
+        let stale_instance_key = sdkt_xdr::encode_ledger_key(
+            &sdkt_xdr::LedgerKeyParams::ContractData(stale_contract_hex()),
+        )
+        .expect("stale contract key encodes");
 
         thread::spawn(move || {
             for conn in listener.incoming() {
@@ -243,10 +276,15 @@ impl MockServer {
                             format!(
                                 r#"{{"jsonrpc":"2.0","id":1,"result":{{"entries":[{{"key":"AAAAAA==","xdr":"{ACCOUNT_ENTRY_XDR}","lastModifiedLedgerSeq":1}}],"latestLedger":100}}}}"#
                             )
-                        } else if instance_live {
-                            format!(
-                                r#"{{"jsonrpc":"2.0","id":1,"result":{{"entries":[{{"key":"AAAAAA==","xdr":"{instance_xdr}","lastModifiedLedgerSeq":1}}],"latestLedger":100}}}}"#
-                            )
+                        } else if keys.iter().any(|k| is_instance_key(k)) {
+                            if keys.iter().any(|k| k == &stale_instance_key) {
+                                r#"{"jsonrpc":"2.0","id":1,"result":{"entries":[],"latestLedger":100}}"#
+                                    .to_string()
+                            } else {
+                                format!(
+                                    r#"{{"jsonrpc":"2.0","id":1,"result":{{"entries":[{{"key":"AAAAAA==","xdr":"{instance_xdr}","lastModifiedLedgerSeq":1}}],"latestLedger":100}}}}"#
+                                )
+                            }
                         } else {
                             r#"{"jsonrpc":"2.0","id":1,"result":{"entries":[],"latestLedger":100}}"#
                                 .to_string()
@@ -321,7 +359,7 @@ fn failed_project_deploy_persists_records_and_skip_deployed_resumes() {
 
     // Run 1: 3-contract graph where the second contract (vault) fails at the
     // 3rd simulation. token deploys; vault fails; router never attempted.
-    let fail_mock = MockServer::start(false, Some(3));
+    let fail_mock = MockServer::start(Some(3));
     sdkt(project_dir)
         .current_dir(project_dir)
         .args(deploy_base_args(&fail_mock))
@@ -344,7 +382,7 @@ fn failed_project_deploy_persists_records_and_skip_deployed_resumes() {
 
     // Run 2: --skip-deployed. token is recorded AND served as live on-chain,
     // so it is skipped; vault and router deploy fresh (2 simulations each).
-    let resume_mock = MockServer::start(true, None);
+    let resume_mock = MockServer::start(None);
     sdkt(project_dir)
         .current_dir(project_dir)
         .args({
@@ -408,7 +446,7 @@ fn skip_deployed_does_not_skip_gone_contract() {
         .write(project_dir.join(DEPLOYMENT_RECORD_FILE))
         .unwrap();
 
-    let mock = MockServer::start(false, None);
+    let mock = MockServer::start(None);
     sdkt(project_dir)
         .current_dir(project_dir)
         .args({
@@ -447,7 +485,7 @@ fn successful_deploy_json_output_is_unchanged() {
     setup_single_contract_project(project_dir);
     generate_default_identity(project_dir);
 
-    let mock = MockServer::start(false, None);
+    let mock = MockServer::start(None);
 
     // Capture stdout as JSON and assert its shape is unchanged by the record file.
     let mut cmd = sdkt(project_dir);
@@ -575,9 +613,20 @@ fn project_deploy_uses_explicit_identity() {
 
             let body = match method.as_deref() {
                 Some("getLedgerEntries") => {
-                    format!(
-                        r#"{{"jsonrpc":"2.0","id":1,"result":{{"entries":[{{"key":"AAAAAA==","xdr":"{ACCOUNT_ENTRY_XDR}","lastModifiedLedgerSeq":1}}],"latestLedger":100}}}}"#
-                    )
+                    // Key-aware: the post-deploy verification (#89) reads the
+                    // contract-instance entry, which must carry the fixture
+                    // hash; account lookups keep the sequence entry.
+                    let keys = parse_get_ledger_keys(&req);
+                    if keys.iter().any(|k| is_instance_key(k)) {
+                        let instance_xdr = contract_instance_entry_xdr();
+                        format!(
+                            r#"{{"jsonrpc":"2.0","id":1,"result":{{"entries":[{{"key":"AAAAAA==","xdr":"{instance_xdr}","lastModifiedLedgerSeq":1}}],"latestLedger":100}}}}"#
+                        )
+                    } else {
+                        format!(
+                            r#"{{"jsonrpc":"2.0","id":1,"result":{{"entries":[{{"key":"AAAAAA==","xdr":"{ACCOUNT_ENTRY_XDR}","lastModifiedLedgerSeq":1}}],"latestLedger":100}}}}"#
+                        )
+                    }
                 }
                 Some("simulateTransaction") => format!(
                     r#"{{"jsonrpc":"2.0","id":1,"result":{{"transactionData":"{SOROBAN_DATA_XDR}","minResourceFee":"150","results":[{{"xdr":"AAAAAQ==","auth":[]}}],"latestLedger":"100","events":[]}}}}"#
@@ -698,7 +747,7 @@ fn project_deploy_nonexistent_identity_error_contains_name() {
     setup_single_contract_project(project_dir);
 
     // No identity is generated at all; the name "no_such_identity" does not exist.
-    let mock = MockServer::start(false, None);
+    let mock = MockServer::start(None);
     sdkt(project_dir)
         .current_dir(project_dir)
         .args({
