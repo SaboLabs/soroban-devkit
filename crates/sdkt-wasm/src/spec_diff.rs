@@ -53,6 +53,34 @@ pub struct SpecDiff {
     /// Both artifacts empty ⇒ `Some(0.0)`.
     #[serde(default)]
     pub size_delta_pct: Option<f64>,
+    /// Where the "old" side's WASM came from. `None` (omitted from JSON) for
+    /// the classic two-file diff, so its JSON shape is byte-identical to
+    /// before; set only when at least one side was fetched from a deployed
+    /// contract (see `sdkt diff --old-contract / --new-contract`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub old_source: Option<WasmSource>,
+    /// Where the "new" side's WASM came from (same rule as `old_source`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub new_source: Option<WasmSource>,
+}
+
+/// Where one side of a [`SpecDiff`] came from.
+///
+/// Recorded in the JSON output only when at least one side was fetched from
+/// a deployed contract; the classic two-file diff leaves both fields absent.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum WasmSource {
+    /// A local WASM file.
+    File {
+        /// Path as passed on the command line.
+        path: String,
+    },
+    /// A deployed contract, fetched over RPC.
+    Contract {
+        /// Stellar contract ID (`C...`).
+        contract_id: String,
+    },
 }
 
 /// Lightweight WASM identity summary for diff context.
