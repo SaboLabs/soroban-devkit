@@ -31,6 +31,61 @@ mode, and fails the step when the check does not pass.
 | `max-size-bytes` | for `release-assurance` | `""` | Fail the release when the candidate artifact exceeds N bytes (forwards `--max-size-bytes`) |
 | `max-growth-pct` | for `release-assurance` | `""` | Fail the release when the candidate grew more than N percent over `previous-wasm` (forwards `--max-growth-pct`) |
 
+## Outputs
+
+The Action writes step outputs via `$GITHUB_OUTPUT` and a markdown table to `$GITHUB_STEP_SUMMARY` for every command.
+
+### `release-assurance` outputs
+
+| Output | Type | Meaning |
+|--------|------|---------|
+| `release_status` | `PASS` \| `REVIEW` \| `FAIL` | Aggregate verdict from the report's `.release_status` field. Written even when the step fails so an `if: failure()` consumer can read it. |
+
+### `audit` outputs
+
+| Output | Type | Meaning |
+|--------|------|---------|
+| `critical` | integer (string) | Count of critical-severity findings from `.summary.critical`. |
+| `warning` | integer (string) | Count of warning-severity findings from `.summary.warning`. |
+| `info` | integer (string) | Count of info-severity findings from `.summary.info`. |
+
+All three are written before the gate runs, so they are available to `if: failure()` steps.
+
+### `upgrade-safety` outputs
+
+| Output | Type | Meaning |
+|--------|------|---------|
+| `compatible` | `true` \| `false` | Upgrade-safety verdict from `.compatible`. Written before the gate so a failing step's output is still readable. |
+
+### Reading outputs in a later step
+
+```yaml
+- name: Check upgrade compatibility
+  id: compat
+  uses: SaboLabs/soroban-devkit/.github/actions/sdkt@main
+  with:
+    command: upgrade-safety
+    old-wasm: builds/current.wasm
+    new-wasm: builds/candidate.wasm
+
+- name: Post verdict as a comment
+  if: always()
+  run: echo "compatible=${{ steps.compat.outputs.compatible }}"
+```
+
+```yaml
+- name: Release assurance
+  id: ra
+  uses: SaboLabs/soroban-devkit/.github/actions/sdkt@main
+  with:
+    command: release-assurance
+    wasm: builds/candidate.wasm
+
+- name: Gate downstream job
+  if: always()
+  run: echo "release_status=${{ steps.ra.outputs.release_status }}"
+```
+
 **Threshold semantics:** only findings at or above `severity-threshold` fail
 the build. The default `critical` means `MOVE-001` (Warning) never breaks CI.
 The Action forwards the input as the CLI's own flag —
@@ -211,6 +266,20 @@ pass, `health-threshold` gating for `healthy` and `at_risk` contracts, invalid
 threshold rejection, `--wasm` hash-mismatch failure, and nonexistent contract
 failure).
 
+The `assert-outputs` job validates the `outputs:` section end-to-end: it runs
+each command mode against the same committed fixtures, then asserts in a
+**separate later step** (using `${{ steps.<id>.outputs.<name> }}`) that:
+
+- `steps.ra_out.outputs.release_status` equals `REVIEW` after a no-baseline
+  release-assurance run,
+- `steps.audit_out.outputs.critical`, `.warning`, and `.info` all equal `0`
+  after a clean audit run,
+- `steps.us_out.outputs.compatible` equals `true` after an identical-WASM
+  upgrade-safety run, and
+- `steps.ra_fail_out.outputs.release_status` equals `FAIL` even after a
+  gate-failing release-assurance run (`continue-on-error: true` lets the
+  assertion step run despite the gate having failed).
+
 ## Notes
 
 - The Action installs `sdkt` from a pinned git tag via
@@ -227,3 +296,9 @@ failure).
   `jq`; the provisioning step is skipped entirely when `command` is `audit`.
   `sdkt audit` is gated by the CLI's exit code through `--fail-on`, so the
   audit path does not run `jq` at all.
+- **Outputs are always written before the gate exits**, so a step with
+  `if: failure()` or `if: always()` can still read them (e.g. to post the
+  verdict as a PR comment or gate a downstream notification job).
+- **Step summaries** appear in the Checks tab of every run: a one-line verdict
+  plus a table of section statuses / finding counts built from the same parsed
+  JSON — no extra CLI flags or tools required.

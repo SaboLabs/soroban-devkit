@@ -407,3 +407,116 @@ jobs:
             exit 1
           fi
           echo "OK: nonexistent contract ID failed cleanly with CLI not-found diagnostic and no jq parse error."
+
+  assert-outputs:
+    # Verifies that the Action's outputs: section works end-to-end: runs each
+    # command mode against the committed fixtures, then asserts that the
+    # expected output value is non-empty and correct in a later step.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      # ---- release-assurance: REVIEW (no on-chain sections) ----
+      # us_new.wasm with no previous-wasm leaves upgrade/verify/health SKIPPED
+      # → aggregate release_status = REVIEW.  Exit 0 so the step succeeds and
+      # the following assertion can read the output.
+      - name: release-assurance REVIEW run (output under test)
+        id: ra_out
+        uses: ./.github/actions/sdkt
+        with:
+          command: release-assurance
+          wasm: crates/sdkt-cli/tests/fixtures/us_new.wasm
+
+      - name: Assert release_status output is readable and equals REVIEW
+        shell: bash
+        run: |
+          VALUE="${{ steps.ra_out.outputs.release_status }}"
+          if [ -z "$VALUE" ]; then
+            echo "::error::steps.ra_out.outputs.release_status is empty — output was not written"
+            exit 1
+          fi
+          if [ "$VALUE" != "REVIEW" ]; then
+            echo "::error::expected release_status=REVIEW, got '$VALUE'"
+            exit 1
+          fi
+          echo "OK: steps.ra_out.outputs.release_status = $VALUE"
+
+      # ---- audit: clean contract (outputs under test) ----
+      # audit_clean.rs has no findings; all three counts must be 0.
+      - name: audit clean run (outputs under test)
+        id: audit_out
+        uses: ./.github/actions/sdkt
+        with:
+          command: audit
+          target: crates/sdkt-cli/tests/fixtures/audit_clean.rs
+
+      - name: Assert audit count outputs are readable and equal zero
+        shell: bash
+        run: |
+          CRITICAL="${{ steps.audit_out.outputs.critical }}"
+          WARNING="${{ steps.audit_out.outputs.warning }}"
+          INFO="${{ steps.audit_out.outputs.info }}"
+          FAIL=0
+          for VAR in CRITICAL WARNING INFO; do
+            VAL="${!VAR}"
+            if [ -z "$VAL" ]; then
+              echo "::error::steps.audit_out.outputs.${VAR,,} is empty — output was not written"
+              FAIL=1
+            elif [ "$VAL" != "0" ]; then
+              echo "::error::expected ${VAR,,}=0 on a clean contract, got '$VAL'"
+              FAIL=1
+            fi
+          done
+          [ "$FAIL" -eq 0 ] || exit 1
+          echo "OK: critical=$CRITICAL warning=$WARNING info=$INFO"
+
+      # ---- upgrade-safety: compatible (identical WASMs) ----
+      # us_old.wasm vs us_old.wasm is identical → compatible=true.
+      - name: upgrade-safety compatible run (output under test)
+        id: us_out
+        uses: ./.github/actions/sdkt
+        with:
+          command: upgrade-safety
+          sdkt-version: v2.7.0
+          old-wasm: crates/sdkt-cli/tests/fixtures/us_old.wasm
+          new-wasm: crates/sdkt-cli/tests/fixtures/us_old.wasm
+
+      - name: Assert compatible output is readable and equals true
+        shell: bash
+        run: |
+          VALUE="${{ steps.us_out.outputs.compatible }}"
+          if [ -z "$VALUE" ]; then
+            echo "::error::steps.us_out.outputs.compatible is empty — output was not written"
+            exit 1
+          fi
+          if [ "$VALUE" != "true" ]; then
+            echo "::error::expected compatible=true for identical WASMs, got '$VALUE'"
+            exit 1
+          fi
+          echo "OK: steps.us_out.outputs.compatible = $VALUE"
+
+      # ---- release-assurance FAIL: outputs written even on gate failure ----
+      # us_new.wasm vs us_old.wasm is a breaking upgrade → release_status=FAIL.
+      # continue-on-error so the assertion step runs despite the gate failing.
+      - name: release-assurance FAIL run (output written on failure under test)
+        id: ra_fail_out
+        continue-on-error: true
+        uses: ./.github/actions/sdkt
+        with:
+          command: release-assurance
+          wasm: crates/sdkt-cli/tests/fixtures/us_new.wasm
+          previous-wasm: crates/sdkt-cli/tests/fixtures/us_old.wasm
+
+      - name: Assert release_status output is FAIL even when step failed
+        shell: bash
+        run: |
+          VALUE="${{ steps.ra_fail_out.outputs.release_status }}"
+          if [ -z "$VALUE" ]; then
+            echo "::error::steps.ra_fail_out.outputs.release_status is empty — output must be written even on gate failure"
+            exit 1
+          fi
+          if [ "$VALUE" != "FAIL" ]; then
+            echo "::error::expected release_status=FAIL on a breaking baseline, got '$VALUE'"
+            exit 1
+          fi
+          echo "OK: release_status output correctly set to FAIL even when the step failed"
