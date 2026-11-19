@@ -10,6 +10,7 @@
 
 use assert_cmd::Command;
 use sdkt_core::registry::{capabilities, Safety};
+use std::collections::HashSet;
 
 /// `sdkt <cmd..> --help` stdout, or `None` when the command does not exist
 /// (unknown subcommand → clap usage error).
@@ -85,6 +86,11 @@ fn declared_flags_exist_in_the_real_cli() {
 
 #[test]
 fn json_format_claims_match_the_real_cli() {
+    // `--format` is not always an output selector: `package pack` uses it to
+    // choose the artifact encoding (`tar.zst` / `dir`), so it accepts the flag
+    // but produces no JSON document. Pinned here so any *other* command with
+    // this combination still fails the test.
+    const NON_OUTPUT_FORMAT_FLAGS: &[&str] = &["package.pack"];
     let mut mismatches = Vec::new();
     for c in capabilities() {
         // Skip commands whose help needs a value for the leaf (none here: all
@@ -101,7 +107,7 @@ fn json_format_claims_match_the_real_cli() {
                 c.argv()
             ));
         }
-        if !c.formats.json && accepts_format {
+        if !c.formats.json && accepts_format && !NON_OUTPUT_FORMAT_FLAGS.contains(&c.id) {
             mismatches.push(format!(
                 "{}: registry omits JSON, but `sdkt {} --help` accepts --format",
                 c.id,
@@ -287,6 +293,82 @@ fn updated_tx_entries_resolve_against_real_cli() {
             String::from_utf8_lossy(&out.stderr)
         );
     }
+}
+
+/// Families whose subcommand surface the registry is expected to describe
+/// exhaustively. A new `sdkt <family> <sub>` without a registry entry fails
+/// [`every_cli_subcommand_in_guarded_families_is_registered`]; if a command is
+/// deliberately unregistered it must be added to that test with a reason.
+const GUARDED_FAMILIES: &[&str] = &[
+    "plugin",
+    "storage",
+    "tx",
+    "wasm",
+    "lock",
+    "package",
+    "identity",
+];
+
+/// Subcommand names listed in `sdkt <family> --help`'s `Commands:` block.
+fn subcommands_in_help(family: &str) -> Vec<String> {
+    let help =
+        help_for(&[family]).unwrap_or_else(|| panic!("`sdkt {family} --help` failed"));
+    let mut names = Vec::new();
+    let mut in_commands = false;
+    for line in help.lines() {
+        if line.trim() == "Commands:" {
+            in_commands = true;
+            continue;
+        }
+        if in_commands {
+            if line.trim().is_empty() {
+                break;
+            }
+            if let Some(first) = line.split_whitespace().next() {
+                let name = first.trim_end_matches(',');
+                // clap's implicit help subcommand is not a capability.
+                if name != "help" {
+                    names.push(name.to_string());
+                }
+            }
+        }
+    }
+    names
+}
+
+#[test]
+fn every_cli_subcommand_in_guarded_families_is_registered() {
+    // Reverse of `every_registered_command_path_exists`: the registry must not
+    // silently omit a real subcommand. Group commands (e.g. `wasm cache`) are
+    // matched by their first two path elements, which is exactly the level the
+    // families in GUARDED_FAMILIES expose in `--help`.
+    let registered: HashSet<String> = capabilities()
+        .iter()
+        .filter(|c| c.command.len() >= 2)
+        .map(|c| format!("{} {}", c.command[0], c.command[1]))
+        .collect();
+
+    let mut missing = Vec::new();
+    for family in GUARDED_FAMILIES {
+        let subcommands = subcommands_in_help(family);
+        assert!(
+            !subcommands.is_empty(),
+            "parsed no subcommands from `sdkt {family} --help`; the help parser is stale"
+        );
+        for sub in subcommands {
+            let path = format!("{family} {sub}");
+            if !registered.contains(&path) {
+                missing.push(path);
+            }
+        }
+    }
+
+    assert!(
+        missing.is_empty(),
+        "CLI subcommands with no registry capability ({}):\n{}",
+        missing.len(),
+        missing.join("\n")
+    );
 }
 
 #[test]

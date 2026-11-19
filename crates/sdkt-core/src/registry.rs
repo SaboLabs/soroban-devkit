@@ -270,6 +270,16 @@ const CAPABILITIES: [Capability; CAP_COUNT] = [
         evidence: Evidence::VerifiedTestnet,
         ..Capability::BASE
     },
+    Capability {
+        id: "wasm.cache",
+        command: &["wasm", "cache"],
+        summary: "Local WASM cache management: stats (`info`), per-hash removal (`remove`) and per-network clear (`clear`).",
+        formats: PRETTY,
+        safety: Safety::LocalWrite,
+        evidence: Evidence::Unverified,
+        notes: Some("Subcommand group, not a leaf: `cache --help` lists only its children and no flags, so this entry claims pretty output only. The leaves accept --format json and --network; `remove <hash>` and `clear` delete cached artifacts."),
+        ..Capability::BASE
+    },
     // ---- Diff / upgrade safety -------------------------------------------
     Capability {
         id: "diff",
@@ -420,6 +430,52 @@ const CAPABILITIES: [Capability; CAP_COUNT] = [
         ..Capability::BASE
     },
     Capability {
+        id: "storage.check",
+        command: &["storage", "check"],
+        summary: "Inspect storage TTL/expiry for a contract's instance entry plus any supplied ledger keys.",
+        required_args: &["<CONTRACT_ID>"],
+        optional_args: &["--key-xdr", "--abi", "--abi-contract", "--rpc-url", "--network-passphrase", "--network-profile", "--format"],
+        formats: PRETTY_JSON,
+        network: NetworkRequirement::Both,
+        evidence: Evidence::Unverified,
+        notes: Some("Not executed by this audit; read-only getLedgerEntries path. Without --key-xdr only the contract instance entry is checked."),
+        ..Capability::BASE
+    },
+    Capability {
+        id: "storage.estimate",
+        command: &["storage", "estimate"],
+        summary: "Offline storage-rent baseline from a WASM ContractSpec: per-class entry counts and cost in stroops/XLM.",
+        required_args: &["<WASM>"],
+        optional_args: &["--ledgers", "--format"],
+        formats: PRETTY_JSON,
+        evidence: Evidence::Unverified,
+        notes: Some("Not executed by this audit; fully offline. The global --abi/--abi-contract flags appear in --help but are rejected for this command. Only statically declared entries are estimated; runtime-created entries cannot be predicted."),
+        ..Capability::BASE
+    },
+    Capability {
+        id: "storage.read",
+        command: &["storage", "read"],
+        summary: "Read a single contract storage entry by raw LedgerKey, typed map key, or the instance entry.",
+        required_args: &["--contract <C...>"],
+        optional_args: &["--key-xdr", "--map-key", "--key-arg", "--instance", "--durability", "--abi", "--abi-contract", "--rpc-url", "--network-passphrase", "--network-profile", "--format"],
+        formats: PRETTY_JSON,
+        network: NetworkRequirement::Both,
+        evidence: Evidence::Unverified,
+        notes: Some("Not executed by this audit; single getLedgerEntries read, never writes. --key-xdr is mutually exclusive with the typed key options."),
+        ..Capability::BASE
+    },
+    Capability {
+        id: "storage.storage_diff",
+        command: &["storage", "storage-diff"],
+        summary: "Diff two `storage analyze --format json` snapshots and optionally derive a TTL extension plan.",
+        required_args: &["--old <FILE>", "--new <FILE>"],
+        optional_args: &["--extend-plan", "--abi", "--abi-contract", "--rpc-url", "--network-passphrase", "--network-profile", "--format"],
+        formats: PRETTY_JSON,
+        evidence: Evidence::Unverified,
+        notes: Some("Not executed by this audit; offline unless --abi-contract is used. --extend-plan only prints a plan — nothing is signed or submitted, and all non-error cases exit 0."),
+        ..Capability::BASE
+    },
+    Capability {
         id: "events",
         command: &["events"],
         summary: "Fetch contract events with ledger range, server-side topic filter, optional ABI decoding.",
@@ -545,6 +601,18 @@ const CAPABILITIES: [Capability; CAP_COUNT] = [
     },
     // ---- Keystore ------------------------------------------------------------
     Capability {
+        id: "identity.show",
+        command: &["identity", "show"],
+        summary: "Show one local identity's public metadata (name + public key); never secret material.",
+        required_args: &["<NAME>"],
+        optional_args: &["--format"],
+        formats: PRETTY_JSON,
+        safety: Safety::ReadOnly,
+        evidence: Evidence::Unverified,
+        notes: Some("Not executed by this audit; local keystore read. An unknown name exits 1. Only public fields are printed, including with --format json."),
+        ..Capability::BASE
+    },
+    Capability {
         id: "identity.list",
         command: &["identity", "list"],
         summary: "Local ED25519 identities (names + public keys; no secret material).",
@@ -643,6 +711,28 @@ const CAPABILITIES: [Capability; CAP_COUNT] = [
         ..Capability::BASE
     },
     Capability {
+        id: "package.fetch",
+        command: &["package", "fetch"],
+        summary: "Fetch declared git dependencies into the local cache and record them in sdkt.lock; local path deps pass through.",
+        optional_args: &["--force", "--format"],
+        formats: PRETTY_JSON,
+        safety: Safety::LocalWrite,
+        network: NetworkRequirement::Both,
+        evidence: Evidence::Unverified,
+        notes: Some("Not executed by this audit; writes the workspace .sdkt-cache and updates sdkt.lock. A malformed manifest fails before any fetch. --force re-fetches existing checkouts."),
+        ..Capability::BASE
+    },
+    Capability {
+        id: "package.pack",
+        command: &["package", "pack"],
+        summary: "Bundle the manifest, lockfile and cached dependency checkouts into an offline portable artifact.",
+        optional_args: &["--out", "--format"],
+        safety: Safety::LocalWrite,
+        evidence: Evidence::Unverified,
+        notes: Some("Not executed by this audit; writes the artifact into --out. Here --format selects the artifact encoding (`tar.zst` default or `dir`), not output formatting, so there is no JSON document; unknown formats exit 1."),
+        ..Capability::BASE
+    },
+    Capability {
         id: "package.update",
         command: &["package", "update"],
         summary: "Resolve/update git dependencies against semver constraints.",
@@ -673,6 +763,16 @@ const CAPABILITIES: [Capability; CAP_COUNT] = [
         formats: PRETTY_JSON,
         evidence: Evidence::VerifiedLocal,
         notes: Some("A missing/invalid lock exits 1 with an error line."),
+        ..Capability::BASE
+    },
+    Capability {
+        id: "lock.show",
+        command: &["lock", "show"],
+        summary: "Print the contents of sdkt.lock (TOML by default, structured JSON with --format json).",
+        optional_args: &["--format"],
+        formats: PRETTY_JSON,
+        evidence: Evidence::Unverified,
+        notes: Some("Not executed by this audit; offline read. A missing or unreadable lock exits 1."),
         ..Capability::BASE
     },
     Capability {
@@ -721,6 +821,67 @@ const CAPABILITIES: [Capability; CAP_COUNT] = [
         ..Capability::BASE
     },
     Capability {
+        id: "plugin.init",
+        command: &["plugin", "init"],
+        summary: "Scaffold a new sdkt-audit plugin rule crate; the rule id derives from the project name.",
+        required_args: &["<name>"],
+        optional_args: &["--force", "--format"],
+        formats: PRETTY_JSON,
+        safety: Safety::LocalWrite,
+        evidence: Evidence::Unverified,
+        notes: Some("Not executed by this audit; creates a local project directory. --force overwrites an existing directory."),
+        ..Capability::BASE
+    },
+    Capability {
+        id: "plugin.show",
+        command: &["plugin", "show"],
+        summary: "Show metadata for one installed plugin (id, version, kind, artifact, ABI, description).",
+        required_args: &["<ID>"],
+        optional_args: &["--format"],
+        formats: PRETTY_JSON,
+        evidence: Evidence::Unverified,
+        notes: Some("Not executed by this audit; local store read. An id that is not installed exits 1."),
+        ..Capability::BASE
+    },
+    Capability {
+        id: "plugin.remove",
+        command: &["plugin", "remove"],
+        summary: "Remove an installed plugin from the local store (idempotent).",
+        required_args: &["<ID>"],
+        optional_args: &["--format"],
+        formats: PRETTY_JSON,
+        safety: Safety::LocalWrite,
+        evidence: Evidence::Unverified,
+        notes: Some("Not executed by this audit; deletes installed plugin artifacts from the local store. Idempotent: removing an absent id succeeds."),
+        requires_confirmation: true,
+        ..Capability::BASE
+    },
+    Capability {
+        id: "plugin.update",
+        command: &["plugin", "update"],
+        summary: "Update an installed plugin from a new local artifact.",
+        required_args: &["<id>", "<source>"],
+        optional_args: &["--format"],
+        formats: PRETTY_JSON,
+        safety: Safety::LocalWrite,
+        evidence: Evidence::Unverified,
+        notes: Some("Not executed by this audit; replaces the installed artifact — supply-chain-sensitive, so require confirmation. Local-only; never downloads."),
+        requires_confirmation: true,
+        ..Capability::BASE
+    },
+    Capability {
+        id: "plugin.pack",
+        command: &["plugin", "pack"],
+        summary: "Pack a plugin directory into a `.sdktplugin` bundle, optionally signed with an Ed25519 key.",
+        required_args: &["<source>"],
+        optional_args: &["--output", "--secret-key", "--format"],
+        formats: PRETTY_JSON,
+        safety: Safety::LocalWrite,
+        evidence: Evidence::Unverified,
+        notes: Some("Not executed by this audit; writes a local bundle. --secret-key reads raw 32-byte key material and must never be exposed to an agent."),
+        ..Capability::BASE
+    },
+    Capability {
         id: "plugin.install",
         command: &["plugin", "install"],
         summary: "Install a plugin artifact or bundle into the local store.",
@@ -743,6 +904,18 @@ const CAPABILITIES: [Capability; CAP_COUNT] = [
         network: NetworkRequirement::Both,
         evidence: Evidence::VerifiedLocal,
         notes: Some("--base-fees path is offline; --rpc fetches network statistics (read-only)."),
+        ..Capability::BASE
+    },
+    Capability {
+        id: "tx.inspect",
+        command: &["tx", "inspect"],
+        summary: "Inspect a submitted transaction by hash: status, ledger, fee charged, operation count.",
+        required_args: &["<HASH>"],
+        optional_args: &["--rpc-url", "--network-passphrase", "--network-profile", "--format"],
+        formats: PRETTY_JSON,
+        network: NetworkRequirement::Both,
+        evidence: Evidence::Unverified,
+        notes: Some("Not executed by this audit; read-only getTransaction against the configured RPC. An unknown hash or RPC error exits 1."),
         ..Capability::BASE
     },
     Capability {
@@ -934,7 +1107,7 @@ const CAPABILITIES: [Capability; CAP_COUNT] = [
 
 /// Number of described capabilities; kept as a const so the array length is
 /// checked by the compiler against every entry.
-const CAP_COUNT: usize = 54;
+const CAP_COUNT: usize = 69;
 
 #[cfg(test)]
 mod tests {
@@ -1093,8 +1266,26 @@ mod tests {
             "identity.fund",
             "identity.generate",
             "identity.list",
+            "identity.show",
+            "plugin.init",
+            "plugin.pack",
+            "plugin.remove",
+            "plugin.show",
+            "plugin.update",
+            "storage.check",
+            "storage.estimate",
+            "storage.read",
+            "storage.storage_diff",
+            "tx.inspect",
+            "lock.show",
+            "package.fetch",
         ];
-        const NO_JSON: &[&str] = &["generate.client", "package.publish"];
+        const NO_JSON: &[&str] = &[
+            "generate.client",
+            "package.publish",
+            "package.pack",
+            "wasm.cache",
+        ];
         for id in JSON {
             let c = find(id).unwrap_or_else(|| panic!("missing {id}"));
             assert!(
