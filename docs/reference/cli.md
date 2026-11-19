@@ -9,7 +9,9 @@ sdkt
 ├── decode <xdr>
 │   ├── --type <ScVal|TransactionEnvelope|TransactionResult|ContractEvent>
 │   ├── --format <json|pretty>
-│   └── --file <path>
+│   ├── --file <path>
+│   ├── --abi <wasm>                  (ABI-aware decode from a local WASM)
+│   └── --abi-contract <id>           (ABI-aware decode using deployed contract's on-chain WASM)
 │
 ├── encode <TYPE:VALUE>...
 │   │   (fully offline: encode typed values to base64 XDR)
