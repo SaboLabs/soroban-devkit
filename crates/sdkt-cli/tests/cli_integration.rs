@@ -393,7 +393,81 @@ fn lock_verify_without_lock_is_non_fatal() {
     let mut verify = Command::cargo_bin("sdkt").expect("sdkt binary built");
     verify.current_dir(&tmp).arg("lock").arg("verify");
     // Must exit 0 (backward compatible): a missing lock is acceptable.
-    verify.assert().success();
+    let assert = verify.assert().success();
+    let out = String::from_utf8_lossy(&assert.get_output().stdout);
+    assert!(
+        out.contains("No sdkt.lock found"),
+        "absent lock keeps its current message: {}",
+        out
+    );
+
+    let _ = std::fs::remove_dir_all(&tmp);
+}
+
+#[test]
+fn lock_verify_corrupt_lock_reports_corruption() {
+    let tmp = std::env::temp_dir().join(format!(
+        "sdkt-it-lock-corrupt-{}",
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos()
+    ));
+    let _ = std::fs::remove_dir_all(&tmp);
+    make_lock_fixture(&tmp, b"token-bytes", b"router-bytes");
+    // Present, but unparseable: the verification entry point for CI.
+    std::fs::write(tmp.join("sdkt.lock"), "CORRUPT {{").unwrap();
+
+    let mut verify = Command::cargo_bin("sdkt").expect("sdkt binary built");
+    verify.current_dir(&tmp).arg("lock").arg("verify");
+    // Documented exit code: 1 for a present-but-corrupt lock.
+    let assert = verify.assert().code(1);
+    let out = String::from_utf8_lossy(&assert.get_output().stdout);
+    assert!(
+        out.contains("Corrupt sdkt.lock"),
+        "corrupt lock must be named as corrupt: {}",
+        out
+    );
+    assert!(
+        out.contains("failed to parse lock file sdkt.lock"),
+        "corrupt message must match `lock show`: {}",
+        out
+    );
+    // Never the absent wording for a file that exists.
+    assert!(
+        !out.contains("No sdkt.lock found") && !out.contains("no sdkt.lock present"),
+        "corrupt lock must not be reported as absent: {}",
+        out
+    );
+
+    // JSON stays parseable and gains the corruption signal additively.
+    let mut json = Command::cargo_bin("sdkt").expect("sdkt binary built");
+    json.current_dir(&tmp)
+        .arg("lock")
+        .arg("verify")
+        .arg("--format")
+        .arg("json");
+    let assert = json.assert().code(1);
+    let doc: serde_json::Value = serde_json::from_slice(&assert.get_output().stdout)
+        .expect("lock verify --format json must stay parseable");
+    assert_eq!(doc["present"], serde_json::json!(false));
+    assert_eq!(doc["consistent"], serde_json::json!(false));
+    assert!(
+        doc["error"]
+            .as_str()
+            .is_some_and(|e| e.contains("failed to parse lock file sdkt.lock")),
+        "top-level error must carry the parse failure: {}",
+        doc["error"]
+    );
+    assert!(
+        !doc["dependencies"]["error"].is_null(),
+        "dependency section must carry the parse failure too"
+    );
+    assert_eq!(
+        doc["dependencies"]["mismatches"],
+        serde_json::json!([]),
+        "a corrupt lock is not a dependency mismatch"
+    );
 
     let _ = std::fs::remove_dir_all(&tmp);
 }

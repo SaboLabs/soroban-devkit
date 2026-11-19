@@ -11057,7 +11057,11 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
                 let dep_report = sdkt_core::lock::verify_dependencies(base, &config);
                 if fmt != OutputFormat::Json {
                     // --- Contract artifact verification (existing behavior) ---
-                    if report.present {
+                    if let Some(error) = &report.error {
+                        // Present but unparseable is its own condition, never the
+                        // absent case. The wording matches `sdkt lock show`.
+                        println!("⚠ Corrupt sdkt.lock: {}", error);
+                    } else if report.present {
                         if report.consistent {
                             println!("✓ sdkt.lock is consistent with current artifacts");
                         } else {
@@ -11090,6 +11094,9 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
                                 );
                             }
                         }
+                    } else if dep_report.error.is_some() {
+                        // Already reported above by the contract section; a
+                        // corrupt lock is not an "absent" dependency state.
                     } else if !config.dependencies.is_empty() {
                         println!("⚠ No sdkt.lock present; package dependencies unverified");
                         for m in &dep_report.mismatches {
@@ -11107,10 +11114,12 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
                             "consistent": report.consistent,
                             "mismatched": report.mismatched,
                             "missing_in_lock": report.missing_in_lock,
+                            "error": report.error,
                             "dependencies": {
                                 "present": dep_report.present,
                                 "consistent": dep_report.consistent,
                                 "checked": dep_report.checked,
+                                "error": dep_report.error,
                                 "mismatches": dep_report.mismatches.iter().map(|m| serde_json::json!({
                                     "name": m.name,
                                     "kind": format!("{:?}", m.kind),
@@ -11120,6 +11129,11 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
                         }))
                         .unwrap()
                     );
+                }
+                if report.error.is_some() || dep_report.error.is_some() {
+                    // A corrupt lock is a broken build input: a verification
+                    // command must not report it as a clean result (exit 1).
+                    std::process::exit(1);
                 }
             }
             LockCommand::Show { format } => {

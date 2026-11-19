@@ -273,8 +273,10 @@ sdkt
 │   ├── generate              Write `sdkt.lock` from current build artifacts (run `sdkt build` first)
 │   ├── verify                Verify `sdkt.lock` against on-disk contract artifacts AND package
 │   │                         dependencies (lock matches manifest, git commits, path existence).
-│   │                         Advisory and non-fatal: prints `✓ lock file verified` /
-│   │                         `✓ package dependencies verified` or lists every drift.
+│   │                         Advisory for drift: prints `✓ lock file verified` /
+│   │                         `✓ package dependencies verified` or lists every drift (exit 0).
+│   │                         An absent lock is advisory too (exit 0). A present-but-corrupt
+│   │                         lock exits 1 and reports the parse error.
 │   └── show                  Print `sdkt.lock` contents
 
 ├── package                   Validate local package manifests
@@ -294,6 +296,34 @@ sdkt
 │   └── publish               Validate publish readiness (`--dry-run` only, read-only);
 │                             detects missing cache, lock drift, integrity mismatch.
 
+### Verifying the lock
+
+`sdkt lock verify` answers one question — is `sdkt.lock` consistent with what is on
+disk? — and its outcome is consumed as a verdict, so the three states are kept
+distinct:
+
+- **Consistent** — every locked artifact hash matches, every manifest contract and
+  dependency is accounted for, and dependency paths/caches/commits agree. Prints
+  `✓ sdkt.lock is consistent with current artifacts` and `✓ package dependencies
+  verified`; exits **0**.
+- **Absent** — no `sdkt.lock` at all. Advisory (matching the lock's documented
+  non-fatal role): prints `⚠ No sdkt.lock found; run `sdkt build` to generate one`
+  and, when dependencies are declared, `⚠ No sdkt.lock present; package
+  dependencies unverified`; exits **0**.
+- **Corrupt** — `sdkt.lock` exists but cannot be parsed. This is a broken build
+  input, never a clean bill of health: prints `⚠ Corrupt sdkt.lock: failed to
+  parse lock file sdkt.lock: ...` (the same parse-error wording `sdkt lock show`
+  uses) and exits **1**.
+
+Drift within a valid lock stays advisory: mismatched artifact hashes, missing
+entries, and dependency drift are listed and the command exits 0.
+
+`--format json` emits `{ "present", "consistent", "mismatched",
+"missing_in_lock", "error", "dependencies": { "present", "consistent",
+"checked", "error", "mismatches" } }`. `error` is `null` for the absent and
+consistent cases and carries the parse failure (same wording as `lock show`)
+for a corrupt lock; `dependencies.checked` is `0` when the lock could not be
+parsed. The field is additive, so existing consumers of the JSON keep working.
 ### Event pagination (`sdkt events`)
 
 `soroban-rpc`'s `getEvents` caps every response and returns a top-level
