@@ -1,134 +1,149 @@
-use std::fs;
-use std::path::PathBuf;
 use std::process::Command;
+use std::path::PathBuf;
 
-fn sdkt() -> Command {
-    Command::new(env!("CARGO_BIN_EXE_sdkt"))
+/// Helper to build the path to the compiled `sdkt` binary for this test run.
+fn sdkt_bin() -> PathBuf {
+    // CARGO_BIN_EXE points at the binary under test for integration tests.
+    let bin = env::var("CARGO_BIN_EXEE").expect("CARGO_BIN_EXE not set; run via cargo test");
+    PathBuf::from(bin)
 }
 
-fn temp_path(name: &str) -> PathBuf {
-    let mut p = std::env::temp_dir();
-    let unique = format!(
-        "sdkt-fuzz-replay-test-{}-{}-{}",
-        std::process::id(),
-        name,
-        std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
-            .as_nanos()
-    );
-    p.push(unique);
-    p
-}
-
-fn write_temp(name: &str, contents: &[u8]) -> PathBuf {
-    let p = temp_path(name);
-    fs::write(&p, contents).expect("write temp file");
-    p
-}
-
-fn minimal_wasm() -> Vec<u8> {
-    // Empty valid WASM module.
-    vec![0x00, 0x61, 0x73, 0x6d, 0x01, 0x00, 0x00, 0x00]
-}
-
-fn run_replay(wasm: &PathBuf, artifact: &PathBuf) -> i32 {
-    let out = sdkt()
-        .arg("the fuzz")
-        .arg("replay")
-        .arg("--wasm")
-        .arg(wasm)
-        .arg(artifact)
+/// Run `sdkt fuzz replay` with the given arguments and return the exit code.
+fn replay_exit_code(args: &[&str]) -> i32 {
+    let output = Command::new(sdkt_bin())
+        .args(["fuzz", "replay"])
+        .args(args)
         .output()
-        .expect("run sdkt");
-    out.status.code().unwrap_or(-1)
+        .expect("failed to spawn sdkt");
+    output.status.code().expect("sdkt terminated by signal")
+}
+
+/// Write contents to a temporary file and return its path.
+fn write_temp(name: &str, contents: &str) -> PathBuf {
+    let dir = env::temp_dir();
+    let path = dir.join(format!("sdkt-fuzz-replay-{}-{}", std::process:id(), name));
+    std::fs::write(&path, contents).expect("failed to write temp file");
+    path
+}
+
+/// A minimal valid-shape artifact with an unsupported schema version.
+const BAD_SCHEMA: &str = r#"{
+    "schema_version": 999,
+    "reason_code": "RETURN_MISMATCH",
+    "wasm_hash": "00000000000000000000000000000000000000000000000000000000000000000",
+    "input": "",
+    "expected": "UnexpectedError",
+    "actual": "Finding(ReturnMismatch)"
+}
+##;
+
+/// A minimal artifact with an unknown reason_code.
+const BAD_REASON: &str = r##{
+    "schema_version": 1,
+    "reason_code": "BOGUS",
+    "wasm_hash": "000000000000000000000000000000000000000000000000000000000000000000",
+    "input": "",
+    "expected": "UnexpectedError",
+    "actual": "Finding(ReturnMismatch)"
+}
+##;
+
+/// A minimal artifact with a WASM hash that will not match any real WASM.
+const MISMATCH_HASH: &str = r##{
+    "schema_version": 1,
+    "reason_code": "RETURN_MISMATCH",
+    "wasm_hash": "000000000000000000000000000000000000000000000000000000000000000000",
+    "input": "",
+    "expected": "UnexpectedError",
+    "actual": "Finding(ReturnMismatch)"
+}
+##;
+
+/// A trivially valid WASM module (empty module) used to exercise the WASM hash
+/// mismatch path without requiring a real fixture.
+const EASY_WASM: &[u8; 8] = &[0x00, 0x61, 0x73, 0x6d, 0x01, 0x00, 0x00, 0x00];
+
+fn write_temp_wasm(name: &str) -> PathBuf {
+    let dir = env::temp_dir();
+    let path = dir.join(format!("sdkt-fuzz-replay-wasm-{}-{}", std::process:id(), name));
+    std::fs::write(&path, EASY_WASM).expect("failed to write temp wasm");
+    path
 }
 
 #[test]
-fn replay_missing_artifact_exits_1() {
-    let wasm = write_temp("wasm", &minimal_wasm());
-    let missing = temp_path("missing-artifact");
-    assert_eq(
-        run_replay(&wasm, &missing),
-        1,
-        "missing artifact should exit 1"
-    );
-    let _ = fs::remove_file(&wasm);
+fn missing_artifact_exits_1() {
+    let wasm = write_temp_wasm("missing");
+    let code = replay_exit_code(&
+        "--wasm",
+        wasm.to_str().unwrap(),
+        "/nonexistent-artifact.json",
+    ]);
+    assert_eq!(code, 1, "missing artifact must exit 1");
 }
 
 #[test]
-fn replay_malformed_artifact_exits_1() {
-    let wasm = write_temp("wasm", &minimal_wasm());
-    let bad = write_temp("bad-artifact", b{"{not json"});
-    assert_eq(
-        run_replay(&wasm, &bad),
-        1,
-        "malformed artifact should exit 1"
-    );
-    let _ = fs::remove_file(&wasm);
-    let _ = fs::remove_file(&bad);
+fn malformed_artifact_exits_1() {
+    let wasm = write_temp_wasm("malformed");
+    let artifact = write_temp("malformed.json", "{ not json");
+    let code = replay_exit_code(&[
+        "--wasm",
+        wasm.to_str().unwrap(),
+        artifact.to_str().unwrap(),
+    ]);
+    assert_eq!(code, 1, "malformed artifact must exit 1");
 }
 
 #[test]
-fn replay_unsupported_schema_exits_1() {
-    let wasm = write_temp("wasm", &minimal_wasm());
-    let bad = write_temp(
-        "bad-schema",
-        b{"{\"schema_version\":999}"},
-    );
-    assert_eq(
-        run_replay(&wasm, &bad),
-        1,
-        "unsupported schema should exit 1"
-    );
-    let _ = fs::remove_file(&wasm);
-    let _ = fs::remove_file(&bad);
+fn unsupported_schema_exits_1() {
+    let wasm = write_temp_wasm("schema");
+    let artifact = write_temp("schema.json", BAD_SCHEME);
+    let code = replay_exit_code(&[
+        "--wasm",
+        wasm.to_str().unwrap(),
+        artifact.to_str().unwrap(),
+    ]);
+    assert_eq!(code, 1, "unsupported schema must exit 1");
 }
 
 #[test]
-fn replay_unknown_reason_code_exits_1() {
-    let wasm = write_temp("wasm", &minimal_wasm());
-    let bad = write_temp(
-        "bad-reason",
-        b{'{"schema_version":1,"reason_code":"BOGUS"}'.to_string().as_bytes(),
-    );
-    assert_eq(
-        run_replay(&wasm, &bad),
-        1,
-        "unknown reason_code should exit 1"
-    );
-    let _ = fs::remove_file(&wasm);
-    let _ = fs::remove_file(&bad);
+fn unknown_reason_code_exits_1() {
+    let wasm = write_temp_wasm("reason");
+    let artifact = write_temp("reason.json", BAD_REASON);
+    let code = replay_exit_code(&[
+        "--wasm",
+        wasm.to_str().unwrap(),
+        artifact.to_str().unwrap(),
+    ]);
+    assert_eq!(code, 1, "unknown reason_code must exit 1");
 }
 
 #[test]
-fn replay_wasm_hash_mismatch_exits_1() {
-    let wasm = write_temp("wasm", &minimal_wasm());
-    // Artifact claiming a hash that cannot match the supplied WASM.
-    let bad = write_temp(
-        "hash-mismatch",
-        b{"{\"schema_version\":1,\"wasm_hash\":\"00000000000000000000000000000000000000000000000000000000000000000\"}"},
-    );
-    assert_eq(
-        run_replay(&wasm, &bad),
-        1,
-        "wasm hash mismatch should exit 1"
-    );
-    let _ = fs::remove_file(&wasm);
-    let _ = fs::remove_file(&bad);
+fn wasm_hash_mismatch_exits_1() {
+    let wasm = write_temp_wasm("hash");
+    let artifact = write_temp("hash.json", MISMATCH_HASH);
+    let code = replay_exit_code(&[
+        "--wasm",
+        wasm.to_str().unwrap(),
+        artifact.to_str().unwrap(),
+    ]);
+    assert_eq!(code, 1, "WASM hash mismatch must exit 1");
 }
 
 #[test]
-fn replay_unknown_flag_exits_2() {
-    let out = sdkt()
-        .arg("fuzz")
-        .arg("replay")
-        .arg("--this-flag-does-not-exist")
-        .output()
-        .expect("run sdkt");
-    assert_eq(
-        out.status.code().unwrap_or(-1),
-        2,
-        "unknown flag should exit 2"
-    );
+fn unknown_flag_exits_2() {
+    let wasm = write_temp_wasm("usage");
+    let code = replay_exit_code(&[
+        "--wasm",
+        wasm.to_str().unwrap(),
+        "--not-a-real-flag",
+        "/tmp/irrelevant.json",
+    ]);
+    assert_eq!(code, 2, "unknown flag must exit 2");
+}
+
+#[test]
+fn missing_required_argument_exits_2() {
+    // No positional artifact and no --wasm: clap should report usage error.
+    let code = replay_exit_code(&[]);
+    assert_eq!(code, 2, "missing required arguments must exit 2");
 }

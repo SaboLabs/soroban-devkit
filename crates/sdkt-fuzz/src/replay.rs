@@ -22,6 +22,8 @@
 //! No host internals, `testutils`, or `recording_mode` are used: replay goes
 //! through [`crate::Executor`], which owns the public execution path.
 
+use std::path::Path;
+
 use sha2::{Digest, Sha256};
 
 use crate::artifact::{FindingArtifact, SCHEMA_VERSION};
@@ -31,22 +33,6 @@ use crate::executor::Executor;
 use crate::observation::Observation;
 use crate::oracle::{Classification, Oracle, ReasonCode};
 use crate::sequence::execute_sequence_auth;
-
-/// Whether a [`ReplayError`] represents a command-line usage error.
-///
-/// The CLI-wide convention (`crates/sdkt-core/src/registry.rs`) reserves exit
-/// code `2` for usage errors and `1` for runtime/verdict failures. Every
-/// current [`ReplayError`] variant describes a well-formed invocation whose
-/// input or environment was bad (unreadable/malformed artifact, unsupported
-/// schema, unknown reason code, WASM mismatch, execution failure), so none of
-/// them is a usage error. This predicate exists so the mapping is explicit and
-/// stays correct if a genuine usage-error variant is ever added.
-impl ReplayError {
-    /// True only for errors caused by an invalid command-line invocation.
-    pub fn is_usage_error(&self) -> bool {
-        false
-    }
-}
 
 /// Replay could not be carried out — invalid input, never a finding.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
@@ -63,6 +49,21 @@ pub enum ReplayError {
     WasmHashMismatch { expected: String, actual: String },
     #[error("execution could not be performed: {0}")]
     Execution(String),
+}
+
+impl ReplayError {
+    /// True when this error is a genuine command-line usage error (the
+    /// invocation itself was malformed), as opposed to an input/runtime
+    /// failure (unreadable file, malformed artifact, unsupported schema,
+    /// unknown reason code, WASM mismatch, execution failure).
+    ///
+    /// The CLI maps usage errors to exit code `2` and input/runtime
+    /// failures to exit code `1`, per the documented CLI-wide convention.
+    /// Every variant currently produced by replay is an input/runtime
+    /// failure; none is a usage error.
+    pub fn is_usage_error(&self) -> bool {
+        false
+    }
 }
 
 /// Replay verdict for a well-formed artifact against a matching WASM.
@@ -135,6 +136,16 @@ pub fn parse_artifact(json: &[u8]) -> Result<FindingArtifact, ReplayError> {
     Ok(artifact)
 }
 
+/// Read and parse an artifact from a path, mapping I/O failures to
+/// [`ReplayError::Malformed`] so they are reported as input failures
+/// (exit `1`), not usage errors.
+pub fn parse_artifact_file(path: &Path) -> Result<FindingArtifact, ReplayError> {
+    let bytes = std::fs::read(path).map_err(|e| {
+        ReplayError::Malformed(format!("reading {}: {e}", path.display()))
+    })?;
+    parse_artifact(&bytes)
+}
+
 /// Verify that `wasm` is the artifact's WASM. Returns the hex digest on
 /// match. A mismatch is invalid input (never a finding, never a contract
 /// result).
@@ -147,6 +158,16 @@ pub fn verify_wasm(artifact: &FindingArtifact, wasm: &[u8]) -> Result<String, Re
         });
     }
     Ok(actual)
+}
+
+/// Read a WASM file from a path, mapping I/O failures to
+/// [`ReplayError::WasmRead`] so they are reported as input failures
+/// (exit `1`), not usage errors.
+pub fn read_wasm_file(path: &Path) -> Result<Vec<u8>, ReplayError> {
+    std::fs::read(path).map_err(|e| ReplayError::WasmRead {
+        path: path.display().to_string(),
+        message: e.to_string(),
+    })
 }
 
 /// Replay a finding artifact against its WASM.

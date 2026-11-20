@@ -133,6 +133,12 @@ sdkt
 │   ├── sign                  [--input <xdr|file>] [--output <file>] [--identity <name>] [--network <testnet|mainnet|futurenet|custom:<p>>] [--format] (offline ED25519 signing)
 │   ├── submit <xdr>          [--wait] [--timeout <s>] [--interval <s>] [--format] (RPC)
 │   ├── status <hash>         [--wait] [--timeout <s>] [--interval <s>] [--format] [--abi <wasm>] [--abi-contract <id>] (RPC; read-only lookup, exit 0 SUCCESS/PENDING, 1 FAILED, 2 NOT_FOUND/usage error)
+│   │
+│   │   Exit codes follow the CLI-wide convention: 0 success, 1 runtime/verdict
+│   │   failure, 2 usage error. `fuzz replay` reports input/runtime failures
+│   │   (unreadable file, malformed artifact, unsupported schema_version, unknown
+│   │   reason_code, WASM hash mismatch) as exit 1, reserving exit 2 for genuine
+│   │   command-line usage errors. Verdicts: Reproduced → 0, Mismatch → 1.
 │   └── build                 [--source --sequence --contract --function --fee* --arg* --output --memo-text <text> --memo-id <id>]
 │                             Offline by default: the envelope carries only the
 │                             base inclusion fee (100 stroops) and prints a
@@ -651,7 +657,7 @@ verification fails after an otherwise successful deploy.
 │   │
 │   └── replay <artifact>     Replay a finding artifact to verify reproduction
 │       ├── --wasm <WASM>                 Path to the campaign WASM
-│       └── (exit code: 0 = REPRODUCED, 1 = MISMATCH or input/runtime failure, 2 = usage error)
+│       └── (exit code: 0 = REPRODUCED, 1 = MISMATCH, 2 = usage error)
 │
 ├── generate                  Generate typed clients and other artifacts
 │   └── client <wasm>         Generate typed Rust client from ContractSpec
@@ -1168,18 +1174,11 @@ sdkt fuzz replay ./sdkt-fuzz-artifacts/contract-increment-case0042.json \
 |-----------|---------|---------|
 | `0` | `REPRODUCED` | The artifact reproduced: same input, same result, finding verified |
 | `1` | `MISMATCH` | The artifact did not reproduce: result differs from expected |
-| `1` | Input/runtime failure | The artifact or WASM could not be used: unreadable file, malformed artifact, unsupported `schema_version`, unknown `reason_code`, or WASM hash mismatch |
-| `2` | Usage error | The command line itself was invalid (e.g. an unknown flag) |
+| `2` | Usage error | Invalid artifact or WASM path |
 
 **Determinism:**
 
 If `--replay` was used during the campaign, every artifact was automatically replayed to verify determinism. A `REPRODUCED` verdict confirms that the finding can be independently re-executed with the exact same inputs and produce the same result.
-
-Input/runtime failures are reported as exit `1`, matching the CLI-wide convention
-(`0` success, `1` runtime/verdict failure, `2` usage error) and the sibling
-commands: a missing artifact, a malformed artifact, an unsupported schema, an
-unknown reason code, or a WASM hash mismatch is a failed check, not a
-mis-invocation. Only a genuine command-line usage error exits `2`.
 
 ### Compare
 
