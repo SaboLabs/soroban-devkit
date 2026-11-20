@@ -136,6 +136,7 @@ mod tests {
             artifacts_available: false,
             replay: BTreeMap::new(),
             deterministic: true,
+            resource_limit_is_finding: false,
         }
     }
 

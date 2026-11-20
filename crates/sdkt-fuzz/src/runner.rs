@@ -35,6 +35,14 @@ pub struct FuzzRunOptions {
     pub expect_success: Vec<String>,
     /// `--expect-error FN:TYPE:CODE` declarations.
     pub expect_error: Vec<String>,
+    /// Opt-in rule: budget-class host errors under a declared `Success`
+    /// classify as RESOURCE_LIMIT findings instead of UNEXPECTED_ERROR.
+    /// Default off — resource exhaustion is an outcome, not a verdict.
+    pub resource_limit_is_finding: bool,
+    /// `--budget-capped CPU:MEM`: deterministic per-case CPU/mem ceilings
+    /// (`BudgetPlan::Capped`) so the budget-exhaustion path can be
+    /// exercised at a known limit. `None` = the default budget.
+    pub budget_capped: Option<(u64, u64)>,
     /// Replay every written artifact (deterministic verification).
     pub replay: bool,
 }
@@ -50,6 +58,8 @@ impl Default for FuzzRunOptions {
             auth_mode: AuthMode::NoAuth,
             expect_success: Vec::new(),
             expect_error: Vec::new(),
+            resource_limit_is_finding: false,
+            budget_capped: None,
             replay: false,
         }
     }
@@ -160,7 +170,15 @@ pub fn run(options: &FuzzRunOptions) -> Result<FuzzReport, FuzzError> {
     input.cases = options.cases;
     input.function = options.function.clone();
     input.auth_mode = options.auth_mode;
-    input.environment = Environment::default();
+    // A capped budget is opt-in via --budget-capped; the default budget is
+    // unchanged (BudgetPlan::Default).
+    input.environment = match options.budget_capped {
+        Some((cpu, mem)) => Environment {
+            budget: crate::environment::BudgetPlan::Capped { cpu, mem },
+            ..Environment::default()
+        },
+        None => Environment::default(),
+    };
 
     let expectations = build_expectations(options)?;
     let (result, artifacts) = run_campaign_artifacts(&input, &expectations)?;
@@ -216,6 +234,7 @@ pub fn run(options: &FuzzRunOptions) -> Result<FuzzReport, FuzzError> {
         &written_artifacts,
         &replay_map,
         deterministic,
+        options.resource_limit_is_finding,
     );
 
     // Write the evidence file next to the artifacts (release-assurance input).
@@ -296,6 +315,9 @@ pub fn expand_seed(seed: u64) -> [u8; 32] {
 /// expectations map. Malformed declarations are configuration errors, not
 /// findings.
 fn build_expectations(options: &FuzzRunOptions) -> Result<BTreeMap<String, Expected>, FuzzError> {
+    // Run-level opt-in: the RESOURCE_LIMIT rule applies to every
+    // expectation built for this run (no per-function granularity).
+    let resource_limit_is_finding = options.resource_limit_is_finding;
     let mut map = BTreeMap::new();
     for f in &options.expect_success {
         map.insert(
@@ -304,6 +326,7 @@ fn build_expectations(options: &FuzzRunOptions) -> Result<BTreeMap<String, Expec
                 behavior: ExpectedBehavior::Success {
                     expect_return: None,
                 },
+                resource_limit_is_finding,
                 ..Default::default()
             },
         );
@@ -332,6 +355,7 @@ fn build_expectations(options: &FuzzRunOptions) -> Result<BTreeMap<String, Expec
                     error_type: error_type.to_string(),
                     code,
                 },
+                resource_limit_is_finding,
                 ..Default::default()
             },
         );

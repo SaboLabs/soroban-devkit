@@ -54,10 +54,15 @@ pub fn options_from(
     auth: &str,
     expect_success: Vec<String>,
     expect_error: Vec<String>,
+    resource_limit_is_finding: bool,
+    budget_capped: Option<String>,
     replay: bool,
 ) -> Result<FuzzRunOptions, String> {
     let auth_mode = parse_auth(auth).ok_or_else(|| {
         format!("invalid auth mode '{auth}' (expected no-auth, correct-auth, wrong-auth)")
+    })?;
+    let budget = parse_budget_capped(budget_capped.as_deref()).ok_or_else(|| {
+        format!("invalid --budget-capped value '{budget_capped:?}' (expected CPU:MEM, e.g. 1:1)")
     })?;
     Ok(FuzzRunOptions {
         wasm: std::path::PathBuf::from(wasm),
@@ -68,8 +73,23 @@ pub fn options_from(
         auth_mode,
         expect_success,
         expect_error,
+        resource_limit_is_finding,
+        budget_capped: budget,
         replay,
     })
+}
+
+/// Parse `--budget-capped CPU:MEM` into deterministic per-case ceilings.
+pub fn parse_budget_capped(spec: Option<&str>) -> Option<Option<(u64, u64)>> {
+    let Some(spec) = spec else {
+        return Some(None);
+    };
+    let mut parts = spec.splitn(2, ':');
+    let (Some(cpu), Some(mem)) = (parts.next(), parts.next()) else {
+        return None;
+    };
+    let (cpu, mem) = (cpu.parse::<u64>().ok()?, mem.parse::<u64>().ok()?);
+    Some(Some((cpu, mem)))
 }
 
 /// Run one campaign and render it. `Ok(true)` = findings produced, `Ok(false)`
@@ -87,6 +107,8 @@ pub fn run(
     auth: &str,
     expect_success: Vec<String>,
     expect_error: Vec<String>,
+    resource_limit_is_finding: bool,
+    budget_capped: Option<String>,
     replay: bool,
     format: &str,
 ) -> Result<bool, String> {
@@ -99,6 +121,8 @@ pub fn run(
         auth,
         expect_success,
         expect_error,
+        resource_limit_is_finding,
+        budget_capped,
         replay,
     )?;
     let fmt = parse_format(format)
