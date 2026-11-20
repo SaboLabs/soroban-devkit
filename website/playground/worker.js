@@ -8,7 +8,7 @@
  * inside this worker's WebAssembly instance, and are never transmitted. The
  * only fetch performed is for the playground's own static wasm runtime asset.
  */
-import init, { decode_xdr, diff_wasm_result, inspect_wasm, sdkt_version } from './wasm/sdkt_playground.js';
+import init, { diff_wasm_result, inspect_wasm, sdkt_version } from './wasm/sdkt_playground.js';
 
 let ready = null;
 
@@ -58,10 +58,16 @@ self.onmessage = async (event) => {
         break;
       }
 
-      case 'decode':
+      case 'decode': {
         await boot();
+        const { decode_xdr } = await import('./wasm/sdkt_playground.js');
+        if (typeof decode_xdr !== 'function') {
+          fail('The playground WASM runtime does not include the XDR decoder.');
+          return;
+        }
         ok(decode_xdr(msg.payload, msg.typeHint || undefined));
         break;
+      }
 
       default:
         fail('Unknown worker request.');
