@@ -14,7 +14,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("Custom sections: {}", metadata.custom_sections.join(", "));
     println!("Contract functions:");
     for function in &spec.functions {
-        println!("  {} ({} parameters)", function.name, function.parameters.len());
+        println!(
+            "  {} ({} parameters)",
+            function.name,
+            function.parameters.len()
+        );
     }
 
     Ok(())
