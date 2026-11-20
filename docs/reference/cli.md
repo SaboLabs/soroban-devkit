@@ -693,6 +693,21 @@ partial build never silently drops them.
 
 ## Network Profiles
 
+Saved profiles may also carry endpoint-specific connection policy:
+
+```bash
+sdkt network add slow \
+  --rpc-url https://rpc.example \
+  --passphrase "Test SDF Network ; September 2015" \
+  --timeout-secs 60 \
+  --pool-max-idle-per-host 20
+sdkt network show slow
+```
+
+`--timeout-secs` and `--pool-max-idle-per-host` are optional and are omitted
+from older profile files. The effective RPC policy uses the profile values
+when present, while `.sdkt.toml` and built-in defaults remain the fallback.
+
 ### Checking an RPC profile
 
 `sdkt network check <name> [--format json]` performs read-only RPC checks against
