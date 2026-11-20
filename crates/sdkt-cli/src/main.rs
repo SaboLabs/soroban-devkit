@@ -2737,7 +2737,8 @@ async fn run_release_assurance(
 /// `--fuzz-evidence` was not supplied (existing releases with no fuzz
 /// section are unaffected), and the status folds into the aggregate. Only
 /// `Classification::Finding` entries are security evidence; a completed
-/// campaign with zero findings is a clean record and stays SKIPPED.
+/// campaign with at least one executed case and zero findings scores `PASS`,
+/// findings score `FAIL`, and incomplete or zero-case evidence scores `ERROR`.
 fn read_fuzz_evidence(
     path: Option<&str>,
 ) -> Result<(Option<FuzzEvidenceResult>, Option<RaStatus>), String> {
@@ -2750,7 +2751,7 @@ fn read_fuzz_evidence(
         serde_json::from_reader(std::io::BufReader::new(file))
             .map_err(|e| format!("Failed to parse fuzz evidence {path}: {e}"))?;
 
-    let status = if !evidence.campaign_completed {
+    let status = if !evidence.campaign_completed || evidence.case_count == 0 {
         RaStatus::Error
     } else if !evidence.findings.is_empty() {
         RaStatus::Fail
@@ -2758,15 +2759,24 @@ fn read_fuzz_evidence(
         // Completed with zero findings: a clean record, not "not executed".
         RaStatus::Pass
     };
-    let detail = format!(
-        "fuzz campaign: cases={} findings={} minimized={} artifacts={} replayed={} deterministic={}",
-        evidence.case_count,
-        evidence.findings.len(),
-        evidence.minimized_findings,
-        evidence.artifacts_available,
-        evidence.replay.len(),
-        evidence.deterministic,
-    );
+    let detail = if !evidence.campaign_completed {
+        format!(
+            "fuzz campaign incomplete (campaign_completed=false, cases={})",
+            evidence.case_count,
+        )
+    } else if evidence.case_count == 0 {
+        "fuzz campaign executed 0 cases; zero-case evidence is not a passing campaign".to_string()
+    } else {
+        format!(
+            "fuzz campaign: cases={} findings={} minimized={} artifacts={} replayed={} deterministic={}",
+            evidence.case_count,
+            evidence.findings.len(),
+            evidence.minimized_findings,
+            evidence.artifacts_available,
+            evidence.replay.len(),
+            evidence.deterministic,
+        )
+    };
     Ok((
         Some(FuzzEvidenceResult {
             check: RaCheck { status, detail },

@@ -325,6 +325,53 @@ fn cli_campaign_bad_auth_mode_is_usage_error() {
         .stderr(predicate::str::contains("invalid auth mode"));
 }
 
+#[test]
+fn cli_campaign_zero_cases_is_usage_error() {
+    let out = temp_dir("zero-cases");
+    let _ = std::fs::remove_dir_all(&out);
+    fuzz_campaign(&[
+        &fixture("us_new.wasm"),
+        "--cases",
+        "0",
+        "--artifact-dir",
+        out.to_str().unwrap(),
+    ])
+    .assert()
+    .failure()
+    .code(2)
+    .stderr(predicate::str::contains("cases must be greater than 0"));
+
+    assert!(
+        !out.join("campaign-evidence.json").exists(),
+        "zero-case campaign must not write campaign-evidence.json"
+    );
+}
+
+#[test]
+fn cli_campaign_unmatched_function_is_usage_error() {
+    let out = temp_dir("unmatched-fn");
+    let _ = std::fs::remove_dir_all(&out);
+    fuzz_campaign(&[
+        &fixture("us_new.wasm"),
+        "--cases",
+        "4",
+        "--function",
+        "nope",
+        "--artifact-dir",
+        out.to_str().unwrap(),
+    ])
+    .assert()
+    .failure()
+    .code(2)
+    .stderr(predicate::str::contains("nope"))
+    .stderr(predicate::str::contains("matched no runnable function"));
+
+    assert!(
+        !out.join("campaign-evidence.json").exists(),
+        "unmatched --function campaign must not write campaign-evidence.json"
+    );
+}
+
 // ---------------------------------------------------------------------------
 // 8. Deterministic campaign stream across runs (same flags, same artifacts)
 // ---------------------------------------------------------------------------

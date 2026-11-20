@@ -188,18 +188,32 @@ fn run_campaign_inner(
     input: &CampaignInput,
     expectations: &std::collections::BTreeMap<String, Expected>,
 ) -> Result<(CampaignResult, Vec<FindingArtifact>), FuzzError> {
-    let executor = Executor::new(&input.wasm, default_config(input)?)?;
-    let artifact_config = input.artifact_config();
-    let (functions, skipped) = input.selectable();
-    if functions.is_empty() {
-        return Ok((
-            CampaignResult {
-                skipped_functions: skipped,
-                ..Default::default()
-            },
-            Vec::new(),
+    if input.cases == 0 {
+        return Err(FuzzError::InvalidConfig(
+            "cases must be greater than 0".to_string(),
         ));
     }
+    let (functions, skipped) = input.selectable();
+    if functions.is_empty() {
+        return match &input.function {
+            Some(want) => {
+                let reason = skipped
+                    .first()
+                    .map(|s| s.reason.as_str())
+                    .unwrap_or("no runnable function matched");
+                Err(FuzzError::InvalidConfig(format!(
+                    "function filter '{want}' matched no runnable function ({reason})"
+                )))
+            }
+            None => Err(FuzzError::InvalidConfig(format!(
+                "contract has no runnable functions ({} skipped)",
+                skipped.len()
+            ))),
+        };
+    }
+
+    let executor = Executor::new(&input.wasm, default_config(input)?)?;
+    let artifact_config = input.artifact_config();
 
     let mut result = CampaignResult {
         skipped_functions: skipped,
@@ -384,6 +398,12 @@ fn run_campaign_inner(
                 result.findings.push(finding);
             }
         }
+    }
+
+    if result.executed == 0 {
+        return Err(FuzzError::InvalidConfig(
+            "campaign executed 0 cases".to_string(),
+        ));
     }
 
     Ok((result, artifacts))
