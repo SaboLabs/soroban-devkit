@@ -617,3 +617,149 @@ fn sign_with_custom_network_label() {
         &sdkt_xdr::SigningOptions::with(sdkt_xdr::Network::Custom("my-local-net".to_string())),
     ));
 }
+
+#[test]
+fn sign_network_passphrase_overrides_network_profile() {
+    let dir = tempfile::tempdir().unwrap();
+    gen_identity(dir.path(), "alice");
+    let profile_passphrase = "Profile Passphrase ; 2026";
+    let override_passphrase = "Override Passphrase ; 2026";
+    add_network_profile(
+        dir.path(),
+        "mynet",
+        "https://rpc.example.com",
+        profile_passphrase,
+    );
+    let unsigned = build_unsigned(dir.path());
+    let signed_path = dir.path().join("signed_override.xdr");
+
+    let (ok, _, stderr) = run_sign(
+        dir.path(),
+        &[
+            "--input",
+            unsigned.to_str().unwrap(),
+            "--output",
+            signed_path.to_str().unwrap(),
+            "--identity",
+            "alice",
+            "--network-profile",
+            "mynet",
+            "--network-passphrase",
+            override_passphrase,
+        ],
+    );
+    assert!(
+        ok,
+        "sign with --network-profile + --network-passphrase should succeed, stderr: {stderr}"
+    );
+
+    let signed_b64 = std::fs::read_to_string(&signed_path).unwrap();
+    let env = parse_envelope_b64(&signed_b64);
+    let signer = load_signer(dir.path(), "alice");
+
+    assert!(
+        sdkt_xdr::verify_signature(
+            &env,
+            &signer,
+            &sdkt_xdr::SigningOptions::with(sdkt_xdr::Network::Custom(
+                override_passphrase.to_string(),
+            )),
+        ),
+        "signature must verify against --network-passphrase override"
+    );
+    assert!(
+        !sdkt_xdr::verify_signature(
+            &env,
+            &signer,
+            &sdkt_xdr::SigningOptions::with(sdkt_xdr::Network::Custom(
+                profile_passphrase.to_string(),
+            )),
+        ),
+        "signature must not verify against the overridden profile passphrase"
+    );
+    assert!(
+        !sdkt_xdr::verify_signature(
+            &env,
+            &signer,
+            &sdkt_xdr::SigningOptions::with(sdkt_xdr::Network::Testnet),
+        ),
+        "signature must not fall back to testnet"
+    );
+}
+
+#[test]
+fn sign_with_bare_network_passphrase() {
+    let dir = tempfile::tempdir().unwrap();
+    gen_identity(dir.path(), "alice");
+    let passphrase = "Bare Override Passphrase ; 2026";
+    let unsigned = build_unsigned(dir.path());
+    let signed_path = dir.path().join("signed_bare_passphrase.xdr");
+
+    let (ok, _, stderr) = run_sign(
+        dir.path(),
+        &[
+            "--input",
+            unsigned.to_str().unwrap(),
+            "--output",
+            signed_path.to_str().unwrap(),
+            "--identity",
+            "alice",
+            "--network-passphrase",
+            passphrase,
+        ],
+    );
+    assert!(
+        ok,
+        "sign with bare --network-passphrase should succeed, stderr: {stderr}"
+    );
+
+    let signed_b64 = std::fs::read_to_string(&signed_path).unwrap();
+    let env = parse_envelope_b64(&signed_b64);
+    let signer = load_signer(dir.path(), "alice");
+
+    assert!(
+        sdkt_xdr::verify_signature(
+            &env,
+            &signer,
+            &sdkt_xdr::SigningOptions::with(sdkt_xdr::Network::Custom(passphrase.to_string())),
+        ),
+        "signature must verify against bare --network-passphrase"
+    );
+    assert!(
+        !sdkt_xdr::verify_signature(
+            &env,
+            &signer,
+            &sdkt_xdr::SigningOptions::with(sdkt_xdr::Network::Testnet),
+        ),
+        "bare --network-passphrase must not fall through to testnet"
+    );
+}
+
+#[test]
+fn sign_with_network_and_network_passphrase_mutually_exclusive() {
+    let dir = tempfile::tempdir().unwrap();
+    gen_identity(dir.path(), "alice");
+    let unsigned = build_unsigned(dir.path());
+
+    let (ok, _, stderr) = run_sign(
+        dir.path(),
+        &[
+            "--input",
+            unsigned.to_str().unwrap(),
+            "--identity",
+            "alice",
+            "--network",
+            "testnet",
+            "--network-passphrase",
+            "Override Passphrase ; 2026",
+        ],
+    );
+    assert!(
+        !ok,
+        "passing both --network and --network-passphrase must fail"
+    );
+    assert!(
+        stderr.contains("cannot be used with") || stderr.contains("together"),
+        "expected mutual exclusion error, got: {stderr}"
+    );
+}

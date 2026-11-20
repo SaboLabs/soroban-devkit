@@ -1270,8 +1270,13 @@ enum TxAction {
         /// Identity name to sign with. Defaults to "default".
         #[arg(short = 'I', long, default_value = "default")]
         identity: String,
-        /// Network: testnet | mainnet | futurenet | custom:<passphrase> (mutually exclusive with --network-profile; defaults to testnet)
-        #[arg(short, long, conflicts_with = "network_profile")]
+        /// Network: testnet | mainnet | futurenet | custom:<passphrase> (mutually exclusive with --network-profile and --network-passphrase; defaults to testnet)
+        #[arg(
+            short,
+            long,
+            conflicts_with = "network_profile",
+            conflicts_with = "network_passphrase"
+        )]
         network: Option<String>,
         /// Output format
         #[arg(short, long, default_value = "pretty")]
@@ -5124,25 +5129,29 @@ mod project_add_tests {
     }
 }
 
-/// Resolve the signing [`Network`] for `sdkt tx sign` from either `--network`
-/// or `--network-profile` (mutually exclusive; defaults to `Network::Testnet`).
+/// Resolve the signing [`Network`] for `sdkt tx sign` from `--network`,
+/// `--network-profile`, and/or `--network-passphrase`.
+///
+/// `--network` is mutually exclusive with `--network-profile` and
+/// `--network-passphrase`. When both `--network-profile` and
+/// `--network-passphrase` are supplied, the profile is still validated via
+/// `NetworkStore` and `--network-passphrase` takes precedence over the
+/// profile's stored passphrase (matching `resolve_network_config` /
+/// `tx submit`). Defaults to `Network::Testnet` when none are specified.
 fn resolve_sign_network(
     network: Option<&str>,
     network_profile: Option<&str>,
+    network_passphrase: Option<&str>,
 ) -> Result<Network, String> {
-    match (network, network_profile) {
-        (Some(_), Some(_)) => {
-            Err("cannot use --network and --network-profile together; specify only one".to_string())
-        }
-        (None, Some(profile_name)) => {
-            let store =
-                NetworkStore::new().map_err(|e| format!("cannot open network store: {}", e))?;
-            let profile = store
-                .get(profile_name)
-                .map_err(|e| format!("network profile '{}' not found: {}", profile_name, e))?;
-            Ok(Network::from_passphrase(&profile.network_passphrase))
-        }
-        (Some(net_str), None) => match net_str.trim().to_ascii_lowercase().as_str() {
+    if network.is_some() && (network_profile.is_some() || network_passphrase.is_some()) {
+        return Err(
+            "cannot use --network together with --network-profile or --network-passphrase; specify only one"
+                .to_string(),
+        );
+    }
+
+    if let Some(net_str) = network {
+        return match net_str.trim().to_ascii_lowercase().as_str() {
             "testnet" => Ok(Network::Testnet),
             "mainnet" => Ok(Network::Mainnet),
             "futurenet" => Ok(Network::Futurenet),
@@ -5151,9 +5160,28 @@ fn resolve_sign_network(
                 "invalid network '{}' (expected testnet|mainnet|futurenet|custom:<passphrase>)",
                 net_str
             )),
-        },
-        (None, None) => Ok(Network::Testnet),
+        };
     }
+
+    let profile_passphrase = if let Some(profile_name) = network_profile {
+        let store = NetworkStore::new().map_err(|e| format!("cannot open network store: {}", e))?;
+        let profile = store
+            .get(profile_name)
+            .map_err(|e| format!("network profile '{}' not found: {}", profile_name, e))?;
+        Some(profile.network_passphrase)
+    } else {
+        None
+    };
+
+    if let Some(passphrase) = network_passphrase {
+        return Ok(Network::from_passphrase(passphrase));
+    }
+
+    if let Some(passphrase) = profile_passphrase {
+        return Ok(Network::from_passphrase(&passphrase));
+    }
+
+    Ok(Network::Testnet)
 }
 
 /// Resolve a transaction envelope argument (`--input` / `--envelope`) to
@@ -7924,6 +7952,7 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
                 let network = match resolve_sign_network(
                     network.as_deref(),
                     net.network_profile.as_deref(),
+                    net.network_passphrase.as_deref(),
                 ) {
                     Ok(n) => n,
                     Err(e) => {
