@@ -1063,8 +1063,8 @@ sdkt fuzz campaign contract.wasm \
 |------|---------|---------|
 | `<WASM>` | *required* | Path to the compiled contract WASM file |
 | `--seed <N>` | `0` | Deterministic seed (u64). Same seed produces identical test case sequence across runs |
-| `--cases <N>` | `100` | Number of test cases to execute |
-| `--function <NAME>` | all | Restrict the campaign to one exported contract function |
+| `--cases <N>` | `100` | Number of test cases to execute (must be `>= 1`; `--cases 0` is a usage error, exit `2`) |
+| `--function <NAME>` | all | Restrict the campaign to one exported contract function (if no runnable function matches, exits `2` without writing clean evidence) |
 | `--artifact-dir <DIR>` | `./sdkt-fuzz-artifacts` | Directory where finding artifacts are written |
 | `--auth <MODE>` | `no-auth` | Authorization mode per test case: `no-auth`, `correct-auth`, or `wrong-auth`. See the sdkt-fuzz docs for exact semantics |
 | `--expect-success <FN>` | none | Declare that function `<FN>` must succeed (repeatable). Violations produce `RETURN_MISMATCH` or `UNEXPECTED_ERROR` findings |
@@ -1105,9 +1105,9 @@ Finding artifacts are written to `--artifact-dir` as JSON files following the na
 
 **Exit codes:**
 
-- `0` — campaign executed successfully; findings may or may not have been discovered
-- `1` — runtime error (e.g. WASM load failure, host error, invalid arguments)
-- `2` — usage error (e.g. malformed expectation, invalid seed)
+- `0` — campaign executed at least one case with no findings
+- `1` — campaign produced one or more findings
+- `2` — usage / configuration / input error (e.g. `--cases 0`, a `--function` filter matching no runnable function, a contract with no runnable functions, malformed expectation, invalid flags, or unreadable WASM)
 
 ### Replay
 
@@ -1193,6 +1193,8 @@ For details on fuzz evidence from real Soroban contracts and multi-step executio
 ### Integration with release assurance
 
 `sdkt release-assurance` accepts `--fuzz-evidence <EVIDENCE_JSON>` to attach fuzz evidence to a release report. The release pipeline does not run fuzz campaigns itself; campaigns are run separately (manually or in CI) and the resulting evidence is attached by path.
+
+A fuzz evidence file scores `PASS` only when `campaign_completed` is `true`, `case_count > 0`, and `findings` is empty. Evidence with `campaign_completed: false` or `case_count: 0` is never scored as `PASS` — it maps to `ERROR` and fails the release-assurance check.
 
 ## Plugin management
 
