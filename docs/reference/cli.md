@@ -175,6 +175,22 @@ sdkt
 │   ├── metadata --contract <contract>  [--network testnet] [--refresh] [--format]
 │   └── cache                 (info | remove | clear)
 │
+├── release-assurance
+│   ├── --config <FILE>       (TOML release-gate definition; explicit flags override
+│   │                         file values, file values override defaults. Keys:
+│   │                         [release] wasm, previous_wasm, contract, network,
+│   │                         max_size_bytes, max_growth_pct; top-level audit,
+│   │                         disable, fuzz_evidence lists. Unknown keys are rejected.)
+│   │   Example release.toml:
+│   │     [release]
+│   │     wasm = "target/candidate.wasm"
+│   │     previous_wasm = "target/previous.wasm"
+│   │     max_size_bytes = 200000
+│   │     max_growth_pct = 5
+│   │     audit = ["audit/report.json"]
+│   │     disable = ["unused-export"]
+│   │     fuzz_evidence = ["fuzz/evidence-1.json", "fuzz/evidence-2.json"]
+│
 ├── verify --contract <contract-id>
 │   ├── --wasm <file.wasm>    (local artifact to compare; offline hashed)
 │   ├── --network <testnet>   (RPC network)
