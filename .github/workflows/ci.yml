@@ -65,6 +65,14 @@ jobs:
     - name: Run Tests (Default)
       run: cargo test --workspace
 
+    - name: Run WASM inspection example
+      if: matrix.os == 'ubuntu-latest'
+      run: cargo run -p sdkt-wasm --example inspect_wasm
+
+    - name: Run fuzz campaign example
+      if: matrix.os == 'ubuntu-latest'
+      run: cargo run -p sdkt-fuzz --example small_campaign
+
     - name: Run Tests (All Features)
       # Only run all-features on Linux to save matrix time, since Wasmtime/Extism
       # compilation takes minutes per platform.
