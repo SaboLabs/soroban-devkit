@@ -58,6 +58,17 @@ self.onmessage = async (event) => {
         break;
       }
 
+      case 'decode': {
+        await boot();
+        const { decode_xdr } = await import('./wasm/sdkt_playground.js');
+        if (typeof decode_xdr !== 'function') {
+          fail('The playground WASM runtime does not include the XDR decoder.');
+          return;
+        }
+        ok(decode_xdr(msg.payload, msg.typeHint || undefined));
+        break;
+      }
+
       default:
         fail('Unknown worker request.');
     }

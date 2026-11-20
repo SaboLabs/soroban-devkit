@@ -132,6 +132,67 @@
     return b;
   }
 
+  // Pretty-print JSON lexically so integer literals remain byte-for-byte exact.
+  function formatJson(json) {
+    let out = '', indent = 0, quoted = false, escaped = false;
+    for (const ch of json) {
+      if (quoted) {
+        out += ch;
+        if (escaped) escaped = false;
+        else if (ch === '\\') escaped = true;
+        else if (ch === '"') quoted = false;
+      } else if (ch === '"') {
+        quoted = true; out += ch;
+      } else if (ch === '{' || ch === '[') {
+        out += ch + '\n' + '  '.repeat(++indent);
+      } else if (ch === '}' || ch === ']') {
+        out += '\n' + '  '.repeat(--indent) + ch;
+      } else if (ch === ',') {
+        out += ',\n' + '  '.repeat(indent);
+      } else if (ch === ':') {
+        out += ': ';
+      } else if (!/\s/.test(ch)) {
+        out += ch;
+      }
+    }
+    return out;
+  }
+
+  // Keep independent decoder requests from overwriting newer results.
+  const decodeBtn = $('decodeBtn');
+  if (decodeBtn) {
+    let decodeGeneration = 0;
+    decodeBtn.addEventListener('click', () => {
+      const generation = ++decodeGeneration;
+      const payload = $('xdrPayload').value;
+      const typeHint = $('xdrType').value;
+      const error = $('xdrError');
+      const result = $('xdrResult');
+      error.hidden = true;
+      result.hidden = true;
+      if (payload.length > 1000000) {
+        error.textContent = 'XDR payload must be at most 1,000,000 characters.';
+        error.hidden = false;
+        return;
+      }
+      post({ type: 'decode', payload, typeHint }).then((json) => {
+        if (generation !== decodeGeneration) return;
+        // Rust already formats the JSON; avoid parsing it through JavaScript's
+        // Number type, which would lose precision for large XDR integers.
+        const formatted = formatJson(json);
+        $('xdrOutput').textContent = formatted;
+        const copy = $('xdrCopy');
+        copy.innerHTML = '';
+        copy.appendChild(copyBtn(formatted));
+        result.hidden = false;
+      }).catch((err) => {
+        if (generation !== decodeGeneration) return;
+        error.textContent = String(err && err.message ? err.message : err);
+        error.hidden = false;
+      });
+    });
+  }
+
   /* ---------- rendering ---------- */
 
   function section(title, countLabel) {

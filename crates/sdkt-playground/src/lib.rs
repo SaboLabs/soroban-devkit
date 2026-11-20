@@ -22,6 +22,14 @@ use sdkt_wasm::{diff_wasm, parse_contract_spec, parse_metadata, UpgradeVerdict, 
 use serde::Serialize;
 use wasm_bindgen::prelude::*;
 
+/// Decode XDR using the same bounded decoder and JSON format as the CLI.
+#[wasm_bindgen]
+pub fn decode_xdr(payload: &str, type_hint: Option<String>) -> Result<JsValue, JsValue> {
+    sdkt_xdr::decode(payload, type_hint.as_deref(), sdkt_xdr::OutputFormat::Json)
+        .map(|json| JsValue::from_str(&json))
+        .map_err(|err| JsValue::from_str(&err.to_string()))
+}
+
 /// Result payload handed to JavaScript.
 ///
 /// `spec` mirrors the CLI: the contract spec is **optional**, because a WASM

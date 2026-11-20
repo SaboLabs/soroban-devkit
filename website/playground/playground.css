@@ -56,6 +56,18 @@ code, kbd, pre { font-family: var(--mono); }
 
 .wrap { width: 100%; max-width: 1120px; margin: 0 auto; padding: 0 1.25rem; }
 
+.xdr-section { margin: 2rem 0; padding: 1.25rem; scroll-margin-top: 5rem; }
+.xdr-section label { display: block; margin: 1rem 0 0.35rem; }
+.xdr-section textarea, .xdr-section select {
+  display: block; color: var(--fg); background: var(--bg-soft);
+  border: 1px solid var(--line); border-radius: var(--radius);
+  padding: 0.65rem; font: inherit;
+}
+.xdr-section textarea { width: 100%; font-family: var(--mono); resize: vertical; }
+.xdr-section button { margin-top: 1rem; }
+.xdr-section pre { overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; }
+#xdrError { color: var(--bad); }
+
 /* ---------- header ---------- */
 .site-nav {
   position: sticky;
