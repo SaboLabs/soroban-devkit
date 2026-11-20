@@ -32,6 +32,22 @@ use crate::observation::Observation;
 use crate::oracle::{Classification, Oracle, ReasonCode};
 use crate::sequence::execute_sequence_auth;
 
+/// Whether a [`ReplayError`] represents a command-line usage error.
+///
+/// The CLI-wide convention (`crates/sdkt-core/src/registry.rs`) reserves exit
+/// code `2` for usage errors and `1` for runtime/verdict failures. Every
+/// current [`ReplayError`] variant describes a well-formed invocation whose
+/// input or environment was bad (unreadable/malformed artifact, unsupported
+/// schema, unknown reason code, WASM mismatch, execution failure), so none of
+/// them is a usage error. This predicate exists so the mapping is explicit and
+/// stays correct if a genuine usage-error variant is ever added.
+impl ReplayError {
+    /// True only for errors caused by an invalid command-line invocation.
+    pub fn is_usage_error(&self) -> bool {
+        false
+    }
+}
+
 /// Replay could not be carried out — invalid input, never a finding.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum ReplayError {
