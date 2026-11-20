@@ -855,3 +855,110 @@ fn agent_never_plans_a_mutating_command() {
         }
     }
 }
+
+// ------------------------------------------------------ list-capabilities ---
+
+/// Run the agent with `--list-capabilities` (and optionally `--format json`),
+/// with no positional request.
+fn list_capabilities(json: bool) -> Output {
+    let mut cmd = Command::cargo_bin("sdkt-agent").expect("sdkt-agent built");
+    cmd.arg("--list-capabilities");
+    if json {
+        cmd.arg("--format").arg("json");
+    }
+    cmd.output().expect("run sdkt-agent --list-capabilities")
+}
+
+#[test]
+fn list_capabilities_json_matches_registry_document() {
+    let out = list_capabilities(true);
+    assert!(out.status.success(), "listing must exit 0");
+
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    let v: serde_json::Value = serde_json::from_str(&stdout)
+        .unwrap_or_else(|e| panic!("stdout must be pure JSON ({e}): {stdout:?}"));
+
+    assert_eq!(v["schema_version"], 1);
+    assert_eq!(v["tool"], "sdkt");
+    let caps = v["capabilities"].as_array().expect("capabilities array");
+    assert_eq!(
+        caps.len(),
+        sdkt_core::registry::capabilities().len(),
+        "every registered capability must be listed"
+    );
+
+    // The output must be exactly `registry::to_json()`, byte for byte.
+    assert_eq!(stdout, sdkt_core::registry::to_json());
+}
+
+#[test]
+fn list_capabilities_pretty_prints_one_line_per_capability() {
+    let out = list_capabilities(false);
+    assert!(out.status.success(), "listing must exit 0");
+
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    let lines: Vec<&str> = stdout.lines().filter(|l| !l.trim().is_empty()).collect();
+    assert_eq!(
+        lines.len(),
+        sdkt_core::registry::capabilities().len(),
+        "one line per capability:\n{stdout}"
+    );
+
+    // A known capability id and its safety classification must appear.
+    assert!(stdout.contains("call"), "missing known id in:\n{stdout}");
+    let call = sdkt_core::registry::capabilities()
+        .iter()
+        .find(|c| c.id == "call")
+        .expect("registry has a `call` capability");
+    let call_line = lines
+        .iter()
+        .find(|l| l.contains("call"))
+        .unwrap_or_else(|| panic!("no line for `call` in:\n{stdout}"));
+    assert!(
+        call_line.contains(&format!("{:?}", call.safety))
+            || call_line.contains(&call.safety.to_string()),
+        "safety must be shown for `call`: {call_line}"
+    );
+}
+
+#[test]
+fn list_capabilities_ignores_a_request_and_never_executes() {
+    let tmp = tempfile::tempdir().unwrap();
+    let marker = tmp.path().join("ran");
+    let fx = FakeCli {
+        stdout: "{}\n".into(),
+        marker: Some(marker.clone()),
+        ..FakeCli::ok()
+    }
+    .write(tmp.path());
+
+    let mut cmd = Command::cargo_bin("sdkt-agent").expect("sdkt-agent built");
+    cmd.env("SDKT_AGENT_BIN", &fx.program);
+    cmd.env("SDKT_AGENT_BIN_ARGS", fx.prefix.join("|"));
+    cmd.arg("--list-capabilities")
+        .arg("--format")
+        .arg("json")
+        .arg(format!("check health of contract {CID} on testnet"));
+    let out = cmd.output().expect("run sdkt-agent");
+
+    assert!(out.status.success(), "listing must exit 0");
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    let v: serde_json::Value = serde_json::from_str(&stdout)
+        .unwrap_or_else(|e| panic!("stdout must be pure JSON ({e}): {stdout:?}"));
+    assert_eq!(v["schema_version"], 1);
+    assert_eq!(v["tool"], "sdkt");
+    assert!(!marker.exists(), "listing must never execute a request");
+}
+
+#[test]
+fn no_flag_and_no_request_is_a_usage_error() {
+    let out = Command::cargo_bin("sdkt-agent")
+        .unwrap()
+        .output()
+        .expect("run sdkt-agent");
+    assert_eq!(out.status.code(), Some(2), "no args must exit 2");
+    assert!(
+        out.stdout.is_empty(),
+        "a usage error writes nothing to stdout"
+    );
+}
