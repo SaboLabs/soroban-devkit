@@ -28,6 +28,7 @@ serde_json = "1"
 
 [dependencies]
 sdkt-wasm = { path = "../sdkt-wasm" }
+sdkt-xdr = { path = "../sdkt-xdr" }
 serde = { version = "1", features = ["derive"] }
 wasm-bindgen = "0.2.127"
 serde-wasm-bindgen = "0.6.5"

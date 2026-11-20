@@ -23,7 +23,7 @@
     <nav class="nav-links" aria-label="Playground sections">
       <a href="#main" class="active" aria-current="page">Inspector</a>
       <span class="soon" role="link" aria-disabled="true" title="Coming soon — not implemented yet">Analyze</span>
-      <span class="soon" role="link" aria-disabled="true" title="Coming soon — not implemented yet">XDR</span>
+      <a href="#xdr">XDR</a>
       <a href="#compare" role="link">Diff</a>
       <span class="soon" role="link" aria-disabled="true" title="Coming soon — not implemented yet">Health</span>
       <span class="nav-ver">v2.7.0</span>
@@ -101,6 +101,31 @@
 
     <!-- Results -->
     <div class="results hidden" id="results" aria-live="polite"></div>
+
+    <section class="result-section xdr-section" id="xdr" aria-labelledby="xdrTitle">
+      <h2 id="xdrTitle">XDR Decoder</h2>
+      <p>Decode base64 or hexadecimal XDR locally in your browser.</p>
+      <label for="xdrPayload">XDR payload</label>
+      <textarea id="xdrPayload" rows="6" spellcheck="false"></textarea>
+      <label for="xdrType">Type hint</label>
+      <select id="xdrType">
+        <option value="auto">Auto</option>
+        <option value="scval">ScVal</option>
+        <option value="transactionenvelope">TransactionEnvelope</option>
+        <option value="transactionresult">TransactionResult</option>
+        <option value="transactionmeta">TransactionMeta</option>
+        <option value="ledgerkey">LedgerKey</option>
+        <option value="ledgerentry">LedgerEntry</option>
+        <option value="contractevent">ContractEvent</option>
+      </select>
+      <button class="btn btn-primary" id="decodeBtn" type="button">Decode</button>
+      <p id="xdrError" role="alert" hidden></p>
+      <div id="xdrResult" hidden>
+        <h3>Decoded JSON</h3>
+        <div id="xdrCopy"></div>
+        <pre id="xdrOutput"></pre>
+      </div>
+    </section>
 
     <!-- CLI -->
     <section class="cli-note">
