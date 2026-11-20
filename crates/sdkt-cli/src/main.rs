@@ -1316,6 +1316,16 @@ enum ProjectCommand {
         #[arg(short, long, default_value = "pretty")]
         format: String,
     },
+    /// Show the resolved workspace dependency graph in deploy order.
+    ///
+    /// Read-only: validates `.sdkt.toml` and prints each contract with its
+    /// source path and dependencies in topological deploy order. Supports
+    /// `pretty` (default), `json`, and `dot` (Graphviz) formats.
+    Graph {
+        /// Output format: pretty, json, or dot
+        #[arg(short, long, default_value = "pretty")]
+        format: String,
+    },
     /// Deploy all contracts defined in the workspace. Every deployed contract
     /// is persisted to `.sdkt-deployments.json` (per network profile) so a
     /// failure mid-graph never loses the contracts that already landed.
@@ -11862,6 +11872,57 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
                         println!("    Timestamp:  {}", record.timestamp);
                         if let Some(salt) = &record.salt {
                             println!("    Salt:       {}", salt);
+                        }
+                    }
+                }
+            }
+            ProjectCommand::Graph { format } => {
+                let format_lower = format.to_lowercase();
+                if !matches!(format_lower.as_str(), "pretty" | "json" | "dot") {
+                    eprintln!(
+                        "Invalid format '{}'. Use 'pretty', 'json', or 'dot'.",
+                        format
+                    );
+                    process::exit(2);
+                }
+
+                let config = load_config();
+                let graph = match sdkt_core::project::resolve_project_graph(&config) {
+                    Ok(g) => g,
+                    Err(e) => {
+                        eprintln!("Error: {}", e);
+                        process::exit(1);
+                    }
+                };
+
+                match format_lower.as_str() {
+                    "json" => {
+                        println!("{}", serde_json::to_string_pretty(&graph).unwrap());
+                    }
+                    "dot" => {
+                        println!("digraph workspace {{");
+                        for node in &graph.nodes {
+                            let alias = node.alias.replace('"', "\\\"");
+                            println!("  \"{}\";", alias);
+                        }
+                        for node in &graph.nodes {
+                            let alias = node.alias.replace('"', "\\\"");
+                            for dep in &node.depends_on {
+                                let dep_escaped = dep.replace('"', "\\\"");
+                                println!("  \"{}\" -> \"{}\";", alias, dep_escaped);
+                            }
+                        }
+                        println!("}}");
+                    }
+                    _ => {
+                        println!("Workspace dependency graph (deploy order):");
+                        for node in &graph.nodes {
+                            let deps = if node.depends_on.is_empty() {
+                                "\u{2014}".to_string()
+                            } else {
+                                node.depends_on.join(", ")
+                            };
+                            println!("  {} ({}) depends on: {}", node.alias, node.path, deps);
                         }
                     }
                 }

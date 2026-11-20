@@ -130,6 +130,50 @@ pub fn validate_project(config: &DevKitConfig) -> Result<(), ProjectError> {
     resolve_deploy_order(config).map(|_| ())
 }
 
+/// A single node in the resolved workspace dependency graph.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
+pub struct ProjectGraphNode {
+    pub alias: String,
+    pub path: String,
+    pub depends_on: Vec<String>,
+}
+
+/// Resolved workspace dependency graph in topological deploy order.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
+pub struct ProjectGraph {
+    pub order: Vec<String>,
+    pub nodes: Vec<ProjectGraphNode>,
+}
+
+/// Build the resolved workspace dependency graph in deploy order.
+///
+/// Reuses [`resolve_deploy_order`] so validation (missing config, cycles,
+/// unknown/self/duplicate dependencies) and topological ordering are
+/// guaranteed to match `sdkt project deploy` and [`validate_project`].
+pub fn resolve_project_graph(config: &DevKitConfig) -> Result<ProjectGraph, ProjectError> {
+    let order = resolve_deploy_order(config)?;
+    let nodes = order
+        .iter()
+        .map(|alias| {
+            let cfg = config.contracts.get(alias).unwrap();
+            let mut depends_on: Vec<String> = cfg
+                .deploy_after
+                .iter()
+                .chain(cfg.depends_on.iter())
+                .cloned()
+                .collect();
+            depends_on.sort();
+            ProjectGraphNode {
+                alias: alias.clone(),
+                path: cfg.path.clone(),
+                depends_on,
+            }
+        })
+        .collect();
+
+    Ok(ProjectGraph { order, nodes })
+}
+
 /// Resolves the deployment sequence and validates that all required WASM artifacts exist.
 /// Does NOT perform actual deployment (which requires sdkt-rpc).
 pub fn resolve_project(config: &DevKitConfig) -> Result<Vec<ResolvedContract>, ProjectError> {
@@ -336,6 +380,51 @@ mod tests {
         assert!(matches!(
             validate_project(&bad),
             Err(ProjectError::SelfDependency(_))
+        ));
+    }
+
+    #[test]
+    fn test_resolve_project_graph_ordering_and_edges() {
+        // Fixture workspace: token ← vault ← router
+        let config = cfg(vec![
+            ("router", vec![], vec!["vault".to_string()]),
+            ("vault", vec![], vec!["token".to_string()]),
+            ("token", vec![], vec![]),
+        ]);
+
+        let graph = resolve_project_graph(&config).unwrap();
+        assert_eq!(graph.order, vec!["token", "vault", "router"]);
+        assert_eq!(
+            graph.nodes,
+            vec![
+                ProjectGraphNode {
+                    alias: "token".to_string(),
+                    path: "contracts/token".to_string(),
+                    depends_on: vec![],
+                },
+                ProjectGraphNode {
+                    alias: "vault".to_string(),
+                    path: "contracts/vault".to_string(),
+                    depends_on: vec!["token".to_string()],
+                },
+                ProjectGraphNode {
+                    alias: "router".to_string(),
+                    path: "contracts/router".to_string(),
+                    depends_on: vec!["vault".to_string()],
+                },
+            ]
+        );
+    }
+
+    #[test]
+    fn test_resolve_project_graph_rejects_cycle() {
+        let cyclic = cfg(vec![
+            ("token", vec![], vec!["vault".to_string()]),
+            ("vault", vec![], vec!["token".to_string()]),
+        ]);
+        assert!(matches!(
+            resolve_project_graph(&cyclic),
+            Err(ProjectError::CircularDependency(_))
         ));
     }
 }
