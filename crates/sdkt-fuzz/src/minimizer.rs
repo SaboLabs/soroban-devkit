@@ -58,8 +58,13 @@ pub struct Minimization {
 
 impl Minimization {
     /// Identity result for cases where minimization was not run.
-    pub fn not_attempted(case: &crate::case::FuzzCase) -> Self {
-        let steps = std::slice::from_ref(&case.call);
+    ///
+    /// Complexity is reported over the **full** executed step sequence, so
+    /// an unminimized multi-step finding records its real sequence
+    /// complexity rather than the single-step weight of its first call.
+    /// For a single-step sequence the values are identical to the previous
+    /// `&FuzzCase`-based signature.
+    pub fn not_attempted(steps: &[FunctionCall]) -> Self {
         Self {
             attempted: false,
             strategy: "deterministically minimized under the configured strategy",
