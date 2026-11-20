@@ -83,6 +83,81 @@ fn declared_flags_exist_in_the_real_cli() {
     );
 }
 
+/// Reverse direction: every long flag that `sdkt <cmd> --help` documents must
+/// be declared in the registry (or explicitly excluded below with a reason).
+/// A flag the registry omits is invisible to the agent, so this catches the
+/// drift direction the original test was blind to.
+///
+/// `IN_SCOPE_REVERSE_PARITY` lists the capabilities for which reverse-direction
+/// parity is enforced. The registry↔CLI contract is being established entry by
+/// entry; this PR scopes the reverse check to `audit` (the entry under repair).
+/// Other entries keep direction-1 coverage (registry → help) via
+/// `declared_flags_exist_in_the_real_cli`; adding an id here opts it into
+/// reverse-direction enforcement too.
+///
+/// `EXCLUDED_HELP_FLAGS` carries flags `--help` documents that are *not*
+/// capability arguments the registry should list. Each entry is commented with
+/// its reason. Adding to this set is the sanctioned way to opt a flag out of
+/// the parity contract.
+#[test]
+fn every_help_documented_flag_is_registered_or_explicitly_excluded() {
+    const IN_SCOPE_REVERSE_PARITY: &[&str] = &["audit"];
+    let in_scope: std::collections::HashSet<&str> =
+        IN_SCOPE_REVERSE_PARITY.iter().copied().collect();
+
+    // Flags `--help` documents that are not capability arguments. `--help` is
+    // clap-injected on every subcommand and is never a registry argument.
+    const EXCLUDED_HELP_FLAGS: &[&str] = &["--help"];
+    let excluded: std::collections::HashSet<&str> = EXCLUDED_HELP_FLAGS.iter().copied().collect();
+
+    let mut missing = Vec::new();
+    for c in capabilities() {
+        if !in_scope.contains(c.id) {
+            continue;
+        }
+        let Some(help) = help_for(c.command) else {
+            continue; // covered by every_registered_command_path_exists
+        };
+
+        let declared: std::collections::HashSet<&str> = help
+            .lines()
+            .flat_map(|l| l.split_whitespace())
+            .map(|tok| tok.trim_end_matches(','))
+            .filter(|tok| tok.starts_with("--"))
+            .collect();
+
+        let registered: std::collections::HashSet<&str> = c
+            .required_args
+            .iter()
+            .chain(c.optional_args)
+            .filter_map(|arg| {
+                let tok = arg.split_whitespace().next()?;
+                if tok.starts_with("--") {
+                    Some(tok)
+                } else {
+                    None
+                }
+            })
+            .collect();
+
+        for flag in declared.iter().filter(|f| !excluded.contains(*f)) {
+            if !registered.contains(flag) {
+                missing.push(format!(
+                    "{}: `{} --help` documents `{flag}`, but the registry omits it from required_args/optional_args",
+                    c.id,
+                    c.argv()
+                ));
+            }
+        }
+    }
+    assert!(
+        missing.is_empty(),
+        "registry omits flags the CLI documents ({} entries):\n{}",
+        missing.len(),
+        missing.join("\n")
+    );
+}
+
 #[test]
 fn json_format_claims_match_the_real_cli() {
     let mut mismatches = Vec::new();
