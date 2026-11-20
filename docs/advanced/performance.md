@@ -12,8 +12,8 @@ offline `sdkt` commands so future releases can detect regressions.
 | Memory | 3.7 GiB total |
 | OS | Linux (Ubuntu) |
 | Rust | rustc 1.97.1 (stable) |
-| sdkt | 2.1.1 (release build) — **historical baseline**, measured on the 2.1.1 release; not re-run since |
-| Benchmark date | 2026-08-06 |
+| sdkt | 2.7.0 (release build) — baseline re-run against the current release |
+| Benchmark date | 2026-10-05 |
 
 > Reported numbers were captured on the project VPS. Absolute values will vary
 > by host; **the relative trend across releases is what matters.** Re-run the
@@ -28,8 +28,13 @@ offline `sdkt` commands so future releases can detect regressions.
 - **Runs:** 7 measured runs per command (configurable via `RUNS=`).
 - **Wall-clock:** measured with nanosecond `date +%s.%N` around the command;
   reported as **min / median / average** (seconds).
-- **Peak memory:** captured via `/usr/bin/time -v` (Maximum resident set
-  size). Reported as **median** peak RSS (kB).
+- **Peak memory:** captured via GNU `/usr/bin/time -v` (Maximum resident set
+  size) when available, reported as **median** peak RSS (kB). If GNU time is
+  absent, the harness falls back to a portable probe: `/proc/<pid>/status`
+  polling (`VmHWM`) on Linux, and `ps -o rss=` sampling on macOS. On platforms
+  with no usable probe (e.g. Windows under Git Bash without GNU time), RSS is
+  reported explicitly as `unavailable` — never as zero or an empty value.
+  Wall-clock stats are still produced in every case.
 - **Noise reduction:** each run is pinned to a single core with
   `taskset 0x1` when available, so scheduler migration does not inflate
   variance.
@@ -81,6 +86,9 @@ First pass (RUNS=7, pinned to 1 core), sdkt 2.1.1:
 | `diff self token` | 0.0036 s | 0.0037 s | 0.0037 s | 5,976 kB |
 | `diff token→lp` | 0.0038 s | 0.0038 s | 0.0039 s | 5,924 kB |
 
+v2.7.0 baseline (RUNS=7, pinned to 1 core) is recorded in the section below
+and supersedes the 2.1.1 numbers, which are retained only as historical context.
+
 Second pass (RUNS=5, reproducibility) — `audit` against the heavier
 `liquidity_pool/src/lib.rs` (more code):
 
@@ -99,8 +107,18 @@ Second pass (RUNS=5, reproducibility) — `audit` against the heavier
   liquidity_pool ~4.9 ms / 7.4 MiB).
 - `diff` cost is dominated by WASM ABI decode, roughly constant per artifact.
 
+## RSS portability by platform
+
+| Platform (CI) | RSS probe | Behaviour |
+|---------------|-----------|-----------|
+| `ubuntu-latest` | GNU `/usr/bin/time -v`, fallback `/proc` polling | RSS populated |
+| `macos-latest` | `ps -o rss=` sampling (BSD time lacks `-v`) | RSS populated (sampled peak) |
+| `windows-latest` | none portable | RSS printed as `unavailable`; wall-clock still reported |
+
 ## Known limitations
 
+0. **Baseline machine profile for v2.7.0** is recorded in the Hardware table
+   above; re-run on the same host before comparing.
 1. **Absolute numbers are host-specific.** CPU model, cache pressure, and
    concurrent load on the shared VPS shift wall-clock by 10–30%. Compare
    releases on the *same* machine using the helper script.
