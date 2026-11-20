@@ -657,7 +657,7 @@ verification fails after an otherwise successful deploy.
 │   │
 │   └── replay <artifact>     Replay a finding artifact to verify reproduction
 │       ├── --wasm <WASM>                 Path to the campaign WASM
-│       └── (exit code: 0 = REPRODUCED, 1 = MISMATCH, 2 = usage error)
+│       └── (exit code: 0 = REPRODUCED, 1 = MISMATCH or input/runtime failure, 2 = usage error)
 │
 ├── generate                  Generate typed clients and other artifacts
 │   └── client <wasm>         Generate typed Rust client from ContractSpec
@@ -1174,11 +1174,14 @@ sdkt fuzz replay ./sdkt-fuzz-artifacts/contract-increment-case0042.json \
 |-----------|---------|---------|
 | `0` | `REPRODUCED` | The artifact reproduced: same input, same result, finding verified |
 | `1` | `MISMATCH` | The artifact did not reproduce: result differs from expected |
-| `2` | Usage error | Invalid artifact or WASM path |
+| `1` | Input/runtime failure | Unreadable file, malformed artifact, unsupported `schema_version`, unknown `reason_code`, or WASM hash mismatch — the invocation was well-formed but the failure is environmental or data-dependent |
+| `2` | Usage error | Genuine command-line usage error (e.g. unknown flag) |
 
 **Determinism:**
 
 If `--replay` was used during the campaign, every artifact was automatically replayed to verify determinism. A `REPRODUCED` verdict confirms that the finding can be independently re-executed with the exact same inputs and produce the same result.
+
+Input/runtime failures follow the CLI-wide convention (`0` success, `1` runtime/verdict failure, `2` usage error) documented in `crates/sdkt-core/src/registry.rs`, matching sibling commands such as `audit`, `wasm inspect`, and `diff`. A CI gate that treats exit `2` as "you called the tool wrong" will not misclassify a missing artifact or a mismatched WASM as operator error.
 
 ### Compare
 
