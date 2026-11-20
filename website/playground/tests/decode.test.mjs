@@ -1,5 +1,41 @@
 // DOM/worker integration test: node website/playground/tests/decode.test.mjs
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
+
+// Exercise the committed wasm-bindgen artifact directly before stubbing the
+// page worker. This keeps the test offline while proving the Rust decoder is
+// exported and callable, not merely that the UI protocol is wired correctly.
+const wasmModule = await import('../wasm/sdkt_playground.js');
+const wasmBytes = readFileSync(new URL('../wasm/sdkt_playground_bg.wasm', import.meta.url));
+wasmModule.initSync({ module: wasmBytes });
+
+const fixture = readFileSync(new URL('../../../examples/sample_scval.b64', import.meta.url), 'utf8').trim();
+assert.deepEqual(JSON.parse(wasmModule.decode_xdr(fixture, 'auto')), { bool: false });
+const envelope = 'AAAAAgAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAGQAAAAAAAAAAQAAAAAAAAAAAAAAAQAAAAAAAAAYAAAAAAAAAAEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQAAAAVoZWxsbwAAAAAAAAAAAAAAAAAAAAAAAAA=';
+assert.equal(typeof JSON.parse(wasmModule.decode_xdr(envelope, 'transactionenvelope')), 'object');
+
+function decoderError(payload, hint) {
+  try {
+    wasmModule.decode_xdr(payload, hint);
+    assert.fail('decode must fail');
+  } catch (error) {
+    return String(error);
+  }
+}
+assert.match(decoderError('not-xdr', 'scval'), /XDR parse failed|Base64 decode failed|Hex decode failed/);
+assert.match(decoderError(fixture, 'unknown'), /Unknown XDR type: unknown/);
+
+// ScVal::Vec(Some([child])) is 12 bytes of framing per level. At 501
+// levels the bounded decoder must reject instead of hanging or overflowing.
+let nested = Buffer.from([0, 0, 0, 1]); // ScVal::Void
+for (let depth = 0; depth < 501; depth += 1) {
+  nested = Buffer.concat([Buffer.from([
+    0, 0, 0, 16, // ScVal::Vec
+    0, 0, 0, 1,  // Some
+    0, 0, 0, 1,  // one element
+  ]), nested]);
+}
+assert.match(decoderError(nested.toString('base64'), 'scval'), /depth|limit/i);
 
 function element() {
   const listeners = {};
@@ -39,17 +75,16 @@ globalThis.Worker = class {
 };
 await import('../playground.js');
 const tick = () => new Promise((resolve) => setTimeout(resolve, 0));
-// Worker responses are stubbed; this verifies the UI protocol, not the Rust decoder.
-const sample = 'AAAAAwAAAAI=';
+const sample = fixture;
 els.xdrPayload.value = sample;
 els.xdrType.value = 'auto';
 els.decodeBtn.click();
 assert.equal(requests[0].payload, sample);
 assert.equal(requests[0].typeHint, 'auto');
-worker.reply(requests[0], '{"u32":2}');
+worker.reply(requests[0], '{"bool":false}');
 await tick();
 assert.equal(els.xdrResult.hidden, false);
-assert.deepEqual(JSON.parse(els.xdrOutput.textContent), { u32: 2 });
+assert.deepEqual(JSON.parse(els.xdrOutput.textContent), { bool: false });
 assert.equal(els.xdrCopy.children.length, 1);
 
 els.xdrPayload.value = 'invalid';

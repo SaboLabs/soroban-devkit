@@ -9,6 +9,7 @@
 # Requirements:
 # rustup toolchain install 1.88.0 --target wasm32-unknown-unknown
 # cargo +1.88.0 install wasm-bindgen-cli --version 0.2.127 --locked
+# macOS only: brew install llvm (Apple Clang has no wasm32 backend)
 #
 # Usage: bash website/playground/build.sh
 set -euo pipefail
@@ -18,6 +19,14 @@ cd "$(dirname "$0")/../.."   # repo root (website/playground -> website -> repo)
 RUST_TOOLCHAIN="1.88.0"
 WASM_BINDGEN_VERSION="0.2.127"
 OUT_DIR="${PLAYGROUND_WASM_OUT:-website/playground/wasm}"
+
+# zstd-sys compiles C sources for the target. Apple Clang does not ship a
+# wasm32 backend, while Homebrew LLVM does. Prefer it automatically on macOS so
+# the documented build command works without caller-specific environment vars.
+if [[ "$(uname -s)" == "Darwin" ]] && [[ -x /opt/homebrew/opt/llvm/bin/clang ]]; then
+  export CC_wasm32_unknown_unknown="${CC_wasm32_unknown_unknown:-/opt/homebrew/opt/llvm/bin/clang}"
+  export AR_wasm32_unknown_unknown="${AR_wasm32_unknown_unknown:-/opt/homebrew/opt/llvm/bin/llvm-ar}"
+fi
 
 echo "==> Building sdkt-playground for wasm32-unknown-unknown (release)"
 cargo +"${RUST_TOOLCHAIN}" build -p sdkt-playground --locked --release \

@@ -42,10 +42,10 @@ All four checks must pass for the smoke test to exit 0.
 A real, copy-paste example (offline — no network):
 
 ```bash
-sdkt decode AAAAAAAAAAIAAAAAAAAABHRlc3Q= --type ScVal
+sdkt decode AAAAAAAAAAA= --type ScVal
 # → { "bool": false }
 
-sdkt decode AAAAAAAAAAIAAAAAAAAABHRlc3Q= --type ScVal --format json
+sdkt decode AAAAAAAAAAA= --type ScVal --format json
 sdkt decode --file payload.b64 --type TransactionEnvelope
 ```
 
