@@ -51,16 +51,18 @@ fn main() {
     if cli.list_capabilities {
         // Listing never consults the parser or planner and always exits 0.
         if json {
-            println!("{}", sdkt_core::registry::to_json());
+            match sdkt_core::registry::to_json() {
+                Ok(doc) => println!("{doc}"),
+                Err(e) => {
+                    eprintln!("Error: failed to serialize registry: {e}");
+                    std::process::exit(1);
+                }
+            }
         } else {
             for cap in sdkt_core::registry::capabilities() {
                 println!(
-                    "{}\t{}\t{}\tnetwork={}\t{}",
-                    cap.id,
-                    cap.command,
-                    cap.safety,
-                    cap.network,
-                    cap.summary
+                    "{}\t{}\t{:?}\tnetwork={:?}\t{}",
+                    cap.id, cap.command, cap.safety, cap.network, cap.summary
                 );
             }
         }
@@ -93,12 +95,12 @@ fn main() {
         // already inside the document (or on stderr from the child).
         println!("{}", result.to_json());
     } else {
-        println!("{}", result.topretty());
+        println!("{}", result.to_pretty());
     }
 
     // Exit status mirrors the outcome so a caller can branch without parsing.
     match result.status {
         Status::Success => {}
-        Status::Failed | Status:Blocked | Status:>NeedsClarification => std::process::exit(1),
+        Status::Failed | Status::Blocked | Status::NeedsClarification => std::process::exit(1),
     }
 }

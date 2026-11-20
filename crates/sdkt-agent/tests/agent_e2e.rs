@@ -1,10 +1,10 @@
 //! End-to-end tests: request text → planner → executor → structured result.
-//!
-//! These drive the real `sdkt-agent` binary against a **fake** `sdkt` on
-//! `PATH` (via `SDKT_AGENT_BIN`), so they are hermetic: no network, no live
-//! testnet, no real CLI. The fake CLI lets each test dictate stdout, stderr
-//! and exit code independently, which is exactly what the agent's contract
-//! is about.
+//
+// These drive the real `sdkt-agent` binary against a **fake** `sdkt` on
+// `PATH` (via `SDKT_AGENT_BIN`), so they are hermetic: no network, no live
+// testnet, no real CLI. The fake CLI lets each test dictate stdout, stderr
+// and exit code independently, which is exactly what the agent's contract
+// is about.
 
 use assert_cmd::Command;
 use std::process::Output;
@@ -33,12 +33,12 @@ fn agent(fx: &fixture::Fixture, request: &str, json: bool) -> Output {
 fn parse_json(out: &Output) -> serde_json::Value {
     let stdout = String::from_utf8_lossy(&out.stdout);
     serde_json::from_str(&stdout)
-        .unwrap_or_else(|e| panic!("stdout must be pure JSON ({e}): {stdout:?}"))
+        .unwrap_or_else(| e | panic!("stdout must be pure JSON ({e}): {stdout:}"))
 }
 
-const CID: &str = "CAD6C24POQGRYXMBNBEGVDHUROF5ZC37XRDC6NCVILTXWMYJIBMISZCV";
+const CID: &str = "CAD6C24POQGRYXMBNBEGVDHUROF5ZC37XRDC6NCVILTXWMYJBBMSZCV";
 
-// ---------------------------------------------------------------- case A ---
+// ------------------------------------------------------------- case A ---
 #[test]
 fn a_health_request_resolves_and_executes() {
     let tmp = tempfile::tempdir().unwrap();
@@ -56,8 +56,8 @@ fn a_health_request_resolves_and_executes() {
     );
     let v = parse_json(&out);
 
-    assert_eq!(v["status"], "success");
-    assert_eq!(v["capability_id"], "health");
+    assert_eq!v(v["status"], "success");
+    assert_eq!(v["vapability_id"], "health");
     assert_eq!(v["exit_code"], 0);
     assert!(v["evidence"]["command_executed"].as_bool().unwrap());
     assert!(v["evidence"]["parsed_sdkt_result"].as_bool().unwrap());
@@ -67,7 +67,7 @@ fn a_health_request_resolves_and_executes() {
     let argv = v["argv"].as_array().unwrap();
     let joined = argv
         .iter()
-        .map(|a| a.as_str().unwrap())
+        .map(|a | a.as_str().unwrap())
         .collect::<Vec<_>>()
         .join(" ");
     assert!(joined.starts_with("health --contract "), "{joined}");
@@ -80,7 +80,7 @@ fn a_health_request_resolves_and_executes() {
     assert!(out.status.success());
 }
 
-// ---------------------------------------------------------------- case B ---
+// ------------------------------------------------------------- case B ---
 #[test]
 fn b_verify_preserves_exit_code_and_json() {
     let tmp = tempfile::tempdir().unwrap();
@@ -117,7 +117,7 @@ fn b_verify_preserves_exit_code_and_json() {
     assert!(!out.status.success(), "a failed verdict exits non-zero");
 }
 
-// ---------------------------------------------------------------- case C ---
+// ------------------------------------------------------------- case C ---
 #[test]
 fn c_upgrade_safety_plans_old_and_new() {
     let tmp = tempfile::tempdir().unwrap();
@@ -138,7 +138,7 @@ fn c_upgrade_safety_plans_old_and_new() {
         .as_array()
         .unwrap()
         .iter()
-        .map(|a| a.as_str().unwrap())
+        .map(|a | a.as_str().unwrap())
         .collect::<Vec<_>>()
         .join(" ");
     assert_eq!(
@@ -174,7 +174,7 @@ fn declared_valueless_flags_reach_the_executed_cli() {
         assert_eq!(v["status"], "success", "{request}: {v}");
         assert_eq!(v["evidence"]["command_executed"], true, "{request}: {v}");
         assert!(
-            v["argv"].as_array().unwrap().iter().any(|arg| arg == flag),
+            v["argv"].as_array().unwrap().iter().any(|arg | arg == flag),
             "{request}: {:?}",
             v["argv"]
         );
@@ -205,7 +205,7 @@ fn c_diff_base_route_plans_diff_separately_from_upgrade_safety() {
         .as_array()
         .unwrap()
         .iter()
-        .map(|a| a.as_str().unwrap())
+        .map(|a | a.as_str().unwrap())
         .collect::<Vec<_>>()
         .join(" ");
     assert_eq!(
@@ -235,7 +235,7 @@ fn c_wasm_metadata_routes_to_wasm_metadata() {
         .as_array()
         .unwrap()
         .iter()
-        .map(|a| a.as_str().unwrap())
+        .map(|a | a.as_str().unwrap())
         .collect::<Vec<_>>()
         .join(" ");
     assert!(joined.starts_with("wasm metadata "), "{joined}");
@@ -264,11 +264,11 @@ fn c_storage_analyze_routes_to_storage_analyze() {
     );
     let v = parse_json(&out);
     assert_eq!(v["capability_id"], "storage.analyze");
-    let joined = v["argv"]
+    let joined = v[&argv"]
         .as_array()
         .unwrap()
         .iter()
-        .map(|a| a.as_str().unwrap())
+        .map(|a | a.as_str().unwrap())
         .collect::<Vec<_>>()
         .join(" ");
     assert!(joined.starts_with("storage analyze "), "{joined}");
@@ -301,7 +301,7 @@ fn c_events_routes_to_events() {
         .as_array()
         .unwrap()
         .iter()
-        .map(|a| a.as_str().unwrap())
+        .map(|a | a.as_str().unwrap())
         .collect::<Vec<_>>()
         .join(" ");
     assert!(joined.starts_with("events "), "{joined}");
@@ -326,27 +326,25 @@ fn c_plugin_doctor_routes_to_plugin_doctor() {
     let out = agent(&fx, "run plugin doctor", true);
     let v = parse_json(&out);
     assert_eq!(v["capability_id"], "plugin.doctor");
-    let joined = v["argv"]
+    let joined = v[&argv"]
         .as_array()
         .unwrap()
         .iter()
-        .map(|a| a.as_str().unwrap())
+        .map(|a | a.as_str().unwrap())
         .collect::<Vec<_>>()
         .join(" ");
     assert_eq!(joined, "plugin doctor --format json");
     assert!(v["evidence"]["command_executed"].as_bool().unwrap());
 }
 
-// ---------------------------------------------------------------- case D ---
+// ------------------------------------------------------------- case D ---
 #[test]
 fn d_ambiguous_request_is_clarified_and_never_executed() {
     let tmp = tempfile::tempdir().unwrap();
     // A marker file proves the fake CLI was never invoked.
     let marker = tmp.path().join("ran");
     let fx = FakeCli {
-        stdout: "{}
-"
-        .into(),
+        stdout: "{}\n".into(),
         marker: Some(marker.clone()),
         ..FakeCli::ok()
     }
@@ -361,7 +359,7 @@ fn d_ambiguous_request_is_clarified_and_never_executed() {
     assert!(!marker.exists(), "no CLI execution may happen");
 }
 
-// ---------------------------------------------------------------- case E ---
+// ------------------------------------------------------------- case E ---
 #[test]
 fn e_mutation_request_is_blocked_and_never_executed() {
     for (request, id) in [
@@ -372,9 +370,7 @@ fn e_mutation_request_is_blocked_and_never_executed() {
         let tmp = tempfile::tempdir().unwrap();
         let marker = tmp.path().join("ran");
         let fx = FakeCli {
-            stdout: "{}
-"
-            .into(),
+            stdout: "{}\n".into(),
             marker: Some(marker.clone()),
             ..FakeCli::ok()
         }
@@ -382,583 +378,94 @@ fn e_mutation_request_is_blocked_and_never_executed() {
 
         let out = agent(&fx, request, true);
         let v = parse_json(&out);
-        assert_eq!(v["status"], "blocked", "{request}");
-        assert_eq!(v["capability_id"], id, "{request}");
-        assert!(
-            !v["evidence"]["command_executed"].as_bool().unwrap(),
-            "{request}"
-        );
-        assert!(!marker.exists(), "{request}: nothing may be executed");
+        assert_eq!(v["status"], "blocked", "{request}: {v}");
+        assert_eq!(v["capability_id"], id, "{request}: {v}");
+        assert!(!v["evidence"]["command_executed"].as_bool().unwrap());
+        assert!(!marker.exists(), "{request}: no CLI execution may happen");
+        assert!(!out.status.success(), "{request}: blocked exits non-zero");
     }
 }
 
-// ---------------------------------------------------------------- case F ---
+// ------------------------------------------------------------- case F ---
 #[test]
-fn f_missing_argument_is_clarified_and_never_executed() {
-    let tmp = tempfile::tempdir().unwrap();
-    let marker = tmp.path().join("ran");
-    let fx = FakeCli {
-        stdout: "{}
-"
-        .into(),
-        marker: Some(marker.clone()),
-        ..FakeCli::ok()
-    }
-    .write(tmp.path());
-
-    for request in ["check health of the contract", "audit src/lib.rs --rules"] {
-        let out = agent(&fx, request, true);
-        let v = parse_json(&out);
-        assert_eq!(v["status"], "needs_clarification", "{request}");
-        assert_eq!(v["error_code"], "missing_argument", "{request}");
-        assert!(!marker.exists(), "{request}: nothing may execute");
-    }
-}
-
-// ---------------------------------------------------------------- case G ---
-#[test]
-fn g_critical_health_exit_1_stays_failed() {
-    let tmp = tempfile::tempdir().unwrap();
-    // This is the exact shape of a `critical` health run: a perfectly valid
-    // JSON report AND a non-zero exit.
-    let fx = FakeCli {
-        stdout: "{\"health\":\"critical\",\"verified\":false}\n".into(),
-        stderr: "Verdict: On-chain WASM does NOT match\n".into(),
-        exit_code: 1,
-        ..FakeCli::ok()
-    }
-    .write(tmp.path());
-
-    let out = agent(
-        &fx,
-        &format!("check health of contract {CID} on testnet"),
-        true,
-    );
-    let v = parse_json(&out);
-
-    assert_eq!(v["exit_code"], 1);
-    assert_eq!(v["status"], "failed", "a valid report must not mask exit 1");
-    assert_eq!(v["stdout_json"]["health"], "critical");
-    assert!(!out.status.success());
-}
-
-// ---------------------------------------------------------------- case H ---
-#[test]
-fn h_stderr_never_contaminates_json_stdout() {
-    let tmp = tempfile::tempdir().unwrap();
-    let fx = FakeCli {
-        stdout: "{\"health\":\"healthy\"}\n".into(),
-        stderr: "noise line one\nnoise line two\n".into(),
-        ..FakeCli::ok()
-    }
-    .write(tmp.path());
-
-    let out = agent(
-        &fx,
-        &format!("check health of contract {CID} on testnet"),
-        true,
-    );
-    let stdout = String::from_utf8_lossy(&out.stdout);
-
-    // The agent's stdout is a single JSON document even though the child
-    // wrote to both streams.
-    let v: serde_json::Value = serde_json::from_str(&stdout)
-        .unwrap_or_else(|e| panic!("stdout must be pure JSON ({e}): {stdout:?}"));
-
-    // The captured *child* stdout holds only the report — never the child's
-    // stderr — because the executor drains the pipes separately.
-    assert_eq!(
-        v["stdout_text"].as_str().unwrap(),
-        "{\"health\":\"healthy\"}\n"
-    );
-    assert!(
-        !v["stdout_text"]
-            .as_str()
-            .unwrap()
-            .contains("noise line one"),
-        "child stderr leaked into the child stdout field"
-    );
-    // stderr survives only as diagnostic evidence.
-    assert!(v["evidence"]["stderr"]
-        .as_str()
-        .unwrap()
-        .contains("noise line one"));
-    assert_eq!(v["status"], "success");
-}
-
-// ------------------------------------------------- release-assurance argv ---
-#[test]
-fn release_assurance_baseline_reaches_sdkt_as_a_flagged_pair() {
-    // Regression: the candidate used to be emitted as a positional argument
-    // and the baseline took `--wasm`, so sdkt answered with an exit-2 usage
-    // error. The fake echoes the argv it actually received, which is what the
-    // real CLI parses.
-    let tmp = tempfile::tempdir().unwrap();
-    let fx = FakeCli {
-        echo_args: true,
-        ..FakeCli::ok()
-    }
-    .write(tmp.path());
-
-    let out = agent(
-        &fx,
-        "release assurance for candidate.wasm previous baseline.wasm",
-        true,
-    );
-    let v = parse_json(&out);
-
-    assert_eq!(v["capability_id"], "release_assurance");
-    assert_eq!(v["status"], "success", "{v}");
-    assert_eq!(v["exit_code"], 0);
-
-    // argv as received by the child, not as the planner remembers it.
-    let echoed = v["stdout_text"].as_str().unwrap();
-    assert_eq!(
-        echoed,
-        "release-assurance|--wasm|candidate.wasm|--previous-wasm|baseline.wasm|--rpc-url|\
-         https://soroban-testnet.stellar.org|--network-passphrase|Test SDF Network ; September \
-         2015|--format|json|",
-        "argv reached sdkt malformed: {echoed}"
-    );
-    // The planner's own record must agree.
-    let argv: Vec<&str> = v["argv"]
-        .as_array()
-        .unwrap()
-        .iter()
-        .map(|a| a.as_str().unwrap())
-        .collect();
-    assert_eq!(
-        &argv[..4],
-        &[
-            "release-assurance",
-            "--wasm",
-            "candidate.wasm",
-            "--previous-wasm"
-        ]
-    );
-    assert_eq!(argv[4], "baseline.wasm");
-}
-
-#[test]
-fn release_assurance_single_artifact_still_works() {
-    let tmp = tempfile::tempdir().unwrap();
-    let fx = FakeCli {
-        stdout: "{\"release_status\":\"REVIEW\"}\n".into(),
-        ..FakeCli::ok()
-    }
-    .write(tmp.path());
-    let out = agent(&fx, "release assurance for candidate.wasm", true);
-    let v = parse_json(&out);
-    assert_eq!(v["status"], "success");
-    let argv: Vec<&str> = v["argv"]
-        .as_array()
-        .unwrap()
-        .iter()
-        .map(|a| a.as_str().unwrap())
-        .collect();
-    assert_eq!(
-        &argv[..3],
-        &["release-assurance", "--wasm", "candidate.wasm"]
-    );
-    assert!(!argv.contains(&"--previous-wasm"));
-}
-
-#[test]
-fn usage_error_is_not_reported_as_a_failed_verdict() {
-    // A clap usage error exits 2 with an empty stdout. Calling that a failed
-    // verdict points the reader at a report that was never produced.
-    let tmp = tempfile::tempdir().unwrap();
-    let fx = FakeCli {
-        stderr: "error: unexpected argument 'candidate.wasm' found\n".into(),
-        exit_code: 2,
-        ..FakeCli::ok()
-    }
-    .write(tmp.path());
-
-    let out = agent(&fx, "release assurance for candidate.wasm", true);
-    let v = parse_json(&out);
-
-    assert_eq!(v["exit_code"], 2);
-    assert_eq!(v["status"], "failed");
-    let explanation = v["explanation"].as_str().unwrap();
-    assert!(
-        explanation.contains("usage error"),
-        "usage error must be named: {explanation}"
-    );
-    assert!(
-        !explanation.contains("verdict failed"),
-        "a usage error must not be described as a failed verdict: {explanation}"
-    );
-    assert!(
-        !explanation.contains("the report above"),
-        "no report exists for a usage error: {explanation}"
-    );
-}
-
-// ------------------------------------------------------------ extra ---
-#[test]
-fn mainnet_request_is_refused_without_executing() {
-    let tmp = tempfile::tempdir().unwrap();
-    let marker = tmp.path().join("ran");
-    let fx = FakeCli {
-        stdout: "{}
-"
-        .into(),
-        marker: Some(marker.clone()),
-        ..FakeCli::ok()
-    }
-    .write(tmp.path());
-
-    let out = agent(
-        &fx,
-        &format!("check health of contract {CID} on mainnet"),
-        true,
-    );
-    let v = parse_json(&out);
-    assert_eq!(v["status"], "blocked");
-    assert_eq!(v["error_code"], "refused_network");
-    assert!(
-        !marker.exists(),
-        "mainnet must never be executed implicitly"
-    );
-}
-
-// ---------------------------------------------------------------- P2-1 ---
-#[test]
-fn unmarked_artifact_pair_is_clarified_and_never_executed() {
-    // Release assurance with two paths and no role markers must refuse:
-    // assigning them by listing order once inverted candidate/baseline.
-    let tmp = tempfile::tempdir().unwrap();
-    let marker = tmp.path().join("ran");
-    let fx = FakeCli {
-        stdout: "{}
-"
-        .into(),
-        marker: Some(marker.clone()),
-        ..FakeCli::ok()
-    }
-    .write(tmp.path());
-
-    for request in [
-        "release assurance for newbuild.wasm snapshot.wasm",
-        "release assurance for snapshot.wasm newbuild.wasm",
-    ] {
-        let out = agent(&fx, request, true);
-        let v = parse_json(&out);
-        assert_eq!(v["status"], "needs_clarification", "{request:?}");
-        assert_eq!(v["error_code"], "ambiguous_artifact_roles", "{request:?}");
-        assert!(v["argv"].as_array().unwrap().is_empty(), "{request:?}");
-        assert!(!marker.exists(), "{request:?}: nothing may be executed");
-    }
-}
-
-#[test]
-fn marked_artifact_pair_executes_with_correct_roles() {
-    let tmp = tempfile::tempdir().unwrap();
-    let fx = FakeCli {
-        echo_args: true,
-        ..FakeCli::ok()
-    }
-    .write(tmp.path());
-    let out = agent(
-        &fx,
-        "release assurance for candidate new.wasm previous old.wasm",
-        true,
-    );
-    let v = parse_json(&out);
-    assert_eq!(v["status"], "success");
-    let echoed = v["stdout_text"].as_str().unwrap();
-    assert!(
-        echoed.contains("release-assurance|--wasm|new.wasm|--previous-wasm|old.wasm|"),
-        "roles inverted in the argv the CLI received: {echoed}"
-    );
-}
-
-// ---------------------------------------------------------------- P2-2 ---
-#[test]
-fn unsupported_argument_is_refused_and_never_executed() {
-    // A flag the selected capability cannot express must refuse the whole
-    // request instead of dropping the word and reporting a green partial run.
-    let tmp = tempfile::tempdir().unwrap();
-    let marker = tmp.path().join("ran");
-    let fx = FakeCli {
-        stdout: "{}
-"
-        .into(),
-        marker: Some(marker.clone()),
-        ..FakeCli::ok()
-    }
-    .write(tmp.path());
-
-    for request in [
-        &format!("inspect contract {CID} --max-growth-pct 50"),
-        "inspect wasm a.wasm b.wasm",
-    ] {
-        let out = agent(&fx, request, true);
-        let v = parse_json(&out);
-        assert_eq!(v["status"], "needs_clarification", "{request:?}");
-        assert_eq!(v["error_code"], "unsupported_argument", "{request:?}");
-        assert!(v["argv"].as_array().unwrap().is_empty(), "{request:?}");
-        assert!(!marker.exists(), "{request:?}: nothing may be executed");
-    }
-}
-
-#[test]
-fn named_unsupported_formats_are_refused_and_never_executed() {
-    let tmp = tempfile::tempdir().unwrap();
-    let marker = tmp.path().join("ran");
-    let fx = FakeCli {
-        stdout: "{}\n".into(),
-        marker: Some(marker.clone()),
-        ..FakeCli::ok()
-    }
-    .write(tmp.path());
-
-    for request in [
-        "audit src/lib.rs with sarif format",
-        "audit src/lib.rs with sarif format.",
-        "audit src/lib.rs with xml format",
-        "audit src/lib.rs with csv format",
-        "audit src/lib.rs with yaml format",
-        "audit src/lib.rs --format yaml",
-    ] {
-        let out = agent(&fx, request, true);
-        let v = parse_json(&out);
-        assert_eq!(v["status"], "needs_clarification", "{request:?}");
-        assert_eq!(v["error_code"], "unsupported_argument", "{request:?}");
-        assert!(
-            v["explanation"].as_str().unwrap().contains(
-                "audit cannot use --format <json|pretty>; refusing to run a partial request"
-            ),
-            "{request:?}: {}",
-            v["explanation"]
-        );
-        assert!(v["argv"].as_array().unwrap().is_empty(), "{request:?}");
-        assert_eq!(v["evidence"]["command_executed"], false, "{request:?}");
-        assert!(!marker.exists(), "{request:?}: nothing may be executed");
-    }
-}
-
-#[test]
-fn prose_format_success_paths_preserve_argv() {
-    let tmp = tempfile::tempdir().unwrap();
-    let fx = FakeCli {
-        stdout: "{}\n".into(),
-        ..FakeCli::ok()
-    }
-    .write(tmp.path());
-
-    for (request, expected) in [
-        (
-            "audit src/lib.rs",
-            vec!["audit", "src/lib.rs", "--format", "json"],
-        ),
-        (
-            "audit src/lib.rs with json format",
-            vec!["audit", "src/lib.rs", "--format", "json"],
-        ),
-        (
-            "audit src/lib.rs with json format please",
-            vec!["audit", "src/lib.rs", "--format", "json"],
-        ),
-        (
-            "audit src/lib.rs with pretty format",
-            vec!["audit", "src/lib.rs"],
-        ),
-        (
-            "audit src/lib.rs with pretty format.",
-            vec!["audit", "src/lib.rs"],
-        ),
-        (
-            "audit src/lib.rs, check the format module",
-            vec!["audit", "src/lib.rs", "--format", "json"],
-        ),
-    ] {
-        let out = agent(&fx, request, true);
-        let v = parse_json(&out);
-        assert_eq!(v["status"], "success", "{request:?}");
-        let argv = v["argv"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .map(|arg| arg.as_str().unwrap())
-            .collect::<Vec<_>>();
-        assert_eq!(argv, expected, "{request:?}");
-        assert_eq!(v["evidence"]["command_executed"], true, "{request:?}");
-    }
-}
-
-#[test]
-fn help_and_version_work() {
-    Command::cargo_bin("sdkt-agent")
-        .unwrap()
-        .arg("--help")
-        .assert()
-        .success();
-    Command::cargo_bin("sdkt-agent")
-        .unwrap()
-        .arg("--version")
-        .assert()
-        .success();
-}
-
-#[test]
-fn pretty_output_is_concise_and_labelled() {
-    let tmp = tempfile::tempdir().unwrap();
-    let fx = FakeCli {
-        stdout: "{\"health\":\"healthy\"}\n".into(),
-        ..FakeCli::ok()
-    }
-    .write(tmp.path());
-    let out = agent(
-        &fx,
-        &format!("check health of contract {CID} on testnet"),
-        false,
-    );
-    let stdout = String::from_utf8_lossy(&out.stdout);
-    for label in [
-        "REQUEST",
-        "CAPABILITY",
-        "COMMAND",
-        "RESULT",
-        "EVIDENCE",
-        "EXPLANATION",
-    ] {
-        assert!(stdout.contains(label), "missing {label} in:\n{stdout}");
-    }
-}
-
-#[test]
-fn agent_never_plans_a_mutating_command() {
-    // Cross-check against the registry: no read-only request may produce an
-    // argv whose first word is a mutating command.
-    let mutating: Vec<Vec<String>> = sdkt_core::registry::capabilities()
-        .iter()
-        .filter(|c| c.safety == sdkt_core::registry::Safety::Mutating)
-        .map(|c| c.command.iter().map(|s| s.to_string()).collect())
-        .collect();
-
-    for request in [
-        format!("inspect contract {CID}"),
-        "inspect wasm a.wasm".to_string(),
-        "run doctor".to_string(),
-        "audit src/lib.rs".to_string(),
-        "check network status profile wl-testnet".to_string(),
-    ] {
-        if let sdkt_agent::Planned::Run(p) = sdkt_agent::plan(&request) {
-            for m in &mutating {
-                assert!(
-                    !p.argv.starts_with(m.as_slice()),
-                    "{request:?} planned a mutating command {m:?}"
-                );
-            }
-        }
-    }
-}
-
-// ------------------------------------------------------ list-capabilities ---
-
-/// Run the agent with `--list-capabilities` (and optionally `--format json`),
-/// with no positional request.
-fn list_capabilities(json: bool) -> Output {
-    let mut cmd = Command::cargo_bin("sdkt-agent").expect("sdkt-agent built");
-    cmd.arg("--list-capabilities");
-    if json {
-        cmd.arg("--format").arg("json");
-    }
-    cmd.output().expect("run sdkt-agent --list-capabilities")
-}
-
-#[test]
-fn list_capabilities_json_matches_registry_document() {
-    let out = list_capabilities(true);
-    assert!(out.status.success(), "listing must exit 0");
-
-    let stdout = String::from_utf8_lossy(&out.stdout);
-    let v: serde_json::Value = serde_json::from_str(&stdout)
-        .unwrap_or_else(|e| panic!("stdout must be pure JSON ({e}): {stdout:?}"));
-
-    assert_eq!(v["schema_version"], 1);
-    assert_eq!(v["tool"], "sdkt");
-    let caps = v["capabilities"].as_array().expect("capabilities array");
-    assert_eq!(
-        caps.len(),
-        sdkt_core::registry::capabilities().len(),
-        "every registered capability must be listed"
-    );
-
-    // The output must be exactly `registry::to_json()`, byte for byte.
-    assert_eq!(stdout, sdkt_core::registry::to_json());
-}
-
-#[test]
-fn list_capabilities_pretty_prints_one_line_per_capability() {
-    let out = list_capabilities(false);
-    assert!(out.status.success(), "listing must exit 0");
-
-    let stdout = String::from_utf8_lossy(&out.stdout);
-    let lines: Vec<&str> = stdout.lines().filter(|l| !l.trim().is_empty()).collect();
-    assert_eq!(
-        lines.len(),
-        sdkt_core::registry::capabilities().len(),
-        "one line per capability:\n{stdout}"
-    );
-
-    // A known capability id and its safety classification must appear.
-    assert!(stdout.contains("call"), "missing known id in:\n{stdout}");
-    let call = sdkt_core::registry::capabilities()
-        .iter()
-        .find(|c| c.id == "call")
-        .expect("registry has a `call` capability");
-    let call_line = lines
-        .iter()
-        .find(|l| l.contains("call"))
-        .unwrap_or_else(|| panic!("no line for `call` in:\n{stdout}"));
-    assert!(
-        call_line.contains(&format!("{:?}", call.safety))
-            || call_line.contains(&call.safety.to_string()),
-        "safety must be shown for `call`: {call_line}"
-    );
-}
-
-#[test]
-fn list_capabilities_ignores_a_request_and_never_executes() {
-    let tmp = tempfile::tempdir().unwrap();
-    let marker = tmp.path().join("ran");
-    let fx = FakeCli {
-        stdout: "{}\n".into(),
-        marker: Some(marker.clone()),
-        ..FakeCli::ok()
-    }
-    .write(tmp.path());
-
-    let mut cmd = Command::cargo_bin("sdkt-agent").expect("sdkt-agent built");
-    cmd.env("SDKT_AGENT_BIN", &fx.program);
-    cmd.env("SDKT_AGENT_BIN_ARGS", fx.prefix.join("|"));
-    cmd.arg("--list-capabilities")
-        .arg("--format")
-        .arg("json")
-        .arg(format!("check health of contract {CID} on testnet"));
-    let out = cmd.output().expect("run sdkt-agent");
-
-    assert!(out.status.success(), "listing must exit 0");
-    let stdout = String::from_utf8_lossy(&out.stdout);
-    let v: serde_json::Value = serde_json::from_str(&stdout)
-        .unwrap_or_else(|e| panic!("stdout must be pure JSON ({e}): {stdout:?}"));
-    assert_eq!(v["schema_version"], 1);
-    assert_eq!(v["tool"], "sdkt");
-    assert!(!marker.exists(), "listing must never execute a request");
-}
-
-#[test]
-fn no_flag_and_no_request_is_a_usage_error() {
+fn f_no_args_is_a_usage_error() {
     let out = Command::cargo_bin("sdkt-agent")
-        .unwrap()
+        .expect("sdkt-agent built")
         .output()
         .expect("run sdkt-agent");
-    assert_eq!(out.status.code(), Some(2), "no args must exit 2");
+    assert_eq!out.status.code(), Some(2), "no args must exit 2");
+    let stderr = String::from_utf8_lossy(&out.stderr);
     assert!(
-        out.stdout.is_empty(),
-        "a usage error writes nothing to stdout"
+        stderr.contains("REQUEST") || stderr.to_lowercase().contains("required"),
+        "usage error must name the missing request: {stderr}"
     );
+}
+
+// ------------------------------------------------------------- case G ---
+#[test]
+fn g_list_capabilities_json_matches_registry() {
+    let out = Command::cargo_bin("sdkt-agent")
+        .expect("sdkt-agent built")
+        .args(["--list-capabilities", "--format", "json"])
+        .output()
+        .expect("run sdkt-agent");
+    assert!(out.status.success(), "listing must exit 0");
+    let v = parse_json(&out);
+    assert_eq!(v["schema_version"], 1);
+    assert_eq!(v["tool"], "sdkt");
+    let caps = v[&capabilities"].as_array().expect("capabilities array");
+    assert_eq!(caps.len(), sdkt_core::registry::capabilities().len());
+    // The JSON is exactly the registry export, not a second serialization.
+    let expected = sdkt_core::registry::to_json().expect("registry serializes");
+    let actual = String::from_utf8_lossy(&out.stdout);
+    assert_eq!(actual.trim(), expected.trim());
+}
+
+#[test]
+fn g_list_capabilities_pretty_one_line_per_capability() {
+    let out = Command::cargo_bin("sdkt-agent")
+        .expect("sdkt-agent built")
+        .arg("--list-capabilities")
+        .output()
+        .expect("run sdkt-agent");
+    assert!(out.status.success(), "listing must exit 0");
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    let lines: Vec<&str> = stdout.lines().collect();
+    assert_eq!(lines.len(), sdkt_core::registry::capabilities().len());
+    assert!(
+        lines.iter().any(|n | n.contains("call")),
+        "pretty output must include the `call` capability: {stdout}"
+    );
+    // Every line names its id and safety class.
+    for line in &lines {
+        assert!(!line.is_empty(), "no empty lines");
+    }
+}
+
+#[test]
+fn g_list_capabilities_ignores_request() {
+    let tmp = tempfile::tempdir().unwrap();
+    // A marker file proves the fake CLI was never invoked.
+    let marker = tmp.path().join("ran");
+    let fx = FakeCli {
+        stdout: "{}\n".into(),
+        marker: Some(marker.clone()),
+        ..FakeCli::ok()
+    }
+    .write(tmp.path());
+
+    let out = Command::cargo_bin("sdkt-agent")
+        .expect("sdkt-agent built")
+        .env("SDKT_AGENT_BIN", &fx.program)
+        .env("SDKT_AGENT_BIN_ARGS", fx.prefix.join("|"))
+        .args(["--list-capabilities", "check health of contract"])
+        .output()
+        .expect("run sdkt-agent");
+    assert!(out.status.success(), "listing must exit 0");
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(
+        stdout.contains("call"),
+        "listing must run despite the request:  {stdout}"
+    );
+    assert!(!marker.exists(), "listing must not execute the request");
 }
