@@ -697,6 +697,12 @@ enum FuzzAction {
         #[arg(long, value_name = "WASM")]
         wasm: String,
     },
+    /// List oracle reason codes and supported mutation operators
+    List {
+        /// Output format (pretty or json)
+        #[arg(short, long, default_value = "pretty")]
+        format: String,
+    },
 }
 
 #[derive(Subcommand)]
@@ -9573,6 +9579,12 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
                         eprintln!("Error: {e}");
                         process::exit(2);
                     }
+                }
+            }
+            FuzzAction::List { format } => {
+                if let Err(e) = commands::fuzz::run_list(&format) {
+                    eprintln!("Error: {e}");
+                    process::exit(2);
                 }
             }
         },

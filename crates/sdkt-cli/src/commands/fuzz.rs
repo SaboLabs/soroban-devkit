@@ -14,7 +14,9 @@
 //!
 //! Exit `1` is the only path that means "findings were produced".
 
-use sdkt_fuzz::{AuthMode, FuzzRunOptions, ReplayOptions};
+use sdkt_fuzz::{AuthMode, FuzzRunOptions, ReasonCode, ReplayOptions};
+use sdkt_wasm::ContractType;
+use std::collections::BTreeMap;
 
 /// Output formats supported by the fuzz surface.
 pub enum FuzzFormat {
@@ -123,6 +125,141 @@ pub fn run_replay(artifact: &str, wasm: &str, format: &str) -> Result<bool, Stri
     let outcome = sdkt_fuzz::run_replay(&options).map_err(|e| e.to_string())?;
     print_replay(&outcome, &fmt);
     Ok(outcome.is_reproduced())
+}
+
+/// Print the oracle vocabulary and mutations available to the generator.
+pub fn run_list(format: &str) -> Result<(), String> {
+    let fmt = parse_format(format)
+        .ok_or_else(|| format!("invalid format '{format}' (expected pretty or json)"))?;
+    if matches!(fmt, FuzzFormat::Jsonl) {
+        return Err(format!(
+            "invalid format '{format}' (expected pretty or json)"
+        ));
+    }
+
+    let reason_codes = [
+        (
+            ReasonCode::ReturnMismatch,
+            "Declared return value did not match.",
+        ),
+        (
+            ReasonCode::StateMismatch,
+            "Declared state changes did not match.",
+        ),
+        (ReasonCode::EventMismatch, "Declared events did not match."),
+        (
+            ReasonCode::AuthorizationBypass,
+            "A protected operation succeeded without authorization.",
+        ),
+        (
+            ReasonCode::UnexpectedError,
+            "A call failed despite a declared success expectation.",
+        ),
+        (
+            ReasonCode::ResourceLimit,
+            "A call exceeded the declared resource limit.",
+        ),
+    ];
+    let mut operators: BTreeMap<&'static str, Vec<&'static str>> = BTreeMap::new();
+    for (contract_type, label) in supported_contract_types() {
+        for operator in sdkt_fuzz::mutation::operators_for(&contract_type) {
+            operators.entry(operator.name()).or_default().push(label);
+        }
+    }
+
+    let value = serde_json::json!({
+        "reason_codes": reason_codes.iter().map(|(code, meaning)| {
+            serde_json::json!({ "name": code.name(), "meaning": meaning })
+        }).collect::<Vec<_>>(),
+        "mutation_operators": operators.iter().map(|(name, types)| {
+            serde_json::json!({ "name": name, "types": types })
+        }).collect::<Vec<_>>(),
+    });
+
+    match fmt {
+        FuzzFormat::Pretty => print_list_pretty(&value),
+        FuzzFormat::Json => println!(
+            "{}",
+            serde_json::to_string_pretty(&value).expect("list serializes")
+        ),
+        FuzzFormat::Jsonl => unreachable!(),
+    }
+    Ok(())
+}
+
+fn supported_contract_types() -> Vec<(ContractType, &'static str)> {
+    let mut types = [
+        "bool",
+        "u32",
+        "i32",
+        "u64",
+        "i64",
+        "u128",
+        "i128",
+        "string",
+        "bytes",
+        "address",
+        "muxed_address",
+    ]
+    .into_iter()
+    .map(|name| (contract_type(name, "primitive", Vec::new()), name))
+    .collect::<Vec<_>>();
+
+    let u32_type = contract_type("u32", "primitive", Vec::new());
+    types.extend([
+        (
+            contract_type("vec<u32>", "compound", vec![u32_type.clone()]),
+            "vec<T>",
+        ),
+        (
+            contract_type("option<u32>", "compound", vec![u32_type.clone()]),
+            "option<T>",
+        ),
+        (
+            contract_type("map<u32,u32>", "compound", vec![u32_type.clone(), u32_type]),
+            "map<K, V>",
+        ),
+    ]);
+    types
+}
+
+fn contract_type(name: &str, kind: &str, type_args: Vec<ContractType>) -> ContractType {
+    ContractType {
+        name: name.to_string(),
+        kind: kind.to_string(),
+        doc: String::new(),
+        members: Vec::new(),
+        type_args,
+        bytes_n: None,
+    }
+}
+
+fn print_list_pretty(value: &serde_json::Value) {
+    println!("Oracle reason codes");
+    println!("{:<24} Meaning", "CODE");
+    for code in value["reason_codes"].as_array().expect("reason code array") {
+        println!(
+            "{:<24} {}",
+            code["name"].as_str().unwrap(),
+            code["meaning"].as_str().unwrap()
+        );
+    }
+    println!();
+    println!("Mutation operators");
+    println!("{:<24} Contract types", "OPERATOR");
+    for operator in value["mutation_operators"]
+        .as_array()
+        .expect("operator array")
+    {
+        let types = operator["types"]
+            .as_array()
+            .expect("operator type array")
+            .iter()
+            .filter_map(serde_json::Value::as_str)
+            .collect::<Vec<_>>()
+            .join(", ");
+        println!("{:<24} {}", operator["name"].as_str().unwrap(), types);
+    }
 }
 
 /// Render a campaign report.

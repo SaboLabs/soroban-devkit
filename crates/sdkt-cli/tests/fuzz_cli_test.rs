@@ -45,6 +45,138 @@ fn auth_fixture() -> String {
         .to_string()
 }
 
+fn supported_types() -> Vec<(sdkt_wasm::ContractType, &'static str)> {
+    fn contract_type(
+        name: &str,
+        kind: &str,
+        type_args: Vec<sdkt_wasm::ContractType>,
+    ) -> sdkt_wasm::ContractType {
+        sdkt_wasm::ContractType {
+            name: name.to_string(),
+            kind: kind.to_string(),
+            doc: String::new(),
+            members: Vec::new(),
+            type_args,
+            bytes_n: None,
+        }
+    }
+
+    let mut types = [
+        "bool",
+        "u32",
+        "i32",
+        "u64",
+        "i64",
+        "u128",
+        "i128",
+        "string",
+        "bytes",
+        "address",
+        "muxed_address",
+    ]
+    .into_iter()
+    .map(|name| (contract_type(name, "primitive", Vec::new()), name))
+    .collect::<Vec<_>>();
+    let u32_type = contract_type("u32", "primitive", Vec::new());
+    types.extend([
+        (
+            contract_type("vec<u32>", "compound", vec![u32_type.clone()]),
+            "vec<T>",
+        ),
+        (
+            contract_type("option<u32>", "compound", vec![u32_type.clone()]),
+            "option<T>",
+        ),
+        (
+            contract_type("map<u32,u32>", "compound", vec![u32_type.clone(), u32_type]),
+            "map<K, V>",
+        ),
+    ]);
+    types
+}
+
+#[test]
+fn cli_fuzz_list_reports_reason_codes_and_runtime_operator_set() {
+    let output = fuzz(&["list", "--format", "json"])
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+    let value: Value = serde_json::from_slice(&output).expect("list output is JSON");
+
+    let reason_names = value["reason_codes"]
+        .as_array()
+        .expect("reason_codes array")
+        .iter()
+        .map(|code| code["name"].as_str().expect("reason name"))
+        .collect::<std::collections::BTreeSet<_>>();
+    assert_eq!(
+        reason_names,
+        [
+            "RETURN_MISMATCH",
+            "STATE_MISMATCH",
+            "EVENT_MISMATCH",
+            "AUTHORIZATION_BYPASS",
+            "UNEXPECTED_ERROR",
+            "RESOURCE_LIMIT",
+        ]
+        .into_iter()
+        .collect()
+    );
+    assert!(value["reason_codes"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .all(|code| {
+            code["meaning"]
+                .as_str()
+                .is_some_and(|meaning| !meaning.is_empty())
+        }));
+
+    let expected = supported_types()
+        .into_iter()
+        .flat_map(|(contract_type, label)| {
+            sdkt_fuzz::mutation::operators_for(&contract_type)
+                .into_iter()
+                .map(move |operator| (operator.name(), label))
+        })
+        .fold(
+            std::collections::BTreeMap::<&str, std::collections::BTreeSet<&str>>::new(),
+            |mut map, (operator, label)| {
+                map.entry(operator).or_default().insert(label);
+                map
+            },
+        );
+    let actual = value["mutation_operators"]
+        .as_array()
+        .expect("mutation_operators array")
+        .iter()
+        .map(|operator| {
+            let name = operator["name"].as_str().expect("operator name");
+            let types = operator["types"]
+                .as_array()
+                .expect("operator types")
+                .iter()
+                .map(|ty| ty.as_str().expect("type label"))
+                .collect::<std::collections::BTreeSet<_>>();
+            (name, types)
+        })
+        .collect::<std::collections::BTreeMap<_, _>>();
+    assert_eq!(actual, expected);
+}
+
+#[test]
+fn cli_fuzz_list_defaults_to_pretty_tables() {
+    fuzz(&["list"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("Oracle reason codes"))
+        .stdout(predicate::str::contains("Mutation operators"))
+        .stdout(predicate::str::contains("RETURN_MISMATCH"))
+        .stdout(predicate::str::contains("vec_mutate_one"));
+}
+
 fn temp_dir(label: &str) -> PathBuf {
     let dir = std::env::temp_dir().join(format!("sdkt-fuzz-cli-{label}-{}", std::process::id()));
     std::fs::create_dir_all(&dir).expect("create temp dir");
