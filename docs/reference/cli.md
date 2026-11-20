@@ -173,7 +173,7 @@ sdkt
 ├── wasm
 │   ├── inspect <file.wasm>  Offline inspection of a local WASM file (sections, exports, spec)
 │   ├── metadata --contract <contract>  [--network testnet] [--refresh] [--format]
-│   └── cache                 (info | remove | clear)
+│   └── cache                 (info | list | remove | clear)
 │
 ├── verify --contract <contract-id>
 │   ├── --wasm <file.wasm>    (local artifact to compare; offline hashed)
@@ -908,6 +908,41 @@ sdkt tx status aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa 
 A malformed hash (anything other than 64 hexadecimal characters) exits 2
 naming the problem before any RPC call is made. A corrupt `result_xdr` is
 an error naming the hash, never a silent empty result.
+
+## WASM cache
+
+`sdkt wasm cache` manages the local WASM metadata cache (see the
+`SDKT_CACHE_DIR` note under `wasm metadata`). Four actions:
+
+```bash
+# Aggregate stats for a network: entry count, metadata and WASM byte totals.
+sdkt wasm cache info --network testnet
+
+# Enumerate the individual entries for a network, one per cached contract.
+sdkt wasm cache list --network testnet
+# Cached WASM entries (2):
+#   HASH ...                                                              WASM       META
+#   551c5a9c7fd4c4a71e57e9c8a0ece1e7bd506ea065993c63db2dc35516406775   530 B      1.2 KB
+
+# The same entries as a JSON array of structured objects (sizes are raw
+# bytes here, and `null` marks a half-pair whose other file is missing).
+sdkt wasm cache list --network testnet --format json
+# [{"network":"testnet","hash":"551c...","metadata_size_bytes":1229,
+#   "wasm_size_bytes":530,"warning":null}]
+
+# Remove one entry by hash (the hash is what `list` shows), or clear the
+# whole network cache.
+sdkt wasm cache remove 551c5a9c7fd4... --network testnet
+sdkt wasm cache clear --network testnet
+```
+
+`list` is sorted by hash so the ordering is deterministic. An empty or
+not-yet-created cache is a useful empty result (`No cached WASM entries`
+pretty, `[]` in JSON), never an error. A malformed `{hash}.json` produces a
+per-entry warning (a `⚠` marker in pretty output, a `warning` field in JSON,
+and a diagnostic on stderr) while the listing still completes — it never
+aborts the whole listing, matching how `wasm metadata` treats cache read
+errors as warnings.
 
 ## Encode
 

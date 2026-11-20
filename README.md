@@ -388,7 +388,7 @@ See [`docs/plugin-authoring.md`](docs/plugins/plugin-authoring.md) for how to bu
 | `sdkt health --contract <ID> [--wasm <file>] [--network <net>]` | Unified read-only contract posture report (WASM, storage, TTL, health verdict). |
 | `sdkt wasm inspect <file>` | Inspect offline WASM metadata, sections, and specifications. |
 | `sdkt wasm metadata --contract <contract>` | WASM metadata for a deployed contract (cached). |
-| `sdkt wasm cache` | Manage the WASM cache (`info` / `remove` / `clear`). |
+| `sdkt wasm cache` | Manage the WASM cache (`info` / `list` / `remove` / `clear`). `list` enumerates every cached entry for a network (hash + sizes, `--format json` supported). |
 || `sdkt audit <path.rs>` | Static security analysis (AUTH-001/002/003/004, MOVE-001, MATH-001, CEI-001). `--disable <RULE_ID>` to skip a rule. `--rules <path|id>` (repeatable) to load external rule paths or resolve installed plugin IDs. |
 | `sdkt identity <generate\|import\|list\|show\|delete\|default>` | ED25519 keystore management. `import <name> <secret>` requires a secret; pass `-` to read it from stdin (recommended — argv secrets are deprecated, issue #64). |
 | `sdkt identity fund <name> --network-profile <NAME>` | Fund an identity via Stellar Testnet Friendbot. |

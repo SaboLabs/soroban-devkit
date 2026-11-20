@@ -1102,6 +1102,13 @@ enum CacheAction {
         #[arg(short, long, default_value = "pretty")]
         format: String,
     },
+    /// List every entry in the cache for the network
+    List {
+        #[arg(short, long, default_value = "testnet")]
+        network: String,
+        #[arg(short, long, default_value = "pretty")]
+        format: String,
+    },
     /// Remove a specific hash from the cache
     Remove {
         /// 64-character hex SHA256 hash of the WASM artifact
@@ -3172,6 +3179,22 @@ fn parse_format_str(s: &str) -> OutputFormat {
             eprintln!("Invalid format '{}'. Use 'json' or 'pretty'.", other);
             process::exit(2);
         }
+    }
+}
+
+/// Formats a byte count for the `wasm cache list` table (`530 B`, `1.2 KB`,
+/// `3.4 MB`). `None` renders as `unknown`: the entry is a half-pair whose
+/// other file is missing.
+fn format_cache_size(bytes: Option<u64>) -> String {
+    let Some(bytes) = bytes else {
+        return "unknown".to_string();
+    };
+    if bytes < 1024 {
+        format!("{} B", bytes)
+    } else if bytes < 1024 * 1024 {
+        format!("{:.1} KB", bytes as f64 / 1024.0)
+    } else {
+        format!("{:.1} MB", bytes as f64 / (1024.0 * 1024.0))
     }
 }
 
@@ -10060,6 +10083,71 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
                             }
                             Err(e) => {
                                 eprintln!("Error getting cache info: {}", e);
+                                process::exit(1);
+                            }
+                        }
+                    }
+                    CacheAction::List { network, format } => {
+                        let fmt = parse_format_str(&format);
+                        match cache.list_entries(&network) {
+                            Ok(entries) => {
+                                if fmt == OutputFormat::Json {
+                                    // Serialize through serde_json rather than a
+                                    // hand-rolled format string so hashes,
+                                    // network names, and warning text are
+                                    // escaped correctly. A structured array of
+                                    // entries; `null` sizes mark a half-pair.
+                                    #[derive(serde::Serialize)]
+                                    struct CacheEntryJson<'a> {
+                                        network: &'a str,
+                                        hash: &'a str,
+                                        metadata_size_bytes: Option<u64>,
+                                        wasm_size_bytes: Option<u64>,
+                                        warning: Option<&'a str>,
+                                    }
+
+                                    let payload: Vec<CacheEntryJson> = entries
+                                        .iter()
+                                        .map(|entry| CacheEntryJson {
+                                            network: &entry.network,
+                                            hash: &entry.hash,
+                                            metadata_size_bytes: entry.metadata_size_bytes,
+                                            wasm_size_bytes: entry.wasm_size_bytes,
+                                            warning: entry.warning.as_deref(),
+                                        })
+                                        .collect();
+                                    println!("{}", serde_json::to_string(&payload)?);
+                                } else if entries.is_empty() {
+                                    println!("No cached WASM entries for network '{}'.", network);
+                                } else {
+                                    println!("Cached WASM entries ({}):", entries.len());
+                                    println!("  {:<66} {:<10} META", "HASH", "WASM");
+                                    for entry in &entries {
+                                        let marker =
+                                            if entry.warning.is_some() { "  ⚠" } else { "" };
+                                        println!(
+                                            "  {:<66} {:<10} {}{}",
+                                            entry.hash,
+                                            format_cache_size(entry.wasm_size_bytes),
+                                            format_cache_size(entry.metadata_size_bytes),
+                                            marker
+                                        );
+                                    }
+                                }
+                                // Per-entry diagnostics go to stderr so stdout
+                                // stays parseable, matching the other cache
+                                // warnings.
+                                for entry in &entries {
+                                    if let Some(warning) = &entry.warning {
+                                        eprintln!(
+                                            "Warning: cache entry '{}': {}",
+                                            entry.hash, warning
+                                        );
+                                    }
+                                }
+                            }
+                            Err(e) => {
+                                eprintln!("Error listing cache entries: {}", e);
                                 process::exit(1);
                             }
                         }

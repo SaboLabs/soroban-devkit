@@ -174,6 +174,194 @@ fn test_cli_wasm_cache_clear_removes_existing_entries() {
 }
 
 #[test]
+fn test_cli_wasm_cache_list_populated() {
+    // Real cache layout: <cache>/wasm/testnet/<hash>.{json,wasm}
+    let cache = tempfile::tempdir().unwrap();
+    let net_dir = cache.path().join("wasm").join("testnet");
+    std::fs::create_dir_all(&net_dir).unwrap();
+    // Valid metadata (only the serde-required fields) + non-empty wasm.
+    std::fs::write(
+        net_dir.join("551c5a9c7fd4.json"),
+        r#"{"hash":"551c5a9c7fd4","size_bytes":10,"version":1,"exports":[],"imports":[],"custom_sections":[]}"#,
+    )
+    .unwrap();
+    std::fs::write(net_dir.join("551c5a9c7fd4.wasm"), b"wasm-bytes").unwrap();
+    std::fs::write(net_dir.join("aaabbbb1aaaa.wasm"), b"x").unwrap();
+
+    let mut cmd = Command::cargo_bin("sdkt").unwrap();
+    let assert = cmd
+        .env("SDKT_CACHE_DIR", cache.path())
+        .args(["wasm", "cache", "list", "--network", "testnet"])
+        .assert();
+    let stdout = String::from_utf8(assert.success().get_output().stdout.clone()).unwrap();
+
+    assert!(stdout.contains("Cached WASM entries (2):"), "got: {stdout}");
+    assert!(stdout.contains("HASH") && stdout.contains("WASM") && stdout.contains("META"));
+    // Deterministic ordering: "551c…" sorts before "aaabbbb1…" (ASCII).
+    assert!(
+        stdout.find("551c5a9c7fd4").unwrap() < stdout.find("aaabbbb1aaaa").unwrap(),
+        "entries must be hash-sorted: {stdout}"
+    );
+    // Sizes come from the filesystem (human-readable).
+    assert!(
+        stdout.contains("551c5a9c7fd4"),
+        "missing full entry: {stdout}"
+    );
+    assert!(stdout.contains("10 B"), "wasm size expected: {stdout}");
+    // The half-pair entry falls back to "unknown" for its metadata size.
+    assert!(
+        stdout.contains("unknown"),
+        "half-pair fallback expected: {stdout}"
+    );
+}
+
+#[test]
+fn test_cli_wasm_cache_list_empty_is_not_an_error() {
+    let cache = tempfile::tempdir().unwrap();
+
+    let mut cmd = Command::cargo_bin("sdkt").unwrap();
+    cmd.env("SDKT_CACHE_DIR", cache.path())
+        .args(["wasm", "cache", "list", "--network", "testnet"])
+        .assert()
+        .success()
+        .stdout(predicates::str::contains(
+            "No cached WASM entries for network 'testnet'.",
+        ));
+}
+
+#[test]
+fn test_cli_wasm_cache_list_json() {
+    let cache = tempfile::tempdir().unwrap();
+    let net_dir = cache.path().join("wasm").join("testnet");
+    std::fs::create_dir_all(&net_dir).unwrap();
+    std::fs::write(
+        net_dir.join("hashone.json"),
+        r#"{"hash":"hashone","size_bytes":10,"version":1,"exports":[],"imports":[],"custom_sections":[]}"#,
+    )
+    .unwrap();
+    std::fs::write(net_dir.join("hashone.wasm"), b"wasm-bytes").unwrap();
+
+    let mut cmd = Command::cargo_bin("sdkt").unwrap();
+    let assert = cmd
+        .env("SDKT_CACHE_DIR", cache.path())
+        .args([
+            "wasm",
+            "cache",
+            "list",
+            "--network",
+            "testnet",
+            "--format",
+            "json",
+        ])
+        .assert();
+    let stdout = String::from_utf8(assert.success().get_output().stdout.clone()).unwrap();
+    let val: serde_json::Value =
+        serde_json::from_str(&stdout).unwrap_or_else(|e| panic!("invalid JSON ({e}): {stdout}"));
+
+    let entries = val.as_array().expect("JSON array of entries");
+    assert_eq!(entries.len(), 1);
+    assert_eq!(entries[0]["network"], "testnet");
+    assert_eq!(entries[0]["hash"], "hashone");
+    assert_eq!(entries[0]["wasm_size_bytes"], 10);
+    assert!(entries[0]["metadata_size_bytes"].is_number());
+    assert!(entries[0]["warning"].is_null());
+}
+
+#[test]
+fn test_cli_wasm_cache_list_json_empty_cache_is_empty_array() {
+    let cache = tempfile::tempdir().unwrap();
+
+    let mut cmd = Command::cargo_bin("sdkt").unwrap();
+    let assert = cmd
+        .env("SDKT_CACHE_DIR", cache.path())
+        .args([
+            "wasm",
+            "cache",
+            "list",
+            "--network",
+            "testnet",
+            "--format",
+            "json",
+        ])
+        .assert();
+    let stdout = String::from_utf8(assert.success().get_output().stdout.clone()).unwrap();
+    let val: serde_json::Value =
+        serde_json::from_str(&stdout).unwrap_or_else(|e| panic!("invalid JSON ({e}): {stdout}"));
+    assert!(val.as_array().expect("JSON array").is_empty());
+}
+
+#[test]
+fn test_cli_wasm_cache_list_malformed_metadata_warns_but_lists() {
+    // A malformed {hash}.json must warn for that entry only; the listing
+    // still completes and other entries are unaffected.
+    let cache = tempfile::tempdir().unwrap();
+    let net_dir = cache.path().join("wasm").join("testnet");
+    std::fs::create_dir_all(&net_dir).unwrap();
+    std::fs::write(net_dir.join("corrupt1.json"), b"{ invalid_json").unwrap();
+    std::fs::write(net_dir.join("corrupt1.wasm"), b"abc").unwrap();
+
+    let mut cmd = Command::cargo_bin("sdkt").unwrap();
+    let assert = cmd
+        .env("SDKT_CACHE_DIR", cache.path())
+        .args(["wasm", "cache", "list", "--network", "testnet"])
+        .assert();
+    let output = assert.success().get_output().clone();
+    let stdout = String::from_utf8(output.stdout.clone()).unwrap();
+    let stderr = String::from_utf8(output.stderr.clone()).unwrap();
+
+    assert!(stdout.contains("Cached WASM entries (1):"), "got: {stdout}");
+    assert!(
+        stdout.contains("corrupt1"),
+        "entry must be listed: {stdout}"
+    );
+    assert!(stdout.contains("⚠"), "warning marker expected: {stdout}");
+    assert!(
+        stderr.contains("corrupt1") && stderr.contains("malformed metadata"),
+        "diagnostic expected on stderr: {stderr}"
+    );
+
+    // JSON path: the same entry carries the warning as a structured field.
+    let mut cmd = Command::cargo_bin("sdkt").unwrap();
+    let stdout = String::from_utf8(
+        cmd.env("SDKT_CACHE_DIR", cache.path())
+            .args([
+                "wasm",
+                "cache",
+                "list",
+                "--network",
+                "testnet",
+                "--format",
+                "json",
+            ])
+            .assert()
+            .success()
+            .get_output()
+            .stdout
+            .clone(),
+    )
+    .unwrap();
+    let val: serde_json::Value =
+        serde_json::from_str(&stdout).unwrap_or_else(|e| panic!("invalid JSON ({e}): {stdout}"));
+    let entries = val.as_array().expect("JSON array of entries");
+    assert_eq!(entries.len(), 1);
+    let warning = entries[0]["warning"].as_str().expect("warning field");
+    assert!(warning.contains("malformed metadata"), "got: {warning}");
+}
+
+#[test]
+fn test_cli_wasm_cache_list_invalid_network_name_fails() {
+    // Path traversal in --network is rejected before any filesystem access.
+    let cache = tempfile::tempdir().unwrap();
+
+    let mut cmd = Command::cargo_bin("sdkt").unwrap();
+    cmd.env("SDKT_CACHE_DIR", cache.path())
+        .args(["wasm", "cache", "list", "--network", "../outside"])
+        .assert()
+        .failure()
+        .stderr(predicates::str::contains("Error listing cache entries"));
+}
+
+#[test]
 fn test_cli_wasm_inspect_missing_file() {
     let mut cmd = Command::cargo_bin("sdkt").unwrap();
     let assert = cmd
