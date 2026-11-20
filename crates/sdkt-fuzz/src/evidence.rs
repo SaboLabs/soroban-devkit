@@ -59,6 +59,13 @@ pub struct CampaignEvidence {
     /// True when the campaign's own determinism check passed (same seed ⇒
     /// same finding stream, verified by the campaign runner).
     pub deterministic: bool,
+    /// True when the run declared budget-class failures as RESOURCE_LIMIT
+    /// findings (`--resource-limit-is-finding`). Opt-in; default off, so
+    /// default-run evidence omits the field entirely (byte-identical to
+    /// pre-flag evidence) and a run that used the rule is distinguishable
+    /// from one that did not.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub resource_limit_is_finding: bool,
 }
 
 /// One finding as evidence: identity + reason + artifact reference.
@@ -89,6 +96,7 @@ impl CampaignEvidence {
         artifacts: &[FindingArtifact],
         replay: &BTreeMap<String, ReplayStatus>,
         deterministic: bool,
+        resource_limit_is_finding: bool,
     ) -> Self {
         // The artifact hash is the canonical hash of the serialized finding,
         // not the wasm hash; match artifacts to findings by case id
@@ -123,6 +131,7 @@ impl CampaignEvidence {
             artifacts_available: !artifacts.is_empty(),
             replay: replay.clone(),
             deterministic,
+            resource_limit_is_finding,
         }
     }
 
@@ -173,6 +182,7 @@ mod tests {
             &[],
             &BTreeMap::new(),
             true,
+            false,
         );
         assert!(!evidence.campaign_completed);
         assert_eq!(evidence.case_count, 0);
@@ -192,6 +202,7 @@ mod tests {
             &[],
             &BTreeMap::new(),
             true,
+            false,
         );
         assert!(evidence.campaign_completed);
         assert_eq!(evidence.case_count, 2);

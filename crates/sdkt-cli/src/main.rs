@@ -849,6 +849,17 @@ enum FuzzAction {
         /// --sequence-length)
         #[arg(long, value_name = "N")]
         sequence_every: Option<usize>,
+        /// Map budget-class host errors to RESOURCE_LIMIT findings instead
+        /// of UNEXPECTED_ERROR. Opt-in; default off — resource exhaustion
+        /// is an outcome, not a verdict. Run-level: applies to every
+        /// expectation declared for this run.
+        #[arg(long)]
+        resource_limit_is_finding: bool,
+        /// Cap the per-case host budget at CPU:MEM instruction ceilings
+        /// (deterministic, not network-faithful) so the budget-exhaustion
+        /// path can be exercised at a known limit, e.g. --budget-capped 1:1
+        #[arg(long, value_name = "CPU:MEM")]
+        budget_capped: Option<String>,
         /// Replay every written artifact to verify determinism
         #[arg(long)]
         replay: bool,
@@ -12949,6 +12960,8 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
                 expect_error,
                 sequence_length,
                 sequence_every,
+                resource_limit_is_finding,
+                budget_capped,
                 replay,
                 format,
             } => {
@@ -12963,6 +12976,8 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
                     expect_error,
                     sequence_length,
                     sequence_every,
+                    resource_limit_is_finding,
+                    budget_capped,
                     replay,
                     &format,
                 ) {
