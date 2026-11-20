@@ -600,6 +600,42 @@ fn audit_missing_path_fails_when_list_rules_not_specified() {
         .stderr(predicates::str::contains("PATH"));
 }
 
+#[test]
+fn audit_explain_pretty_and_json_show_examples() {
+    sdkt()
+        .args(["audit", "--explain", "MATH-001"])
+        .assert()
+        .success()
+        .stdout(predicates::str::contains("Rule: MATH-001"))
+        .stdout(predicates::str::contains("Example (vulnerable):"))
+        .stdout(predicates::str::contains("Example (fixed):"));
+
+    let out = sdkt()
+        .args(["audit", "--explain", "MATH-001", "--format", "json"])
+        .output()
+        .expect("run audit explain json");
+    assert!(out.status.success());
+    let value: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
+    assert_eq!(value["id"], "MATH-001");
+    assert!(value["example_vulnerable"].as_str().unwrap().len() > 0);
+    assert!(value["example_fixed"].as_str().unwrap().len() > 0);
+}
+
+#[test]
+fn audit_explain_rejects_sarif_and_unknown_rules() {
+    sdkt()
+        .args(["audit", "--explain", "MATH-001", "--format", "sarif"])
+        .assert()
+        .failure()
+        .stderr(predicates::str::contains("not supported with --explain"));
+    sdkt()
+        .args(["audit", "--explain", "NOPE-000"])
+        .assert()
+        .failure()
+        .stderr(predicates::str::contains("Unknown audit rule"))
+        .stderr(predicates::str::contains("AUTH-001"));
+}
+
 // ── Issue #311: severity follows behavior, not the name alone ──────────────
 
 /// A read-only accessor whose name matches a privileged substring must not be
