@@ -34,6 +34,116 @@ pub struct DevKitConfig {
     pub dependencies: std::collections::HashMap<String, Dependency>,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ConfigProblem {
+    pub section: String,
+    pub key: String,
+    pub message: String,
+}
+
+impl ConfigProblem {
+    pub fn new(
+        section: impl Into<String>,
+        key: impl Into<String>,
+        message: impl Into<String>,
+    ) -> Self {
+        Self {
+            section: section.into(),
+            key: key.into(),
+            message: message.into(),
+        }
+    }
+}
+
+/// Validate keys while the raw TOML table is still available.
+pub fn validate_config_schema(content: &str) -> Vec<ConfigProblem> {
+    let value: toml::Value = match toml::from_str(content) {
+        Ok(value) => value,
+        Err(error) => return vec![ConfigProblem::new("config", "file", error.to_string())],
+    };
+    let Some(root) = value.as_table() else {
+        return vec![ConfigProblem::new(
+            "config",
+            "file",
+            "configuration must be a table",
+        )];
+    };
+    let allowed = |keys: &[&str],
+                   table: &toml::map::Map<String, toml::Value>,
+                   section: &str,
+                   problems: &mut Vec<ConfigProblem>| {
+        for key in table.keys() {
+            if !keys.contains(&key.as_str()) {
+                problems.push(ConfigProblem::new(section, key, "unknown key"));
+            }
+        }
+    };
+    let mut problems = Vec::new();
+    allowed(
+        &[
+            "network",
+            "decode",
+            "storage",
+            "contracts",
+            "package",
+            "dependencies",
+        ],
+        root,
+        "config",
+        &mut problems,
+    );
+    for (section, keys) in [
+        (
+            "network",
+            [
+                "rpc_url",
+                "passphrase",
+                "timeout_secs",
+                "pool_max_idle_per_host",
+            ]
+            .as_slice(),
+        ),
+        ("decode", ["max_depth", "allow_fallback_hex"].as_slice()),
+        ("storage", ["max_entries", "ttl_warning_days"].as_slice()),
+    ] {
+        if let Some(table) = root.get(section).and_then(toml::Value::as_table) {
+            allowed(keys, table, section, &mut problems);
+        }
+    }
+    if let Some(contracts) = root.get("contracts").and_then(toml::Value::as_table) {
+        for (alias, value) in contracts {
+            if let Some(table) = value.as_table() {
+                allowed(
+                    &["path", "deploy_after", "depends_on", "ctor_args"],
+                    table,
+                    &format!("contracts.{alias}"),
+                    &mut problems,
+                );
+                if !table.contains_key("path") {
+                    problems.push(ConfigProblem::new(
+                        format!("contracts.{alias}"),
+                        "path",
+                        "required",
+                    ));
+                }
+            }
+        }
+    }
+    if let Some(deps) = root.get("dependencies").and_then(toml::Value::as_table) {
+        for (name, value) in deps {
+            if let Some(table) = value.as_table() {
+                allowed(
+                    &["path", "git", "tag", "branch", "rev", "version"],
+                    table,
+                    &format!("dependencies.{name}"),
+                    &mut problems,
+                );
+            }
+        }
+    }
+    problems
+}
+
 /// Settings for a specific contract in a workspace.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct ContractConfig {
@@ -224,8 +334,65 @@ impl DevKitConfig {
     /// XDR decoder honours as `Limits::none`), so a `.sdkt.toml` that omits an
     /// override or sets `0` behaves identically. This guard exists primarily
     /// to surface a clear, named error if a future semantic rule is added.
-    pub fn validate(&self) -> Result<(), String> {
-        Ok(())
+    pub fn validate(&self, base_dir: &Path) -> Result<(), Vec<ConfigProblem>> {
+        let mut problems = Vec::new();
+        if self.storage.max_entries == 0 {
+            problems.push(ConfigProblem::new(
+                "storage",
+                "max_entries",
+                "must be greater than 0",
+            ));
+        }
+        if self.network.timeout_secs == Some(0) {
+            problems.push(ConfigProblem::new(
+                "network",
+                "timeout_secs",
+                "must be greater than 0",
+            ));
+        }
+        if self.network.pool_max_idle_per_host == Some(0) {
+            problems.push(ConfigProblem::new(
+                "network",
+                "pool_max_idle_per_host",
+                "must be greater than 0",
+            ));
+        }
+        for (alias, contract) in &self.contracts {
+            let path = Path::new(&contract.path);
+            let resolved = if path.is_absolute() {
+                path.to_path_buf()
+            } else {
+                base_dir.join(path)
+            };
+            if !resolved.is_dir() {
+                problems.push(ConfigProblem::new(
+                    format!("contracts.{alias}"),
+                    "path",
+                    format!("{} does not exist", resolved.display()),
+                ));
+            } else if !resolved.join("Cargo.toml").is_file() {
+                problems.push(ConfigProblem::new(
+                    format!("contracts.{alias}"),
+                    "path",
+                    format!("{} does not contain Cargo.toml", resolved.display()),
+                ));
+            }
+        }
+        if !self.dependencies.is_empty() {
+            if let Err(error) = crate::package::validate_dependencies(base_dir, self) {
+                problems.push(ConfigProblem::new("dependencies", "", error.to_string()));
+            }
+        }
+        if !self.contracts.is_empty() {
+            if let Err(error) = crate::project::validate_project(self) {
+                problems.push(ConfigProblem::new("contracts", "", error.to_string()));
+            }
+        }
+        if problems.is_empty() {
+            Ok(())
+        } else {
+            Err(problems)
+        }
     }
 
     /// Loads configuration from a specific file path.
@@ -313,7 +480,7 @@ mod tests {
         let mut config = DevKitConfig::default();
         config.decode.max_depth = 0;
         assert!(
-            config.validate().is_ok(),
+            config.validate(Path::new(".")).is_ok(),
             "max_depth = 0 must be valid (unlimited), matching decode_with_config"
         );
     }
@@ -322,9 +489,9 @@ mod tests {
     fn test_validate_accepts_positive_max_depth() {
         let mut config = DevKitConfig::default();
         config.decode.max_depth = 1;
-        assert!(config.validate().is_ok());
+        assert!(config.validate(Path::new(".")).is_ok());
         config.decode.max_depth = u32::MAX;
-        assert!(config.validate().is_ok());
+        assert!(config.validate(Path::new(".")).is_ok());
     }
 
     #[test]
