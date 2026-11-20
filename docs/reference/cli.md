@@ -1371,12 +1371,14 @@ one memory unit so a declared `Success` hits the host's `Budget` error:
 ```bash
 # Without the rule: a capped-budget error under --expect-success is
 # UNEXPECTED_ERROR, as before.
-sdkt fuzz campaign contract.wasm --cases 1 --expect-success hello \
-    --budget-capped 1:1            # FINDING … UNEXPECTED_ERROR
+sdkt fuzz campaign contract.wasm --cases 1 --function hello \
+    --expect-success hello --budget-capped 1:1
+# FINDING … UNEXPECTED_ERROR
 
 # With the rule: the same campaign reports RESOURCE_LIMIT instead.
-sdkt fuzz campaign contract.wasm --cases 1 --expect-success hello \
-    --budget-capped 1:1 --resource-limit-is-finding   # RESOURCE_LIMIT
+sdkt fuzz campaign contract.wasm --cases 1 --function hello \
+    --expect-success hello --budget-capped 1:1 --resource-limit-is-finding
+# RESOURCE_LIMIT
 ```
 
 The campaign evidence records whether the rule was enabled: a run that used
