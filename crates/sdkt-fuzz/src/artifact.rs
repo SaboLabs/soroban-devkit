@@ -414,11 +414,29 @@ impl ExpectedSnapshot {
     }
 
     /// Reconstruct the runtime expectation for replay.
+    ///
+    /// Lossy: XDR that fails to decode (including over-depth input) is
+    /// dropped. Replay uses [`Self::try_to_expected`], which rejects it.
     pub fn to_expected(&self) -> Expected {
-        Expected {
+        self.try_to_expected().unwrap_or_default()
+    }
+
+    /// Reconstruct the runtime expectation, rejecting any undecodable or
+    /// over-depth XDR instead of substituting a different value.
+    pub fn try_to_expected(&self) -> Result<Expected, FuzzError> {
+        Ok(Expected {
             behavior: match &self.behavior {
                 BehaviorSnapshot::Success { expect_return } => ExpectedBehavior::Success {
-                    expect_return: expect_return.as_deref().and_then(unhex_xdr),
+                    expect_return: match expect_return.as_deref() {
+                        Some(h) => Some(unhex_xdr(h).ok_or_else(|| {
+                            FuzzError::InvalidArtifact(
+                                "expected return value did not decode as ScVal XDR \
+                                 (malformed or nested deeper than the depth limit)"
+                                    .to_string(),
+                            )
+                        })?),
+                        None => None,
+                    },
                 },
                 BehaviorSnapshot::Error { error_type, code } => ExpectedBehavior::Error {
                     error_type: error_type.clone(),
@@ -432,13 +450,17 @@ impl ExpectedSnapshot {
                     .filter_map(|e| Some((unhex(&e.key_xdr)?, unhex(&e.value_xdr)?)))
                     .collect::<BTreeMap<Vec<u8>, Vec<u8>>>()
             }),
-            events: self
-                .events
-                .as_ref()
-                .map(|ev| ev.iter().map(restore_event).collect()),
+            events: match self.events.as_ref() {
+                Some(ev) => Some(
+                    ev.iter()
+                        .map(try_restore_event)
+                        .collect::<Result<Vec<_>, FuzzError>>()?,
+                ),
+                None => None,
+            },
             auth_required: self.auth_required,
             resource_limit_is_finding: self.resource_limit_is_finding,
-        }
+        })
     }
 }
 
@@ -451,13 +473,24 @@ fn snapshot_event(e: &EventRecord) -> EventSnapshot {
     }
 }
 
-fn restore_event(e: &EventSnapshot) -> EventRecord {
-    EventRecord {
+fn try_restore_event(e: &EventSnapshot) -> Result<EventRecord, FuzzError> {
+    let bad = || {
+        FuzzError::InvalidArtifact(
+            "expected event XDR did not decode as ScVal \
+             (malformed or nested deeper than the depth limit)"
+                .to_string(),
+        )
+    };
+    Ok(EventRecord {
         contract_id: e.contract_id.as_deref().and_then(unhex_32),
         event_type: e.event_type.clone(),
-        topics: e.topics_xdr.iter().filter_map(|t| unhex_xdr(t)).collect(),
-        data: unhex_xdr(&e.data_xdr).unwrap_or(soroban_env_host::xdr::ScVal::Void),
-    }
+        topics: e
+            .topics_xdr
+            .iter()
+            .map(|t| unhex_xdr(t).ok_or_else(bad))
+            .collect::<Result<Vec<_>, FuzzError>>()?,
+        data: unhex_xdr(&e.data_xdr).ok_or_else(bad)?,
+    })
 }
 
 /// Serializable minimization record.
@@ -575,9 +608,15 @@ impl FindingArtifact {
         String::from_utf8_lossy(&self.canonical_bytes()).into_owned()
     }
 
-    /// The declared expectation that was violated.
+    /// The declared expectation that was violated (lossy; see
+    /// [`ExpectedSnapshot::to_expected`]).
     pub fn expected(&self) -> Expected {
         self.expected.to_expected()
+    }
+
+    /// The declared expectation, rejecting undecodable or over-depth XDR.
+    pub fn try_expected(&self) -> Result<Expected, FuzzError> {
+        self.expected.try_to_expected()
     }
 
     /// Steps to replay, decoded from base16 XDR.
@@ -642,11 +681,16 @@ pub(crate) fn xdr_hex<T: soroban_env_host::xdr::WriteXdr>(v: &T) -> String {
     hex(&v.to_xdr(Limits::none()).unwrap_or_default())
 }
 
-/// Decode a `ScVal` from lowercase-hex XDR.
+/// Maximum XDR nesting depth accepted when decoding artifact input. Matches
+/// the default `[decode] max_depth` used by the generic `sdkt decode` path.
+pub(crate) const MAX_XDR_DEPTH: u32 = 500;
+
+/// Decode a `ScVal` from lowercase-hex XDR, bounded to [`MAX_XDR_DEPTH`].
+/// Returns `None` for malformed or over-depth input.
 pub(crate) fn unhex_xdr(hex_str: &str) -> Option<soroban_env_host::xdr::ScVal> {
     use soroban_env_host::xdr::{Limits, ReadXdr};
     let bytes = unhex(hex_str)?;
-    soroban_env_host::xdr::ScVal::from_xdr(bytes.as_slice(), Limits::none()).ok()
+    soroban_env_host::xdr::ScVal::from_xdr(bytes.as_slice(), Limits::depth(MAX_XDR_DEPTH)).ok()
 }
 
 pub(crate) fn unhex(s: &str) -> Option<Vec<u8>> {

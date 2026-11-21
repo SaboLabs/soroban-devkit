@@ -355,3 +355,71 @@ fn unreadable_artifact_still_names_the_artifact_path() {
     );
     let _ = std::fs::remove_dir_all(dir);
 }
+
+// ---------------------------------------------------------------------------
+// I. bounded XDR decoding depth for user-supplied artifacts (#494)
+// ---------------------------------------------------------------------------
+
+/// Hex XDR of an `ScVal::Vec` nested `levels` deep around a `Void` leaf.
+fn nested_vec_hex(levels: usize) -> String {
+    let mut bytes = Vec::with_capacity(levels * 12 + 4);
+    for _ in 0..levels {
+        bytes.extend_from_slice(&16u32.to_be_bytes()); // SCV_VEC
+        bytes.extend_from_slice(&1u32.to_be_bytes()); // Some(..)
+        bytes.extend_from_slice(&1u32.to_be_bytes()); // one element
+    }
+    bytes.extend_from_slice(&1u32.to_be_bytes()); // SCV_VOID
+    bytes.iter().map(|b| format!("{b:02x}")).collect()
+}
+
+#[test]
+fn over_depth_sequence_argument_is_rejected() {
+    let (_, artifacts) = campaign([41u8; 32]);
+    let mut art = artifacts[0].clone();
+    art.sequence[0].args_xdr = vec![nested_vec_hex(5000)];
+
+    let err = art.steps().unwrap_err();
+    assert!(matches!(err, sdkt_fuzz::FuzzError::InvalidArtifact(_)));
+
+    let err = replay(&art, COUNTER_WASM).unwrap_err();
+    assert!(
+        matches!(err, sdkt_fuzz::ReplayError::InvalidArtifact(_)),
+        "over-depth argument must be InvalidArtifact, got {err:?}"
+    );
+    let err = replay_json(&art.canonical_bytes(), COUNTER_WASM).unwrap_err();
+    assert!(matches!(err, sdkt_fuzz::ReplayError::InvalidArtifact(_)));
+}
+
+#[test]
+fn over_depth_expected_return_is_rejected() {
+    let (_, artifacts) = campaign([42u8; 32]);
+    let mut art = artifacts[0].clone();
+    art.expected.behavior = sdkt_fuzz::artifact::BehaviorSnapshot::Success {
+        expect_return: Some(nested_vec_hex(5000)),
+    };
+    assert!(matches!(
+        art.try_expected().unwrap_err(),
+        sdkt_fuzz::FuzzError::InvalidArtifact(_)
+    ));
+    let err = replay(&art, COUNTER_WASM).unwrap_err();
+    assert!(
+        matches!(err, sdkt_fuzz::ReplayError::InvalidArtifact(_)),
+        "over-depth expected return must be InvalidArtifact, got {err:?}"
+    );
+}
+
+#[test]
+fn moderately_nested_argument_still_decodes() {
+    let (_, artifacts) = campaign([43u8; 32]);
+    let mut art = artifacts[0].clone();
+    art.sequence[0].args_xdr = vec![nested_vec_hex(50)];
+    let steps = art.steps().expect("depth 50 is within the bound");
+    assert_eq!(steps[0].args.len(), 1);
+}
+
+#[test]
+fn well_formed_artifact_still_replays_after_depth_bound() {
+    let (_, artifacts) = campaign([44u8; 32]);
+    let outcome = replay(&artifacts[0], COUNTER_WASM).expect("replay runs");
+    assert!(outcome.is_reproduced(), "{outcome:?}");
+}

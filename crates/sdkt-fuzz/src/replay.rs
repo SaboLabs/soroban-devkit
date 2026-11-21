@@ -224,7 +224,10 @@ pub fn replay(artifact: &FindingArtifact, wasm: &[u8]) -> Result<ReplayOutcome, 
     };
 
     // Re-apply the recorded oracle rules (with the artifact's auth posture).
-    let oracle = Oracle::with_auth_mode(artifact.expected(), auth_mode);
+    let expected = artifact
+        .try_expected()
+        .map_err(|e| ReplayError::InvalidArtifact(e.to_string()))?;
+    let oracle = Oracle::with_auth_mode(expected, auth_mode);
     let actual = oracle.classify(&observation);
     let observation_hash = observation_hash(&observation);
     let artifact_hash = artifact.canonical_hash();
