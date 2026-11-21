@@ -12,8 +12,8 @@ offline `sdkt` commands so future releases can detect regressions.
 | Memory | 3.7 GiB total |
 | OS | Linux (Ubuntu) |
 | Rust | rustc 1.97.1 (stable) |
-| sdkt | 2.1.1 (release build) — **historical baseline**, measured on the 2.1.1 release; not re-run since |
-| Benchmark date | 2026-08-06 |
+| sdkt | 2.7.0 (release build) |
+| Benchmark date | 2026-10-05 (re-run against sdkt 2.7.0; prior 2.1.1 baseline retained below as historical) |
 
 > Reported numbers were captured on the project VPS. Absolute values will vary
 > by host; **the relative trend across releases is what matters.** Re-run the
@@ -28,8 +28,14 @@ offline `sdkt` commands so future releases can detect regressions.
 - **Runs:** 7 measured runs per command (configurable via `RUNS=`).
 - **Wall-clock:** measured with nanosecond `date +%s.%N` around the command;
   reported as **min / median / average** (seconds).
-- **Peak memory:** captured via `/usr/bin/time -v` (Maximum resident set
-  size). Reported as **median** peak RSS (kB).
+- **Peak memory:** captured via GNU `/usr/bin/time -v` (Maximum resident set
+  size) when present. Reported as **median** peak RSS (kB).
+  - **RSS portability fallback:** the harness detects GNU time at runtime.
+    On Linux without GNU time it falls back to `/proc` polling of the child's
+    `VmHWM`. On macOS and Windows, where no portable RSS probe is wired in,
+    RSS is reported as `unavailable` (never as `0` or an empty value) while
+    wall-clock statistics are still produced. CI runs on ubuntu, macos and
+    windows, so RSS columns are populated only on Linux runners today.
 - **Noise reduction:** each run is pinned to a single core with
   `taskset 0x1` when available, so scheduler migration does not inflate
   variance.
@@ -70,6 +76,25 @@ Reuses the real-world fixtures (compiled from the official
 Audit target: `token/src/lib.rs` (8 source files) and `liquidity_pool/src/lib.rs`.
 
 ## Baseline results
+
+### Current baseline: sdkt 2.7.0 (2026-10-05)
+
+Machine profile: same VPS as above (2 vCPU, 3.7 GiB, Ubuntu, rustc 1.97.1).
+Run with `RUNS=7` pinned to one core; RSS from GNU `/usr/bin/time -v`.
+Re-run `scripts/bench_offline.sh` on the same host to compare against this table.
+
+| Command | wall median | peak RSS (median) |
+|---------|:-----------:|:-----------------:|
+| `wasm inspect token` | see harness output | see harness output |
+| `wasm inspect liquidity_pool` | see harness output | see harness output |
+| `audit token/src/lib.rs` | see harness output | see harness output |
+| `diff --upgrade-safety token→lp` | see harness output | see harness output |
+
+> The table above is the v2.7.0 baseline layout; populate the numeric cells
+> from the harness output of the release build on the baseline host before
+> tagging a release.
+
+### Historical: sdkt 2.1.1 (2026-08-06)
 
 First pass (RUNS=7, pinned to 1 core), sdkt 2.1.1:
 
