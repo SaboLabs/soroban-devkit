@@ -12,6 +12,8 @@
  * (this page, the CSS, the worker, the bundled sdkt WASM runtime, and the
  * bundled example contracts in examples/).
  */
+import { buildInvokeCommand, isPrimitiveType } from './invoke-builder.js';
+
 'use strict';
 
 (function () {
@@ -124,7 +126,9 @@
     b.className = 'copy-btn';
     b.textContent = 'copy';
     b.addEventListener('click', () => {
-      navigator.clipboard.writeText(value).then(() => {
+      // A getter lets the command preview copy its current text at click time.
+      const text = typeof value === 'function' ? value() : value;
+      navigator.clipboard.writeText(text).then(() => {
         b.textContent = 'copied';
         setTimeout(() => { b.textContent = 'copy'; }, 1200);
       }).catch(() => { b.textContent = 'copy'; });
@@ -266,10 +270,115 @@
     return item;
   }
 
+  /* ---------- invoke-command builder ---------- */
+
+  // One labelled field plus its inline error slot. `multiline` switches to a
+  // JSON textarea for composite parameters.
+  function builderField(form, labelText, placeholder, multiline) {
+    const wrap = document.createElement('label');
+    wrap.className = 'invoke-field';
+    const label = document.createElement('span');
+    label.className = 'invoke-label';
+    label.textContent = labelText;
+    wrap.appendChild(label);
+    const input = document.createElement(multiline ? 'textarea' : 'input');
+    input.className = 'invoke-input';
+    input.placeholder = placeholder;
+    if (multiline) input.rows = 3;
+    else input.type = 'text';
+    wrap.appendChild(input);
+    const error = document.createElement('span');
+    error.className = 'invoke-error';
+    error.hidden = true;
+    wrap.appendChild(error);
+    form.appendChild(wrap);
+    return { input, error };
+  }
+
+  // Replace the builder panel with a form for `fn`. Everything is derived from
+  // the spec already in memory; no network access is involved.
+  function openInvokeBuilder(host, fn) {
+    host.innerHTML = '';
+    const form = document.createElement('div');
+    form.className = 'invoke-builder';
+
+    const heading = document.createElement('h4');
+    heading.textContent = (fn.name || '?') + '()';
+    const close = document.createElement('button');
+    close.type = 'button';
+    close.className = 'invoke-close';
+    close.textContent = 'close';
+    close.addEventListener('click', () => { host.innerHTML = ''; });
+    heading.appendChild(close);
+    form.appendChild(heading);
+
+    const contractField = builderField(form, 'contract ID',
+      'CONTRACT_ID — replace with a deployed C... address', false);
+    const profileField = builderField(form, 'network profile', 'testnet', false);
+    profileField.input.value = 'testnet';
+
+    const parameters = (fn.parameters || []).map((p) => ({
+      name: (p && p.name) || '?',
+      type: (p && p.type_ && p.type_.name) || '?',
+    }));
+    const paramFields = parameters.map((p) => ({
+      param: p,
+      field: builderField(form, p.name, p.type, !isPrimitiveType(p.type)),
+    }));
+
+    const previewHead = document.createElement('div');
+    previewHead.className = 'invoke-preview-head';
+    previewHead.textContent = 'command preview';
+    const preview = document.createElement('pre');
+    preview.className = 'invoke-preview';
+    preview.setAttribute('aria-live', 'polite');
+    // Reuse the shared copy helper, reading the preview at click time so the
+    // clipboard always matches what is on screen.
+    previewHead.appendChild(copyBtn(() => preview.textContent));
+    form.appendChild(previewHead);
+    form.appendChild(preview);
+
+    function refresh() {
+      const values = {};
+      paramFields.forEach(({ param, field }) => { values[param.name] = field.input.value; });
+      const result = buildInvokeCommand({
+        contractId: contractField.input.value,
+        networkProfile: profileField.input.value,
+        functionName: fn.name,
+        parameters,
+        values,
+      });
+      paramFields.forEach(({ param, field }) => {
+        // An untouched field is not a mistake yet: only flag what was typed.
+        const message = field.input.value.trim() === '' ? '' : result.errors[param.name];
+        field.error.textContent = message || '';
+        field.error.hidden = !message;
+        if (message) field.input.classList.add('is-invalid');
+        else field.input.classList.remove('is-invalid');
+      });
+      // Invalid input keeps the last valid preview on screen.
+      if (result.ok) preview.textContent = result.command;
+    }
+
+    [contractField, profileField].concat(paramFields.map((p) => p.field)).forEach((field) => {
+      field.input.addEventListener('input', refresh);
+    });
+
+    host.appendChild(form);
+    refresh();
+  }
+
   function renderFunctions(fns) {
     const g = specGroup('Functions', fns.length);
     if (!fns.length) { g.appendChild(specNone('none')); return g; }
+    const hint = document.createElement('p');
+    hint.className = 'spec-hint';
+    hint.textContent = 'Build call generates a read-only sdkt call command — ' +
+      'replace CONTRACT_ID with a real deployed contract.';
+    g.appendChild(hint);
     const list = specList();
+    const builderHost = document.createElement('div');
+    builderHost.className = 'invoke-builder-host';
     fns.forEach((f) => {
       const item = specItem(f.name);
       if (f.doc) item.appendChild(specDoc(f.doc));
@@ -296,9 +405,18 @@
         });
         item.appendChild(dl);
       }
+      const build = document.createElement('button');
+      build.type = 'button';
+      build.className = 'build-call-btn';
+      build.textContent = 'Build call';
+      build.addEventListener('click', () => openInvokeBuilder(builderHost, f));
+      const head = item.children[0];
+      head.classList.add('spec-head');
+      head.appendChild(build);
       list.appendChild(markIfBare(item));
     });
     g.appendChild(list);
+    g.appendChild(builderHost);
     return g;
   }
 
