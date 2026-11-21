@@ -1086,6 +1086,31 @@ functions instead of aborting the entire command:
 - If all functions in the contract are unsupported, valid non-crashing output is
   produced with an empty `contract_functions()` and an explanatory header.
 
+## Generate docs
+
+`sdkt generate docs` renders a Markdown API reference set: one `<alias>.md`
+page per contract plus an `index.md` linking every page with its contract
+identifier and function count. Each page has a one-line title header naming the
+contract; the body is byte-identical to
+`sdkt inspect --interface --format markdown` output for the same spec. The
+command is offline unless `--contract` is used.
+
+```bash
+# One page for a local WASM artifact (token.wasm -> token.md)
+sdkt generate docs --wasm target/wasm32v1-none/release/token.wasm --out ./docs/api
+
+# One page for a deployed contract (<contract-id>.md)
+sdkt generate docs --contract CDLZFC3SYJYDZT7K67VZ75HPJVIEUVNIXF47ZG2FB2RMQQVU2HHGCYSC --out ./docs/api
+
+# One page per contract in the workspace (<alias>.md) plus index.md
+sdkt generate docs --project --out ./docs/api
+```
+
+`--out` defaults to `./docs/api`. `--wasm`, `--contract`, and `--project` are
+mutually exclusive. Without `--force` the command refuses to overwrite any
+existing file, naming the first conflict and writing nothing; `--force`
+replaces existing files.
+
 ## Fuzz
 
 `sdkt fuzz` provides Soroban-aware deterministic fuzzing for release assurance. It is fully offline and read-only: contracts execute in an isolated in-memory host environment without touching the network.
