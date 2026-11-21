@@ -452,7 +452,7 @@ fn default_config(input: &CampaignInput) -> Result<crate::config::FuzzConfig, Fu
     Ok(cfg)
 }
 
-fn hex(bytes: &[u8]) -> String {
+pub(crate) fn hex(bytes: &[u8]) -> String {
     bytes.iter().map(|b| format!("{b:02x}")).collect()
 }
 

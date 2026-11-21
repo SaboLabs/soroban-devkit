@@ -61,7 +61,9 @@ fn main() {
         println!("{}", result.to_pretty());
     }
 
-    // Exit status mirrors the outcome so a caller can branch without parsing.
+        // Exit status mirrors the outcome so a caller can branch without parsing.
+    // Replay/input failures are reported as exit 1 (failed or refused), never 2:
+    // exit 2 is reserved strictly for usage errors detected before planning.
     match result.status {
         Status::Success => {}
         Status::Failed | Status::Blocked | Status::NeedsClarification => std::process::exit(1),

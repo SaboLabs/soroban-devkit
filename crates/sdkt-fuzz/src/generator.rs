@@ -406,6 +406,6 @@ pub fn selectable_functions(spec: &ContractSpec) -> (Vec<String>, Vec<(String, S
     (ok, skipped)
 }
 
-fn hex(bytes: &[u8]) -> String {
+pub(crate) fn hex(bytes: &[u8]) -> String {
     bytes.iter().map(|b| format!("{b:02x}")).collect()
 }

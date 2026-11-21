@@ -117,7 +117,7 @@ sdkt
 │   State-changing end-to-end flow in one command:
 │     fetch account sequence → simulate → build final envelope (authoritative
 │     footprint + fees + auth entries from simulation) → sign with the local
- main
+
 │   Result decoding is limited to the transaction-level `TransactionResult`
 │   XDR (auto-detection also recognizes `ScVal`, `TransactionEnvelope`,
 │   `TransactionResult`, and `ContractEvent`; there is no XDR
@@ -134,11 +134,7 @@ sdkt
 │   ├── submit <xdr>          [--wait] [--timeout <s>] [--interval <s>] [--format] (RPC)
 │   ├── status <hash>         [--wait] [--timeout <s>] [--interval <s>] [--format] [--abi <wasm>] [--abi-contract <id>] (RPC; read-only lookup, exit 0 SUCCESS/PENDING, 1 FAILED, 2 NOT_FOUND/usage error)
 │   │
-│   │   Exit codes follow the CLI-wide convention: 0 success, 1 runtime/verdict
-│   │   failure, 2 usage error. `fuzz replay` reports input/runtime failures
-│   │   (unreadable file, malformed artifact, unsupported schema_version, unknown
-│   │   reason_code, WASM hash mismatch) as exit 1, reserving exit 2 for genuine
-│   │   command-line usage errors. Verdicts: Reproduced → 0, Mismatch → 1.
+
 │   └── build                 [--source --sequence --contract --function --fee* --arg* --output --memo-text <text> --memo-id <id>]
 │                             Offline by default: the envelope carries only the
 │                             base inclusion fee (100 stroops) and prints a
@@ -158,7 +154,14 @@ sdkt
 │                             exclusive. Omit both for no memo (unchanged
 │                             default).
 │
+├── fuzz
+│   └── replay                 (Exit codes: 0 Reproduced, 1 Mismatch, and 1 for input/runtime
+│                              failures: unreadable file, malformed artifact, unsupported
+│                              schema_version, unknown reason_code, WASM hash mismatch.
+│                              Exit 2 is reserved for genuine command-line usage errors.)
+│
 ├── events <contract-id>
+
 │   ├── --format <json|pretty>
 │   ├── --start-ledger <START_LEDGER> (start ledger sequence number for event search)
 │   ├── --end-ledger <END_LEDGER>     (end ledger sequence number for event search)

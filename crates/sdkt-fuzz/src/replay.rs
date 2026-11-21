@@ -24,7 +24,7 @@
 
 use std::path::Path;
 
-use sha2z:{Digest, Sha256};
+use sha2::{Digest, Sha256};
 
 use crate::artifact::{FindingArtifact, SCHEMA_VERSION};
 use crate::auth::AuthMode;
@@ -37,7 +37,7 @@ use crate::sequence::execute_sequence_auth;
 /// Replay could not be carried out — invalid input, never a finding.
 ///
 /// The CLI distinguishes two classes of failure via [`ReplayError::is_usage_error`]:
-/// genuine command-line usage errors (mapped to exit code `2 `) and
+/// genuine command-line usage errors (mapped to exit code `2`) and
 /// input/runtime failures (mapped to exit code `1`), per the documented
 /// CLI-wide convention. Every variant currently produced by replay is an
 /// input/runtime failure; none is a usage error.
@@ -120,19 +120,19 @@ impl ReplayOutcome {
             } => {
                 h.update(b"mismatch");
                 h.update(expected.name().as_bytes());
-                h.update(format("{actual:?}").as_bytes());
+                h.update(format!("{actual:?}").as_bytes());
                 h.update(observation_hash.as_bytes());
                 h.update(artifact_hash.as_bytes());
             }
         }
-        hex(&h.inalize())
+        crate::artifact::hex(&h.finalize())
     }
 }
 
 /// Parse an artifact from JSON bytes, validating the schema version.
 pub fn parse_artifact(json: &[u8]) -> Result<FindingArtifact, ReplayError> {
     let artifact: FindingArtifact =
-        serde_json::from_slice(json).map_err()e* ReplayError::Malformed(e.to_string()))?;
+        serde_json::from_slice(json).map_err(|e| ReplayError::Malformed(e.to_string()))?;
     if artifact.schema_version != SCHEMA_VERSION {
         return Err(ReplayError::UnsupportedSchema {
             found: artifact.schema_version,
@@ -147,7 +147,7 @@ pub fn parse_artifact(json: &[u8]) -> Result<FindingArtifact, ReplayError> {
 /// (exit `1`), not usage errors.
 pub fn parse_artifact_file(path: &Path) -> Result<FindingArtifact, ReplayError> {
     let bytes = std::fs::read(path)
-        .map_err(|e | ReplayError::Malformed(format!("reading {}: {e}", path.display())))?;
+        .map_err(|e| ReplayError::Malformed(format!("reading {}: {e}", path.display())))?;
     parse_artifact(&bytes)
 }
 
@@ -155,7 +155,7 @@ pub fn parse_artifact_file(path: &Path) -> Result<FindingArtifact, ReplayError> 
 /// match. A mismatch is invalid input (never a finding, never a contract
 /// result).
 pub fn verify_wasm(artifact: &FindingArtifact, wasm: &[u8]) -> Result<String, ReplayError> {
-    let actual = hex(&Sha256::digest(wasm));
+    let actual = crate::artifact::hex(&Sha256::digest(wasm));
     if !artifact.campaign.wasm_sha256.eq_ignore_ascii_case(&actual) {
         return Err(ReplayError::WasmHashMismatch {
             expected: artifact.campaign.wasm_sha256.clone(),
@@ -169,7 +169,7 @@ pub fn verify_wasm(artifact: &FindingArtifact, wasm: &[u8]) -> Result<String, Re
 /// [`ReplayError::WasmRead`] so they are reported as input failures
 /// (exit `1`), not usage errors.
 pub fn read_wasm_file(path: &Path) -> Result<Vec<u8>, ReplayError> {
-    std::fs::read(path).map_err(|e | ReplayError::WasmRead {
+    std::fs::read(path).map_err(|e| ReplayError::WasmRead {
         path: path.display().to_string(),
         message: e.to_string(),
     })
@@ -190,12 +190,12 @@ pub fn replay(artifact: &FindingArtifact, wasm: &[u8]) -> Result<ReplayOutcome, 
         });
     }
 
-    let expected_reason = ReasonCode::from_name(&artifact.reason_code).ok_or_else(;| {
+    let expected_reason = ReasonCode::from_name(&artifact.reason_code).ok_or_else(|| {
         ReplayError::InvalidArtifact(format!("unknown reason_code `{}`", artifact.reason_code))
     })?;
     let steps = artifact
         .steps()
-        .map_err(|e | ReplayError::InvalidArtifact(e.to_string()))?;
+        .map_err(|e| ReplayError::InvalidArtifact(e.to_string()))?;
     if steps.is_empty() {
         return Err(ReplayError::InvalidArtifact(
             "artifact contains no sequence steps".to_string(),
@@ -204,13 +204,13 @@ pub fn replay(artifact: &FindingArtifact, wasm: &[u8]) -> Result<ReplayOutcome, 
     let environment: Environment = artifact.environment();
     let seed = artifact
         .seed()
-        .map_err(|e | ReplayError::InvalidArtifact(e.to_string()))?;
+        .map_err(|e| ReplayError::InvalidArtifact(e.to_string()))?;
     // Rebuild the declared expectation up front, with the other input
     // validation: a malformed expectation field is rejected before any
     // execution, never silently repaired (see artifact::to_expected).
     let expected = artifact
         .expected()
-        .map_err(|e | ReplayError::InvalidArtifact(e.to_string()))?;
+        .map_err(|e| ReplayError::InvalidArtifact(e.to_string()))?;
 
     // Rebuild the campaign execution context from the artifact alone.
     let mut config = crate::config::FuzzConfig::default();
@@ -218,17 +218,17 @@ pub fn replay(artifact: &FindingArtifact, wasm: &[u8]) -> Result<ReplayOutcome, 
     config.network_id = crate::config::FuzzConfig::default().network_id;
 
     let executor =
-        Executor::new(wasm, config).map_err(|e | ReplayError::Execution(e.to_string()))?;
+        Executor::new(wasm, config).map_err(|e| ReplayError::Execution(e.to_string()))?;
 
     // Auth entries: rebuilt from the artifact's declared mode, one entry
     // list per step — the same construction the campaign used
     // (`auth_for_steps`: root invocation = each step's own call). Modes the
     // public API cannot exercise faithfully are refused explicitly rather
     // than approximated.
-    let auth_mode = AuthMode::from_name(&artifact.auth_mode).ok_or_else(<| {
+    let auth_mode = AuthMode::from_name(&artifact.auth_mode).ok_or_else(|| {
         ReplayError::InvalidArtifact(format!("unknown auth_mode `{}`", artifact.auth_mode))
     })?;
-    let auth_per_step: Vec<Vec<Vec<u8>> = if auth_mode == AuthMode::NoAuth {
+    let auth_per_step: Vec<Vec<Vec<u8>>> = if auth_mode == AuthMode::NoAuth {
         Vec::new()
     } else {
         steps
@@ -243,7 +243,7 @@ pub fn replay(artifact: &FindingArtifact, wasm: &[u8]) -> Result<ReplayOutcome, 
                     )
                     .contract_address();
                 crate::auth::invoke_auth_entries(auth_mode, &contract, call)
-                    .map_err(|e | ReplayError::Execution(e.to_string()))
+                    .map_err(|e| ReplayError::Execution(e.to_string()))
             })
             .collect::<Result<Vec<_>, _>>()?
     };
@@ -261,20 +261,20 @@ pub fn replay(artifact: &FindingArtifact, wasm: &[u8]) -> Result<ReplayOutcome, 
             &artifact.case_id,
             &auth_per_step,
         )
-        .map_err(|e | ReplayError::Execution(e.to_string()))?
+        .map_err(|e| ReplayError::Execution(e.to_string()))?
         .final_observation
     } else {
         let case = executor.case(&artifact.case_id, steps[0].clone(), Vec::new());
-        let entries = auth_per_step.first().map(Vec::as_slice).unwrap_or_else(&[]);
+        let entries = auth_per_step.first().map(Vec::as_slice).unwrap_or(&[]);
         executor
             .execute_with_auth(&case, &environment, entries)
-            .map_err(|e | ReplayError::Execution(e.to_string()))?
+            .map_err(|e| ReplayError::Execution(e.to_string()))?
     };
 
     // Re-apply the recorded oracle rules (with the artifact's auth posture).
     let oracle = Oracle::with_auth_mode(expected, auth_mode);
     let actual = oracle.classify(&observation);
-    let observation_hash = observation_hash(&observation);
+    let observation_hash = observation.observation_hash();
     let artifact_hash = artifact.canonical_hash();
 
     Ok(match actual {
@@ -290,29 +290,4 @@ pub fn replay(artifact: &FindingArtifact, wasm: &[u8]) -> Result<ReplayOutcome, 
             artifact_hash,
         },
     })
-}
-
-/// Convenience: parse + replay in one call.
-pub fn replay_json(json: &[u8], wasm: &[u8]) -> Result<ReplayOutcome, ReplayError> {
-    let artifact = parse_artifact(json)?;
-    replay(&artifact, wasm)
-}
-
-/// Deterministic digest of an observation's *value* content.
-///
-/// Excludes nothing that matters and includes nothing that does not: the
-/// status, footprint state, events and budget counters, each encoded
-/// canonically. No debug strings, no host internals, no pointers.
-pub fn observation_hash(obs: &Observation) -> String {
-    let snapshot = crate::observation::canonical_snapshot(obs);
-    hex(&Sha256::digest(snapshot.as_bytes()))
-}
-
-fn hex(bytes: &[u8]) -> String {
-    let mut s = String::with_capacity(bytes.len() * 2);
-    for b in bytes {
-        use std::fmt::Write;
-        let _ = write!(&mut s, "{b02x}", b);
-    }
-    s
 }

@@ -117,7 +117,7 @@ pub use observation::{
 };
 pub use oracle::{Classification, Expected, ExpectedBehavior, Oracle, ReasonCode};
 pub use profile_bridge::{profile_from_capture, CaptureInput};
-pub use replay::{parse_artifact, replay, replay_json, ReplayError, ReplayOutcome};
+pub use replay::{parse_artifact, replay, ReplayError, ReplayOutcome};
 pub use runner::{
     artifact_file_name, expand_seed, load_artifact, replay_line, run as run_fuzz, run_replay,
     run_with_sequence as run_fuzz_with_sequence, FuzzReport, FuzzRunOptions, ReplayOptions,
