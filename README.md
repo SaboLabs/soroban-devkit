@@ -710,3 +710,8 @@ tests, and small fixes are great first PRs. Please follow the
 ## License
 
 [MIT](LICENSE).
+
+## Handsoff notes
+
+<!-- handsoff-issue-530 -->
+- #530: `sdkt call --batch` — run several read-only calls in one command, one JSON result
