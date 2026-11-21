@@ -79,14 +79,26 @@ pub struct SnapshotEntry {
 impl StorageSnapshot {
     /// Construct a snapshot from a [`StorageReport`] produced by the analyzer.
     ///
-    /// Returns an error if `report.total_entries > 0` but `report.entries` is empty,
-    /// indicating a legacy or summary-only report without per-entry detail.
+    /// Returns an error if:
+    /// - `report.total_entries > 0` but `report.entries` is empty (indicating a
+    ///   legacy or summary-only report without per-entry detail), or
+    /// - `report.entries` contains duplicate ledger keys ([`StorageError::DuplicateKey`]).
+    ///   Duplicate keys are rejected loudly rather than silently dropped.
     pub fn from_report(report: &StorageReport) -> Result<Self, StorageError> {
         if report.total_entries > 0 && report.entries.is_empty() {
             return Err(StorageError::Parse(format!(
                 "Snapshot report for contract '{}' has total_entries ({}) > 0 but entries array is empty (legacy or summary-only report without per-entry detail)",
                 report.contract_id, report.total_entries
             )));
+        }
+        let mut seen = std::collections::HashSet::with_capacity(report.entries.len());
+        for entry in &report.entries {
+            if !seen.insert(entry.key.as_str()) {
+                return Err(StorageError::DuplicateKey {
+                    snapshot: format!("snapshot for contract '{}'", report.contract_id),
+                    key: entry.key.clone(),
+                });
+            }
         }
         Ok(Self {
             contract_id: report.contract_id.clone(),
@@ -229,6 +241,9 @@ impl SnapshotDiff {
 ///
 /// If differing networks are recorded in the snapshots, the diff is rejected
 /// with [`StorageError::NetworkMismatch`].
+///
+/// If either snapshot contains duplicate ledger keys, the diff is rejected
+/// with [`StorageError::DuplicateKey`] instead of silently dropping entries.
 pub fn diff_snapshots(
     old: &StorageSnapshot,
     new: &StorageSnapshot,
@@ -276,11 +291,25 @@ pub fn diff_snapshots(
 
     use std::collections::HashMap;
 
-    let old_map: HashMap<&str, &SnapshotEntry> =
-        old.entries.iter().map(|e| (e.key.as_str(), e)).collect();
+    let mut old_map: HashMap<&str, &SnapshotEntry> = HashMap::with_capacity(old.entries.len());
+    for entry in &old.entries {
+        if old_map.insert(entry.key.as_str(), entry).is_some() {
+            return Err(StorageError::DuplicateKey {
+                snapshot: "old snapshot".to_string(),
+                key: entry.key.clone(),
+            });
+        }
+    }
 
-    let new_map: HashMap<&str, &SnapshotEntry> =
-        new.entries.iter().map(|e| (e.key.as_str(), e)).collect();
+    let mut new_map: HashMap<&str, &SnapshotEntry> = HashMap::with_capacity(new.entries.len());
+    for entry in &new.entries {
+        if new_map.insert(entry.key.as_str(), entry).is_some() {
+            return Err(StorageError::DuplicateKey {
+                snapshot: "new snapshot".to_string(),
+                key: entry.key.clone(),
+            });
+        }
+    }
 
     let mut entries: Vec<DiffEntry> = Vec::new();
 
@@ -1319,5 +1348,91 @@ mod tests {
         assert_eq!(diff.entries[0].status, DiffStatus::ExpiringSoon);
         assert_eq!(diff.entries[0].normalized_old_ttl, Some(9_000));
         assert_eq!(diff.actionable().count(), 1);
+    }
+
+    // -----------------------------------------------------------------------
+    // Duplicate ledger key detection
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn diff_duplicate_key_in_old_snapshot_returns_error() {
+        let old = snap(vec![("dupKey", 50_000), ("dupKey", 3_000)]);
+        let new = snap(vec![("dupKey", 50_000)]);
+
+        let err = diff_snapshots(&old, &new).unwrap_err();
+        assert!(
+            matches!(
+                &err,
+                StorageError::DuplicateKey { snapshot, key }
+                    if snapshot == "old snapshot" && key == "dupKey"
+            ),
+            "expected DuplicateKey for old snapshot, got: {err:?}"
+        );
+        assert!(err.to_string().contains("dupKey"));
+        assert!(err.to_string().contains("old snapshot"));
+    }
+
+    #[test]
+    fn diff_duplicate_key_in_new_snapshot_returns_error() {
+        let old = snap(vec![("dupKey", 50_000)]);
+        let new = snap(vec![("dupKey", 50_000), ("dupKey", 3_000)]);
+
+        let err = diff_snapshots(&old, &new).unwrap_err();
+        assert!(
+            matches!(
+                &err,
+                StorageError::DuplicateKey { snapshot, key }
+                    if snapshot == "new snapshot" && key == "dupKey"
+            ),
+            "expected DuplicateKey for new snapshot, got: {err:?}"
+        );
+        assert!(err.to_string().contains("dupKey"));
+        assert!(err.to_string().contains("new snapshot"));
+    }
+
+    #[test]
+    fn snapshot_from_report_rejects_duplicate_keys() {
+        use crate::types::{StorageClass, StorageEntry, StorageReport};
+        let report = StorageReport {
+            contract_id: CONTRACT.to_string(),
+            total_entries: 2,
+            instance_entries: 0,
+            persistent_entries: 2,
+            temporary_entries: 0,
+            other_entries: 0,
+            total_size_bytes: None,
+            ttl_summary: None,
+            entries: vec![
+                StorageEntry {
+                    key: "dupKey".to_string(),
+                    label: None,
+                    class: StorageClass::Persistent,
+                    current_ttl: 50_000,
+                    days_remaining: 2,
+                    extension_cost_stroops: 0,
+                    value: None,
+                },
+                StorageEntry {
+                    key: "dupKey".to_string(),
+                    label: None,
+                    class: StorageClass::Persistent,
+                    current_ttl: 3_000,
+                    days_remaining: 0,
+                    extension_cost_stroops: 0,
+                    value: None,
+                },
+            ],
+            latest_ledger: None,
+            network: None,
+        };
+        let err = StorageSnapshot::from_report(&report).unwrap_err();
+        assert!(
+            matches!(
+                &err,
+                StorageError::DuplicateKey { snapshot, key }
+                    if snapshot.contains(CONTRACT) && key == "dupKey"
+            ),
+            "expected DuplicateKey from from_report, got: {err:?}"
+        );
     }
 }

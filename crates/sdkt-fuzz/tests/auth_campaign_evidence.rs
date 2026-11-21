@@ -306,3 +306,32 @@ fn evidence_with_findings_and_replay() {
         ev.replay
     );
 }
+
+#[test]
+fn campaign_rejects_zero_cases() {
+    let mut input = CampaignInput::new(AUTH_WASM, [1u8; 32]).expect("spec");
+    input.cases = 0;
+    let err = run_campaign_artifacts(&input, &BTreeMap::new())
+        .expect_err("zero cases must be rejected as invalid config");
+    assert!(
+        matches!(err, sdkt_fuzz::FuzzError::InvalidConfig(_)),
+        "expected InvalidConfig, got {err:?}"
+    );
+}
+
+#[test]
+fn campaign_rejects_unmatched_function_filter() {
+    let mut input = CampaignInput::new(AUTH_WASM, [2u8; 32]).expect("spec");
+    input.cases = 4;
+    input.function = Some("nope".to_string());
+    let err = run_campaign_artifacts(&input, &BTreeMap::new())
+        .expect_err("unmatched function filter must be rejected as invalid config");
+    assert!(
+        matches!(err, sdkt_fuzz::FuzzError::InvalidConfig(_)),
+        "expected InvalidConfig, got {err:?}"
+    );
+    assert!(
+        err.to_string().contains("nope"),
+        "error should name the unmatched function: {err}"
+    );
+}

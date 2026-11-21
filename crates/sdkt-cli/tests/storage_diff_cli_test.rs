@@ -660,3 +660,83 @@ fn extend_plan_expiring_only_is_unchanged() {
     assert!(!stdout.contains("sdkt storage restore"));
     assert!(!stdout.contains("Removed keys"));
 }
+
+#[test]
+fn storage_diff_cli_rejects_duplicate_key_in_old_snapshot() {
+    let dir = tempdir().unwrap();
+    let old_path = dir.path().join("old_dup.json");
+    let new_path = dir.path().join("new.json");
+
+    create_snapshot_file(
+        &old_path,
+        CONTRACT,
+        &[("keyDup==", 50_000), ("keyDup==", 3_000)],
+    );
+    create_snapshot_file(&new_path, CONTRACT, &[("keyDup==", 50_000)]);
+
+    let mut cmd = sdkt();
+    cmd.args(["storage", "diff", "--old"])
+        .arg(&old_path)
+        .arg("--new")
+        .arg(&new_path);
+
+    let assert = cmd.assert().failure();
+    let stdout = String::from_utf8(assert.get_output().stdout.clone()).unwrap();
+    let stderr = String::from_utf8(assert.get_output().stderr.clone()).unwrap();
+
+    assert!(
+        stdout.is_empty(),
+        "duplicate key rejection must not emit a diff to stdout: {stdout}"
+    );
+    assert!(
+        stderr.contains(&format!(
+            "Failed to load --old snapshot '{}'",
+            old_path.display()
+        )),
+        "stderr should name the --old snapshot file: {stderr}"
+    );
+    assert!(
+        stderr.contains("Duplicate ledger key 'keyDup=='"),
+        "stderr should name the duplicated ledger key: {stderr}"
+    );
+}
+
+#[test]
+fn storage_diff_cli_rejects_duplicate_key_in_new_snapshot() {
+    let dir = tempdir().unwrap();
+    let old_path = dir.path().join("old.json");
+    let new_path = dir.path().join("new_dup.json");
+
+    create_snapshot_file(&old_path, CONTRACT, &[("keyDup==", 50_000)]);
+    create_snapshot_file(
+        &new_path,
+        CONTRACT,
+        &[("keyDup==", 50_000), ("keyDup==", 3_000)],
+    );
+
+    let mut cmd = sdkt();
+    cmd.args(["storage", "diff", "--old"])
+        .arg(&old_path)
+        .arg("--new")
+        .arg(&new_path);
+
+    let assert = cmd.assert().failure();
+    let stdout = String::from_utf8(assert.get_output().stdout.clone()).unwrap();
+    let stderr = String::from_utf8(assert.get_output().stderr.clone()).unwrap();
+
+    assert!(
+        stdout.is_empty(),
+        "duplicate key rejection must not emit a diff to stdout: {stdout}"
+    );
+    assert!(
+        stderr.contains(&format!(
+            "Failed to load --new snapshot '{}'",
+            new_path.display()
+        )),
+        "stderr should name the --new snapshot file: {stderr}"
+    );
+    assert!(
+        stderr.contains("Duplicate ledger key 'keyDup=='"),
+        "stderr should name the duplicated ledger key: {stderr}"
+    );
+}

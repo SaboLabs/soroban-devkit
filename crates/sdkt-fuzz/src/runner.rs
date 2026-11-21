@@ -13,7 +13,9 @@ use std::path::{Path, PathBuf};
 
 use crate::artifact::{encode_scval_xdr_hex, FindingArtifact};
 use crate::auth::AuthMode;
-use crate::campaign::{run_campaign_artifacts, summarize, CampaignInput, CampaignResult};
+use crate::campaign::{
+    run_campaign_artifacts, sequence_case_counts, summarize, CampaignInput, CampaignResult,
+};
 use crate::environment::Environment;
 use crate::error::FuzzError;
 use crate::evidence::{CampaignEvidence, ReplayStatus};
@@ -51,6 +53,27 @@ impl Default for FuzzRunOptions {
             expect_success: Vec::new(),
             expect_error: Vec::new(),
             replay: false,
+        }
+    }
+}
+
+/// Opt-in multi-step sequence configuration for [`run_with_sequence`].
+///
+/// Kept separate from [`FuzzRunOptions`] so existing library callers that
+/// construct `FuzzRunOptions` literally continue to compile unchanged.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct SequenceOptions {
+    /// Sequence length when generating `CaseKind::Sequence` cases (`--sequence-length`).
+    pub sequence_length: usize,
+    /// Every `n`-th case is a sequence; `0` disables sequence generation (`--sequence-every`).
+    pub sequence_every: usize,
+}
+
+impl Default for SequenceOptions {
+    fn default() -> Self {
+        Self {
+            sequence_length: 2,
+            sequence_every: 0,
         }
     }
 }
@@ -152,6 +175,21 @@ fn status_kind(s: &ReplayStatus) -> &'static str {
 /// write one artifact per finding, optionally replay them, and build the
 /// release-assurance evidence.
 pub fn run(options: &FuzzRunOptions) -> Result<FuzzReport, FuzzError> {
+    run_with_sequence(options, SequenceOptions::default())
+}
+
+/// Run a campaign with explicit multi-step [`SequenceOptions`].
+pub fn run_with_sequence(
+    options: &FuzzRunOptions,
+    sequence: SequenceOptions,
+) -> Result<FuzzReport, FuzzError> {
+    if sequence.sequence_every > 0 && sequence.sequence_length < 2 {
+        return Err(FuzzError::InvalidConfig(format!(
+            "sequence_length must be >= 2 when sequence_every > 0 (got {})",
+            sequence.sequence_length
+        )));
+    }
+
     let wasm = std::fs::read(&options.wasm).map_err(|e| {
         FuzzError::InvalidConfig(format!("reading {}: {e}", options.wasm.display()))
     })?;
@@ -160,6 +198,8 @@ pub fn run(options: &FuzzRunOptions) -> Result<FuzzReport, FuzzError> {
     input.cases = options.cases;
     input.function = options.function.clone();
     input.auth_mode = options.auth_mode;
+    input.sequence_length = sequence.sequence_length;
+    input.sequence_every = sequence.sequence_every;
     input.environment = Environment::default();
 
     let expectations = build_expectations(options)?;
@@ -227,8 +267,19 @@ pub fn run(options: &FuzzRunOptions) -> Result<FuzzReport, FuzzError> {
     )
     .map_err(|e| FuzzError::InvalidConfig(format!("writing evidence: {e}")))?;
 
+    let summary = if input.sequence_every > 0 && input.sequence_length > 1 {
+        let (sequences, single_step) =
+            sequence_case_counts(result.executed, input.sequence_length, input.sequence_every);
+        format!(
+            "{} sequences={sequences} single_step={single_step}",
+            summarize(&result)
+        )
+    } else {
+        summarize(&result)
+    };
+
     Ok(FuzzReport {
-        summary: summarize(&result),
+        summary,
         result,
         artifacts: written,
         replay: replay_map,
