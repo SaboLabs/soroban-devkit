@@ -6,8 +6,8 @@ use serde::Serialize;
 use stellar_strkey::Strkey;
 use stellar_xdr::{
     FeeBumpTransaction, FeeBumpTransactionEnvelope, FeeBumpTransactionExt,
-    FeeBumpTransactionInnerTx, Limits, MuxedAccount, ReadXdr, TransactionEnvelope, Uint256,
-    WriteXdr,
+    FeeBumpTransactionInnerTx, Limits, MuxedAccount, ReadXdr, Transaction, TransactionEnvelope,
+    TransactionExt, Uint256, WriteXdr,
 };
 use thiserror::Error;
 
@@ -96,15 +96,7 @@ pub fn wrap_fee_bump(params: &FeeBumpWrapParams) -> Result<FeeBumpResult, FeeBum
         }
     };
 
-    let operation_count =
-        i64::try_from(inner.tx.operations.len()).map_err(|_| FeeBumpError::InvalidFee)?;
-    let minimum_fee = i64::from(inner.tx.fee)
-        .checked_add(
-            MIN_BASE_FEE
-                .checked_mul(operation_count)
-                .ok_or(FeeBumpError::InvalidFee)?,
-        )
-        .ok_or(FeeBumpError::InvalidFee)?;
+    let (_, minimum_fee) = minimum_fee_for_inner(&inner.tx)?;
     if params.fee < minimum_fee {
         return Err(FeeBumpError::FeeTooLow {
             minimum: minimum_fee,
@@ -136,18 +128,70 @@ pub fn wrap_fee_bump(params: &FeeBumpWrapParams) -> Result<FeeBumpResult, FeeBum
     })
 }
 
+/// Compute a fee-bump total that meets both the base-fee floor and the inner
+/// transaction's inclusion-fee rate. Soroban resource fees are carried
+/// through unchanged; only the inclusion fee is raised by the wrapper.
+fn minimum_fee_for_inner(inner: &Transaction) -> Result<(i64, i64), FeeBumpError> {
+    let operation_count =
+        i64::try_from(inner.operations.len()).map_err(|_| FeeBumpError::InvalidFee)?;
+    if operation_count <= 0 {
+        return Err(FeeBumpError::InvalidFee);
+    }
+    let resource_fee = match &inner.ext {
+        TransactionExt::V0 => 0,
+        TransactionExt::V1(data) => data.resource_fee,
+    };
+    if resource_fee < 0 {
+        return Err(FeeBumpError::InvalidFee);
+    }
+    let inner_inclusion_fee = i64::from(inner.fee)
+        .checked_sub(resource_fee)
+        .filter(|fee| *fee >= 0)
+        .ok_or(FeeBumpError::InvalidFee)?;
+    let effective_operation_count = operation_count
+        .checked_add(1)
+        .ok_or(FeeBumpError::InvalidFee)?;
+    let base_fee_minimum = MIN_BASE_FEE
+        .checked_mul(effective_operation_count)
+        .ok_or(FeeBumpError::InvalidFee)?;
+    let rate_numerator = inner_inclusion_fee
+        .checked_mul(effective_operation_count)
+        .ok_or(FeeBumpError::InvalidFee)?;
+    let rate_minimum = rate_numerator
+        .checked_div(operation_count)
+        .and_then(|fee| {
+            fee.checked_add(if rate_numerator % operation_count != 0 {
+                1
+            } else {
+                0
+            })
+        })
+        .ok_or(FeeBumpError::InvalidFee)?;
+    let minimum_fee = resource_fee
+        .checked_add(base_fee_minimum.max(rate_minimum))
+        .ok_or(FeeBumpError::InvalidFee)?;
+    Ok((resource_fee, minimum_fee))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
-    use stellar_xdr::{Operation, Transaction, TransactionExt, TransactionV1Envelope, VecM};
+    use stellar_xdr::{
+        LedgerFootprint, Operation, SorobanResources, SorobanTransactionData,
+        SorobanTransactionDataExt, TransactionV1Envelope, VecM,
+    };
 
     const FEE_SOURCE: &str = "GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF";
 
     fn input_envelope(fee: u32) -> String {
+        input_envelope_with(fee, 1, TransactionExt::V0)
+    }
+
+    fn input_envelope_with(fee: u32, operation_count: usize, ext: TransactionExt) -> String {
         let tx = Transaction {
             fee,
-            operations: VecM::try_from(vec![Operation::default()]).unwrap(),
-            ext: TransactionExt::V0,
+            operations: VecM::try_from(vec![Operation::default(); operation_count]).unwrap(),
+            ext,
             ..Transaction::default()
         };
         let envelope = TransactionEnvelope::Tx(TransactionV1Envelope {
@@ -186,5 +230,53 @@ mod tests {
         })
         .unwrap_err();
         assert!(error.to_string().contains("minimum"));
+    }
+
+    #[test]
+    fn one_operation_fee_bump_preserves_or_exceeds_inner_fee_rate() {
+        let params = |fee| FeeBumpWrapParams {
+            envelope: input_envelope(1_000),
+            fee_source: FEE_SOURCE.into(),
+            fee,
+        };
+        let error = wrap_fee_bump(&params(1_999)).unwrap_err();
+        assert!(error.to_string().contains("minimum of 2000"));
+        assert_eq!(wrap_fee_bump(&params(2_000)).unwrap().minimum_fee, 2_000);
+    }
+
+    #[test]
+    fn two_operation_minimum_uses_the_inner_inclusion_fee_rate() {
+        let params = |fee| FeeBumpWrapParams {
+            envelope: input_envelope_with(200, 2, TransactionExt::V0),
+            fee_source: FEE_SOURCE.into(),
+            fee,
+        };
+        let error = wrap_fee_bump(&params(299)).unwrap_err();
+        assert!(error.to_string().contains("minimum of 300"));
+        assert_eq!(wrap_fee_bump(&params(300)).unwrap().minimum_fee, 300);
+    }
+
+    #[test]
+    fn soroban_resource_fee_is_preserved_outside_inclusion_fee_calculation() {
+        let data = SorobanTransactionData {
+            ext: SorobanTransactionDataExt::V0,
+            resources: SorobanResources {
+                footprint: LedgerFootprint::default(),
+                instructions: 0,
+                disk_read_bytes: 0,
+                write_bytes: 0,
+            },
+            resource_fee: 10_000,
+        };
+        let params = |fee| FeeBumpWrapParams {
+            envelope: input_envelope_with(10_100, 1, TransactionExt::V1(data.clone())),
+            fee_source: FEE_SOURCE.into(),
+            fee,
+        };
+        let error = wrap_fee_bump(&params(10_199)).unwrap_err();
+        assert!(error.to_string().contains("minimum of 10200"));
+        let result = wrap_fee_bump(&params(10_200)).unwrap();
+        assert_eq!(result.inner_fee, 10_100);
+        assert_eq!(result.minimum_fee, 10_200);
     }
 }

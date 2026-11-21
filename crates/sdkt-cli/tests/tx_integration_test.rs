@@ -416,6 +416,45 @@ fn test_tx_wrap_produces_fee_bump_envelope() {
 }
 
 #[test]
+fn test_tx_wrap_resolves_named_fee_source_from_public_identity_metadata() {
+    let dir = tempdir().unwrap();
+    let identity_dir = dir.path().join("identity");
+    std::fs::create_dir_all(&identity_dir).unwrap();
+    std::fs::write(
+        identity_dir.join("alice.toml"),
+        "public_key = \"GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF\"\n",
+    )
+    .unwrap();
+    let envelope = plain_envelope_b64(100);
+
+    let output = sdkt_tx_isolated(dir.path())
+        .args([
+            "tx",
+            "wrap",
+            "--envelope",
+            &envelope,
+            "--fee-source",
+            "alice",
+            "--fee",
+            "300",
+            "--format",
+            "json",
+        ])
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let result: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(
+        result["fee_source"],
+        "GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF"
+    );
+}
+
+#[test]
 fn test_tx_wrap_preserves_inner_signatures() {
     let dir = tempdir().unwrap();
     let mut envelope = TransactionV1Envelope::default();

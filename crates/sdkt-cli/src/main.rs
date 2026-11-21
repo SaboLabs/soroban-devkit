@@ -1165,7 +1165,7 @@ enum TxAction {
         /// Base64 XDR transaction envelope or path to a file containing it
         #[arg(short, long)]
         envelope: String,
-        /// G... account that will pay the outer fee
+        /// Identity name or G... account that will pay the outer fee
         #[arg(long, value_name = "ACCOUNT")]
         fee_source: String,
         /// Total fee in stroops paid by the fee source
@@ -5138,6 +5138,21 @@ mod project_add_tests {
     }
 }
 
+/// Resolve a fee source to its public account address without loading a secret.
+fn resolve_fee_source_public_key(input: &str) -> Result<String, String> {
+    let input = input.trim();
+    if sdkt_xdr::decode_account_id(input).is_ok() {
+        return Ok(input.to_string());
+    }
+
+    let store = sdkt_storage::IdentityStore::new()
+        .map_err(|e| format!("Failed to access identity store: {e}"))?;
+    store
+        .resolve_public_identity(input)
+        .map(|identity| identity.public_key)
+        .map_err(|e| format!("Failed to resolve fee source identity: {e}"))
+}
+
 /// Resolve a transaction envelope argument (`--input` / `--envelope`) to
 /// envelope text.
 ///
@@ -7132,6 +7147,13 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
                 let fmt = parse_format_str(&format);
                 let env_data = match resolve_tx_input(&envelope) {
                     Ok(s) => s,
+                    Err(e) => {
+                        eprintln!("Error: {}", e);
+                        process::exit(1);
+                    }
+                };
+                let fee_source = match resolve_fee_source_public_key(&fee_source) {
+                    Ok(public_key) => public_key,
                     Err(e) => {
                         eprintln!("Error: {}", e);
                         process::exit(1);
