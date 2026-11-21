@@ -137,6 +137,7 @@ impl Token {
     /// Initialize the starter token's administrator and metadata once.
     pub fn initialize(env: Env, admin: Address, name: String, symbol: String, decimals: u32) {
         assert!(!env.storage().instance().has(&DataKey::Admin), "already initialized");
+        admin.require_auth();
         env.storage().instance().set(&DataKey::Admin, &admin);
         env.storage().instance().set(&DataKey::Name, &name);
         env.storage().instance().set(&DataKey::Symbol, &symbol);
@@ -158,6 +159,9 @@ impl Token {
         from.require_auth();
         let from_balance = Self::balance_of(env.clone(), from.clone());
         assert!(from_balance >= amount, "insufficient balance");
+        if from == to {
+            return;
+        }
         let to_balance = Self::balance_of(env.clone(), to.clone());
         env.storage().persistent().set(&DataKey::Balance(from), &(from_balance - amount));
         env.storage().persistent().set(&DataKey::Balance(to), &(to_balance + amount));
@@ -222,6 +226,17 @@ path = "."
 
         fs::create_dir_all(root.join("tests"))?;
 
+        let stale_test = if token_template {
+            "basic.rs"
+        } else {
+            "token.rs"
+        };
+        match fs::remove_file(root.join("tests").join(stale_test)) {
+            Ok(()) => {}
+            Err(error) if error.kind() == io::ErrorKind::NotFound => {}
+            Err(error) => return Err(error),
+        }
+
         let basic_test = if token_template {
             format!(
                 r#"#![cfg(test)]
@@ -237,15 +252,33 @@ fn token_mint_transfer_and_over_balance_failure() {{
     let bob = Address::generate(&env);
     let contract_id = env.register(Token, ());
     let client = TokenClient::new(&env, &contract_id);
+    env.mock_all_auths();
     client.initialize(&admin, &String::from_str(&env, "Starter Token"), &String::from_str(&env, "STRT"), &7);
 
-    env.mock_all_auths();
     client.mint(&alice, &100);
+    assert_eq!(client.balance_of(&alice), 100);
+    client.transfer(&alice, &alice, &40);
     assert_eq!(client.balance_of(&alice), 100);
     client.transfer(&alice, &bob, &40);
     assert_eq!(client.balance_of(&alice), 60);
     assert_eq!(client.balance_of(&bob), 40);
     let _ = client.try_transfer(&alice, &bob, &61).unwrap_err();
+}}
+
+#[test]
+fn initialize_requires_admin_authorization() {{
+    let env = Env::default();
+    let admin = Address::generate(&env);
+    let contract_id = env.register(Token, ());
+    let client = TokenClient::new(&env, &contract_id);
+
+    let result = client.try_initialize(
+        &admin,
+        &String::from_str(&env, "Starter Token"),
+        &String::from_str(&env, "STRT"),
+        &7,
+    );
+    assert!(result.is_err());
 }}
 "#,
                 crate_name = crate_name,
@@ -1143,6 +1176,40 @@ mod tests {
         let readme = fs::read_to_string(p.join("README.md")).unwrap();
         assert!(readme.contains("not a production or audited token"));
         assert!(!readme.contains("SEP-41 compliant"));
+        let _ = fs::remove_dir_all(&p);
+    }
+
+    #[test]
+    fn force_regeneration_from_hello_to_token_removes_only_stale_test() {
+        let p = tmp_dir("force-hello-to-token");
+        generate_project(&cfg(&p, false, false)).unwrap();
+        generate_project(&ScaffoldConfig {
+            name: p.to_string_lossy().to_string(),
+            minimal: false,
+            force: true,
+            template: "token".to_string(),
+        })
+        .unwrap();
+
+        assert!(!p.join("tests/basic.rs").exists());
+        assert!(p.join("tests/token.rs").exists());
+        let _ = fs::remove_dir_all(&p);
+    }
+
+    #[test]
+    fn force_regeneration_from_token_to_hello_removes_only_stale_test() {
+        let p = tmp_dir("force-token-to-hello");
+        generate_project(&ScaffoldConfig {
+            name: p.to_string_lossy().to_string(),
+            minimal: false,
+            force: false,
+            template: "token".to_string(),
+        })
+        .unwrap();
+        generate_project(&cfg(&p, false, true)).unwrap();
+
+        assert!(p.join("tests/basic.rs").exists());
+        assert!(!p.join("tests/token.rs").exists());
         let _ = fs::remove_dir_all(&p);
     }
 
