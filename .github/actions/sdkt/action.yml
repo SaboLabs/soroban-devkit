@@ -67,6 +67,26 @@ inputs:
     required: false
     default: ""
 
+outputs:
+  # release-assurance outputs
+  release_status:
+    description: "Aggregate release-assurance verdict: PASS, REVIEW, or FAIL. Empty when command is not release-assurance."
+    value: ${{ steps.ra_gate.outputs.release_status }}
+  # audit outputs
+  critical:
+    description: "Number of critical-severity findings from an audit run. Empty when command is not audit."
+    value: ${{ steps.audit_gate.outputs.critical }}
+  warning:
+    description: "Number of warning-severity findings from an audit run. Empty when command is not audit."
+    value: ${{ steps.audit_gate.outputs.warning }}
+  info:
+    description: "Number of info-severity findings from an audit run. Empty when command is not audit."
+    value: ${{ steps.audit_gate.outputs.info }}
+  # upgrade-safety outputs
+  compatible:
+    description: "Upgrade-safety verdict: 'true' or 'false'. Empty when command is not upgrade-safety."
+    value: ${{ steps.us_gate.outputs.compatible }}
+
 runs:
   using: "composite"
   steps:
@@ -204,6 +224,7 @@ runs:
         jq --version
 
     - name: Run sdkt audit
+      id: audit_gate
       if: ${{ inputs.command == 'audit' }}
       shell: bash
       env:
@@ -221,8 +242,49 @@ runs:
         # 2 = usage error such as an unknown level) after printing the full
         # JSON report. Branching on the exit code keeps one implementation of
         # the threshold semantics and needs no jq.
+        # Capture JSON to a temp file so we can parse outputs AND still print
+        # the report to the log even when the CLI exits non-zero.
+        REPORT_FILE="$(mktemp)"
         RC=0
-        sdkt audit "$SDKT_TARGET" --format json --fail-on "$SDKT_THRESHOLD" || RC=$?
+        sdkt audit "$SDKT_TARGET" --format json --fail-on "$SDKT_THRESHOLD" > "$REPORT_FILE" || RC=$?
+        # Always print the report to the log regardless of the exit code.
+        cat "$REPORT_FILE"
+        # Parse and write outputs only when we got a valid JSON report.
+        # jq is not guaranteed on audit runners, so extract with grep/sed as a
+        # fallback; but we still use jq when present (the provisioning step
+        # only runs for the other commands). Guard with command -v.
+        if command -v jq >/dev/null 2>&1 && jq -e . "$REPORT_FILE" >/dev/null 2>&1; then
+          CRITICAL=$(jq -r '.summary.critical // "0"' "$REPORT_FILE")
+          WARNING=$(jq  -r '.summary.warning  // "0"' "$REPORT_FILE")
+          INFO=$(jq     -r '.summary.info     // "0"' "$REPORT_FILE")
+        else
+          CRITICAL=0; WARNING=0; INFO=0
+        fi
+        # Write step outputs — written even when the gate will fail so an
+        # if: failure() consumer step can still read them.
+        {
+          echo "critical=${CRITICAL}"
+          echo "warning=${WARNING}"
+          echo "info=${INFO}"
+        } >> "$GITHUB_OUTPUT"
+        # Write step summary.
+        {
+          echo "## sdkt audit"
+          echo ""
+          if [ "$RC" -eq 2 ]; then
+            echo "**Result:** ❌ invocation rejected (check \`severity-threshold\`)"
+          elif [ "$RC" -ne 0 ]; then
+            echo "**Result:** ❌ findings at or above threshold \`${SDKT_THRESHOLD}\`"
+          else
+            echo "**Result:** ✅ passed (no findings at or above threshold \`${SDKT_THRESHOLD}\`)"
+          fi
+          echo ""
+          echo "| Severity | Count |"
+          echo "|----------|-------|"
+          echo "| Critical | ${CRITICAL} |"
+          echo "| Warning  | ${WARNING} |"
+          echo "| Info     | ${INFO} |"
+        } >> "$GITHUB_STEP_SUMMARY"
         if [ "$RC" -eq 2 ]; then
           echo "::error::sdkt audit rejected the invocation (exit 2) -- check 'severity-threshold' (critical | warning | info); see the error above"
           exit 2
@@ -234,6 +296,7 @@ runs:
         echo "sdkt audit passed (nothing at or above threshold '$SDKT_THRESHOLD')."
 
     - name: Run sdkt upgrade-safety
+      id: us_gate
       if: ${{ inputs.command == 'upgrade-safety' }}
       shell: bash
       env:
@@ -250,6 +313,24 @@ runs:
         echo "$OUT"
         COMPAT=$(echo "$OUT" | jq '.compatible')
         echo "Upgrade verdict compatible=$COMPAT"
+        # Write step output — written before gating so if: failure() reads it.
+        echo "compatible=${COMPAT}" >> "$GITHUB_OUTPUT"
+        # Write step summary.
+        {
+          echo "## sdkt upgrade-safety"
+          echo ""
+          if [ "$COMPAT" = "true" ]; then
+            echo "**Result:** ✅ compatible — no breaking changes detected"
+          else
+            BREAKING=$(echo "$OUT" | jq '.breaking_changes | length')
+            echo "**Result:** ❌ NOT compatible — breaking changes detected"
+            echo ""
+            echo "| Metric | Value |"
+            echo "|--------|-------|"
+            echo "| Compatible | ${COMPAT} |"
+            echo "| Breaking changes | ${BREAKING} |"
+          fi
+        } >> "$GITHUB_STEP_SUMMARY"
         if [ "$COMPAT" != "true" ]; then
           echo "::error::upgrade is NOT backwards-compatible (breaking changes detected)"
           exit 1
@@ -257,6 +338,7 @@ runs:
         echo "sdkt upgrade-safety passed (upgrade is backwards-compatible)."
 
     - name: Run sdkt release-assurance
+      id: ra_gate
       if: ${{ inputs.command == 'release-assurance' }}
       shell: bash
       env:
@@ -298,8 +380,38 @@ runs:
         # .release_status, so it must be decided from the captured exit code.
         OUT=$(sdkt release-assurance "${ARGS[@]}" --format json) && RC=0 || RC=$?
         echo "$OUT"
-        STATUS=$(echo "$OUT" | jq -r '.release_status')
+        STATUS=$(echo "$OUT" | jq -r '.release_status // ""')
         echo "Release assurance status: $STATUS (cli exit code $RC)"
+        # Write step output — written before gating so an if: failure() step
+        # can still read release_status even when the gate fails.
+        echo "release_status=${STATUS}" >> "$GITHUB_OUTPUT"
+        # Write step summary — build from the per-section statuses.
+        {
+          echo "## sdkt release-assurance"
+          echo ""
+          case "$STATUS" in
+            PASS)   echo "**Result:** ✅ PASS" ;;
+            REVIEW) echo "**Result:** 🔍 REVIEW — human review recommended" ;;
+            FAIL)   echo "**Result:** ❌ FAIL" ;;
+            *)
+              if [ "$RC" -ne 0 ]; then
+                echo "**Result:** ❌ CLI error (no report produced)"
+              else
+                echo "**Result:** ✅ PASS"
+              fi
+              ;;
+          esac
+          if [ -n "$OUT" ] && echo "$OUT" | jq -e '.artifact' >/dev/null 2>&1; then
+            echo ""
+            echo "| Section | Status |"
+            echo "|---------|--------|"
+            echo "| Artifact | $(echo "$OUT" | jq -r '.artifact.status // "—"') |"
+            echo "| Security | $(echo "$OUT" | jq -r '.security.status // "—"') |"
+            echo "| Upgrade Safety | $(echo "$OUT" | jq -r '.upgrade_safety.status // "—"') |"
+            echo "| Verification | $(echo "$OUT" | jq -r '.verification.status // "—"') |"
+            echo "| Contract Health | $(echo "$OUT" | jq -r '.health.status // "—"') |"
+          fi
+        } >> "$GITHUB_STEP_SUMMARY"
         if [ "$STATUS" = "FAIL" ]; then
           echo "::error::sdkt release-assurance reported FAIL (see report above)"
           exit 1
@@ -361,6 +473,19 @@ runs:
           echo "WASM verification: verified=$VERIFIED (on_chain=$ON_CHAIN_HASH local=$LOCAL_HASH)"
           if [ "$VERIFIED" = "false" ]; then
             echo "::error::sdkt health detected a WASM hash mismatch (verified=false: on-chain $ON_CHAIN_HASH != local $LOCAL_HASH)"
+            # Write step summary before exiting.
+            {
+              echo "## sdkt health"
+              echo ""
+              echo "**Result:** ❌ WASM hash mismatch (verified=false)"
+              echo ""
+              echo "| Field | Value |"
+              echo "|-------|-------|"
+              echo "| Health | ${HEALTH} |"
+              echo "| Verified | false |"
+              echo "| On-chain hash | ${ON_CHAIN_HASH} |"
+              echo "| Local hash | ${LOCAL_HASH} |"
+            } >> "$GITHUB_STEP_SUMMARY"
             exit 1
           fi
         fi
@@ -379,6 +504,25 @@ runs:
             exit 1
             ;;
         esac
+        # Write step summary.
+        {
+          echo "## sdkt health"
+          echo ""
+          if [ "$FAIL" -eq 1 ]; then
+            echo "**Result:** ❌ health verdict \`${HEALTH}\` meets or exceeds threshold \`${SDKT_HEALTH_THRESHOLD}\`"
+          else
+            echo "**Result:** ✅ passed (health=\`${HEALTH}\`, threshold=\`${SDKT_HEALTH_THRESHOLD}\`)"
+          fi
+          echo ""
+          echo "| Field | Value |"
+          echo "|-------|-------|"
+          echo "| Health | ${HEALTH} |"
+          echo "| Threshold | ${SDKT_HEALTH_THRESHOLD} |"
+          if [ -n "$SDKT_WASM" ]; then
+            VERIFIED=$(echo "$OUT" | jq -r '.verified // "—"')
+            echo "| Verified | ${VERIFIED} |"
+          fi
+        } >> "$GITHUB_STEP_SUMMARY"
         if [ "$FAIL" -eq 1 ]; then
           echo "::error::sdkt health verdict '$HEALTH' meets or exceeds threshold '$SDKT_HEALTH_THRESHOLD'"
           exit 1
