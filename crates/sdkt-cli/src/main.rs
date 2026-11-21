@@ -588,7 +588,17 @@ enum Commands {
         /// Requires --old-wasm (the currently deployed WASM) to be supplied.
         #[arg(long, default_value_t = false)]
         deny_breaking: bool,
-        /// Path to the currently deployed (baseline) WASM, used with --deny-breaking.
+        /// Run release assurance before identity lookup and upload. Verification and
+        /// Contract Health are skipped because the contract is not deployed yet.
+        #[arg(long, requires = "wasm")]
+        release_assurance: bool,
+        /// Audit source file or directory for release preflight (repeatable).
+        #[arg(long, value_name = "PATH", requires = "release_assurance")]
+        preflight_audit: Vec<String>,
+        /// Fuzz evidence JSON for release preflight (repeatable).
+        #[arg(long, value_name = "FILE", requires = "release_assurance")]
+        preflight_fuzz_evidence: Vec<String>,
+        /// Path to the currently deployed (baseline) WASM, used by upgrade checks.
         #[arg(long, value_name = "WASM")]
         old_wasm: Option<String>,
         /// Timeout in seconds while waiting for the upload and create transactions to settle
@@ -10454,6 +10464,9 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
             identity,
             arg,
             deny_breaking,
+            release_assurance,
+            preflight_audit,
+            preflight_fuzz_evidence,
             old_wasm,
             timeout,
             interval,
@@ -10552,6 +10565,46 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
             let parsed_args = parse_typed_args(&arg, false)?;
             sdkt_xdr::parse_scval_args(&parsed_args)
                 .map_err(|e| format!("Invalid constructor argument: {}", e))?;
+
+            // Run every supplied evidence file through the existing assurance
+            // engine. It accepts one file per report, so each must pass.
+            if release_assurance {
+                let client = SorobanRpcClient::from_config(&network_config);
+                let evidence: Vec<Option<&str>> = if preflight_fuzz_evidence.is_empty() {
+                    vec![None]
+                } else {
+                    preflight_fuzz_evidence
+                        .iter()
+                        .map(|s| Some(s.as_str()))
+                        .collect()
+                };
+                for path in evidence {
+                    let report = match run_release_assurance(
+                        &client,
+                        wasm.as_deref()
+                            .expect("--release-assurance requires --wasm"),
+                        old_wasm.as_deref(),
+                        &preflight_audit,
+                        &[],
+                        None,
+                        "preflight",
+                        path,
+                    )
+                    .await
+                    {
+                        Ok(report) => report,
+                        Err(error) => {
+                            eprintln!("Deployment aborted: release assurance error: {error}");
+                            process::exit(1);
+                        }
+                    };
+                    print_release_assurance_pretty(&report);
+                    if report.release_status == "FAIL" {
+                        eprintln!("Deployment aborted: release assurance failed.");
+                        process::exit(1);
+                    }
+                }
+            }
 
             // Read the new WASM before looking up the identity. This preserves
             // the fail-fast behavior for a missing or unreadable file on the

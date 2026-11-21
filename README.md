@@ -409,6 +409,13 @@ See [`docs/plugin-authoring.md`](docs/plugins/plugin-authoring.md) for how to bu
 new contract instance. It is the single-contract counterpart to
 `sdkt project deploy` (which orchestrates multi-contract workspaces).
 
+Add `--release-assurance` to gate a single deploy before identity lookup and
+upload. It checks the artifact, audits sources supplied with repeatable
+`--preflight-audit`, compares `--old-wasm` when supplied, and checks each
+repeatable `--preflight-fuzz-evidence` file. Verification and Contract Health
+are skipped because the candidate is not yet deployed on-chain. A failing check
+or assurance error aborts deployment; omitted optional checks are skipped.
+
 #### Deploy a contract to Testnet (step by step)
 
 A fresh deploy requires a built WASM, a funded signing identity, and a salt.
