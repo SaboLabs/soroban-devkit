@@ -26,10 +26,12 @@ offline `sdkt` commands so future releases can detect regressions.
 - **Warmup:** 1 discarded run per command to absorb cold page-cache / lazy
   linking effects.
 - **Runs:** 7 measured runs per command (configurable via `RUNS=`).
-- **Wall-clock:** measured with nanosecond `date +%s.%N` around the command;
-  reported as **min / median / average** (seconds).
+- **Wall-clock:** measured around the command using a portable clock (GNU
+  `date +%s.%N` where supported, otherwise a macOS-compatible monotonic
+  millisecond clock such as `perl -MTime::HiRes` or Python `time.time`);
+  reported as **min / median / average** (seconds) on every platform.
 - **Peak memory:** captured via GNU `/usr/bin/time -v` (Maximum resident set
-  size) when present. Reported as **median** peak RSS (kB).
+  size) when present, falling back to BSD `/usr/bin/time -l` on macOS. Reported as **median** peak RSS (kB).
   - **RSS portability fallback:** the harness detects GNU time at runtime.
     On Linux without GNU time it falls back to `/proc` polling of the child's
     `VmHWM`. On macOS and Windows, where no portable RSS probe is wired in,
@@ -85,14 +87,16 @@ Re-run `scripts/bench_offline.sh` on the same host to compare against this table
 
 | Command | wall median | peak RSS (median) |
 |---------|:-----------:|:-----------------:|
-| `wasm inspect token` | see harness output | see harness output |
-| `wasm inspect liquidity_pool` | see harness output | see harness output |
-| `audit token/src/lib.rs` | see harness output | see harness output |
-| `diff --upgrade-safety token→lp` | see harness output | see harness output |
+| `wasm inspect token` | not measured in this revision | not measured in this revision |
+| `wasm inspect liquidity_pool` | not measured in this revision | not measured in this revision |
+| `audit token/src/lib.rs` | not measured in this revision | not measured in this revision |
+| `diff --upgrade-safety token→lp` | not measured in this revision | not measured in this revision |
 
-> The table above is the v2.7.0 baseline layout; populate the numeric cells
+> No v2.7.0 numbers were captured for this revision. The cells are left
+> explicitly unpopulated rather than filled with placeholders. Populate them
 > from the harness output of the release build on the baseline host before
-> tagging a release.
+> tagging a release, and treat the 2.1.1 table below as the most recent
+> measured reference until then.
 
 ### Historical: sdkt 2.1.1 (2026-08-06)
 

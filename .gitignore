@@ -8,7 +8,6 @@
 
 # IDE
 .idea/
-.vscode/
 *.swp
 *.swo
 *~
@@ -18,7 +17,6 @@
 Thumbs.db
 
 # Environment
-.env
 .sdkt.toml.local
 *.local
 
@@ -32,3 +30,5 @@ Thumbs.db
 .project/
 __pycache__/
 *.pyc
+config.bat
+node_modules

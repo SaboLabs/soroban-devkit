@@ -10,7 +10,10 @@
 # Methodology to avoid flaky numbers:
 # * A release build of sdkt is used (debug builds are not representative).
 # * Each command is run WARMUP (1, discarded) + RUNS (default 7) times.
-# * Wall-clock measured with nanosecond `date`.
+# * Wall-clock measured with a portable clock:
+#     - nanosecond `date +%s.%N` where supported (GNU/Linux),
+#     - otherwise Perl/Python high-resolution time, or whole seconds as a
+#       last resort (macOS BSD `date` lacks %N).
 # * Peak RSS probe, in order of preference:
 #     1. GNU time (`/usr/bin/time -v`) when present (Linux, most CI images).
 #     2. BSD time (`/usr/bin/time -l`, macOS) reporting max RSS in bytes.
@@ -23,9 +26,9 @@
 #   SDKT=/path/to/sdkt WASM_DIR=/path/to/wasm AUDIT_SRC=/path/to/lib.rs \
 #     bash scripts/bench_offline.sh
 #
-# Fixtures: by default WASM_DIR and AUDIT_SRC point at the committed fixture
-# set under bench/fixtures/. Run scripts/fetch_bench_fixtures.sh to refresh
-# them from stellar/soroban-examples.
+# Fixtures: WASM_DIR and AUDIT_SRC must point at a fixture set. The default
+# location is bench/fixtures/ under the repo root; if it is missing, the script
+# fails with an explicit message instead of silently benchmarking nothing.
 #
 # Output format (one line per command):
 #   <label> wall min=..s med=..s avg=..s | peakRSS med=<N> kB
@@ -47,6 +50,12 @@ if [[ ! -x "$SDKT" ]]; then
   exit 1
 fi
 
+if [[ ! -f "$WASM_DIR/token.wasm" || ! -f "$WASM_DIR/liquidity_pool.wasm" || ! -f "$AUDIT_SRC" ]]; then
+  echo "ERROR: benchmark fixtures missing (WASM_DIR=$WASM_DIR, AUDIT_SRC=$AUDIT_SRC)." >&2
+  echo "Provide them via WASM_DIR / AUDIT_SRC overrides, or add them under bench/fixtures/." >&2
+  exit 1
+fi
+
 # Detect RSS probe once.
 RSS_MODE="none"
 GNU_TIME="/usr/bin/time"
@@ -55,6 +64,25 @@ if [[ -x "$GNU_TIME" ]] && "$GNU_TIME" -v true >/dev/null 2>&1; then
 elif [[ -x "$GNU_TIME" ]] && "$GNU_TIME" -l true >/dev/null 2>&1; then
   RSS_MODE="bsd"
 fi
+
+# Pick a high-resolution clock once.
+CLOCK_MODE="seconds"
+if date +%s.%N 2>/dev/null | grep -q '\.[0-9]'; then
+  CLOCK_MODE="date"
+elif command -v python3 >/dev/null 2>&1; then
+  CLOCK_MODE="python"
+elif command -v perl >/dev/null 2>&1; then
+  CLOCK_MODE="perl"
+fi
+
+now() {
+  case "$CLOCK_MODE" in
+    date)   date +%s.%N ;;
+    python) python3 -c 'import time; print(f"{time.time():.6f}")' ;;
+    perl)   perl -MTime::HiRes=time -e 'printf "%.6f\n", time' ;;
+    *)      date +%s ;;
+  esac
+}
 
 # Optional single-core pinning for steadier numbers.
 PIN=""
@@ -70,7 +98,7 @@ median() {
 # Run one measured invocation; prints "<wall_seconds> <rss_kb_or_NA>".
 measure_once() {
   local t0 t1 out rss_kb="NA"
-  t0=$(date +%s.%N)
+  t0=$(now)
   case "$RSS_MODE" in
     gnu)
       out=$($PIN "$GNU_TIME" -v "$@" 2>&1 >/dev/null)
@@ -87,9 +115,8 @@ measure_once() {
       $PIN "$@" >/dev/null 2>&1
       ;;
   esac
-  t1=$(date +%s.%N)
-  awk "BEGIN{printf \"%.4f %s\
-\", $t1-$t0, \"${rss_kb:-NA}\"}"
+  t1=$(now)
+  awk "BEGIN{printf \"%.4f %s\n\", $t1-$t0, \"${rss_kb:-NA}\"}"
 }
 
 bench_time() {
@@ -125,7 +152,7 @@ bench_time() {
 
 echo "=== Offline benchmark :: sdkt=$( "$SDKT" --version 2>/dev/null || echo unknown ) ==="
 echo "RUNS=$RUNS  WASM_DIR=$WASM_DIR  AUDIT_SRC=$AUDIT_SRC"
-echo "pin=${PIN:-none}  rss_probe=$RSS_MODE"
+echo "pin=${PIN:-none}  rss_probe=$RSS_MODE  clock=$CLOCK_MODE"
 echo
 
 TOKEN="$WASM_DIR/token.wasm"
