@@ -6,11 +6,9 @@
  *   - render the structured result returned by the Rust inspector
  *   - reset / re-upload
  *
- * The uploaded bytes exist only as a Uint8Array on this thread; they are
- * transferred into the worker, inspected there, and never sent anywhere.
- * The only network requests the app makes are for its own static assets
- * (this page, the CSS, the worker, the bundled sdkt WASM runtime, and the
- * bundled example contracts in examples/).
+ * Contract bytes selected from disk or fetched directly from a user-provided
+ * URL exist only on this thread; they are transferred into the worker for
+ * inspection and are never uploaded anywhere.
  */
 'use strict';
 
@@ -20,6 +18,8 @@
   const $ = (id) => document.getElementById(id);
   const dropzone = $('dropzone');
   const fileInput = $('fileInput');
+  const urlForm = $('urlForm');
+  const urlInput = $('urlInput');
   const candidateInput = $('candidateInput');
   const candidateName = $('candidateName');
   const filebar = $('filebar');
@@ -662,6 +662,47 @@
       });
   }
 
+  function loadUrl(url) {
+    const gen = beginSelection();
+    currentFile = null;
+    currentBytes = null;
+    candidateFile = null;
+    candidateBytes = null;
+    candidateInput.value = '';
+    candidateName.textContent = 'No candidate loaded';
+    filebar.hidden = true;
+    results.classList.add('hidden');
+    inspected = false;
+    clearError();
+
+    if (!url) {
+      setStatus('err', 'URL required');
+      showError('Enter a URL to load a WASM contract.');
+      return;
+    }
+
+    setStatus('loading', 'loading URL…');
+    fetch(url).catch((err) => {
+      throw new Error('Fetch failed (' + (err && err.message ? err.message : err) +
+        '). The host must allow cross-origin reads (CORS).');
+    }).then((res) => {
+      if (!res.ok) throw new Error('HTTP ' + res.status);
+      return res.arrayBuffer();
+    }).then((buf) => {
+      if (!isCurrent(gen)) return;
+      const bytes = new Uint8Array(buf);
+      if (!bytes.length) throw new Error('The response was empty.');
+      const fileName = url.split(/[?#]/, 1)[0].split('/').pop() || 'contract.wasm';
+      const file = new File([bytes], fileName + ' (from URL)', { type: 'application/wasm' });
+      acceptFile(file, gen);
+    }).catch((err) => {
+      if (!isCurrent(gen)) return;
+      setStatus('err', 'URL load failed');
+      showError('Could not load the contract URL (' +
+        (err && err.message ? err.message : err) + ').');
+    });
+  }
+
   function reset() {
     // Invalidate any in-flight fetch/inspection so it cannot re-render after reset.
     beginSelection();
@@ -684,6 +725,11 @@
 
   fileInput.addEventListener('change', () => {
     if (fileInput.files && fileInput.files[0]) acceptFile(fileInput.files[0]);
+  });
+
+  urlForm.addEventListener('submit', (e) => {
+    e.preventDefault();
+    loadUrl(urlInput.value.trim());
   });
 
   candidateInput.addEventListener('change', () => {

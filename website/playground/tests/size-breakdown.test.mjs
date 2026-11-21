@@ -53,7 +53,7 @@ function makeEl() {
 }
 
 const els = new Map();
-const ids = ['dropzone', 'fileInput', 'candidateInput', 'candidateName', 'filebar', 'fname', 'fmeta', 'status',
+const ids = ['dropzone', 'fileInput', 'urlForm', 'urlInput', 'candidateInput', 'candidateName', 'filebar', 'fname', 'fmeta', 'status',
   'errorBox', 'errorMsg', 'results', 'resetBtn', 'modeChip'];
 for (const id of ids) els.set(id, makeEl());
 
