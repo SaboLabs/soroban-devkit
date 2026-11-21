@@ -841,6 +841,14 @@ enum FuzzAction {
         /// (repeatable), e.g. --expect-error bump:Auth:6
         #[arg(long, value_name = "FN:TYPE:CODE", action = clap::ArgAction::Append)]
         expect_error: Vec<String>,
+        /// Number of invocations in each generated multi-step sequence (>= 2;
+        /// requires --sequence-every)
+        #[arg(long, value_name = "N")]
+        sequence_length: Option<usize>,
+        /// Execute every N-th case as a multi-step sequence (>= 1; requires
+        /// --sequence-length)
+        #[arg(long, value_name = "N")]
+        sequence_every: Option<usize>,
         /// Replay every written artifact to verify determinism
         #[arg(long)]
         replay: bool,
@@ -1277,9 +1285,14 @@ enum TxAction {
         /// Identity name to sign with. Defaults to "default".
         #[arg(short = 'I', long, default_value = "default")]
         identity: String,
-        /// Network: testnet | mainnet | futurenet | custom:<passphrase>
-        #[arg(short, long, default_value = "testnet")]
-        network: String,
+        /// Network: testnet | mainnet | futurenet | custom:<passphrase> (mutually exclusive with --network-profile and --network-passphrase; defaults to testnet)
+        #[arg(
+            short,
+            long,
+            conflicts_with = "network_profile",
+            conflicts_with = "network_passphrase"
+        )]
+        network: Option<String>,
         /// Output format
         #[arg(short, long, default_value = "pretty")]
         format: String,
@@ -1630,6 +1643,9 @@ enum StorageAction {
     /// plan: the contract ID, the ledger keys covering the removed/expiring
     /// entries, and a suggested `--ledgers` value.  Nothing is signed or
     /// submitted.
+    ///
+    /// Duplicate ledger keys within a single snapshot are rejected with an
+    /// error rather than silently dropped.
     ///
     /// Exit codes: 0 in all non-error cases (including an empty plan).
     #[command(name = "storage-diff", alias = "diff")]
@@ -5157,6 +5173,61 @@ mod project_add_tests {
     }
 }
 
+/// Resolve the signing [`Network`] for `sdkt tx sign` from `--network`,
+/// `--network-profile`, and/or `--network-passphrase`.
+///
+/// `--network` is mutually exclusive with `--network-profile` and
+/// `--network-passphrase`. When both `--network-profile` and
+/// `--network-passphrase` are supplied, the profile is still validated via
+/// `NetworkStore` and `--network-passphrase` takes precedence over the
+/// profile's stored passphrase (matching `resolve_network_config` /
+/// `tx submit`). Defaults to `Network::Testnet` when none are specified.
+fn resolve_sign_network(
+    network: Option<&str>,
+    network_profile: Option<&str>,
+    network_passphrase: Option<&str>,
+) -> Result<Network, String> {
+    if network.is_some() && (network_profile.is_some() || network_passphrase.is_some()) {
+        return Err(
+            "cannot use --network together with --network-profile or --network-passphrase; specify only one"
+                .to_string(),
+        );
+    }
+
+    if let Some(net_str) = network {
+        return match net_str.trim().to_ascii_lowercase().as_str() {
+            "testnet" => Ok(Network::Testnet),
+            "mainnet" => Ok(Network::Mainnet),
+            "futurenet" => Ok(Network::Futurenet),
+            other if other.starts_with("custom:") => Ok(Network::parse(other)),
+            _ => Err(format!(
+                "invalid network '{}' (expected testnet|mainnet|futurenet|custom:<passphrase>)",
+                net_str
+            )),
+        };
+    }
+
+    let profile_passphrase = if let Some(profile_name) = network_profile {
+        let store = NetworkStore::new().map_err(|e| format!("cannot open network store: {}", e))?;
+        let profile = store
+            .get(profile_name)
+            .map_err(|e| format!("network profile '{}' not found: {}", profile_name, e))?;
+        Some(profile.network_passphrase)
+    } else {
+        None
+    };
+
+    if let Some(passphrase) = network_passphrase {
+        return Ok(Network::from_passphrase(passphrase));
+    }
+
+    if let Some(passphrase) = profile_passphrase {
+        return Ok(Network::from_passphrase(&passphrase));
+    }
+
+    Ok(Network::Testnet)
+}
+
 /// Resolve a transaction envelope argument (`--input` / `--envelope`) to
 /// envelope text.
 ///
@@ -7921,17 +7992,15 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
             } => {
                 let fmt = parse_format_str(&format);
 
-                // --- Network resolution (strict; reject unknown labels) ---
-                let network = match network.trim().to_ascii_lowercase().as_str() {
-                    "testnet" => Network::Testnet,
-                    "mainnet" => Network::Mainnet,
-                    "futurenet" => Network::Futurenet,
-                    other if other.starts_with("custom:") => Network::parse(other),
-                    _ => {
-                        eprintln!(
-                            "Error: invalid network '{}' (expected testnet|mainnet|futurenet|custom:<passphrase>)",
-                            network
-                        );
+                // --- Network resolution (strict; reject unknown labels / profiles) ---
+                let network = match resolve_sign_network(
+                    network.as_deref(),
+                    net.network_profile.as_deref(),
+                    net.network_passphrase.as_deref(),
+                ) {
+                    Ok(n) => n,
+                    Err(e) => {
+                        eprintln!("Error: {}", e);
                         process::exit(1);
                     }
                 };
@@ -12806,6 +12875,8 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
                 auth,
                 expect_success,
                 expect_error,
+                sequence_length,
+                sequence_every,
                 replay,
                 format,
             } => {
@@ -12818,6 +12889,8 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
                     &auth,
                     expect_success,
                     expect_error,
+                    sequence_length,
+                    sequence_every,
                     replay,
                     &format,
                 ) {
