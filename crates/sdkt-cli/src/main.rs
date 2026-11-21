@@ -1175,6 +1175,20 @@ enum TxAction {
         #[arg(short, long, default_value = "pretty")]
         format: String,
     },
+    /// Wrap a V1 transaction envelope with a fee-bump envelope (offline)
+    Wrap {
+        /// Base64 XDR transaction envelope or path to a file containing it
+        #[arg(short, long)]
+        envelope: String,
+        /// G... account that will pay the outer fee
+        #[arg(long, value_name = "ACCOUNT")]
+        fee_source: String,
+        /// Total fee in stroops paid by the fee source
+        #[arg(long, value_name = "STROOPS")]
+        fee: i64,
+        #[arg(short, long, default_value = "pretty")]
+        format: String,
+    },
     /// Simulate a transaction envelope without submitting it
     Simulate {
         /// Base64 XDR transaction envelope or path to a file containing it
@@ -7211,6 +7225,42 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
                         eprintln!("Error inspecting transaction: {}", e);
                         process::exit(1);
                     }
+                }
+            }
+            TxAction::Wrap {
+                envelope,
+                fee_source,
+                fee,
+                format,
+            } => {
+                let fmt = parse_format_str(&format);
+                let env_data = match resolve_tx_input(&envelope) {
+                    Ok(s) => s,
+                    Err(e) => {
+                        eprintln!("Error: {}", e);
+                        process::exit(1);
+                    }
+                };
+                let result = match sdkt_xdr::wrap_fee_bump(&sdkt_xdr::FeeBumpWrapParams {
+                    envelope: env_data,
+                    fee_source,
+                    fee,
+                }) {
+                    Ok(result) => result,
+                    Err(e) => {
+                        eprintln!("Error: {}", e);
+                        process::exit(1);
+                    }
+                };
+                if fmt == OutputFormat::Json {
+                    println!("{}", serde_json::to_string(&result)?);
+                } else {
+                    println!("Fee-bump envelope:");
+                    println!("  Fee source:      {}", result.fee_source);
+                    println!("  Inner fee: {} stroops", result.inner_fee);
+                    println!("  Minimum fee: {} stroops", result.minimum_fee);
+                    println!("  Fee-bump total: {} stroops", result.fee);
+                    println!("  Envelope:        {}", result.envelope);
                 }
             }
             TxAction::Validate { envelope, format } => {
