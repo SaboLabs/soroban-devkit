@@ -16,6 +16,12 @@ impl AuditRule for Auth001 {
     fn description(&self) -> &'static str {
         "Privileged/admin function must call require_auth()"
     }
+    fn example_vulnerable(&self) -> &'static str {
+        "pub fn set_admin(env: Env, who: Address) {\n    env.storage().instance().set(&ADMIN, &who);\n}"
+    }
+    fn example_fixed(&self) -> &'static str {
+        "pub fn set_admin(env: Env, who: Address) {\n    env.invoker().require_auth();\n    env.storage().instance().set(&ADMIN, &who);\n}"
+    }
     fn check(&self, scans: &[FnScan], _ctx: &AuditContext, report: &mut AuditReport) {
         for s in scans {
             if crate::audit::is_privileged(&s.fn_name) && s.require_auth == 0 {
@@ -50,6 +56,12 @@ impl AuditRule for Auth002 {
     fn description(&self) -> &'static str {
         "Cross-contract invoke_contract() must be guarded by require_auth()"
     }
+    fn example_vulnerable(&self) -> &'static str {
+        "pub fn forward(env: Env, target: Address) {\n    env.invoke_contract::<()>(&target, &symbol_short!(\"run\"), ());\n}"
+    }
+    fn example_fixed(&self) -> &'static str {
+        "pub fn forward(env: Env, target: Address) {\n    env.invoker().require_auth();\n    env.invoke_contract::<()>(&target, &symbol_short!(\"run\"), ());\n}"
+    }
     fn check(&self, scans: &[FnScan], _ctx: &AuditContext, report: &mut AuditReport) {
         for s in scans {
             if s.invoke_contract > 0 && s.require_auth == 0 {
@@ -80,6 +92,12 @@ impl AuditRule for Auth003 {
     }
     fn description(&self) -> &'static str {
         "initialize()-style entrypoint must call require_auth()"
+    }
+    fn example_vulnerable(&self) -> &'static str {
+        "pub fn initialize(env: Env, admin: Address) {\n    env.storage().instance().set(&ADMIN, &admin);\n}"
+    }
+    fn example_fixed(&self) -> &'static str {
+        "pub fn initialize(env: Env, admin: Address) {\n    admin.require_auth();\n    env.storage().instance().set(&ADMIN, &admin);\n}"
     }
     fn check(&self, scans: &[FnScan], ctx: &AuditContext, report: &mut AuditReport) {
         for s in scans {
@@ -126,6 +144,12 @@ impl AuditRule for Auth004 {
     fn description(&self) -> &'static str {
         "Token transfer function must call require_auth() on source or destination"
     }
+    fn example_vulnerable(&self) -> &'static str {
+        "pub fn transfer(env: Env, from: Address, to: Address, amount: i128) {\n    move_tokens(&env, &from, &to, amount);\n}"
+    }
+    fn example_fixed(&self) -> &'static str {
+        "pub fn transfer(env: Env, from: Address, to: Address, amount: i128) {\n    from.require_auth();\n    move_tokens(&env, &from, &to, amount);\n}"
+    }
     fn check(&self, scans: &[FnScan], _ctx: &AuditContext, report: &mut AuditReport) {
         for s in scans {
             // Match on the unqualified name so a transfer-style function
@@ -169,6 +193,12 @@ impl AuditRule for Move001 {
     fn description(&self) -> &'static str {
         "Local used as a call argument multiple times (possible move-after-use)"
     }
+    fn example_vulnerable(&self) -> &'static str {
+        "let value = build_value();\nconsume(value);\nconsume(value);"
+    }
+    fn example_fixed(&self) -> &'static str {
+        "let value = build_value();\nconsume(&value);\nconsume(&value);"
+    }
     fn check(&self, scans: &[FnScan], _ctx: &AuditContext, report: &mut AuditReport) {
         for s in scans {
             // `usage` is a HashMap, so iterate a name-sorted snapshot:
@@ -205,6 +235,12 @@ impl AuditRule for Math001 {
     }
     fn description(&self) -> &'static str {
         "Division before multiplication may truncate numeric precision"
+    }
+    fn example_vulnerable(&self) -> &'static str {
+        "let shares = amount / total;\nlet payout = shares * price;"
+    }
+    fn example_fixed(&self) -> &'static str {
+        "let payout = amount.checked_mul(price).expect(\"overflow\") / total;"
     }
     fn check(&self, scans: &[FnScan], _ctx: &AuditContext, report: &mut AuditReport) {
         for scan in scans {
@@ -289,6 +325,12 @@ impl AuditRule for Cei001 {
     }
     fn description(&self) -> &'static str {
         "External invocation before state write — reordering may prevent reentrancy"
+    }
+    fn example_vulnerable(&self) -> &'static str {
+        "env.invoke_contract::<()>(&hook, &symbol_short!(\"notify\"), ());\nenv.storage().instance().set(&DONE, &true);"
+    }
+    fn example_fixed(&self) -> &'static str {
+        "env.storage().instance().set(&DONE, &true);\nenv.invoke_contract::<()>(&hook, &symbol_short!(\"notify\"), ());"
     }
     fn check(&self, scans: &[FnScan], _ctx: &AuditContext, report: &mut AuditReport) {
         for scan in scans {
