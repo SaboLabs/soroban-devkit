@@ -3925,24 +3925,72 @@ fn load_config() -> DevKitConfig {
 fn config_without_defaults(
     resolved: serde_json::Value,
     defaults: &serde_json::Value,
-) -> (serde_json::Value, usize) {
-    match (resolved, defaults) {
-        (resolved, defaults) if resolved == *defaults => (serde_json::Value::Null, 1),
-        (serde_json::Value::Object(values), serde_json::Value::Object(defaults)) => {
+) -> (Option<serde_json::Value>, usize) {
+    match resolved {
+        serde_json::Value::Object(values) => {
             let mut kept = serde_json::Map::new();
             let mut omitted = 0;
             for (key, value) in values {
-                let default = defaults.get(&key).unwrap_or(&serde_json::Value::Null);
-                let (filtered, count) = config_without_defaults(value, default);
-                if !filtered.is_null() {
-                    kept.insert(key, filtered);
-                } else {
-                    omitted += count;
+                match defaults.get(&key) {
+                    Some(default) => {
+                        let (filtered, count) = config_without_defaults(value, default);
+                        omitted += count;
+                        if let Some(filtered) = filtered {
+                            kept.insert(key, filtered);
+                        }
+                    }
+                    None => {
+                        if !value.as_object().is_some_and(serde_json::Map::is_empty) {
+                            kept.insert(key, value);
+                        }
+                    }
                 }
             }
-            (serde_json::Value::Object(kept), omitted)
+            if kept.is_empty() {
+                (None, omitted)
+            } else {
+                (Some(serde_json::Value::Object(kept)), omitted)
+            }
         }
-        (resolved, _) => (resolved, 0),
+        value if value == *defaults => (None, 1),
+        value => (Some(value), 0),
+    }
+}
+
+/// Mask a password in URL user information without changing ordinary URLs.
+fn redact_url_password(url: &str) -> String {
+    let Some(scheme_end) = url.find("://") else {
+        return url.to_owned();
+    };
+    let authority_start = scheme_end + 3;
+    let authority_end = url[authority_start..]
+        .find(['/', '?', '#'])
+        .map(|offset| authority_start + offset)
+        .unwrap_or(url.len());
+    let authority = &url[authority_start..authority_end];
+    let Some(at) = authority.rfind('@') else {
+        return url.to_owned();
+    };
+    let userinfo = &authority[..at];
+    let Some(password_start) = userinfo.find(':') else {
+        return url.to_owned();
+    };
+    let mut redacted = String::with_capacity(url.len());
+    redacted.push_str(&url[..authority_start]);
+    redacted.push_str(&userinfo[..password_start]);
+    redacted.push_str(":***@");
+    redacted.push_str(&authority[at + 1..]);
+    redacted.push_str(&url[authority_end..]);
+    redacted
+}
+
+fn redact_config_credentials(config: &mut serde_json::Value) {
+    if let Some(url) = config
+        .pointer("/network/rpc_url")
+        .and_then(serde_json::Value::as_str)
+        .map(redact_url_password)
+    {
+        config["network"]["rpc_url"] = serde_json::Value::String(url);
     }
 }
 
@@ -3951,7 +3999,8 @@ fn show_config(format: &str, show_defaults: bool) -> Result<(), String> {
     let found = path.is_file();
     let resolved =
         DevKitConfig::from_file(path).map_err(|e| format!("Error loading .sdkt.toml: {e}"))?;
-    let resolved_json = serde_json::to_value(&resolved).map_err(|e| e.to_string())?;
+    let mut resolved_json = serde_json::to_value(&resolved).map_err(|e| e.to_string())?;
+    redact_config_credentials(&mut resolved_json);
     let defaults_json = serde_json::to_value(DevKitConfig::default()).map_err(|e| e.to_string())?;
     // A missing file is still useful diagnostically: show the complete
     // built-in configuration rather than an empty diff.
@@ -3959,7 +4008,11 @@ fn show_config(format: &str, show_defaults: bool) -> Result<(), String> {
     let (display, omitted) = if show_all {
         (resolved_json, 0)
     } else {
-        config_without_defaults(resolved_json, &defaults_json)
+        let (filtered, omitted) = config_without_defaults(resolved_json, &defaults_json);
+        (
+            filtered.unwrap_or_else(|| serde_json::Value::Object(serde_json::Map::new())),
+            omitted,
+        )
     };
 
     match parse_format_str(format) {
@@ -4019,11 +4072,44 @@ mod config_show_tests {
         let defaults_json = serde_json::to_value(DevKitConfig::default()).unwrap();
         let (filtered, omitted) = config_without_defaults(resolved_json, &defaults_json);
 
+        let filtered = filtered.unwrap();
         assert_eq!(filtered["network"]["rpc_url"], "https://example.test/rpc");
         assert_eq!(filtered["network"]["passphrase"], "Example Network");
         assert_eq!(filtered["decode"]["max_depth"], 42);
         assert!(filtered["network"].get("timeout_secs").is_none());
-        assert!(omitted > 0);
+        assert_eq!(omitted, 5);
+    }
+
+    #[test]
+    fn all_default_values_leave_an_empty_root_object() {
+        let defaults = serde_json::json!({"network":{"rpc_url":"https://example.test","passphrase":"test","timeout":null}});
+        let (filtered, omitted) = config_without_defaults(defaults.clone(), &defaults);
+        assert_eq!(filtered, None);
+        assert_eq!(omitted, 3);
+    }
+
+    #[test]
+    fn filtering_preserves_non_default_nulls_and_counts_each_omission() {
+        let defaults = serde_json::json!({"network":{"timeout":15,"pool":100,"same":7}});
+        let resolved = serde_json::json!({"network":{"timeout":null,"pool":100,"same":7}});
+        let (filtered, omitted) = config_without_defaults(resolved, &defaults);
+        assert_eq!(
+            filtered.unwrap(),
+            serde_json::json!({"network":{"timeout":null}})
+        );
+        assert_eq!(omitted, 2);
+    }
+
+    #[test]
+    fn url_password_redaction_only_changes_credential_bearing_urls() {
+        assert_eq!(
+            redact_url_password("https://user:dummy-password@example.test/rpc"),
+            "https://user:***@example.test/rpc"
+        );
+        assert_eq!(
+            redact_url_password("https://example.test/rpc"),
+            "https://example.test/rpc"
+        );
     }
 
     #[test]
