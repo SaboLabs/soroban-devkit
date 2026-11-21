@@ -210,7 +210,7 @@ sdkt
 │
 ├── audit [path.rs]
 │   ├── --list-rules          (list available audit rules and exit)
-│   ├── --format <json|pretty>
+│   ├── --format <json|pretty|sarif>
 │   ├── --disable <RULE_ID>   (repeatable)
 │   ├── --rules <PATH|ID>     (repeatable; compiled plugin artifact or installed plugin ID)
 │   ├── --no-plugins          (skip loading installed plugins)
