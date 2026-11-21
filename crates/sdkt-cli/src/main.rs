@@ -690,6 +690,11 @@ enum Commands {
         #[command(subcommand)]
         action: PackageCommand,
     },
+    /// Validate the local .sdkt.toml without network access
+    Config {
+        #[command(subcommand)]
+        action: ConfigAction,
+    },
     /// Manage multi-contract projects
     Project {
         #[command(subcommand)]
@@ -784,6 +789,15 @@ enum Commands {
     /// Generate typed clients and other artifacts from contract interfaces
     #[command(subcommand)]
     Generate(GenerateAction),
+}
+
+#[derive(Subcommand)]
+enum ConfigAction {
+    /// Validate schema and semantic configuration rules
+    Validate {
+        #[arg(short, long, default_value = "pretty")]
+        format: String,
+    },
 }
 
 #[derive(Subcommand)]
@@ -5981,8 +5995,15 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
 
             let fmt = parse_format_str(&format);
             let cfg = load_config();
-            if let Err(e) = cfg.validate() {
-                fail_cli(e, json_mode);
+            if let Err(errors) = cfg.validate(Path::new(".")) {
+                fail_cli(
+                    errors
+                        .iter()
+                        .map(|e| format!("{}.{}: {}", e.section, e.key, e.message))
+                        .collect::<Vec<_>>()
+                        .join("; "),
+                    json_mode,
+                );
             }
             let decoded = match decode_payload_with_optional_abi(
                 &input,
@@ -11325,6 +11346,78 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
                         eprintln!("Error reading lock: {}", e);
                         std::process::exit(1);
                     }
+                }
+            }
+        },
+        Commands::Config { action } => match action {
+            ConfigAction::Validate { format } => {
+                let json = format.eq_ignore_ascii_case("json");
+                let path = Path::new(".sdkt.toml");
+                if !path.exists() {
+                    if json {
+                        println!("{}", serde_json::json!({"valid": true, "problems": []}));
+                    } else {
+                        println!("No .sdkt.toml found; defaults apply.");
+                        println!("Configuration is valid");
+                    }
+                    return Ok(());
+                }
+                let content = match std::fs::read_to_string(path) {
+                    Ok(content) => content,
+                    Err(error) => {
+                        let problem = sdkt_core::ConfigProblem {
+                            section: "config".into(),
+                            key: "file".into(),
+                            message: error.to_string(),
+                        };
+                        if json {
+                            println!(
+                                "{}",
+                                serde_json::json!({"valid": false, "problems": [problem]})
+                            );
+                        } else {
+                            eprintln!("error: config.file: {}", problem.message);
+                        }
+                        process::exit(1);
+                    }
+                };
+                let mut problems = sdkt_core::validate_config_schema(&content);
+                if problems.is_empty() {
+                    match DevKitConfig::from_toml(&content) {
+                        Ok(config) => {
+                            if let Err(mut errors) =
+                                config.validate(path.parent().unwrap_or(Path::new(".")))
+                            {
+                                problems.append(&mut errors);
+                            }
+                        }
+                        Err(error) => problems.push(sdkt_core::ConfigProblem {
+                            section: "config".into(),
+                            key: "file".into(),
+                            message: error.to_string(),
+                        }),
+                    }
+                }
+                if json {
+                    println!(
+                        "{}",
+                        serde_json::json!({"valid": problems.is_empty(), "problems": problems})
+                    );
+                } else if problems.is_empty() {
+                    println!("Configuration is valid");
+                } else {
+                    for problem in &problems {
+                        eprintln!(
+                            "error: {}.{}: {}",
+                            problem.section, problem.key, problem.message
+                        );
+                    }
+                    eprintln!("{} problem(s) found", problems.len());
+                }
+                if problems.is_empty() {
+                    return Ok(());
+                } else {
+                    process::exit(1)
                 }
             }
         },
