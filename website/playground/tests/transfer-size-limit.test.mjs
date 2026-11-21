@@ -11,31 +11,13 @@
 
 import assert from 'node:assert/strict';
 import { Worker, MessageChannel } from 'node:worker_threads';
-
-const MAX_INPUT_BYTES = 16 * 1024 * 1024; // must match playground.js MAX_INPUT_BYTES
-const TOO_LARGE_MESSAGE =
-  'File is too large to inspect in the playground (limit: 16 MiB).';
-
-// Mirror of the sender-side helper contract: post with an explicit transfer list.
-function postWithTransfer(port, msg) {
-  const transfer = [];
-  for (const key of ['bytes', 'oldBytes', 'newBytes']) {
-    const v = msg[key];
-    if (v instanceof Uint8Array && !transfer.includes(v.buffer)) {
-      transfer.push(v.buffer);
-    }
-  }
-  port.postMessage(msg, transfer);
-}
-
-// Mirror of the sender-side size guard used before any post.
-function assertWithinLimit(byteLength) {
-  if (byteLength > MAX_INPUT_BYTES) {
-    const err = new Error(TOO_LARGE_MESSAGE);
-    err.code = 'FILE_TOO_LARGE';
-    throw err;
-  }
-}
+import {
+  MAX_INPUT_BYTES,
+  TOO_LARGE_MESSAGE,
+  assertWithinLimit,
+  postWithTransfer,
+  readFileBytes,
+} from '../playground.js';
 
 async function testTransferDetachesSenderBuffer() {
   const { port1, port2 } = new MessageChannel();
@@ -49,7 +31,6 @@ async function testTransferDetachesSenderBuffer() {
 
   postWithTransfer(port1, { id: 1, bytes });
 
-  // After a transfer the sender's buffer is detached.
   assert.equal(buffer.byteLength, 0, 'sender ArrayBuffer must be detached');
   assert.equal(bytes.byteLength, 0, 'sender view must be detached');
 
@@ -95,7 +76,7 @@ function testOversizedInputRejectedBeforePost() {
   let caught = null;
   try {
     assertWithinLimit(oversized.byteLength);
-    fakePort.postMessage({ id: 3, bytes: oversized }, [oversized.buffer]);
+    postWithTransfer(fakePort, { id: 3, bytes: oversized });
   } catch (err) {
     caught = err;
   }
@@ -117,14 +98,13 @@ async function testRetryReadsFromFileNotDetachedBuffer() {
   const contents = new Uint8Array(256).fill(9);
   const file = new Blob([contents]);
 
-  const first = new Uint8Array(await file.arrayBuffer());
+  const first = await readFileBytes(file);
   const { port1, port2 } = new MessageChannel();
   port2.on('message', () => {});
   postWithTransfer(port1, { id: 4, bytes: first });
   assert.equal(first.byteLength, 0, 'first attempt transferred its buffer');
 
-  // Retry re-reads from the File, yielding a fresh, non-detached buffer.
-  const retry = new Uint8Array(await file.arrayBuffer());
+  const retry = await readFileBytes(file);
   assert.equal(retry.byteLength, 256, 'retry must not read a detached buffer');
   assert.equal(retry[0], 9);
   port1.close();
