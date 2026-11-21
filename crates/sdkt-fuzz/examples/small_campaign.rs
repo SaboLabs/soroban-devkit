@@ -17,6 +17,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // No declared violation: a finding requires an explicit expectation.
     let expectations = BTreeMap::<String, Expected>::new();
     let result = run_campaign(&input, &expectations)?;
+    if result.executed == 0 {
+        return Err("fuzz campaign executed no cases".into());
+    }
 
     println!("Executed: {}", result.executed);
     println!("Passed: {}", result.passed.len());
