@@ -110,3 +110,22 @@ fn cli_decode_allow_fallback_hex_false_rejects_hex_input() {
         .assert()
         .failure();
 }
+
+/// Decoding is independent of workspace contract paths; config validation is opt-in.
+#[test]
+fn cli_decode_does_not_validate_unrelated_contract_paths() {
+    let dir = TempDir::new().unwrap();
+    write_config(&dir, "[contracts.missing]\npath = 'does-not-exist'\n");
+    let mut cmd = sdkt();
+    cmd.current_dir(dir.path())
+        .args([
+            "decode",
+            DEEP_SCVAL_B64,
+            "--type",
+            "ScVal",
+            "--format",
+            "json",
+        ])
+        .assert()
+        .success();
+}

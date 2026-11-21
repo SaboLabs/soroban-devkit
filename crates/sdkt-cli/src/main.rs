@@ -5924,16 +5924,6 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
 
             let fmt = parse_format_str(&format);
             let cfg = load_config();
-            if let Err(errors) = cfg.validate(Path::new(".")) {
-                fail_cli(
-                    errors
-                        .iter()
-                        .map(|e| format!("{}.{}: {}", e.section, e.key, e.message))
-                        .collect::<Vec<_>>()
-                        .join("; "),
-                    json_mode,
-                );
-            }
             let decoded = match decode_payload_with_optional_abi(
                 &input,
                 r#type.as_deref(),
@@ -11282,19 +11272,19 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
         },
         Commands::Config { action } => match action {
             ConfigAction::Validate { format } => {
-                let json = format.eq_ignore_ascii_case("json");
+                let json = parse_format_str(&format) == OutputFormat::Json;
                 let path = Path::new(".sdkt.toml");
-                if !path.exists() {
-                    if json {
-                        println!("{}", serde_json::json!({"valid": true, "problems": []}));
-                    } else {
-                        println!("No .sdkt.toml found; defaults apply.");
-                        println!("Configuration is valid");
-                    }
-                    return Ok(());
-                }
                 let content = match std::fs::read_to_string(path) {
                     Ok(content) => content,
+                    Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                        if json {
+                            println!("{}", serde_json::json!({"valid": true, "problems": []}));
+                        } else {
+                            println!("No .sdkt.toml found; defaults apply.");
+                            println!("Configuration is valid");
+                        }
+                        return Ok(());
+                    }
                     Err(error) => {
                         let problem = sdkt_core::ConfigProblem {
                             section: "config".into(),

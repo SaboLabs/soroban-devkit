@@ -380,7 +380,54 @@ impl DevKitConfig {
         }
         if !self.dependencies.is_empty() {
             if let Err(error) = crate::package::validate_dependencies(base_dir, self) {
-                problems.push(ConfigProblem::new("dependencies", "", error.to_string()));
+                use crate::package::PackageError;
+                let (section, key) = match &error {
+                    PackageError::UnsupportedUrlScheme(scheme) => self
+                        .dependencies
+                        .iter()
+                        .find(|(_, dep)| {
+                            dep.git
+                                .as_deref()
+                                .is_some_and(|url| url.starts_with(&format!("{scheme}://")))
+                        })
+                        .map(|(name, _)| (format!("dependencies.{name}"), "git".to_string()))
+                        .unwrap_or_else(|| ("dependencies".into(), "git".into())),
+                    PackageError::MissingGitUrl(name)
+                    | PackageError::InvalidGitUrl(name)
+                    | PackageError::MissingGitRef(name)
+                    | PackageError::MultipleGitRefs(name)
+                    | PackageError::EmptyGitRef(name)
+                    | PackageError::MixedSources(name)
+                    | PackageError::SelfDependency(name)
+                    | PackageError::DuplicateDependency(name) => {
+                        let key = match &error {
+                            PackageError::MissingGitUrl(_)
+                            | PackageError::InvalidGitUrl(_)
+                            | PackageError::UnsupportedUrlScheme(_) => "git",
+                            PackageError::MissingGitRef(_)
+                            | PackageError::MultipleGitRefs(_)
+                            | PackageError::EmptyGitRef(_) => "branch/tag/rev",
+                            PackageError::MixedSources(_) => "path/git",
+                            _ => "name",
+                        };
+                        (format!("dependencies.{name}"), key.to_string())
+                    }
+                    PackageError::PathNotFound(path) => self
+                        .dependencies
+                        .iter()
+                        .find(|(_, dep)| {
+                            dep.path
+                                .as_deref()
+                                .is_some_and(|p| base_dir.join(p).display().to_string() == *path)
+                        })
+                        .map(|(name, _)| (format!("dependencies.{name}"), "path".into()))
+                        .unwrap_or_else(|| ("dependencies".into(), "path".into())),
+                    PackageError::MissingPath(name) => {
+                        (format!("dependencies.{name}"), "path".into())
+                    }
+                    _ => ("dependencies".into(), "source".into()),
+                };
+                problems.push(ConfigProblem::new(section, key, error.to_string()));
             }
         }
         if !self.contracts.is_empty() {
