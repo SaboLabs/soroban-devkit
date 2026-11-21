@@ -550,6 +550,9 @@ enum Commands {
         /// Overwrite existing directory
         #[arg(long, default_value_t = false)]
         force: bool,
+        /// Template to generate (hello or token)
+        #[arg(long, value_parser = ["hello", "token"], default_value = "hello")]
+        template: String,
         /// Output format (pretty or json)
         #[arg(short, long, default_value = "pretty")]
         format: String,
@@ -10394,6 +10397,7 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
             name,
             minimal,
             force,
+            template,
             format,
         } => {
             use sdkt_core::scaffold::{generate_project, ScaffoldConfig};
@@ -10403,6 +10407,7 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
                 name: name.clone(),
                 minimal,
                 force,
+                template,
             };
 
             match generate_project(&scaffold_cfg) {
