@@ -94,6 +94,7 @@ sdkt audit src/lib.rs --rules my-rule
 ## Testing Instructions
 
 - Unit tests live next to the code (`#[cfg(test)] mod tests`).
+- Library examples under `crates/*/examples/` must compile and run offline using committed fixtures, without credentials, RPC access, or writes outside `target/`.
 - CLI integration tests use `assert_cmd` under `crates/sdkt-cli/tests/`.
   Fixture paths are resolved from `CARGO_MANIFEST_DIR`, so they work regardless
   of the current directory.
