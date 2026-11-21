@@ -8,10 +8,9 @@ use std::net::TcpListener;
 use std::thread;
 use std::time::Duration;
 use stellar_xdr::{
-    FeeBumpTransaction, FeeBumpTransactionEnvelope, FeeBumpTransactionExt,
-    FeeBumpTransactionInnerTx, Limits, Operation, OperationResult, TransactionEnvelope,
-    TransactionResult, TransactionResultExt, TransactionResultResult, TransactionV1Envelope,
-    WriteXdr,
+    FeeBumpTransactionInnerTx, Limits, Operation, OperationResult, ReadXdr, SequenceNumber,
+    TransactionEnvelope, TransactionResult, TransactionResultExt, TransactionResultResult,
+    TransactionV1Envelope, WriteXdr,
 };
 use tempfile::tempdir;
 
@@ -146,9 +145,13 @@ fn mock_submit_server() -> String {
 fn plain_envelope_b64(fee: u32) -> String {
     let mut envelope = TransactionV1Envelope::default();
     envelope.tx.fee = fee;
+    envelope.tx.seq_num = SequenceNumber(1);
     envelope.tx.operations = vec![Operation::default()].try_into().unwrap();
-    base64::engine::general_purpose::STANDARD
-        .encode(TransactionEnvelope::Tx(envelope).to_xdr(Limits::none()).unwrap())
+    base64::engine::general_purpose::STANDARD.encode(
+        TransactionEnvelope::Tx(envelope)
+            .to_xdr(Limits::none())
+            .unwrap(),
+    )
 }
 
 /// Path to a real contractspecv0 WASM fixture with functions that return u32.
@@ -424,8 +427,11 @@ fn test_tx_wrap_preserves_inner_signatures() {
     }]
     .try_into()
     .unwrap();
-    let envelope_b64 = base64::engine::general_purpose::STANDARD
-        .encode(TransactionEnvelope::Tx(envelope).to_xdr(Limits::none()).unwrap());
+    let envelope_b64 = base64::engine::general_purpose::STANDARD.encode(
+        TransactionEnvelope::Tx(envelope)
+            .to_xdr(Limits::none())
+            .unwrap(),
+    );
 
     let output = sdkt_tx_isolated(dir.path())
         .args([
@@ -454,7 +460,7 @@ fn test_tx_wrap_preserves_inner_signatures() {
         TransactionEnvelope::TxFeeBump(fb) => match fb.tx.inner_tx {
             FeeBumpTransactionInnerTx::Tx(inner) => {
                 assert_eq!(inner.signatures.len(), 1);
-                assert_eq!(inner.signatures[0].signature.0, vec![1u8, 2, 3, 4]);
+                assert_eq!(inner.signatures[0].signature.0.as_slice(), &[1u8, 2, 3, 4]);
             }
         },
         _ => panic!("expected fee-bump envelope"),
