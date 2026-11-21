@@ -617,8 +617,8 @@ fn audit_explain_pretty_and_json_show_examples() {
     assert!(out.status.success());
     let value: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
     assert_eq!(value["id"], "MATH-001");
-    assert!(value["example_vulnerable"].as_str().unwrap().len() > 0);
-    assert!(value["example_fixed"].as_str().unwrap().len() > 0);
+    assert!(!value["example_vulnerable"].as_str().unwrap().is_empty());
+    assert!(!value["example_fixed"].as_str().unwrap().is_empty());
 }
 
 #[test]
