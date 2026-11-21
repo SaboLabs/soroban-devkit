@@ -645,6 +645,8 @@ verification fails after an otherwise successful deploy.
 │   │   ├── --auth <MODE>                 Authorization mode: no-auth | correct-auth | wrong-auth
 │   │   ├── --expect-success <FN>         Declare function must succeed (repeatable)
 │   │   ├── --expect-error <FN:TYPE:CODE> Declare function must fail (repeatable)
+│   │   ├── --sequence-length <N>         Steps per generated sequence (>= 2; requires --sequence-every)
+│   │   ├── --sequence-every <N>          Run every N-th case as a sequence (>= 1; requires --sequence-length)
 │   │   ├── --replay                      Replay every written artifact to verify determinism
 │   │   ├── --format <pretty|json|jsonl>  Output format (default: pretty)
 │   │   └── [network flags inherited from network-profile resolution]
@@ -1104,6 +1106,8 @@ sdkt fuzz campaign contract.wasm \
 | `--auth <MODE>` | `no-auth` | Authorization mode per test case: `no-auth`, `correct-auth`, or `wrong-auth`. See the sdkt-fuzz docs for exact semantics |
 | `--expect-success <FN>` | none | Declare that function `<FN>` must succeed (repeatable). Violations produce `RETURN_MISMATCH` or `UNEXPECTED_ERROR` findings |
 | `--expect-error <FN:TYPE:CODE>` | none | Declare that function `<FN>` must fail with error type `<TYPE>` and code `<CODE>`, e.g. `--expect-error bump:Auth:6` (repeatable) |
+| `--sequence-length <N>` | off (`2` when active) | Number of invocations in each generated multi-step sequence (`>= 2`; must be paired with `--sequence-every`) |
+| `--sequence-every <N>` | `0` (disabled) | Execute every `N`-th case (`case_number % N == 0`) as a multi-step sequence (`>= 1`; must be paired with `--sequence-length`) |
 | `--replay` | false | Replay every written artifact to verify determinism and reproduce findings |
 | `--format <FORMAT>` | `pretty` | Output format: `pretty`, `json`, or `jsonl` |
 
@@ -1113,6 +1117,13 @@ sdkt fuzz campaign contract.wasm \
 - `--expect-error <FN:TYPE:CODE>` — declare that a function must fail with a specific error. Format: `FunctionName:ErrorType:ErrorCode`. Example: `--expect-error transfer:Auth:6` means the `transfer` function must fail with `ContractError{Auth, 6}`.
 - A function may have only one expectation; declaring it with both flags is a usage error (exit 2).
 - Malformed declarations are usage errors (exit 2).
+
+**Sequence execution (state carry):**
+
+- By default (when both `--sequence-length` and `--sequence-every` are omitted), every case runs a single invocation against a fresh baseline (`sequence_every = 0`).
+- Passing `--sequence-length <L>` and `--sequence-every <E>` together exercises state carry across invocations: every `E`-th case (`case_number % E == 0`, starting at `case0000`) executes an ordered sequence of `L` calls to the selected function, carrying contract instance and data storage forward from step to step and building per-step authorization entries under `--auth`. All other cases run as single-step invocations.
+- Both flags must be supplied together: passing only one is a usage error (exit `2`) rejected before any campaign work starts. Values below the engine minimums (`--sequence-length < 2` or `--sequence-every < 1`) are also rejected with exit `2`.
+- When sequence mode is active, the campaign summary reports `sequences=<S> single_step=<K>` alongside the standard counters, and finding artifacts record `campaign.sequence_length`, `campaign.sequence_every`, and the minimized multi-step `sequence` array for replay via `sdkt fuzz replay`.
 
 **Output artifacts:**
 
