@@ -456,6 +456,8 @@ the descriptor summary (`schema`, `name`, `version`, `format`, `lock_sha256`,
 │   │                         Register an existing contract in `.sdkt.toml`
 │   │                         under `[contracts.<alias>]`, validated before writing
 │   ├── status                Show deployments recorded for the selected network profile
+│   ├── graph                 Show the resolved workspace dependency graph in deploy order
+│   │                         (`--format pretty|json|dot`)
 │   └── deploy                Deploy all contracts defined in the workspace (.sdkt.toml),
 │                             applying topological dependency sorting
 │
@@ -470,6 +472,14 @@ the descriptor summary (`schema`, `name`, `version`, `format`, `lock_sha256`,
 │
 │     sdkt project add token --path ./contracts/token --ctor-arg u32:100
 │     sdkt project add vault --path ./contracts/vault --depends-on token
+│
+│   `project graph` is a read-only command that validates `.sdkt.toml` and
+│   prints the resolved workspace dependency graph in topological deploy
+│   order without building or deploying anything. Use `--format pretty`
+│   (default) for an indented list, `--format json` for `{ "order", "nodes" }`,
+│   or `--format dot` for a Graphviz `digraph`. Example:
+│
+│     sdkt project graph --format dot | dot -Tsvg > graph.svg
 │
 │   `--timeout <SECONDS>` (default 60) and `--interval <SECONDS>` (default 1)
 │   control how long each contract deployment waits for settlement and how
