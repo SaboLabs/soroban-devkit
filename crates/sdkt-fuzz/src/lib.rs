@@ -87,7 +87,9 @@ pub mod state_compare;
 
 pub use artifact::{CampaignConfig, FindingArtifact, SCHEMA_VERSION};
 pub use auth::AuthMode;
-pub use campaign::{run_campaign, run_campaign_artifacts, CampaignInput, CampaignResult};
+pub use campaign::{
+    run_campaign, run_campaign_artifacts, sequence_case_counts, CampaignInput, CampaignResult,
+};
 pub use case::{FunctionCall, FuzzCase};
 pub use compare::{compare_evidence, EvidenceComparison};
 pub use config::{BudgetConfig, FuzzConfig, LedgerConfig, PROTOCOL_VERSION};
@@ -118,7 +120,8 @@ pub use profile_bridge::{profile_from_capture, CaptureInput};
 pub use replay::{parse_artifact, replay, replay_json, ReplayError, ReplayOutcome};
 pub use runner::{
     artifact_file_name, expand_seed, load_artifact, replay_line, run as run_fuzz, run_replay,
-    FuzzReport, FuzzRunOptions, ReplayOptions,
+    run_with_sequence as run_fuzz_with_sequence, FuzzReport, FuzzRunOptions, ReplayOptions,
+    SequenceOptions,
 };
 pub use sequence::{
     apply_state_delta, decode_simulate_state_changes, decode_state_change_row, execute_sequence,

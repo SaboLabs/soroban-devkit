@@ -274,6 +274,38 @@ jobs:
     - name: Run committed offline example smoke test
       run: bash scripts/smoke_examples.sh
 
+  # Executes the committed fuzz-demo end to end so the transcript in
+  # examples/fuzz_demo/README.md is machine-verified on every PR, not just
+  # an author claim. run.sh builds the WASM itself and asserts the
+  # deterministic UNEXPECTED_ERROR finding is surfaced.
+  fuzz-demo:
+    name: fuzz demo run.sh (deterministic finding)
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v7
+      with:
+        persist-credentials: false
+
+    - name: Set up Rust
+      uses: dtolnay/rust-toolchain@stable
+      with:
+        targets: wasm32v1-none
+
+    - uses: Swatinem/rust-cache@v2
+      with:
+        workspaces: |
+          .
+          examples/fuzz_demo
+
+    - name: Build sdkt
+      run: cargo build --bin sdkt --release
+
+    - name: Run fuzz_demo end to end (run.sh)
+      env:
+        # Building sdkt does not put it on PATH; point run.sh at the binary.
+        SDKT: ${{ github.workspace }}/target/release/sdkt
+      run: bash examples/fuzz_demo/run.sh
+
   playground-wasm:
     name: playground WASM freshness
     runs-on: ubuntu-latest
