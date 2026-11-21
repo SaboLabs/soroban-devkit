@@ -30,8 +30,10 @@ impl FuzzDemo {
     /// `a`; the lost fraction can never be recovered. When `b == 0` the
     /// division also traps the VM.
     ///
-    /// Do not copy this pattern into real contracts — divide after
-    /// multiplying (or use checked arithmetic) instead.
+    /// Do not copy this pattern into real contracts — multiply before
+    /// dividing and handle possible overflow instead. Checked arithmetic
+    /// alone does not restore precision already lost to truncation
+    /// (`checked_div` followed by `checked_mul` still truncates).
     pub fn compute(a: i128, b: i128) -> i128 {
         // INTENTIONAL DEFECT: divide before multiply (MATH-001 pattern).
         // `a / b` truncates first; the subsequent multiply cannot restore
