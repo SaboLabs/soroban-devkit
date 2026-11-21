@@ -20,7 +20,7 @@ impl AuditRule for Auth001 {
         "pub fn set_admin(env: Env, who: Address) {\n    env.storage().instance().set(&ADMIN, &who);\n}"
     }
     fn example_fixed(&self) -> &'static str {
-        "pub fn set_admin(env: Env, who: Address) {\n    env.invoker().require_auth();\n    env.storage().instance().set(&ADMIN, &who);\n}"
+        "pub fn set_admin(env: Env, admin: Address, who: Address) {\n    admin.require_auth();\n    env.storage().instance().set(&ADMIN, &who);\n}"
     }
     fn check(&self, scans: &[FnScan], _ctx: &AuditContext, report: &mut AuditReport) {
         for s in scans {
@@ -57,10 +57,10 @@ impl AuditRule for Auth002 {
         "Cross-contract invoke_contract() must be guarded by require_auth()"
     }
     fn example_vulnerable(&self) -> &'static str {
-        "pub fn forward(env: Env, target: Address) {\n    env.invoke_contract::<()>(&target, &symbol_short!(\"run\"), ());\n}"
+        "pub fn forward(env: Env, target: Address) {\n    env.invoke_contract::<()>(&target, &symbol_short!(\"run\"), soroban_sdk::Vec::new(&env));\n}"
     }
     fn example_fixed(&self) -> &'static str {
-        "pub fn forward(env: Env, target: Address) {\n    env.invoker().require_auth();\n    env.invoke_contract::<()>(&target, &symbol_short!(\"run\"), ());\n}"
+        "pub fn forward(env: Env, caller: Address, target: Address) {\n    caller.require_auth();\n    env.invoke_contract::<()>(&target, &symbol_short!(\"run\"), soroban_sdk::Vec::new(&env));\n}"
     }
     fn check(&self, scans: &[FnScan], _ctx: &AuditContext, report: &mut AuditReport) {
         for s in scans {
@@ -327,10 +327,10 @@ impl AuditRule for Cei001 {
         "External invocation before state write — reordering may prevent reentrancy"
     }
     fn example_vulnerable(&self) -> &'static str {
-        "env.invoke_contract::<()>(&hook, &symbol_short!(\"notify\"), ());\nenv.storage().instance().set(&DONE, &true);"
+        "env.invoke_contract::<()>(&hook, &symbol_short!(\"notify\"), soroban_sdk::Vec::new(&env));\nenv.storage().instance().set(&DONE, &true);"
     }
     fn example_fixed(&self) -> &'static str {
-        "env.storage().instance().set(&DONE, &true);\nenv.invoke_contract::<()>(&hook, &symbol_short!(\"notify\"), ());"
+        "env.storage().instance().set(&DONE, &true);\nenv.invoke_contract::<()>(&hook, &symbol_short!(\"notify\"), soroban_sdk::Vec::new(&env));"
     }
     fn check(&self, scans: &[FnScan], _ctx: &AuditContext, report: &mut AuditReport) {
         for scan in scans {

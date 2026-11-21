@@ -608,7 +608,8 @@ fn audit_explain_pretty_and_json_show_examples() {
         .success()
         .stdout(predicates::str::contains("Rule: MATH-001"))
         .stdout(predicates::str::contains("Example (vulnerable):"))
-        .stdout(predicates::str::contains("Example (fixed):"));
+        .stdout(predicates::str::contains("Example (fixed):"))
+        .stdout(predicates::str::contains("Flags:").not());
 
     let out = sdkt()
         .args(["audit", "--explain", "MATH-001", "--format", "json"])
@@ -619,6 +620,33 @@ fn audit_explain_pretty_and_json_show_examples() {
     assert_eq!(value["id"], "MATH-001");
     assert!(!value["example_vulnerable"].as_str().unwrap().is_empty());
     assert!(!value["example_fixed"].as_str().unwrap().is_empty());
+    assert!(value.get("flags").is_none());
+}
+
+#[test]
+fn audit_explain_examples_use_supported_auth_and_invoke_api() {
+    for rule_id in ["AUTH-001", "AUTH-002", "CEI-001"] {
+        let output = sdkt()
+            .args(["audit", "--explain", rule_id, "--format", "json"])
+            .output()
+            .unwrap();
+        assert!(output.status.success(), "{rule_id} explanation failed");
+        let value: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+        assert!(value.get("flags").is_none());
+        let examples = format!(
+            "{}\n{}",
+            value["example_vulnerable"].as_str().unwrap(),
+            value["example_fixed"].as_str().unwrap()
+        );
+        assert!(!examples.contains("env.invoker()"), "{rule_id}: {examples}");
+        if rule_id != "AUTH-001" {
+            assert!(
+                examples.contains("soroban_sdk::Vec::new(&env)"),
+                "{rule_id}: {examples}"
+            );
+            assert!(!examples.contains(", ());"), "{rule_id}: {examples}");
+        }
+    }
 }
 
 #[test]
@@ -634,6 +662,24 @@ fn audit_explain_rejects_sarif_and_unknown_rules() {
         .failure()
         .stderr(predicates::str::contains("Unknown audit rule"))
         .stderr(predicates::str::contains("AUTH-001"));
+}
+
+#[test]
+fn audit_explain_rejects_source_paths_and_disabled_rules() {
+    sdkt()
+        .args(["audit", "Cargo.toml", "--explain", "AUTH-001"])
+        .assert()
+        .failure()
+        .stderr(predicates::str::contains(
+            "cannot be combined with source paths",
+        ));
+    sdkt()
+        .args(["audit", "--explain", "AUTH-001", "--disable", "AUTH-001"])
+        .assert()
+        .failure()
+        .stderr(predicates::str::contains(
+            "cannot be combined with source paths",
+        ));
 }
 
 // ── Issue #311: severity follows behavior, not the name alone ──────────────

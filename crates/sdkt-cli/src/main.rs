@@ -8843,6 +8843,12 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
             };
 
             if let Some(rule_id) = explain {
+                if !paths.is_empty() || !disable.is_empty() {
+                    eprintln!(
+                        "Error: --explain cannot be combined with source paths or --disable."
+                    );
+                    process::exit(1);
+                }
                 if audit_fmt == AuditFormat::Sarif {
                     eprintln!(
                         "Error: --format sarif is not supported with --explain. Use --format json or --format pretty."
@@ -8872,7 +8878,6 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
                             "id": rule.id(),
                             "severity": rule.severity().to_string(),
                             "description": rule.description(),
-                            "flags": rule.description(),
                             "example_vulnerable": rule.example_vulnerable(),
                             "example_fixed": rule.example_fixed(),
                         })
@@ -8881,7 +8886,6 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
                     println!("Rule: {}", rule.id());
                     println!("Severity: {}", rule.severity());
                     println!("Description: {}", rule.description());
-                    println!("Flags: {}", rule.description());
                     println!("Example (vulnerable):\n{}", rule.example_vulnerable());
                     println!("Example (fixed):\n{}", rule.example_fixed());
                 }
