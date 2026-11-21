@@ -740,3 +740,83 @@ fn storage_diff_cli_rejects_duplicate_key_in_new_snapshot() {
         "stderr should name the duplicated ledger key: {stderr}"
     );
 }
+
+#[test]
+fn storage_diff_cli_reports_new_only_entries_as_added_and_excludes_from_extend_plan() {
+    let dir = tempdir().unwrap();
+    let old_path = dir.path().join("old.json");
+    let new_path = dir.path().join("new.json");
+
+    create_snapshot_file(&old_path, CONTRACT, &[("sharedKey==", 50_000)]);
+    create_snapshot_file(
+        &new_path,
+        CONTRACT,
+        &[
+            ("sharedKey==", 50_000),
+            ("addedHealthy==", 50_000),
+            ("addedExpiring==", 3_000),
+        ],
+    );
+
+    // JSON diff: new-only healthy key is "added" with old_ttl: null, new-only low-TTL key is "expiring_soon".
+    let mut json_cmd = sdkt();
+    json_cmd
+        .args(["storage", "diff", "--old"])
+        .arg(&old_path)
+        .arg("--new")
+        .arg(&new_path)
+        .args(["--format", "json"]);
+    let json_out = json_cmd.assert().success().get_output().stdout.clone();
+    let diff: serde_json::Value = serde_json::from_slice(&json_out).unwrap();
+    let entries = diff["entries"].as_array().unwrap();
+    let find_entry = |k: &str| entries.iter().find(|e| e["key"] == k).unwrap();
+
+    let added = find_entry("addedHealthy==");
+    assert_eq!(added["status"], "added");
+    assert!(added["old_ttl"].is_null());
+    assert_eq!(added["new_ttl"], 50_000);
+
+    let expiring = find_entry("addedExpiring==");
+    assert_eq!(expiring["status"], "expiring_soon");
+    assert!(expiring["old_ttl"].is_null());
+    assert_eq!(expiring["new_ttl"], 3_000);
+
+    let shared = find_entry("sharedKey==");
+    assert_eq!(shared["status"], "unchanged");
+
+    // Pretty diff: shows Added section and entry.
+    let mut pretty_cmd = sdkt();
+    pretty_cmd
+        .args(["storage", "diff", "--old"])
+        .arg(&old_path)
+        .arg("--new")
+        .arg(&new_path);
+    let pretty_out =
+        String::from_utf8(pretty_cmd.assert().success().get_output().stdout.clone()).unwrap();
+    assert!(
+        pretty_out.contains("[added] key=addedHealthy=="),
+        "expected [added] line in pretty output:\n{pretty_out}"
+    );
+    assert!(
+        pretty_out.contains("[expiring] key=addedExpiring=="),
+        "expected [expiring] line in pretty output:\n{pretty_out}"
+    );
+
+    // Extend plan: includes addedExpiring==, never includes addedHealthy==.
+    let mut plan_cmd = sdkt();
+    plan_cmd
+        .args(["storage", "diff", "--old"])
+        .arg(&old_path)
+        .arg("--new")
+        .arg(&new_path)
+        .args(["--extend-plan", "--format", "json"]);
+    let plan_out = plan_cmd.assert().success().get_output().stdout.clone();
+    let plan: serde_json::Value = serde_json::from_slice(&plan_out).unwrap();
+    let keys: Vec<&str> = plan["keys"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|v| v.as_str().unwrap())
+        .collect();
+    assert_eq!(keys, vec!["addedExpiring=="]);
+}

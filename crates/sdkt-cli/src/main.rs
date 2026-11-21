@@ -3459,19 +3459,35 @@ fn print_diff_pretty(diff: &sdkt_storage::SnapshotDiff) {
         .iter()
         .filter(|e| e.status == DiffStatus::ValueChanged)
         .collect();
+    let added: Vec<_> = diff
+        .entries
+        .iter()
+        .filter(|e| e.status == DiffStatus::Added)
+        .collect();
     let unchanged: Vec<_> = diff
         .entries
         .iter()
         .filter(|e| e.status == DiffStatus::Unchanged)
         .collect();
 
-    println!(
-        "  Removed:       {} | Expiring Soon: {} | Value Changed: {} | Unchanged: {}",
-        removed.len(),
-        expiring.len(),
-        value_changed.len(),
-        unchanged.len()
-    );
+    if added.is_empty() {
+        println!(
+            "  Removed:       {} | Expiring Soon: {} | Value Changed: {} | Unchanged: {}",
+            removed.len(),
+            expiring.len(),
+            value_changed.len(),
+            unchanged.len()
+        );
+    } else {
+        println!(
+            "  Removed:       {} | Expiring Soon: {} | Value Changed: {} | Added: {} | Unchanged: {}",
+            removed.len(),
+            expiring.len(),
+            value_changed.len(),
+            added.len(),
+            unchanged.len()
+        );
+    }
 
     if !removed.is_empty() {
         println!("\nRemoved entries ({}):", removed.len());
@@ -3528,6 +3544,19 @@ fn print_diff_pretty(diff: &sdkt_storage::SnapshotDiff) {
             );
         }
     }
+    if !added.is_empty() {
+        println!("\nAdded entries ({}):", added.len());
+        for e in &added {
+            println!(
+                "  [added] key={}{} (ttl={})",
+                e.key,
+                e.label
+                    .as_ref()
+                    .map_or(String::new(), |l| format!(" label={l}")),
+                e.new_ttl.map_or("?".to_string(), |t| t.to_string())
+            );
+        }
+    }
     if !unchanged.is_empty() {
         println!("\nUnchanged entries ({}):", unchanged.len());
         for e in &unchanged {
@@ -3545,7 +3574,11 @@ fn print_diff_pretty(diff: &sdkt_storage::SnapshotDiff) {
             );
         }
     }
-    if unchanged.is_empty() && removed.is_empty() && expiring.is_empty() && value_changed.is_empty()
+    if unchanged.is_empty()
+        && removed.is_empty()
+        && expiring.is_empty()
+        && value_changed.is_empty()
+        && added.is_empty()
     {
         println!("  (no entries)");
     }

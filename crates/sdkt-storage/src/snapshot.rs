@@ -12,6 +12,8 @@
 //!   otherwise gone).
 //! - [`DiffStatus::ExpiringSoon`] — entry still live in new but with a TTL below
 //!   [`EXPIRING_SOON_LEDGERS`] (≈ 1 day).
+//! - [`DiffStatus::Added`] — entry present only in new with TTL at or above
+//!   [`EXPIRING_SOON_LEDGERS`].
 //! - [`DiffStatus::Unchanged`] — entry live and above the threshold.
 //!
 //! [`derive_extend_plan`] turns the diff result into a non-mutating
@@ -159,6 +161,9 @@ pub enum DiffStatus {
     /// Entry is live with stable TTL but its stored value differs between
     /// snapshots. Reported only when both snapshots captured a value.
     ValueChanged,
+    /// Entry is present only in the new snapshot and its TTL is at or above
+    /// [`EXPIRING_SOON_LEDGERS`]. Informational only (not actionable).
+    Added,
 }
 
 /// A single entry in a [`SnapshotDiff`].
@@ -379,7 +384,7 @@ pub fn diff_snapshots(
             let status = if new_ttl < EXPIRING_SOON_LEDGERS {
                 DiffStatus::ExpiringSoon
             } else {
-                DiffStatus::Unchanged
+                DiffStatus::Added
             };
             entries.push(DiffEntry {
                 key: key.to_string(),
@@ -1434,5 +1439,69 @@ mod tests {
             ),
             "expected DuplicateKey from from_report, got: {err:?}"
         );
+    }
+
+    // -----------------------------------------------------------------------
+    // New-only entries (DiffStatus::Added vs DiffStatus::ExpiringSoon)
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn diff_new_only_entry_at_or_above_threshold_is_added_and_not_actionable() {
+        let old = snap(vec![("existing", 50_000)]);
+        let new = snap(vec![
+            ("existing", 50_000),
+            ("new_at_threshold", EXPIRING_SOON_LEDGERS),
+            ("new_above_threshold", EXPIRING_SOON_LEDGERS + 10_000),
+        ]);
+
+        let diff = diff_snapshots(&old, &new).unwrap();
+        let find = |k: &str| diff.entries.iter().find(|e| e.key == k).unwrap();
+
+        let existing = find("existing");
+        assert_eq!(existing.status, DiffStatus::Unchanged);
+
+        let at_thresh = find("new_at_threshold");
+        assert_eq!(at_thresh.status, DiffStatus::Added);
+        assert_eq!(at_thresh.old_ttl, None);
+        assert_eq!(at_thresh.new_ttl, Some(EXPIRING_SOON_LEDGERS));
+
+        let above_thresh = find("new_above_threshold");
+        assert_eq!(above_thresh.status, DiffStatus::Added);
+        assert_eq!(above_thresh.old_ttl, None);
+        assert_eq!(above_thresh.new_ttl, Some(EXPIRING_SOON_LEDGERS + 10_000));
+
+        // Added is informational only: never actionable and never in the extend plan.
+        assert_eq!(diff.actionable().count(), 0);
+        let plan = derive_extend_plan(&diff);
+        assert!(plan.keys.is_empty());
+        assert!(plan.extendable_keys.is_empty());
+        assert!(plan.removed_keys.is_empty());
+    }
+
+    #[test]
+    fn diff_new_only_entry_below_threshold_is_expiring_soon_and_actionable() {
+        let old = snap(vec![("existing", 50_000)]);
+        let new = snap(vec![
+            ("existing", 50_000),
+            ("new_low_ttl", EXPIRING_SOON_LEDGERS - 1),
+        ]);
+
+        let diff = diff_snapshots(&old, &new).unwrap();
+        let entry = diff
+            .entries
+            .iter()
+            .find(|e| e.key == "new_low_ttl")
+            .unwrap();
+
+        assert_eq!(entry.status, DiffStatus::ExpiringSoon);
+        assert_eq!(entry.old_ttl, None);
+        assert_eq!(entry.new_ttl, Some(EXPIRING_SOON_LEDGERS - 1));
+
+        // Low-TTL new-only entry stays actionable and enters the extend plan.
+        assert_eq!(diff.actionable().count(), 1);
+        let plan = derive_extend_plan(&diff);
+        assert_eq!(plan.keys, vec!["new_low_ttl"]);
+        assert_eq!(plan.extendable_keys, vec!["new_low_ttl"]);
+        assert!(plan.removed_keys.is_empty());
     }
 }
