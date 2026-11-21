@@ -13,7 +13,7 @@ use sdkt_fuzz::{
     replay, run_campaign, run_campaign_artifacts, sequence_case_counts, Classification,
     Environment, EventRecord, ExecutionStatus, Executor, Expected, ExpectedBehavior, FunctionCall,
     FuzzRunOptions, GenerationCaps, MinimizationTarget, Mutation, Operator, Oracle, ReasonCode,
-    ReplayOptions,
+    ReplayOptions, SequenceOptions,
 };
 use soroban_env_host::xdr::ScVal;
 
@@ -751,12 +751,17 @@ fn runner_writes_and_replays_multistep_artifacts_when_sequence_enabled() {
         auth_mode: sdkt_fuzz::AuthMode::NoAuth,
         expect_success: vec!["increment".to_string()],
         expect_error: Vec::new(),
-        sequence_length: 3,
-        sequence_every: 2,
         replay: true,
     };
 
-    let report = sdkt_fuzz::run_fuzz(&options).expect("sequence campaign runs");
+    let report = sdkt_fuzz::run_fuzz_with_sequence(
+        &options,
+        SequenceOptions {
+            sequence_length: 3,
+            sequence_every: 2,
+        },
+    )
+    .expect("sequence campaign runs");
     assert_eq!(
         report.summary,
         "executed=4 passed=2 expected_errors=0 findings=2 skipped=0 sequences=2 single_step=2"

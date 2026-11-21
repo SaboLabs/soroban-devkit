@@ -14,7 +14,7 @@
 //!
 //! Exit `1` is the only path that means "findings were produced".
 
-use sdkt_fuzz::{AuthMode, FuzzRunOptions, ReplayOptions};
+use sdkt_fuzz::{AuthMode, FuzzRunOptions, ReplayOptions, SequenceOptions};
 
 /// Output formats supported by the fuzz surface.
 pub enum FuzzFormat {
@@ -56,7 +56,7 @@ pub fn parse_auth(mode: &str) -> Option<AuthMode> {
 pub fn validate_sequence_flags(
     sequence_length: Option<usize>,
     sequence_every: Option<usize>,
-) -> Result<(usize, usize), String> {
+) -> Result<SequenceOptions, String> {
     if let Some(len) = sequence_length {
         if len < 2 {
             return Err(format!(
@@ -72,14 +72,17 @@ pub fn validate_sequence_flags(
         }
     }
     match (sequence_length, sequence_every) {
-        (None, None) => Ok((2, 0)),
+        (None, None) => Ok(SequenceOptions::default()),
         (Some(_), None) => Err(
             "--sequence-length requires --sequence-every (pass both --sequence-length <N> (>= 2) and --sequence-every <N> (>= 1), or omit both)".to_string(),
         ),
         (None, Some(_)) => Err(
             "--sequence-every requires --sequence-length (pass both --sequence-length <N> (>= 2) and --sequence-every <N> (>= 1), or omit both)".to_string(),
         ),
-        (Some(len), Some(every)) => Ok((len, every)),
+        (Some(sequence_length), Some(sequence_every)) => Ok(SequenceOptions {
+            sequence_length,
+            sequence_every,
+        }),
     }
 }
 
@@ -94,15 +97,11 @@ pub fn options_from(
     auth: &str,
     expect_success: Vec<String>,
     expect_error: Vec<String>,
-    sequence_length: Option<usize>,
-    sequence_every: Option<usize>,
     replay: bool,
 ) -> Result<FuzzRunOptions, String> {
     let auth_mode = parse_auth(auth).ok_or_else(|| {
         format!("invalid auth mode '{auth}' (expected no-auth, correct-auth, wrong-auth)")
     })?;
-    let (sequence_length, sequence_every) =
-        validate_sequence_flags(sequence_length, sequence_every)?;
     Ok(FuzzRunOptions {
         wasm: std::path::PathBuf::from(wasm),
         seed,
@@ -112,8 +111,6 @@ pub fn options_from(
         auth_mode,
         expect_success,
         expect_error,
-        sequence_length,
-        sequence_every,
         replay,
     })
 }
@@ -147,14 +144,14 @@ pub fn run(
         auth,
         expect_success,
         expect_error,
-        sequence_length,
-        sequence_every,
         replay,
     )?;
+    let sequence = validate_sequence_flags(sequence_length, sequence_every)?;
     let fmt = parse_format(format)
         .ok_or_else(|| format!("invalid format '{format}' (expected pretty, json, or jsonl)"))?;
 
-    let report = sdkt_fuzz::run_fuzz(&options).map_err(|e| e.to_string())?;
+    let report =
+        sdkt_fuzz::run_fuzz_with_sequence(&options, sequence).map_err(|e| e.to_string())?;
     print_report(&report, &fmt);
     Ok(!report.result.findings.is_empty())
 }
