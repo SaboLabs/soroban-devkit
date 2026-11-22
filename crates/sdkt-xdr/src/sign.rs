@@ -72,6 +72,23 @@ impl Network {
         }
     }
 
+    /// Map a Stellar network passphrase to the canonical [`Network`] variant.
+    ///
+    /// Passphrases matching Testnet, Mainnet, or Futurenet map to their
+    /// respective enum variants; any other passphrase maps to [`Network::Custom`]
+    /// preserving the exact passphrase string.
+    pub fn from_passphrase(passphrase: &str) -> Network {
+        if passphrase == Network::Testnet.passphrase() {
+            Network::Testnet
+        } else if passphrase == Network::Mainnet.passphrase() {
+            Network::Mainnet
+        } else if passphrase == Network::Futurenet.passphrase() {
+            Network::Futurenet
+        } else {
+            Network::Custom(passphrase.to_string())
+        }
+    }
+
     /// The 32-byte network ID: `Sha256(passphrase)`.
     pub fn network_id(&self) -> [u8; 32] {
         let mut h = Sha256::new();
@@ -372,6 +389,27 @@ mod tests {
             Network::parse("somethingelse"),
             Network::Custom("somethingelse".into())
         );
+    }
+
+    #[test]
+    fn test_network_from_passphrase() {
+        assert_eq!(
+            Network::from_passphrase("Test SDF Network ; September 2015"),
+            Network::Testnet
+        );
+        assert_eq!(
+            Network::from_passphrase("Public Global Stellar Network ; September 2015"),
+            Network::Mainnet
+        );
+        assert_eq!(
+            Network::from_passphrase("Test SDF Future Network ; October 2022"),
+            Network::Futurenet
+        );
+        assert_eq!(
+            Network::from_passphrase("My Custom Passphrase ; 2026"),
+            Network::Custom("My Custom Passphrase ; 2026".into())
+        );
+        assert_eq!(Network::from_passphrase(""), Network::Custom("".into()));
     }
 
     #[test]

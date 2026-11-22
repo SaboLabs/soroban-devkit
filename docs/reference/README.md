@@ -87,7 +87,7 @@ sdkt
 ├── wasm
 │   ├── inspect <file.wasm>  Offline inspection of a local WASM file (sections, exports, spec)
 │   ├── metadata --contract <contract>  [--network testnet] [--refresh] [--format]
-│   └── cache                 (info | remove | clear)
+│   └── cache                 (info | list | remove | clear)
 │
 ├── verify --contract <contract-id>
 │   ├── --wasm <file.wasm>    (local artifact to compare; offline hashed)

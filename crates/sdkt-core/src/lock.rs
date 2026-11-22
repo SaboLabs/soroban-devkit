@@ -434,10 +434,39 @@ pub fn read_lock(dir: &Path) -> Result<LockFile, LockError> {
     lock_from_toml(&content)
 }
 
+/// Result of locating and parsing `dir/sdkt.lock` for verification.
+enum LockReadState {
+    /// No lock file exists at all.
+    Absent,
+    /// The lock file exists and parsed successfully.
+    Parsed(LockFile),
+    /// The lock file exists but could not be read or parsed.
+    Corrupt(LockError),
+}
+
+/// Read `dir/sdkt.lock`, keeping "absent" distinct from "present but
+/// unparseable".
+///
+/// [`read_lock`] folds every failure (including "not found") into
+/// [`LockError::Parse`], so an `Ok`/`Err` match alone cannot tell a missing
+/// lock from a corrupt one. Verification must not do that: a missing lock is
+/// advisory, while a corrupt lock is a broken build input that has to be
+/// reported as such.
+fn read_lock_state(dir: &Path) -> LockReadState {
+    if !dir.join(LOCK_FILE_NAME).exists() {
+        return LockReadState::Absent;
+    }
+    match read_lock(dir) {
+        Ok(lock) => LockReadState::Parsed(lock),
+        Err(e) => LockReadState::Corrupt(e),
+    }
+}
+
 /// Outcome of a lock verification against the live artifacts.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct LockVerifyReport {
-    /// Lock file was present and parsed successfully.
+    /// Lock file was present and parsed successfully. `false` both when no lock
+    /// exists and when one exists but cannot be parsed (see [`Self::error`]).
     pub present: bool,
     /// True when every locked artifact still matches its recorded hash.
     pub consistent: bool,
@@ -445,6 +474,10 @@ pub struct LockVerifyReport {
     pub mismatched: Vec<String>,
     /// Aliases in the config that are absent from the lock.
     pub missing_in_lock: Vec<String>,
+    /// Parse failure when `dir/sdkt.lock` exists but could not be read or
+    /// parsed. `None` for an absent or successfully parsed lock. Carries the
+    /// same "failed to parse lock file ..." wording `sdkt lock show` prints.
+    pub error: Option<String>,
 }
 
 /// Verify an existing lock file against the current on-disk artifacts.
@@ -452,18 +485,36 @@ pub struct LockVerifyReport {
 /// `base_dir` is the workspace root the lock file and artifact paths are
 /// resolved against (production: `.`, the cwd sdkt runs from).
 ///
-/// This is **advisory**: it never errors on a stale lock, it simply reports
-/// which artifacts drifted. A missing lock yields `present = false` with
-/// `consistent = false` and `missing_in_lock` populated from the config.
+/// This is **advisory** for a missing or stale lock: it reports which
+/// artifacts drifted without treating them as hard errors. A missing lock
+/// yields `present = false` with `consistent = false` and `missing_in_lock`
+/// populated from the config. A lock that exists but cannot be parsed is a
+/// separate condition: `present = false`, `consistent = false`, empty
+/// `missing_in_lock`, and the parse failure in [`LockVerifyReport::error`].
 pub fn verify_lock(base_dir: &Path, config: &DevKitConfig) -> LockVerifyReport {
-    let Ok(lock) = read_lock(base_dir) else {
-        let missing_in_lock = config.contracts.keys().cloned().collect();
-        return LockVerifyReport {
-            present: false,
-            consistent: false,
-            mismatched: vec![],
-            missing_in_lock,
-        };
+    let lock = match read_lock_state(base_dir) {
+        LockReadState::Parsed(lock) => lock,
+        LockReadState::Absent => {
+            let missing_in_lock = config.contracts.keys().cloned().collect();
+            return LockVerifyReport {
+                present: false,
+                consistent: false,
+                mismatched: vec![],
+                missing_in_lock,
+                error: None,
+            };
+        }
+        LockReadState::Corrupt(e) => {
+            // Present but unparseable is never the absent case: folding it in
+            // would report a corrupt lock as a clean (advisory) result.
+            return LockVerifyReport {
+                present: false,
+                consistent: false,
+                mismatched: vec![],
+                missing_in_lock: vec![],
+                error: Some(e.to_string()),
+            };
+        }
     };
 
     let mut mismatched = Vec::new();
@@ -495,6 +546,7 @@ pub fn verify_lock(base_dir: &Path, config: &DevKitConfig) -> LockVerifyReport {
         consistent,
         mismatched,
         missing_in_lock,
+        error: None,
     }
 }
 
@@ -542,6 +594,10 @@ pub struct DepVerifyReport {
     pub checked: usize,
     /// Every drift record (empty when consistent).
     pub mismatches: Vec<DepMismatch>,
+    /// Parse failure when `dir/sdkt.lock` exists but could not be read or
+    /// parsed. `None` for an absent or successfully parsed lock. Carries the
+    /// same "failed to parse lock file ..." wording `sdkt lock show` prints.
+    pub error: Option<String>,
 }
 
 /// Resolve the current HEAD commit SHA of a local git checkout (empty if the
@@ -646,32 +702,51 @@ pub fn compute_dependency_integrity(base_dir: &Path, dep: &crate::config::Depend
 /// * local path dependencies still exist on disk,
 /// * Git cache checkouts exist and resolve to the locked commit SHA.
 ///
-/// This is **advisory**: it never errors, it reports every drift. A missing
-/// lock yields `present = false` with `consistent = false` and every manifest
-/// dependency listed as `MissingInLock`. Network/registry access is never
-/// required — Git resolution reads only the local `.sdkt-cache` checkout.
+/// This is **advisory** for a missing or stale lock: it reports every drift
+/// instead of erroring. A missing lock yields `present = false` with
+/// `consistent = false` and every manifest dependency listed as
+/// `MissingInLock`. A lock that exists but cannot be parsed is a separate
+/// condition: `present = false`, `consistent = false`, `checked = 0`, no
+/// `MissingInLock` records, and the parse failure in [`DepVerifyReport::error`].
+/// Network/registry access is never required — Git resolution reads only the
+/// local `.sdkt-cache` checkout.
 pub fn verify_dependencies(base_dir: &Path, config: &DevKitConfig) -> DepVerifyReport {
     // Reuse the existing manifest validator rather than re-implementing
     // dependency validation. If the manifest is malformed we still report the
     // lock state; the validator's error surfaces through the normal CLI path.
     let _ = crate::package::validate_dependencies(base_dir, config);
 
-    let Ok(lock) = read_lock(base_dir) else {
-        let mismatches = config
-            .dependencies
-            .keys()
-            .map(|name| DepMismatch {
-                name: name.clone(),
-                kind: DepMismatchKind::MissingInLock,
-                detail: "no sdkt.lock present".to_string(),
-            })
-            .collect();
-        return DepVerifyReport {
-            present: false,
-            consistent: false,
-            checked: config.dependencies.len(),
-            mismatches,
-        };
+    let lock = match read_lock_state(base_dir) {
+        LockReadState::Parsed(lock) => lock,
+        LockReadState::Absent => {
+            let mismatches = config
+                .dependencies
+                .keys()
+                .map(|name| DepMismatch {
+                    name: name.clone(),
+                    kind: DepMismatchKind::MissingInLock,
+                    detail: "no sdkt.lock present".to_string(),
+                })
+                .collect();
+            return DepVerifyReport {
+                present: false,
+                consistent: false,
+                checked: config.dependencies.len(),
+                mismatches,
+                error: None,
+            };
+        }
+        LockReadState::Corrupt(e) => {
+            // Do not claim anything is "missing in lock": the file is there,
+            // it just cannot be parsed. Surface that as its own condition.
+            return DepVerifyReport {
+                present: false,
+                consistent: false,
+                checked: 0,
+                mismatches: vec![],
+                error: Some(e.to_string()),
+            };
+        }
     };
 
     let locked: std::collections::HashMap<&str, &DependencyLock> = lock
@@ -818,6 +893,7 @@ pub fn verify_dependencies(base_dir: &Path, config: &DevKitConfig) -> DepVerifyR
         consistent: mismatches.is_empty(),
         checked,
         mismatches,
+        error: None,
     }
 }
 
@@ -1026,6 +1102,68 @@ mod tests {
         assert!(!report.present);
         assert!(!report.consistent);
         assert_eq!(report.missing_in_lock, vec!["token".to_string()]);
+        assert!(report.error.is_none());
+
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn verify_lock_corrupt_is_reported_as_corrupt_not_absent() {
+        let root = std::env::temp_dir().join("sdkt_lock_test_corrupt");
+        let _ = fs::remove_dir_all(&root);
+        fs::create_dir_all(&root).unwrap();
+
+        let mut map = HashMap::new();
+        map.insert(
+            "token".to_string(),
+            ContractConfig {
+                path: "contracts/token".to_string(),
+                deploy_after: vec![],
+                depends_on: vec![],
+                ctor_args: vec![],
+            },
+        );
+        let config = config_with(map);
+
+        // A present but unparseable lock is not the absent case.
+        fs::write(root.join(LOCK_FILE_NAME), "CORRUPT {{").unwrap();
+
+        let report = verify_lock(&root, &config);
+        assert!(!report.present);
+        assert!(!report.consistent);
+        assert!(
+            report.missing_in_lock.is_empty(),
+            "corrupt lock must not report config contracts as missing: {:?}",
+            report.missing_in_lock
+        );
+        let error = report
+            .error
+            .as_deref()
+            .expect("corrupt lock must surface a parse error");
+        assert!(
+            error.contains("failed to parse lock file sdkt.lock"),
+            "unexpected error wording: {}",
+            error
+        );
+
+        let dep = verify_dependencies(&root, &config);
+        assert!(!dep.present);
+        assert!(!dep.consistent);
+        assert_eq!(dep.checked, 0);
+        assert!(
+            dep.mismatches.is_empty(),
+            "corrupt lock must not be reported as a dependency mismatch: {:?}",
+            dep.mismatches
+        );
+        let dep_error = dep
+            .error
+            .as_deref()
+            .expect("corrupt lock must surface a dependency-side parse error");
+        assert!(
+            dep_error.contains("failed to parse lock file sdkt.lock"),
+            "unexpected error wording: {}",
+            dep_error
+        );
 
         let _ = fs::remove_dir_all(&root);
     }
@@ -1149,6 +1287,7 @@ mod tests {
         let rep = verify_dependencies(&root, &config);
         assert!(!rep.present);
         assert!(!rep.consistent);
+        assert!(rep.error.is_none());
         assert_eq!(rep.checked, 1);
         assert_eq!(rep.mismatches.len(), 1);
         assert_eq!(rep.mismatches[0].kind, DepMismatchKind::MissingInLock);
