@@ -204,6 +204,10 @@ pub(crate) fn unqualified(name: &str) -> &str {
 struct FnVisitor<'a> {
     scan: &'a mut FnScan,
     divided_bindings: HashSet<String>,
+    /// Bindings currently known to hold a compile-time constant, so that
+    /// `x /= 2` on a constant-only binding keeps the constant-division
+    /// exemption.
+    constant_bindings: HashSet<String>,
     /// Ordered sequence of CEI events (external calls and state writes) in source order.
     order_events: &'a mut Vec<OrderEvent>,
 }
@@ -214,6 +218,11 @@ impl<'ast, 'a> Visit<'ast> for FnVisitor<'a> {
             let name = pat.ident.to_string();
             self.scan.bound.insert(name.clone());
             if let Some(init) = &node.init {
+                if is_constant_expr(&init.expr) {
+                    self.constant_bindings.insert(name.clone());
+                } else {
+                    self.constant_bindings.remove(&name);
+                }
                 if expr_contains_division(&init.expr)
                     || expr_uses_any(&init.expr, &self.divided_bindings)
                 {
@@ -227,6 +236,35 @@ impl<'ast, 'a> Visit<'ast> for FnVisitor<'a> {
     }
 
     fn visit_expr_binary(&mut self, node: &'ast syn::ExprBinary) {
+        // Compound assignment (`x /= y`, `x *= y`). `syn` 2 models these as
+        // `ExprBinary` with `DivAssign` / `MulAssign`.
+        match node.op {
+            syn::BinOp::DivAssign(_) => {
+                if let Some(name) = assigned_ident(&node.left) {
+                    let constant_only =
+                        self.constant_bindings.contains(&name) && is_constant_expr(&node.right);
+                    if constant_only {
+                        // Constant-only division: exempt, like `5 / 2`.
+                    } else {
+                        self.divided_bindings.insert(name.clone());
+                        self.constant_bindings.remove(&name);
+                    }
+                }
+            }
+            syn::BinOp::MulAssign(_) => {
+                if expr_contains_division(&node.left)
+                    || expr_contains_division(&node.right)
+                    || expr_uses_any(&node.left, &self.divided_bindings)
+                    || expr_uses_any(&node.right, &self.divided_bindings)
+                {
+                    self.scan.division_before_multiplication = true;
+                }
+                if let Some(name) = assigned_ident(&node.left) {
+                    self.constant_bindings.remove(&name);
+                }
+            }
+            _ => {}
+        }
         if matches!(node.op, syn::BinOp::Mul(_))
             && (expr_contains_division(&node.left)
                 || expr_contains_division(&node.right)
@@ -287,6 +325,16 @@ impl<'ast, 'a> Visit<'ast> for FnVisitor<'a> {
         // Detect state write patterns: storage().set(...), storage().write(...), etc.
         self.detect_state_write(&method);
         // Don't call visit::visit_expr_method_call since we've manually visited children.
+    }
+}
+
+/// Name of a plain local being assigned to (`x` in `x /= y`), if any.
+fn assigned_ident(expr: &Expr) -> Option<String> {
+    match expr {
+        Expr::Path(p) => p.path.get_ident().map(|i| i.to_string()),
+        Expr::Paren(p) => assigned_ident(&p.expr),
+        Expr::Group(g) => assigned_ident(&g.expr),
+        _ => None,
     }
 }
 
@@ -498,6 +546,7 @@ fn fn_scan(sig: &syn::Signature, block: &syn::Block) -> FnScan {
     let mut visitor = FnVisitor {
         scan: &mut scan,
         divided_bindings: HashSet::new(),
+        constant_bindings: HashSet::new(),
         order_events: &mut order_events,
     };
     visitor.visit_block(block);
@@ -766,6 +815,48 @@ mod tests {
             "pub fn quote(amount: i128, bps: i128) -> i128 { amount / 10_000 + bps }",
             "pub fn quote(amount: i128, other: i128, bps: i128) -> i128 { amount / 10_000 + other * bps }",
             "pub fn quote(amount: i128, other: i128, bps: i128) -> i128 { let divided = amount / 10_000; other * bps + divided }",
+        ] {
+            assert!(
+                !has(&report_for(src), "MATH-001"),
+                "unexpected math finding for {src}"
+            );
+        }
+    }
+
+    #[test]
+    fn math001_detects_compound_assignment_division_before_multiplication() {
+        for src in [
+            "pub fn quote(amount: i128, bps: i128) -> i128 { let mut amount = amount; amount /= 10_000; amount * bps }",
+            "pub fn quote(amount: i128, bps: i128) -> i128 { let d = amount / 10_000; let mut d = d; d *= bps; d }",
+            "pub fn quote(amount: i128, bps: i128) -> i128 { let mut d = amount; d /= 10_000; d *= bps; d }",
+            "pub fn quote(amount: i128, y: i128) -> i128 { let mut x = amount; x /= 10_000; x * y }",
+            "pub fn quote(amount: i128, bps: i128) -> i128 { let mut d = amount; d /= 10_000; let r = d; r * bps }",
+        ] {
+            let report = report_for(src);
+            let found: Vec<_> = report
+                .findings
+                .iter()
+                .filter(|finding| finding.rule_id == "MATH-001")
+                .collect();
+            assert_eq!(found.len(), 1, "expected exactly one MATH-001 for {src}");
+            assert_eq!(found[0].severity, Severity::Warning);
+            assert_eq!(found[0].location.as_deref(), Some("quote"));
+            assert!(found[0].message.contains("divides before multiplying"));
+        }
+    }
+
+    #[test]
+    fn math001_ignores_compound_assignment_without_divide_then_multiply() {
+        for src in [
+            // `/=` with no later multiplication.
+            "pub fn quote(amount: i128) -> i128 { let mut a = amount; a /= 10_000; a }",
+            // `*=` with no prior division.
+            "pub fn quote(amount: i128, bps: i128) -> i128 { let mut a = amount; a *= bps; a }",
+            // `/=` of constants only keeps the constant-division exemption.
+            "pub fn quote(bps: i128) -> i128 { let mut c = 10; c /= 2; c * bps }",
+            "pub fn quote(bps: i128) -> i128 { let mut c = 10; c /= 2; let mut d = bps; d *= c; d }",
+            // `/=` on one binding does not taint an unrelated one.
+            "pub fn quote(amount: i128, x: i128, bps: i128) -> i128 { let mut a = amount; a /= 10_000; x * bps + a }",
         ] {
             assert!(
                 !has(&report_for(src), "MATH-001"),

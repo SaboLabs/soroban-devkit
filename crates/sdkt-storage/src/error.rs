@@ -12,6 +12,10 @@ pub enum StorageError {
     ContractIdMismatch { old: String, new: String },
     #[error("Snapshot network mismatch: old '{old}' vs new '{new}'")]
     NetworkMismatch { old: String, new: String },
+    #[error(
+        "Duplicate ledger key '{key}' in {snapshot}: each ledger key must appear at most once per snapshot"
+    )]
+    DuplicateKey { snapshot: String, key: String },
     #[error("Parsing error: {0}")]
     Parse(String),
     #[error("IO error: {0}")]
