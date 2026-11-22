@@ -56,6 +56,9 @@ use serde_json::Value;
 
 pub use sdkt_core::OutputFormat;
 
+/// Maximum nesting depth accepted when decoding untrusted XDR input.
+pub const MAX_XDR_DEPTH: u32 = 500;
+
 use stellar_xdr::{
     ContractDataDurability, ContractEvent, ContractExecutable, ContractId, Hash, LedgerEntry,
     LedgerEntryData, LedgerKey, LedgerKeyContractCode, LedgerKeyContractData, Limited, Limits,
@@ -555,7 +558,7 @@ pub fn decode(
     type_hint: Option<&str>,
     format: OutputFormat,
 ) -> Result<String, DecodeError> {
-    decode_with_config(payload, type_hint, format, 500, true)
+    decode_with_config(payload, type_hint, format, MAX_XDR_DEPTH, true)
 }
 
 /// Decode with explicit config values (wired from `.sdkt.toml` `[decode]`).
@@ -613,7 +616,7 @@ fn hex_bytes_if_valid(payload: &str) -> Option<Vec<u8>> {
 
 /// Decode raw bytes (no base64/hex pre-processing).
 pub fn decode_bytes(raw: &[u8], type_hint: Option<&str>) -> Result<Value, DecodeError> {
-    decode_bytes_with_config(raw, type_hint, 500)
+    decode_bytes_with_config(raw, type_hint, MAX_XDR_DEPTH)
 }
 
 /// Decode raw bytes with explicit max_depth.
@@ -1292,6 +1295,27 @@ mod tests {
         );
         let unlimited = decode_with_config(&b64, Some("scval"), OutputFormat::Json, 0, true);
         assert!(unlimited.is_ok(), "max_depth = 0 (unlimited) must accept");
+    }
+
+    #[test]
+    fn test_decode_default_depth_limit_rejects_deep_scval() {
+        let mut nested = ScVal::U32(7);
+        for _ in 0..MAX_XDR_DEPTH {
+            nested = ScVal::Vec(Some(ScVec::try_from(vec![nested]).unwrap()));
+        }
+
+        let mut buf = Vec::new();
+        let mut writer = Limited::new(&mut buf, Limits::none());
+        nested.write_xdr(&mut writer).unwrap();
+
+        let err = decode_bytes(&buf, Some("scval")).unwrap_err();
+        match err {
+            DecodeError::XdrParse(name, error) => {
+                assert_eq!(name, "ScVal");
+                assert!(error.to_string().contains("depth limit"), "{error}");
+            }
+            other => panic!("expected XDR depth error, got {other:?}"),
+        }
     }
 
     #[test]
