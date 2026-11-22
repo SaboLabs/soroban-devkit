@@ -9,7 +9,10 @@
 //! is not a live Mainnet validator configuration and not the current
 //! Protocol 29 cost model.
 
-use sdkt_fuzz::{artifact::EnvironmentSnapshot, BudgetPlan, Environment, Executor, FunctionCall};
+use sdkt_fuzz::{
+    artifact::{budget_plan_from_snapshot, BudgetPlanSnapshot, EnvironmentSnapshot},
+    BudgetPlan, Environment, Executor, FunctionCall,
+};
 
 const COUNTER_WASM: &[u8] = include_bytes!("../../../crates/sdkt-cli/tests/fixtures/us_new.wasm");
 
@@ -98,7 +101,35 @@ fn protocol_initial_snapshot_round_trips() {
         "snapshot must record the plan kind: {json}"
     );
     let back: EnvironmentSnapshot = serde_json::from_str(&json).unwrap();
-    assert_eq!(Environment::from(&back), env);
+    assert_eq!(back.try_environment().unwrap(), env);
+}
+
+#[test]
+fn budget_snapshot_variants_preserve_their_plans_or_refuse_explicitly() {
+    assert_eq!(
+        budget_plan_from_snapshot(&BudgetPlanSnapshot::Default).unwrap(),
+        BudgetPlan::Default
+    );
+    assert_eq!(
+        budget_plan_from_snapshot(&BudgetPlanSnapshot::Capped { cpu: 7, mem: 11 }).unwrap(),
+        BudgetPlan::Capped { cpu: 7, mem: 11 }
+    );
+    assert_eq!(
+        budget_plan_from_snapshot(&BudgetPlanSnapshot::ProtocolInitial).unwrap(),
+        BudgetPlan::ProtocolInitial
+    );
+
+    let err = budget_plan_from_snapshot(&BudgetPlanSnapshot::NetworkFaithful {
+        profile_content_hash: "missing".to_string(),
+        profile_network: "test".to_string(),
+        profile_protocol: 30,
+        profile_ledger: 1,
+        coverage: "COMPLETE".to_string(),
+        covered_cost_types: 95,
+        host_cost_types: 95,
+    })
+    .unwrap_err();
+    assert!(err.contains("profile.json"), "{err}");
 }
 
 #[test]

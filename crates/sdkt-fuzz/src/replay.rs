@@ -159,7 +159,9 @@ pub fn replay(artifact: &FindingArtifact, wasm: &[u8]) -> Result<ReplayOutcome, 
             "artifact contains no sequence steps".to_string(),
         ));
     }
-    let environment: Environment = artifact.environment();
+    let environment: Environment = artifact
+        .environment()
+        .map_err(ReplayError::InvalidArtifact)?;
     let seed = artifact
         .seed()
         .map_err(|e| ReplayError::InvalidArtifact(e.to_string()))?;

@@ -90,7 +90,7 @@ fn artifact_is_self_contained_for_replay() {
     assert_eq!(steps[0].function, "hello");
 
     // Environment and expectation round-trip.
-    let env = art.environment();
+    let env = art.environment().unwrap();
     assert_eq!(env, sdkt_fuzz::Environment::default());
     assert_eq!(
         art.expected().unwrap().behavior,
@@ -140,6 +140,28 @@ fn replay_reproduces_the_finding() {
     // The JSON path (what the CLI uses) agrees.
     let via_json = replay_json(&art.canonical_bytes(), COUNTER_WASM).unwrap();
     assert_eq!(via_json, outcome);
+}
+
+#[test]
+fn replay_refuses_network_faithful_artifacts_without_profile() {
+    let (_, artifacts) = campaign([44u8; 32]);
+    let mut artifact = artifacts[0].clone();
+    artifact.campaign.environment.budget =
+        sdkt_fuzz::artifact::BudgetPlanSnapshot::NetworkFaithful {
+            profile_content_hash: "missing".to_string(),
+            profile_network: "test".to_string(),
+            profile_protocol: 30,
+            profile_ledger: 1,
+            coverage: "COMPLETE".to_string(),
+            covered_cost_types: 95,
+            host_cost_types: 95,
+        };
+
+    let err = replay(&artifact, COUNTER_WASM).unwrap_err();
+    assert!(matches!(err, sdkt_fuzz::ReplayError::InvalidArtifact(_)));
+    let message = err.to_string();
+    assert!(message.contains("finding artifact"), "{message}");
+    assert!(message.contains("profile.json"), "{message}");
 }
 
 // ---------------------------------------------------------------------------

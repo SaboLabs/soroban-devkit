@@ -121,15 +121,16 @@ impl Default for EnvironmentSnapshot {
     }
 }
 
-impl From<&EnvironmentSnapshot> for Environment {
-    fn from(s: &EnvironmentSnapshot) -> Self {
-        Self {
+impl EnvironmentSnapshot {
+    /// Rebuild the runtime environment from its snapshot.
+    pub fn try_environment(&self) -> Result<Environment, String> {
+        Ok(Environment {
             ledger: crate::config::LedgerConfig {
-                sequence_number: s.sequence_number,
-                timestamp: s.timestamp,
+                sequence_number: self.sequence_number,
+                timestamp: self.timestamp,
             },
-            budget: budget_plan_from_snapshot(&s.budget),
-        }
+            budget: budget_plan_from_snapshot(&self.budget)?,
+        })
     }
 }
 
@@ -140,25 +141,19 @@ impl From<&EnvironmentSnapshot> for Environment {
 /// artifact. The fallback is an explicit refusal to substitute a different
 /// budget model — replay surfaces this as an error, not as a silent change of
 /// semantics.
-pub fn budget_plan_from_snapshot(s: &BudgetPlanSnapshot) -> BudgetPlan {
+pub fn budget_plan_from_snapshot(s: &BudgetPlanSnapshot) -> Result<BudgetPlan, String> {
     match s {
-        BudgetPlanSnapshot::Default => BudgetPlan::Default,
-        BudgetPlanSnapshot::Capped { cpu, mem } => BudgetPlan::Capped {
+        BudgetPlanSnapshot::Default => Ok(BudgetPlan::Default),
+        BudgetPlanSnapshot::Capped { cpu, mem } => Ok(BudgetPlan::Capped {
             cpu: *cpu,
             mem: *mem,
-        },
-        BudgetPlanSnapshot::ProtocolInitial => BudgetPlan::ProtocolInitial,
-        BudgetPlanSnapshot::NetworkFaithful { .. } => {
-            debug_assert!(
-                false,
-                "network-faithful budget requires the profile snapshot; \
-                 load profile.json and rebuild the plan"
-            );
-            // Debug builds fail loudly; release builds fall back to the
-            // protocol-initial plan, which is the closest *honest* model
-            // available offline (documented, deterministic, no live claim).
-            BudgetPlan::ProtocolInitial
-        }
+        }),
+        BudgetPlanSnapshot::ProtocolInitial => Ok(BudgetPlan::ProtocolInitial),
+        BudgetPlanSnapshot::NetworkFaithful { .. } => Err(
+            "network-faithful budget in finding artifact requires profile.json; \
+             load profile.json and rebuild the plan"
+                .to_string(),
+        ),
     }
 }
 
@@ -658,8 +653,8 @@ impl FindingArtifact {
     }
 
     /// The runtime environment to replay under.
-    pub fn environment(&self) -> Environment {
-        Environment::from(&self.campaign.environment)
+    pub fn environment(&self) -> Result<Environment, String> {
+        self.campaign.environment.try_environment()
     }
 
     /// Deterministic seed, decoded from the campaign snapshot.
