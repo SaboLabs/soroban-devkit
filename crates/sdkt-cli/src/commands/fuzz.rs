@@ -14,7 +14,7 @@
 //!
 //! Exit `1` is the only path that means "findings were produced".
 
-use sdkt_fuzz::{AuthMode, FuzzRunOptions, ReplayOptions};
+use sdkt_fuzz::{AuthMode, FuzzRunOptions, ReplayOptions, SequenceOptions};
 
 /// Output formats supported by the fuzz surface.
 pub enum FuzzFormat {
@@ -40,6 +40,49 @@ pub fn parse_auth(mode: &str) -> Option<AuthMode> {
         "correct-auth" | "correct" | "correctauth" => Some(AuthMode::CorrectAuth),
         "wrong-auth" | "wrong" | "wrongauth" => Some(AuthMode::WrongAuth),
         _ => None,
+    }
+}
+
+/// Validate `--sequence-length` and `--sequence-every` as a pair.
+///
+/// Rules:
+/// - Omitting both flags keeps the default single-step behavior
+///   (`sequence_length = 2`, `sequence_every = 0`).
+/// - Supplying only one of the two flags is a usage error.
+/// - `sequence_length` must be `>= 2` (a sequence needs at least 2 steps to
+///   carry state between invocations).
+/// - `sequence_every` must be `>= 1` (`0` is the internal disabled sentinel
+///   and cannot be passed on the CLI).
+pub fn validate_sequence_flags(
+    sequence_length: Option<usize>,
+    sequence_every: Option<usize>,
+) -> Result<SequenceOptions, String> {
+    if let Some(len) = sequence_length {
+        if len < 2 {
+            return Err(format!(
+                "invalid --sequence-length {len}: must be >= 2 (a sequence requires at least 2 steps; pass both --sequence-length <N> (>= 2) and --sequence-every <N> (>= 1))"
+            ));
+        }
+    }
+    if let Some(every) = sequence_every {
+        if every < 1 {
+            return Err(format!(
+                "invalid --sequence-every {every}: must be >= 1 (pass both --sequence-length <N> (>= 2) and --sequence-every <N> (>= 1))"
+            ));
+        }
+    }
+    match (sequence_length, sequence_every) {
+        (None, None) => Ok(SequenceOptions::default()),
+        (Some(_), None) => Err(
+            "--sequence-length requires --sequence-every (pass both --sequence-length <N> (>= 2) and --sequence-every <N> (>= 1), or omit both)".to_string(),
+        ),
+        (None, Some(_)) => Err(
+            "--sequence-every requires --sequence-length (pass both --sequence-length <N> (>= 2) and --sequence-every <N> (>= 1), or omit both)".to_string(),
+        ),
+        (Some(sequence_length), Some(sequence_every)) => Ok(SequenceOptions {
+            sequence_length,
+            sequence_every,
+        }),
     }
 }
 
@@ -87,6 +130,8 @@ pub fn run(
     auth: &str,
     expect_success: Vec<String>,
     expect_error: Vec<String>,
+    sequence_length: Option<usize>,
+    sequence_every: Option<usize>,
     replay: bool,
     format: &str,
 ) -> Result<bool, String> {
@@ -101,10 +146,12 @@ pub fn run(
         expect_error,
         replay,
     )?;
+    let sequence = validate_sequence_flags(sequence_length, sequence_every)?;
     let fmt = parse_format(format)
         .ok_or_else(|| format!("invalid format '{format}' (expected pretty, json, or jsonl)"))?;
 
-    let report = sdkt_fuzz::run_fuzz(&options).map_err(|e| e.to_string())?;
+    let report =
+        sdkt_fuzz::run_fuzz_with_sequence(&options, sequence).map_err(|e| e.to_string())?;
     print_report(&report, &fmt);
     Ok(!report.result.findings.is_empty())
 }

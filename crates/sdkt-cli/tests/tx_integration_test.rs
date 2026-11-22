@@ -8,8 +8,9 @@ use std::net::TcpListener;
 use std::thread;
 use std::time::Duration;
 use stellar_xdr::{
-    Limits, Operation, OperationResult, TransactionEnvelope, TransactionResult,
-    TransactionResultExt, TransactionResultResult, TransactionV1Envelope, WriteXdr,
+    FeeBumpTransactionInnerTx, Limits, Operation, OperationResult, ReadXdr, SequenceNumber,
+    TransactionEnvelope, TransactionResult, TransactionResultExt, TransactionResultResult,
+    TransactionV1Envelope, WriteXdr,
 };
 use tempfile::tempdir;
 
@@ -104,6 +105,53 @@ fn mock_inspect_server() -> String {
         .unwrap();
     });
     url
+}
+
+/// Mock RPC server that accepts a `sendTransaction` request and returns a
+/// successful submission response echoing the submitted envelope.
+fn mock_submit_server() -> String {
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let url = format!("http://{}", listener.local_addr().unwrap());
+
+    thread::spawn(move || {
+        let (mut sock, _) = listener.accept().unwrap();
+        let mut request = [0u8; 65536];
+        let n = sock.read(&mut request).unwrap_or(0);
+        let request = String::from_utf8_lossy(&request[..n]).to_string();
+        let hash = "0000000000000000000000000000000000000000000000000000000000000000";
+        let body = json!({
+            "jsonrpc": "2.0",
+            "id": 1,
+            "result": {
+                "status": "PENDING",
+                "hash": hash,
+                "latestLedger": 12_345,
+            }
+        })
+        .to_string();
+        let _ = request;
+        write!(
+            sock,
+            "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+            body.len(),
+            body
+        )
+        .unwrap();
+    });
+    url
+}
+
+/// Build a plain V1 envelope with a single default operation and the given fee.
+fn plain_envelope_b64(fee: u32) -> String {
+    let mut envelope = TransactionV1Envelope::default();
+    envelope.tx.fee = fee;
+    envelope.tx.seq_num = SequenceNumber(1);
+    envelope.tx.operations = vec![Operation::default()].try_into().unwrap();
+    base64::engine::general_purpose::STANDARD.encode(
+        TransactionEnvelope::Tx(envelope)
+            .to_xdr(Limits::none())
+            .unwrap(),
+    )
 }
 
 /// Path to a real contractspecv0 WASM fixture with functions that return u32.
@@ -311,4 +359,240 @@ fn test_tx_simulate_with_invalid_abi_fails() {
         .assert()
         .failure()
         .stderr(predicate::str::contains("Failed to parse ABI"));
+}
+
+#[test]
+fn test_tx_wrap_help_shows_required_flags() {
+    let mut cmd = Command::cargo_bin("sdkt").unwrap();
+    cmd.arg("tx").arg("wrap").arg("--help");
+
+    cmd.assert()
+        .success()
+        .stdout(predicate::str::contains("--envelope"))
+        .stdout(predicate::str::contains("--fee-source"))
+        .stdout(predicate::str::contains("--fee"));
+}
+
+#[test]
+fn test_tx_wrap_produces_fee_bump_envelope() {
+    let dir = tempdir().unwrap();
+    let envelope = plain_envelope_b64(100);
+
+    let output = sdkt_tx_isolated(dir.path())
+        .args([
+            "tx",
+            "wrap",
+            "--envelope",
+            &envelope,
+            "--fee-source",
+            "GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF",
+            "--fee",
+            "1000",
+            "--format",
+            "json",
+        ])
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let parsed: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    let wrapped_b64 = parsed["envelope"].as_str().expect("envelope field");
+    let wrapped = TransactionEnvelope::from_xdr_base64(wrapped_b64, Limits::none()).unwrap();
+    match wrapped {
+        TransactionEnvelope::TxFeeBump(fb) => {
+            assert_eq!(fb.tx.fee, 1000);
+            match fb.tx.inner_tx {
+                FeeBumpTransactionInnerTx::Tx(inner) => {
+                    assert_eq!(inner.tx.fee, 100);
+                    assert_eq!(inner.tx.operations.len(), 1);
+                }
+            }
+        }
+        _ => panic!("expected fee-bump envelope"),
+    }
+}
+
+#[test]
+fn test_tx_wrap_resolves_named_fee_source_from_public_identity_metadata() {
+    let dir = tempdir().unwrap();
+    let identity_dir = dir.path().join("identity");
+    std::fs::create_dir_all(&identity_dir).unwrap();
+    std::fs::write(
+        identity_dir.join("alice.toml"),
+        "public_key = \"GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF\"\n",
+    )
+    .unwrap();
+    let envelope = plain_envelope_b64(100);
+
+    let output = sdkt_tx_isolated(dir.path())
+        .args([
+            "tx",
+            "wrap",
+            "--envelope",
+            &envelope,
+            "--fee-source",
+            "alice",
+            "--fee",
+            "300",
+            "--format",
+            "json",
+        ])
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let result: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(
+        result["fee_source"],
+        "GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF"
+    );
+}
+
+#[test]
+fn test_tx_wrap_preserves_inner_signatures() {
+    let dir = tempdir().unwrap();
+    let mut envelope = TransactionV1Envelope::default();
+    envelope.tx.fee = 100;
+    envelope.tx.operations = vec![Operation::default()].try_into().unwrap();
+    envelope.signatures = vec![stellar_xdr::DecoratedSignature {
+        hint: stellar_xdr::SignatureHint([0, 0, 0, 0]),
+        signature: stellar_xdr::Signature(vec![1u8, 2, 3, 4].try_into().unwrap()),
+    }]
+    .try_into()
+    .unwrap();
+    let envelope_b64 = base64::engine::general_purpose::STANDARD.encode(
+        TransactionEnvelope::Tx(envelope)
+            .to_xdr(Limits::none())
+            .unwrap(),
+    );
+
+    let output = sdkt_tx_isolated(dir.path())
+        .args([
+            "tx",
+            "wrap",
+            "--envelope",
+            &envelope_b64,
+            "--fee-source",
+            "GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF",
+            "--fee",
+            "1000",
+            "--format",
+            "json",
+        ])
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let parsed: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    let wrapped_b64 = parsed["envelope"].as_str().unwrap();
+    let wrapped = TransactionEnvelope::from_xdr_base64(wrapped_b64, Limits::none()).unwrap();
+    match wrapped {
+        TransactionEnvelope::TxFeeBump(fb) => match fb.tx.inner_tx {
+            FeeBumpTransactionInnerTx::Tx(inner) => {
+                assert_eq!(inner.signatures.len(), 1);
+                assert_eq!(inner.signatures[0].signature.0.as_slice(), &[1u8, 2, 3, 4]);
+            }
+        },
+        _ => panic!("expected fee-bump envelope"),
+    }
+}
+
+#[test]
+fn test_tx_wrap_rejects_fee_below_minimum() {
+    let dir = tempdir().unwrap();
+    let envelope = plain_envelope_b64(100);
+
+    sdkt_tx_isolated(dir.path())
+        .args([
+            "tx",
+            "wrap",
+            "--envelope",
+            &envelope,
+            "--fee-source",
+            "GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF",
+            "--fee",
+            "1",
+        ])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("minimum"));
+}
+
+#[test]
+fn test_tx_wrap_pretty_output_shows_fees() {
+    let dir = tempdir().unwrap();
+    let envelope = plain_envelope_b64(100);
+
+    sdkt_tx_isolated(dir.path())
+        .args([
+            "tx",
+            "wrap",
+            "--envelope",
+            &envelope,
+            "--fee-source",
+            "GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF",
+            "--fee",
+            "1000",
+        ])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("Inner fee: 100"))
+        .stdout(predicate::str::contains("Fee-bump total: 1000"));
+}
+
+#[test]
+fn test_tx_wrap_output_validates_and_submits() {
+    let dir = tempdir().unwrap();
+    let rpc_url = mock_submit_server();
+    add_mock_tx_profile(dir.path(), &rpc_url);
+    let envelope = plain_envelope_b64(100);
+
+    let output = sdkt_tx_isolated(dir.path())
+        .args([
+            "tx",
+            "wrap",
+            "--envelope",
+            &envelope,
+            "--fee-source",
+            "GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF",
+            "--fee",
+            "1000",
+            "--format",
+            "json",
+        ])
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let parsed: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    let wrapped_b64 = parsed["envelope"].as_str().unwrap();
+
+    sdkt_tx_isolated(dir.path())
+        .args(["tx", "validate", "--envelope", wrapped_b64])
+        .assert()
+        .success();
+
+    sdkt_tx_isolated(dir.path())
+        .args([
+            "tx",
+            "--network-profile",
+            "mocknet",
+            "submit",
+            "--envelope",
+            wrapped_b64,
+        ])
+        .assert()
+        .success();
 }
