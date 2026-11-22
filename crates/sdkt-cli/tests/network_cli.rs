@@ -557,7 +557,11 @@ fn network_check_matching_passphrase_reports_endpoint_identity() {
 }
 
 #[test]
-fn network_check_mismatched_passphrase_warns_but_remains_healthy() {
+fn network_check_mismatched_passphrase_exits_nonzero_with_warning() {
+    // A reachable but mismatched profile must exit 1 (verdict-gated, consistent
+    // with `network diagnose` identity-mismatch behavior). The warning line must
+    // appear in pretty output so both modes agree on the mismatch signal.
+    // References: PR #264 (introduced the gap), registry.rs:501 (diagnose precedent).
     let dir = tempdir().unwrap();
     let url = spawn_mock_rpc_with_network(99, 20, "Endpoint Network", false);
 
@@ -577,11 +581,109 @@ fn network_check_mismatched_passphrase_warns_but_remains_healthy() {
     sdkt(dir.path())
         .args(["network", "check", "mock"])
         .assert()
-        .success()
-        .stdout(predicate::str::contains("is reachable"))
+        .failure()
+        .stdout(predicate::str::contains("passphrase mismatch"))
         .stdout(predicate::str::contains(
             "Warning: endpoint passphrase does not match the profile.",
         ));
+}
+
+#[test]
+fn network_check_mismatched_passphrase_json_includes_derived_field() {
+    // JSON output must expose `passphrase_mismatch: true` — not just the two raw
+    // passphrases — so a CI consumer can gate on it without string-comparing
+    // the passphrase values itself.
+    let dir = tempdir().unwrap();
+    let url = spawn_mock_rpc_with_network(5161, 29, "Test SDF Network ; September 2015", false);
+
+    sdkt(dir.path())
+        .args([
+            "network",
+            "add",
+            "badpass",
+            "--rpc-url",
+            &url,
+            "--passphrase",
+            "Wrong Passphrase",
+        ])
+        .assert()
+        .success();
+
+    sdkt(dir.path())
+        .args(["network", "check", "badpass", "--format", "json"])
+        .assert()
+        .failure()
+        .stdout(predicate::str::contains("\"passphrase_mismatch\":true"))
+        .stdout(predicate::str::contains(
+            "\"configured_passphrase\":\"Wrong Passphrase\"",
+        ))
+        .stdout(predicate::str::contains(
+            "\"endpoint_passphrase\":\"Test SDF Network ; September 2015\"",
+        ))
+        .stdout(predicate::str::contains("\"reachable\":true"))
+        .stdout(predicate::str::contains("\"status\":\"healthy\""));
+}
+
+#[test]
+fn network_check_matching_passphrase_json_mismatch_false() {
+    // A correct profile must still report passphrase_mismatch: false, exit 0,
+    // and preserve the existing JSON field set byte-for-byte.
+    let dir = tempdir().unwrap();
+    let url = spawn_mock_rpc_with_network(99, 20, "Mock Network", false);
+
+    sdkt(dir.path())
+        .args([
+            "network",
+            "add",
+            "good",
+            "--rpc-url",
+            &url,
+            "--passphrase",
+            "Mock Network",
+        ])
+        .assert()
+        .success();
+
+    sdkt(dir.path())
+        .args(["network", "check", "good", "--format", "json"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("\"passphrase_mismatch\":false"))
+        .stdout(predicate::str::contains("\"reachable\":true"))
+        .stdout(predicate::str::contains("\"status\":\"healthy\""))
+        .stdout(predicate::str::contains("\"error\":null"));
+}
+
+#[test]
+fn network_check_no_get_network_passphrase_mismatch_false_exits_zero() {
+    // When `getNetwork` is unavailable the endpoint passphrase is unknown:
+    // passphrase_mismatch must be false (no evidence of a mismatch) and the
+    // command must exit 0, keeping the same behavior as before for providers
+    // that do not implement getNetwork.
+    let dir = tempdir().unwrap();
+    let url = spawn_mock_rpc_with_network(99, 20, "unused", true); // network_error = true
+
+    sdkt(dir.path())
+        .args([
+            "network",
+            "add",
+            "noid",
+            "--rpc-url",
+            &url,
+            "--passphrase",
+            "Any Passphrase",
+        ])
+        .assert()
+        .success();
+
+    sdkt(dir.path())
+        .args(["network", "check", "noid", "--format", "json"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("\"passphrase_mismatch\":false"))
+        .stdout(predicate::str::contains("\"endpoint_passphrase\":null"))
+        .stdout(predicate::str::contains("\"reachable\":true"))
+        .stdout(predicate::str::contains("\"error\":null"));
 }
 
 #[test]

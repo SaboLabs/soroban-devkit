@@ -403,8 +403,13 @@ pub(crate) fn resolve_rpc_client_mutating(
 /// Serializes to the structured JSON schema used by `--format json`:
 /// `profile`, `rpc_url`, `reachable`, `status`, `latest_ledger`,
 /// `protocol_version`, `configured_passphrase`, `endpoint_passphrase`,
-/// `friendbot_url`, `network_info_error`, `error`. `error` describes
-/// reachability/health only; unsupported `getNetwork` is reported separately.
+/// `passphrase_mismatch`, `friendbot_url`, `network_info_error`, `error`.
+///
+/// `passphrase_mismatch` is `true` when the endpoint reported a passphrase
+/// that differs from the one stored in the profile. It is `false` when they
+/// match or when the endpoint did not report a passphrase (i.e. `getNetwork`
+/// was unavailable). `error` describes reachability/health only; unsupported
+/// `getNetwork` is reported separately via `network_info_error`.
 #[derive(Debug, serde::Serialize)]
 pub(crate) struct NetworkCheckOutcome {
     profile: String,
@@ -415,6 +420,9 @@ pub(crate) struct NetworkCheckOutcome {
     protocol_version: Option<u32>,
     configured_passphrase: String,
     endpoint_passphrase: Option<String>,
+    /// Derived comparison result: `true` when the endpoint returned a
+    /// passphrase that does not equal `configured_passphrase`.
+    passphrase_mismatch: bool,
     friendbot_url: Option<String>,
     network_info_error: Option<String>,
     error: Option<String>,
@@ -422,9 +430,10 @@ pub(crate) struct NetworkCheckOutcome {
 
 impl NetworkCheckOutcome {
     /// A profile is healthy only when the RPC endpoint answered a ledger
-    /// query *and* the subsequent health check reported `healthy`.
+    /// query, the subsequent health check reported `healthy`, and the
+    /// endpoint passphrase matches the configured one (when reported).
     fn is_healthy(&self) -> bool {
-        self.reachable && self.error.is_none()
+        self.reachable && self.error.is_none() && !self.passphrase_mismatch
     }
 }
 
@@ -450,6 +459,7 @@ async fn probe_network_profile(profile: &str, cfg: &NetworkConfig) -> NetworkChe
         protocol_version: None,
         configured_passphrase: cfg.passphrase.clone(),
         endpoint_passphrase: None,
+        passphrase_mismatch: false,
         friendbot_url: None,
         network_info_error: None,
         error: None,
@@ -501,6 +511,7 @@ fn apply_network_info(outcome: &mut NetworkCheckOutcome, network: NetworkInfo) {
         outcome.latest_ledger = network.latest_ledger;
     }
     outcome.protocol_version = Some(network.protocol_version);
+    outcome.passphrase_mismatch = network.passphrase != outcome.configured_passphrase;
     outcome.endpoint_passphrase = Some(network.passphrase);
     outcome.friendbot_url = network.friendbot_url;
 }
@@ -730,7 +741,12 @@ pub(crate) async fn run_network_action(
                 }
                 print_network_identity(&outcome);
             } else {
-                if outcome.reachable {
+                if outcome.passphrase_mismatch {
+                    println!(
+                        "Network profile '{}' is reachable but has a passphrase mismatch.",
+                        outcome.profile
+                    );
+                } else if outcome.reachable {
                     println!(
                         "Network profile '{}' is reachable but not healthy.",
                         outcome.profile

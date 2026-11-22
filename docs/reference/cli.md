@@ -716,18 +716,28 @@ when present, while `.sdkt.toml` and built-in defaults remain the fallback.
 the saved profile. It checks ledger reachability and node health, then asks the
 endpoint for its network identity with `getNetwork`. The output shows the
 profile's configured passphrase beside the endpoint-reported passphrase and
-warns when they differ; an available Friendbot URL is shown as well. A mismatch
-is advisory and does not change the profile or the command's exit status.
+warns when they differ; an available Friendbot URL is shown as well.
+
+A passphrase mismatch is a detected condition, not an advisory: the command
+exits 1 and sets `passphrase_mismatch: true` in JSON output, consistent with
+`sdkt network diagnose`'s identity-mismatch verdict. This is the most dangerous
+failure mode for a signing tool — a profile pointed at the wrong network — and
+both output modes must agree on it.
+
+Exit codes:
+- `0` — endpoint is reachable, healthy, and passphrase matches (or `getNetwork`
+  was unavailable, so no mismatch could be detected).
+- `1` — endpoint is unreachable, unhealthy, or passphrase mismatches.
+- `2` — usage error (missing profile name, unknown profile).
 
 Some RPC providers do not implement `getNetwork`. In that case the command
 still reports reachability, health, latest ledger, and protocol version from
-the other RPC checks, and labels the identity fields as not reported. JSON
-output keeps the existing `profile`, `rpc_url`, `reachable`, `status`,
-`latest_ledger`, `protocol_version`, and `error` keys, and adds
-`configured_passphrase`, nullable `endpoint_passphrase`, nullable
-`friendbot_url`, and nullable `network_info_error`. Only an unreachable or
-unhealthy endpoint causes a non-zero exit; failure of the optional identity
-query does not.
+the other RPC checks, and labels the identity fields as not reported. When
+`getNetwork` is unavailable `passphrase_mismatch` is `false` and the command
+exits 0 if the endpoint is otherwise healthy. JSON output carries `profile`,
+`rpc_url`, `reachable`, `status`, `latest_ledger`, `protocol_version`,
+`configured_passphrase`, nullable `endpoint_passphrase`, `passphrase_mismatch`,
+nullable `friendbot_url`, and nullable `network_info_error`.
 
 ### Capturing a network profile
 
