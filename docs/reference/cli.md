@@ -173,7 +173,7 @@ sdkt
 ├── wasm
 │   ├── inspect <file.wasm>  Offline inspection of a local WASM file (sections, exports, spec)
 │   ├── metadata --contract <contract>  [--network testnet] [--refresh] [--format]
-│   └── cache                 (info | remove | clear)
+│   └── cache                 (info | list | remove | clear)
 │
 ├── verify --contract <contract-id>
 │   ├── --wasm <file.wasm>    (local artifact to compare; offline hashed)
@@ -273,8 +273,10 @@ sdkt
 │   ├── generate              Write `sdkt.lock` from current build artifacts (run `sdkt build` first)
 │   ├── verify                Verify `sdkt.lock` against on-disk contract artifacts AND package
 │   │                         dependencies (lock matches manifest, git commits, path existence).
-│   │                         Advisory and non-fatal: prints `✓ lock file verified` /
-│   │                         `✓ package dependencies verified` or lists every drift.
+│   │                         Advisory for drift: prints `✓ lock file verified` /
+│   │                         `✓ package dependencies verified` or lists every drift (exit 0).
+│   │                         An absent lock is advisory too (exit 0). A present-but-corrupt
+│   │                         lock exits 1 and reports the parse error.
 │   └── show                  Print `sdkt.lock` contents
 
 ├── package                   Validate local package manifests
@@ -294,6 +296,34 @@ sdkt
 │   └── publish               Validate publish readiness (`--dry-run` only, read-only);
 │                             detects missing cache, lock drift, integrity mismatch.
 
+### Verifying the lock
+
+`sdkt lock verify` answers one question — is `sdkt.lock` consistent with what is on
+disk? — and its outcome is consumed as a verdict, so the three states are kept
+distinct:
+
+- **Consistent** — every locked artifact hash matches, every manifest contract and
+  dependency is accounted for, and dependency paths/caches/commits agree. Prints
+  `✓ sdkt.lock is consistent with current artifacts` and `✓ package dependencies
+  verified`; exits **0**.
+- **Absent** — no `sdkt.lock` at all. Advisory (matching the lock's documented
+  non-fatal role): prints `⚠ No sdkt.lock found; run `sdkt build` to generate one`
+  and, when dependencies are declared, `⚠ No sdkt.lock present; package
+  dependencies unverified`; exits **0**.
+- **Corrupt** — `sdkt.lock` exists but cannot be parsed. This is a broken build
+  input, never a clean bill of health: prints `⚠ Corrupt sdkt.lock: failed to
+  parse lock file sdkt.lock: ...` (the same parse-error wording `sdkt lock show`
+  uses) and exits **1**.
+
+Drift within a valid lock stays advisory: mismatched artifact hashes, missing
+entries, and dependency drift are listed and the command exits 0.
+
+`--format json` emits `{ "present", "consistent", "mismatched",
+"missing_in_lock", "error", "dependencies": { "present", "consistent",
+"checked", "error", "mismatches" } }`. `error` is `null` for the absent and
+consistent cases and carries the parse failure (same wording as `lock show`)
+for a corrupt lock; `dependencies.checked` is `0` when the lock could not be
+parsed. The field is additive, so existing consumers of the JSON keep working.
 ### Event pagination (`sdkt events`)
 
 `soroban-rpc`'s `getEvents` caps every response and returns a top-level
@@ -615,6 +645,8 @@ verification fails after an otherwise successful deploy.
 │   │   ├── --auth <MODE>                 Authorization mode: no-auth | correct-auth | wrong-auth
 │   │   ├── --expect-success <FN>         Declare function must succeed (repeatable)
 │   │   ├── --expect-error <FN:TYPE:CODE> Declare function must fail (repeatable)
+│   │   ├── --sequence-length <N>         Steps per generated sequence (>= 2; requires --sequence-every)
+│   │   ├── --sequence-every <N>          Run every N-th case as a sequence (>= 1; requires --sequence-length)
 │   │   ├── --replay                      Replay every written artifact to verify determinism
 │   │   ├── --format <pretty|json|jsonl>  Output format (default: pretty)
 │   │   └── [network flags inherited from network-profile resolution]
@@ -662,6 +694,21 @@ Entries for unselected contracts already in an existing lock are preserved, so a
 partial build never silently drops them.
 
 ## Network Profiles
+
+Saved profiles may also carry endpoint-specific connection policy:
+
+```bash
+sdkt network add slow \
+  --rpc-url https://rpc.example \
+  --passphrase "Test SDF Network ; September 2015" \
+  --timeout-secs 60 \
+  --pool-max-idle-per-host 20
+sdkt network show slow
+```
+
+`--timeout-secs` and `--pool-max-idle-per-host` are optional and are omitted
+from older profile files. The effective RPC policy uses the profile values
+when present, while `.sdkt.toml` and built-in defaults remain the fallback.
 
 ### Checking an RPC profile
 
@@ -879,6 +926,41 @@ A malformed hash (anything other than 64 hexadecimal characters) exits 2
 naming the problem before any RPC call is made. A corrupt `result_xdr` is
 an error naming the hash, never a silent empty result.
 
+## WASM cache
+
+`sdkt wasm cache` manages the local WASM metadata cache (see the
+`SDKT_CACHE_DIR` note under `wasm metadata`). Four actions:
+
+```bash
+# Aggregate stats for a network: entry count, metadata and WASM byte totals.
+sdkt wasm cache info --network testnet
+
+# Enumerate the individual entries for a network, one per cached contract.
+sdkt wasm cache list --network testnet
+# Cached WASM entries (2):
+#   HASH ...                                                              WASM       META
+#   551c5a9c7fd4c4a71e57e9c8a0ece1e7bd506ea065993c63db2dc35516406775   530 B      1.2 KB
+
+# The same entries as a JSON array of structured objects (sizes are raw
+# bytes here, and `null` marks a half-pair whose other file is missing).
+sdkt wasm cache list --network testnet --format json
+# [{"network":"testnet","hash":"551c...","metadata_size_bytes":1229,
+#   "wasm_size_bytes":530,"warning":null}]
+
+# Remove one entry by hash (the hash is what `list` shows), or clear the
+# whole network cache.
+sdkt wasm cache remove 551c5a9c7fd4... --network testnet
+sdkt wasm cache clear --network testnet
+```
+
+`list` is sorted by hash so the ordering is deterministic. An empty or
+not-yet-created cache is a useful empty result (`No cached WASM entries`
+pretty, `[]` in JSON), never an error. A malformed `{hash}.json` produces a
+per-entry warning (a `⚠` marker in pretty output, a `warning` field in JSON,
+and a diagnostic on stderr) while the listing still completes — it never
+aborts the whole listing, matching how `wasm metadata` treats cache read
+errors as warnings.
+
 ## Encode
 
 `sdkt encode` converts a typed value to its base64 XDR representation — the
@@ -1033,12 +1115,14 @@ sdkt fuzz campaign contract.wasm \
 |------|---------|---------|
 | `<WASM>` | *required* | Path to the compiled contract WASM file |
 | `--seed <N>` | `0` | Deterministic seed (u64). Same seed produces identical test case sequence across runs |
-| `--cases <N>` | `100` | Number of test cases to execute |
-| `--function <NAME>` | all | Restrict the campaign to one exported contract function |
+| `--cases <N>` | `100` | Number of test cases to execute (must be `>= 1`; `--cases 0` is a usage error, exit `2`) |
+| `--function <NAME>` | all | Restrict the campaign to one exported contract function (if no runnable function matches, exits `2` without writing clean evidence) |
 | `--artifact-dir <DIR>` | `./sdkt-fuzz-artifacts` | Directory where finding artifacts are written |
 | `--auth <MODE>` | `no-auth` | Authorization mode per test case: `no-auth`, `correct-auth`, or `wrong-auth`. See the sdkt-fuzz docs for exact semantics |
 | `--expect-success <FN>` | none | Declare that function `<FN>` must succeed (repeatable). Violations produce `RETURN_MISMATCH` or `UNEXPECTED_ERROR` findings |
 | `--expect-error <FN:TYPE:CODE>` | none | Declare that function `<FN>` must fail with error type `<TYPE>` and code `<CODE>`, e.g. `--expect-error bump:Auth:6` (repeatable) |
+| `--sequence-length <N>` | off (`2` when active) | Number of invocations in each generated multi-step sequence (`>= 2`; must be paired with `--sequence-every`) |
+| `--sequence-every <N>` | `0` (disabled) | Execute every `N`-th case (`case_number % N == 0`) as a multi-step sequence (`>= 1`; must be paired with `--sequence-length`) |
 | `--replay` | false | Replay every written artifact to verify determinism and reproduce findings |
 | `--format <FORMAT>` | `pretty` | Output format: `pretty`, `json`, or `jsonl` |
 
@@ -1048,6 +1132,13 @@ sdkt fuzz campaign contract.wasm \
 - `--expect-error <FN:TYPE:CODE>` — declare that a function must fail with a specific error. Format: `FunctionName:ErrorType:ErrorCode`. Example: `--expect-error transfer:Auth:6` means the `transfer` function must fail with `ContractError{Auth, 6}`.
 - A function may have only one expectation; declaring it with both flags is a usage error (exit 2).
 - Malformed declarations are usage errors (exit 2).
+
+**Sequence execution (state carry):**
+
+- By default (when both `--sequence-length` and `--sequence-every` are omitted), every case runs a single invocation against a fresh baseline (`sequence_every = 0`).
+- Passing `--sequence-length <L>` and `--sequence-every <E>` together exercises state carry across invocations: every `E`-th case (`case_number % E == 0`, starting at `case0000`) executes an ordered sequence of `L` calls to the selected function, carrying contract instance and data storage forward from step to step and building per-step authorization entries under `--auth`. All other cases run as single-step invocations.
+- Both flags must be supplied together: passing only one is a usage error (exit `2`) rejected before any campaign work starts. Values below the engine minimums (`--sequence-length < 2` or `--sequence-every < 1`) are also rejected with exit `2`.
+- When sequence mode is active, the campaign summary reports `sequences=<S> single_step=<K>` alongside the standard counters, and finding artifacts record `campaign.sequence_length`, `campaign.sequence_every`, and the minimized multi-step `sequence` array for replay via `sdkt fuzz replay`.
 
 **Output artifacts:**
 
@@ -1075,9 +1166,9 @@ Finding artifacts are written to `--artifact-dir` as JSON files following the na
 
 **Exit codes:**
 
-- `0` — campaign executed successfully; findings may or may not have been discovered
-- `1` — runtime error (e.g. WASM load failure, host error, invalid arguments)
-- `2` — usage error (e.g. malformed expectation, invalid seed)
+- `0` — campaign executed at least one case with no findings
+- `1` — campaign produced one or more findings
+- `2` — usage / configuration / input error (e.g. `--cases 0`, a `--function` filter matching no runnable function, a contract with no runnable functions, malformed expectation, invalid flags, or unreadable WASM)
 
 ### Replay
 
@@ -1163,6 +1254,8 @@ For details on fuzz evidence from real Soroban contracts and multi-step executio
 ### Integration with release assurance
 
 `sdkt release-assurance` accepts `--fuzz-evidence <EVIDENCE_JSON>` to attach fuzz evidence to a release report. The release pipeline does not run fuzz campaigns itself; campaigns are run separately (manually or in CI) and the resulting evidence is attached by path.
+
+A fuzz evidence file scores `PASS` only when `campaign_completed` is `true`, `case_count > 0`, and `findings` is empty. Evidence with `campaign_completed: false` or `case_count: 0` is never scored as `PASS` — it maps to `ERROR` and fails the release-assurance check.
 
 ## Plugin management
 

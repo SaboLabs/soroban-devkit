@@ -41,6 +41,12 @@ pub struct NetworkProfile {
     pub friendbot_url: Option<String>,
     /// Optional: description or notes
     pub description: Option<String>,
+    /// Optional per-endpoint RPC timeout in seconds.
+    #[serde(default)]
+    pub timeout_secs: Option<u64>,
+    /// Optional per-endpoint connection-pool idle limit.
+    #[serde(default)]
+    pub pool_max_idle_per_host: Option<usize>,
 }
 
 impl NetworkProfile {
@@ -56,6 +62,8 @@ impl NetworkProfile {
             network_passphrase: network_passphrase.into(),
             friendbot_url: None,
             description: None,
+            timeout_secs: None,
+            pool_max_idle_per_host: None,
         }
     }
 
@@ -68,6 +76,16 @@ impl NetworkProfile {
     /// Set the description.
     pub fn with_description(mut self, desc: impl Into<String>) -> Self {
         self.description = Some(desc.into());
+        self
+    }
+
+    pub fn with_timeout_secs(mut self, timeout_secs: u64) -> Self {
+        self.timeout_secs = Some(timeout_secs);
+        self
+    }
+
+    pub fn with_pool_max_idle_per_host(mut self, max_idle: usize) -> Self {
+        self.pool_max_idle_per_host = Some(max_idle);
         self
     }
 
@@ -92,6 +110,18 @@ impl NetworkProfile {
         if self.rpc_url.is_empty() {
             return Err(StorageError::ConfigError(format!(
                 "Network profile '{}' has an empty RPC URL",
+                self.name
+            )));
+        }
+        if self.timeout_secs == Some(0) {
+            return Err(StorageError::ConfigError(format!(
+                "Network profile '{}' timeout must be greater than zero",
+                self.name
+            )));
+        }
+        if self.pool_max_idle_per_host == Some(0) {
+            return Err(StorageError::ConfigError(format!(
+                "Network profile '{}' pool size must be greater than zero",
                 self.name
             )));
         }
@@ -350,6 +380,26 @@ mod tests {
 
         let valid = NetworkProfile::new("ok", "https://x.example", "P");
         assert!(valid.validate().is_ok());
+    }
+
+    #[test]
+    fn test_legacy_profile_without_connection_policy_still_loads() {
+        let profile: NetworkProfile = serde_json::from_str(
+            r#"{"name":"old","rpc_url":"https://old.example","network_passphrase":"P"}"#,
+        )
+        .unwrap();
+        assert_eq!(profile.timeout_secs, None);
+        assert_eq!(profile.pool_max_idle_per_host, None);
+        assert!(profile.validate().is_ok());
+    }
+
+    #[test]
+    fn test_rejects_zero_connection_policy_values() {
+        let timeout = NetworkProfile::new("bad", "https://x.example", "P").with_timeout_secs(0);
+        assert!(timeout.validate().is_err());
+        let pool =
+            NetworkProfile::new("bad", "https://x.example", "P").with_pool_max_idle_per_host(0);
+        assert!(pool.validate().is_err());
     }
 
     #[test]

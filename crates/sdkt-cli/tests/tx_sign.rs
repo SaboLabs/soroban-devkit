@@ -66,6 +66,7 @@ fn set_default_identity(dir: &std::path::Path, name: &str) {
 fn run_sign(dir: &std::path::Path, args: &[&str]) -> (bool, String, String) {
     let out = Command::new(env!("CARGO_BIN_EXE_sdkt"))
         .env("SDKT_IDENTITY_DIR", dir)
+        .env("SDKT_NETWORK_DIR", dir)
         .args(["tx", "sign"])
         .args(args)
         .output()
@@ -75,6 +76,46 @@ fn run_sign(dir: &std::path::Path, args: &[&str]) -> (bool, String, String) {
         String::from_utf8_lossy(&out.stdout).to_string(),
         String::from_utf8_lossy(&out.stderr).to_string(),
     )
+}
+
+fn add_network_profile(dir: &std::path::Path, name: &str, rpc_url: &str, passphrase: &str) {
+    let out = Command::new(env!("CARGO_BIN_EXE_sdkt"))
+        .env("SDKT_NETWORK_DIR", dir)
+        .args([
+            "network",
+            "add",
+            name,
+            "--rpc-url",
+            rpc_url,
+            "--passphrase",
+            passphrase,
+        ])
+        .output()
+        .expect("failed to run sdkt network add");
+    assert!(
+        out.status.success(),
+        "network add failed: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+}
+
+fn parse_envelope_b64(b64: &str) -> stellar_xdr::TransactionEnvelope {
+    use base64::Engine;
+    use stellar_xdr::{Limited, Limits, ReadXdr};
+
+    let raw = base64::engine::general_purpose::STANDARD
+        .decode(b64.trim())
+        .expect("signed envelope must be valid base64");
+    let mut cursor = std::io::Cursor::new(&raw);
+    let mut limited = Limited::new(&mut cursor, Limits::none());
+    stellar_xdr::TransactionEnvelope::read_xdr(&mut limited)
+        .expect("signed envelope must be valid XDR")
+}
+
+fn load_signer(dir: &std::path::Path, name: &str) -> sdkt_xdr::Ed25519Signer {
+    let store = sdkt_storage::IdentityStore::with_dir(dir).expect("open identity store");
+    let key = store.load_signing_key(name).expect("load signing key");
+    sdkt_xdr::Ed25519Signer::from_seed(&key.to_bytes())
 }
 
 #[test]
@@ -333,4 +374,392 @@ fn sign_without_default_identity_suggests_identity_default() {
         "stderr: {stderr2}"
     );
     let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn sign_with_network_profile_custom_passphrase() {
+    let dir = tempfile::tempdir().unwrap();
+    gen_identity(dir.path(), "alice");
+    let passphrase = "My Custom Passphrase ; 2026";
+    add_network_profile(dir.path(), "mynet", "https://rpc.example.com", passphrase);
+    let unsigned = build_unsigned(dir.path());
+    let signed_path = dir.path().join("signed.xdr");
+
+    let (ok, _, stderr) = run_sign(
+        dir.path(),
+        &[
+            "--input",
+            unsigned.to_str().unwrap(),
+            "--output",
+            signed_path.to_str().unwrap(),
+            "--identity",
+            "alice",
+            "--network-profile",
+            "mynet",
+        ],
+    );
+    assert!(
+        ok,
+        "sign with --network-profile should succeed, stderr: {stderr}"
+    );
+
+    let signed_b64 = std::fs::read_to_string(&signed_path).unwrap();
+    let env = parse_envelope_b64(&signed_b64);
+    let signer = load_signer(dir.path(), "alice");
+
+    assert!(
+        sdkt_xdr::verify_signature(
+            &env,
+            &signer,
+            &sdkt_xdr::SigningOptions::with(sdkt_xdr::Network::Custom(passphrase.to_string())),
+        ),
+        "signature must verify against the profile's custom passphrase"
+    );
+    assert!(
+        !sdkt_xdr::verify_signature(
+            &env,
+            &signer,
+            &sdkt_xdr::SigningOptions::with(sdkt_xdr::Network::Testnet),
+        ),
+        "signature for custom profile must not verify against testnet"
+    );
+}
+
+#[test]
+fn sign_with_network_profile_standard_passphrases_match_network_flag() {
+    let dir = tempfile::tempdir().unwrap();
+    gen_identity(dir.path(), "alice");
+    let unsigned = build_unsigned(dir.path());
+    let signer = load_signer(dir.path(), "alice");
+
+    let cases = [
+        ("prof-testnet", "testnet", sdkt_xdr::Network::Testnet),
+        ("prof-mainnet", "mainnet", sdkt_xdr::Network::Mainnet),
+        ("prof-futurenet", "futurenet", sdkt_xdr::Network::Futurenet),
+    ];
+
+    for (profile_name, label, expected_net) in cases {
+        add_network_profile(
+            dir.path(),
+            profile_name,
+            "https://rpc.example.com",
+            expected_net.passphrase(),
+        );
+
+        let via_profile = dir.path().join(format!("{profile_name}.xdr"));
+        let via_label = dir.path().join(format!("{label}.xdr"));
+
+        let (ok1, _, stderr1) = run_sign(
+            dir.path(),
+            &[
+                "--input",
+                unsigned.to_str().unwrap(),
+                "--output",
+                via_profile.to_str().unwrap(),
+                "--identity",
+                "alice",
+                "--network-profile",
+                profile_name,
+            ],
+        );
+        assert!(ok1, "profile sign failed for {profile_name}: {stderr1}");
+
+        let (ok2, _, stderr2) = run_sign(
+            dir.path(),
+            &[
+                "--input",
+                unsigned.to_str().unwrap(),
+                "--output",
+                via_label.to_str().unwrap(),
+                "--identity",
+                "alice",
+                "--network",
+                label,
+            ],
+        );
+        assert!(ok2, "label sign failed for {label}: {stderr2}");
+
+        let profile_b64 = std::fs::read_to_string(&via_profile).unwrap();
+        let label_b64 = std::fs::read_to_string(&via_label).unwrap();
+        assert_eq!(
+            profile_b64, label_b64,
+            "profile '{profile_name}' must sign identically to --network {label}"
+        );
+
+        let env = parse_envelope_b64(&profile_b64);
+        assert!(sdkt_xdr::verify_signature(
+            &env,
+            &signer,
+            &sdkt_xdr::SigningOptions::with(expected_net),
+        ));
+    }
+}
+
+#[test]
+fn sign_with_network_and_network_profile_mutually_exclusive() {
+    let dir = tempfile::tempdir().unwrap();
+    gen_identity(dir.path(), "alice");
+    add_network_profile(
+        dir.path(),
+        "mynet",
+        "https://rpc.example.com",
+        "My Custom Passphrase ; 2026",
+    );
+    let unsigned = build_unsigned(dir.path());
+
+    // Both flags after `tx sign`
+    let (ok, _, stderr) = run_sign(
+        dir.path(),
+        &[
+            "--input",
+            unsigned.to_str().unwrap(),
+            "--identity",
+            "alice",
+            "--network",
+            "testnet",
+            "--network-profile",
+            "mynet",
+        ],
+    );
+    assert!(
+        !ok,
+        "passing both --network and --network-profile must fail"
+    );
+    assert!(
+        stderr.contains("cannot be used with") || stderr.contains("together"),
+        "expected mutual exclusion error, got: {stderr}"
+    );
+
+    // Global `--network-profile` before `sign`, `--network` after `sign`
+    let out = Command::new(env!("CARGO_BIN_EXE_sdkt"))
+        .env("SDKT_IDENTITY_DIR", dir.path())
+        .env("SDKT_NETWORK_DIR", dir.path())
+        .args([
+            "tx",
+            "--network-profile",
+            "mynet",
+            "sign",
+            "--input",
+            unsigned.to_str().unwrap(),
+            "--identity",
+            "alice",
+            "--network",
+            "testnet",
+        ])
+        .output()
+        .expect("failed to run sdkt tx sign");
+    assert!(
+        !out.status.success(),
+        "passing global --network-profile with --network must fail"
+    );
+    let stderr2 = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        stderr2.contains("cannot be used with") || stderr2.contains("together"),
+        "expected mutual exclusion error, got: {stderr2}"
+    );
+}
+
+#[test]
+fn sign_with_unknown_network_profile_errors() {
+    let dir = tempfile::tempdir().unwrap();
+    gen_identity(dir.path(), "alice");
+    let unsigned = build_unsigned(dir.path());
+
+    let (ok, _, stderr) = run_sign(
+        dir.path(),
+        &[
+            "--input",
+            unsigned.to_str().unwrap(),
+            "--identity",
+            "alice",
+            "--network-profile",
+            "ghost",
+        ],
+    );
+    assert!(!ok, "sign with unknown network profile must fail");
+    assert!(
+        stderr.contains("network profile 'ghost' not found"),
+        "expected standard 'not found' error, got: {stderr}"
+    );
+}
+
+#[test]
+fn sign_with_custom_network_label() {
+    let dir = tempfile::tempdir().unwrap();
+    gen_identity(dir.path(), "alice");
+    let unsigned = build_unsigned(dir.path());
+    let signed_path = dir.path().join("signed_custom.xdr");
+
+    let (ok, _, stderr) = run_sign(
+        dir.path(),
+        &[
+            "--input",
+            unsigned.to_str().unwrap(),
+            "--output",
+            signed_path.to_str().unwrap(),
+            "--identity",
+            "alice",
+            "--network",
+            "custom:my-local-net",
+        ],
+    );
+    assert!(
+        ok,
+        "sign with --network custom:... should succeed, stderr: {stderr}"
+    );
+
+    let signed_b64 = std::fs::read_to_string(&signed_path).unwrap();
+    let env = parse_envelope_b64(&signed_b64);
+    let signer = load_signer(dir.path(), "alice");
+    assert!(sdkt_xdr::verify_signature(
+        &env,
+        &signer,
+        &sdkt_xdr::SigningOptions::with(sdkt_xdr::Network::Custom("my-local-net".to_string())),
+    ));
+}
+
+#[test]
+fn sign_network_passphrase_overrides_network_profile() {
+    let dir = tempfile::tempdir().unwrap();
+    gen_identity(dir.path(), "alice");
+    let profile_passphrase = "Profile Passphrase ; 2026";
+    let override_passphrase = "Override Passphrase ; 2026";
+    add_network_profile(
+        dir.path(),
+        "mynet",
+        "https://rpc.example.com",
+        profile_passphrase,
+    );
+    let unsigned = build_unsigned(dir.path());
+    let signed_path = dir.path().join("signed_override.xdr");
+
+    let (ok, _, stderr) = run_sign(
+        dir.path(),
+        &[
+            "--input",
+            unsigned.to_str().unwrap(),
+            "--output",
+            signed_path.to_str().unwrap(),
+            "--identity",
+            "alice",
+            "--network-profile",
+            "mynet",
+            "--network-passphrase",
+            override_passphrase,
+        ],
+    );
+    assert!(
+        ok,
+        "sign with --network-profile + --network-passphrase should succeed, stderr: {stderr}"
+    );
+
+    let signed_b64 = std::fs::read_to_string(&signed_path).unwrap();
+    let env = parse_envelope_b64(&signed_b64);
+    let signer = load_signer(dir.path(), "alice");
+
+    assert!(
+        sdkt_xdr::verify_signature(
+            &env,
+            &signer,
+            &sdkt_xdr::SigningOptions::with(sdkt_xdr::Network::Custom(
+                override_passphrase.to_string(),
+            )),
+        ),
+        "signature must verify against --network-passphrase override"
+    );
+    assert!(
+        !sdkt_xdr::verify_signature(
+            &env,
+            &signer,
+            &sdkt_xdr::SigningOptions::with(sdkt_xdr::Network::Custom(
+                profile_passphrase.to_string(),
+            )),
+        ),
+        "signature must not verify against the overridden profile passphrase"
+    );
+    assert!(
+        !sdkt_xdr::verify_signature(
+            &env,
+            &signer,
+            &sdkt_xdr::SigningOptions::with(sdkt_xdr::Network::Testnet),
+        ),
+        "signature must not fall back to testnet"
+    );
+}
+
+#[test]
+fn sign_with_bare_network_passphrase() {
+    let dir = tempfile::tempdir().unwrap();
+    gen_identity(dir.path(), "alice");
+    let passphrase = "Bare Override Passphrase ; 2026";
+    let unsigned = build_unsigned(dir.path());
+    let signed_path = dir.path().join("signed_bare_passphrase.xdr");
+
+    let (ok, _, stderr) = run_sign(
+        dir.path(),
+        &[
+            "--input",
+            unsigned.to_str().unwrap(),
+            "--output",
+            signed_path.to_str().unwrap(),
+            "--identity",
+            "alice",
+            "--network-passphrase",
+            passphrase,
+        ],
+    );
+    assert!(
+        ok,
+        "sign with bare --network-passphrase should succeed, stderr: {stderr}"
+    );
+
+    let signed_b64 = std::fs::read_to_string(&signed_path).unwrap();
+    let env = parse_envelope_b64(&signed_b64);
+    let signer = load_signer(dir.path(), "alice");
+
+    assert!(
+        sdkt_xdr::verify_signature(
+            &env,
+            &signer,
+            &sdkt_xdr::SigningOptions::with(sdkt_xdr::Network::Custom(passphrase.to_string())),
+        ),
+        "signature must verify against bare --network-passphrase"
+    );
+    assert!(
+        !sdkt_xdr::verify_signature(
+            &env,
+            &signer,
+            &sdkt_xdr::SigningOptions::with(sdkt_xdr::Network::Testnet),
+        ),
+        "bare --network-passphrase must not fall through to testnet"
+    );
+}
+
+#[test]
+fn sign_with_network_and_network_passphrase_mutually_exclusive() {
+    let dir = tempfile::tempdir().unwrap();
+    gen_identity(dir.path(), "alice");
+    let unsigned = build_unsigned(dir.path());
+
+    let (ok, _, stderr) = run_sign(
+        dir.path(),
+        &[
+            "--input",
+            unsigned.to_str().unwrap(),
+            "--identity",
+            "alice",
+            "--network",
+            "testnet",
+            "--network-passphrase",
+            "Override Passphrase ; 2026",
+        ],
+    );
+    assert!(
+        !ok,
+        "passing both --network and --network-passphrase must fail"
+    );
+    assert!(
+        stderr.contains("cannot be used with") || stderr.contains("together"),
+        "expected mutual exclusion error, got: {stderr}"
+    );
 }

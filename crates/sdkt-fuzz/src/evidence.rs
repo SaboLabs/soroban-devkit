@@ -38,7 +38,7 @@ pub enum ReplayStatus {
 /// under its declared rules, not a guarantee about the contract.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct CampaignEvidence {
-    /// True when the campaign ran to completion.
+    /// True when the campaign ran to completion and executed at least one case.
     pub campaign_completed: bool,
     /// Campaign configuration snapshot (deterministic inputs).
     pub config: crate::artifact::CampaignConfig,
@@ -119,7 +119,7 @@ impl CampaignEvidence {
             .collect();
 
         Self {
-            campaign_completed: true,
+            campaign_completed: result.executed > 0,
             config,
             case_count: result.executed,
             passed: result.passed.len(),
@@ -165,4 +165,44 @@ pub fn record_replay(
         },
     };
     map.insert(artifact_hash.to_string(), status);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::artifact::CampaignConfig;
+
+    #[test]
+    fn zero_executed_campaign_is_not_marked_completed() {
+        let result = CampaignResult::default();
+        let evidence = CampaignEvidence::from_result(
+            &result,
+            CampaignConfig::default(),
+            &[],
+            &BTreeMap::new(),
+            true,
+        );
+        assert!(!evidence.campaign_completed);
+        assert_eq!(evidence.case_count, 0);
+        assert!(evidence.findings.is_empty());
+    }
+
+    #[test]
+    fn nonzero_executed_campaign_is_marked_completed() {
+        let result = CampaignResult {
+            executed: 2,
+            passed: vec!["case0000".to_string(), "case0001".to_string()],
+            ..Default::default()
+        };
+        let evidence = CampaignEvidence::from_result(
+            &result,
+            CampaignConfig::default(),
+            &[],
+            &BTreeMap::new(),
+            true,
+        );
+        assert!(evidence.campaign_completed);
+        assert_eq!(evidence.case_count, 2);
+        assert_eq!(evidence.passed, 2);
+    }
 }
