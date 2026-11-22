@@ -71,6 +71,7 @@ mod tests {
     fn example_rule_fires_on_trigger_function() {
         let scans = vec![FnScan {
             fn_name: "sdkt_example_trigger_admin".to_string(),
+            line: None,
             require_auth: 0,
             invoke_contract: 0,
             bound: Default::default(),
@@ -92,6 +93,7 @@ mod tests {
     fn example_rule_silent_on_normal_function() {
         let scans = vec![FnScan {
             fn_name: "balance_of".to_string(),
+            line: None,
             require_auth: 0,
             invoke_contract: 0,
             bound: Default::default(),

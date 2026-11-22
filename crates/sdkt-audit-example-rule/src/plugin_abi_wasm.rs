@@ -70,7 +70,6 @@ pub fn sdkt_plugin_check(input_json: String) -> FnResult<String> {
             severity: SEVERITY_INFO,
             message: format!("Example rule matched trigger function `{}`", s.fn_name),
             location: Some(s.fn_name.clone()),
-            line: None,
         })
         .collect();
 

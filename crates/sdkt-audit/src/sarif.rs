@@ -430,19 +430,19 @@ fn finding_to_result_for_file(f: &Finding) -> SarifResult {
     let source_file = f
         .file
         .as_deref()
-        .filter(|s| !s.is_empty())
-        .unwrap_or("unknown.rs");
+        .filter(|s| !s.is_empty());
+    let resolved_file = source_file.unwrap_or("unknown.rs");
     let message_text = match &f.location {
         Some(loc) => format!("{} ({})", f.message, loc),
         None => f.message.clone(),
     };
 
-    let is_absolute = is_absolute_source_path(source_file);
+    let is_absolute = is_absolute_source_path(resolved_file);
     let (uri, uri_base_id) = if is_absolute {
-        (file_uri_from_path(source_file), None)
+        (file_uri_from_path(resolved_file), None)
     } else {
         (
-            relative_uri_from_path(source_file),
+            relative_uri_from_path(resolved_file),
             Some("%SRCROOT%".to_string()),
         )
     };
@@ -454,7 +454,7 @@ fn finding_to_result_for_file(f: &Finding) -> SarifResult {
         locations: vec![SarifLocation {
             physical_location: SarifPhysicalLocation {
                 artifact_location: SarifArtifactLocation { uri, uri_base_id },
-                region: f.line.map(|start_line| SarifRegion { start_line }),
+                region: source_file.and_then(|_| f.line.map(|start_line| SarifRegion { start_line })),
             },
         }],
     }
