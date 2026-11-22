@@ -301,6 +301,8 @@ fn replay_json_value(outcome: &sdkt_fuzz::ReplayOutcome) -> serde_json::Value {
             v["actual_classification"] = serde_json::json!(format!("{actual:?}"));
             v["artifact_hash"] = serde_json::json!(artifact_hash);
             v["observation_hash"] = serde_json::json!(observation_hash);
+            v["minimization"] =
+                serde_json::to_value(minimization).expect("minimization snapshot serializes");
         }
     }
     v
