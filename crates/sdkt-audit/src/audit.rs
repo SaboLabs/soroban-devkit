@@ -1,4 +1,4 @@
-﻿//! Audit engine: rule trait, AST scanner, and entry points.
+//! Audit engine: rule trait, AST scanner, and entry points.
 
 use std::collections::{HashMap, HashSet};
 
@@ -963,4 +963,3 @@ mod tests {
         assert_rule(&Move001);
     }
 }
-
