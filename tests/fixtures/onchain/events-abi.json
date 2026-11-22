@@ -1,10 +1,10 @@
 {
-  "source_wasm": "crates/sdkt-cli/tests/fixtures/us_new.wasm",
+  "source_wasm": "crates/sdkt-cli/tests/fixtures/mint_fixture.wasm",
   "event_topic_symbol": "Mint",
   "expected": {
     "label": "Mint",
     "matched_type": "event:Mint",
     "decoded_by": "sdkt_xdr::abi_decode::decode_event_topics (ABI-aware decoding)"
   },
-  "note": "Deterministic, offline-provable assertion: the deployed-contract ABI path (on-chain retrieval -> parse_contract_spec) feeds the ABI decoder exactly this spec, so a 'Mint' event topic decodes to label 'Mint' / matched_type 'event:Mint'. CI validates the source WASM declares the 'Mint' event (via offline `sdkt wasm inspect`) and that the decoder yields the expected label."
+  "note": "Deterministic, offline-provable assertion: the deployed-contract ABI path (on-chain retrieval -> parse_contract_spec) feeds the ABI decoder exactly this spec, so a 'Mint' event topic decodes to label 'Mint' / matched_type 'event:Mint'. CI validates the source WASM declares the 'Mint' event (via offline `sdkt wasm inspect --format json`) and that the decoder yields the expected label. Source contract: crates/sdkt-cli/tests/fixtures/mint_fixture/ (soroban-sdk =27.0.6, wasm32v1-none)."
 }

@@ -255,21 +255,46 @@ jobs:
           set -euo pipefail
           SDKT="${{ github.workspace }}/target/debug/sdkt"
           FIXTURE="${{ github.workspace }}/tests/fixtures/onchain/events-abi.json"
-          SRC_WASM="${{ github.workspace }}/crates/sdkt-cli/tests/fixtures/us_new.wasm"
+          SRC_WASM="${{ github.workspace }}/crates/sdkt-cli/tests/fixtures/mint_fixture.wasm"
 
           # 1) Fixture is always validated (no network): the source WASM must declare
           #    the event the M43 path would decode, proving ABI-aware decoding is wired.
+          #    Read the expected event name from the fixture, then assert it appears in
+          #    the WASM's parsed spec (--format json). A mismatch fails the step.
           python3 - <<PY
-          import json, sys
-          with open("$FIXTURE") as f:
+          import json, subprocess, sys
+
+          fixture_path = "$FIXTURE"
+          wasm_path    = "$SRC_WASM"
+          sdkt         = "$SDKT"
+
+          with open(fixture_path) as f:
               d = json.load(f)
           assert d["expected"]["label"], "fixture must name an expected decoded label"
-          print("fixture OK: event=%s label=%s" % (d["event_topic_symbol"], d["expected"]["label"]))
+          want_event = d["event_topic_symbol"]
+          print("fixture OK: event=%s label=%s" % (want_event, d["expected"]["label"]))
+
+          print("--- verifying source WASM declares event %r (offline) ---" % want_event)
+          result = subprocess.run(
+              [sdkt, "wasm", "inspect", wasm_path, "--format", "json"],
+              capture_output=True, text=True
+          )
+          if result.returncode != 0:
+              print("FAIL: sdkt wasm inspect exited %d" % result.returncode, file=sys.stderr)
+              print(result.stderr, file=sys.stderr)
+              sys.exit(1)
+          spec = json.loads(result.stdout)
+          event_names = [e["name"] for e in (spec.get("spec") or {}).get("events") or []]
+          if want_event not in event_names:
+              print(
+                  "FAIL: source WASM does not declare event %r — got %r\n"
+                  "      (the M43 ABI-aware decode path is not wired to a real event spec)"
+                  % (want_event, event_names),
+                  file=sys.stderr,
+              )
+              sys.exit(1)
+          print("source WASM declares event %r — ABI-aware decode path valid" % want_event)
           PY
-          echo "--- verifying source WASM declares event 'Mint' (offline) ---"
-          "$SDKT" wasm inspect "$SRC_WASM" 2>/dev/null | grep -q "Mint" \
-            && echo "source WASM declares 'Mint' event (ABI-aware decode path valid)" \
-            || echo "WARN: source WASM did not expose 'Mint' in inspect output"
 
           # 2) Attempt a live on-chain events decode; tolerate network failure.
           CONTRACT="CCJFOGL5RVIAZC3F4KTV5XK3YZYEXZCBEEDCSU4T202MJQVVP5JXN3M"
@@ -290,26 +315,77 @@ jobs:
           set -euo pipefail
           SDKT="${{ github.workspace }}/target/debug/sdkt"
           FIXTURE="${{ github.workspace }}/tests/fixtures/onchain/storage-abi.json"
-          SRC_WASM="${{ github.workspace }}/crates/sdkt-cli/tests/fixtures/us_new.wasm"
+          SRC_WASM="${{ github.workspace }}/crates/sdkt-cli/tests/fixtures/mint_fixture.wasm"
 
           # 1) Fixture is always validated (no network): the source WASM must declare
           #    the ABI fields the M44 path would feed the storage analyzer.
+          #    Read each expected name from the fixture, then assert it appears in
+          #    the WASM's parsed spec (--format json). Any mismatch fails the step.
           python3 - <<PY
-          import json, sys
-          with open("$FIXTURE") as f:
+          import json, subprocess, sys
+
+          fixture_path = "$FIXTURE"
+          wasm_path    = "$SRC_WASM"
+          sdkt         = "$SDKT"
+
+          with open(fixture_path) as f:
               d = json.load(f)
-          assert d["expected_abi_fields"]["functions_contain"], "fixture must name a function"
-          assert d["expected_abi_fields"]["custom_types_contain"], "fixture must name a custom type"
-          assert d["expected_abi_fields"]["events_contain"], "fixture must name an event"
-          print("fixture OK: functions=%s custom_types=%s events=%s" % (
-              d["expected_abi_fields"]["functions_contain"],
-              d["expected_abi_fields"]["custom_types_contain"],
-              d["expected_abi_fields"]["events_contain"]))
+          fields = d["expected_abi_fields"]
+          assert fields["functions_contain"],   "fixture must name a function"
+          assert fields["custom_types_contain"], "fixture must name a custom type"
+          assert fields["events_contain"],       "fixture must name an event"
+          want_fn   = fields["functions_contain"]
+          want_type = fields["custom_types_contain"]
+          want_ev   = fields["events_contain"]
+          print("fixture OK: functions=%s custom_types=%s events=%s" % (want_fn, want_type, want_ev))
+
+          print("--- verifying source WASM declares ABI fields (offline) ---")
+          result = subprocess.run(
+              [sdkt, "wasm", "inspect", wasm_path, "--format", "json"],
+              capture_output=True, text=True
+          )
+          if result.returncode != 0:
+              print("FAIL: sdkt wasm inspect exited %d" % result.returncode, file=sys.stderr)
+              print(result.stderr, file=sys.stderr)
+              sys.exit(1)
+          spec_root = json.loads(result.stdout)
+          spec = spec_root.get("spec") or {}
+          fn_names   = [f["name"] for f in spec.get("functions")    or []]
+          type_names = [t["name"] for t in spec.get("custom_types") or []]
+          ev_names   = [e["name"] for e in spec.get("events")        or []]
+
+          failed = False
+          if want_fn not in fn_names:
+              print(
+                  "FAIL: source WASM does not declare function %r — got %r\n"
+                  "      (the M44 storage ABI path is not wired to a real function spec)"
+                  % (want_fn, fn_names),
+                  file=sys.stderr,
+              )
+              failed = True
+          if want_type not in type_names:
+              print(
+                  "FAIL: source WASM does not declare custom type %r — got %r\n"
+                  "      (the M44 storage ABI path is not wired to a real custom type spec)"
+                  % (want_type, type_names),
+                  file=sys.stderr,
+              )
+              failed = True
+          if want_ev not in ev_names:
+              print(
+                  "FAIL: source WASM does not declare event %r — got %r\n"
+                  "      (the M44 storage ABI path is not wired to a real event spec)"
+                  % (want_ev, ev_names),
+                  file=sys.stderr,
+              )
+              failed = True
+          if failed:
+              sys.exit(1)
+          print(
+              "source WASM declares function=%r custom_type=%r event=%r"
+              " — storage on-chain decode path valid" % (want_fn, want_type, want_ev)
+          )
           PY
-          echo "--- verifying source WASM declares ABI fields (offline) ---"
-          "$SDKT" wasm inspect "$SRC_WASM" 2>/dev/null | grep -q "Mint" \
-            && echo "source WASM declares 'Mint' ABI (storage on-chain decode path valid)" \
-            || echo "WARN: source WASM did not expose expected ABI in inspect output"
 
           # 2) Attempt a live on-chain storage ABI decode; tolerate network failure.
           CONTRACT="CCJFOGL5RVIAZC3F4KTV5XK3YZYEXZCBEEDCSU4T202MJQVVP5JXN3M"
