@@ -751,6 +751,10 @@ fn runner_writes_and_replays_multistep_artifacts_when_sequence_enabled() {
         auth_mode: sdkt_fuzz::AuthMode::NoAuth,
         expect_success: vec!["increment".to_string()],
         expect_error: Vec::new(),
+        // Default-off: this test exercises the sequence path, not the
+        // RESOURCE_LIMIT rule or capped budgets.
+        resource_limit_is_finding: false,
+        budget_capped: None,
         replay: true,
     };
 
