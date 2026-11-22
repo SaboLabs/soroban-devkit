@@ -411,6 +411,20 @@ fn run_campaign_inner(
         }
     }
 
+    for function in expectations.keys() {
+        let evaluated = result.evaluated_functions.iter().any(|f| f == function);
+        let skipped = result
+            .skipped_functions
+            .iter()
+            .any(|skip| &skip.function == function);
+        if !evaluated && !skipped && functions.iter().any(|f| f == function) {
+            result.skipped_functions.push(SkippedFunction {
+                function: function.clone(),
+                reason: "declaration not evaluated: no case budget allocated".to_string(),
+            });
+        }
+    }
+
     Ok((result, artifacts))
 }
 

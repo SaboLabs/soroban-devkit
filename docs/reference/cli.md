@@ -1252,11 +1252,13 @@ contract's `ContractSpec` is also a usage error that exits 2 and names the
 declaration and function.
 
 A declaration for a function present in the spec but not evaluated, for example
-because `--function` excludes it or the function has an unsupported parameter
-type, is reported by the campaign's existing `SKIPPED` output with the reason.
-A declaration that was executed is reported as `status=evaluated` in pretty
-output. Valid declarations keep their existing campaign semantics and exit
-behavior. Malformed `--expect-error` declarations remain usage errors.
+because `--function` excludes it, the function has an unsupported parameter
+type, or it received no `--cases` budget, is reported by the campaign's
+`SKIPPED` output with the reason. A declaration that was executed is reported
+as `DECLARATION <declaration> status=evaluated` in pretty output and recorded
+in campaign evidence. Valid declarations keep their existing campaign
+semantics and exit behavior. Malformed `--expect-error` declarations remain
+usage errors.
 
 ## Error Handling
 

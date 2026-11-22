@@ -85,6 +85,9 @@ impl FuzzReport {
                 skipped.function, skipped.reason
             ));
         }
+        for declaration in &self.result.evaluated_declarations {
+            out.push_str(&format!("DECLARATION {declaration} status=evaluated\n"));
+        }
         for f in &self.result.findings {
             out.push_str(&format!(
                 "FINDING {} {} {} (minimized_complexity={})\n",
