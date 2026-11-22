@@ -376,7 +376,7 @@ fn cli_campaign_zero_cases_is_usage_error() {
     .assert()
     .failure()
     .code(2)
-    .stderr(predicate::str::contains("cases must be greater than 0"));
+    .stderr(predicate::str::contains("campaign executed 0 cases"));
 
     assert!(
         !out.join("campaign-evidence.json").exists(),

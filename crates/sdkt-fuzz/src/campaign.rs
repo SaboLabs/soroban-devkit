@@ -192,8 +192,6 @@ fn run_campaign_inner(
     input: &CampaignInput,
     expectations: &std::collections::BTreeMap<String, Expected>,
 ) -> Result<(CampaignResult, Vec<FindingArtifact>), FuzzError> {
-    let executor = Executor::new(&input.wasm, default_config(input)?)?;
-    let artifact_config = input.artifact_config();
     let (functions, mut skipped) = input.selectable();
     let (_, all_skipped) = crate::finding::selectable(&input.spec);
     for function in expectations.keys() {

@@ -519,6 +519,12 @@ pub fn load_artifact(path: &Path) -> Result<FindingArtifact, ReplayError> {
     parse_artifact(&json)
 }
 
+/// Convenience for CLI/tests: the ScVal hex of a U32 (expected-return
+/// declarations need the canonical encoding once).
+pub fn u32_scval_hex(n: u32) -> String {
+    encode_scval_xdr_hex(&ScVal::U32(n))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -539,10 +545,4 @@ mod tests {
         assert!(trace.contains("REDUCTION case=case0001 kind=arg"));
         assert!(trace.contains("complexity_after=7"));
     }
-}
-
-/// Convenience for CLI/tests: the ScVal hex of a U32 (expected-return
-/// declarations need the canonical encoding once).
-pub fn u32_scval_hex(n: u32) -> String {
-    encode_scval_xdr_hex(&ScVal::U32(n))
 }
