@@ -88,7 +88,9 @@ fn install_list_show_resolve_remove_lifecycle() {
     )
     .unwrap();
 
-    let meta = install(&src, &InstallOpts::default()).expect("install");
+    let meta = install(&src, &InstallOpts::default())
+        .expect("install")
+        .metadata;
     assert_eq!(meta.id, "example-rule");
 
     let listed = list_in(tmp.path());
@@ -122,9 +124,11 @@ fn install_with_id_override_preserves_identity_across_lifecycle() {
         &InstallOpts {
             id: Some("override-name".into()),
             force: false,
+            dry_run: false,
         },
     )
-    .expect("install with override");
+    .expect("install with override")
+    .metadata;
     assert_eq!(meta.id, "override-name");
 
     let installed_manifest = tmp.path().join("override-name").join("plugin.toml");
@@ -181,6 +185,92 @@ fn kind_extension_mismatch_rejected() {
     .unwrap();
     let err = install(&src, &InstallOpts::default()).unwrap_err();
     assert!(matches!(err, StoreError::KindExtMismatch { .. }));
+}
+
+#[test]
+fn dry_run_is_read_only_and_reports_collision_modes() {
+    let _g = env_lock();
+    let tmp = tempfile::tempdir().unwrap();
+    set_store_root(tmp.path());
+    let source_dir = tmp.path().join("source");
+    std::fs::create_dir_all(&source_dir).unwrap();
+    let src = source_dir.join("ex.wasm");
+    std::fs::write(&src, b"dummy-wasm-bytes").unwrap();
+    std::fs::write(
+        source_dir.join("plugin.toml"),
+        meta_toml("wasm", SDKT_AUDIT_ABI_MAJOR, "ex.wasm"),
+    )
+    .unwrap();
+
+    let preview = install(
+        &src,
+        &InstallOpts {
+            dry_run: true,
+            ..Default::default()
+        },
+    )
+    .unwrap();
+    assert_eq!(preview.metadata.id, "example-rule");
+    assert!(preview.collision.is_none());
+    assert!(!tmp.path().join("example-rule").exists());
+
+    install(&src, &InstallOpts::default()).unwrap();
+    let before = std::fs::read(tmp.path().join("example-rule/plugin.toml")).unwrap();
+    let collision = install(
+        &src,
+        &InstallOpts {
+            dry_run: true,
+            ..Default::default()
+        },
+    )
+    .unwrap();
+    assert_eq!(
+        collision.collision.as_deref(),
+        Some("would fail: id already installed (use --force)")
+    );
+    let overwrite = install(
+        &src,
+        &InstallOpts {
+            dry_run: true,
+            force: true,
+            ..Default::default()
+        },
+    )
+    .unwrap();
+    assert_eq!(
+        overwrite.collision.as_deref(),
+        Some("would overwrite the existing install")
+    );
+    assert_eq!(
+        std::fs::read(tmp.path().join("example-rule/plugin.toml")).unwrap(),
+        before
+    );
+}
+
+#[test]
+fn dry_run_bad_abi_matches_real_install_error() {
+    let _g = env_lock();
+    let tmp = tempfile::tempdir().unwrap();
+    set_store_root(tmp.path());
+    let src = tmp.path().join("bad.wasm");
+    std::fs::write(&src, b"dummy-wasm-bytes").unwrap();
+    let wrong = if SDKT_AUDIT_ABI_MAJOR == 1 { 2 } else { 1 };
+    std::fs::write(
+        tmp.path().join("plugin.toml"),
+        meta_toml("wasm", wrong, "bad.wasm"),
+    )
+    .unwrap();
+    let dry = install(
+        &src,
+        &InstallOpts {
+            dry_run: true,
+            ..Default::default()
+        },
+    )
+    .unwrap_err();
+    let real = install(&src, &InstallOpts::default()).unwrap_err();
+    assert_eq!(dry.to_string(), real.to_string());
+    assert!(!tmp.path().join("example-rule").exists());
 }
 
 /// Verifies resolve_store_root() fallback behavior when SDKT_PLUGIN_DIR is absent.

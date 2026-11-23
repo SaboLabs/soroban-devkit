@@ -156,6 +156,15 @@ pub enum StoreError {
 pub struct BundleVerification {
     pub metadata: PluginMeta,
     pub signed: bool,
+    pub collision: Option<String>,
+}
+
+/// Result of validating an install. A collision is reported during dry runs;
+/// normal installs turn the same condition into [`StoreError::AlreadyInstalled`].
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct InstallOutcome {
+    pub metadata: PluginMeta,
+    pub collision: Option<String>,
 }
 
 /// Validate that a relative path does not escape the parent directory (no path traversal).
@@ -350,6 +359,7 @@ pub fn verify_bundle(
     Ok(BundleVerification {
         metadata: meta,
         signed,
+        collision: None,
     })
 }
 
@@ -389,7 +399,9 @@ pub fn install_bundle_with_key(
         // at the staging root, not next to the artifact, so a nested
         // artifact path (e.g. `bin/rule.wasm`) must not make install look
         // for `bin/plugin.toml`.
-        verified.metadata = install_with_meta(&source, opts, verified.metadata)?;
+        let outcome = install_with_meta(&source, opts, verified.metadata)?;
+        verified.metadata = outcome.metadata;
+        verified.collision = outcome.collision;
         Ok(verified)
     })();
     let _ = std::fs::remove_dir_all(&staging);
@@ -555,6 +567,8 @@ pub struct InstallOpts {
     pub id: Option<String>,
     /// Overwrite an existing install of the same id.
     pub force: bool,
+    /// Validate and preview the install without modifying the store.
+    pub dry_run: bool,
 }
 
 /// Install a plugin from a local artifact path.
@@ -563,7 +577,7 @@ pub struct InstallOpts {
 /// artifact's directory), check `abi_major`, check kind/extension, optionally
 /// dry-run load via the existing loader, then copy the artifact + manifest into
 /// the store. Nothing is committed to the store until all checks pass.
-pub fn install(local_source: &Path, opts: &InstallOpts) -> Result<PluginMeta, StoreError> {
+pub fn install(local_source: &Path, opts: &InstallOpts) -> Result<InstallOutcome, StoreError> {
     if local_source.to_string_lossy().starts_with("http://")
         || local_source.to_string_lossy().starts_with("https://")
     {
@@ -594,7 +608,7 @@ fn install_with_meta(
     local_source: &Path,
     opts: &InstallOpts,
     mut meta: PluginMeta,
-) -> Result<PluginMeta, StoreError> {
+) -> Result<InstallOutcome, StoreError> {
     if local_source.to_string_lossy().starts_with("http://")
         || local_source.to_string_lossy().starts_with("https://")
     {
@@ -610,7 +624,16 @@ fn install_with_meta(
 
     let root = resolve_store_root();
     let dir = plugin_dir(&root, &id);
-    if dir.exists() && !opts.force {
+    let collision = if dir.exists() {
+        if opts.force {
+            Some("would overwrite the existing install".to_string())
+        } else {
+            Some("would fail: id already installed (use --force)".to_string())
+        }
+    } else {
+        None
+    };
+    if collision.is_some() && !opts.dry_run && !opts.force {
         return Err(StoreError::AlreadyInstalled(id));
     }
 
@@ -629,6 +652,13 @@ fn install_with_meta(
             crate::plugin_loader_wasm::WasmPluginRule::load(local_source, "")
                 .map_err(|e| StoreError::DryRunLoad(e.to_string()))?;
         }
+    }
+
+    if opts.dry_run {
+        return Ok(InstallOutcome {
+            metadata: meta,
+            collision,
+        });
     }
 
     // Capture the previously-managed artifact (if any) before committing, so a
@@ -668,7 +698,10 @@ fn install_with_meta(
             }
         }
     }
-    Ok(meta)
+    Ok(InstallOutcome {
+        metadata: meta,
+        collision: None,
+    })
 }
 
 /// Keep lifecycle tests hermetic without weakening release installation.
@@ -727,12 +760,13 @@ pub fn update_with_key(
     let opts = InstallOpts {
         id: Some(id.to_string()),
         force: true,
+        dry_run: false,
     };
     if is_bundle_path(local_source) {
         let verified = install_bundle_with_key(local_source, &opts, verifying_key)?;
         Ok(verified.metadata)
     } else {
-        install(local_source, &opts)
+        install(local_source, &opts).map(|outcome| outcome.metadata)
     }
 }
 
@@ -917,6 +951,30 @@ mod bundle_tests {
     /// `cargo build --release -p sdkt-audit-example-rule --target
     /// wasm32-wasip1 --features wasm-plugins`.
     const EXAMPLE_WASM: &[u8] = include_bytes!("../tests/fixtures/example-rule.wasm");
+
+    #[test]
+    fn dry_run_bundle_is_read_only() {
+        let _g = ENV_LOCK.lock().unwrap();
+        let tmp = tempfile::tempdir().unwrap();
+        let store = tmp.path().join("store");
+        set_store_root(&store);
+        let artifact = tmp.path().join("rule.wasm");
+        fs::write(&artifact, EXAMPLE_WASM).unwrap();
+        let bundle = tmp.path().join("dry-run.sdktplugin");
+        pack_bundle(&bundle, &meta(), &artifact, None).unwrap();
+
+        let result = install_bundle(
+            &bundle,
+            &InstallOpts {
+                dry_run: true,
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        assert_eq!(result.metadata.id, "example-rule");
+        assert!(result.collision.is_none());
+        assert!(!store.exists());
+    }
 
     /// Install v1 from a bundle into a fresh temp store; returns the store root.
     fn install_v1_bundle(tmp: &Path) -> PathBuf {

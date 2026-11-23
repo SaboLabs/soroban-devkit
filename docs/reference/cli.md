@@ -1271,6 +1271,7 @@ sdkt plugin show <id>                              # show a plugin's metadata
 sdkt plugin install ./path/to/artifact.wasm        # install from a local file
 sdkt plugin install ./bundle.sdktplugin            # verify, then install a bundle (reports signed: true/false)
 sdkt plugin install ./bundle.sdktplugin --public-key ./pubkey.key               # require a signature from this author key (unsigned is refused)
+sdkt plugin install ./path/to/artifact.wasm --dry-run                           # validate and preview without writing
 sdkt plugin remove <id>                            # remove (idempotent)
 sdkt plugin update <id> ./path/to/artifact.wasm    # local-only update
 sdkt plugin pack ./path/to/plugin-dir --output ./myrule.sdktplugin              # pack into .sdktplugin bundle
@@ -1290,6 +1291,21 @@ schema and the install-validation rules.
 
 Store root precedence (lowest → highest): `<cwd>/.sdkt/plugins`,
 `<config-dir>/sdkt/plugins`, `$SDKT_PLUGIN_DIR`.
+
+#### `plugin install --dry-run`
+
+`sdkt plugin install <artifact-or-bundle> --dry-run` runs the same metadata,
+ABI, kind/extension, signature (when `--public-key` is supplied), and loader
+checks as a real install, then stops before changing the plugin store. The
+preview reports the plugin id, name, version, author, kind, ABI versions, and
+whether the install would succeed. Use `--format json` for those fields as
+`id`, `name`, `version`, `author`, `kind`, `abi_major`, `abi_minor`,
+`would_succeed`, and `collision`.
+
+If the same id is already installed, a dry run without `--force` exits 1 and
+reports `would fail: id already installed (use --force)`. With `--force`, it
+reports `would overwrite the existing install` and exits 0; neither mode
+modifies the existing install.
 
 - `--format json` is supported on all read-style commands, every `plugin` subcommand, and on `diff`, `audit`, `deploy`, `init` for scripting / CI.
 - `diff --upgrade-safety` and `deploy --deny-breaking` implement the Upgrade Safety Guard (see `ROADMAP.md`).

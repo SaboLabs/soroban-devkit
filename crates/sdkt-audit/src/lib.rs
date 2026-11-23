@@ -44,7 +44,7 @@ pub use plugin_doctor::{
 };
 pub use plugin_store::{
     install_bundle, install_bundle_with_key, pack_bundle, verify_bundle, BundleVerification,
-    InstallOpts, PluginMeta, StoreError,
+    InstallOpts, InstallOutcome, PluginMeta, StoreError,
 };
 pub use registry::{
     register_builtin_rules, register_rule, registered_rule_info, run_registered, BoxedRule,

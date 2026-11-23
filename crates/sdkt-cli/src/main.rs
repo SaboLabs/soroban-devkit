@@ -993,6 +993,9 @@ enum PluginAction {
         /// Overwrite an existing install of the same id
         #[arg(long)]
         force: bool,
+        /// Validate and preview the install without modifying the plugin store
+        #[arg(long)]
+        dry_run: bool,
         /// Require the bundle to be signed by this Ed25519 public key file (32 bytes, raw);
         /// unsigned bundles are refused
         #[arg(long)]
@@ -12504,11 +12507,12 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
                 source,
                 id,
                 force,
+                dry_run,
                 public_key,
                 format,
             } => {
                 let fmt = parse_format_str(&format);
-                let opts = sdkt_audit::plugin_store::InstallOpts { id, force };
+                let opts = sdkt_audit::plugin_store::InstallOpts { id, force, dry_run };
                 let path = std::path::Path::new(&source);
                 let is_bundle = is_sdktplugin_bundle(path);
                 if public_key.is_some() && !is_bundle {
@@ -12519,37 +12523,86 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
                 let result = if is_bundle {
                     let pubkey = public_key.as_deref().map(read_public_key_or_exit);
                     sdkt_audit::plugin_store::install_bundle_with_key(path, &opts, pubkey.as_ref())
-                        .map(|v| (v.metadata, Some(v.signed)))
+                        .map(|v| {
+                            (
+                                sdkt_audit::plugin_store::InstallOutcome {
+                                    metadata: v.metadata,
+                                    collision: v.collision,
+                                },
+                                Some(v.signed),
+                            )
+                        })
                 } else {
-                    sdkt_audit::plugin_store::install(path, &opts).map(|meta| (meta, None))
+                    sdkt_audit::plugin_store::install(path, &opts).map(|outcome| (outcome, None))
                 };
                 match result {
-                    Ok((meta, signed)) => {
-                        if meta.kind == "native" {
-                            eprintln!(
+                    Ok((outcome, signed)) => {
+                        if dry_run {
+                            let would_succeed = outcome.collision.is_none();
+                            let meta = &outcome.metadata;
+                            if fmt == OutputFormat::Json {
+                                let json = serde_json::json!({
+                                    "id": meta.id,
+                                    "name": meta.name,
+                                    "version": meta.version,
+                                    "author": meta.author,
+                                    "kind": meta.kind,
+                                    "abi_major": meta.abi_major,
+                                    "abi_minor": meta.abi_minor,
+                                    "would_succeed": would_succeed,
+                                    "collision": outcome.collision,
+                                });
+                                println!("{}", serde_json::to_string_pretty(&json)?);
+                            } else {
+                                println!("Plugin install preview (dry run)");
+                                println!("id: {}", meta.id);
+                                println!("name: {}", meta.name);
+                                println!("version: {}", meta.version);
+                                println!("author: {}", meta.author);
+                                println!("kind: {}", meta.kind);
+                                println!("abi: {}.{}", meta.abi_major, meta.abi_minor);
+                                println!("would succeed: {}", would_succeed);
+                                if let Some(collision) = outcome.collision {
+                                    println!("collision: {}", collision);
+                                }
+                                if let Some(signed) = signed {
+                                    println!(
+                                        "signature: {}",
+                                        if signed { "VERIFIED" } else { "UNSIGNED" }
+                                    );
+                                }
+                            }
+                            if !would_succeed {
+                                process::exit(1);
+                            }
+                        } else {
+                            let meta = outcome.metadata;
+                            if meta.kind == "native" {
+                                eprintln!(
                                     "Warning: native plugins run UNSANDBOXED. Only install from trusted sources."
                                 );
-                        }
-                        if fmt == OutputFormat::Json {
-                            let mut json =
-                                serde_json::json!({ "status": "installed", "plugin": meta });
-                            if let Some(signed) = signed {
-                                json["signed"] = serde_json::Value::Bool(signed);
                             }
-                            println!("{}", serde_json::to_string_pretty(&json)?);
-                        } else {
-                            println!(
-                                "Installed plugin '{}' ({} v{})",
-                                meta.id, meta.kind, meta.version
-                            );
-                            match signed {
-                                Some(true) => println!("  signature: VERIFIED"),
-                                Some(false) => println!("  signature: UNSIGNED"),
-                                None => {}
+                            if fmt == OutputFormat::Json {
+                                let mut json =
+                                    serde_json::json!({ "status": "installed", "plugin": meta });
+                                if let Some(signed) = signed {
+                                    json["signed"] = serde_json::Value::Bool(signed);
+                                }
+                                println!("{}", serde_json::to_string_pretty(&json)?);
+                            } else {
+                                println!(
+                                    "Installed plugin '{}' ({} v{})",
+                                    meta.id, meta.kind, meta.version
+                                );
+                                match signed {
+                                    Some(true) => println!("  signature: VERIFIED"),
+                                    Some(false) => println!("  signature: UNSIGNED"),
+                                    None => {}
+                                }
                             }
-                        }
-                        if signed == Some(false) {
-                            eprintln!("Note: bundle was NOT signed");
+                            if signed == Some(false) {
+                                eprintln!("Note: bundle was NOT signed");
+                            }
                         }
                     }
                     Err(e) => {

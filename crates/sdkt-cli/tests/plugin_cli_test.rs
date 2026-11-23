@@ -215,6 +215,34 @@ fn plugin_install_with_id_override_uses_effective_identity() {
     assert!(!store.path().join("override-name").exists());
 }
 
+#[test]
+fn plugin_install_dry_run_is_read_only_and_emits_json_preview() {
+    let root = tempfile::TempDir::new().unwrap();
+    let source = fixture_plugin(root.path());
+    let store = tempfile::TempDir::new().unwrap();
+    let output = sdkt()
+        .env("SDKT_PLUGIN_DIR", store.path())
+        .env("SDKT_TEST_SKIP_PLUGIN_DRY_RUN", "1")
+        .args([
+            "plugin",
+            "install",
+            source.to_str().unwrap(),
+            "--dry-run",
+            "--format",
+            "json",
+        ])
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+    let json: serde_json::Value = serde_json::from_slice(&output).unwrap();
+    assert_eq!(json["id"], "example-rule");
+    assert_eq!(json["would_succeed"], true);
+    assert!(json["collision"].is_null());
+    assert!(!store.path().join("example-rule").exists());
+}
+
 /// Parse a command's stdout as JSON, failing with the raw output if it is not.
 fn stdout_json(out: &assert_cmd::assert::Assert) -> serde_json::Value {
     let stdout = String::from_utf8_lossy(&out.get_output().stdout).to_string();
