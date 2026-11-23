@@ -1048,6 +1048,19 @@ sdkt generate client contract.wasm --output src/client.rs
 sdkt generate client contract.wasm --skip-unsupported --output src/client.rs
 ```
 
+To generate from a deployed contract without first saving its WASM locally,
+use the read-only chain source. The positional WASM path and `--contract` are
+mutually exclusive, and the fetched bytes use the same generator as local
+input:
+
+```bash
+sdkt generate client --contract C... --network testnet --output src/client.rs
+```
+
+Use `--rpc-url`, `--network-profile`, or `--network-passphrase` for a custom
+endpoint or saved profile. Contract inspection or bytecode-fetch failures are
+reported before any output file is written.
+
 ### Output
 
 Each contract function becomes a `*Call` struct with:
