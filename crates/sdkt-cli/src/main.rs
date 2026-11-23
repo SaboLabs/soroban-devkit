@@ -815,13 +815,16 @@ enum FuzzAction {
     Campaign {
         /// Path to the compiled contract WASM file
         #[arg(value_name = "WASM")]
-        wasm: String,
+        wasm: Option<String>,
+        /// TOML campaign definition; explicit flags override file values.
+        #[arg(long, value_name = "FILE")]
+        config: Option<String>,
         /// Deterministic seed (u64)
-        #[arg(long, value_name = "N", default_value_t = 0)]
-        seed: u64,
+        #[arg(long, value_name = "N")]
+        seed: Option<u64>,
         /// Number of cases to execute
-        #[arg(long, value_name = "N", default_value_t = 100)]
-        cases: usize,
+        #[arg(long, value_name = "N")]
+        cases: Option<usize>,
         /// Restrict the campaign to one exported function
         #[arg(long, value_name = "NAME")]
         function: Option<String>,
@@ -830,8 +833,8 @@ enum FuzzAction {
         artifact_dir: Option<String>,
         /// Authorization mode for every case: no-auth | correct-auth |
         /// wrong-auth (see the sdkt-fuzz docs for exact semantics)
-        #[arg(long, value_name = "MODE", default_value = "no-auth")]
-        auth: String,
+        #[arg(long, value_name = "MODE")]
+        auth: Option<String>,
         /// Declare that a function must succeed: --expect-success NAME
         /// (repeatable). Violations become RETURN_MISMATCH or
         /// UNEXPECTED_ERROR findings.
@@ -878,6 +881,54 @@ enum FuzzAction {
         #[arg(short, long, default_value = "pretty")]
         format: String,
     },
+}
+
+#[derive(Debug, Default, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+struct FuzzConfigFile {
+    campaign: FuzzCampaignConfig,
+    #[serde(default)]
+    expect: FuzzExpectConfig,
+}
+
+#[derive(Debug, Default, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+struct FuzzCampaignConfig {
+    wasm: Option<String>,
+    seed: Option<u64>,
+    cases: Option<usize>,
+    function: Option<String>,
+    auth: Option<String>,
+}
+
+#[derive(Debug, Default, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+struct FuzzExpectConfig {
+    #[serde(default)]
+    success: Vec<FuzzSuccessConfig>,
+    #[serde(default)]
+    error: Vec<FuzzErrorConfig>,
+}
+
+#[derive(Debug, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+struct FuzzSuccessConfig {
+    name: String,
+}
+
+#[derive(Debug, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+struct FuzzErrorConfig {
+    function: String,
+    #[serde(rename = "type")]
+    error_type: String,
+    code: String,
+}
+
+fn load_fuzz_config(path: &str) -> Result<FuzzConfigFile, String> {
+    let text = fs::read_to_string(path)
+        .map_err(|e| format!("Failed to read fuzz config {}: {}", path, e))?;
+    toml::from_str(&text).map_err(|e| format!("Invalid fuzz config {}: {}", path, e))
 }
 
 #[derive(Subcommand)]
@@ -12940,6 +12991,7 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
         Commands::Fuzz(action) => match action {
             FuzzAction::Campaign {
                 wasm,
+                config,
                 seed,
                 cases,
                 function,
@@ -12952,6 +13004,66 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
                 replay,
                 format,
             } => {
+                let file_config = match config.as_deref() {
+                    Some(path) => match load_fuzz_config(path) {
+                        Ok(value) => Some(value),
+                        Err(e) => {
+                            eprintln!("Error: {e}");
+                            process::exit(2);
+                        }
+                    },
+                    None => None,
+                };
+                let config_wasm = file_config.as_ref().and_then(|c| c.campaign.wasm.clone());
+                if let (Some(cli_wasm), Some(file_wasm)) = (&wasm, &config_wasm) {
+                    if cli_wasm != file_wasm {
+                        eprintln!(
+                            "Error: positional WASM '{}' does not match config '{}'",
+                            cli_wasm, file_wasm
+                        );
+                        process::exit(2);
+                    }
+                }
+                let wasm = wasm.or(config_wasm).unwrap_or_else(|| {
+                    eprintln!("Error: campaign config must provide `wasm` or a positional WASM");
+                    process::exit(2);
+                });
+                let seed = seed
+                    .or_else(|| file_config.as_ref().and_then(|c| c.campaign.seed))
+                    .unwrap_or(0);
+                let cases = cases
+                    .or_else(|| file_config.as_ref().and_then(|c| c.campaign.cases))
+                    .unwrap_or(100);
+                let function = function.or_else(|| {
+                    file_config
+                        .as_ref()
+                        .and_then(|c| c.campaign.function.clone())
+                });
+                let auth = auth
+                    .or_else(|| file_config.as_ref().and_then(|c| c.campaign.auth.clone()))
+                    .unwrap_or_else(|| "no-auth".to_string());
+                let expect_success = if expect_success.is_empty() {
+                    file_config
+                        .as_ref()
+                        .map(|c| c.expect.success.iter().map(|e| e.name.clone()).collect())
+                        .unwrap_or_default()
+                } else {
+                    expect_success
+                };
+                let expect_error = if expect_error.is_empty() {
+                    file_config
+                        .as_ref()
+                        .map(|c| {
+                            c.expect
+                                .error
+                                .iter()
+                                .map(|e| format!("{}:{}:{}", e.function, e.error_type, e.code))
+                                .collect()
+                        })
+                        .unwrap_or_default()
+                } else {
+                    expect_error
+                };
                 match commands::fuzz::run(
                     &wasm,
                     seed,

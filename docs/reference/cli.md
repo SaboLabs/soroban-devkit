@@ -1109,6 +1109,30 @@ sdkt fuzz campaign contract.wasm \
   --format json
 ```
 
+For a repeatable, reviewable campaign definition, use `--config fuzz.toml`:
+
+```toml
+[campaign]
+wasm = "contract.wasm"
+seed = 42
+cases = 100
+function = "increment"
+auth = "correct-auth"
+
+[[expect.success]]
+name = "increment"
+
+[[expect.error]]
+function = "invalid"
+type = "Auth"
+code = "6"
+```
+
+Explicit flags override config values, and config values override defaults. The
+positional WASM path is optional with `--config`, but if both are supplied they
+must match. Unknown keys, malformed or missing files, and a missing WASM are
+usage errors; the existing campaign runner and evidence shape are unchanged.
+
 **Arguments and flags:**
 
 | Flag | Default | Meaning |
