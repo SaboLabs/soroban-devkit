@@ -4694,6 +4694,41 @@ fn load_config() -> DevKitConfig {
     }
 }
 
+/// Resolve an explicit deployment alias before any network operation. Bare
+/// contract IDs remain byte-for-byte unchanged and never touch the record file.
+fn resolve_contract_reference(
+    reference: &str,
+    net: &NetworkArgs,
+) -> Result<(String, Option<String>), String> {
+    let Some(alias) = reference.strip_prefix('@') else {
+        return Ok((reference.to_string(), None));
+    };
+    if alias.is_empty() {
+        return Err("deployment alias '@' is empty".to_string());
+    }
+    let network_config = resolve_network_config(
+        net.rpc_url.clone(),
+        net.network_passphrase.clone(),
+        net.network_profile.clone(),
+    )?;
+    let network_key = sdkt_core::deployment::network_key(
+        if net.network_passphrase.is_some() {
+            None
+        } else {
+            net.network_profile.as_deref()
+        },
+        &network_config.passphrase,
+    );
+    let records = sdkt_core::deployment::DeploymentRecordFile::read(Path::new(
+        sdkt_core::deployment::DEPLOYMENT_RECORD_FILE,
+    ))
+    .map_err(|e| format!("cannot resolve @{alias} on {network_key}: {e}"))?;
+    let record = records.record_for(&network_key, alias).ok_or_else(|| {
+        format!("no deployment record for @{alias} on network profile {network_key}")
+    })?;
+    Ok((record.contract_id.clone(), Some(alias.to_string())))
+}
+
 /// Validate a `sdkt project add` entry, in order, failing fast with a
 /// one-line error. Nothing is written when any check fails. On success
 /// returns the [`ContractConfig`] to persist.
@@ -6865,6 +6900,7 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
             abi_contract,
             net,
         } => {
+            let (contract_id, _alias) = resolve_contract_reference(&contract_id, &net)?;
             if abi.is_some() && abi_contract.is_some() {
                 return Err("specify only one of --abi or --abi-contract".into());
             }
@@ -6959,6 +6995,7 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
             upgrade_safety,
             net,
         } => {
+            let (contract, _alias) = resolve_contract_reference(&contract, &net)?;
             let fmt = parse_format_str(&format);
             let target = match resolve_target_network(network.as_deref(), &net) {
                 Ok(t) => t,
@@ -7081,6 +7118,7 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
             format,
             net,
         } => {
+            let (contract, _alias) = resolve_contract_reference(&contract, &net)?;
             let fmt = parse_format_str(&format);
             let target = match resolve_target_network(network.as_deref(), &net) {
                 Ok(t) => t,
@@ -10943,6 +10981,8 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
             use sdkt_rpc::simulate_transaction;
             use sdkt_xdr::scval_from_base64;
 
+            let (contract_id, _alias) = resolve_contract_reference(&contract_id, &net)?;
+
             // `--abi` (local WASM) and `--abi-contract` (on-chain WASM) are
             // mutually exclusive. Validate before any network I/O so the
             // error is deterministic regardless of RPC reachability.
@@ -11088,6 +11128,7 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
             build_only,
             net,
         } => {
+            let (contract_id, _alias) = resolve_contract_reference(&contract_id, &net)?;
             let fmt = parse_format_str(&format);
 
             // Validate the wait pair before any transaction is built or

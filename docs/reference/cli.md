@@ -1094,6 +1094,12 @@ functions instead of aborting the entire command:
 
 `sdkt fuzz campaign <wasm>` runs a deterministic fuzz campaign against a compiled contract.
 
+Post-deploy commands accept recorded deployment aliases with an `@` prefix. For
+example, `sdkt call @token balance`, `sdkt health @vault`, `sdkt verify --contract
+@vault`, and `sdkt inspect @token` resolve through `.sdkt-deployments.json` for
+the selected network before making any RPC call. Unknown aliases fail locally;
+bare `C...` contract IDs retain their existing behavior.
+
 **Syntax:**
 
 ```bash
