@@ -240,6 +240,60 @@ fn missing_required_wasm_argument_fails_to_parse() {
 }
 
 #[test]
+fn config_file_supplies_wasm_and_is_recorded_in_report() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let config = dir.path().join("release.toml");
+    std::fs::write(
+        &config,
+        format!(
+            "[release]\nwasm = \"{}\"\nmax_size_bytes = 100000\n",
+            fixture("us_new.wasm")
+        ),
+    )
+    .expect("write config");
+
+    let out = release_assurance(&["--config", config.to_str().unwrap(), "--format", "json"])
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+    let value: serde_json::Value = serde_json::from_slice(&out).expect("valid JSON");
+    assert_eq!(value["config"], config.to_str().unwrap());
+    assert_eq!(value["artifact"]["status"], "PASS");
+}
+
+#[test]
+fn config_file_requires_wasm_and_names_the_file() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let config = dir.path().join("missing-wasm.toml");
+    std::fs::write(&config, "[release]\nmax_size_bytes = 100\n").expect("write config");
+
+    release_assurance(&["--config", config.to_str().unwrap()])
+        .assert()
+        .failure()
+        .stderr(contains("must provide `wasm` or --wasm"));
+}
+
+#[test]
+fn explicit_wasm_overrides_config_wasm() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let config = dir.path().join("override.toml");
+    std::fs::write(&config, "[release]\nwasm = \"/no/such/config.wasm\"\n").expect("write config");
+
+    release_assurance(&[
+        "--config",
+        config.to_str().unwrap(),
+        "--wasm",
+        &fixture("us_new.wasm"),
+        "--format",
+        "json",
+    ])
+    .assert()
+    .success();
+}
+
+#[test]
 fn nonexistent_wasm_path_is_a_command_error() {
     release_assurance(&["--wasm", "/no/such/contract.wasm"])
         .assert()

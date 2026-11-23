@@ -708,7 +708,10 @@ enum Commands {
     ReleaseAssurance {
         /// Candidate WASM artifact to assess (hash, spec, upgrade diff, audit)
         #[arg(long, value_name = "WASM")]
-        wasm: String,
+        wasm: Option<String>,
+        /// TOML release definition. Explicit flags override values from the file.
+        #[arg(long, value_name = "FILE")]
+        config: Option<String>,
         /// Previous (baseline) WASM for the offline upgrade-safety diff
         #[arg(long, value_name = "WASM")]
         previous_wasm: Option<String>,
@@ -2298,8 +2301,38 @@ struct ReleaseAssuranceReport {
     /// (`--fuzz-evidence`); absent (and JSON-skipped) unless supplied.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     fuzz: Option<FuzzEvidenceResult>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    config: Option<String>,
     release_status: String,
     reasons: Vec<String>,
+}
+
+#[derive(Debug, Default, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ReleaseAssuranceConfigFile {
+    release: ReleaseAssuranceConfig,
+}
+
+#[derive(Debug, Default, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ReleaseAssuranceConfig {
+    wasm: Option<String>,
+    previous_wasm: Option<String>,
+    audit: Option<Vec<String>>,
+    disable: Option<Vec<String>>,
+    contract: Option<String>,
+    network: Option<String>,
+    fuzz_evidence: Option<Vec<String>>,
+    max_size_bytes: Option<u64>,
+    max_growth_pct: Option<f64>,
+}
+
+fn load_release_assurance_config(path: &str) -> Result<ReleaseAssuranceConfig, String> {
+    let text = fs::read_to_string(path)
+        .map_err(|e| format!("Failed to read release-assurance config {}: {}", path, e))?;
+    let parsed: ReleaseAssuranceConfigFile = toml::from_str(&text)
+        .map_err(|e| format!("Invalid release-assurance config {}: {}", path, e))?;
+    Ok(parsed.release)
 }
 
 /// Release-assurance section for a recorded fuzz campaign evidence file.
@@ -2548,6 +2581,9 @@ fn apply_size_policy_to_assurance(
 fn print_release_assurance_pretty(r: &ReleaseAssuranceReport) {
     println!("Soroban Release Assurance");
     println!("────────────────────────");
+    if let Some(path) = &r.config {
+        println!("Config:         {path}");
+    }
     println!("Artifact        {}", r.artifact.check.status);
     println!("Security        {}", r.security.check.status);
     println!("Upgrade Safety  {}", r.upgrade_safety.check.status);
@@ -2762,6 +2798,7 @@ async fn run_release_assurance(
         verification: verification_result,
         health: health_result,
         fuzz: fuzz_evidence,
+        config: None,
         release_status,
         reasons,
     })
@@ -12834,6 +12871,7 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
         },
         Commands::ReleaseAssurance {
             wasm,
+            config,
             previous_wasm,
             fuzz_evidence,
             audit,
@@ -12845,6 +12883,52 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
             max_growth_pct,
             net,
         } => {
+            let file_config = match config.as_deref() {
+                Some(path) => match load_release_assurance_config(path) {
+                    Ok(value) => Some(value),
+                    Err(e) => {
+                        eprintln!("Error: {e}");
+                        process::exit(1);
+                    }
+                },
+                None => None,
+            };
+            let wasm = wasm.or_else(|| file_config.as_ref().and_then(|c| c.wasm.clone()));
+            let Some(wasm) = wasm else {
+                eprintln!("Error: release-assurance config must provide `wasm` or --wasm");
+                process::exit(1);
+            };
+            let previous_wasm = previous_wasm
+                .or_else(|| file_config.as_ref().and_then(|c| c.previous_wasm.clone()));
+            let audit = if audit.is_empty() {
+                file_config
+                    .as_ref()
+                    .and_then(|c| c.audit.clone())
+                    .unwrap_or_default()
+            } else {
+                audit
+            };
+            let disable = if disable.is_empty() {
+                file_config
+                    .as_ref()
+                    .and_then(|c| c.disable.clone())
+                    .unwrap_or_default()
+            } else {
+                disable
+            };
+            let contract =
+                contract.or_else(|| file_config.as_ref().and_then(|c| c.contract.clone()));
+            let network = network.or_else(|| file_config.as_ref().and_then(|c| c.network.clone()));
+            let fuzz_evidence = fuzz_evidence.or_else(|| {
+                file_config
+                    .as_ref()
+                    .and_then(|c| c.fuzz_evidence.as_ref())
+                    .and_then(|paths| paths.first().cloned())
+            });
+            let max_size_bytes =
+                max_size_bytes.or_else(|| file_config.as_ref().and_then(|c| c.max_size_bytes));
+            let max_growth_pct =
+                max_growth_pct.or_else(|| file_config.as_ref().and_then(|c| c.max_growth_pct));
             let fmt = parse_format_str(&format);
             // Validate policy inputs before doing any work: a requested check
             // that cannot be evaluated must fail loudly, never be skipped.
@@ -12892,11 +12976,12 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
                     process::exit(1);
                 }
             };
+            let mut report = report;
+            report.config = config;
             // Opt-in size policy, folded into the artifact section of the
             // finished report: a violation flips artifact to FAIL, which the
             // existing aggregation turns into release_status=FAIL (exit 1).
             // With no policy flags this is a no-op.
-            let mut report = report;
             apply_size_policy_to_assurance(
                 &mut report,
                 previous_wasm.as_deref(),

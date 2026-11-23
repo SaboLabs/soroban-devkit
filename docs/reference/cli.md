@@ -221,7 +221,8 @@ sdkt
 │   ├── --baseline <PATH>     (compare against a saved baseline and exit non-zero on new findings)
 │   └── --network-profile <NAME> / --rpc-url <URL> / --network-passphrase <PASS>
 ├── release-assurance
-│   ├── --wasm <WASM>         (candidate artifact; required)
+│   ├── --wasm <WASM>         (candidate artifact; required unless supplied by --config)
+│   ├── --config <FILE>       (TOML release definition; flags override file values)
 │   ├── --previous-wasm <WASM> (baseline for the offline upgrade diff)
 │   ├── --audit <PATH>...     (Rust source path(s)/dir(s); same engine as `audit`)
 │   ├── --disable <RULE_ID>   (repeatable)
@@ -1256,6 +1257,33 @@ For details on fuzz evidence from real Soroban contracts and multi-step executio
 `sdkt release-assurance` accepts `--fuzz-evidence <EVIDENCE_JSON>` to attach fuzz evidence to a release report. The release pipeline does not run fuzz campaigns itself; campaigns are run separately (manually or in CI) and the resulting evidence is attached by path.
 
 A fuzz evidence file scores `PASS` only when `campaign_completed` is `true`, `case_count > 0`, and `findings` is empty. Evidence with `campaign_completed: false` or `case_count: 0` is never scored as `PASS` — it maps to `ERROR` and fails the release-assurance check.
+
+### Release-assurance configuration files
+
+`sdkt release-assurance --config release.toml` reads a reviewed TOML definition
+for the release gate. Explicit command-line flags take precedence over values in
+the file, and file values take precedence over defaults. The candidate `wasm`
+must be supplied by one of those two sources. Unknown keys, malformed TOML, and
+missing files are usage errors that name the offending file.
+
+The file uses a strict `[release]` table:
+
+```toml
+[release]
+wasm = "artifacts/candidate.wasm"
+previous_wasm = "artifacts/previous.wasm"
+audit = ["contracts/src"]
+disable = ["DOC-001"]
+contract = "CXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX"
+network = "testnet"
+fuzz_evidence = ["artifacts/fuzz-evidence.json"]
+max_size_bytes = 131072
+max_growth_pct = 10.0
+```
+
+For example, `--max-size-bytes 100` overrides `max_size_bytes = 200` in the
+file. The existing release-assurance runner and report shape are reused; JSON
+reports add `config`, and pretty reports print `Config: <file>`.
 
 ## Plugin management
 
