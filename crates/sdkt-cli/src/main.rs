@@ -734,12 +734,12 @@ enum Commands {
             conflicts_with = "network_passphrase"
         )]
         network: Option<String>,
-        /// Attach the JSON evidence file written by a completed `sdkt fuzz
-        /// campaign --artifact-dir` run (release-assurance records the
-        /// evidence; it never runs a fuzz campaign itself). Only
-        /// Classification::Finding entries count as security evidence.
-        #[arg(long, value_name = "EVIDENCE_JSON")]
-        fuzz_evidence: Option<String>,
+        /// Attach JSON evidence files from completed `sdkt fuzz campaign
+        /// --artifact-dir` runs (repeatable); incomplete -> ERROR, findings ->
+        /// FAIL, all complete and clean -> PASS. Only Classification::Finding
+        /// entries count as security evidence.
+        #[arg(long, value_name = "EVIDENCE_JSON", action = clap::ArgAction::Append)]
+        fuzz_evidence: Vec<String>,
         /// Output format (pretty or json)
         #[arg(short, long, default_value = "pretty")]
         format: String,
@@ -2586,7 +2586,7 @@ async fn run_release_assurance(
     disable: &[String],
     contract_id: Option<&str>,
     network: &str,
-    fuzz_evidence: Option<&str>,
+    fuzz_evidence: &[String],
 ) -> Result<ReleaseAssuranceReport, String> {
     // ---- 1. ARTIFACT (existing sdkt-wasm metadata engine, offline) ----
     let candidate_bytes = fs::read(wasm_path)
@@ -2777,43 +2777,76 @@ async fn run_release_assurance(
 /// campaign with at least one executed case and zero findings scores `PASS`,
 /// findings score `FAIL`, and incomplete or zero-case evidence scores `ERROR`.
 fn read_fuzz_evidence(
-    path: Option<&str>,
+    paths: &[String],
 ) -> Result<(Option<FuzzEvidenceResult>, Option<RaStatus>), String> {
-    let Some(path) = path else {
+    if paths.is_empty() {
         return Ok((None, None));
-    };
-    let file = std::fs::File::open(path)
-        .map_err(|e| format!("Failed to read fuzz evidence {path}: {e}"))?;
-    let evidence: sdkt_fuzz::CampaignEvidence =
-        serde_json::from_reader(std::io::BufReader::new(file))
-            .map_err(|e| format!("Failed to parse fuzz evidence {path}: {e}"))?;
-
-    let status = if !evidence.campaign_completed || evidence.case_count == 0 {
+    }
+    let mut evidence_records = Vec::with_capacity(paths.len());
+    let mut statuses = Vec::with_capacity(paths.len());
+    let mut details = Vec::with_capacity(paths.len());
+    for path in paths {
+        let file = std::fs::File::open(path)
+            .map_err(|e| format!("Failed to read fuzz evidence {path}: {e}"))?;
+        let evidence: sdkt_fuzz::CampaignEvidence =
+            serde_json::from_reader(std::io::BufReader::new(file))
+                .map_err(|e| format!("Failed to parse fuzz evidence {path}: {e}"))?;
+        let status = if !evidence.campaign_completed || evidence.case_count == 0 {
+            RaStatus::Error
+        } else if !evidence.findings.is_empty() {
+            RaStatus::Fail
+        } else {
+            RaStatus::Pass
+        };
+        let detail = if !evidence.campaign_completed && paths.len() == 1 {
+            format!(
+                "fuzz campaign incomplete (campaign_completed=false, cases={})",
+                evidence.case_count,
+            )
+        } else if evidence.case_count == 0 && paths.len() == 1 {
+            "fuzz campaign executed 0 cases; zero-case evidence is not a passing campaign"
+                .to_string()
+        } else if !evidence.campaign_completed {
+            format!(
+                "fuzz campaign incomplete (campaign_completed=false, cases={} findings={} minimized={})",
+                evidence.case_count,
+                evidence.findings.len(),
+                evidence.minimized_findings,
+            )
+        } else if evidence.case_count == 0 {
+            format!(
+                "fuzz campaign executed 0 cases; zero-case evidence is not a passing campaign (findings={} minimized={})",
+                evidence.findings.len(),
+                evidence.minimized_findings,
+            )
+        } else {
+            format!(
+                "fuzz campaign: cases={} findings={} minimized={} artifacts={} replayed={} deterministic={}",
+                evidence.case_count,
+                evidence.findings.len(),
+                evidence.minimized_findings,
+                evidence.artifacts_available,
+                evidence.replay.len(),
+                evidence.deterministic,
+            )
+        };
+        statuses.push(status);
+        details.push(if paths.len() == 1 {
+            detail
+        } else {
+            format!("{path}: {detail}")
+        });
+        evidence_records.push(evidence);
+    }
+    let status = if statuses.contains(&RaStatus::Error) {
         RaStatus::Error
-    } else if !evidence.findings.is_empty() {
+    } else if statuses.contains(&RaStatus::Fail) {
         RaStatus::Fail
     } else {
-        // Completed with zero findings: a clean record, not "not executed".
         RaStatus::Pass
     };
-    let detail = if !evidence.campaign_completed {
-        format!(
-            "fuzz campaign incomplete (campaign_completed=false, cases={})",
-            evidence.case_count,
-        )
-    } else if evidence.case_count == 0 {
-        "fuzz campaign executed 0 cases; zero-case evidence is not a passing campaign".to_string()
-    } else {
-        format!(
-            "fuzz campaign: cases={} findings={} minimized={} artifacts={} replayed={} deterministic={}",
-            evidence.case_count,
-            evidence.findings.len(),
-            evidence.minimized_findings,
-            evidence.artifacts_available,
-            evidence.replay.len(),
-            evidence.deterministic,
-        )
-    };
+    let evidence = evidence_records.remove(0);
+    let detail = details.join("; ");
     Ok((
         Some(FuzzEvidenceResult {
             check: RaCheck { status, detail },
@@ -12882,7 +12915,7 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
                 &disable,
                 contract.as_deref(),
                 &network_name,
-                fuzz_evidence.as_deref(),
+                &fuzz_evidence,
             )
             .await
             {

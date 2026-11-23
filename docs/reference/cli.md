@@ -1253,7 +1253,7 @@ For details on fuzz evidence from real Soroban contracts and multi-step executio
 
 ### Integration with release assurance
 
-`sdkt release-assurance` accepts `--fuzz-evidence <EVIDENCE_JSON>` to attach fuzz evidence to a release report. The release pipeline does not run fuzz campaigns itself; campaigns are run separately (manually or in CI) and the resulting evidence is attached by path.
+`sdkt release-assurance` accepts repeatable `--fuzz-evidence <EVIDENCE_JSON>` flags to attach multiple fuzz campaign evidence files to a release report. The release pipeline does not run fuzz campaigns itself; campaigns are run separately (manually or in CI) and each resulting evidence file is attached by path. Across all files, any incomplete or zero-case campaign produces `ERROR`; otherwise any findings produce `FAIL`; only all completed campaigns with no findings produce `PASS`. Every file is read independently and named in the fuzz section detail.
 
 A fuzz evidence file scores `PASS` only when `campaign_completed` is `true`, `case_count > 0`, and `findings` is empty. Evidence with `campaign_completed: false` or `case_count: 0` is never scored as `PASS` — it maps to `ERROR` and fails the release-assurance check.
 

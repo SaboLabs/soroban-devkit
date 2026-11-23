@@ -250,4 +250,132 @@ fn release_assurance_passes_clean_nonzero_fuzz_evidence() {
     assert_eq!(value["fuzz"]["status"], "PASS");
     assert_eq!(value["fuzz"]["evidence"]["campaign_completed"], true);
     assert_eq!(value["fuzz"]["evidence"]["case_count"], 2);
+    assert_eq!(
+        value["fuzz"]["detail"],
+        format!(
+            "fuzz campaign: cases=2 findings=0 minimized={} artifacts={} replayed={} deterministic={}",
+            value["fuzz"]["evidence"]["minimized_findings"],
+            value["fuzz"]["evidence"]["artifacts_available"],
+            value["fuzz"]["evidence"]["replay"].as_object().unwrap().len(),
+            value["fuzz"]["evidence"]["deterministic"],
+        )
+    );
+}
+
+#[test]
+fn release_assurance_aggregates_multiple_fuzz_evidence_files() {
+    let clean_dir = temp_dir("ra-multi-clean");
+    sdkt(&[
+        "fuzz",
+        "campaign",
+        &fixture("us_new.wasm"),
+        "--cases",
+        "2",
+        "--artifact-dir",
+        clean_dir.to_str().unwrap(),
+    ])
+    .assert()
+    .success();
+    let clean = clean_dir.join("campaign-evidence.json");
+    let findings_dir = campaign_with_findings();
+    let findings = findings_dir.join("campaign-evidence.json");
+
+    let out = sdkt(&[
+        "release-assurance",
+        "--wasm",
+        &fixture("us_new.wasm"),
+        "--fuzz-evidence",
+        clean.to_str().unwrap(),
+        "--fuzz-evidence",
+        findings.to_str().unwrap(),
+        "--format",
+        "json",
+    ])
+    .assert()
+    .failure()
+    .code(1);
+    let stdout = String::from_utf8_lossy(&out.get_output().stdout);
+    let value: Value = serde_json::from_str(&stdout).expect("release-assurance JSON");
+    assert_eq!(value["fuzz"]["status"], "FAIL");
+    let detail = value["fuzz"]["detail"].as_str().unwrap();
+    assert!(detail.contains(clean.to_str().unwrap()), "{detail}");
+    assert!(detail.contains(findings.to_str().unwrap()), "{detail}");
+
+    let clean_copy = clean_dir.join("second-clean-evidence.json");
+    std::fs::copy(&clean, &clean_copy).expect("copy second clean evidence file");
+    let out = sdkt(&[
+        "release-assurance",
+        "--wasm",
+        &fixture("us_new.wasm"),
+        "--fuzz-evidence",
+        clean.to_str().unwrap(),
+        "--fuzz-evidence",
+        clean_copy.to_str().unwrap(),
+        "--format",
+        "json",
+    ])
+    .assert()
+    .success()
+    .code(0);
+    let stdout = String::from_utf8_lossy(&out.get_output().stdout);
+    let value: Value = serde_json::from_str(&stdout).expect("release-assurance JSON");
+    assert_eq!(value["fuzz"]["status"], "PASS");
+}
+
+#[test]
+fn release_assurance_incomplete_evidence_dominates_clean_evidence() {
+    let clean_dir = temp_dir("ra-incomplete-clean");
+    sdkt(&[
+        "fuzz",
+        "campaign",
+        &fixture("us_new.wasm"),
+        "--cases",
+        "2",
+        "--artifact-dir",
+        clean_dir.to_str().unwrap(),
+    ])
+    .assert()
+    .success();
+    let clean = clean_dir.join("campaign-evidence.json");
+    let incomplete_dir = temp_dir("ra-incomplete");
+    let incomplete = sdkt_fuzz::CampaignEvidence::from_result(
+        &sdkt_fuzz::CampaignResult::default(),
+        sdkt_fuzz::CampaignConfig::default(),
+        &[],
+        &std::collections::BTreeMap::new(),
+        true,
+    );
+    let incomplete_path = incomplete_dir.join("incomplete.json");
+    std::fs::write(&incomplete_path, serde_json::to_vec(&incomplete).unwrap()).unwrap();
+
+    let out = sdkt(&[
+        "release-assurance",
+        "--wasm",
+        &fixture("us_new.wasm"),
+        "--fuzz-evidence",
+        clean.to_str().unwrap(),
+        "--fuzz-evidence",
+        incomplete_path.to_str().unwrap(),
+        "--format",
+        "json",
+    ])
+    .assert()
+    .failure()
+    .code(1);
+    let stdout = String::from_utf8_lossy(&out.get_output().stdout);
+    let value: Value = serde_json::from_str(&stdout).expect("release-assurance JSON");
+    assert_eq!(value["fuzz"]["status"], "ERROR");
+    let detail = value["fuzz"]["detail"].as_str().unwrap();
+    assert!(detail.contains(clean.to_str().unwrap()), "{detail}");
+    assert!(
+        detail.contains(incomplete_path.to_str().unwrap()),
+        "{detail}"
+    );
+    assert!(
+        detail.contains(&format!(
+            "{}: fuzz campaign incomplete (campaign_completed=false, cases=0 findings=0 minimized=0)",
+            incomplete_path.display(),
+        )),
+        "{detail}"
+    );
 }
