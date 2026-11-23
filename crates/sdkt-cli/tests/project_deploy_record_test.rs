@@ -770,5 +770,6 @@ fn project_deploy_help_shows_identity_option() {
         .assert()
         .success()
         .stdout(predicate::str::contains("--identity"))
-        .stdout(predicate::str::contains("-I"));
+        .stdout(predicate::str::contains("-I"))
+        .stdout(predicate::str::contains("--release-assurance"));
 }

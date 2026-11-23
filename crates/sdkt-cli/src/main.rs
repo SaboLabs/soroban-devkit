@@ -1356,6 +1356,11 @@ enum ProjectCommand {
         /// without re-deploying (and re-paying for) what already succeeded.
         #[arg(long)]
         skip_deployed: bool,
+        /// Preflight every contract with release assurance before any upload.
+        /// Artifact, security, and recorded upgrade safety run; post-deploy
+        /// verification, health, and fuzz evidence are skipped.
+        #[arg(long)]
+        release_assurance: bool,
         /// Preview the deployment without submitting anything: resolve the
         /// deploy order, predict each contract's address and WASM hash
         /// offline, and print the plan. Never signs, never touches private
@@ -2765,6 +2770,91 @@ async fn run_release_assurance(
         release_status,
         reasons,
     })
+}
+
+/// Run the release gate for every contract that would be uploaded by a
+/// project deploy. This phase deliberately completes before the mutating loop
+/// starts, so a failed later contract cannot leave an earlier upload behind.
+async fn run_project_release_preflight(
+    client: &SorobanRpcClient,
+    resolved: &[sdkt_core::project::ResolvedContract],
+    record_file: &sdkt_core::deployment::DeploymentRecordFile,
+    network_key: &str,
+    skip_deployed: bool,
+    network_name: &str,
+) -> Result<(), String> {
+    for (index, contract) in resolved.iter().enumerate() {
+        if skip_deployed {
+            if let Some(record) = record_file.record_for(network_key, &contract.alias) {
+                if sdkt_rpc::storage::contract_exists(client, &record.contract_id)
+                    .await
+                    .map_err(|e| {
+                        format!(
+                            "release-assurance could not verify skipped contract '{}': {}",
+                            contract.alias, e
+                        )
+                    })?
+                {
+                    continue;
+                }
+            }
+        }
+
+        let mut previous_path = None;
+        if let Some(record) = record_file.record_for(network_key, &contract.alias) {
+            let (previous_bytes, _) =
+                fetch_deployed_contract_wasm(client, &record.contract_id, network_name).await?;
+            let safe_alias: String = contract
+                .alias
+                .chars()
+                .map(|c| if c.is_ascii_alphanumeric() { c } else { '_' })
+                .collect();
+            let path = std::env::temp_dir().join(format!(
+                "sdkt-release-assurance-{}-{}-{}.wasm",
+                std::process::id(),
+                index,
+                safe_alias
+            ));
+            fs::write(&path, previous_bytes).map_err(|e| {
+                format!(
+                    "release-assurance could not write previous WASM for '{}': {}",
+                    contract.alias, e
+                )
+            })?;
+            previous_path = Some(path);
+        }
+
+        let audit_paths = vec![contract.path.clone()];
+        let candidate = contract.wasm_artifact.to_string_lossy().into_owned();
+        let report_result = run_release_assurance(
+            client,
+            &candidate,
+            previous_path.as_deref().and_then(|p| p.to_str()),
+            &audit_paths,
+            &[],
+            None,
+            network_name,
+            None,
+        )
+        .await;
+        if let Some(path) = previous_path {
+            let cleanup = fs::remove_file(&path).map_err(|e| {
+                format!(
+                    "release-assurance could not remove temporary previous WASM for '{}': {}",
+                    contract.alias, e
+                )
+            });
+            cleanup?;
+        }
+        let report = report_result?;
+        if report.release_status == "FAIL" {
+            return Err(format!(
+                "release-assurance preflight failed for '{}' — no contracts were uploaded",
+                contract.alias
+            ));
+        }
+    }
+    Ok(())
 }
 
 /// Read a fuzz evidence JSON file produced by a completed `sdkt fuzz`
@@ -12010,6 +12100,7 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
             ProjectCommand::Deploy {
                 salt,
                 skip_deployed,
+                release_assurance,
                 dry_run,
                 identity,
                 timeout,
@@ -12146,6 +12237,25 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
 
                 match sdkt_core::project::resolve_project(&config) {
                     Ok(resolved) => {
+                        let network_name = verification_network_name(
+                            net.network_profile.as_deref(),
+                            &network_config.passphrase,
+                        );
+                        if release_assurance {
+                            if let Err(e) = run_project_release_preflight(
+                                &client,
+                                &resolved,
+                                &record_file,
+                                &network_key,
+                                skip_deployed,
+                                &network_name,
+                            )
+                            .await
+                            {
+                                eprintln!("Error: {e}");
+                                process::exit(1);
+                            }
+                        }
                         // Contracts skipped via --skip-deployed (existing on-chain
                         // record) count toward the resolved total for reporting.
                         let total_planned = resolved.len();
@@ -12167,11 +12277,6 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
                             DeployVerification,
                         > = std::collections::HashMap::new();
                         let mut verification_failed = false;
-                        let network_name = verification_network_name(
-                            net.network_profile.as_deref(),
-                            &network_config.passphrase,
-                        );
-
                         for contract in resolved {
                             // --skip-deployed: honor the record only when the
                             // recorded contract still exists on-chain. A record
