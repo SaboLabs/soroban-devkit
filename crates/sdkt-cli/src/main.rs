@@ -2294,12 +2294,30 @@ struct ReleaseAssuranceReport {
     upgrade_safety: UpgradeResult,
     verification: VerifyResult,
     health: HealthResult,
+    network_fit: RaCheck,
     /// Fuzz evidence attached from a completed campaign
     /// (`--fuzz-evidence`); absent (and JSON-skipped) unless supplied.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     fuzz: Option<FuzzEvidenceResult>,
     release_status: String,
     reasons: Vec<String>,
+}
+
+fn network_fit_check(candidate_size: Option<usize>, network_limit: Option<u32>) -> RaCheck {
+    match (candidate_size, network_limit) {
+        (Some(size), Some(limit)) if size <= limit as usize => RaCheck {
+            status: RaStatus::Pass,
+            detail: format!("candidate size {size} bytes fits network limit {limit} bytes"),
+        },
+        (Some(size), Some(limit)) => RaCheck {
+            status: RaStatus::Fail,
+            detail: format!("candidate size {size} bytes exceeds network limit {limit} bytes"),
+        },
+        _ => RaCheck {
+            status: RaStatus::Skipped,
+            detail: "network contract-size limit unavailable".to_string(),
+        },
+    }
 }
 
 /// Release-assurance section for a recorded fuzz campaign evidence file.
@@ -2531,6 +2549,7 @@ fn apply_size_policy_to_assurance(
         report.upgrade_safety.check.status,
         report.verification.check.status,
         report.health.check.status,
+        report.network_fit.status,
         // A recorded fuzz-evidence status must survive re-aggregation.
         report
             .fuzz
@@ -2553,6 +2572,7 @@ fn print_release_assurance_pretty(r: &ReleaseAssuranceReport) {
     println!("Upgrade Safety  {}", r.upgrade_safety.check.status);
     println!("Verification    {}", r.verification.check.status);
     println!("Contract Health {}", r.health.check.status);
+    println!("Network Fit     {}", r.network_fit.status);
     if let Some(f) = &r.fuzz {
         println!("Fuzz Evidence   {}", f.check.status);
     }
@@ -2718,12 +2738,24 @@ async fn run_release_assurance(
     // `Classification::Finding` entries count as security evidence.
     let (fuzz_evidence, fuzz_status) = read_fuzz_evidence(fuzz_evidence)?;
 
+    let network_fit = match sdkt_rpc::network_capture::capture_network_config(client).await {
+        Ok(capture) => network_fit_check(
+            artifact.metadata.as_ref().map(|m| m.size_bytes),
+            capture.max_contract_size_bytes.value,
+        ),
+        Err(e) => RaCheck {
+            status: RaStatus::Skipped,
+            detail: format!("network configuration unavailable: {e}"),
+        },
+    };
+
     let statuses = [
         artifact.check.status,
         security.check.status,
         upgrade.check.status,
         verification_result.check.status,
         health_result.check.status,
+        network_fit.status,
     ];
     let release_status = match fuzz_status {
         // Fold the recorded evidence status in as one more section.
@@ -2742,6 +2774,7 @@ async fn run_release_assurance(
         ("Upgrade Safety", upgrade.check.status),
         ("Verification", verification_result.check.status),
         ("Contract Health", health_result.check.status),
+        ("Network Fit", network_fit.status),
     ] {
         if matches!(s, RaStatus::Fail | RaStatus::Error | RaStatus::Review) {
             reasons.push(format!("{}: {}", label, s));
@@ -2761,6 +2794,7 @@ async fn run_release_assurance(
         upgrade_safety: upgrade,
         verification: verification_result,
         health: health_result,
+        network_fit,
         fuzz: fuzz_evidence,
         release_status,
         reasons,

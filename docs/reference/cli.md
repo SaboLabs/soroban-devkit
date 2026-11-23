@@ -1303,6 +1303,8 @@ Store root precedence (lowest → highest): `<cwd>/.sdkt/plugins`,
 
 - **WASM size policy (opt-in).** `diff` and `release-assurance` accept `--max-size-bytes <N>` (absolute ceiling on the candidate artifact) and `--max-growth-pct <N>` (growth over the baseline). Thresholds are **operator-supplied policy** — SDKT hardcodes no Stellar network limit, and passing a threshold does not assert network-limit compliance. `diff` measures growth against the old side (file or contract); `release-assurance` requires `--previous-wasm` for a growth check and fails with an explicit error when it is missing rather than silently skipping. Violations exit non-zero: `diff` prints the violation on stderr after the report, and `release-assurance` marks the artifact section `FAIL` (so `release_status` becomes `FAIL`). Boundaries are inclusive — a size exactly at the limit or growth exactly at the cap passes. `diff --format json` also reports `size_delta_bytes` (signed) and `size_delta_pct` (one decimal, `null` when the old artifact is zero bytes). Size policy is independent of ABI compatibility: it is refused in combination with `diff --upgrade-safety`, and a size violation never changes an upgrade-safety verdict.
 
+- **Network Fit.** `release-assurance` also compares the candidate artifact size with the live network's captured contract-size limit. A fitting or exactly-at-limit artifact passes; an oversized artifact fails with both byte counts. If the network or limit is unavailable, the section is `SKIPPED` and does not silently assume a limit.
+
   ```bash
   # Report size change alongside the ABI diff (always on, no flags needed):
   sdkt diff --old-wasm prev.wasm --new-wasm candidate.wasm --format json
