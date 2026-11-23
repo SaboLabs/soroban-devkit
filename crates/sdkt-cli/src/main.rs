@@ -2524,14 +2524,23 @@ fn format_release_assurance_pretty(r: &ReleaseAssuranceReport) -> String {
     out.push_str("────────────────────────\n");
     out.push_str(&format!("Artifact        {}\n", r.artifact.check.status));
     out.push_str(&format!("Security        {}\n", r.security.check.status));
-    out.push_str(&format!("Upgrade Safety  {}\n", r.upgrade_safety.check.status));
-    out.push_str(&format!("Verification    {}\n", r.verification.check.status));
+    out.push_str(&format!(
+        "Upgrade Safety  {}\n",
+        r.upgrade_safety.check.status
+    ));
+    out.push_str(&format!(
+        "Verification    {}\n",
+        r.verification.check.status
+    ));
     out.push_str(&format!("Contract Health {}\n", r.health.check.status));
     if let Some(f) = &r.fuzz {
         out.push_str(&format!("Fuzz Evidence   {}\n", f.check.status));
     }
     out.push('\n');
-    out.push_str(&format!("RELEASE STATUS  {}\n", r.release_status.to_uppercase()));
+    out.push_str(&format!(
+        "RELEASE STATUS  {}\n",
+        r.release_status.to_uppercase()
+    ));
     if !r.reasons.is_empty() {
         out.push('\n');
         out.push_str("Reasons:\n");
