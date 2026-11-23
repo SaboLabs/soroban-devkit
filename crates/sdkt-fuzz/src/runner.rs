@@ -145,6 +145,8 @@ impl FuzzReport {
                 "reason_code": f.reason_code.name(),
                 "auth_mode": f.identity.auth_mode,
                 "mutation_id": f.identity.mutation_id,
+                "mutation_ids": f.identity.mutation_ids,
+                "operators": f.identity.operators,
                 "minimized": f.minimization.attempted && f.minimization.preserved,
             });
             out.push_str(

@@ -793,3 +793,72 @@ fn runner_writes_and_replays_multistep_artifacts_when_sequence_enabled() {
 /// Unused-binding guard for optional imports.
 #[allow(dead_code)]
 fn _unused(_: Option<Mutation>) {}
+
+// ---------------------------------------------------------------------------
+
+/// `set(n: u32)` echoes its argument; declaring a return of 43 makes every
+/// mutated case a finding, and two mutations are applied per case.
+fn chain_campaign() -> (sdkt_fuzz::CampaignResult, Vec<sdkt_fuzz::FindingArtifact>) {
+    let mut input = sdkt_fuzz::CampaignInput::new(AUTH_WASM, [9u8; 32]).unwrap();
+    input.cases = 4;
+    input.mutations_per_case = 2;
+    input.sequence_every = 0;
+    input.function = Some("set".to_string());
+    let mut expectations = BTreeMap::new();
+    expectations.insert(
+        "set".to_string(),
+        Expected {
+            behavior: ExpectedBehavior::Success {
+                expect_return: Some(ScVal::U32(43)),
+            },
+            ..Default::default()
+        },
+    );
+    run_campaign_artifacts(&input, &expectations).unwrap()
+}
+
+// Mutation chain: every applied mutation is recorded, in order (issue #500)
+// ---------------------------------------------------------------------------
+
+#[test]
+fn two_mutation_finding_records_full_chain_in_order() {
+    let (result, _) = chain_campaign();
+    let finding = result
+        .findings
+        .iter()
+        .find(|f| f.mutations.len() == 2)
+        .expect("a finding produced by two mutations");
+    assert_eq!(finding.identity.mutation_ids.len(), 2);
+    assert_eq!(finding.identity.operators.len(), 2);
+    for (i, m) in finding.mutations.iter().enumerate() {
+        assert_eq!(finding.identity.mutation_ids[i], m.mutation_id);
+        assert_eq!(finding.identity.operators[i], m.operator.name());
+    }
+    assert_ne!(
+        finding.mutations[0].mutation_id,
+        finding.mutations[1].mutation_id
+    );
+    // legacy single field is the last applied mutation
+    assert_eq!(
+        finding.mutation.as_ref().unwrap().mutation_id,
+        finding.mutations[1].mutation_id
+    );
+}
+
+#[test]
+fn artifact_serializes_full_mutation_chain() {
+    let (result, artifacts) = chain_campaign();
+    let (f, a) = result
+        .findings
+        .iter()
+        .zip(artifacts.iter())
+        .find(|(f, _)| f.mutations.len() == 2)
+        .expect("two-mutation finding");
+    assert_eq!(a.mutations.len(), 2);
+    for (i, m) in f.mutations.iter().enumerate() {
+        assert_eq!(a.mutations[i].mutation_id, m.mutation_id);
+    }
+    let json = serde_json::to_string(a).unwrap();
+    let back: sdkt_fuzz::FindingArtifact = serde_json::from_str(&json).unwrap();
+    assert_eq!(&back, a);
+}
