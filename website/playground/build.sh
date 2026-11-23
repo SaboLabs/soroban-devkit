@@ -23,9 +23,22 @@ OUT_DIR="${PLAYGROUND_WASM_OUT:-website/playground/wasm}"
 # zstd-sys compiles C sources for the target. Apple Clang does not ship a
 # wasm32 backend, while Homebrew LLVM does. Prefer it automatically on macOS so
 # the documented build command works without caller-specific environment vars.
-if [[ "$(uname -s)" == "Darwin" ]] && [[ -x /opt/homebrew/opt/llvm/bin/clang ]]; then
-  export CC_wasm32_unknown_unknown="${CC_wasm32_unknown_unknown:-/opt/homebrew/opt/llvm/bin/clang}"
-  export AR_wasm32_unknown_unknown="${AR_wasm32_unknown_unknown:-/opt/homebrew/opt/llvm/bin/llvm-ar}"
+if [[ "$(uname -s)" == "Darwin" ]]; then
+  LLVM_PREFIX=""
+  if command -v brew >/dev/null 2>&1; then
+    LLVM_PREFIX="$(brew --prefix llvm 2>/dev/null || true)"
+  fi
+  if [[ -z "${LLVM_PREFIX}" ]] || [[ ! -x "${LLVM_PREFIX}/bin/clang" ]]; then
+    if [[ -x /opt/homebrew/opt/llvm/bin/clang ]]; then
+      LLVM_PREFIX="/opt/homebrew/opt/llvm"
+    elif [[ -x /usr/local/opt/llvm/bin/clang ]]; then
+      LLVM_PREFIX="/usr/local/opt/llvm"
+    fi
+  fi
+  if [[ -n "${LLVM_PREFIX}" ]] && [[ -x "${LLVM_PREFIX}/bin/clang" ]]; then
+    export CC_wasm32_unknown_unknown="${CC_wasm32_unknown_unknown:-${LLVM_PREFIX}/bin/clang}"
+    export AR_wasm32_unknown_unknown="${AR_wasm32_unknown_unknown:-${LLVM_PREFIX}/bin/llvm-ar}"
+  fi
 fi
 
 echo "==> Building sdkt-playground for wasm32-unknown-unknown (release)"

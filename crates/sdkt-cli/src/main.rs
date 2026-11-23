@@ -841,6 +841,14 @@ enum FuzzAction {
         /// (repeatable), e.g. --expect-error bump:Auth:6
         #[arg(long, value_name = "FN:TYPE:CODE", action = clap::ArgAction::Append)]
         expect_error: Vec<String>,
+        /// Number of invocations in each generated multi-step sequence (>= 2;
+        /// requires --sequence-every)
+        #[arg(long, value_name = "N")]
+        sequence_length: Option<usize>,
+        /// Execute every N-th case as a multi-step sequence (>= 1; requires
+        /// --sequence-length)
+        #[arg(long, value_name = "N")]
+        sequence_every: Option<usize>,
         /// Replay every written artifact to verify determinism
         #[arg(long)]
         replay: bool,
@@ -1102,6 +1110,13 @@ enum CacheAction {
         #[arg(short, long, default_value = "pretty")]
         format: String,
     },
+    /// List every entry in the cache for the network
+    List {
+        #[arg(short, long, default_value = "testnet")]
+        network: String,
+        #[arg(short, long, default_value = "pretty")]
+        format: String,
+    },
     /// Remove a specific hash from the cache
     Remove {
         /// 64-character hex SHA256 hash of the WASM artifact
@@ -1157,6 +1172,20 @@ enum TxAction {
     Decode {
         /// Base64 XDR transaction envelope or path to a file containing it
         envelope: String,
+        #[arg(short, long, default_value = "pretty")]
+        format: String,
+    },
+    /// Wrap a V1 transaction envelope with a fee-bump envelope (offline)
+    Wrap {
+        /// Base64 XDR transaction envelope or path to a file containing it
+        #[arg(short, long)]
+        envelope: String,
+        /// Identity name or G... account that will pay the outer fee
+        #[arg(long, value_name = "ACCOUNT")]
+        fee_source: String,
+        /// Total fee in stroops paid by the fee source
+        #[arg(long, value_name = "STROOPS")]
+        fee: i64,
         #[arg(short, long, default_value = "pretty")]
         format: String,
     },
@@ -1270,9 +1299,14 @@ enum TxAction {
         /// Identity name to sign with. Defaults to "default".
         #[arg(short = 'I', long, default_value = "default")]
         identity: String,
-        /// Network: testnet | mainnet | futurenet | custom:<passphrase>
-        #[arg(short, long, default_value = "testnet")]
-        network: String,
+        /// Network: testnet | mainnet | futurenet | custom:<passphrase> (mutually exclusive with --network-profile and --network-passphrase; defaults to testnet)
+        #[arg(
+            short,
+            long,
+            conflicts_with = "network_profile",
+            conflicts_with = "network_passphrase"
+        )]
+        network: Option<String>,
         /// Output format
         #[arg(short, long, default_value = "pretty")]
         format: String,
@@ -1623,6 +1657,9 @@ enum StorageAction {
     /// plan: the contract ID, the ledger keys covering the removed/expiring
     /// entries, and a suggested `--ledgers` value.  Nothing is signed or
     /// submitted.
+    ///
+    /// Duplicate ledger keys within a single snapshot are rejected with an
+    /// error rather than silently dropped.
     ///
     /// Exit codes: 0 in all non-error cases (including an empty plan).
     #[command(name = "storage-diff", alias = "diff")]
@@ -2737,7 +2774,8 @@ async fn run_release_assurance(
 /// `--fuzz-evidence` was not supplied (existing releases with no fuzz
 /// section are unaffected), and the status folds into the aggregate. Only
 /// `Classification::Finding` entries are security evidence; a completed
-/// campaign with zero findings is a clean record and stays SKIPPED.
+/// campaign with at least one executed case and zero findings scores `PASS`,
+/// findings score `FAIL`, and incomplete or zero-case evidence scores `ERROR`.
 fn read_fuzz_evidence(
     path: Option<&str>,
 ) -> Result<(Option<FuzzEvidenceResult>, Option<RaStatus>), String> {
@@ -2750,7 +2788,7 @@ fn read_fuzz_evidence(
         serde_json::from_reader(std::io::BufReader::new(file))
             .map_err(|e| format!("Failed to parse fuzz evidence {path}: {e}"))?;
 
-    let status = if !evidence.campaign_completed {
+    let status = if !evidence.campaign_completed || evidence.case_count == 0 {
         RaStatus::Error
     } else if !evidence.findings.is_empty() {
         RaStatus::Fail
@@ -2758,15 +2796,24 @@ fn read_fuzz_evidence(
         // Completed with zero findings: a clean record, not "not executed".
         RaStatus::Pass
     };
-    let detail = format!(
-        "fuzz campaign: cases={} findings={} minimized={} artifacts={} replayed={} deterministic={}",
-        evidence.case_count,
-        evidence.findings.len(),
-        evidence.minimized_findings,
-        evidence.artifacts_available,
-        evidence.replay.len(),
-        evidence.deterministic,
-    );
+    let detail = if !evidence.campaign_completed {
+        format!(
+            "fuzz campaign incomplete (campaign_completed=false, cases={})",
+            evidence.case_count,
+        )
+    } else if evidence.case_count == 0 {
+        "fuzz campaign executed 0 cases; zero-case evidence is not a passing campaign".to_string()
+    } else {
+        format!(
+            "fuzz campaign: cases={} findings={} minimized={} artifacts={} replayed={} deterministic={}",
+            evidence.case_count,
+            evidence.findings.len(),
+            evidence.minimized_findings,
+            evidence.artifacts_available,
+            evidence.replay.len(),
+            evidence.deterministic,
+        )
+    };
     Ok((
         Some(FuzzEvidenceResult {
             check: RaCheck { status, detail },
@@ -3162,6 +3209,22 @@ fn parse_format_str(s: &str) -> OutputFormat {
             eprintln!("Invalid format '{}'. Use 'json' or 'pretty'.", other);
             process::exit(2);
         }
+    }
+}
+
+/// Formats a byte count for the `wasm cache list` table (`530 B`, `1.2 KB`,
+/// `3.4 MB`). `None` renders as `unknown`: the entry is a half-pair whose
+/// other file is missing.
+fn format_cache_size(bytes: Option<u64>) -> String {
+    let Some(bytes) = bytes else {
+        return "unknown".to_string();
+    };
+    if bytes < 1024 {
+        format!("{} B", bytes)
+    } else if bytes < 1024 * 1024 {
+        format!("{:.1} KB", bytes as f64 / 1024.0)
+    } else {
+        format!("{:.1} MB", bytes as f64 / (1024.0 * 1024.0))
     }
 }
 
@@ -5122,6 +5185,76 @@ mod project_add_tests {
         );
         let _ = std::fs::remove_dir_all(dir);
     }
+}
+
+/// Resolve a fee source to its public account address without loading a secret.
+fn resolve_fee_source_public_key(input: &str) -> Result<String, String> {
+    let input = input.trim();
+    if sdkt_xdr::decode_account_id(input).is_ok() {
+        return Ok(input.to_string());
+    }
+
+    let store = sdkt_storage::IdentityStore::new()
+        .map_err(|e| format!("Failed to access identity store: {e}"))?;
+    store
+        .resolve_public_identity(input)
+        .map(|identity| identity.public_key)
+        .map_err(|e| format!("Failed to resolve fee source identity: {e}"))
+}
+
+/// Resolve the signing [`Network`] for `sdkt tx sign` from `--network`,
+/// `--network-profile`, and/or `--network-passphrase`.
+///
+/// `--network` is mutually exclusive with `--network-profile` and
+/// `--network-passphrase`. When both `--network-profile` and
+/// `--network-passphrase` are supplied, the profile is still validated via
+/// `NetworkStore` and `--network-passphrase` takes precedence over the
+/// profile's stored passphrase (matching `resolve_network_config` /
+/// `tx submit`). Defaults to `Network::Testnet` when none are specified.
+fn resolve_sign_network(
+    network: Option<&str>,
+    network_profile: Option<&str>,
+    network_passphrase: Option<&str>,
+) -> Result<Network, String> {
+    if network.is_some() && (network_profile.is_some() || network_passphrase.is_some()) {
+        return Err(
+            "cannot use --network together with --network-profile or --network-passphrase; specify only one"
+                .to_string(),
+        );
+    }
+
+    if let Some(net_str) = network {
+        return match net_str.trim().to_ascii_lowercase().as_str() {
+            "testnet" => Ok(Network::Testnet),
+            "mainnet" => Ok(Network::Mainnet),
+            "futurenet" => Ok(Network::Futurenet),
+            other if other.starts_with("custom:") => Ok(Network::parse(other)),
+            _ => Err(format!(
+                "invalid network '{}' (expected testnet|mainnet|futurenet|custom:<passphrase>)",
+                net_str
+            )),
+        };
+    }
+
+    let profile_passphrase = if let Some(profile_name) = network_profile {
+        let store = NetworkStore::new().map_err(|e| format!("cannot open network store: {}", e))?;
+        let profile = store
+            .get(profile_name)
+            .map_err(|e| format!("network profile '{}' not found: {}", profile_name, e))?;
+        Some(profile.network_passphrase)
+    } else {
+        None
+    };
+
+    if let Some(passphrase) = network_passphrase {
+        return Ok(Network::from_passphrase(passphrase));
+    }
+
+    if let Some(passphrase) = profile_passphrase {
+        return Ok(Network::from_passphrase(&passphrase));
+    }
+
+    Ok(Network::Testnet)
 }
 
 /// Resolve a transaction envelope argument (`--input` / `--envelope`) to
@@ -7109,6 +7242,49 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
                     }
                 }
             }
+            TxAction::Wrap {
+                envelope,
+                fee_source,
+                fee,
+                format,
+            } => {
+                let fmt = parse_format_str(&format);
+                let env_data = match resolve_tx_input(&envelope) {
+                    Ok(s) => s,
+                    Err(e) => {
+                        eprintln!("Error: {}", e);
+                        process::exit(1);
+                    }
+                };
+                let fee_source = match resolve_fee_source_public_key(&fee_source) {
+                    Ok(public_key) => public_key,
+                    Err(e) => {
+                        eprintln!("Error: {}", e);
+                        process::exit(1);
+                    }
+                };
+                let result = match sdkt_xdr::wrap_fee_bump(&sdkt_xdr::FeeBumpWrapParams {
+                    envelope: env_data,
+                    fee_source,
+                    fee,
+                }) {
+                    Ok(result) => result,
+                    Err(e) => {
+                        eprintln!("Error: {}", e);
+                        process::exit(1);
+                    }
+                };
+                if fmt == OutputFormat::Json {
+                    println!("{}", serde_json::to_string(&result)?);
+                } else {
+                    println!("Fee-bump envelope:");
+                    println!("  Fee source:      {}", result.fee_source);
+                    println!("  Inner fee: {} stroops", result.inner_fee);
+                    println!("  Minimum fee: {} stroops", result.minimum_fee);
+                    println!("  Fee-bump total: {} stroops", result.fee);
+                    println!("  Envelope:        {}", result.envelope);
+                }
+            }
             TxAction::Validate { envelope, format } => {
                 let fmt = parse_format_str(&format);
                 let env_data = match resolve_tx_input(&envelope) {
@@ -7888,17 +8064,15 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
             } => {
                 let fmt = parse_format_str(&format);
 
-                // --- Network resolution (strict; reject unknown labels) ---
-                let network = match network.trim().to_ascii_lowercase().as_str() {
-                    "testnet" => Network::Testnet,
-                    "mainnet" => Network::Mainnet,
-                    "futurenet" => Network::Futurenet,
-                    other if other.starts_with("custom:") => Network::parse(other),
-                    _ => {
-                        eprintln!(
-                            "Error: invalid network '{}' (expected testnet|mainnet|futurenet|custom:<passphrase>)",
-                            network
-                        );
+                // --- Network resolution (strict; reject unknown labels / profiles) ---
+                let network = match resolve_sign_network(
+                    network.as_deref(),
+                    net.network_profile.as_deref(),
+                    net.network_passphrase.as_deref(),
+                ) {
+                    Ok(n) => n,
+                    Err(e) => {
+                        eprintln!("Error: {}", e);
                         process::exit(1);
                     }
                 };
@@ -10050,6 +10224,71 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
                             }
                             Err(e) => {
                                 eprintln!("Error getting cache info: {}", e);
+                                process::exit(1);
+                            }
+                        }
+                    }
+                    CacheAction::List { network, format } => {
+                        let fmt = parse_format_str(&format);
+                        match cache.list_entries(&network) {
+                            Ok(entries) => {
+                                if fmt == OutputFormat::Json {
+                                    // Serialize through serde_json rather than a
+                                    // hand-rolled format string so hashes,
+                                    // network names, and warning text are
+                                    // escaped correctly. A structured array of
+                                    // entries; `null` sizes mark a half-pair.
+                                    #[derive(serde::Serialize)]
+                                    struct CacheEntryJson<'a> {
+                                        network: &'a str,
+                                        hash: &'a str,
+                                        metadata_size_bytes: Option<u64>,
+                                        wasm_size_bytes: Option<u64>,
+                                        warning: Option<&'a str>,
+                                    }
+
+                                    let payload: Vec<CacheEntryJson> = entries
+                                        .iter()
+                                        .map(|entry| CacheEntryJson {
+                                            network: &entry.network,
+                                            hash: &entry.hash,
+                                            metadata_size_bytes: entry.metadata_size_bytes,
+                                            wasm_size_bytes: entry.wasm_size_bytes,
+                                            warning: entry.warning.as_deref(),
+                                        })
+                                        .collect();
+                                    println!("{}", serde_json::to_string(&payload)?);
+                                } else if entries.is_empty() {
+                                    println!("No cached WASM entries for network '{}'.", network);
+                                } else {
+                                    println!("Cached WASM entries ({}):", entries.len());
+                                    println!("  {:<66} {:<10} META", "HASH", "WASM");
+                                    for entry in &entries {
+                                        let marker =
+                                            if entry.warning.is_some() { "  ⚠" } else { "" };
+                                        println!(
+                                            "  {:<66} {:<10} {}{}",
+                                            entry.hash,
+                                            format_cache_size(entry.wasm_size_bytes),
+                                            format_cache_size(entry.metadata_size_bytes),
+                                            marker
+                                        );
+                                    }
+                                }
+                                // Per-entry diagnostics go to stderr so stdout
+                                // stays parseable, matching the other cache
+                                // warnings.
+                                for entry in &entries {
+                                    if let Some(warning) = &entry.warning {
+                                        eprintln!(
+                                            "Warning: cache entry '{}': {}",
+                                            entry.hash, warning
+                                        );
+                                    }
+                                }
+                            }
+                            Err(e) => {
+                                eprintln!("Error listing cache entries: {}", e);
                                 process::exit(1);
                             }
                         }
@@ -12708,6 +12947,8 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
                 auth,
                 expect_success,
                 expect_error,
+                sequence_length,
+                sequence_every,
                 replay,
                 format,
             } => {
@@ -12720,6 +12961,8 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
                     &auth,
                     expect_success,
                     expect_error,
+                    sequence_length,
+                    sequence_every,
                     replay,
                     &format,
                 ) {
