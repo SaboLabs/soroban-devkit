@@ -88,7 +88,8 @@ pub mod state_compare;
 pub use artifact::{CampaignConfig, FindingArtifact, SCHEMA_VERSION};
 pub use auth::AuthMode;
 pub use campaign::{
-    run_campaign, run_campaign_artifacts, sequence_case_counts, CampaignInput, CampaignResult,
+    plan_campaign, run_campaign, run_campaign_artifacts, sequence_case_counts, CampaignInput,
+    CampaignPlan, CampaignResult, PlannedCaseSummary,
 };
 pub use case::{FunctionCall, FuzzCase};
 pub use compare::{compare_evidence, EvidenceComparison};
@@ -119,7 +120,8 @@ pub use oracle::{Classification, Expected, ExpectedBehavior, Oracle, ReasonCode}
 pub use profile_bridge::{profile_from_capture, CaptureInput};
 pub use replay::{parse_artifact, replay, replay_json, ReplayError, ReplayOutcome};
 pub use runner::{
-    artifact_file_name, expand_seed, load_artifact, replay_line, run as run_fuzz, run_replay,
+    artifact_file_name, expand_seed, load_artifact, plan as plan_fuzz,
+    plan_with_sequence as plan_fuzz_with_sequence, replay_line, run as run_fuzz, run_replay,
     run_with_sequence as run_fuzz_with_sequence, FuzzReport, FuzzRunOptions, ReplayOptions,
     SequenceOptions,
 };

@@ -752,6 +752,7 @@ fn runner_writes_and_replays_multistep_artifacts_when_sequence_enabled() {
         expect_success: vec!["increment".to_string()],
         expect_error: Vec::new(),
         replay: true,
+        dry_run: false,
     };
 
     let report = sdkt_fuzz::run_fuzz_with_sequence(

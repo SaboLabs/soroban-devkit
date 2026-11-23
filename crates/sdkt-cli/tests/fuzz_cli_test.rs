@@ -910,3 +910,121 @@ fn cli_campaign_default_path_parity_when_sequence_flags_omitted() {
     assert_eq!(ev["config"]["sequence_length"], 2);
     assert_eq!(ev["config"]["sequence_every"], 0);
 }
+
+// ---------------------------------------------------------------------------
+// `--dry-run`: plan without executing (issue #511)
+// ---------------------------------------------------------------------------
+
+fn dry_run_json(args: &[&str]) -> serde_json::Value {
+    let owned = fixture("us_new.wasm");
+    let mut all = vec![owned.as_str()];
+    all.extend_from_slice(args);
+    let out = fuzz_campaign(&all)
+        .args(["--dry-run", "--format", "json"])
+        .output()
+        .expect("run sdkt");
+    assert_eq!(
+        out.status.code(),
+        Some(0),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    serde_json::from_slice(&out.stdout).expect("plan is json")
+}
+
+#[test]
+fn dry_run_is_deterministic_for_same_seed() {
+    let a = fuzz_campaign(&[
+        &fixture("us_new.wasm"),
+        "--seed",
+        "7",
+        "--cases",
+        "12",
+        "--dry-run",
+    ])
+    .output()
+    .unwrap();
+    let b = fuzz_campaign(&[
+        &fixture("us_new.wasm"),
+        "--seed",
+        "7",
+        "--cases",
+        "12",
+        "--dry-run",
+    ])
+    .output()
+    .unwrap();
+    assert_eq!(a.status.code(), Some(0));
+    assert_eq!(a.stdout, b.stdout, "pretty plans must be byte-identical");
+    let ja = dry_run_json(&["--seed", "7", "--cases", "12"]);
+    let jb = dry_run_json(&["--seed", "7", "--cases", "12"]);
+    assert_eq!(ja, jb);
+}
+
+#[test]
+fn dry_run_case_count_equals_cases() {
+    for n in [1usize, 5, 17] {
+        let plan = dry_run_json(&["--cases", &n.to_string()]);
+        assert_eq!(plan["cases"].as_array().unwrap().len(), n);
+    }
+}
+
+#[test]
+fn dry_run_functions_are_selectable_and_filter_applies() {
+    let plan = dry_run_json(&["--cases", "9"]);
+    let fns: std::collections::BTreeSet<String> = plan["cases"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|c| c["function"].as_str().unwrap().to_string())
+        .collect();
+    assert!(!fns.is_empty());
+    let wasm = std::fs::read(fixture("us_new.wasm")).unwrap();
+    let input = sdkt_fuzz::CampaignInput::new(&wasm, [0u8; 32]).unwrap();
+    let (selectable, _) = input.selectable();
+    for f in &fns {
+        assert!(selectable.contains(f), "{f} not selectable");
+    }
+    let only = selectable[0].clone();
+    let filtered = dry_run_json(&["--cases", "4", "--function", &only]);
+    for c in filtered["cases"].as_array().unwrap() {
+        assert_eq!(c["function"], only.as_str());
+        assert!(c["auth_mode"].is_string());
+        assert!(c["operators"].is_array());
+    }
+}
+
+#[test]
+fn dry_run_unknown_function_errors_like_a_real_run() {
+    let wasm = fixture("us_new.wasm");
+    let dry = fuzz_campaign(&[&wasm, "--function", "no_such_fn", "--dry-run"])
+        .output()
+        .unwrap();
+    let real = fuzz_campaign(&[&wasm, "--function", "no_such_fn"])
+        .output()
+        .unwrap();
+    assert_eq!(dry.status.code(), Some(2));
+    assert_eq!(dry.status.code(), real.status.code());
+    assert_eq!(dry.stderr, real.stderr);
+}
+
+#[test]
+fn dry_run_writes_no_artifacts() {
+    let dir = temp_dir("dry-run-artifacts");
+    let target = dir.join("artifacts");
+    let out = fuzz_campaign(&[
+        &fixture("us_new.wasm"),
+        "--cases",
+        "6",
+        "--expect-success",
+        "hello",
+        "--artifact-dir",
+        target.to_str().unwrap(),
+        "--dry-run",
+    ])
+    .output()
+    .unwrap();
+    assert_eq!(out.status.code(), Some(0));
+    assert!(!target.exists(), "dry run must not create the artifact dir");
+    let _ = std::fs::remove_dir_all(&dir);
+}

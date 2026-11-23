@@ -852,6 +852,11 @@ enum FuzzAction {
         /// Replay every written artifact to verify determinism
         #[arg(long)]
         replay: bool,
+        /// Plan the campaign and print the case plan (case id, function,
+        /// mutation operators, auth mode) without executing anything or
+        /// writing artifacts
+        #[arg(long, conflicts_with = "replay")]
+        dry_run: bool,
         /// Output format (pretty | json | jsonl)
         #[arg(short, long, default_value = "pretty")]
         format: String,
@@ -12950,6 +12955,7 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
                 sequence_length,
                 sequence_every,
                 replay,
+                dry_run,
                 format,
             } => {
                 match commands::fuzz::run(
@@ -12964,6 +12970,7 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
                     sequence_length,
                     sequence_every,
                     replay,
+                    dry_run,
                     &format,
                 ) {
                     // Findings exist → exit 1 (the only exit code that means

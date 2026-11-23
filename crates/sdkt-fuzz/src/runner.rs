@@ -14,7 +14,8 @@ use std::path::{Path, PathBuf};
 use crate::artifact::{encode_scval_xdr_hex, FindingArtifact};
 use crate::auth::AuthMode;
 use crate::campaign::{
-    run_campaign_artifacts, sequence_case_counts, summarize, CampaignInput, CampaignResult,
+    plan_campaign, run_campaign_artifacts, sequence_case_counts, summarize, CampaignInput,
+    CampaignPlan, CampaignResult,
 };
 use crate::environment::Environment;
 use crate::error::FuzzError;
@@ -39,6 +40,9 @@ pub struct FuzzRunOptions {
     pub expect_error: Vec<String>,
     /// Replay every written artifact (deterministic verification).
     pub replay: bool,
+    /// Plan the campaign and report the case plan without executing anything
+    /// or writing artifacts (see [`plan`]).
+    pub dry_run: bool,
 }
 
 impl Default for FuzzRunOptions {
@@ -53,6 +57,7 @@ impl Default for FuzzRunOptions {
             expect_success: Vec::new(),
             expect_error: Vec::new(),
             replay: false,
+            dry_run: false,
         }
     }
 }
@@ -178,11 +183,25 @@ pub fn run(options: &FuzzRunOptions) -> Result<FuzzReport, FuzzError> {
     run_with_sequence(options, SequenceOptions::default())
 }
 
-/// Run a campaign with explicit multi-step [`SequenceOptions`].
-pub fn run_with_sequence(
+/// Plan a campaign (`--dry-run`): the case list a real run would execute,
+/// without creating an executor, writing artifacts, or touching the network.
+pub fn plan(options: &FuzzRunOptions) -> Result<CampaignPlan, FuzzError> {
+    plan_with_sequence(options, SequenceOptions::default())
+}
+
+/// [`plan`] with explicit multi-step [`SequenceOptions`].
+pub fn plan_with_sequence(
     options: &FuzzRunOptions,
     sequence: SequenceOptions,
-) -> Result<FuzzReport, FuzzError> {
+) -> Result<CampaignPlan, FuzzError> {
+    let (_wasm, input) = campaign_input(options, sequence)?;
+    plan_campaign(&input)
+}
+
+fn campaign_input(
+    options: &FuzzRunOptions,
+    sequence: SequenceOptions,
+) -> Result<(Vec<u8>, CampaignInput), FuzzError> {
     if sequence.sequence_every > 0 && sequence.sequence_length < 2 {
         return Err(FuzzError::InvalidConfig(format!(
             "sequence_length must be >= 2 when sequence_every > 0 (got {})",
@@ -201,6 +220,20 @@ pub fn run_with_sequence(
     input.sequence_length = sequence.sequence_length;
     input.sequence_every = sequence.sequence_every;
     input.environment = Environment::default();
+    Ok((wasm, input))
+}
+
+/// Run a campaign with explicit multi-step [`SequenceOptions`].
+pub fn run_with_sequence(
+    options: &FuzzRunOptions,
+    sequence: SequenceOptions,
+) -> Result<FuzzReport, FuzzError> {
+    if options.dry_run {
+        return Err(FuzzError::InvalidConfig(
+            "dry_run is set: call plan_with_sequence instead of running the campaign".to_string(),
+        ));
+    }
+    let (wasm, input) = campaign_input(options, sequence)?;
 
     let expectations = build_expectations(options)?;
     let (result, artifacts) = run_campaign_artifacts(&input, &expectations)?;
