@@ -680,6 +680,20 @@ enum Commands {
         #[command(flatten)]
         net: NetworkArgs,
     },
+    /// Run a multi-step contract scenario from a TOML file (#549)
+    Run {
+        /// Scenario file to execute
+        #[arg(value_name = "SCENARIO.toml")]
+        scenario: String,
+        /// Output format (pretty or json)
+        #[arg(short, long, default_value = "pretty")]
+        format: String,
+        /// Validate the file, simulate every step, sign and submit nothing
+        #[arg(long)]
+        dry_run: bool,
+        #[command(flatten)]
+        net: NetworkArgs,
+    },
     /// Generate or inspect the project lock file (`sdkt.lock`)
     Lock {
         #[command(subcommand)]
@@ -10929,6 +10943,15 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
                 }
                 Err(e) => build_error_exit(&e, fmt),
             }
+        }
+        Commands::Run {
+            scenario,
+            format,
+            dry_run,
+            net,
+        } => {
+            let code = commands::run::run_scenario(&scenario, &format, dry_run, &net).await;
+            process::exit(code);
         }
         Commands::Call {
             contract_id,

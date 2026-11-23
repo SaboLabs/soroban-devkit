@@ -125,6 +125,20 @@ sdkt
 │   Inherits the mainnet safety guard
 │   (see below). Live Testnet smoke test is documented but NOT exercised in CI.
 │
+├── run <SCENARIO.toml>
+│   ├── --format <json|pretty>
+│   ├── --dry-run                 (validate + simulate every step; never
+│   │                             signs and never submits)
+│   └── --network-profile <NAME> / --rpc-url <URL> / --network-passphrase <P>
+│
+│   Executes a checked-in `[[steps]]` list in file order through the existing
+│   `call` simulation path and `invoke` flow. Later steps interpolate earlier
+│   outputs with `${steps.<id>.result}` / `${steps.<id>.tx_hash}`, and each
+│   step may assert on its recorded output. The first failed step or assertion
+│   stops the run. Exit codes: 0 all passed, 1 a step/assertion failed,
+│   2 usage error (unreadable file, malformed TOML, validation failure).
+│   See "Running a scenario (`sdkt run`)" below for the file format.
+│
 ├── tx
 │   ├── inspect <hash>        [--format]
 │   ├── validate <xdr>        [--format] (offline parse + structural checks)
@@ -1334,6 +1348,115 @@ Store root precedence (lowest → highest): `<cwd>/.sdkt/plugins`,
 - **Contract metadata (`contractmetav0`).** `sdkt wasm inspect <file.wasm>` decodes the `contractmetav0` custom section and prints a `Contract Metadata` block of `key = value` entries (for example the `rsver`, `rssdkver`, and `cliver` provenance keys) in section order, with duplicate keys preserved. A WASM without the section prints `Contract Metadata (0):` followed by `(none)`. With `--format json` the entries appear as the additive `metadata.contract_meta` array of `{ "key": ..., "value": ... }` objects — an empty array when the section is absent — alongside the existing `metadata` keys, which are unchanged. A malformed `contractmetav0` payload is reported as a classified error rather than a panic.
 - `sdkt wasm metadata --contract <id>` reports the same entries for the deployed contract, from the fetched (or cached) WASM bytes: pretty output gains the identical `Contract Metadata` block, and `--format json` gains an additive top-level `contract_meta` array alongside the existing inspection keys, which are unchanged. It is empty when the deployed WASM carries no `contractmetav0`.
 - **Mainnet safety.** Mutating commands (`tx submit`, `invoke`, `deploy`, `project deploy`) refuse to target mainnet unless you explicitly select the network — via `--network-profile`, `--rpc-url`, or `--network-passphrase`. A testnet-default passphrase pointed at a mainnet endpoint is rejected before any request is sent, protecting against signing for the wrong network.
+
+## Running a scenario (`sdkt run`)
+
+A real contract workflow is a sequence — deploy, initialize, transfer, read the
+balance back and check it. `sdkt run` makes that sequence a checked-in,
+re-runnable artifact instead of shell folklore.
+
+```bash
+sdkt run <SCENARIO.toml> [--format pretty|json] [--dry-run]
+         [--network-profile <NAME> | --rpc-url <URL> | --network-passphrase <P>]
+```
+
+### File format
+
+A scenario is a TOML file with an ordered `[[steps]]` list. Every step has:
+
+| Field | Required | Meaning |
+| --- | --- | --- |
+| `id` | yes | Unique step id, `[A-Za-z0-9_-]+`. Referenced by later steps and by errors. |
+| `kind` | yes | `call` (read-only simulation) or `invoke` (sign → submit → poll). |
+| `contract` | yes | A `C...` contract ID, or a workspace alias recorded in `.sdkt-deployments.json` for the selected network profile. |
+| `function` | yes | Contract function to invoke. |
+| `args` | no | Typed arguments (`TYPE:VALUE`), same syntax as `sdkt call` / `sdkt invoke`. |
+| `args_json` | no | Composite arguments as JSON arrays, appended after `args`. |
+| `identity` | invoke only | Identity that signs and pays (default `"default"`). Keys are read from the identity store, never from the scenario. |
+| `no_wait` | invoke only | Return after submission with the transaction hash instead of polling for settlement. |
+| `[[steps.assert]]` | no | Assertions on the step's recorded output (below). |
+
+**Value passing.** An argument may reference an earlier step's output:
+
+- `${steps.<id>.result}` — the decoded JSON result of a `call` step;
+- `${steps.<id>.tx_hash}` — the submitted hash of an `invoke` step.
+
+References to unknown steps, to steps that have not run yet, or to a field the
+step does not produce are validation errors raised before any step runs (exit
+2).
+
+**Assertions.** Each `[[steps.assert]]` table has a `path` (a JSON pointer into
+the step's recorded output, e.g. `/result`) and either `equals` (a JSON value
+the pointed-to value must equal) or `exists` (boolean). A failed assertion
+fails the step and stops the run.
+
+### Exit codes
+
+| Code | Meaning |
+| --- | --- |
+| `0` | Every step and assertion passed (or, with `--dry-run`, every step simulated). |
+| `1` | A step or assertion failed. The failing step is named on stderr; no later step runs. |
+| `2` | Usage error: unreadable file, malformed TOML, duplicate step id, unknown step reference, unresolvable alias, malformed arguments. Nothing runs. |
+
+### `--format json`
+
+Prints one summary document: `scenario`, `dry_run`, `status`, and one entry per
+executed step with `id`, `kind`, `status`, the recorded `output`, `tx_hash` for
+invoke steps, `result` for call steps, and the assertion outcomes. Pretty mode
+prints one section per step.
+
+### `--dry-run`
+
+Validates the whole file (ids, references, aliases, arguments) and simulates
+every `call` step and every `invoke` step's simulation. It never builds a final
+envelope, never signs, and never submits — assertions are reported as skipped.
+
+### Complete example
+
+`examples/scenario/transfer.toml`:
+
+```toml
+[[steps]]
+id = "balance"
+kind = "call"
+contract = "token"          # alias from .sdkt-deployments.json
+function = "balance"
+args = ["address:GAAAA...WHF"]
+
+[[steps.assert]]
+path = "/result"
+equals = 1000
+
+[[steps]]
+id = "transfer"
+kind = "invoke"
+contract = "token"
+function = "transfer"
+identity = "default"
+args = [
+  "address:GAAAA...WHF",
+  "address:GBBBB...XYZ",
+  "i128:${steps.balance.result}",   # amount read by the call step
+]
+
+[[steps.assert]]
+path = "/tx_hash"
+exists = true
+```
+
+```bash
+# Execute for real (signs and submits the invoke step):
+sdkt run examples/scenario/transfer.toml --network-profile testnet
+
+# Validate and simulate only:
+sdkt run examples/scenario/transfer.toml --network-profile testnet --dry-run --format json
+```
+
+A failing assertion exits `1` and names the step:
+
+```text
+Error: step 'balance' failed: assertion /result failed: expected 999, found 1000
+```
 
 ## Fuzz expectation declarations
 
