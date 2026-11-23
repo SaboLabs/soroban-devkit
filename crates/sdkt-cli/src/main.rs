@@ -2517,27 +2517,39 @@ fn apply_size_policy_to_assurance(
     Ok(())
 }
 
-/// Pretty-print the aggregate report to stdout.
-fn print_release_assurance_pretty(r: &ReleaseAssuranceReport) {
-    println!("Soroban Release Assurance");
-    println!("────────────────────────");
-    println!("Artifact        {}", r.artifact.check.status);
-    println!("Security        {}", r.security.check.status);
-    println!("Upgrade Safety  {}", r.upgrade_safety.check.status);
-    println!("Verification    {}", r.verification.check.status);
-    println!("Contract Health {}", r.health.check.status);
+/// Format the aggregate report pretty text.
+fn format_release_assurance_pretty(r: &ReleaseAssuranceReport) -> String {
+    let mut out = String::new();
+    out.push_str("Soroban Release Assurance\n");
+    out.push_str("────────────────────────\n");
+    out.push_str(&format!("Artifact        {}\n", r.artifact.check.status));
+    out.push_str(&format!("Security        {}\n", r.security.check.status));
+    out.push_str(&format!("Upgrade Safety  {}\n", r.upgrade_safety.check.status));
+    out.push_str(&format!("Verification    {}\n", r.verification.check.status));
+    out.push_str(&format!("Contract Health {}\n", r.health.check.status));
     if let Some(f) = &r.fuzz {
-        println!("Fuzz Evidence   {}", f.check.status);
+        out.push_str(&format!("Fuzz Evidence   {}\n", f.check.status));
     }
-    println!();
-    println!("RELEASE STATUS  {}", r.release_status.to_uppercase());
+    out.push('\n');
+    out.push_str(&format!("RELEASE STATUS  {}\n", r.release_status.to_uppercase()));
     if !r.reasons.is_empty() {
-        println!();
-        println!("Reasons:");
+        out.push('\n');
+        out.push_str("Reasons:\n");
         for reason in &r.reasons {
-            println!("  - {}", reason);
+            out.push_str(&format!("  - {}\n", reason));
         }
     }
+    out
+}
+
+/// Pretty-print the aggregate report to stdout.
+fn print_release_assurance_pretty(r: &ReleaseAssuranceReport) {
+    print!("{}", format_release_assurance_pretty(r));
+}
+
+/// Pretty-print the aggregate report to stderr (preserves parseable stdout in JSON mode).
+fn eprint_release_assurance_pretty(r: &ReleaseAssuranceReport) {
+    eprint!("{}", format_release_assurance_pretty(r));
 }
 
 /// Read-only release-assurance composition reusing the existing SDKT engines:
@@ -10431,7 +10443,11 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
                             process::exit(1);
                         }
                     };
-                    print_release_assurance_pretty(&report);
+                    if fmt == OutputFormat::Json {
+                        eprint_release_assurance_pretty(&report);
+                    } else {
+                        print_release_assurance_pretty(&report);
+                    }
                     if report.release_status == "FAIL" {
                         eprintln!("Deployment aborted: release assurance failed.");
                         process::exit(1);
@@ -10442,6 +10458,11 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
             // Read the new WASM before looking up the identity. This preserves
             // the fail-fast behavior for a missing or unreadable file on the
             // full-deploy path; create-only recovery does not need a file.
+            //
+            // Note (TOCTOU gap): The candidate WASM is read here for upload
+            // after having been checked by run_release_assurance above. If the file
+            // on disk is modified between assurance and upload, the deployed bytes
+            // may differ from the assessed bytes.
             let preloaded_wasm = wasm
                 .as_ref()
                 .map(|path| {

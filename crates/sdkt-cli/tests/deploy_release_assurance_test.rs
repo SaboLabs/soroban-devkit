@@ -52,6 +52,43 @@ fn passing_checks_continue_to_identity_without_on_chain_checks() {
 }
 
 #[test]
+fn passing_checks_send_pretty_report_to_stderr_in_json_mode() {
+    deploy(&fixture("us_new.wasm"))
+        .args(["--release-assurance", "--format", "json"])
+        .assert()
+        .failure()
+        .stdout(predicate::str::contains("Soroban Release Assurance").not())
+        .stderr(predicate::str::contains("Soroban Release Assurance"))
+        .stderr(predicate::str::contains("Artifact        PASS"))
+        .stderr(predicate::str::contains("identity"))
+        .stderr(predicate::str::contains("Deployment aborted").not());
+}
+
+#[test]
+fn critical_audit_aborts_to_stderr_in_json_mode() {
+    let dir = tempfile::tempdir().unwrap();
+    let src = dir.path().join("vuln.rs");
+    std::fs::write(&src, "fn initialize() { let _ = 1; }\n").unwrap();
+    deploy(&fixture("us_new.wasm"))
+        .args([
+            "--release-assurance",
+            "--preflight-audit",
+            src.to_str().unwrap(),
+            "--format",
+            "json",
+        ])
+        .assert()
+        .code(1)
+        .stdout(predicate::str::contains("Soroban Release Assurance").not())
+        .stderr(predicate::str::contains("Soroban Release Assurance"))
+        .stderr(predicate::str::contains("Security        FAIL"))
+        .stderr(predicate::str::contains(
+            "Deployment aborted: release assurance failed",
+        ))
+        .stderr(predicate::str::contains("identity").not());
+}
+
+#[test]
 fn incompatible_upgrade_aborts_before_identity() {
     deploy(&fixture("us_new.wasm"))
         .args(["--release-assurance", "--old-wasm", &fixture("us_old.wasm")])
