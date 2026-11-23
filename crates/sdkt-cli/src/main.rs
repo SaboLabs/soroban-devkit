@@ -1356,6 +1356,9 @@ enum ProjectCommand {
         /// without re-deploying (and re-paying for) what already succeeded.
         #[arg(long)]
         skip_deployed: bool,
+        /// Deploy only these aliases and their transitive workspace dependencies.
+        #[arg(long = "only", value_name = "ALIAS", action = clap::ArgAction::Append)]
+        only: Vec<String>,
         /// Preview the deployment without submitting anything: resolve the
         /// deploy order, predict each contract's address and WASM hash
         /// offline, and print the plan. Never signs, never touches private
@@ -4303,6 +4306,38 @@ struct DryRunContract {
     skipped: bool,
 }
 
+fn select_project_contracts(
+    config: &DevKitConfig,
+    resolved: Vec<sdkt_core::project::ResolvedContract>,
+    only: &[String],
+) -> Result<Vec<sdkt_core::project::ResolvedContract>, String> {
+    if only.is_empty() {
+        return Ok(resolved);
+    }
+    let known = config.contracts.keys().cloned().collect::<Vec<_>>();
+    let mut selected = std::collections::HashSet::new();
+    let mut pending = only.to_vec();
+    while let Some(alias) = pending.pop() {
+        if !config.contracts.contains_key(&alias) {
+            return Err(format!(
+                "unknown --only alias '{}'; known aliases: {}",
+                alias,
+                known.join(", ")
+            ));
+        }
+        if !selected.insert(alias.clone()) {
+            continue;
+        }
+        let cfg = config.contracts.get(&alias).expect("checked above");
+        pending.extend(cfg.deploy_after.iter().cloned());
+        pending.extend(cfg.depends_on.iter().cloned());
+    }
+    Ok(resolved
+        .into_iter()
+        .filter(|contract| selected.contains(&contract.alias))
+        .collect())
+}
+
 /// Preview a multi-contract deployment without submitting anything.
 ///
 /// Resolves the workspace deploy order, predicts each contract's address
@@ -4321,6 +4356,7 @@ async fn project_deploy_dry_run(
     config: &DevKitConfig,
     salt_bytes: Option<[u8; 20]>,
     skip_deployed: bool,
+    only: &[String],
     identity: &str,
     net: &NetworkArgs,
     fmt: OutputFormat,
@@ -4382,6 +4418,7 @@ async fn project_deploy_dry_run(
 
     let resolved = sdkt_core::project::resolve_project(config)
         .map_err(|e| format!("Error resolving project: {}", e))?;
+    let resolved = select_project_contracts(config, resolved, only)?;
 
     let mut plan: Vec<DryRunContract> = Vec::new();
     for contract in &resolved {
@@ -12010,6 +12047,7 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
             ProjectCommand::Deploy {
                 salt,
                 skip_deployed,
+                only,
                 dry_run,
                 identity,
                 timeout,
@@ -12037,6 +12075,7 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
                         &config,
                         salt_bytes,
                         skip_deployed,
+                        &only,
                         &identity,
                         &net,
                         fmt,
@@ -12146,11 +12185,28 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
 
                 match sdkt_core::project::resolve_project(&config) {
                     Ok(resolved) => {
+                        let resolved = match select_project_contracts(&config, resolved, &only) {
+                            Ok(selected) => selected,
+                            Err(e) => {
+                                eprintln!("Error: {e}");
+                                process::exit(1);
+                            }
+                        };
                         // Contracts skipped via --skip-deployed (existing on-chain
                         // record) count toward the resolved total for reporting.
                         let total_planned = resolved.len();
 
                         if fmt != OutputFormat::Json {
+                            if !only.is_empty() {
+                                println!(
+                                    "Selected deploy set: {}",
+                                    resolved
+                                        .iter()
+                                        .map(|contract| contract.alias.as_str())
+                                        .collect::<Vec<_>>()
+                                        .join(", ")
+                                );
+                            }
                             println!(
                                 "✓ Project dependency graph resolved. Deploying {} contract(s).",
                                 total_planned
@@ -12158,6 +12214,10 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
                         }
 
                         let mut results = std::collections::HashMap::new();
+                        let selected_aliases = resolved
+                            .iter()
+                            .map(|contract| contract.alias.clone())
+                            .collect::<Vec<_>>();
                         let mut failure: Option<String> = None;
                         // Post-deploy verification outcomes (#89), one entry
                         // per contract deployed in this run (contracts skipped
@@ -12395,6 +12455,7 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
                                 "status": "success",
                                 "contracts_deployed": results,
                                 "verification": verifications,
+                                "selected_aliases": selected_aliases,
                             });
                             println!("{}", serde_json::to_string(&json).unwrap());
                         } else {

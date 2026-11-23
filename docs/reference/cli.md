@@ -494,6 +494,13 @@ the descriptor summary (`schema`, `name`, `version`, `format`, `lock_sha256`,
 │
 │     sdkt project deploy --dry-run --salt 000102030405060708090a0b0c0d0e0f10111213
 │
+│   Use repeatable `--only <ALIAS>` to deploy one or more aliases without
+│   deploying the rest of the workspace. Each selected alias automatically
+│   includes its transitive `depends_on`/`deploy_after` dependencies, in the
+│   existing resolved order. It composes with `--skip-deployed`; an unknown
+│   alias is rejected with the known aliases listed before any upload. Pretty
+│   output prints the selected set, and JSON includes `selected_aliases`.
+│
 │   Contracts declare dependencies via `depends_on` (canonical) or the
 │   legacy `deploy_after` field in `[contracts.<alias>]`; both are merged. Build,
 │   deploy, and `sdkt lock generate` share one resolver, so order is deterministic.
