@@ -257,6 +257,9 @@ fn minimal_wasm_parses_through_the_real_metadata_engine() {
         .stdout
         .clone();
     let v: serde_json::Value = serde_json::from_slice(&out).expect("valid JSON");
+    assert_eq!(v["schema_version"], 1);
+    assert_eq!(v["tool"], "sdkt");
+    assert_eq!(v["version"], env!("CARGO_PKG_VERSION"));
     assert_eq!(v["artifact"]["status"], "PASS");
     assert_eq!(v["artifact"]["metadata"]["size_bytes"], 8);
     assert_eq!(v["artifact"]["metadata"]["version"], 1);

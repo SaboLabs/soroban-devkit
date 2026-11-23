@@ -2284,6 +2284,8 @@ struct HealthResult {
     report: Option<ContractHealthReport>,
 }
 
+const RELEASE_ASSURANCE_SCHEMA_VERSION: u32 = 1;
+
 /// Aggregate, machine-readable release-assurance result.
 #[derive(Debug, serde::Serialize)]
 struct ReleaseAssuranceReport {
@@ -2300,6 +2302,12 @@ struct ReleaseAssuranceReport {
     fuzz: Option<FuzzEvidenceResult>,
     release_status: String,
     reasons: Vec<String>,
+    /// Release-assurance report format version.
+    schema_version: u32,
+    /// CLI that produced this report.
+    tool: &'static str,
+    /// Version of the CLI build that produced this report.
+    version: &'static str,
 }
 
 /// Release-assurance section for a recorded fuzz campaign evidence file.
@@ -2764,6 +2772,9 @@ async fn run_release_assurance(
         fuzz: fuzz_evidence,
         release_status,
         reasons,
+        schema_version: RELEASE_ASSURANCE_SCHEMA_VERSION,
+        tool: "sdkt",
+        version: env!("CARGO_PKG_VERSION"),
     })
 }
 
