@@ -234,7 +234,7 @@ fn build_case(
     let case_id = format!("case{case_number:04}");
     let is_sequence = input.sequence_every > 0
         && input.sequence_length > 1
-        && case_number % input.sequence_every == 0;
+        && case_number.is_multiple_of(input.sequence_every);
 
     // --- Generate the base call (or sequence) ----------------------
     let base_call = generate_call(
@@ -559,7 +559,7 @@ pub fn sequence_case_counts(
     sequence_every: usize,
 ) -> (usize, usize) {
     if sequence_every > 0 && sequence_length > 1 {
-        let sequences = (0..executed).filter(|c| c % sequence_every == 0).count();
+        let sequences = (0..executed).filter(|c| c.is_multiple_of(sequence_every)).count();
         (sequences, executed.saturating_sub(sequences))
     } else {
         (0, executed)
