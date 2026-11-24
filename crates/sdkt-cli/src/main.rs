@@ -3463,7 +3463,9 @@ async fn run_call_batch(
             args: entry_args[i].clone(),
             memo: None,
         };
-        let envelope = sdkt_xdr::builder::build_invoke_transaction(&params)?;
+        let envelope = sdkt_xdr::builder::build_invoke_transaction(&params).map_err(|e| {
+            format!("batch entry {i} ({name}): failed to build transaction: {e}")
+        })?;
         match simulate_transaction(&client, &envelope).await {
             Ok(resp) => {
                 if let Some(err) = &resp.error {

@@ -77,9 +77,43 @@ fn mock_batch_rpc(fail_on: Option<usize>) -> String {
                 Ok(s) => s,
                 Err(_) => break,
             };
-            let mut buf = [0u8; 16384];
-            let n = sock.read(&mut buf).unwrap_or(0);
-            let req = String::from_utf8_lossy(&buf[..n]).to_string();
+            // Read the complete HTTP request: headers first, then exactly
+            // Content-Length body bytes. A single `read` may return only
+            // part of the request.
+            let mut raw: Vec<u8> = Vec::new();
+            let mut buf = [0u8; 4096];
+            let header_len = loop {
+                let n = sock.read(&mut buf).unwrap_or(0);
+                if n == 0 {
+                    break 0;
+                }
+                raw.extend_from_slice(&buf[..n]);
+                if let Some(pos) = raw.windows(4).position(|w| w == b"\r\n\r\n") {
+                    break pos + 4;
+                }
+            };
+            if header_len == 0 {
+                continue;
+            }
+            let content_length: usize = String::from_utf8_lossy(&raw[..header_len])
+                .lines()
+                .find_map(|line| {
+                    let (key, value) = line.split_once(':')?;
+                    if key.trim().eq_ignore_ascii_case("content-length") {
+                        value.trim().parse().ok()
+                    } else {
+                        None
+                    }
+                })
+                .unwrap_or(0);
+            while raw.len() < header_len + content_length {
+                let n = sock.read(&mut buf).unwrap_or(0);
+                if n == 0 {
+                    break;
+                }
+                raw.extend_from_slice(&buf[..n]);
+            }
+            let req = String::from_utf8_lossy(&raw).to_string();
 
             let body = if req.contains("\"simulateTransaction\"") {
                 let call_no = count.fetch_add(1, Ordering::SeqCst) + 1;

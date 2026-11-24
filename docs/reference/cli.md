@@ -861,7 +861,7 @@ The token-metadata example below reads `name`, `symbol`, `decimals`, and
 ```
 
 ```bash
-sdkt call CAAA... --batch token-meta.json --network testnet
+sdkt call CAAA... --batch token-meta.json --network-profile testnet --abi-contract CAAA...
 # {"name":"\"My Token\"","symbol":"\"MTK\"","decimals":"u32(7)","total_supply":"i128(1000000000 hi=0, lo=1000000000)"}
 ```
 
