@@ -304,10 +304,8 @@ fn build_argv(cap: &Capability, args: &intent::IntentArgs) -> Result<Vec<String>
     let mut argv: Vec<String> = cap.command.iter().map(|s| (*s).to_string()).collect();
 
     // Flags the registry declares for this capability but the planner does
-    // not map itself (`--audit <path>`, `--max-size-bytes <N>`, `--key-xdr`):
-    // passed through verbatim, with the value the request supplied. A
-    // declared flag with no value is refused rather than emitted bare, which
-    // the CLI would answer with a usage error.
+    // not map itself are passed through verbatim. Value-taking flags still
+    // require a captured value; known valueless flags are emitted bare.
     for (flag, value) in &args.explicit_flags {
         if PLANNER_MANAGED_FLAGS.contains(&flag.as_str()) {
             continue;
@@ -319,6 +317,9 @@ fn build_argv(cap: &Capability, args: &intent::IntentArgs) -> Result<Vec<String>
             Some(v) => {
                 argv.push(flag.clone());
                 argv.push(v.clone());
+            }
+            None if intent::VALUELESS_FLAGS.contains(&flag.as_str()) => {
+                argv.push(flag.clone());
             }
             None => {
                 return Err(PlanError::Parse(ParseError::MissingArgument {
@@ -465,9 +466,8 @@ fn build_argv(cap: &Capability, args: &intent::IntentArgs) -> Result<Vec<String>
         }
     }
 
-    // A `--format` the parser could not capture a value for (`--format`
-    // followed by prose) must refuse rather than default to json: the user
-    // asked for a format and dropping the word silently would change the
+    // A `--format` without a value must refuse rather than default to json:
+    // the user asked for a format and dropping the flag would change the
     // request.
     if args.has_flag("--format") && args.flag_value("--format").is_none() {
         return Err(PlanError::Parse(ParseError::UnsupportedArgument {
@@ -477,15 +477,16 @@ fn build_argv(cap: &Capability, args: &intent::IntentArgs) -> Result<Vec<String>
     }
     // JSON output: request it when the registry says it exists, unless the
     // request explicitly asked for pretty. A `--format` value the registry
-    // cannot back is refused here rather than dropped, so `--format yaml`
-    // never runs as a silent `--format json`.
+    // cannot back is refused here rather than dropped, so a named format
+    // never runs as a silent `--format json`. Use the same refusal wording
+    // for explicit and prose format requests.
     let asked = args.flag_value("--format");
     if let Some(v) = asked {
         let ok = (v == "json" && cap.formats.json) || (v == "pretty" && cap.formats.pretty);
         if !ok {
             return Err(PlanError::Parse(ParseError::UnsupportedArgument {
                 capability_id: cap.id,
-                arguments: format!("--format {v}"),
+                arguments: "--format <json|pretty>".to_string(),
             }));
         }
     }
@@ -872,6 +873,33 @@ mod tests {
     }
 
     #[test]
+    fn declared_valueless_flags_are_forwarded() {
+        let metadata_request = format!("show wasm metadata for contract {CID} --refresh");
+        for (request, flag) in [
+            (metadata_request.as_str(), "--refresh"),
+            ("audit --no-plugins src/lib.rs", "--no-plugins"),
+            ("run plugin doctor --all", "--all"),
+            (
+                "diff baseline old.wasm candidate new.wasm --upgrade-safety",
+                "--upgrade-safety",
+            ),
+        ] {
+            let p = plan_ok(request);
+            assert!(
+                p.argv.iter().any(|arg| arg == flag),
+                "{request}: {:?}",
+                p.argv
+            );
+        }
+    }
+
+    #[test]
+    fn missing_value_for_declared_value_taking_flag_still_refuses() {
+        let e = plan_err("audit src/lib.rs --rules");
+        assert_eq!(e.code(), "missing_argument", "{e:?}");
+    }
+
+    #[test]
     fn extra_artifact_refuses_rather_than_dropping() {
         // wasm inspect takes exactly one artifact.
         let e = plan_err("inspect wasm a.wasm b.wasm");
@@ -934,16 +962,46 @@ mod tests {
 
     #[test]
     fn unsupported_format_value_is_refused_not_dropped() {
-        // `--format yaml` would otherwise vanish and the agent would emit
-        // `--format json` on its own — a different request than the user made.
-        let e = plan_err("inspect wasm a.wasm --format yaml");
-        assert_eq!(e.code(), "unsupported_argument", "{e:?}");
+        for request in [
+            "inspect wasm a.wasm --format yaml",
+            "inspect wasm a.wasm with sarif format",
+            "inspect wasm a.wasm with xml format",
+        ] {
+            let e = plan_err(request);
+            assert_eq!(e.code(), "unsupported_argument", "{e:?}");
+            assert!(
+                e.message().contains("--format <json|pretty>"),
+                "{}",
+                e.message()
+            );
+        }
     }
 
     #[test]
     fn pretty_format_suppresses_the_json_default() {
         let p = plan_ok("inspect wasm a.wasm --format pretty");
         assert!(!p.argv.contains(&"--format".to_string()), "{:?}", p.argv);
+    }
+
+    #[test]
+    fn prose_json_and_pretty_match_existing_format_argv() {
+        let no_format = plan_ok("inspect wasm a.wasm");
+        let json = plan_ok("inspect wasm a.wasm with json format");
+        let json_with_trailing_prose = plan_ok("inspect wasm a.wasm with json format please");
+        let pretty = plan_ok("inspect wasm a.wasm with pretty format");
+        let prose_about_format_module = plan_ok("audit src/lib.rs, check the format module");
+
+        assert_eq!(
+            no_format.argv,
+            vec!["wasm", "inspect", "a.wasm", "--format", "json"]
+        );
+        assert_eq!(json.argv, no_format.argv);
+        assert_eq!(json_with_trailing_prose.argv, no_format.argv);
+        assert_eq!(pretty.argv, vec!["wasm", "inspect", "a.wasm"]);
+        assert_eq!(
+            prose_about_format_module.argv,
+            vec!["audit", "src/lib.rs", "--format", "json"]
+        );
     }
 
     #[test]

@@ -1,0 +1,5 @@
+{
+  /* block comment */
+  "editor.tabSize": 2, // trailing comment
+  "files.trimTrailingWhitespace": true,
+}

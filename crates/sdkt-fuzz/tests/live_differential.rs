@@ -3,7 +3,7 @@
 //!
 //! ## What this proves
 //!
-//! - The pinned host (`soroban-env-host 29.0.0`) accepts protocol 29 and runs
+//! - The pinned host (`soroban-env-host 30.0.0`) accepts protocol 30 and runs
 //!   a real contract through its real execution path.
 //! - The live network configuration (captured from the RPC) produces a budget
 //!   whose limits match what the network reports.
@@ -407,13 +407,13 @@ async fn live_differential_run_is_recorded_with_classification() {
 
     // The profile must be complete for the pinned host's protocol.
     assert_eq!(
-        profile.protocol_version, 29,
-        "testnet must report protocol 29"
+        profile.protocol_version, 30,
+        "testnet must report protocol 30"
     );
     assert_eq!(
         profile.status(),
         sdkt_fuzz::ProfileStatus::Complete,
-        "live testnet config must be complete under host 29"
+        "live testnet config must be complete under host 30"
     );
     assert_eq!(
         profile.config.cpu_limit.value,
@@ -432,14 +432,14 @@ async fn live_differential_run_is_recorded_with_classification() {
             .value
             .as_ref()
             .map(|p| p.cpu.len()),
-        Some(86),
-        "live cost table must have 86 entries"
+        Some(95),
+        "live cost table must have 95 entries"
     );
 
     // The local execution really runs under the live budget.
     let function = target_function();
     let (local, status) = local_run(&profile, &function);
-    assert_eq!(local.protocol_version, 29);
+    assert_eq!(local.protocol_version, 30);
     assert!(
         local.cpu_insns > 0,
         "a real execution must consume CPU: {status}"
@@ -629,7 +629,7 @@ fn missing_cost_is_a_blocker_not_zero_metrics() {
     // And the outcome built from it is Blocked, with no classification.
     let local = LocalExecutionMetrics {
         ledger_sequence: 5101905,
-        protocol_version: 29,
+        protocol_version: 30,
         cpu_insns: 554025,
         mem_bytes: 1336202,
         succeeded: false,
@@ -639,7 +639,7 @@ fn missing_cost_is_a_blocker_not_zero_metrics() {
         block,
         profile_content_hash: "fixture".to_string(),
         network: "testnet".to_string(),
-        protocol_version: 29,
+        protocol_version: 30,
         local,
         function: "pause".to_string(),
     };
@@ -1098,6 +1098,10 @@ fn foreign_external_instance_entry_is_rejected() {
 
 /// The host's cost-type name for an index, taken from the host's own enum so
 /// the profile validator cannot disagree with it.
+fn cost_type_count() -> u32 {
+    soroban_env_host::xdr::ContractCostType::variants().len() as u32
+}
+
 fn cost_type_name(i: u32) -> String {
     use soroban_env_host::xdr::ContractCostType;
     let variants = ContractCostType::variants();
@@ -1121,7 +1125,7 @@ fn profile_for_test() -> NetworkProfile {
         .unwrap_or(5101905);
     profile_from_capture(CaptureInput {
         passphrase: "Test SDF Network ; September 2015".to_string(),
-        protocol_version: 29,
+        protocol_version: 30,
         ledger_sequence: ledger,
         source_endpoint: "fixture".to_string(),
         captured_at_unix: 0,
@@ -1138,7 +1142,7 @@ fn profile_for_test() -> NetworkProfile {
         // need the profile to be Complete; the exact table is not what they
         // assert.
         cpu_cost_params: Some(
-            (0..86u32)
+            (0..cost_type_count())
                 .map(|i| sdkt_fuzz::CostParamEntrySnapshot {
                     cost_type: cost_type_name(i),
                     index: i,
@@ -1148,7 +1152,7 @@ fn profile_for_test() -> NetworkProfile {
                 .collect(),
         ),
         mem_cost_params: Some(
-            (0..86u32)
+            (0..cost_type_count())
                 .map(|i| sdkt_fuzz::CostParamEntrySnapshot {
                     cost_type: cost_type_name(i),
                     index: i,
@@ -1207,7 +1211,7 @@ fn get_ledger_entries_payload_is_entry_data_not_full_entry() {
 }
 
 /// The live state-matched test (in `state_matched_live.rs`) asserts the
-/// endpoint reports protocol 29 and reports no `cost` block. Both are
+/// endpoint reports protocol 30 and reports no `cost` block. Both are
 /// properties the RPC's own testnet serves; pin them against the captured
 /// fixture so a drift is caught deterministically, without a network call.
 #[test]
@@ -2499,7 +2503,7 @@ fn chaining_created_updated_deleted_valid_sequence_still_passes() {
 
 // ---------------------------------------------------------------------------
 // Semantic gap tests (targeted): pin concrete behaviors discovered during
-// the host v29 semantic review.
+// the host v30 semantic review.
 // ---------------------------------------------------------------------------
 
 /// GAP 1 — Executor-owned instance entry is skipped by the chaining function.

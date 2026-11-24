@@ -1,0 +1,8 @@
+{
+  "search.exclude": {
+    "**/.sst": true
+  },
+  "typescript.tsdk": "node_modules/typescript/lib",
+  "editor.defaultFormatter": "esbenp.prettier-vscode",
+  "problems.autoReveal": true
+}

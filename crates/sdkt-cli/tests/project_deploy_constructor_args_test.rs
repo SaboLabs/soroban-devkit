@@ -17,7 +17,11 @@ use std::path::Path;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 use std::thread;
-use stellar_xdr::{Limited, Limits, ReadXdr, TransactionEnvelope};
+use stellar_xdr::{
+    ContractDataDurability, ContractDataEntry, ContractExecutable, ContractId, ExtensionPoint,
+    Hash, LedgerEntry, LedgerEntryData, LedgerEntryExt, Limited, Limits, ReadXdr, ScAddress,
+    ScContractInstance, ScVal, TransactionEnvelope, WriteXdr,
+};
 use tempfile::TempDir;
 
 /// A real contractspecv0 WASM fixture.
@@ -26,6 +30,74 @@ static CONTRACT_WASM: &[u8] = include_bytes!("fixtures/us_new.wasm");
 /// LedgerEntry XDR for an account with seq_num 41 (so next sequence = 42).
 const ACCOUNT_ENTRY_XDR: &str =
     "AAAAAQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAO5rKAAAAAAAAAAApAAAAAAAAAAAAAAAAAAAAAAEBAQEAAAAAAAAAAAAAAAA=";
+
+/// SHA-256 of the `us_new.wasm` fixture (the on-chain hash the mock serves
+/// for contract-instance lookups, so the post-deploy verification (#89) sees
+/// a match). The mock answers ledger lookups by key kind: account keys get
+/// the sequence entry, contract-instance keys get an instance entry carrying
+/// this hash, anything else gets no entries.
+const US_NEW_HASH: &str = "551c5a9c7fd4c4a71e57e9c8a0ece1e7bd506ea065993c63db2dc35516406775";
+
+/// Instance entry for any contract address, carrying the fixture hash as its
+/// WASM executable hash. The address is irrelevant to `inspect_contract` (it
+/// decodes the executable out of the first entry).
+fn instance_entry_xdr() -> String {
+    let mut hash = [0u8; 32];
+    hex::decode_to_slice(US_NEW_HASH, &mut hash).unwrap();
+    let entry = LedgerEntry {
+        last_modified_ledger_seq: 1,
+        data: LedgerEntryData::ContractData(ContractDataEntry {
+            ext: ExtensionPoint::V0,
+            contract: ScAddress::Contract(ContractId(Hash([0u8; 32]))),
+            key: ScVal::LedgerKeyContractInstance,
+            durability: ContractDataDurability::Persistent,
+            val: ScVal::ContractInstance(ScContractInstance {
+                executable: ContractExecutable::Wasm(Hash(hash)),
+                storage: None,
+            }),
+        }),
+        ext: LedgerEntryExt::V0,
+    };
+    let mut buf = Vec::new();
+    let mut cursor = std::io::Cursor::new(&mut buf);
+    let mut l = Limited::new(&mut cursor, Limits::none());
+    entry.write_xdr(&mut l).unwrap();
+    STANDARD.encode(&buf)
+}
+
+fn parse_get_ledger_keys(req: &str) -> Vec<String> {
+    let body_start = match req.find("\r\n\r\n") {
+        Some(i) => i + 4,
+        None => return Vec::new(),
+    };
+    let body = &req[body_start..];
+    let Ok(val) = serde_json::from_str::<serde_json::Value>(body) else {
+        return Vec::new();
+    };
+    val.get("params")
+        .and_then(|p| p.get("keys"))
+        .and_then(|k| k.as_array())
+        .map(|arr| {
+            arr.iter()
+                .filter_map(|k| k.as_str().map(String::from))
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+fn is_account_key(key: &str) -> bool {
+    matches!(
+        sdkt_xdr::decode_ledger_key(key),
+        Ok(stellar_xdr::LedgerKey::Account(_))
+    )
+}
+
+fn is_instance_key(key: &str) -> bool {
+    matches!(
+        sdkt_xdr::decode_ledger_key(key),
+        Ok(stellar_xdr::LedgerKey::ContractData(_))
+    )
+}
 
 /// SorobanTransactionData XDR: empty footprint, 1000 instructions, 150 stroops
 /// resource fee.
@@ -85,9 +157,20 @@ impl MockServer {
 
                 let body = match method.as_deref() {
                     Some("getLedgerEntries") => {
-                        format!(
-                            r#"{{"jsonrpc":"2.0","id":1,"result":{{"entries":[{{"key":"AAAAAA==","xdr":"{ACCOUNT_ENTRY_XDR}","lastModifiedLedgerSeq":1}}],"latestLedger":100}}}}"#
-                        )
+                        let keys = parse_get_ledger_keys(&req);
+                        if keys.iter().any(|k| is_account_key(k)) {
+                            format!(
+                                r#"{{"jsonrpc":"2.0","id":1,"result":{{"entries":[{{"key":"AAAAAA==","xdr":"{ACCOUNT_ENTRY_XDR}","lastModifiedLedgerSeq":1}}],"latestLedger":100}}}}"#
+                            )
+                        } else if keys.iter().any(|k| is_instance_key(k)) {
+                            let instance_xdr = instance_entry_xdr();
+                            format!(
+                                r#"{{"jsonrpc":"2.0","id":1,"result":{{"entries":[{{"key":"AAAAAA==","xdr":"{instance_xdr}","lastModifiedLedgerSeq":1}}],"latestLedger":100}}}}"#
+                            )
+                        } else {
+                            r#"{"jsonrpc":"2.0","id":1,"result":{"entries":[],"latestLedger":100}}"#
+                                .to_string()
+                        }
                     }
                     Some("simulateTransaction") => format!(
                         r#"{{"jsonrpc":"2.0","id":1,"result":{{"transactionData":"{SOROBAN_DATA_XDR}","minResourceFee":"150","results":[{{"xdr":"AAAAAQ==","auth":[]}}],"latestLedger":"100","events":[]}}}}"#

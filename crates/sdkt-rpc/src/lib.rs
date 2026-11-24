@@ -30,8 +30,10 @@ pub use deploy::{
 };
 pub use error::RpcError;
 pub use events::{
-    first_topic_filter, get_contract_events, get_contract_events_filtered, resolve_ledger_range,
-    ContractEvent, EventFilter, GetEventsRequest, TopicFilter, TOPIC_WILDCARD_ONE,
+    first_topic_filter, get_contract_events, get_contract_events_filtered,
+    get_contract_events_page, get_contract_events_paginated, resolve_ledger_range,
+    validate_pagination_request, ContractEvent, EventFilter, GetEventsPagination, GetEventsRequest,
+    PaginatedEvents, PaginationOptions, TopicFilter, DEFAULT_ALL_PAGES_MAX, TOPIC_WILDCARD_ONE,
     TOPIC_WILDCARD_REST,
 };
 pub use fee::{estimate_dynamic_fee, get_fee_stats, FeeDistribution, FeeStats};
@@ -54,9 +56,10 @@ pub use storage::{
     RestoreResult, StateReadResult, TtlEntry, TtlInfo,
 };
 pub use submission::{
-    extract_contract_events, get_transaction_status, poll_transaction, send_transaction,
-    submit_and_wait, PollConfig, SendTransactionRequest, SendTransactionResponse, SubmissionResult,
-    TransactionStatus, TransactionStatusResponse,
+    extract_contract_events, extract_diagnostic_events, get_transaction_status, poll_transaction,
+    response_diagnostic_events, send_transaction, settled_error_code, submit_and_wait, PollConfig,
+    SendTransactionRequest, SendTransactionResponse, SubmissionResult, TransactionStatus,
+    TransactionStatusResponse,
 };
 pub use transaction::{inspect_transaction, TransactionInspection};
 pub use wasm::get_wasm_metadata;

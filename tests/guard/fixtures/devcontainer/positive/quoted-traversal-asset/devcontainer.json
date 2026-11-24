@@ -1,0 +1,1 @@
+{"name": "quoted-traversal-asset", "postCreateCommand": "node './scripts/../dist/setup.js'"}

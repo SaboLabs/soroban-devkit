@@ -1,0 +1,1 @@
+{"name": "quoted-asset-fullpath", "scripts": {"postinstall": "node \"app/dist/setup.js\""}}

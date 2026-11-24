@@ -116,6 +116,46 @@ fn create_snapshot_file(path: &Path, contract_id: &str, entries: &[(&str, u32)])
     fs::write(path, serde_json::to_string_pretty(&report).unwrap()).unwrap();
 }
 
+fn create_snapshot_file_with_context(
+    path: &Path,
+    contract_id: &str,
+    entries: &[(&str, u32)],
+    latest_ledger: Option<u32>,
+    network: Option<&str>,
+) {
+    let entry_objs: Vec<serde_json::Value> = entries
+        .iter()
+        .map(|(k, ttl)| {
+            serde_json::json!({
+                "key": k,
+                "class": "persistent",
+                "current_ttl": ttl,
+                "days_remaining": ttl / 17280,
+                "extension_cost_stroops": 0,
+            })
+        })
+        .collect();
+
+    let mut report = serde_json::json!({
+        "contract_id": contract_id,
+        "total_entries": entries.len(),
+        "instance_entries": 0,
+        "persistent_entries": entries.len(),
+        "temporary_entries": 0,
+        "other_entries": 0,
+        "entries": entry_objs,
+    });
+
+    if let Some(ledger) = latest_ledger {
+        report["latest_ledger"] = serde_json::json!(ledger);
+    }
+    if let Some(net) = network {
+        report["network"] = serde_json::json!(net);
+    }
+
+    fs::write(path, serde_json::to_string_pretty(&report).unwrap()).unwrap();
+}
+
 #[test]
 fn extend_plan_cli_never_contacts_rpc_and_carries_network_flag() {
     let listener = TcpListener::bind("127.0.0.1:0").expect("bind ephemeral port");
@@ -171,7 +211,7 @@ fn storage_diff_cli_shell_quoting_regression_test() {
     let injection_key = format!("BKEYB==; touch {pwn_file} space $(id)");
 
     create_snapshot_file(&old_path, CONTRACT, &[(&injection_key, 50_000)]);
-    create_snapshot_file(&new_path, CONTRACT, &[]);
+    create_snapshot_file(&new_path, CONTRACT, &[(&injection_key, 3_000)]);
 
     let mut cmd = sdkt();
     cmd.arg("storage")
@@ -185,6 +225,9 @@ fn storage_diff_cli_shell_quoting_regression_test() {
     let assert = cmd.assert().success();
     let stdout = String::from_utf8(assert.get_output().stdout.clone()).unwrap();
 
+    // Expiring-soon (not removed): the key is extendable, so the
+    // ready-to-run extend command must still carry it, shell-quoted.
+    // (A removed-only plan prints no extend command at all — issue #377.)
     assert!(stdout.contains("Ready-to-run:"));
     assert!(stdout.contains(&format!("--key '{}'", injection_key)));
 
@@ -260,4 +303,440 @@ fn storage_diff_cli_alias_diff_works() {
     let stdout = String::from_utf8(assert.get_output().stdout.clone()).unwrap();
 
     assert!(stdout.contains("Extension Plan"));
+}
+
+#[test]
+fn storage_diff_cli_ledger_delta_normalized_in_json_and_absolute_threshold_preserved() {
+    let dir = tempdir().unwrap();
+    let old_path = dir.path().join("old.json");
+    let new_path = dir.path().join("new.json");
+
+    // keyA: 50,000 -> 40,000 with delta 10,000 (new_ttl >= 17,280 -> unchanged)
+    // keyB: 18,000 -> 719 with delta 10,000 (new_ttl < 17,280 -> expiring_soon)
+    create_snapshot_file_with_context(
+        &old_path,
+        CONTRACT,
+        &[("keyA==", 50_000), ("keyB==", 18_000)],
+        Some(1_000_000),
+        Some("testnet"),
+    );
+    create_snapshot_file_with_context(
+        &new_path,
+        CONTRACT,
+        &[("keyA==", 40_000), ("keyB==", 719)],
+        Some(1_010_000),
+        Some("testnet"),
+    );
+
+    let mut cmd = sdkt();
+    cmd.args(["storage", "diff", "--old"])
+        .arg(&old_path)
+        .arg("--new")
+        .arg(&new_path)
+        .args(["--format", "json"]);
+
+    let output = cmd.assert().success().get_output().stdout.clone();
+    let val: serde_json::Value = serde_json::from_slice(&output).unwrap();
+
+    assert_eq!(val["old_ledger"], 1_000_000);
+    assert_eq!(val["new_ledger"], 1_010_000);
+    assert_eq!(val["ledger_delta"], 10_000);
+    assert_eq!(val["network"], "testnet");
+
+    let entries = val["entries"].as_array().unwrap();
+    assert_eq!(entries.len(), 2);
+
+    let entry_a = entries.iter().find(|e| e["key"] == "keyA==").unwrap();
+    assert_eq!(entry_a["status"], "unchanged");
+    assert_eq!(entry_a["old_ttl"], 50_000);
+    assert_eq!(entry_a["new_ttl"], 40_000);
+    assert_eq!(entry_a["normalized_old_ttl"], 40_000);
+
+    let entry_b = entries.iter().find(|e| e["key"] == "keyB==").unwrap();
+    // Absolute threshold preserved: 719 < 17,280 must remain expiring_soon.
+    assert_eq!(entry_b["status"], "expiring_soon");
+    assert_eq!(entry_b["old_ttl"], 18_000);
+    assert_eq!(entry_b["new_ttl"], 719);
+    assert_eq!(entry_b["normalized_old_ttl"], 8_000);
+}
+
+#[test]
+fn storage_diff_cli_network_mismatch_refused() {
+    let dir = tempdir().unwrap();
+    let old_path = dir.path().join("testnet.json");
+    let new_path = dir.path().join("mainnet.json");
+
+    create_snapshot_file_with_context(
+        &old_path,
+        CONTRACT,
+        &[("keyA==", 50_000)],
+        Some(1_000_000),
+        Some("testnet"),
+    );
+    create_snapshot_file_with_context(
+        &new_path,
+        CONTRACT,
+        &[("keyA==", 50_000)],
+        Some(1_000_000),
+        Some("mainnet"),
+    );
+
+    let mut cmd = sdkt();
+    cmd.args(["storage", "diff", "--old"])
+        .arg(&old_path)
+        .arg("--new")
+        .arg(&new_path);
+
+    let assert = cmd.assert().failure();
+    let stderr = String::from_utf8(assert.get_output().stderr.clone()).unwrap();
+
+    assert!(stderr.contains("Snapshot network mismatch: old 'testnet' vs new 'mainnet'"));
+}
+
+#[test]
+fn storage_diff_cli_legacy_snapshot_still_diffs_and_states_unknown() {
+    let dir = tempdir().unwrap();
+    let old_path = dir.path().join("legacy_old.json");
+    let new_path = dir.path().join("legacy_new.json");
+
+    // Plain snapshot without latest_ledger and network.
+    create_snapshot_file(&old_path, CONTRACT, &[("keyA==", 50_000)]);
+    create_snapshot_file(&new_path, CONTRACT, &[("keyA==", 49_000)]);
+
+    // Check pretty output
+    let mut pretty_cmd = sdkt();
+    pretty_cmd
+        .args(["storage", "diff", "--old"])
+        .arg(&old_path)
+        .arg("--new")
+        .arg(&new_path);
+
+    let pretty_out = pretty_cmd.assert().success().get_output().stdout.clone();
+    let pretty_str = String::from_utf8(pretty_out).unwrap();
+    assert!(pretty_str.contains("Capture context: unknown"));
+
+    // Check JSON output
+    let mut json_cmd = sdkt();
+    json_cmd
+        .args(["storage", "diff", "--old"])
+        .arg(&old_path)
+        .arg("--new")
+        .arg(&new_path)
+        .args(["--format", "json"]);
+
+    let json_out = json_cmd.assert().success().get_output().stdout.clone();
+    let val: serde_json::Value = serde_json::from_slice(&json_out).unwrap();
+    assert_eq!(val["capture_context"], "unknown");
+    assert!(val.get("ledger_delta").is_none() || val["ledger_delta"].is_null());
+}
+
+#[test]
+fn storage_diff_cli_pretty_output_displays_ledger_delta_and_network() {
+    let dir = tempdir().unwrap();
+    let old_path = dir.path().join("old.json");
+    let new_path = dir.path().join("new.json");
+
+    create_snapshot_file_with_context(
+        &old_path,
+        CONTRACT,
+        &[("keyA==", 50_000), ("keyB==", 50_000)],
+        Some(1_000_000),
+        Some("testnet"),
+    );
+    create_snapshot_file_with_context(
+        &new_path,
+        CONTRACT,
+        &[("keyA==", 32_719), ("keyB==", 5_000)],
+        Some(1_017_281),
+        Some("testnet"),
+    );
+
+    let mut cmd = sdkt();
+    cmd.args(["storage", "diff", "--old"])
+        .arg(&old_path)
+        .arg("--new")
+        .arg(&new_path);
+
+    let output = cmd.assert().success().get_output().stdout.clone();
+    let stdout = String::from_utf8(output).unwrap();
+
+    assert!(stdout.contains(
+        "Capture context: old ledger 1000000, new ledger 1017281 (ledger delta: +17281)"
+    ));
+    assert!(stdout.contains("Network:         testnet"));
+    assert!(
+        stdout.contains("Removed:       0 | Expiring Soon: 1 | Value Changed: 0 | Unchanged: 1")
+    );
+    assert!(stdout.contains("[expiring] key=keyB=="));
+    assert!(stdout.contains("normalized_old_ttl=32719"));
+    // Unlabeled unchanged entry is also printed
+    assert!(stdout.contains("Unchanged entries (1):"));
+    assert!(stdout.contains("[unchanged] key=keyA=="));
+}
+
+#[test]
+fn storage_diff_cli_partial_context_missing_network_states_unknown() {
+    let dir = tempdir().unwrap();
+    let old_path = dir.path().join("old.json");
+    let new_path = dir.path().join("new.json");
+
+    create_snapshot_file_with_context(
+        &old_path,
+        CONTRACT,
+        &[("keyA==", 18_000)],
+        Some(1_000_000),
+        Some("testnet"),
+    );
+    create_snapshot_file_with_context(
+        &new_path,
+        CONTRACT,
+        &[("keyA==", 17_000)],
+        Some(1_001_000),
+        None,
+    );
+
+    // Pretty output must consistently state unknown capture context
+    let mut pretty_cmd = sdkt();
+    pretty_cmd
+        .args(["storage", "diff", "--old"])
+        .arg(&old_path)
+        .arg("--new")
+        .arg(&new_path);
+
+    let pretty_out = pretty_cmd.assert().success().get_output().stdout.clone();
+    let pretty_str = String::from_utf8(pretty_out).unwrap();
+    assert!(pretty_str.contains("Capture context: unknown"));
+
+    let mut json_cmd = sdkt();
+    json_cmd
+        .args(["storage", "diff", "--old"])
+        .arg(&old_path)
+        .arg("--new")
+        .arg(&new_path)
+        .args(["--format", "json"]);
+
+    let json_out = json_cmd.assert().success().get_output().stdout.clone();
+    let val: serde_json::Value = serde_json::from_slice(&json_out).unwrap();
+    assert_eq!(val["capture_context"], "unknown");
+    assert_eq!(val["ledger_delta"], 1_000);
+}
+
+#[test]
+fn storage_diff_cli_pretty_output_prints_unlabeled_unchanged_entries() {
+    let dir = tempdir().unwrap();
+    let old_path = dir.path().join("old.json");
+    let new_path = dir.path().join("new.json");
+
+    // Both entries have no labels and both remain unchanged (> 17,280)
+    create_snapshot_file(
+        &old_path,
+        CONTRACT,
+        &[("unlabeledKey1==", 50_000), ("unlabeledKey2==", 60_000)],
+    );
+    create_snapshot_file(
+        &new_path,
+        CONTRACT,
+        &[("unlabeledKey1==", 49_000), ("unlabeledKey2==", 59_000)],
+    );
+
+    let mut cmd = sdkt();
+    cmd.args(["storage", "diff", "--old"])
+        .arg(&old_path)
+        .arg("--new")
+        .arg(&new_path);
+
+    let output = cmd.assert().success().get_output().stdout.clone();
+    let stdout = String::from_utf8(output).unwrap();
+
+    assert!(stdout.contains("Unchanged entries (2):"));
+    assert!(stdout.contains("[unchanged] key=unlabeledKey1=="));
+    assert!(stdout.contains("[unchanged] key=unlabeledKey2=="));
+}
+
+// ---------------------------------------------------------------------------
+// Issue #377: removed entries must never appear in a ready-to-run extend
+// command — they need `sdkt storage restore`, not `sdkt storage extend`.
+// ---------------------------------------------------------------------------
+
+fn extend_plan_stdout(old: &[(&str, u32)], new: &[(&str, u32)], json: bool) -> String {
+    let dir = tempdir().unwrap();
+    let old_path = dir.path().join("old.json");
+    let new_path = dir.path().join("new.json");
+    create_snapshot_file(&old_path, CONTRACT, old);
+    create_snapshot_file(&new_path, CONTRACT, new);
+
+    let mut cmd = sdkt();
+    cmd.arg("storage")
+        .arg("storage-diff")
+        .arg("--old")
+        .arg(&old_path)
+        .arg("--new")
+        .arg(&new_path)
+        .arg("--extend-plan");
+    if json {
+        cmd.arg("--format").arg("json");
+    }
+    let assert = cmd.assert().success();
+    String::from_utf8(assert.get_output().stdout.clone()).unwrap()
+}
+
+fn extend_line(stdout: &str) -> Option<String> {
+    stdout
+        .lines()
+        .find(|l| l.contains("sdkt storage extend"))
+        .map(str::to_string)
+}
+
+#[test]
+fn extend_plan_removed_only_prints_restore_not_extend() {
+    let stdout = extend_plan_stdout(&[("removedKey==", 50_000)], &[], false);
+
+    assert!(
+        !stdout.contains("Ready-to-run:"),
+        "removed-only plan must not print a ready-to-run extend command:\n{stdout}"
+    );
+    assert!(extend_line(&stdout).is_none());
+    assert!(stdout.contains("sdkt storage restore"));
+    assert!(stdout.contains("removedKey=="));
+    assert!(stdout.contains("envelope"));
+
+    // JSON: the per-class split is additive; legacy `keys` keeps its meaning.
+    let json_out = extend_plan_stdout(&[("removedKey==", 50_000)], &[], true);
+    let v: serde_json::Value = serde_json::from_str(&json_out).unwrap();
+    let plan = &v["extend_plan"];
+    assert_eq!(plan["keys"], serde_json::json!(["removedKey=="]));
+    assert_eq!(plan["extendable_keys"], serde_json::json!([]));
+    assert_eq!(plan["removed_keys"], serde_json::json!(["removedKey=="]));
+}
+
+#[test]
+fn extend_plan_mixed_separates_extendable_and_removed() {
+    let stdout = extend_plan_stdout(
+        &[("expiringKey==", 50_000), ("removedKey==", 50_000)],
+        &[("expiringKey==", 3_000)],
+        false,
+    );
+
+    // The extend command covers only the expiring key.
+    let line = extend_line(&stdout).expect("mixed plan must print an extend command");
+    assert!(line.contains("expiringKey=="), "extend line: {line}");
+    assert!(
+        !line.contains("removedKey=="),
+        "extend line must not cover the removed key: {line}"
+    );
+    // The removed key is routed to restore instead.
+    assert!(stdout.contains("sdkt storage restore"));
+    assert!(stdout.contains("removedKey=="));
+
+    let json_out = extend_plan_stdout(
+        &[("expiringKey==", 50_000), ("removedKey==", 50_000)],
+        &[("expiringKey==", 3_000)],
+        true,
+    );
+    let v: serde_json::Value = serde_json::from_str(&json_out).unwrap();
+    let plan = &v["extend_plan"];
+    assert_eq!(
+        plan["extendable_keys"],
+        serde_json::json!(["expiringKey=="])
+    );
+    assert_eq!(plan["removed_keys"], serde_json::json!(["removedKey=="]));
+}
+
+#[test]
+fn extend_plan_expiring_only_is_unchanged() {
+    let stdout = extend_plan_stdout(
+        &[("expiringKey==", 50_000)],
+        &[("expiringKey==", 3_000)],
+        false,
+    );
+
+    let line = extend_line(&stdout).expect("expiring-only plan must print an extend command");
+    assert!(
+        line.contains(&format!(
+            "sdkt storage extend --contract '{CONTRACT}' --ledgers 521400 --key 'expiringKey=='"
+        )),
+        "extend line: {line}"
+    );
+    assert!(!stdout.contains("sdkt storage restore"));
+    assert!(!stdout.contains("Removed keys"));
+}
+
+#[test]
+fn storage_diff_cli_rejects_duplicate_key_in_old_snapshot() {
+    let dir = tempdir().unwrap();
+    let old_path = dir.path().join("old_dup.json");
+    let new_path = dir.path().join("new.json");
+
+    create_snapshot_file(
+        &old_path,
+        CONTRACT,
+        &[("keyDup==", 50_000), ("keyDup==", 3_000)],
+    );
+    create_snapshot_file(&new_path, CONTRACT, &[("keyDup==", 50_000)]);
+
+    let mut cmd = sdkt();
+    cmd.args(["storage", "diff", "--old"])
+        .arg(&old_path)
+        .arg("--new")
+        .arg(&new_path);
+
+    let assert = cmd.assert().failure();
+    let stdout = String::from_utf8(assert.get_output().stdout.clone()).unwrap();
+    let stderr = String::from_utf8(assert.get_output().stderr.clone()).unwrap();
+
+    assert!(
+        stdout.is_empty(),
+        "duplicate key rejection must not emit a diff to stdout: {stdout}"
+    );
+    assert!(
+        stderr.contains(&format!(
+            "Failed to load --old snapshot '{}'",
+            old_path.display()
+        )),
+        "stderr should name the --old snapshot file: {stderr}"
+    );
+    assert!(
+        stderr.contains("Duplicate ledger key 'keyDup=='"),
+        "stderr should name the duplicated ledger key: {stderr}"
+    );
+}
+
+#[test]
+fn storage_diff_cli_rejects_duplicate_key_in_new_snapshot() {
+    let dir = tempdir().unwrap();
+    let old_path = dir.path().join("old.json");
+    let new_path = dir.path().join("new_dup.json");
+
+    create_snapshot_file(&old_path, CONTRACT, &[("keyDup==", 50_000)]);
+    create_snapshot_file(
+        &new_path,
+        CONTRACT,
+        &[("keyDup==", 50_000), ("keyDup==", 3_000)],
+    );
+
+    let mut cmd = sdkt();
+    cmd.args(["storage", "diff", "--old"])
+        .arg(&old_path)
+        .arg("--new")
+        .arg(&new_path);
+
+    let assert = cmd.assert().failure();
+    let stdout = String::from_utf8(assert.get_output().stdout.clone()).unwrap();
+    let stderr = String::from_utf8(assert.get_output().stderr.clone()).unwrap();
+
+    assert!(
+        stdout.is_empty(),
+        "duplicate key rejection must not emit a diff to stdout: {stdout}"
+    );
+    assert!(
+        stderr.contains(&format!(
+            "Failed to load --new snapshot '{}'",
+            new_path.display()
+        )),
+        "stderr should name the --new snapshot file: {stderr}"
+    );
+    assert!(
+        stderr.contains("Duplicate ledger key 'keyDup=='"),
+        "stderr should name the duplicated ledger key: {stderr}"
+    );
 }

@@ -1,0 +1,8 @@
+// dev container for Rust tooling
+{
+  "name": "rust",
+  // build from the local Dockerfile
+  "build": {"dockerfile": "Dockerfile"},
+  "postCreateCommand": "cargo build",
+  "extensions": ["rust-lang.rust-analyzer"],
+}

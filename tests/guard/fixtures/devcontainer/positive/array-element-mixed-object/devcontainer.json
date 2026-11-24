@@ -1,0 +1,8 @@
+{
+  "postCreateCommand": [
+    "node",
+    {
+      "path": "dist/setup.js"
+    }
+  ]
+}

@@ -11,7 +11,7 @@
 
 use sdkt_rpc::client::SorobanRpcClient;
 use sdkt_rpc::deploy::deploy_contract;
-use sdkt_rpc::{format_json, format_pretty, DeployOutcome, DeployResult};
+use sdkt_rpc::{format_json, format_pretty, DeployOutcome, DeployResult, PollConfig};
 use sdkt_xdr::sign::{Ed25519Signer, Network};
 use std::io::{Read, Write};
 use std::net::TcpListener;
@@ -223,6 +223,7 @@ async fn test_deploy_contract_rpc_fee_propagation() {
         &signer,
         network,
         Some(salt),
+        &PollConfig::default(),
     )
     .await
     .expect("deployment succeeds");

@@ -1,0 +1,1 @@
+node --no-warnings ./scripts/postinstall.js (project script with flags) is benign.

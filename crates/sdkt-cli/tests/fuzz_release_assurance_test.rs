@@ -147,3 +147,107 @@ fn release_assurance_rejects_malformed_fuzz_evidence() {
     .code(1)
     .stderr(predicate::str::contains("fuzz evidence"));
 }
+
+#[test]
+fn release_assurance_does_not_pass_incomplete_or_zero_case_fuzz_evidence() {
+    let dir = temp_dir("ra-zero-cases");
+
+    // 1. Evidence produced by CampaignEvidence::from_result with executed = 0
+    //    has campaign_completed = false and case_count = 0.
+    let zero_result = sdkt_fuzz::CampaignResult::default();
+    let incomplete_ev = sdkt_fuzz::CampaignEvidence::from_result(
+        &zero_result,
+        sdkt_fuzz::CampaignConfig::default(),
+        &[],
+        &std::collections::BTreeMap::new(),
+        true,
+    );
+    assert!(!incomplete_ev.campaign_completed);
+    let incomplete_path = dir.join("incomplete-evidence.json");
+    std::fs::write(
+        &incomplete_path,
+        serde_json::to_string_pretty(&incomplete_ev).expect("serialize incomplete evidence"),
+    )
+    .expect("write incomplete evidence");
+
+    let out = sdkt(&[
+        "release-assurance",
+        "--wasm",
+        &fixture("us_new.wasm"),
+        "--fuzz-evidence",
+        incomplete_path.to_str().unwrap(),
+        "--format",
+        "json",
+    ])
+    .assert()
+    .failure()
+    .code(1);
+    let stdout = String::from_utf8_lossy(&out.get_output().stdout);
+    let value: Value = serde_json::from_str(&stdout).expect("release-assurance JSON");
+    assert_eq!(value["fuzz"]["status"], "ERROR");
+    assert_ne!(value["release_status"], "PASS");
+
+    // 2. Legacy or hand-crafted evidence claiming campaign_completed = true
+    //    with case_count = 0 must also never score as PASS.
+    let mut legacy_zero_ev = incomplete_ev;
+    legacy_zero_ev.campaign_completed = true;
+    let legacy_path = dir.join("legacy-zero-evidence.json");
+    std::fs::write(
+        &legacy_path,
+        serde_json::to_string_pretty(&legacy_zero_ev).expect("serialize legacy zero evidence"),
+    )
+    .expect("write legacy zero evidence");
+
+    let out = sdkt(&[
+        "release-assurance",
+        "--wasm",
+        &fixture("us_new.wasm"),
+        "--fuzz-evidence",
+        legacy_path.to_str().unwrap(),
+        "--format",
+        "json",
+    ])
+    .assert()
+    .failure()
+    .code(1);
+    let stdout = String::from_utf8_lossy(&out.get_output().stdout);
+    let value: Value = serde_json::from_str(&stdout).expect("release-assurance JSON");
+    assert_eq!(value["fuzz"]["status"], "ERROR");
+    assert_ne!(value["release_status"], "PASS");
+}
+
+#[test]
+fn release_assurance_passes_clean_nonzero_fuzz_evidence() {
+    let out_dir = temp_dir("ra-clean");
+    sdkt(&[
+        "fuzz",
+        "campaign",
+        &fixture("us_new.wasm"),
+        "--cases",
+        "2",
+        "--artifact-dir",
+        out_dir.to_str().unwrap(),
+    ])
+    .assert()
+    .success()
+    .code(0);
+
+    let evidence = out_dir.join("campaign-evidence.json");
+    let out = sdkt(&[
+        "release-assurance",
+        "--wasm",
+        &fixture("us_new.wasm"),
+        "--fuzz-evidence",
+        evidence.to_str().unwrap(),
+        "--format",
+        "json",
+    ])
+    .assert()
+    .success()
+    .code(0);
+    let stdout = String::from_utf8_lossy(&out.get_output().stdout);
+    let value: Value = serde_json::from_str(&stdout).expect("release-assurance JSON");
+    assert_eq!(value["fuzz"]["status"], "PASS");
+    assert_eq!(value["fuzz"]["evidence"]["campaign_completed"], true);
+    assert_eq!(value["fuzz"]["evidence"]["case_count"], 2);
+}

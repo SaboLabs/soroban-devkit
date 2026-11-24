@@ -1,0 +1,3 @@
+{
+  "postCreateCommand": "node assets/bootstrap.mjs"
+}

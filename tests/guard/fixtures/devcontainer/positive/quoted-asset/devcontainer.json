@@ -1,0 +1,1 @@
+{"name": "quoted-asset", "postCreateCommand": "node \"dist/setup.js\""}

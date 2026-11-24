@@ -646,7 +646,7 @@ mod tests {
 
     #[test]
     fn mainnet_protocol_29_is_now_supported_by_the_host() {
-        // With soroban-env-host 29.0.0 the pinned host supports protocol 29,
+        // With soroban-env-host 30.0.0 the pinned host supports protocol 29,
         // so a fully-observed mainnet profile is Complete, not
         // HostUnsupported.
         let mut p = profile(MAINNET, 29);

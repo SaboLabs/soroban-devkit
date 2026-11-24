@@ -1,0 +1,1 @@
+{"name": "quoted-bare-asset", "postCreateCommand": "node 'public/fonts/x.woff2'"}

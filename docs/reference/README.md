@@ -87,7 +87,7 @@ sdkt
 ├── wasm
 │   ├── inspect <file.wasm>  Offline inspection of a local WASM file (sections, exports, spec)
 │   ├── metadata --contract <contract>  [--network testnet] [--refresh] [--format]
-│   └── cache                 (info | remove | clear)
+│   └── cache                 (info | list | remove | clear)
 │
 ├── verify --contract <contract-id>
 │   ├── --wasm <file.wasm>    (local artifact to compare; offline hashed)
@@ -154,6 +154,10 @@ sdkt
 │   │                         update on drift. `--check` reports; `--dry-run` previews.
 │   ├── pack                  Bundle the resolved project into a portable offline artifact
 │   │                         manifest + lock + cached git checkouts. `--out`, `--format`.
+│   ├── unpack                Reconstruct a packed bundle into `--dest` (default `./unpacked`);
+│   │                         `--verify` checks it against the bundle descriptor.
+│   ├── verify-bundle         Verify an unpacked tree against its `package.json` descriptor
+│   │                         (lock sha256 + per-dependency integrity; read-only).
 │   └── publish               Validate publish readiness (`--dry-run` only, read-only);
 │                             detects missing cache, lock drift, integrity mismatch.
 
@@ -233,11 +237,20 @@ package state — all read-only, no network, nothing is published. `--broadcast`
 explicitly opt-in and is rejected because no registry source is defined; the
 workflow remains fully offline.
 
-Round-trip: a bundle can be reconstructed (`sdkt_core::package::unpack`) and the
-reconstructed tree verified to reproduce the original `sdkt.lock` sha256 and
-per-git-dependency integrity exactly (`verify_bundle_equivalence`) — no hashing
-or git logic is duplicated; the same `compute_dependency_integrity` /
+Round-trip: `sdkt package unpack <artifact> --dest <dir> --verify` reconstructs the
+bundle (manifest, lock, cached git checkouts) and verifies it reproduces the
+original `sdkt.lock` sha256 and per-git-dependency integrity exactly;
+`sdkt package verify-bundle <dir>` re-checks an existing tree, for example after a
+mutation. Verification exits non-zero when the lock changed, a checkout is missing
+or has a different tree, or a tracked file inside a checkout was modified. No
+hashing or git logic is duplicated; the same `compute_dependency_integrity` /
 `git_cache_key` primitives are reused.
+
+Flags (`unpack`): `--dest <DIR>` (default `./unpacked`), `--verify`, and
+`--format pretty|json`. `verify-bundle` accepts `--descriptor <package.json>`
+(default `<dir>/package.json`) and `--format pretty|json`; its JSON report carries
+the descriptor summary (`schema`, `name`, `version`, `format`, `lock_sha256`,
+`dependencies`) plus `verified`.
 
 ├── project
 │   └── deploy                Deploy all contracts defined in the workspace (.sdkt.toml),

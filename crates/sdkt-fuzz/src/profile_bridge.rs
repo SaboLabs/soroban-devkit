@@ -88,7 +88,10 @@ mod tests {
     use crate::network_profile::{ProfileStatus, HOST_SUPPORTED_PROTOCOL};
 
     fn capture(protocol: u32) -> CaptureInput {
-        let params: Vec<CostParamEntrySnapshot> = (0..86)
+        // Cost tables derived from the pinned host's cost-type enum, not
+        // hardcoded: the host is the authority on how many types exist.
+        let n = crate::environment::host_cost_type_count() as u32;
+        let params: Vec<CostParamEntrySnapshot> = (0..n)
             .map(|i| CostParamEntrySnapshot {
                 cost_type: format!("Type{i}"),
                 index: i,
@@ -118,7 +121,7 @@ mod tests {
 
     #[test]
     fn mainnet_capture_with_host_protocol_is_complete() {
-        let p = profile_from_capture(capture(29));
+        let p = profile_from_capture(capture(HOST_SUPPORTED_PROTOCOL));
         assert_eq!(
             p.network_id,
             crate::network_id_from_passphrase("Public Global Stellar Network ; September 2015")
@@ -153,8 +156,8 @@ mod tests {
     #[test]
     fn host_supported_protocol_tracks_the_pinned_host() {
         // Derived from the host's own metadata, not hardcoded: with
-        // soroban-env-host 29.0.0 this is 29.
-        assert_eq!(HOST_SUPPORTED_PROTOCOL, 29);
+        // soroban-env-host 30.0.0 this is 30.
+        assert_eq!(HOST_SUPPORTED_PROTOCOL, 30);
         assert_eq!(
             HOST_SUPPORTED_PROTOCOL,
             soroban_env_host::meta::INTERFACE_VERSION.protocol

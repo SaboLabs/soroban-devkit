@@ -2,14 +2,15 @@ use clap::{Args, CommandFactory, Parser, Subcommand};
 use clap_complete::Shell;
 use sdkt_core::fee::{FeeConfig, FeeEstimator, LedgerFeeSample, NetworkKind};
 use sdkt_core::fetch::DependencyFetcher;
-use sdkt_core::{DevKitConfig, OutputFormat};
+use sdkt_core::{ContractConfig, DevKitConfig, OutputFormat};
 use sdkt_rpc::inspect::StorageSummary;
 use sdkt_rpc::wasm::get_wasm_bytecode;
 use sdkt_rpc::{
-    estimate_dynamic_fee, extend_footprint, first_topic_filter, get_contract_events_filtered,
-    get_next_sequence, get_ttl_info_for_keys, get_wasm_metadata, inspect_account, inspect_contract,
-    inspect_transaction, read_contract_state, restore_footprint, simulate_transaction,
-    SorobanRpcClient, StorageKeyInfo, TtlInfoSummary,
+    estimate_dynamic_fee, extend_footprint, first_topic_filter, get_contract_events_page,
+    get_contract_events_paginated, get_next_sequence, get_ttl_info_for_keys, get_wasm_metadata,
+    inspect_account, inspect_contract, inspect_transaction, read_contract_state, restore_footprint,
+    simulate_transaction, GetEventsPagination, PaginationOptions, SorobanRpcClient, StorageKeyInfo,
+    TtlInfoSummary,
 };
 use sdkt_storage::WasmCache;
 use sdkt_storage::{
@@ -27,6 +28,7 @@ use std::fs;
 use std::io::{self, Write};
 use std::path::Path;
 use std::process;
+use std::time::Duration;
 
 use commands::network::{
     network_is_explicit, resolve_network_config, resolve_rpc_client, resolve_rpc_client_mutating,
@@ -104,6 +106,45 @@ mod storage_label_tests {
                 .unwrap();
         assert_eq!(storage_key_label(&unknown, &spec), unknown);
     }
+
+    #[test]
+    fn shorten_value_passes_through_short_values_unchanged() {
+        assert_eq!(shorten_value("short"), "short");
+        assert_eq!(shorten_value("exactly-24"), "exactly-24");
+    }
+
+    #[test]
+    fn shorten_value_distinguishes_values_sharing_head_tail_and_length() {
+        // Same 16-char head, same 8-char tail, same length: fingerprint
+        // must differ.
+        let a = format!(
+            "{}{}{}{}",
+            "a".repeat(16),
+            "AAAA",
+            "Z".repeat(8),
+            "0".repeat(24)
+        );
+        let b = format!(
+            "{}{}{}{}",
+            "a".repeat(16),
+            "ZZZZ",
+            "Z".repeat(8),
+            "0".repeat(24)
+        );
+        // sanity: the structural parts really do coincide
+        assert_eq!(&a[0..16], &b[0..16]);
+        assert_eq!(&a[a.len() - 8..], &b[b.len() - 8..]);
+        assert_eq!(a.len(), b.len());
+        assert_ne!(
+            shorten_value(&a),
+            shorten_value(&b),
+            "fingerprint must distinguish structurally-alike values"
+        );
+        assert!(
+            shorten_value(&a).contains('#'),
+            "long value must carry the SHA-256 fingerprint"
+        );
+    }
 }
 
 /// Reusable network-resolution flags shared by every command that talks to a
@@ -177,6 +218,15 @@ enum Commands {
         /// Read the XDR payload from a file instead of the positional argument.
         #[arg(short = 'i', long, value_name = "FILE")]
         file: Option<String>,
+        /// Path to contract WASM for ABI-aware decoding
+        #[arg(long, value_name = "WASM")]
+        abi: Option<String>,
+        /// Use the ABI of a deployed contract (fetched on-chain via path) for
+        /// decoding. Mutually exclusive with `--abi`.
+        #[arg(long, value_name = "CONTRACT_ID")]
+        abi_contract: Option<String>,
+        #[command(flatten)]
+        net: NetworkArgs,
     },
     /// Encode typed values (TYPE:VALUE) to base64 XDR (reverse of decode)
     Encode {
@@ -307,6 +357,24 @@ enum Commands {
         /// symbol. Case-sensitive; filtered server-side by the RPC.
         #[arg(long, value_name = "SYMBOL")]
         topic: Option<String>,
+        /// Maximum events per page, sent as getEvents `pagination.limit`.
+        /// The RPC applies its own default cap when omitted.
+        #[arg(long, value_name = "N")]
+        limit: Option<u32>,
+        /// Resume from a pagination cursor returned by a previous
+        /// `sdkt events` run, sent as getEvents `pagination.cursor`.
+        /// Cannot be combined with `--start-ledger`: a cursor-only
+        /// request resumes from the token. `--end-ledger` is still
+        /// allowed as a client-side bound — it is enforced locally
+        /// and never sent on the wire with a cursor.
+        #[arg(long, value_name = "CURSOR")]
+        cursor: Option<String>,
+        /// Follow the getEvents cursor until the pages are exhausted.
+        /// Bounded: at most N pages (default 10 when no value is given);
+        /// `--all-pages 25` raises the cap. Without this flag only one
+        /// page is fetched and a page-boundary notice is printed instead.
+        #[arg(long, value_name = "N", num_args = 0..=1, default_missing_value = "10")]
+        all_pages: Option<usize>,
         #[command(flatten)]
         net: NetworkArgs,
     },
@@ -334,14 +402,26 @@ enum Commands {
         #[command(flatten)]
         net: NetworkArgs,
     },
-    /// Offline diff of two contract WASM files (ABI/function/event/type changes)
+    /// Offline diff of two contract WASMs (ABI/function/event/type changes).
+    /// Each side is a local file (`--old-wasm` / `--new-wasm`) or a deployed
+    /// contract (`--old-contract` / `--new-contract`, fetched over RPC).
     Diff {
-        /// Path to the OLD (baseline) WASM file
-        #[arg(long, value_name = "WASM")]
-        old_wasm: String,
-        /// Path to the NEW (candidate) WASM file
-        #[arg(long, value_name = "WASM")]
-        new_wasm: String,
+        /// Path to the OLD (baseline) WASM file. Conflicts with --old-contract.
+        #[arg(long, value_name = "WASM", conflicts_with = "old_contract")]
+        old_wasm: Option<String>,
+        /// Path to the NEW (candidate) WASM file. Conflicts with --new-contract.
+        #[arg(long, value_name = "WASM", conflicts_with = "new_contract")]
+        new_wasm: Option<String>,
+        /// Deployed contract ID (C...) to use as the OLD (baseline) side;
+        /// its on-chain WASM is fetched over RPC. Conflicts with --old-wasm.
+        /// Requires a network (--network / --rpc-url / --network-profile).
+        #[arg(long, value_name = "CONTRACT_ID")]
+        old_contract: Option<String>,
+        /// Deployed contract ID (C...) to use as the NEW (candidate) side;
+        /// its on-chain WASM is fetched over RPC. Conflicts with --new-wasm.
+        /// Requires a network (--network / --rpc-url / --network-profile).
+        #[arg(long, value_name = "CONTRACT_ID")]
+        new_contract: Option<String>,
         #[arg(short, long, default_value = "pretty")]
         format: String,
         /// Emit an upgrade-safety verdict (breaking vs non-breaking changes)
@@ -349,8 +429,7 @@ enum Commands {
         upgrade_safety: bool,
         /// Fail when the candidate grows more than N percent over the old
         /// artifact (e.g. `--max-growth-pct 10`). Operator-supplied policy:
-        /// SDKT never assumes a network limit. Requires `--old-wasm` (always
-        /// present for `diff`). Violation exits non-zero.
+        /// SDKT never assumes a network limit. Violation exits non-zero.
         #[arg(long, value_name = "N")]
         max_growth_pct: Option<f64>,
         /// Fail when the candidate artifact exceeds N bytes (e.g.
@@ -358,6 +437,21 @@ enum Commands {
         /// hardcoded network limit. Violation exits non-zero.
         #[arg(long, value_name = "N")]
         max_size_bytes: Option<u64>,
+        /// Network to fetch deployed contracts from (testnet | mainnet |
+        /// futurenet). Required when --old-contract or --new-contract is
+        /// given; conflicts with --rpc-url / --network-profile /
+        /// --network-passphrase.
+        #[arg(
+            short,
+            long,
+            value_name = "NETWORK",
+            conflicts_with = "rpc_url",
+            conflicts_with = "network_profile",
+            conflicts_with = "network_passphrase"
+        )]
+        network: Option<String>,
+        #[command(flatten)]
+        net: NetworkArgs,
     },
     /// Static security analysis of a Soroban contract source file (Gap C)
     Audit {
@@ -390,8 +484,21 @@ enum Commands {
         /// Without this flag sdkt audit always exits 0 on findings.
         #[arg(long, value_name = "SEVERITY")]
         fail_on: Option<String>,
+        /// Persist the current audit report (plus version and active rule set)
+        /// as a baseline JSON file at PATH.
+        #[arg(long, value_name = "PATH")]
+        save_baseline: Option<String>,
+        /// Load a saved baseline JSON file from PATH, compare current findings
+        /// against it, and exit non-zero when new findings are introduced.
+        #[arg(long, value_name = "PATH")]
+        baseline: Option<String>,
         #[command(flatten)]
         net: NetworkArgs,
+    },
+    /// Token-focused contract inspection (SEP-41)
+    Token {
+        #[command(subcommand)]
+        action: TokenAction,
     },
     /// Manage Soroban identities (keys)
     Identity {
@@ -484,6 +591,20 @@ enum Commands {
         /// Path to the currently deployed (baseline) WASM, used with --deny-breaking.
         #[arg(long, value_name = "WASM")]
         old_wasm: Option<String>,
+        /// Timeout in seconds while waiting for the upload and create transactions to settle
+        #[arg(long, default_value_t = 60)]
+        timeout: u64,
+        /// Polling interval in seconds while waiting for settlement
+        #[arg(long, default_value_t = 1)]
+        interval: u64,
+        /// Skip the post-deploy on-chain WASM hash verification (issue #89).
+        /// By default a successful deploy verifies the deployed contract's
+        /// on-chain WASM hash against the artifact bytes already in memory
+        /// (one read-only `getLedgerEntries` round-trip — the same call
+        /// `sdkt verify` already makes). With this flag the deploy behaves
+        /// exactly as before, with no extra RPC call.
+        #[arg(long, default_value_t = false)]
+        no_verify: bool,
         #[command(flatten)]
         net: NetworkArgs,
     },
@@ -492,6 +613,10 @@ enum Commands {
         /// Output format (pretty or json)
         #[arg(short, long, default_value = "pretty")]
         format: String,
+        /// Build only the named contract(s) plus their workspace dependencies
+        /// (repeatable)
+        #[arg(long = "package", value_name = "ALIAS")]
+        packages: Vec<String>,
     },
     /// Invoke a contract function (read-only, no signing/submission)
     Call {
@@ -543,6 +668,12 @@ enum Commands {
         /// Return after submission with the transaction hash instead of polling for settlement
         #[arg(long)]
         no_wait: bool,
+        /// Timeout in seconds while waiting for settlement (only without --no-wait)
+        #[arg(long, default_value_t = 60)]
+        timeout: u64,
+        /// Polling interval in seconds while waiting for settlement (only without --no-wait)
+        #[arg(long, default_value_t = 1)]
+        interval: u64,
         /// Build and sign the invocation envelope, print it, and stop without submitting (#73)
         #[arg(long)]
         build_only: bool,
@@ -554,7 +685,7 @@ enum Commands {
         #[command(subcommand)]
         action: LockCommand,
     },
-    /// Validate and inspect local package manifests ()
+    /// Validate, bundle, unpack, and inspect local package manifests
     Package {
         #[command(subcommand)]
         action: PackageCommand,
@@ -656,6 +787,29 @@ enum Commands {
 }
 
 #[derive(Subcommand)]
+enum TokenAction {
+    /// Inspect a deployed contract as a SEP-41 token: method presence from
+    /// its spec plus the four metadata values (read-only simulation).
+    ///
+    /// Presence comes from the contract spec only — never from a simulation
+    /// result. `balance`, `allowance`, and the state-changing methods are
+    /// never simulated. A value whose simulation fails is reported as
+    /// `unavailable` and never changes the presence verdict or `is_token`.
+    /// Exit 2 when the contract's WASM cannot be fetched or its spec
+    /// cannot be parsed (never reported as "not a token").
+    Info {
+        /// Stellar contract ID (C... StrKey format)
+        #[arg(value_name = "CONTRACT_ID")]
+        contract_id: String,
+        /// Output format (pretty or json)
+        #[arg(short, long, default_value = "pretty")]
+        format: String,
+        #[command(flatten)]
+        net: NetworkArgs,
+    },
+}
+
+#[derive(Subcommand)]
 enum FuzzAction {
     /// Run a deterministic fuzz campaign against a compiled contract
     Campaign {
@@ -687,6 +841,14 @@ enum FuzzAction {
         /// (repeatable), e.g. --expect-error bump:Auth:6
         #[arg(long, value_name = "FN:TYPE:CODE", action = clap::ArgAction::Append)]
         expect_error: Vec<String>,
+        /// Number of invocations in each generated multi-step sequence (>= 2;
+        /// requires --sequence-every)
+        #[arg(long, value_name = "N")]
+        sequence_length: Option<usize>,
+        /// Execute every N-th case as a multi-step sequence (>= 1; requires
+        /// --sequence-length)
+        #[arg(long, value_name = "N")]
+        sequence_every: Option<usize>,
         /// Replay every written artifact to verify determinism
         #[arg(long)]
         replay: bool,
@@ -702,6 +864,19 @@ enum FuzzAction {
         /// Path to the campaign WASM the artifact was produced from
         #[arg(long, value_name = "WASM")]
         wasm: String,
+    },
+    /// Compare two campaign evidence files and report new, fixed, and
+    /// persisting findings (read-only; exits 1 when new findings exist)
+    Compare {
+        /// Path to the baseline campaign evidence JSON
+        #[arg(long, value_name = "FILE")]
+        baseline: String,
+        /// Path to the new campaign evidence JSON
+        #[arg(long, value_name = "FILE")]
+        new: String,
+        /// Output format (pretty | json)
+        #[arg(short, long, default_value = "pretty")]
+        format: String,
     },
 }
 
@@ -835,11 +1010,16 @@ enum PluginAction {
         #[arg(short, long, default_value = "pretty")]
         format: String,
     },
-    /// Update an installed plugin from a new local artifact (local-only)
+    /// Update an installed plugin from a new local artifact, or from a
+    /// `.sdktplugin` bundle (verified before anything is updated)
     Update {
         id: String,
-        /// Path to the new local artifact
+        /// Path to the new local artifact or `.sdktplugin` bundle
         source: String,
+        /// Require the bundle to be signed by this Ed25519 public key file (32 bytes, raw);
+        /// unsigned bundles are refused. Only applies to `.sdktplugin` bundles.
+        #[arg(long)]
+        public_key: Option<String>,
         /// Output format (pretty or json)
         #[arg(short, long, default_value = "pretty")]
         format: String,
@@ -930,6 +1110,13 @@ enum CacheAction {
         #[arg(short, long, default_value = "pretty")]
         format: String,
     },
+    /// List every entry in the cache for the network
+    List {
+        #[arg(short, long, default_value = "testnet")]
+        network: String,
+        #[arg(short, long, default_value = "pretty")]
+        format: String,
+    },
     /// Remove a specific hash from the cache
     Remove {
         /// 64-character hex SHA256 hash of the WASM artifact
@@ -988,6 +1175,20 @@ enum TxAction {
         #[arg(short, long, default_value = "pretty")]
         format: String,
     },
+    /// Wrap a V1 transaction envelope with a fee-bump envelope (offline)
+    Wrap {
+        /// Base64 XDR transaction envelope or path to a file containing it
+        #[arg(short, long)]
+        envelope: String,
+        /// Identity name or G... account that will pay the outer fee
+        #[arg(long, value_name = "ACCOUNT")]
+        fee_source: String,
+        /// Total fee in stroops paid by the fee source
+        #[arg(long, value_name = "STROOPS")]
+        fee: i64,
+        #[arg(short, long, default_value = "pretty")]
+        format: String,
+    },
     /// Simulate a transaction envelope without submitting it
     Simulate {
         /// Base64 XDR transaction envelope or path to a file containing it
@@ -1019,6 +1220,32 @@ enum TxAction {
         interval: u64,
         #[arg(short, long, default_value = "pretty")]
         format: String,
+    },
+    /// Look up a transaction by hash and report its settlement status
+    ///
+    /// Read-only: a single `getTransaction` lookup, or polling until
+    /// settlement with `--wait`. Never signs, submits, or re-submits.
+    Status {
+        /// Transaction hash (64 hexadecimal characters)
+        hash: String,
+        /// Wait and poll until the transaction settles
+        #[arg(short, long)]
+        wait: bool,
+        /// Timeout in seconds while waiting
+        #[arg(short = 't', long, default_value = "60")]
+        timeout: u64,
+        /// Polling interval in seconds while waiting
+        #[arg(short, long, default_value = "2")]
+        interval: u64,
+        #[arg(short, long, default_value = "pretty")]
+        format: String,
+        /// Path to contract WASM for ABI-aware result decoding
+        #[arg(long, value_name = "WASM")]
+        abi: Option<String>,
+        /// Use the ABI of a deployed contract (fetched on-chain via path) for
+        /// result decoding. Mutually exclusive with `--abi`.
+        #[arg(long, value_name = "CONTRACT_ID")]
+        abi_contract: Option<String>,
     },
     /// Build a Soroban transaction envelope XDR
     ///
@@ -1072,9 +1299,14 @@ enum TxAction {
         /// Identity name to sign with. Defaults to "default".
         #[arg(short = 'I', long, default_value = "default")]
         identity: String,
-        /// Network: testnet | mainnet | futurenet | custom:<passphrase>
-        #[arg(short, long, default_value = "testnet")]
-        network: String,
+        /// Network: testnet | mainnet | futurenet | custom:<passphrase> (mutually exclusive with --network-profile and --network-passphrase; defaults to testnet)
+        #[arg(
+            short,
+            long,
+            conflicts_with = "network_profile",
+            conflicts_with = "network_passphrase"
+        )]
+        network: Option<String>,
         /// Output format
         #[arg(short, long, default_value = "pretty")]
         format: String,
@@ -1083,6 +1315,29 @@ enum TxAction {
 
 #[derive(Subcommand)]
 enum ProjectCommand {
+    /// Register an existing contract in `.sdkt.toml` under
+    /// `[contracts.<alias>]`. The entry is validated before anything is
+    /// written: the alias must be new, `--path` must be a directory
+    /// containing a `Cargo.toml`, every `--depends-on` must name an alias
+    /// already in `[contracts]`, and every `--ctor-arg` must parse as
+    /// `TYPE:VALUE`. Never overwrites an existing alias and never drops
+    /// any other section of `.sdkt.toml`.
+    Add {
+        /// Alias for the contract in `[contracts.<alias>]`.
+        alias: String,
+        /// Path to the contract source directory.
+        #[arg(long)]
+        path: String,
+        /// Alias of a contract that must deploy before this one (repeatable).
+        #[arg(long)]
+        depends_on: Vec<String>,
+        /// Constructor argument in TYPE:VALUE format, as in `sdkt deploy
+        /// --arg` (repeatable).
+        #[arg(long)]
+        ctor_arg: Vec<String>,
+        #[arg(short, long, default_value = "pretty")]
+        format: String,
+    },
     /// Show deployments recorded for the selected network profile.
     Status {
         #[arg(short, long, default_value = "pretty")]
@@ -1101,9 +1356,25 @@ enum ProjectCommand {
         /// without re-deploying (and re-paying for) what already succeeded.
         #[arg(long)]
         skip_deployed: bool,
+        /// Preview the deployment without submitting anything: resolve the
+        /// deploy order, predict each contract's address and WASM hash
+        /// offline, and print the plan. Never signs, never touches private
+        /// key material, and never writes a deployment record.
+        #[arg(long)]
+        dry_run: bool,
         /// Identity name to sign and pay for each contract deployment. Defaults to "default".
         #[arg(short = 'I', long, default_value = "default")]
         identity: String,
+        /// Timeout in seconds while waiting for each contract deployment to settle (default 60)
+        #[arg(long, default_value_t = 60)]
+        timeout: u64,
+        /// Poll interval in seconds between status checks (default 1)
+        #[arg(long, default_value_t = 1)]
+        interval: u64,
+        /// Skip the post-deploy on-chain WASM hash verification for every
+        /// contract (issue #89). See `sdkt deploy --no-verify`.
+        #[arg(long, default_value_t = false)]
+        no_verify: bool,
         #[arg(short, long, default_value = "pretty")]
         format: String,
     },
@@ -1164,13 +1435,46 @@ enum PackageCommand {
     },
     /// Bundle the resolved project into a portable offline artifact: the
     /// manifest, the lockfile, and the cached git dependency checkouts. The
-    /// artifact can be unpacked on another machine and rebuilt without network.
+    /// artifact can be unpacked on another machine with `sdkt package unpack`
+    /// and rebuilt without network.
     Pack {
         /// Output directory for the artifact (default: `./dist`).
         #[arg(short, long, default_value = "dist")]
         out: String,
         /// Artifact format: `tar.zst` (compressed tarball) or `dir` (directory tree).
         #[arg(long, default_value = "tar.zst")]
+        format: String,
+    },
+    /// Reconstruct a packed bundle into a buildable tree (the other half of the
+    /// `pack` round-trip). Offline: the artifact is self-contained. `--verify`
+    /// checks the reconstructed tree against the bundle's `package.json`
+    /// descriptor (lock sha256 + per-git-dependency integrity) and exits
+    /// non-zero on any mismatch.
+    Unpack {
+        /// Packed artifact: a `.tar.zst` / `.tgz` bundle or a `--format dir`
+        /// bundle directory.
+        #[arg(value_name = "ARTIFACT")]
+        artifact: String,
+        /// Destination directory for the reconstructed tree (created if absent).
+        #[arg(short, long, default_value = "unpacked")]
+        dest: String,
+        /// Verify the reconstructed tree against the bundle descriptor.
+        #[arg(long)]
+        verify: bool,
+        #[arg(short, long, default_value = "pretty")]
+        format: String,
+    },
+    /// Verify an unpacked bundle against its descriptor: the bundled `sdkt.lock`
+    /// sha256 and every per-git-dependency integrity must match, and each
+    /// checkout must have no modified tracked files. Read-only.
+    VerifyBundle {
+        /// Unpacked bundle directory (contains `sdkt.lock` + `package.json`).
+        #[arg(value_name = "DIR")]
+        dir: String,
+        /// Descriptor to verify against (default: `<DIR>/package.json`).
+        #[arg(long, value_name = "PACKAGE_JSON")]
+        descriptor: Option<String>,
+        #[arg(short, long, default_value = "pretty")]
         format: String,
     },
     /// Validate publish readiness (read-only): manifest valid, lock consistent,
@@ -1271,6 +1575,12 @@ enum StorageAction {
         /// Identity name to sign the extend transaction. Defaults to "default".
         #[arg(short = 'I', long, default_value = "default")]
         identity: String,
+        /// Timeout in seconds while waiting for the extend transaction to settle (default 60)
+        #[arg(long, default_value_t = 60)]
+        timeout: u64,
+        /// Poll interval in seconds between status checks (default 1)
+        #[arg(long, default_value_t = 1)]
+        interval: u64,
         #[arg(short, long, default_value = "pretty")]
         format: String,
     },
@@ -1292,6 +1602,12 @@ enum StorageAction {
         /// Dry-run: show what would be restored without submitting.
         #[arg(long)]
         dry_run: bool,
+        /// Timeout in seconds while waiting for the restore transaction to settle (default 60)
+        #[arg(long, default_value_t = 60)]
+        timeout: u64,
+        /// Poll interval in seconds between status checks (default 1)
+        #[arg(long, default_value_t = 1)]
+        interval: u64,
         #[arg(short, long, default_value = "pretty")]
         format: String,
     },
@@ -1341,6 +1657,9 @@ enum StorageAction {
     /// plan: the contract ID, the ledger keys covering the removed/expiring
     /// entries, and a suggested `--ledgers` value.  Nothing is signed or
     /// submitted.
+    ///
+    /// Duplicate ledger keys within a single snapshot are rejected with an
+    /// error rather than silently dropped.
     ///
     /// Exit codes: 0 in all non-error cases (including an empty plan).
     #[command(name = "storage-diff", alias = "diff")]
@@ -1644,6 +1963,239 @@ async fn verify_contract(
         verification_status: status,
         explanation,
     })
+}
+
+// === post-deploy verification (issue #89) ===
+//
+// Design decision (the issue leaves the failure semantics open): a failed
+// verification is NEVER a deploy failure — the upload and create
+// transactions have settled, so claiming the deploy failed would be false.
+// Instead the failure is loud and machine-catchable in three ways:
+//   (a) pretty output prints a hard warning on stderr naming both hashes;
+//   (b) JSON output carries an explicit `"verification": {"status": "failed",
+//       ...}` object (see `DeployVerification`);
+//   (c) the process exits with code 3 — distinct from 0 (success), 1
+//       (deploy/IO failure) and 2 (usage error) — so CI can tell "the
+//       contract is on-chain but the code does not match the artifact" apart
+//       from a failed deployment. No other exit code 3 exists in this CLI.
+
+/// Exit code for "deploy settled, but post-deploy verification failed"
+/// (issue #89). See the design note above.
+const EXIT_VERIFICATION_FAILED: i32 = 3;
+
+/// How many times a post-deploy verification lookup is attempted when the
+/// contract is reported as not found yet, and how long to wait between
+/// attempts. A just-settled create can take a moment to become visible to a
+/// read RPC; the total extra wait (~1s) stays far below any deploy timeout.
+const VERIFY_NOT_FOUND_ATTEMPTS: usize = 3;
+const VERIFY_NOT_FOUND_DELAY: std::time::Duration = std::time::Duration::from_millis(500);
+
+/// True when a verification error means "contract not yet visible": the
+/// `RpcError::ContractNotFound` display, as surfaced through
+/// `verify_contract`/`inspect_contract` (the same signal
+/// `contract_not_found_status` matches).
+fn is_verify_not_found(e: &str) -> bool {
+    e.contains("Contract not found on the network")
+}
+
+/// Status of the post-deploy on-chain WASM hash check (issue #89).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
+#[serde(rename_all = "lowercase")]
+enum DeployVerificationStatus {
+    Verified,
+    Failed,
+    Skipped,
+}
+
+/// Compact outcome of the post-deploy verification (issue #89), attached to
+/// deploy output as the additive `verification` field. Serializes camelCase
+/// to match the surrounding deploy JSON (`wasmHash`, `contractId`, ...).
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+struct DeployVerification {
+    status: DeployVerificationStatus,
+    /// On-chain WASM hash, when the contract could be read.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    on_chain_wasm_hash: Option<String>,
+    /// Hash of the local artifact (or the `--wasm-hash` value), when known.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    local_wasm_hash: Option<String>,
+    /// Why verification failed, when it did.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    reason: Option<String>,
+}
+
+impl DeployVerification {
+    fn skipped() -> Self {
+        Self {
+            status: DeployVerificationStatus::Skipped,
+            on_chain_wasm_hash: None,
+            local_wasm_hash: None,
+            reason: None,
+        }
+    }
+}
+
+/// Verify a just-deployed contract against the artifact bytes already in
+/// memory (issue #89). Reuses `verify_contract` — the same on-chain hash
+/// comparison `sdkt verify` runs — so no new RPC calls exist beyond what
+/// verify already makes, and the file is never read a second time.
+///
+/// A just-settled create can take a moment to become visible to a read RPC,
+/// so a bare "contract not found" is retried briefly before it is reported
+/// as a verification failure. A hash mismatch is definitive and is never
+/// retried.
+async fn verify_deployed_wasm(
+    client: &SorobanRpcClient,
+    contract_id: &str,
+    wasm_bytes: &[u8],
+    network: &str,
+) -> DeployVerification {
+    // Offline local hash for the report even when the RPC side fails, so the
+    // JSON still names the artifact that was deployed.
+    let local_hash = sdkt_wasm::parse_metadata(wasm_bytes).map(|m| m.hash).ok();
+    let mut attempt = 0;
+    loop {
+        attempt += 1;
+        match verify_contract(client, contract_id, Some(wasm_bytes), network).await {
+            Ok(report) => {
+                if report.matches == Some(true) {
+                    return DeployVerification {
+                        status: DeployVerificationStatus::Verified,
+                        on_chain_wasm_hash: Some(report.on_chain_wasm_hash),
+                        local_wasm_hash: report.local_wasm_hash,
+                        reason: None,
+                    };
+                }
+                return DeployVerification {
+                    status: DeployVerificationStatus::Failed,
+                    on_chain_wasm_hash: Some(report.on_chain_wasm_hash.clone()),
+                    local_wasm_hash: report.local_wasm_hash.clone(),
+                    reason: Some(format!(
+                        "on-chain WASM hash {} does not match local artifact {}",
+                        report.on_chain_wasm_hash,
+                        report.local_wasm_hash.as_deref().unwrap_or("<unknown>")
+                    )),
+                };
+            }
+            Err(e) => {
+                if is_verify_not_found(&e) && attempt < VERIFY_NOT_FOUND_ATTEMPTS {
+                    tokio::time::sleep(VERIFY_NOT_FOUND_DELAY).await;
+                    continue;
+                }
+                return DeployVerification {
+                    status: DeployVerificationStatus::Failed,
+                    on_chain_wasm_hash: None,
+                    local_wasm_hash: local_hash,
+                    reason: Some(format!("could not verify on-chain WASM hash: {e}")),
+                };
+            }
+        }
+    }
+}
+
+/// Same check for the create-only `--wasm-hash` path, where no local bytes
+/// exist: the expected hash is the flag value itself, compared against the
+/// on-chain hash from the existing inspection path (`inspect_contract`).
+/// Hex is case-insensitive, so both sides are normalized before comparing —
+/// an uppercase `--wasm-hash` value must not produce a false mismatch.
+async fn verify_deployed_wasm_hash(
+    client: &SorobanRpcClient,
+    contract_id: &str,
+    expected_wasm_hash: &str,
+) -> DeployVerification {
+    let expected = expected_wasm_hash.to_ascii_lowercase();
+    let mut attempt = 0;
+    loop {
+        attempt += 1;
+        match inspect_contract(client, contract_id).await {
+            Ok(inspection) => {
+                if inspection.wasm_hash.eq_ignore_ascii_case(&expected) {
+                    return DeployVerification {
+                        status: DeployVerificationStatus::Verified,
+                        on_chain_wasm_hash: Some(inspection.wasm_hash),
+                        local_wasm_hash: Some(expected),
+                        reason: None,
+                    };
+                }
+                return DeployVerification {
+                    status: DeployVerificationStatus::Failed,
+                    on_chain_wasm_hash: Some(inspection.wasm_hash.clone()),
+                    local_wasm_hash: Some(expected.clone()),
+                    reason: Some(format!(
+                        "on-chain WASM hash {} does not match expected {}",
+                        inspection.wasm_hash, expected
+                    )),
+                };
+            }
+            Err(e) => {
+                if matches!(e, sdkt_rpc::RpcError::ContractNotFound)
+                    && attempt < VERIFY_NOT_FOUND_ATTEMPTS
+                {
+                    tokio::time::sleep(VERIFY_NOT_FOUND_DELAY).await;
+                    continue;
+                }
+                return DeployVerification {
+                    status: DeployVerificationStatus::Failed,
+                    on_chain_wasm_hash: None,
+                    local_wasm_hash: Some(expected),
+                    reason: Some(format!("could not verify on-chain WASM hash: {e}")),
+                };
+            }
+        }
+    }
+}
+
+/// Short network name for the verification report (issue #89), mirroring
+/// `resolve_target_network`'s naming: the profile name when one was given,
+/// else the well-known name for the passphrase, else "custom". The report
+/// field is informational only; it never affects the RPC calls.
+fn verification_network_name(profile: Option<&str>, passphrase: &str) -> String {
+    if let Some(profile) = profile {
+        return profile.to_string();
+    }
+    match passphrase {
+        "Test SDF Network ; September 2015" => "testnet".to_string(),
+        "Public Global Stellar Network ; September 2015" => "mainnet".to_string(),
+        "Test SDF Future Network ; October 2022" => "futurenet".to_string(),
+        _ => "custom".to_string(),
+    }
+}
+
+/// Print the loud post-deploy verification warning (issue #89) to stderr, in
+/// both pretty and JSON mode, so JSON stdout stays parseable. The deployment
+/// has settled — this is not a deploy failure — but the caller exits with
+/// [`EXIT_VERIFICATION_FAILED`] so CI can catch it. `recheck` names the exact
+/// recheck the operator should run: for a file deploy, `sdkt verify
+/// --contract <id> --wasm <file>` on the same network (which actually
+/// compares the artifact); for a hash-only deploy, comparing the reported
+/// on-chain hash with the original `--wasm-hash`.
+fn print_verification_failure_warning(
+    contract_id: &str,
+    verification: &DeployVerification,
+    recheck: &str,
+) {
+    eprintln!("Warning: post-deploy verification FAILED for {contract_id}");
+    if let Some(reason) = &verification.reason {
+        eprintln!("  {reason}");
+    }
+    eprintln!(
+        "  The deployment has settled, but the deployed code could not be confirmed to match the local artifact."
+    );
+    eprintln!("  {recheck}");
+}
+
+/// Attach the post-deploy `verification` object to the existing deploy JSON
+/// (issue #89). Additive only — the deploy fields are untouched (same
+/// parse/mutate pattern as the audit report's `spec_correlated` field).
+fn deploy_json_with_verification(
+    res: &sdkt_rpc::DeployResult,
+    verification: &DeployVerification,
+) -> String {
+    let mut value: serde_json::Value =
+        serde_json::from_str(&sdkt_rpc::format_json(res)).unwrap_or(serde_json::json!({}));
+    value["verification"] = serde_json::to_value(verification).unwrap_or(serde_json::Value::Null);
+    serde_json::to_string(&value).unwrap_or_else(|_| sdkt_rpc::format_json(res))
 }
 
 // === release-assurance foundation: shared types + pure classifiers ===
@@ -2222,7 +2774,8 @@ async fn run_release_assurance(
 /// `--fuzz-evidence` was not supplied (existing releases with no fuzz
 /// section are unaffected), and the status folds into the aggregate. Only
 /// `Classification::Finding` entries are security evidence; a completed
-/// campaign with zero findings is a clean record and stays SKIPPED.
+/// campaign with at least one executed case and zero findings scores `PASS`,
+/// findings score `FAIL`, and incomplete or zero-case evidence scores `ERROR`.
 fn read_fuzz_evidence(
     path: Option<&str>,
 ) -> Result<(Option<FuzzEvidenceResult>, Option<RaStatus>), String> {
@@ -2235,7 +2788,7 @@ fn read_fuzz_evidence(
         serde_json::from_reader(std::io::BufReader::new(file))
             .map_err(|e| format!("Failed to parse fuzz evidence {path}: {e}"))?;
 
-    let status = if !evidence.campaign_completed {
+    let status = if !evidence.campaign_completed || evidence.case_count == 0 {
         RaStatus::Error
     } else if !evidence.findings.is_empty() {
         RaStatus::Fail
@@ -2243,15 +2796,24 @@ fn read_fuzz_evidence(
         // Completed with zero findings: a clean record, not "not executed".
         RaStatus::Pass
     };
-    let detail = format!(
-        "fuzz campaign: cases={} findings={} minimized={} artifacts={} replayed={} deterministic={}",
-        evidence.case_count,
-        evidence.findings.len(),
-        evidence.minimized_findings,
-        evidence.artifacts_available,
-        evidence.replay.len(),
-        evidence.deterministic,
-    );
+    let detail = if !evidence.campaign_completed {
+        format!(
+            "fuzz campaign incomplete (campaign_completed=false, cases={})",
+            evidence.case_count,
+        )
+    } else if evidence.case_count == 0 {
+        "fuzz campaign executed 0 cases; zero-case evidence is not a passing campaign".to_string()
+    } else {
+        format!(
+            "fuzz campaign: cases={} findings={} minimized={} artifacts={} replayed={} deterministic={}",
+            evidence.case_count,
+            evidence.findings.len(),
+            evidence.minimized_findings,
+            evidence.artifacts_available,
+            evidence.replay.len(),
+            evidence.deterministic,
+        )
+    };
     Ok((
         Some(FuzzEvidenceResult {
             check: RaCheck { status, detail },
@@ -2493,6 +3055,16 @@ fn shell_quote(s: &str) -> String {
     format!("'{}'", s.replace('\'', "'\\''"))
 }
 
+/// True when an RPC URL may carry credentials, so it must never be printed
+/// in a resume command: a userinfo part (`scheme://user:pass@host`), or a
+/// query string / fragment, where API tokens commonly live. A plain
+/// endpoint without any of those is safe to print verbatim.
+fn rpc_url_may_contain_credentials(url: &str) -> bool {
+    let rest = url.split("://").nth(1).unwrap_or(url);
+    let authority_end = rest.find(['/', '?', '#']).unwrap_or(rest.len());
+    rest[..authority_end].contains('@') || rest.contains(['?', '#'])
+}
+
 /// Warning for `sdkt events --topic` when `symbol` will not match the event's
 /// `topic[0]` on the wire. For a `#[contractevent]` that is its first prefix
 /// topic (the snake_case event name by default), not the declared event name,
@@ -2572,14 +3144,213 @@ fn apply_audit_gate(level: Option<sdkt_audit::Severity>, summary: &sdkt_audit::A
     process::exit(1);
 }
 
+/// Report the result of `package unpack` / `package verify-bundle`: the bundle
+/// descriptor summary plus, when requested, the round-trip verdict.
+fn print_bundle_result(
+    fmt: OutputFormat,
+    bundle: &sdkt_core::package::PackageBundle,
+    tree: &Path,
+    artifact: Option<&Path>,
+    descriptor: &Path,
+    verified: Option<bool>,
+) {
+    let git_deps = bundle.entries.iter().filter(|e| e.source == "git").count();
+    if fmt == OutputFormat::Json {
+        let mut doc = serde_json::json!({
+            "tree": tree.display().to_string(),
+            "descriptor": descriptor.display().to_string(),
+            "schema": bundle.schema,
+            "name": bundle.name,
+            "version": bundle.version,
+            "format": bundle.format,
+            "lock_sha256": bundle.lock_sha256,
+            "dependencies": bundle.entries.len(),
+            "verified": verified,
+        });
+        if let Some(a) = artifact {
+            doc["artifact"] = serde_json::json!(a.display().to_string());
+        }
+        println!("{}", serde_json::to_string_pretty(&doc).unwrap());
+        return;
+    }
+
+    match artifact {
+        Some(a) => {
+            println!("Unpacked {} v{}", bundle.name, bundle.version);
+            println!("  artifact:     {}", a.display());
+        }
+        None => println!("Bundle {} v{}", bundle.name, bundle.version),
+    }
+    println!("  tree:         {}", tree.display());
+    println!("  descriptor:   {}", descriptor.display());
+    println!("  lock sha256:  {}", bundle.lock_sha256);
+    println!(
+        "  dependencies: {} ({} git)",
+        bundle.entries.len(),
+        git_deps
+    );
+    match verified {
+        Some(true) => println!(
+            "  verification: OK — sdkt.lock sha256 and {} git checkout(s) match the descriptor",
+            git_deps
+        ),
+        Some(false) => {
+            println!("  verification: MISMATCH — the tree does not reproduce the descriptor")
+        }
+        None => {}
+    }
+}
+
 fn parse_format_str(s: &str) -> OutputFormat {
     match s.to_lowercase().as_str() {
         "json" => OutputFormat::Json,
         "pretty" => OutputFormat::Pretty,
         other => {
             eprintln!("Invalid format '{}'. Use 'json' or 'pretty'.", other);
-            process::exit(1);
+            process::exit(2);
         }
+    }
+}
+
+/// Formats a byte count for the `wasm cache list` table (`530 B`, `1.2 KB`,
+/// `3.4 MB`). `None` renders as `unknown`: the entry is a half-pair whose
+/// other file is missing.
+fn format_cache_size(bytes: Option<u64>) -> String {
+    let Some(bytes) = bytes else {
+        return "unknown".to_string();
+    };
+    if bytes < 1024 {
+        format!("{} B", bytes)
+    } else if bytes < 1024 * 1024 {
+        format!("{:.1} KB", bytes as f64 / 1024.0)
+    } else {
+        format!("{:.1} MB", bytes as f64 / (1024.0 * 1024.0))
+    }
+}
+
+/// Report a build failure in the requested format and exit non-zero.
+fn build_error_exit(e: &sdkt_core::build::BuildError, fmt: OutputFormat) -> ! {
+    if fmt == OutputFormat::Json {
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&serde_json::json!({
+                "success": false,
+                "error": e.to_string(),
+            }))
+            .expect("serialize build error")
+        );
+    } else {
+        eprintln!("Error building workspace: {}", e);
+    }
+    std::process::exit(1);
+}
+
+/// Validate a `(timeout, interval)` wait pair before any transaction is
+/// submitted.
+///
+/// `interval` must be non-zero — a zero interval spins the poll loop without
+/// advancing. `timeout` must cover at least one interval — a timeout below the
+/// interval could never observe a settled transaction. Both errors name the
+/// offending values so the operator can correct them without a source dive.
+/// Callers exit with status 2 (usage error) on `Err`.
+fn validate_poll_pair(timeout: u64, interval: u64) -> Result<(), String> {
+    if interval == 0 {
+        return Err("--interval must be greater than 0".to_string());
+    }
+    if timeout < interval {
+        return Err(format!(
+            "--timeout ({timeout}s) must be at least one --interval ({interval}s)"
+        ));
+    }
+    Ok(())
+}
+
+/// Validate a transaction hash before any RPC call is made.
+///
+/// A transaction hash is the 64-character hexadecimal encoding of the 32-byte
+/// transaction hash. Anything else is a usage error; `tx status` callers exit
+/// with status 2 on `Err`.
+fn validate_transaction_hash(hash: &str) -> Result<(), String> {
+    if hash.len() != 64 || !hash.chars().all(|c| c.is_ascii_hexdigit()) {
+        return Err(format!(
+            "invalid transaction hash '{hash}': expected 64 hexadecimal characters"
+        ));
+    }
+    Ok(())
+}
+
+/// Map a [`sdkt_rpc::TransactionStatus`] to the `tx status` display label and
+/// process exit code.
+///
+/// Success exits 0, a settled failure exits 1, an unknown hash exits 2, and a
+/// point-in-time `Pending` lookup exits 0 — it has not failed, the operator
+/// only asked whether it settled yet.
+fn tx_status_label_and_exit(status: sdkt_rpc::TransactionStatus) -> (&'static str, i32) {
+    match status {
+        sdkt_rpc::TransactionStatus::Success => ("SUCCESS", 0),
+        sdkt_rpc::TransactionStatus::Failed => ("FAILED", 1),
+        sdkt_rpc::TransactionStatus::NotFound => ("NOT_FOUND", 2),
+        sdkt_rpc::TransactionStatus::Pending => ("PENDING", 0),
+    }
+}
+
+/// Decode a base64 `result_xdr` (`TransactionResult`) from a `getTransaction`
+/// response into its JSON form, via the generic XDR decoder.
+///
+/// A corrupt `result_xdr` is an error naming the hash, never a silent empty
+/// result; callers exit with status 2 on `Err`.
+fn decode_tx_status_result(result_xdr: &str, hash: &str) -> Result<serde_json::Value, String> {
+    use base64::Engine as _;
+    let raw = base64::engine::general_purpose::STANDARD
+        .decode(result_xdr.trim())
+        .map_err(|e| format!("invalid result_xdr for transaction {hash}: {e}"))?;
+    sdkt_xdr::decode_bytes(&raw, Some("transactionresult"))
+        .map_err(|e| format!("invalid result_xdr for transaction {hash}: {e}"))
+}
+
+/// Decode a base64 `result_meta_xdr` (`TransactionMeta`) the same way.
+/// A corrupt `result_meta_xdr` is an error naming the hash, like the result.
+fn decode_tx_status_result_meta(
+    result_meta_xdr: &str,
+    hash: &str,
+) -> Result<serde_json::Value, String> {
+    use base64::Engine as _;
+    let raw = base64::engine::general_purpose::STANDARD
+        .decode(result_meta_xdr.trim())
+        .map_err(|e| format!("invalid result_meta_xdr for transaction {hash}: {e}"))?;
+    sdkt_xdr::decode_bytes(&raw, Some("transactionmeta"))
+        .map_err(|e| format!("invalid result_meta_xdr for transaction {hash}: {e}"))
+}
+
+/// Extract the invoke return value from a settled successful transaction's
+/// result metadata.
+///
+/// Since protocol 30 the `TransactionResult` no longer carries the return
+/// value — `InvokeHostFunctionResult::Success` holds only a hash — and the
+/// value lives in the Soroban transaction meta instead:
+/// `SorobanTransactionMeta.return_value` (V3) or
+/// `SorobanTransactionMetaV2.return_value` (V4).
+///
+/// Returns `None` when the meta is absent, corrupt, carries no Soroban meta,
+/// or holds no return value.
+fn invoke_return_scval(result_meta_xdr: &str) -> Option<stellar_xdr::ScVal> {
+    use base64::Engine as _;
+    use stellar_xdr::{Limits, ReadXdr, TransactionMeta};
+    let raw = base64::engine::general_purpose::STANDARD
+        .decode(result_meta_xdr.trim())
+        .ok()?;
+    let meta = TransactionMeta::from_xdr(
+        &raw,
+        Limits {
+            depth: 64,
+            len: 1_048_576,
+        },
+    )
+    .ok()?;
+    match meta {
+        TransactionMeta::V3(meta) => meta.soroban_meta.map(|soroban| soroban.return_value),
+        TransactionMeta::V4(meta) => meta.soroban_meta.and_then(|soroban| soroban.return_value),
+        TransactionMeta::V0(_) | TransactionMeta::V1(_) | TransactionMeta::V2(_) => None,
     }
 }
 
@@ -2661,6 +3432,30 @@ fn print_diff_pretty(diff: &sdkt_storage::SnapshotDiff) {
     use sdkt_storage::DiffStatus;
 
     println!("Storage Diff for Contract: {}", diff.contract_id);
+    if diff.capture_context.as_deref() == Some("unknown") {
+        println!("Capture context: unknown");
+        if let Some(ref net) = diff.network {
+            println!("Network:         {}", net);
+        }
+    } else {
+        match (diff.old_ledger, diff.new_ledger, diff.ledger_delta) {
+            (Some(old_l), Some(new_l), Some(delta)) => {
+                println!(
+                    "Capture context: old ledger {}, new ledger {} (ledger delta: {:+})",
+                    old_l, new_l, delta
+                );
+                if let Some(ref net) = diff.network {
+                    println!("Network:         {}", net);
+                }
+            }
+            _ => {
+                println!("Capture context: unknown");
+                if let Some(ref net) = diff.network {
+                    println!("Network:         {}", net);
+                }
+            }
+        }
+    }
     println!("Total entries: {}", diff.entries.len());
 
     let removed: Vec<_> = diff
@@ -2673,6 +3468,11 @@ fn print_diff_pretty(diff: &sdkt_storage::SnapshotDiff) {
         .iter()
         .filter(|e| e.status == DiffStatus::ExpiringSoon)
         .collect();
+    let value_changed: Vec<_> = diff
+        .entries
+        .iter()
+        .filter(|e| e.status == DiffStatus::ValueChanged)
+        .collect();
     let unchanged: Vec<_> = diff
         .entries
         .iter()
@@ -2680,9 +3480,10 @@ fn print_diff_pretty(diff: &sdkt_storage::SnapshotDiff) {
         .collect();
 
     println!(
-        "  Removed:       {} | Expiring Soon: {} | Unchanged: {}",
+        "  Removed:       {} | Expiring Soon: {} | Value Changed: {} | Unchanged: {}",
         removed.len(),
         expiring.len(),
+        value_changed.len(),
         unchanged.len()
     );
 
@@ -2702,31 +3503,86 @@ fn print_diff_pretty(diff: &sdkt_storage::SnapshotDiff) {
     if !expiring.is_empty() {
         println!("\nExpiring soon ({}):", expiring.len());
         for e in &expiring {
+            let norm_str = e
+                .normalized_old_ttl
+                .map_or(String::new(), |n| format!(" normalized_old_ttl={n}"));
             println!(
-                "  [expiring] key={}{} (ttl={})",
+                "  [expiring] key={}{}{} (ttl={})",
                 e.key,
                 e.label
                     .as_ref()
                     .map_or(String::new(), |l| format!(" label={l}")),
+                norm_str,
                 e.new_ttl.map_or("?".to_string(), |t| t.to_string())
             );
         }
     }
-    if unchanged.iter().any(|e| e.label.is_some()) {
+    if !value_changed.is_empty() {
+        println!("\nValue changed ({}):", value_changed.len());
+        for e in &value_changed {
+            let old_short = e
+                .old_value
+                .as_deref()
+                .map(shorten_value)
+                .unwrap_or_else(|| "?".to_string());
+            let new_short = e
+                .new_value
+                .as_deref()
+                .map(shorten_value)
+                .unwrap_or_else(|| "?".to_string());
+            println!(
+                "  [value_changed] key={}{} ttl={} (old_value={} new_value={})",
+                e.key,
+                e.label
+                    .as_ref()
+                    .map_or(String::new(), |l| format!(" label={l}")),
+                e.new_ttl.map_or("?".to_string(), |t| t.to_string()),
+                old_short,
+                new_short
+            );
+        }
+    }
+    if !unchanged.is_empty() {
         println!("\nUnchanged entries ({}):", unchanged.len());
         for e in &unchanged {
+            let norm_str = e
+                .normalized_old_ttl
+                .map_or(String::new(), |n| format!(" normalized_old_ttl={n}"));
             println!(
-                "  [unchanged] key={}{} (ttl={})",
+                "  [unchanged] key={}{}{} (ttl={})",
                 e.key,
                 e.label
                     .as_ref()
                     .map_or(String::new(), |l| format!(" label={l}")),
+                norm_str,
                 e.new_ttl.map_or("?".to_string(), |t| t.to_string())
             );
         }
     }
-    if unchanged.is_empty() && removed.is_empty() && expiring.is_empty() {
+    if unchanged.is_empty() && removed.is_empty() && expiring.is_empty() && value_changed.is_empty()
+    {
         println!("  (no entries)");
+    }
+}
+
+/// Shorten a base64 XDR value for display: keep the first 16 and last 8
+/// characters plus a SHA-256 fingerprint (first 8 hex chars) of the complete
+/// value, so two distinct values sharing head, tail, and length still print
+/// differently in the `[value_changed]` line.
+fn shorten_value(value: &str) -> String {
+    if value.len() <= 24 {
+        value.to_string()
+    } else {
+        let mut hasher = Sha256::new();
+        hasher.update(value.as_bytes());
+        let fp = hasher.finalize();
+        format!(
+            "{}…{}#{} ({} chars)",
+            &value[..16],
+            &value[value.len() - 8..],
+            hex::encode(&fp[..4]),
+            value.len()
+        )
     }
 }
 
@@ -3240,7 +4096,34 @@ fn run_encode(values: &[String]) -> Result<String, String> {
 
 #[cfg(test)]
 mod encode_tests {
-    use super::{parse_typed_args, run_encode};
+    use super::{parse_typed_args, run_encode, validate_poll_pair};
+
+    #[test]
+    fn poll_pair_defaults_are_valid() {
+        // The CLI defaults (60s timeout, 1s interval) must pass validation.
+        assert!(validate_poll_pair(60, 1).is_ok());
+    }
+
+    #[test]
+    fn poll_pair_zero_interval_is_rejected() {
+        let err = validate_poll_pair(60, 0).expect_err("zero interval must error");
+        assert!(err.contains("--interval"), "{err}");
+    }
+
+    #[test]
+    fn poll_pair_timeout_below_interval_is_rejected() {
+        let err = validate_poll_pair(2, 5).expect_err("timeout below interval must error");
+        assert!(err.contains("--timeout"), "{err}");
+        assert!(err.contains("--interval"), "{err}");
+        assert!(err.contains('2'), "{err}");
+        assert!(err.contains('5'), "{err}");
+    }
+
+    #[test]
+    fn poll_pair_equal_timeout_and_interval_is_valid() {
+        // timeout == interval is the minimum valid pair (one poll).
+        assert!(validate_poll_pair(5, 5).is_ok());
+    }
 
     #[test]
     fn new_types_match_runtime_typed_arguments() {
@@ -3408,6 +4291,399 @@ mod encode_tests {
     }
 }
 
+/// One contract in a `project deploy --dry-run` plan.
+struct DryRunContract {
+    alias: String,
+    /// Predicted contract ID, or the recorded one when skipped.
+    contract_id: String,
+    /// SHA-256 of the WASM artifact (hex), or the recorded hash when skipped.
+    wasm_hash: String,
+    /// Salt used for the prediction (hex), or the recorded salt when skipped.
+    salt: String,
+    skipped: bool,
+}
+
+/// Preview a multi-contract deployment without submitting anything.
+///
+/// Resolves the workspace deploy order, predicts each contract's address
+/// and WASM hash offline with the same derivation the single-deploy dry run
+/// and the real deploy path use (`sdkt_xdr::derive_contract_id`), and
+/// prints the plan. With `--skip-deployed`, aliases whose recorded contract
+/// still exists on-chain (verified read-only via `getLedgerEntries`, the
+/// same check the real path uses) are marked skipped instead of predicted.
+///
+/// This path never signs, never loads a signing key (the source account is
+/// the identity's public key, read from the identity store only), never
+/// submits, and never writes `.sdkt-deployments.json`. Without
+/// `--skip-deployed` it makes no RPC calls at all.
+#[allow(clippy::too_many_arguments)]
+async fn project_deploy_dry_run(
+    config: &DevKitConfig,
+    salt_bytes: Option<[u8; 20]>,
+    skip_deployed: bool,
+    identity: &str,
+    net: &NetworkArgs,
+    fmt: OutputFormat,
+) -> Result<(), String> {
+    // 4.1 — advisory lock check, same as the real path (read-only).
+    let lock_report = sdkt_core::lock::verify_lock(Path::new("."), config);
+    if lock_report.present && !lock_report.consistent && fmt != OutputFormat::Json {
+        eprintln!("⚠ Warning: sdkt.lock is stale — run `sdkt build` to refresh it.");
+    }
+
+    let network_config = resolve_network_config(
+        net.rpc_url.clone(),
+        net.network_passphrase.clone(),
+        net.network_profile.clone(),
+    )?;
+    let network = match network_config.passphrase.as_str() {
+        "Test SDF Network ; September 2015" => sdkt_xdr::sign::Network::Testnet,
+        "Public Global Stellar Network ; September 2015" => sdkt_xdr::sign::Network::Mainnet,
+        "Test SDF Future Network ; October 2022" => sdkt_xdr::sign::Network::Futurenet,
+        other => sdkt_xdr::sign::Network::Custom(other.to_string()),
+    };
+    let network_key = sdkt_core::deployment::network_key(
+        if net.network_passphrase.is_some() {
+            None
+        } else {
+            net.network_profile.as_deref()
+        },
+        &network_config.passphrase,
+    );
+    let record_path = Path::new(sdkt_core::deployment::DEPLOYMENT_RECORD_FILE);
+    let record_file = sdkt_core::deployment::DeploymentRecordFile::read(record_path)?;
+
+    // Source account only: resolve the identity's public key without
+    // loading the secret. The signing key is deliberately never loaded
+    // on this path — `resolve_public_identity` reads only the stored
+    // `public_key` line, never `secret_key`.
+    let identity_store = sdkt_storage::IdentityStore::new()
+        .map_err(|e| format!("Failed to access identity store: {}", e))?;
+    let identity_obj = identity_store
+        .resolve_public_identity(identity)
+        .map_err(|e| format!("Failed to resolve identity public key: {}", e))?;
+    let source_account = identity_obj.public_key.clone();
+
+    // The RPC client is only needed for the --skip-deployed existence
+    // check (read-only); without it the dry run is fully offline.
+    let client = if skip_deployed {
+        Some(resolve_rpc_client(
+            net.rpc_url.clone(),
+            net.network_passphrase.clone(),
+            net.network_profile.clone(),
+        ))
+    } else {
+        None
+    };
+
+    let salt_generated = salt_bytes.is_none();
+    let salt = salt_bytes.unwrap_or_else(sdkt_rpc::deploy::generate_salt);
+    let salt_hex = hex::encode(salt);
+
+    let resolved = sdkt_core::project::resolve_project(config)
+        .map_err(|e| format!("Error resolving project: {}", e))?;
+
+    let mut plan: Vec<DryRunContract> = Vec::new();
+    for contract in &resolved {
+        // --skip-deployed: honor the record only when the recorded contract
+        // still exists on-chain — the same rule as the real deploy path.
+        if skip_deployed {
+            if let Some(record) = record_file.record_for(&network_key, &contract.alias) {
+                let client = client.as_ref().expect("skip-deployed builds a client");
+                match sdkt_rpc::storage::contract_exists(client, &record.contract_id).await {
+                    Ok(true) => {
+                        plan.push(DryRunContract {
+                            alias: contract.alias.clone(),
+                            contract_id: record.contract_id.clone(),
+                            wasm_hash: record.wasm_hash.clone(),
+                            salt: record.salt.clone().unwrap_or_default(),
+                            skipped: true,
+                        });
+                        continue;
+                    }
+                    Ok(false) => {
+                        if fmt != OutputFormat::Json {
+                            eprintln!(
+                                "    ⚠ Recorded contract for '{}' is no longer on-chain; would re-deploy.",
+                                contract.alias
+                            );
+                        }
+                    }
+                    Err(e) => {
+                        return Err(format!(
+                            "Failed to verify recorded contract for '{}': {}",
+                            contract.alias, e
+                        ));
+                    }
+                }
+            }
+        }
+
+        let wasm_bytes = fs::read(&contract.wasm_artifact)
+            .map_err(|e| format!("Failed to read WASM for '{}': {}", contract.alias, e))?;
+        let wasm_digest: [u8; 32] = Sha256::digest(&wasm_bytes).into();
+        let contract_id = sdkt_xdr::derive_contract_id(
+            &network.network_id(),
+            &source_account,
+            &salt,
+            &wasm_digest,
+        )
+        .map_err(|e| format!("Failed to derive predicted contract ID: {}", e))?;
+        plan.push(DryRunContract {
+            alias: contract.alias.clone(),
+            contract_id,
+            wasm_hash: hex::encode(wasm_digest),
+            salt: salt_hex.clone(),
+            skipped: false,
+        });
+    }
+
+    let to_deploy = plan.iter().filter(|c| !c.skipped).count();
+    let skipped = plan.len() - to_deploy;
+
+    if fmt == OutputFormat::Json {
+        let contracts: Vec<_> = plan
+            .iter()
+            .map(|c| {
+                serde_json::json!({
+                    "alias": c.alias,
+                    "contractId": c.contract_id,
+                    "wasmHash": c.wasm_hash,
+                    "salt": c.salt,
+                    "skipped": c.skipped,
+                })
+            })
+            .collect();
+        println!(
+            "{}",
+            serde_json::to_string(&serde_json::json!({
+                "status": "dry_run",
+                "submitted": false,
+                "network": network_key,
+                "salt": salt_hex,
+                "contracts": contracts,
+                "contracts_to_deploy": to_deploy,
+                "contracts_skipped": skipped,
+            }))
+            .unwrap()
+        );
+    } else {
+        println!(
+            "Project deployment plan (dry run, network: {}):",
+            network_key
+        );
+        for c in &plan {
+            if c.skipped {
+                println!("  {} (skipped — already deployed)", c.alias);
+                println!("    Contract ID: {}", c.contract_id);
+                println!("    WASM hash:   {}", c.wasm_hash);
+                if !c.salt.is_empty() {
+                    println!("    Salt:        {}", c.salt);
+                }
+            } else {
+                println!("  {}", c.alias);
+                println!("    Contract ID: {} (predicted)", c.contract_id);
+                println!("    WASM hash:   {}", c.wasm_hash);
+                println!("    Salt:        {}", c.salt);
+            }
+        }
+        println!(
+            "Totals: {} contract(s) to deploy, {} skipped.",
+            to_deploy, skipped
+        );
+        if salt_generated {
+            println!(
+                "Salt was auto-generated ({}). Pass --salt {} to the real deploy to land these addresses.",
+                salt_hex, salt_hex
+            );
+        }
+        println!("No transactions submitted.");
+    }
+    Ok(())
+}
+
+#[cfg(test)]
+mod tx_status_tests {
+    use super::{
+        decode_tx_status_result, decode_tx_status_result_meta, invoke_return_scval,
+        tx_status_label_and_exit, validate_transaction_hash,
+    };
+    use sdkt_rpc::TransactionStatus;
+    use stellar_xdr::{
+        Hash, InvokeHostFunctionResult, Limits, OperationResult, OperationResultTr, ScVal,
+        SorobanTransactionMeta, SorobanTransactionMetaV2, TransactionMeta, TransactionMetaV3,
+        TransactionMetaV4, TransactionResult, TransactionResultExt, TransactionResultResult,
+        WriteXdr,
+    };
+
+    const HASH: &str = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+
+    fn success_result_xdr() -> String {
+        use base64::Engine as _;
+        let tx = TransactionResult {
+            fee_charged: 100,
+            result: TransactionResultResult::TxSuccess(
+                vec![OperationResult::OpInner(
+                    OperationResultTr::InvokeHostFunction(InvokeHostFunctionResult::Success(
+                        Hash::default(),
+                    )),
+                )]
+                .try_into()
+                .unwrap(),
+            ),
+            ext: TransactionResultExt::V0,
+        };
+        base64::engine::general_purpose::STANDARD.encode(tx.to_xdr(Limits::none()).unwrap())
+    }
+
+    fn failed_result_xdr() -> String {
+        use base64::Engine as _;
+        let tx = TransactionResult {
+            fee_charged: 100,
+            result: TransactionResultResult::TxFailed(
+                vec![OperationResult::OpInner(
+                    OperationResultTr::InvokeHostFunction(InvokeHostFunctionResult::Trapped),
+                )]
+                .try_into()
+                .unwrap(),
+            ),
+            ext: TransactionResultExt::V0,
+        };
+        base64::engine::general_purpose::STANDARD.encode(tx.to_xdr(Limits::none()).unwrap())
+    }
+
+    /// V3 meta whose Soroban meta carries `return_value`.
+    fn v3_meta_xdr(return_value: ScVal) -> String {
+        use base64::Engine as _;
+        let meta = TransactionMeta::V3(TransactionMetaV3 {
+            soroban_meta: Some(SorobanTransactionMeta {
+                events: vec![].try_into().unwrap(),
+                return_value,
+                diagnostic_events: vec![].try_into().unwrap(),
+                ..Default::default()
+            }),
+            ..Default::default()
+        });
+        base64::engine::general_purpose::STANDARD.encode(meta.to_xdr(Limits::none()).unwrap())
+    }
+
+    /// V4 meta whose Soroban meta carries `return_value`.
+    fn v4_meta_xdr(return_value: Option<ScVal>) -> String {
+        use base64::Engine as _;
+        let meta = TransactionMeta::V4(TransactionMetaV4 {
+            soroban_meta: Some(SorobanTransactionMetaV2 {
+                return_value,
+                ..Default::default()
+            }),
+            ..Default::default()
+        });
+        base64::engine::general_purpose::STANDARD.encode(meta.to_xdr(Limits::none()).unwrap())
+    }
+
+    /// V3 meta with no Soroban meta at all.
+    fn v3_meta_without_soroban_xdr() -> String {
+        use base64::Engine as _;
+        let meta = TransactionMeta::V3(TransactionMetaV3 {
+            soroban_meta: None,
+            ..Default::default()
+        });
+        base64::engine::general_purpose::STANDARD.encode(meta.to_xdr(Limits::none()).unwrap())
+    }
+
+    #[test]
+    fn status_labels_and_exit_codes_cover_all_four_values() {
+        assert_eq!(
+            tx_status_label_and_exit(TransactionStatus::Success),
+            ("SUCCESS", 0)
+        );
+        assert_eq!(
+            tx_status_label_and_exit(TransactionStatus::Failed),
+            ("FAILED", 1)
+        );
+        assert_eq!(
+            tx_status_label_and_exit(TransactionStatus::NotFound),
+            ("NOT_FOUND", 2)
+        );
+        assert_eq!(
+            tx_status_label_and_exit(TransactionStatus::Pending),
+            ("PENDING", 0)
+        );
+    }
+
+    #[test]
+    fn hash_validation_accepts_64_hex_characters() {
+        assert!(validate_transaction_hash(HASH).is_ok());
+        assert!(validate_transaction_hash(&"AB".repeat(32)).is_ok());
+        assert!(validate_transaction_hash(&"0123456789abcdef".repeat(4)).is_ok());
+    }
+
+    #[test]
+    fn hash_validation_rejects_malformed_hashes() {
+        for bad in [
+            "".to_string(),
+            "xyz".to_string(),
+            "ab".repeat(31),
+            "ab".repeat(33),
+            "g".repeat(64),
+            "ab cd".repeat(13),
+        ] {
+            let err = validate_transaction_hash(&bad).expect_err("malformed hash must error");
+            assert!(err.contains("invalid transaction hash"), "{bad}: {err}");
+            assert!(err.contains("64 hexadecimal"), "{bad}: {err}");
+        }
+    }
+
+    #[test]
+    fn result_decoding_roundtrips_a_successful_transaction_result() {
+        let xdr = success_result_xdr();
+        let decoded = decode_tx_status_result(&xdr, HASH).unwrap();
+        assert_eq!(decoded["fee_charged"], "100");
+        assert!(decoded["result"]["tx_success"].is_array(), "{decoded}");
+    }
+
+    #[test]
+    fn corrupt_result_xdr_errors_naming_the_hash() {
+        for bad in ["not-base64!!!", "AAAA"] {
+            let err = decode_tx_status_result(bad, HASH).expect_err("corrupt result must error");
+            assert!(err.contains(HASH), "{err}");
+        }
+    }
+
+    #[test]
+    fn corrupt_result_meta_xdr_errors_naming_the_hash() {
+        let err = decode_tx_status_result_meta("not-base64!!!", HASH)
+            .expect_err("corrupt meta must error");
+        assert!(err.contains(HASH), "{err}");
+    }
+
+    #[test]
+    fn invoke_return_extraction_finds_the_return_value_in_v3_and_v4_meta() {
+        // Protocol 30 moved the invoke return value out of the
+        // TransactionResult into the Soroban transaction meta.
+        assert_eq!(
+            invoke_return_scval(&v3_meta_xdr(ScVal::U32(42))),
+            Some(ScVal::U32(42))
+        );
+        assert_eq!(
+            invoke_return_scval(&v4_meta_xdr(Some(ScVal::U32(42)))),
+            Some(ScVal::U32(42))
+        );
+    }
+
+    #[test]
+    fn invoke_return_extraction_is_none_without_a_return_value() {
+        assert_eq!(invoke_return_scval(&v3_meta_without_soroban_xdr()), None);
+        assert_eq!(invoke_return_scval(&v4_meta_xdr(None)), None);
+        assert_eq!(invoke_return_scval("not-base64!!!"), None);
+    }
+
+    #[test]
+    fn failed_result_still_decodes_as_a_transaction_result() {
+        let decoded = decode_tx_status_result(&failed_result_xdr(), HASH).unwrap();
+        assert!(decoded["result"]["tx_failed"].is_array(), "{decoded}");
+    }
+}
+
 fn load_config() -> DevKitConfig {
     match DevKitConfig::from_file(".sdkt.toml") {
         Ok(c) => c,
@@ -3416,6 +4692,569 @@ fn load_config() -> DevKitConfig {
             process::exit(1);
         }
     }
+}
+
+/// Validate a `sdkt project add` entry, in order, failing fast with a
+/// one-line error. Nothing is written when any check fails. On success
+/// returns the [`ContractConfig`] to persist.
+fn validate_project_add(
+    alias: &str,
+    path: &str,
+    depends_on: &[String],
+    ctor_args: &[String],
+    config: &DevKitConfig,
+) -> Result<ContractConfig, String> {
+    if alias.is_empty()
+        || !alias
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || b == b'_' || b == b'-')
+    {
+        return Err(format!(
+            "invalid alias '{alias}': use only letters, digits, '_' and '-'"
+        ));
+    }
+    if config.contracts.contains_key(alias) {
+        return Err(format!("contract '{alias}' already exists in .sdkt.toml"));
+    }
+    let dir = Path::new(path);
+    if !dir.exists() {
+        return Err(format!("path '{path}' does not exist"));
+    }
+    if !dir.is_dir() {
+        return Err(format!("path '{path}' is not a directory"));
+    }
+    if !dir.join("Cargo.toml").is_file() {
+        return Err(format!("path '{path}' does not contain a Cargo.toml"));
+    }
+    // A repeated dependency would save cleanly and then fail
+    // `resolve_deploy_order` with DuplicateDependency, blocking project
+    // graph consumers until the file is hand-fixed — reject it here.
+    let mut seen_deps: std::collections::HashSet<&str> = std::collections::HashSet::new();
+    for dep in depends_on {
+        if !config.contracts.contains_key(dep) {
+            return Err(format!(
+                "unknown dependency '{dep}': no contract with that alias in .sdkt.toml"
+            ));
+        }
+        if !seen_deps.insert(dep.as_str()) {
+            return Err(format!(
+                "duplicate dependency '{dep}': list each dependency only once"
+            ));
+        }
+    }
+    // Strict parse: an untyped value (e.g. `nope`) or an unknown type must
+    // fail here, not pass through as a pre-encoded ScVal. The stored form
+    // stays the original TYPE:VALUE string, as in `deploy --arg`.
+    if let Err(e) = parse_typed_args(ctor_args, true) {
+        return Err(format!("invalid --ctor-arg: {e}"));
+    }
+    Ok(ContractConfig {
+        path: path.to_string(),
+        deploy_after: Vec::new(),
+        depends_on: depends_on.to_vec(),
+        ctor_args: ctor_args.to_vec(),
+    })
+}
+
+/// Persist one new `[contracts.<alias>]` entry to `.sdkt.toml`.
+///
+/// The entry is grafted into the original TOML document with `toml_edit`,
+/// so every other section of an existing file survives byte-for-byte
+/// (comments, key order, and sections the config struct does not model are
+/// all untouched). A `[contracts]` table written as an inline table (which
+/// cannot take a `[contracts.<alias>]` header) is converted to a standard
+/// table in place — its entries survive, only that one item is re-rendered.
+/// A file that does not exist yet is created minimal, containing only the
+/// new entry. The result is verified by re-parsing it through
+/// [`DevKitConfig`] before the write lands; if the document cannot be
+/// updated without losing content (unparseable file, `contracts` defined
+/// as a non-table value, or a failed round-trip check), this returns an
+/// error and the file is left unchanged — there is no lossy fallback.
+///
+/// The write is atomic (temp file in the same directory + rename),
+/// mirroring [`sdkt_core::deployment::DeploymentRecordFile::write`].
+fn save_project_contract(
+    config_path: &Path,
+    config: &DevKitConfig,
+    alias: &str,
+    entry: &ContractConfig,
+) -> Result<(), String> {
+    use std::io::Write as _;
+
+    let existing = match fs::read_to_string(config_path) {
+        Ok(text) => Some(text),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => None,
+        Err(e) => {
+            return Err(format!("Failed to read {}: {e}", config_path.display()));
+        }
+    };
+
+    let mut doc: toml_edit::DocumentMut = match &existing {
+        Some(text) => text.parse().map_err(|e| {
+            format!(
+                "Failed to parse {} as TOML: {e}; the file was left unchanged",
+                config_path.display()
+            )
+        })?,
+        None => toml_edit::DocumentMut::new(),
+    };
+
+    // Serialize the new entry with `toml` (the same shape the loader
+    // expects), then graft its fields into a fresh table.
+    let entry_toml =
+        toml::to_string(entry).map_err(|e| format!("Failed to serialize new entry: {e}"))?;
+    let entry_doc: toml_edit::DocumentMut = entry_toml
+        .parse()
+        .map_err(|e| format!("Failed to serialize new entry: {e}"))?;
+    let alias_table = entry_doc.as_table().clone();
+
+    // Resolve the `contracts` table. An inline table cannot take a
+    // `[contracts.<alias>]` header, so convert it to a standard table
+    // first; the conversion rewrites only that one item.
+    match doc.as_table_mut().entry("contracts") {
+        toml_edit::Entry::Occupied(mut occupied) => {
+            let item = occupied.get_mut();
+            if let toml_edit::Item::Value(toml_edit::Value::InlineTable(inline)) = item {
+                let converted = inline_table_to_table(inline);
+                *item = toml_edit::Item::Table(converted);
+            }
+            if item.as_table().is_none() {
+                return Err(format!(
+                    "Cannot add contract '{alias}': '.sdkt.toml' defines 'contracts' as a non-table value; the file was left unchanged"
+                ));
+            }
+        }
+        toml_edit::Entry::Vacant(vacant) => {
+            vacant.insert(toml_edit::Item::Table(toml_edit::Table::new()));
+        }
+    }
+    let contracts = doc
+        .as_table_mut()
+        .get_mut("contracts")
+        .and_then(|item| item.as_table_mut())
+        .expect("contracts is a table here");
+    contracts.insert(alias, toml_edit::Item::Table(alias_table));
+
+    let new_text = doc.to_string();
+
+    // Verify the result round-trips through DevKitConfig serde with the
+    // new entry present and every previous entry intact.
+    let round_trips = DevKitConfig::from_toml(&new_text)
+        .map(|parsed| {
+            parsed.contracts.get(alias) == Some(entry)
+                && config
+                    .contracts
+                    .iter()
+                    .all(|(a, c)| parsed.contracts.get(a) == Some(c))
+        })
+        .unwrap_or(false);
+    if !round_trips {
+        return Err(format!(
+            "Cannot add contract '{alias}': the updated .sdkt.toml would not load; the file was left unchanged"
+        ));
+    }
+
+    let parent = config_path.parent().unwrap_or_else(|| Path::new("."));
+    let tmp_path = parent.join(format!(".sdkt.toml.tmp.{}", std::process::id()));
+    let mut tmp_file = fs::File::create(&tmp_path).map_err(|e| {
+        format!(
+            "Failed to create temp config file {}: {e}",
+            tmp_path.display()
+        )
+    })?;
+    tmp_file.write_all(new_text.as_bytes()).map_err(|e| {
+        format!(
+            "Failed to write temp config file {}: {e}",
+            tmp_path.display()
+        )
+    })?;
+    tmp_file.sync_all().map_err(|e| {
+        format!(
+            "Failed to sync temp config file {}: {e}",
+            tmp_path.display()
+        )
+    })?;
+    drop(tmp_file);
+    fs::rename(&tmp_path, config_path)
+        .map_err(|e| format!("Failed to write {}: {e}", config_path.display()))?;
+    Ok(())
+}
+
+/// Convert an inline table to an equivalent standard table, preserving
+/// every entry (nested inline tables become sub-tables recursively).
+fn inline_table_to_table(inline: &toml_edit::InlineTable) -> toml_edit::Table {
+    let mut table = toml_edit::Table::new();
+    for (key, value) in inline.iter() {
+        let converted = match value {
+            toml_edit::Value::InlineTable(inner) => {
+                toml_edit::Item::Table(inline_table_to_table(inner))
+            }
+            other => toml_edit::Item::Value(other.clone()),
+        };
+        table.insert(key, converted);
+    }
+    table
+}
+
+#[cfg(test)]
+mod project_add_tests {
+    use super::{save_project_contract, validate_project_add};
+    use sdkt_core::config::{ContractConfig, DevKitConfig};
+
+    fn scratch_dir(tag: &str) -> std::path::PathBuf {
+        let dir =
+            std::env::temp_dir().join(format!("sdkt-project-add-{tag}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    fn contract_dir(parent: &std::path::Path, name: &str) -> std::path::PathBuf {
+        let dir = parent.join(name);
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("Cargo.toml"), "[package]\nname = \"x\"\n").unwrap();
+        dir
+    }
+
+    fn config_with(alias: &str, path: &str) -> DevKitConfig {
+        let mut config = DevKitConfig::default();
+        config.contracts.insert(
+            alias.to_string(),
+            ContractConfig {
+                path: path.to_string(),
+                deploy_after: Vec::new(),
+                depends_on: Vec::new(),
+                ctor_args: Vec::new(),
+            },
+        );
+        config
+    }
+
+    #[test]
+    fn bad_alias_is_rejected() {
+        let config = DevKitConfig::default();
+        for alias in ["", "has space", "has.dot", "has/slash", "has:colon"] {
+            let err = validate_project_add(alias, ".", &[], &[], &config).unwrap_err();
+            assert!(err.contains("invalid alias"), "{err}");
+        }
+        // A valid alias passes the alias check and reaches the path check.
+        let err = validate_project_add("ok-alias_1", "no/such/dir", &[], &[], &config).unwrap_err();
+        assert!(err.contains("does not exist"), "{err}");
+    }
+
+    #[test]
+    fn duplicate_alias_is_rejected() {
+        let dir = scratch_dir("dup");
+        let token = contract_dir(&dir, "token");
+        let config = config_with("token", token.to_str().unwrap());
+        let err =
+            validate_project_add("token", token.to_str().unwrap(), &[], &[], &config).unwrap_err();
+        assert!(err.contains("already exists"), "{err}");
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn missing_path_is_rejected() {
+        let config = DevKitConfig::default();
+        let err = validate_project_add("token", "no/such/dir", &[], &[], &config).unwrap_err();
+        assert!(err.contains("does not exist"), "{err}");
+    }
+
+    #[test]
+    fn path_must_be_a_directory_with_cargo_toml() {
+        let dir = scratch_dir("path");
+        let file = dir.join("not-a-dir");
+        std::fs::write(&file, "x").unwrap();
+        let config = DevKitConfig::default();
+        let err =
+            validate_project_add("token", file.to_str().unwrap(), &[], &[], &config).unwrap_err();
+        assert!(err.contains("not a directory"), "{err}");
+
+        let empty = dir.join("empty");
+        std::fs::create_dir_all(&empty).unwrap();
+        let err =
+            validate_project_add("token", empty.to_str().unwrap(), &[], &[], &config).unwrap_err();
+        assert!(err.contains("Cargo.toml"), "{err}");
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn unknown_depends_on_is_rejected_and_names_the_alias() {
+        let dir = scratch_dir("dep");
+        let token = contract_dir(&dir, "token");
+        let config = DevKitConfig::default();
+        let err = validate_project_add(
+            "token",
+            token.to_str().unwrap(),
+            &["missing-alias".to_string()],
+            &[],
+            &config,
+        )
+        .unwrap_err();
+        assert!(err.contains("missing-alias"), "{err}");
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn duplicate_depends_on_is_rejected() {
+        // Regression test (CodeRabbit review on PR #569): a repeated
+        // dependency used to save cleanly and then fail
+        // `resolve_deploy_order` with DuplicateDependency.
+        let dir = scratch_dir("dupdep");
+        let token = contract_dir(&dir, "token");
+        let vault = contract_dir(&dir, "vault");
+        let config = config_with("token", token.to_str().unwrap());
+        let err = validate_project_add(
+            "vault",
+            vault.to_str().unwrap(),
+            &["token".to_string(), "token".to_string()],
+            &[],
+            &config,
+        )
+        .unwrap_err();
+        assert!(err.contains("duplicate dependency 'token'"), "{err}");
+        // A single dependency stays valid.
+        let entry = validate_project_add(
+            "vault",
+            vault.to_str().unwrap(),
+            &["token".to_string()],
+            &[],
+            &config,
+        )
+        .unwrap();
+        assert_eq!(entry.depends_on, vec!["token".to_string()]);
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn malformed_ctor_arg_is_rejected() {
+        let dir = scratch_dir("ctor");
+        let token = contract_dir(&dir, "token");
+        let config = DevKitConfig::default();
+        for bad in ["nope", "u32:not-a-number", "wat:1"] {
+            let err = validate_project_add(
+                "token",
+                token.to_str().unwrap(),
+                &[],
+                &[bad.to_string()],
+                &config,
+            )
+            .unwrap_err();
+            assert!(err.contains("invalid --ctor-arg"), "{err}");
+        }
+        // Valid typed args pass.
+        let entry = validate_project_add(
+            "token",
+            token.to_str().unwrap(),
+            &[],
+            &["u32:100".to_string()],
+            &config,
+        )
+        .unwrap();
+        assert_eq!(entry.ctor_args, vec!["u32:100".to_string()]);
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn save_creates_minimal_file_when_none_exists() {
+        let dir = scratch_dir("new");
+        let path = dir.join(".sdkt.toml");
+        let config = DevKitConfig::default();
+        let entry = ContractConfig {
+            path: "./contracts/token".to_string(),
+            deploy_after: Vec::new(),
+            depends_on: Vec::new(),
+            ctor_args: vec!["u32:100".to_string()],
+        };
+        save_project_contract(&path, &config, "token", &entry).unwrap();
+        let text = std::fs::read_to_string(&path).unwrap();
+        assert!(
+            !text.contains("[network]") && !text.contains("[decode]"),
+            "new file must contain only the new entry:\n{text}"
+        );
+        let back = DevKitConfig::from_file(&path).unwrap();
+        assert_eq!(back.contracts.get("token"), Some(&entry));
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn save_preserves_other_sections_byte_for_byte() {
+        let dir = scratch_dir("append");
+        let path = dir.join(".sdkt.toml");
+        let before = "# Operator comment, must survive\n[network]\nrpc_url = \"http://localhost:8000\"\npassphrase = \"Standalone Network\"\n\n[contracts.token]\npath = \"contracts/token\"\n";
+        std::fs::write(&path, before).unwrap();
+        let config = DevKitConfig::from_file(&path).unwrap();
+        let entry = ContractConfig {
+            path: "./contracts/vault".to_string(),
+            deploy_after: Vec::new(),
+            depends_on: vec!["token".to_string()],
+            ctor_args: Vec::new(),
+        };
+        save_project_contract(&path, &config, "vault", &entry).unwrap();
+        let after = std::fs::read_to_string(&path).unwrap();
+        assert!(
+            after.starts_with(before),
+            "existing content must survive byte-for-byte:\n--- before ---\n{before}\n--- after ---\n{after}"
+        );
+        let back = DevKitConfig::from_file(&path).unwrap();
+        assert_eq!(back.contracts.get("vault"), Some(&entry));
+        assert_eq!(back.network.rpc_url, "http://localhost:8000");
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn save_with_inline_empty_contracts_preserves_unmodeled_sections() {
+        // Regression test (CodeRabbit review on PR #569): a file whose
+        // `contracts` is an inline table used to fall back to serializing
+        // only DevKitConfig, silently dropping unmodeled sections and
+        // comments. The edit must preserve them instead.
+        let dir = scratch_dir("inline-empty");
+        let path = dir.join(".sdkt.toml");
+        let before = "# Operator comment, must survive\n[tool]\nname = \"external-tool\"\n\ncontracts = {}\n";
+        std::fs::write(&path, before).unwrap();
+        let config = DevKitConfig::from_file(&path).unwrap();
+        let entry = ContractConfig {
+            path: "./contracts/token".to_string(),
+            deploy_after: Vec::new(),
+            depends_on: Vec::new(),
+            ctor_args: Vec::new(),
+        };
+        save_project_contract(&path, &config, "token", &entry).unwrap();
+        let after = std::fs::read_to_string(&path).unwrap();
+        assert!(
+            after.contains("# Operator comment, must survive"),
+            "comment must survive:\n{after}"
+        );
+        assert!(
+            after.contains("[tool]\nname = \"external-tool\""),
+            "unmodeled [tool] section must survive:\n{after}"
+        );
+        let back = DevKitConfig::from_file(&path).unwrap();
+        assert_eq!(back.contracts.get("token"), Some(&entry));
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn save_with_inline_contracts_entry_preserves_existing_entry() {
+        let dir = scratch_dir("inline-entry");
+        let path = dir.join(".sdkt.toml");
+        let before = "# Keep me\ncontracts = { token = { path = \"contracts/token\" } }\n";
+        std::fs::write(&path, before).unwrap();
+        let config = DevKitConfig::from_file(&path).unwrap();
+        let entry = ContractConfig {
+            path: "./contracts/vault".to_string(),
+            deploy_after: Vec::new(),
+            depends_on: vec!["token".to_string()],
+            ctor_args: Vec::new(),
+        };
+        save_project_contract(&path, &config, "vault", &entry).unwrap();
+        let after = std::fs::read_to_string(&path).unwrap();
+        assert!(
+            after.contains("# Keep me"),
+            "comment must survive:\n{after}"
+        );
+        let back = DevKitConfig::from_file(&path).unwrap();
+        assert_eq!(
+            back.contracts.get("token").map(|c| c.path.as_str()),
+            Some("contracts/token"),
+            "inline-table entry must survive:\n{after}"
+        );
+        assert_eq!(back.contracts.get("vault"), Some(&entry));
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn save_refuses_non_table_contracts_and_leaves_file_unchanged() {
+        let dir = scratch_dir("non-table");
+        let path = dir.join(".sdkt.toml");
+        let before = "contracts = \"not-a-table\"\n";
+        std::fs::write(&path, before).unwrap();
+        let config = DevKitConfig::from_file(&path).unwrap_or_default();
+        let entry = ContractConfig {
+            path: "./contracts/token".to_string(),
+            deploy_after: Vec::new(),
+            depends_on: Vec::new(),
+            ctor_args: Vec::new(),
+        };
+        let err = save_project_contract(&path, &config, "token", &entry).unwrap_err();
+        assert!(err.contains("non-table"), "{err}");
+        assert_eq!(
+            std::fs::read_to_string(&path).unwrap(),
+            before,
+            "a refused save must leave the file unchanged"
+        );
+        let _ = std::fs::remove_dir_all(dir);
+    }
+}
+
+/// Resolve a fee source to its public account address without loading a secret.
+fn resolve_fee_source_public_key(input: &str) -> Result<String, String> {
+    let input = input.trim();
+    if sdkt_xdr::decode_account_id(input).is_ok() {
+        return Ok(input.to_string());
+    }
+
+    let store = sdkt_storage::IdentityStore::new()
+        .map_err(|e| format!("Failed to access identity store: {e}"))?;
+    store
+        .resolve_public_identity(input)
+        .map(|identity| identity.public_key)
+        .map_err(|e| format!("Failed to resolve fee source identity: {e}"))
+}
+
+/// Resolve the signing [`Network`] for `sdkt tx sign` from `--network`,
+/// `--network-profile`, and/or `--network-passphrase`.
+///
+/// `--network` is mutually exclusive with `--network-profile` and
+/// `--network-passphrase`. When both `--network-profile` and
+/// `--network-passphrase` are supplied, the profile is still validated via
+/// `NetworkStore` and `--network-passphrase` takes precedence over the
+/// profile's stored passphrase (matching `resolve_network_config` /
+/// `tx submit`). Defaults to `Network::Testnet` when none are specified.
+fn resolve_sign_network(
+    network: Option<&str>,
+    network_profile: Option<&str>,
+    network_passphrase: Option<&str>,
+) -> Result<Network, String> {
+    if network.is_some() && (network_profile.is_some() || network_passphrase.is_some()) {
+        return Err(
+            "cannot use --network together with --network-profile or --network-passphrase; specify only one"
+                .to_string(),
+        );
+    }
+
+    if let Some(net_str) = network {
+        return match net_str.trim().to_ascii_lowercase().as_str() {
+            "testnet" => Ok(Network::Testnet),
+            "mainnet" => Ok(Network::Mainnet),
+            "futurenet" => Ok(Network::Futurenet),
+            other if other.starts_with("custom:") => Ok(Network::parse(other)),
+            _ => Err(format!(
+                "invalid network '{}' (expected testnet|mainnet|futurenet|custom:<passphrase>)",
+                net_str
+            )),
+        };
+    }
+
+    let profile_passphrase = if let Some(profile_name) = network_profile {
+        let store = NetworkStore::new().map_err(|e| format!("cannot open network store: {}", e))?;
+        let profile = store
+            .get(profile_name)
+            .map_err(|e| format!("network profile '{}' not found: {}", profile_name, e))?;
+        Some(profile.network_passphrase)
+    } else {
+        None
+    };
+
+    if let Some(passphrase) = network_passphrase {
+        return Ok(Network::from_passphrase(passphrase));
+    }
+
+    if let Some(passphrase) = profile_passphrase {
+        return Ok(Network::from_passphrase(&passphrase));
+    }
+
+    Ok(Network::Testnet)
 }
 
 /// Resolve a transaction envelope argument (`--input` / `--envelope`) to
@@ -3532,6 +5371,37 @@ fn print_verdict_changes(changes: &[sdkt_wasm::VerdictChange]) {
     }
 }
 
+/// Fetch a deployed contract's WASM bytes via the existing composition
+/// (`inspect_contract` → `get_wasm_bytecode`), returning the bytes plus the
+/// on-chain WASM hash.
+///
+/// Shared by `verify --upgrade-safety` (via
+/// `upgrade_assurance_against_deployed`) and `sdkt diff --old-contract /
+/// --new-contract`, so both resolve a contract ID to bytes the same way. A
+/// contract ID absent from the network fails with a clear "not found"
+/// error, never a bytecode-decode panic.
+async fn fetch_deployed_contract_wasm(
+    client: &SorobanRpcClient,
+    contract_id: &str,
+    network: &str,
+) -> Result<(Vec<u8>, String), String> {
+    let inspection = inspect_contract(client, contract_id)
+        .await
+        .map_err(|e| match e {
+            sdkt_rpc::RpcError::ContractNotFound => {
+                format!("contract {} not found on {}", contract_id, network)
+            }
+            other => format!("{}", other),
+        })?;
+    let wasm_hash = inspection.wasm_hash;
+
+    let deployed_bytes = get_wasm_bytecode(client, &wasm_hash)
+        .await
+        .map_err(|e| format!("could not fetch on-chain WASM for {}: {}", contract_id, e))?;
+
+    Ok((deployed_bytes, wasm_hash))
+}
+
 /// — On-chain upgrade-safety verification.
 ///
 /// Fetches the deployed contract's on-chain WASM via the path
@@ -3557,19 +5427,8 @@ async fn upgrade_assurance_against_deployed(
     sdkt_wasm::parse_metadata(candidate_bytes)
         .map_err(|e| format!("candidate is not valid WASM: {}", e))?;
 
-    let inspection = inspect_contract(client, contract_id)
-        .await
-        .map_err(|e| match e {
-            sdkt_rpc::RpcError::ContractNotFound => {
-                format!("contract {} not found on {}", contract_id, network)
-            }
-            other => format!("{}", other),
-        })?;
-    let wasm_hash = inspection.wasm_hash;
-
-    let deployed_bytes = get_wasm_bytecode(client, &wasm_hash)
-        .await
-        .map_err(|e| format!("could not fetch on-chain WASM for {}: {}", contract_id, e))?;
+    let (deployed_bytes, wasm_hash) =
+        fetch_deployed_contract_wasm(client, contract_id, network).await?;
 
     // "old" side is the deployed contract; "new" side is the local candidate.
     let diff = sdkt_wasm::diff_wasm(&deployed_bytes, candidate_bytes)
@@ -3751,6 +5610,15 @@ fn path_contains_command(path_var: &std::ffi::OsStr, program: &str) -> bool {
 /// Look for a runnable program on PATH (name only; no output capture).
 fn command_on_path(program: &str) -> bool {
     path_contains_command(&std::env::var_os("PATH").unwrap_or_default(), program)
+}
+
+/// True when `path` names a `.sdktplugin` bundle (case-insensitive extension).
+/// Single predicate shared by the plugin install and update paths so the two
+/// cannot drift apart.
+fn is_sdktplugin_bundle(path: &std::path::Path) -> bool {
+    path.extension()
+        .and_then(|e| e.to_str())
+        .is_some_and(|e| e.eq_ignore_ascii_case("sdktplugin"))
 }
 
 /// Read a raw 32-byte Ed25519 public key file, exiting with a clear error on failure.
@@ -3972,6 +5840,115 @@ fn run_doctor(fmt: OutputFormat) {
     }
 }
 
+/// Result of decoding an XDR payload when an optional ABI [`sdkt_wasm::ContractSpec`] is supplied.
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct AbiDecodeResult {
+    /// Formatted output string (pretty or compact JSON).
+    output: String,
+    /// Optional advisory note (e.g. when no custom type in the ABI matched).
+    note: Option<String>,
+}
+
+fn decode_payload_with_optional_abi(
+    input: &str,
+    type_hint: Option<&str>,
+    fmt: OutputFormat,
+    max_depth: u32,
+    allow_fallback_hex: bool,
+    contract_spec: Option<&sdkt_wasm::ContractSpec>,
+) -> Result<AbiDecodeResult, String> {
+    let generic_json =
+        match decode_with_config(input, type_hint, fmt, max_depth, allow_fallback_hex) {
+            Ok(j) => j,
+            Err(e) => {
+                return if contract_spec.is_some() {
+                    Err(format!(
+                        "Failed to decode XDR input '{}': {}",
+                        input.trim(),
+                        e
+                    ))
+                } else {
+                    Err(e.to_string())
+                };
+            }
+        };
+
+    let Some(spec) = contract_spec else {
+        return Ok(AbiDecodeResult {
+            output: generic_json,
+            note: None,
+        });
+    };
+
+    let is_scval_compatible = matches!(
+        type_hint.map(|t| t.to_ascii_lowercase()).as_deref(),
+        None | Some("auto") | Some("scval")
+    );
+    let scval = if is_scval_compatible {
+        sdkt_xdr::scval_from_base64(input)
+            .or_else(|| serde_json::from_str::<stellar_xdr::ScVal>(&generic_json).ok())
+    } else {
+        None
+    };
+
+    if let Some(scval) = scval {
+        let decoded = sdkt_xdr::abi_decode::decode_with_abi(spec, &scval, None);
+        if let Some(matched_type) = &decoded.matched_type {
+            let type_name = matched_type.strip_prefix("udt:").unwrap_or(matched_type);
+            let named_fields: serde_json::Map<String, serde_json::Value> = decoded
+                .fields
+                .as_ref()
+                .map(|fields| {
+                    fields
+                        .iter()
+                        .map(|(k, v)| {
+                            let clean_key = k
+                                .trim_matches('"')
+                                .trim_start_matches("sym(\"")
+                                .trim_end_matches("\")")
+                                .to_string();
+                            (clean_key, serde_json::Value::String(v.clone()))
+                        })
+                        .collect()
+                })
+                .unwrap_or_default();
+            let clean_label = if !named_fields.is_empty() {
+                format!(
+                    "{} {{ {} }}",
+                    type_name,
+                    named_fields
+                        .iter()
+                        .map(|(k, v)| format!("{}: {}", k, v.as_str().unwrap_or_default()))
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                )
+            } else {
+                decoded.label.clone()
+            };
+            let abi_json_val = serde_json::json!({
+                "type": type_name,
+                "matched_type": matched_type,
+                "label": clean_label,
+                "fields": named_fields,
+                "raw": decoded.raw,
+            });
+            let formatted = sdkt_xdr::format_json(&abi_json_val, fmt).map_err(|e| e.to_string())?;
+            return Ok(AbiDecodeResult {
+                output: formatted,
+                note: None,
+            });
+        }
+    }
+
+    Ok(AbiDecodeResult {
+        output: generic_json,
+        note: Some(
+            "Note: no custom type in ABI matched the decoded value; showing generic decoding."
+                .to_string(),
+        ),
+    })
+}
+
 async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
     let cli = Cli::parse();
 
@@ -3981,8 +5958,42 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
             r#type,
             format,
             file,
+            abi,
+            abi_contract,
+            net,
         } => {
+            if let Err(e) =
+                commands::abi::check_abi_mutual_exclusion(abi.as_ref(), abi_contract.as_ref())
+            {
+                eprintln!("Error: {e}");
+                process::exit(1);
+            }
+
             let json_mode = parse_format_str(&format) == OutputFormat::Json;
+            let contract_spec: Option<sdkt_wasm::ContractSpec> = if abi.is_some()
+                || abi_contract.is_some()
+            {
+                let client = resolve_rpc_client(
+                    net.rpc_url.clone(),
+                    net.network_passphrase.clone(),
+                    net.network_profile.clone(),
+                );
+                match commands::abi::resolve_abi_spec(abi.as_ref(), abi_contract.as_ref(), &client)
+                    .await
+                {
+                    Ok(spec) => spec,
+                    Err(e) => {
+                        let msg = match abi.as_deref() {
+                            Some(path) if !e.contains(path) => format!("Error: {path}: {e}"),
+                            _ => format!("Error: {e}"),
+                        };
+                        fail_cli(msg, json_mode);
+                    }
+                }
+            } else {
+                None
+            };
+
             let input = match (file, payload) {
                 (Some(path), _) => fs::read_to_string(&path).unwrap_or_else(|e| {
                     fail_cli(
@@ -4002,17 +6013,21 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
             if let Err(e) = cfg.validate() {
                 fail_cli(e, json_mode);
             }
-            let json = match decode_with_config(
+            let decoded = match decode_payload_with_optional_abi(
                 &input,
                 r#type.as_deref(),
                 fmt,
                 cfg.decode.max_depth,
                 cfg.decode.allow_fallback_hex,
+                contract_spec.as_ref(),
             ) {
-                Ok(j) => j,
-                Err(e) => fail_cli(e.to_string(), json_mode),
+                Ok(d) => d,
+                Err(e) => fail_cli(e, json_mode),
             };
-            println!("{}", json);
+            if let Some(note) = decoded.note {
+                eprintln!("{note}");
+            }
+            println!("{}", decoded.output);
         }
         Commands::Encode { values } => match run_encode(&values) {
             Ok(b64) => println!("{}", b64),
@@ -4196,7 +6211,13 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
                         }
                         println!("  Suggested --ledgers: {}", plan.suggested_ledgers);
                         println!("  Reason:              {}", plan.suggested_ledgers_reason);
-                        if !plan.keys.is_empty() {
+                        // Issue #377: the ready-to-run extend command covers
+                        // ONLY the extendable (expiring-soon) keys. Removed
+                        // keys are gone from the ledger — `ExtendFootprintTtl`
+                        // cannot bring them back — so they are never listed
+                        // in an extend command. When there are no extendable
+                        // keys, no extend command is printed at all.
+                        if !plan.extendable_keys.is_empty() {
                             println!();
                             println!("  Ready-to-run:");
                             let mut net_args = String::new();
@@ -4215,7 +6236,7 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
                             }
 
                             let key_args: String = plan
-                                .keys
+                                .extendable_keys
                                 .iter()
                                 .map(|k| format!(" --key {}", shell_quote(k)))
                                 .collect::<Vec<_>>()
@@ -4227,6 +6248,23 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
                                 net_args,
                                 key_args
                             );
+                        }
+                        if !plan.removed_keys.is_empty() {
+                            println!();
+                            println!(
+                                "  Removed keys ({}) cannot be extended — they are gone from",
+                                plan.removed_keys.len()
+                            );
+                            println!("  the ledger. Restore them with:");
+                            println!(
+                                "    sdkt storage restore --contract {} --envelope <ENVELOPE>",
+                                shell_quote(&plan.contract_id)
+                            );
+                            println!("  where <ENVELOPE> is the invocation envelope that failed");
+                            println!("  on archived state for these keys:");
+                            for (i, k) in plan.removed_keys.iter().enumerate() {
+                                println!("    #{} {}", i + 1, k);
+                            }
                         }
                     }
                 } else if fmt == OutputFormat::Json {
@@ -4377,17 +6415,27 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
                     let fmt = parse_format_str(&format);
                     let extra_keys = analyze_extra_keys.expect("resolved for Analyze");
 
-                    let client = resolve_rpc_client(
-                        net.rpc_url.clone(),
-                        net.network_passphrase.clone(),
-                        net.network_profile.clone(),
-                    );
+                    let target_net = commands::network::resolve_target_network(None, &net).ok();
+                    let (client, network_name) = match target_net {
+                        Some(tn) => (tn.client, Some(tn.network_name)),
+                        None => (
+                            resolve_rpc_client(
+                                net.rpc_url.clone(),
+                                net.network_passphrase.clone(),
+                                net.network_profile.clone(),
+                            ),
+                            None,
+                        ),
+                    };
                     let cfg = load_config();
-                    let analyzer = sdkt_storage::StorageAnalyzer::with_config(
+                    let mut analyzer = sdkt_storage::StorageAnalyzer::with_config(
                         client,
                         cfg.storage.max_entries,
                         cfg.storage.ttl_warning_days,
                     );
+                    if let Some(net_name) = network_name {
+                        analyzer = analyzer.with_network(net_name);
+                    }
 
                     match analyzer
                         .inspect_contract_storage_keys(&contract_id, &extra_keys)
@@ -4403,6 +6451,12 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
                                 println!("{}", serde_json::to_string(&report)?);
                             } else {
                                 println!("Storage Analysis for Contract: {}", report.contract_id);
+                                if let Some(ledger) = report.latest_ledger {
+                                    println!("Latest Ledger: {}", ledger);
+                                }
+                                if let Some(ref net) = report.network {
+                                    println!("Network:       {}", net);
+                                }
                                 println!("Total Entries: {}", report.total_entries);
                                 println!("  Instance:    {}", report.instance_entries);
                                 println!("  Persistent: {}", report.persistent_entries);
@@ -4452,9 +6506,15 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
                     ledgers,
                     key,
                     identity,
+                    timeout,
+                    interval,
                     format,
                 } => {
                     let fmt = parse_format_str(&format);
+                    if let Err(msg) = validate_poll_pair(timeout, interval) {
+                        eprintln!("Error: {msg}");
+                        process::exit(2);
+                    }
 
                     if contract.trim().is_empty() {
                         eprintln!("Error: --contract / contract id must not be empty");
@@ -4516,6 +6576,10 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
                         })?;
                     let signer = sdkt_xdr::sign::Ed25519Signer::from_seed(&signing_key.to_bytes());
                     let source_account = identity_obj.public_key.clone();
+                    let poll_cfg = sdkt_rpc::PollConfig {
+                        timeout: Duration::from_secs(timeout),
+                        interval: Duration::from_secs(interval),
+                    };
                     let client = SorobanRpcClient::from_config(&network_config);
 
                     match extend_footprint(
@@ -4526,6 +6590,7 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
                         &source_account,
                         &signer,
                         network,
+                        &poll_cfg,
                     )
                     .await
                     {
@@ -4556,9 +6621,15 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
                     envelope,
                     identity,
                     dry_run,
+                    timeout,
+                    interval,
                     format,
                 } => {
                     let fmt = parse_format_str(&format);
+                    if let Err(msg) = validate_poll_pair(timeout, interval) {
+                        eprintln!("Error: {msg}");
+                        process::exit(2);
+                    }
 
                     if contract.trim().is_empty() {
                         eprintln!("Error: --contract / contract id must not be empty");
@@ -4624,6 +6695,10 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
                         })?;
                     let signer = sdkt_xdr::sign::Ed25519Signer::from_seed(&signing_key.to_bytes());
                     let source_account = identity_obj.public_key.clone();
+                    let poll_cfg = sdkt_rpc::PollConfig {
+                        timeout: Duration::from_secs(timeout),
+                        interval: Duration::from_secs(interval),
+                    };
                     let client = SorobanRpcClient::from_config(&network_config);
 
                     match restore_footprint(
@@ -4634,6 +6709,7 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
                         &signer,
                         network,
                         dry_run,
+                        &poll_cfg,
                     )
                     .await
                     {
@@ -5166,6 +7242,49 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
                     }
                 }
             }
+            TxAction::Wrap {
+                envelope,
+                fee_source,
+                fee,
+                format,
+            } => {
+                let fmt = parse_format_str(&format);
+                let env_data = match resolve_tx_input(&envelope) {
+                    Ok(s) => s,
+                    Err(e) => {
+                        eprintln!("Error: {}", e);
+                        process::exit(1);
+                    }
+                };
+                let fee_source = match resolve_fee_source_public_key(&fee_source) {
+                    Ok(public_key) => public_key,
+                    Err(e) => {
+                        eprintln!("Error: {}", e);
+                        process::exit(1);
+                    }
+                };
+                let result = match sdkt_xdr::wrap_fee_bump(&sdkt_xdr::FeeBumpWrapParams {
+                    envelope: env_data,
+                    fee_source,
+                    fee,
+                }) {
+                    Ok(result) => result,
+                    Err(e) => {
+                        eprintln!("Error: {}", e);
+                        process::exit(1);
+                    }
+                };
+                if fmt == OutputFormat::Json {
+                    println!("{}", serde_json::to_string(&result)?);
+                } else {
+                    println!("Fee-bump envelope:");
+                    println!("  Fee source:      {}", result.fee_source);
+                    println!("  Inner fee: {} stroops", result.inner_fee);
+                    println!("  Minimum fee: {} stroops", result.minimum_fee);
+                    println!("  Fee-bump total: {} stroops", result.fee);
+                    println!("  Envelope:        {}", result.envelope);
+                }
+            }
             TxAction::Validate { envelope, format } => {
                 let fmt = parse_format_str(&format);
                 let env_data = match resolve_tx_input(&envelope) {
@@ -5412,10 +7531,9 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
                     net.network_profile.clone(),
                 );
 
-                use sdkt_rpc::{submit_and_wait, PollConfig, TransactionStatus};
-                use std::time::Duration;
+                use sdkt_rpc::{submit_and_wait, TransactionStatus};
 
-                let poll_cfg = PollConfig {
+                let poll_cfg = sdkt_rpc::PollConfig {
                     timeout: Duration::from_secs(timeout),
                     interval: Duration::from_secs(interval),
                 };
@@ -5466,6 +7584,290 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
                         std::process::exit(1);
                     }
                 }
+            }
+            TxAction::Status {
+                hash,
+                wait,
+                timeout,
+                interval,
+                format,
+                abi,
+                abi_contract,
+            } => {
+                // `--abi` (local WASM) and `--abi-contract` (on-chain WASM) are
+                // mutually exclusive sources for result decoding. Conflicting
+                // flags are a usage error (exit 2), distinct from a settled
+                // FAILED transaction (exit 1).
+                if let Err(e) =
+                    commands::abi::check_abi_mutual_exclusion(abi.as_ref(), abi_contract.as_ref())
+                {
+                    eprintln!("Error: {e}");
+                    process::exit(2);
+                }
+
+                // A malformed hash is a usage error (exit 2) and must fail
+                // before any RPC call is made.
+                if let Err(e) = validate_transaction_hash(&hash) {
+                    eprintln!("Error: {e}");
+                    process::exit(2);
+                }
+
+                // Validate the --wait poll pair before any network I/O, like
+                // the other polling commands.
+                if wait {
+                    if let Err(msg) = validate_poll_pair(timeout, interval) {
+                        eprintln!("Error: {msg}");
+                        process::exit(2);
+                    }
+                }
+
+                let fmt = parse_format_str(&format);
+                let client = resolve_rpc_client(
+                    net.rpc_url.clone(),
+                    net.network_passphrase.clone(),
+                    net.network_profile.clone(),
+                );
+
+                // Without --wait this is exactly one `getTransaction` lookup;
+                // with --wait it polls until settlement via the existing
+                // `poll_transaction` (same timeout/interval semantics as
+                // `tx submit --wait`). The poll result already carries the
+                // settling response's metadata, inclusion ledger, and
+                // diagnostics — no follow-up lookup is issued, so a bounded
+                // RPC history can never lose the settled result.
+                let (
+                    status,
+                    result_xdr,
+                    result_meta_xdr,
+                    ledger,
+                    latest_ledger,
+                    error_code,
+                    diagnostic_events,
+                ) = if wait {
+                    let poll_cfg = sdkt_rpc::PollConfig {
+                        timeout: Duration::from_secs(timeout),
+                        interval: Duration::from_secs(interval),
+                    };
+                    match sdkt_rpc::poll_transaction(&client, &hash, &poll_cfg).await {
+                        Ok(res) => (
+                            res.status,
+                            res.result_xdr,
+                            res.result_meta_xdr,
+                            res.ledger,
+                            res.latest_ledger,
+                            res.error_code,
+                            res.diagnostic_events,
+                        ),
+                        Err(e) => {
+                            eprintln!("Error looking up transaction {hash}: {e}");
+                            process::exit(2);
+                        }
+                    }
+                } else {
+                    match sdkt_rpc::get_transaction_status(&client, &hash).await {
+                        Ok(res) => {
+                            // A missing or unknown wire status is an
+                            // unreadable response (exit 2), never a silent
+                            // PENDING. An explicit PENDING still exits 0.
+                            let Some(status) = res.wire_status() else {
+                                eprintln!(
+                                    "Error: unrecognized transaction status '{}' for transaction {hash}",
+                                    res.status
+                                );
+                                process::exit(2);
+                            };
+                            // On Failed, diagnostics are the RPC's own
+                            // diagnostic events (or the DiagnosticEvent
+                            // entries in the metadata) — never ordinary
+                            // contract events.
+                            let diagnostics = if status == sdkt_rpc::TransactionStatus::Failed {
+                                sdkt_rpc::response_diagnostic_events(&res)
+                            } else {
+                                Vec::new()
+                            };
+                            // On Failed, derive the failure code the same way
+                            // the polling path does: prefer the RPC's own
+                            // error string, otherwise decode it from the
+                            // settled result XDR (e.g.
+                            // `invoke_host_function_trapped`).
+                            let error_code = if status == sdkt_rpc::TransactionStatus::Failed {
+                                Some(sdkt_rpc::settled_error_code(&res))
+                            } else {
+                                res.error.and_then(|e| {
+                                    let e = e.trim().to_string();
+                                    if e.is_empty() {
+                                        None
+                                    } else {
+                                        Some(e)
+                                    }
+                                })
+                            };
+                            (
+                                status,
+                                res.result_xdr,
+                                res.result_meta_xdr,
+                                res.ledger,
+                                res.latest_ledger,
+                                error_code,
+                                diagnostics,
+                            )
+                        }
+                        Err(e) => {
+                            eprintln!("Error looking up transaction {hash}: {e}");
+                            process::exit(2);
+                        }
+                    }
+                };
+
+                // Decode the settled result. A corrupt result_xdr is an error
+                // naming the hash (exit 2), never a silent empty result.
+                let decoded_result =
+                    result_xdr
+                        .as_ref()
+                        .map(|xdr| match decode_tx_status_result(xdr, &hash) {
+                            Ok(v) => v,
+                            Err(e) => {
+                                eprintln!("Error: {e}");
+                                process::exit(2);
+                            }
+                        });
+                let decoded_meta = result_meta_xdr.as_ref().map(|xdr| {
+                    match decode_tx_status_result_meta(xdr, &hash) {
+                        Ok(v) => v,
+                        Err(e) => {
+                            eprintln!("Error: {e}");
+                            process::exit(2);
+                        }
+                    }
+                });
+
+                // ABI-aware decoding of the invoke return value reuses the
+                // `tx simulate` path: resolve the spec, then decode the ScVal
+                // carried by the settled result metadata (protocol 30 moved
+                // the return value out of `TransactionResult` into the
+                // Soroban transaction meta). Only a settled SUCCESS has a
+                // return value to decode; like `tx simulate`, the failure
+                // path never consults the ABI sources. The return value is
+                // extracted first: when the transaction carries none, the
+                // ABI sources are never loaded, so a missing `--abi` file
+                // cannot fail an otherwise successful status report.
+                let return_scval = if status == sdkt_rpc::TransactionStatus::Success {
+                    result_meta_xdr.as_deref().and_then(invoke_return_scval)
+                } else {
+                    None
+                };
+                let decoded_return = match return_scval {
+                    Some(scval) => {
+                        match commands::abi::resolve_abi_spec(
+                            abi.as_ref(),
+                            abi_contract.as_ref(),
+                            &client,
+                        )
+                        .await
+                        {
+                            Ok(Some(spec)) => {
+                                Some(sdkt_xdr::abi_decode::decode_with_abi(&spec, &scval, None))
+                            }
+                            Ok(None) => None,
+                            Err(e) => {
+                                eprintln!("Error: {e}");
+                                process::exit(1);
+                            }
+                        }
+                    }
+                    None => None,
+                };
+
+                let (label, exit_code) = tx_status_label_and_exit(status);
+
+                if fmt == OutputFormat::Json {
+                    let mut json_obj = serde_json::json!({
+                        "hash": hash,
+                        "status": label,
+                    });
+                    if let Some(result) = &decoded_result {
+                        json_obj["result"] = result.clone();
+                    }
+                    if let Some(meta) = &decoded_meta {
+                        json_obj["result_meta"] = meta.clone();
+                    }
+                    // The inclusion ledger is fixed; the RPC head keeps
+                    // moving. Report them under separate keys, and omit the
+                    // inclusion ledger for unsettled transactions.
+                    if matches!(
+                        status,
+                        sdkt_rpc::TransactionStatus::Success | sdkt_rpc::TransactionStatus::Failed
+                    ) {
+                        if let Some(ledger) = &ledger {
+                            json_obj["ledger"] = serde_json::json!(ledger);
+                        }
+                    }
+                    if let Some(ledger) = &latest_ledger {
+                        json_obj["latestLedger"] = serde_json::json!(ledger);
+                    }
+                    if let Some(code) = &error_code {
+                        json_obj["error"] = serde_json::json!(code);
+                    }
+                    if !diagnostic_events.is_empty() {
+                        json_obj["diagnosticEvents"] = serde_json::json!(diagnostic_events);
+                    }
+                    if let Some(decoded) = &decoded_return {
+                        json_obj["decodedResult"] = serde_json::json!({
+                            "raw": decoded.raw,
+                            "label": decoded.label,
+                            "matchedType": decoded.matched_type,
+                            "fields": decoded.fields,
+                        });
+                    }
+                    println!("{}", serde_json::to_string(&json_obj)?);
+                } else {
+                    println!("Status: {label}");
+                    println!("Hash: {hash}");
+                    if matches!(
+                        status,
+                        sdkt_rpc::TransactionStatus::Success | sdkt_rpc::TransactionStatus::Failed
+                    ) {
+                        if let Some(ledger) = &ledger {
+                            println!("Ledger: {ledger}");
+                        }
+                    }
+                    if let Some(ledger) = &latest_ledger {
+                        println!("Latest Ledger: {ledger}");
+                    }
+                    if let Some(code) = &error_code {
+                        println!("Error: {code}");
+                    }
+                    if let Some(result) = &decoded_result {
+                        println!("Result:");
+                        for line in serde_json::to_string_pretty(result)?.lines() {
+                            println!("  {line}");
+                        }
+                    }
+                    // Show the ABI-decoded invoke return value, same shape as
+                    // `tx simulate`.
+                    if let Some(decoded) = &decoded_return {
+                        println!("Decoded Result: {}", decoded.label);
+                        if let Some(matched) = &decoded.matched_type {
+                            println!("  ABI Type: {matched}");
+                        }
+                        if let Some(fields) = &decoded.fields {
+                            if !fields.is_empty() {
+                                println!("  Fields:");
+                                for (k, v) in fields {
+                                    println!("    {k}: {v}");
+                                }
+                            }
+                        }
+                    }
+                    if !diagnostic_events.is_empty() {
+                        println!("Diagnostics:");
+                        for event in &diagnostic_events {
+                            println!("  {event}");
+                        }
+                    }
+                }
+
+                process::exit(exit_code);
             }
             TxAction::Build {
                 source,
@@ -5662,17 +8064,15 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
             } => {
                 let fmt = parse_format_str(&format);
 
-                // --- Network resolution (strict; reject unknown labels) ---
-                let network = match network.trim().to_ascii_lowercase().as_str() {
-                    "testnet" => Network::Testnet,
-                    "mainnet" => Network::Mainnet,
-                    "futurenet" => Network::Futurenet,
-                    other if other.starts_with("custom:") => Network::parse(other),
-                    _ => {
-                        eprintln!(
-                            "Error: invalid network '{}' (expected testnet|mainnet|futurenet|custom:<passphrase>)",
-                            network
-                        );
+                // --- Network resolution (strict; reject unknown labels / profiles) ---
+                let network = match resolve_sign_network(
+                    network.as_deref(),
+                    net.network_profile.as_deref(),
+                    net.network_passphrase.as_deref(),
+                ) {
+                    Ok(n) => n,
+                    Err(e) => {
+                        eprintln!("Error: {}", e);
                         process::exit(1);
                     }
                 };
@@ -5769,6 +8169,9 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
             abi,
             abi_contract,
             topic,
+            limit,
+            cursor,
+            all_pages,
             net,
         } => {
             let fmt = parse_format_str(&format);
@@ -5800,6 +8203,32 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
                 None => None,
             };
 
+            // Validate the pagination flags before resolving the ABI: a
+            // rejected combination must fail fast without waiting on the
+            // ABI fetch (notably `--abi-contract`, which hits the network)
+            // and without issuing any RPC request. A cursor positions the
+            // query on its own, so it cannot be combined with
+            // `--start-ledger`; an `--end-ledger` is allowed alongside a
+            // cursor as a client-side-only bound (it is never sent on the
+            // wire). A page size / page cap of 0 is rejected the same way.
+            if cursor.is_some() && start_ledger.is_some() {
+                eprintln!(
+                    "Error: --cursor cannot be combined with --start-ledger: \
+                     resume with the cursor alone (a request carrying a cursor must omit \
+                     --start-ledger; an --end-ledger bound may still be given, it is \
+                     enforced client-side)"
+                );
+                process::exit(1);
+            }
+            if let Some(0) = limit {
+                eprintln!("Error: --limit must be at least 1");
+                process::exit(1);
+            }
+            if let Some(0) = all_pages {
+                eprintln!("Error: --all-pages must be at least 1");
+                process::exit(1);
+            }
+
             // Resolve the ABI ContractSpec from one of two sources (mutually
             // exclusive): a local WASM file (`--abi`) or a deployed contract's
             // on-chain WASM fetched via the path (`--abi-contract`).
@@ -5820,117 +8249,255 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
                 }
             }
 
-            match get_contract_events_filtered(
-                &client,
-                &contract_id,
-                start_ledger,
-                end_ledger,
-                topic_filters,
-            )
-            .await
-            {
-                Ok(events) => {
-                    if let Some(spec) = contract_spec {
-                        // ABI-aware decoding: topics[0] is the event symbol,
-                        // remaining topics + the data value carry the payload.
-                        if fmt == OutputFormat::Json {
-                            let decoded_events: Vec<serde_json::Value> = events
-                                .iter()
-                                .map(|ev| {
-                                    let topic_scvals: Vec<stellar_xdr::ScVal> = ev
-                                        .topics
-                                        .iter()
-                                        .filter_map(|t| sdkt_xdr::scval_from_base64(t))
-                                        .collect();
-                                    let data_scvals: Vec<stellar_xdr::ScVal> = ev
-                                        .value
-                                        .as_deref()
-                                        .and_then(sdkt_xdr::scval_from_base64)
-                                        .into_iter()
-                                        .collect();
-                                    let decoded =
-                                        decode_event_topics(&spec, &topic_scvals, &data_scvals);
-                                    serde_json::json!({
-                                        "contract_id": ev.contract_id,
-                                        "ledger": ev.ledger,
-                                        "topics": ev.topics,
-                                        "value": ev.value,
-                                        "decoded": decoded.iter().map(|d| serde_json::json!({
-                                            "raw": d.raw,
-                                            "label": d.label,
-                                            "matched_type": d.matched_type,
-                                            "fields": d.fields
-                                        })).collect::<Vec<_>>()
-                                    })
-                                })
-                                .collect();
-                            let json_str = serde_json::to_string(&decoded_events)?;
-                            println!("{}", json_str);
-                        } else {
-                            println!("Contract Events (ABI-decoded):");
-                            if events.is_empty() {
-                                println!("No events found.");
-                            } else {
-                                for (i, ev) in events.iter().enumerate() {
-                                    println!("\nEvent #{}", i + 1);
-                                    println!(
-                                        "Ledger: {}",
-                                        ev.ledger.map_or("Unknown".to_string(), |v| v.to_string())
-                                    );
-                                    println!("Topics: {:?}", ev.topics);
-                                    println!("Value: {}", ev.value.as_deref().unwrap_or("N/A"));
+            // Rebuild the invocation for the resume notices below: the
+            // same network, topic, limit, ABI and output options as this
+            // run, plus the new cursor. The start ledger is deliberately
+            // omitted — a cursor-only request resumes from the token — but
+            // the end ledger is carried: it is a client-side-only bound
+            // that keeps a resumed bounded query inside its original end.
+            // Every value is shell-quoted so the notice is safe to paste
+            // back into a shell.
+            let mut resume_url_note = "";
+            let mut resume_cmd = format!("sdkt events {}", shell_quote(&contract_id));
+            if let Some(profile) = &net.network_profile {
+                resume_cmd.push_str(&format!(" --network-profile {}", shell_quote(profile)));
+            }
+            if let Some(url) = &net.rpc_url {
+                // A credential-bearing --rpc-url (an API token in the
+                // query string, or userinfo) must never be printed: the
+                // resume notice goes to stderr in JSON mode and stdout
+                // in pretty mode, so the token would land in logs.
+                // Omit it and tell the user to add it back (or use
+                // --network-profile) instead.
+                if rpc_url_may_contain_credentials(url) {
+                    resume_url_note = " Note: --rpc-url was omitted from the resume command because it may contain credentials; add it back when resuming, or use --network-profile.";
+                } else {
+                    resume_cmd.push_str(&format!(" --rpc-url {}", shell_quote(url)));
+                }
+            }
+            if let Some(passphrase) = &net.network_passphrase {
+                resume_cmd.push_str(&format!(
+                    " --network-passphrase {}",
+                    shell_quote(passphrase)
+                ));
+            }
+            if let Some(symbol) = &topic {
+                resume_cmd.push_str(&format!(" --topic {}", shell_quote(symbol)));
+            }
+            if let Some(n) = limit {
+                resume_cmd.push_str(&format!(" --limit {n}"));
+            }
+            if let Some(end) = end_ledger {
+                resume_cmd.push_str(&format!(" --end-ledger {end}"));
+            }
+            if let Some(path) = &abi {
+                resume_cmd.push_str(&format!(" --abi {}", shell_quote(path)));
+            }
+            if let Some(id) = &abi_contract {
+                resume_cmd.push_str(&format!(" --abi-contract {}", shell_quote(id)));
+            }
+            if format != "pretty" {
+                resume_cmd.push_str(&format!(" --format {}", shell_quote(&format)));
+            }
 
-                                    // Decode with ABI using the real topics/value
-                                    let topic_scvals: Vec<stellar_xdr::ScVal> = ev
-                                        .topics
-                                        .iter()
-                                        .filter_map(|t| sdkt_xdr::scval_from_base64(t))
-                                        .collect();
-                                    let data_scvals: Vec<stellar_xdr::ScVal> = ev
-                                        .value
-                                        .as_deref()
-                                        .and_then(sdkt_xdr::scval_from_base64)
-                                        .into_iter()
-                                        .collect();
-                                    let decoded =
-                                        decode_event_topics(&spec, &topic_scvals, &data_scvals);
-                                    for d in decoded {
-                                        println!("  Decoded: {}", d.label);
-                                        if let Some(fields) = d.fields {
-                                            for (k, v) in fields {
-                                                println!("    {}: {}", k, v);
-                                            }
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                    } else {
-                        // Original raw output
-                        if fmt == OutputFormat::Json {
-                            let json_str = serde_json::to_string(&events)?;
-                            println!("{}", json_str);
-                        } else {
-                            println!("Contract Events:");
-                            if events.is_empty() {
-                                println!("No events found.");
+            // Fetch the events, then render them below. The default path
+            // fetches exactly one page (the historical behaviour) and
+            // reports the continuation cursor as a page-boundary notice;
+            // --all-pages follows the cursor up to its explicit cap.
+            let (events, page_notice) = if let Some(max_pages) = all_pages {
+                match get_contract_events_paginated(
+                    &client,
+                    &contract_id,
+                    start_ledger,
+                    end_ledger,
+                    topic_filters,
+                    PaginationOptions {
+                        cursor: cursor.clone(),
+                        limit,
+                        max_pages,
+                    },
+                )
+                .await
+                {
+                    Ok(paged) => {
+                        let notice = paged.next_cursor.as_ref().map(|next_cursor| {
+                            if paged.pages_fetched >= max_pages {
+                                format!(
+                                    "Stopped after {} page(s): the page cap was reached. Resume with: {} --cursor {} --all-pages {}{}",
+                                    paged.pages_fetched, resume_cmd, shell_quote(next_cursor), max_pages, resume_url_note
+                                )
                             } else {
-                                for (i, ev) in events.iter().enumerate() {
-                                    println!("\nEvent #{}", i + 1);
-                                    println!(
-                                        "Ledger: {}",
-                                        ev.ledger.map_or("Unknown".to_string(), |v| v.to_string())
-                                    );
-                                    println!("Topics: {:?}", ev.topics);
-                                    println!("Value: {}", ev.value.as_deref().unwrap_or("N/A"));
+                                format!(
+                                    "Stopped after {} page(s): the latest ledger was passed. Resume with: {} --cursor {}{}",
+                                    paged.pages_fetched, resume_cmd, shell_quote(next_cursor), resume_url_note
+                                )
+                            }
+                        });
+                        (paged.events, notice)
+                    }
+                    Err(e) => {
+                        eprintln!("Error fetching events: {e}");
+                        process::exit(1);
+                    }
+                }
+            } else {
+                let pagination = if cursor.is_some() || limit.is_some() {
+                    Some(GetEventsPagination {
+                        cursor: cursor.clone(),
+                        limit,
+                    })
+                } else {
+                    None
+                };
+                match get_contract_events_page(
+                    &client,
+                    &contract_id,
+                    start_ledger,
+                    end_ledger,
+                    topic_filters,
+                    pagination,
+                )
+                .await
+                {
+                    Ok(paged) => {
+                        // A returned cursor on its own does not prove more
+                        // events exist: the RPC may return a cursor for a
+                        // page that reached the scan tip without filling
+                        // up. Only an explicit limit that was reached
+                        // proves the page stopped at the requested size —
+                        // and even then the next page may hold no further
+                        // match, so the notice reports the limit without
+                        // promising more events. Without an explicit limit
+                        // there is no known page size to compare against
+                        // (the RPC applies its own default cap), so the
+                        // cursor is only a scan checkpoint.
+                        let notice = paged.next_cursor.as_ref().map(|next_cursor| {
+                            match limit.filter(|n| paged.events.len() == *n as usize) {
+                                Some(n) => format!(
+                                    "Page limit of {n} reached. Continue with: {} --cursor {}{}",
+                                    resume_cmd,
+                                    shell_quote(next_cursor),
+                                    resume_url_note
+                                ),
+                                None => format!(
+                                    "Scan checkpoint reached (page not full; more events may or may not exist). Continue with: {} --cursor {}{}",
+                                    resume_cmd,
+                                    shell_quote(next_cursor),
+                                    resume_url_note
+                                ),
+                            }
+                        });
+                        (paged.events, notice)
+                    }
+                    Err(e) => {
+                        eprintln!("Error fetching events: {e}");
+                        process::exit(1);
+                    }
+                }
+            };
+
+            if let Some(spec) = contract_spec {
+                // ABI-aware decoding: topics[0] is the event symbol,
+                // remaining topics + the data value carry the payload.
+                if fmt == OutputFormat::Json {
+                    let decoded_events: Vec<serde_json::Value> = events
+                        .iter()
+                        .map(|ev| {
+                            let topic_scvals: Vec<stellar_xdr::ScVal> = ev
+                                .topics
+                                .iter()
+                                .filter_map(|t| sdkt_xdr::scval_from_base64(t))
+                                .collect();
+                            let data_scvals: Vec<stellar_xdr::ScVal> = ev
+                                .value
+                                .as_deref()
+                                .and_then(sdkt_xdr::scval_from_base64)
+                                .into_iter()
+                                .collect();
+                            let decoded = decode_event_topics(&spec, &topic_scvals, &data_scvals);
+                            serde_json::json!({
+                                "contract_id": ev.contract_id,
+                                "ledger": ev.ledger,
+                                "topics": ev.topics,
+                                "value": ev.value,
+                                "decoded": decoded.iter().map(|d| serde_json::json!({
+                                    "raw": d.raw,
+                                    "label": d.label,
+                                    "matched_type": d.matched_type,
+                                    "fields": d.fields
+                                })).collect::<Vec<_>>()
+                            })
+                        })
+                        .collect();
+                    let json_str = serde_json::to_string(&decoded_events)?;
+                    println!("{}", json_str);
+                } else {
+                    println!("Contract Events (ABI-decoded):");
+                    if events.is_empty() {
+                        println!("No events found.");
+                    } else {
+                        for (i, ev) in events.iter().enumerate() {
+                            println!("\nEvent #{}", i + 1);
+                            println!(
+                                "Ledger: {}",
+                                ev.ledger.map_or("Unknown".to_string(), |v| v.to_string())
+                            );
+                            println!("Topics: {:?}", ev.topics);
+                            println!("Value: {}", ev.value.as_deref().unwrap_or("N/A"));
+
+                            // Decode with ABI using the real topics/value
+                            let topic_scvals: Vec<stellar_xdr::ScVal> = ev
+                                .topics
+                                .iter()
+                                .filter_map(|t| sdkt_xdr::scval_from_base64(t))
+                                .collect();
+                            let data_scvals: Vec<stellar_xdr::ScVal> = ev
+                                .value
+                                .as_deref()
+                                .and_then(sdkt_xdr::scval_from_base64)
+                                .into_iter()
+                                .collect();
+                            let decoded = decode_event_topics(&spec, &topic_scvals, &data_scvals);
+                            for d in decoded {
+                                println!("  Decoded: {}", d.label);
+                                if let Some(fields) = d.fields {
+                                    for (k, v) in fields {
+                                        println!("    {}: {}", k, v);
+                                    }
                                 }
                             }
                         }
                     }
                 }
-                Err(e) => {
-                    eprintln!("Error fetching events: {}", e);
-                    process::exit(1);
+            } else {
+                // Original raw output
+                if fmt == OutputFormat::Json {
+                    let json_str = serde_json::to_string(&events)?;
+                    println!("{}", json_str);
+                } else {
+                    println!("Contract Events:");
+                    if events.is_empty() {
+                        println!("No events found.");
+                    } else {
+                        for (i, ev) in events.iter().enumerate() {
+                            println!("\nEvent #{}", i + 1);
+                            println!(
+                                "Ledger: {}",
+                                ev.ledger.map_or("Unknown".to_string(), |v| v.to_string())
+                            );
+                            println!("Topics: {:?}", ev.topics);
+                            println!("Value: {}", ev.value.as_deref().unwrap_or("N/A"));
+                        }
+                    }
+                }
+            }
+            // The page-boundary notice goes to stderr for JSON output
+            // so stdout stays parseable, and to stdout otherwise.
+            if let Some(notice) = page_notice {
+                if fmt == OutputFormat::Json {
+                    eprintln!("{notice}");
+                } else {
+                    println!("{notice}");
                 }
             }
         }
@@ -6077,10 +8644,14 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
         Commands::Diff {
             old_wasm,
             new_wasm,
+            old_contract,
+            new_contract,
             format,
             upgrade_safety,
             max_growth_pct,
             max_size_bytes,
+            network,
+            net,
         } => {
             let fmt = parse_format_str(&format);
             let json_mode = fmt == OutputFormat::Json;
@@ -6099,26 +8670,148 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
             if let Err(e) = validate_size_threshold_pct(max_growth_pct, "--max-growth-pct") {
                 fail_cli(e, json_mode);
             }
-            let old_bytes = fs::read(&old_wasm).unwrap_or_else(|e| {
-                fail_cli(
-                    format!("Failed to read OLD WASM '{}': {}", old_wasm, e),
-                    json_mode,
-                )
-            });
-            let new_bytes = fs::read(&new_wasm).unwrap_or_else(|e| {
-                fail_cli(
-                    format!("Failed to read NEW WASM '{}': {}", new_wasm, e),
-                    json_mode,
-                )
-            });
+            // Each side needs exactly one source. Clap already rejects both
+            // sources on the same side (--old-contract vs --old-wasm); a side
+            // with neither is a usage error (exit 2).
+            if old_wasm.is_none() && old_contract.is_none() {
+                eprintln!(
+                    "Error: the old side needs a source: pass --old-wasm <WASM> or --old-contract <CONTRACT_ID>"
+                );
+                process::exit(2);
+            }
+            if new_wasm.is_none() && new_contract.is_none() {
+                eprintln!(
+                    "Error: the new side needs a source: pass --new-wasm <WASM> or --new-contract <CONTRACT_ID>"
+                );
+                process::exit(2);
+            }
+            // Contract-ID sides need an explicitly selected network. The
+            // fetch must not silently fall back to the built-in testnet
+            // default: a `.sdkt.toml` default does not count — the operator
+            // must name the network on the command line. A blank --network
+            // value is not a selection either: it would satisfy the
+            // presence check and then resolve to the default network.
+            let needs_network = old_contract.is_some() || new_contract.is_some();
+            if needs_network {
+                if let Some(name) = network.as_deref() {
+                    if name.trim().is_empty() {
+                        eprintln!(
+                            "Error: --network must not be blank for --old-contract/--new-contract"
+                        );
+                        process::exit(2);
+                    }
+                }
+            }
+            if needs_network
+                && network.is_none()
+                && net.rpc_url.is_none()
+                && net.network_profile.is_none()
+            {
+                eprintln!(
+                    "Error: --old-contract/--new-contract require a network: pass --network testnet|mainnet|futurenet, --rpc-url <URL>, or --network-profile <NAME>"
+                );
+                process::exit(2);
+            }
+            // Resolve the RPC client lazily: the pure two-file path stays
+            // fully offline, so an unconfigured network must not fail it.
+            let (client, network_name) = if needs_network {
+                match resolve_target_network(network.as_deref(), &net) {
+                    Ok(t) => (Some(t.client), t.network_name),
+                    Err(e) => {
+                        eprintln!("Error: {}", e);
+                        process::exit(1);
+                    }
+                }
+            } else {
+                (None, String::new())
+            };
+            let client = client.as_ref();
+            // Resolve each side to raw bytes. Contract-ID sides reuse the
+            // `inspect_contract` → `get_wasm_bytecode` composition from
+            // `verify --upgrade-safety`; file sides read offline as before.
+            // The bytes then flow through the existing `diff_wasm` path
+            // unchanged.
+            let (old_bytes, old_source) = match (&old_wasm, &old_contract) {
+                (Some(path), None) => (
+                    fs::read(path).unwrap_or_else(|e| {
+                        fail_cli(
+                            format!("Failed to read OLD WASM '{}': {}", path, e),
+                            json_mode,
+                        )
+                    }),
+                    sdkt_wasm::WasmSource::File { path: path.clone() },
+                ),
+                (None, Some(cid)) => {
+                    let (bytes, _) = fetch_deployed_contract_wasm(
+                        client.expect("client resolved when a contract side is present"),
+                        cid,
+                        &network_name,
+                    )
+                    .await
+                    .unwrap_or_else(|e| fail_cli(e, json_mode));
+                    (
+                        bytes,
+                        sdkt_wasm::WasmSource::Contract {
+                            contract_id: cid.clone(),
+                        },
+                    )
+                }
+                _ => unreachable!("each side validated to have exactly one source"),
+            };
+            let (new_bytes, new_source) = match (&new_wasm, &new_contract) {
+                (Some(path), None) => (
+                    fs::read(path).unwrap_or_else(|e| {
+                        fail_cli(
+                            format!("Failed to read NEW WASM '{}': {}", path, e),
+                            json_mode,
+                        )
+                    }),
+                    sdkt_wasm::WasmSource::File { path: path.clone() },
+                ),
+                (None, Some(cid)) => {
+                    let (bytes, _) = fetch_deployed_contract_wasm(
+                        client.expect("client resolved when a contract side is present"),
+                        cid,
+                        &network_name,
+                    )
+                    .await
+                    .unwrap_or_else(|e| fail_cli(e, json_mode));
+                    (
+                        bytes,
+                        sdkt_wasm::WasmSource::Contract {
+                            contract_id: cid.clone(),
+                        },
+                    )
+                }
+                _ => unreachable!("each side validated to have exactly one source"),
+            };
 
             match sdkt_wasm::diff_wasm(&old_bytes, &new_bytes) {
-                Ok(report) => {
+                Ok(mut report) => {
+                    // Record where each side came from, but only when a
+                    // contract-ID side is involved: the pure two-file JSON
+                    // keeps its exact previous shape (both fields omitted).
+                    if needs_network {
+                        report.old_source = Some(old_source);
+                        report.new_source = Some(new_source);
+                    }
                     if upgrade_safety {
                         // Upgrade-safety verdict mode: reuse the diff, classify.
                         let verdict = sdkt_wasm::UpgradeVerdict::from_diff(&report);
                         if fmt == OutputFormat::Json {
-                            println!("{}", serde_json::to_string(&verdict)?);
+                            if needs_network {
+                                // Keep the contract sources in this JSON
+                                // mode too, exactly as in diff JSON mode, so
+                                // a script can tell which deployed contracts
+                                // were compared. Two-file verdict output is
+                                // unchanged.
+                                let mut value = serde_json::to_value(&verdict)?;
+                                value["old_source"] = serde_json::to_value(&report.old_source)?;
+                                value["new_source"] = serde_json::to_value(&report.new_source)?;
+                                println!("{value}");
+                            } else {
+                                println!("{}", serde_json::to_string(&verdict)?);
+                            }
                         } else {
                             print_upgrade_verdict(&verdict);
                         }
@@ -6235,6 +8928,8 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
             abi,
             abi_contract,
             fail_on,
+            save_baseline,
+            baseline,
             net,
         } => {
             // Validate --fail-on before any analysis runs so an invalid level
@@ -6646,10 +9341,26 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
             // Derived, never hard-coded: the header must agree with
             // `--list-rules` and with what the registry executes.
             let builtin_rule_count = sdkt_audit::all_rules().len();
+            // Successful plugin loads, recorded per source file so each
+            // file's report names the plugins that actually ran for it.
+            // A single global count is wrong in directory audits: the load
+            // arms used to increment it only in single-file mode, so a
+            // directory audit with a working plugin printed
+            // "Rules loaded: 7 built-in, 0 plugins" even though the plugin
+            // ran through `local_reg` for every file.
+            let mut loaded_plugins_per_file: Vec<usize> = Vec::new();
+            // Plugins that fail to load are skipped with a warning instead of
+            // aborting the audit (issue #385). Recorded once per plugin id
+            // with the load error so the report can name every skipped plugin.
             #[allow(unused_mut)]
-            let mut loaded_plugins = 0usize;
+            let mut skipped_plugins: Vec<(String, String)> = Vec::new();
 
             for source_path in &source_paths {
+                // Plugins that load for this file. The increments live
+                // inside feature-gated blocks, so the `mut` is unused in
+                // builds without the plugin features.
+                #[allow(unused_mut)]
+                let mut file_loaded_plugins = 0usize;
                 let source = match fs::read_to_string(source_path) {
                     Ok(source) => source,
                     Err(e) => {
@@ -6668,6 +9379,7 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
 
                         aggregate.add(finding);
                         per_file.push((source_path.clone(), report));
+                        loaded_plugins_per_file.push(file_loaded_plugins);
                         continue;
                     }
                 };
@@ -6697,9 +9409,7 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
 
                                 match result {
                                     Ok(()) => {
-                                        if single_file {
-                                            loaded_plugins += 1;
-                                        }
+                                        file_loaded_plugins += 1;
                                     }
                                     Err(e) => {
                                         if matches!(
@@ -6712,11 +9422,15 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
                                             );
                                             continue;
                                         }
-                                        eprintln!(
-                                            "Error loading native plugin '{}': {}",
-                                            plugin_id, e
-                                        );
-                                        process::exit(1);
+                                        if !skipped_plugins.iter().any(|(id, _)| id == plugin_id) {
+                                            eprintln!(
+                                                "Warning: skipping native plugin '{}': {}; audit continues without it",
+                                                plugin_id, e
+                                            );
+                                            skipped_plugins
+                                                .push((plugin_id.clone(), e.to_string()));
+                                        }
+                                        continue;
                                     }
                                 }
                             }
@@ -6743,9 +9457,7 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
 
                                 match result {
                                     Ok(()) => {
-                                        if single_file {
-                                            loaded_plugins += 1;
-                                        }
+                                        file_loaded_plugins += 1;
                                     }
                                     Err(e) => {
                                         if matches!(
@@ -6758,11 +9470,15 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
                                             );
                                             continue;
                                         }
-                                        eprintln!(
-                                            "Error loading WASM plugin '{}': {}",
-                                            plugin_id, e
-                                        );
-                                        process::exit(1);
+                                        if !skipped_plugins.iter().any(|(id, _)| id == plugin_id) {
+                                            eprintln!(
+                                                "Warning: skipping WASM plugin '{}': {}; audit continues without it",
+                                                plugin_id, e
+                                            );
+                                            skipped_plugins
+                                                .push((plugin_id.clone(), e.to_string()));
+                                        }
+                                        continue;
                                     }
                                 }
                             }
@@ -6813,6 +9529,7 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
                                 aggregate.add(finding.clone());
                             }
                             per_file.push((source_path.clone(), report));
+                            loaded_plugins_per_file.push(file_loaded_plugins);
                         }
                         Err(_) => {
                             eprintln!("Error auditing source: Failed to parse Rust source");
@@ -6841,6 +9558,7 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
                         }
 
                         per_file.push((source_path.clone(), report));
+                        loaded_plugins_per_file.push(file_loaded_plugins);
                     }
                     None => {
                         let e = "Failed to parse Rust source";
@@ -6864,6 +9582,7 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
 
                         aggregate.add(finding);
                         per_file.push((source_path.clone(), report));
+                        loaded_plugins_per_file.push(file_loaded_plugins);
                     }
                 }
             }
@@ -6899,21 +9618,59 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
                 }
             }
 
-            if audit_fmt == AuditFormat::Sarif {
-                let mut rules_info: Vec<sdkt_audit::RuleInfo> = sdkt_audit::registered_rule_info();
-                if multi_file {
-                    // Merge per-file local registry rule infos (covers plugin
-                    // rules; global registry only has built-ins). Dedup by rule ID.
-                    let mut seen: std::collections::HashSet<String> =
-                        rules_info.iter().map(|r| r.id.clone()).collect();
-                    for local_infos in &multi_file_local_rule_infos {
-                        for info in local_infos {
-                            if seen.insert(info.id.clone()) {
-                                rules_info.push(info.clone());
-                            }
+            let mut all_rules_info: Vec<sdkt_audit::RuleInfo> = sdkt_audit::registered_rule_info();
+            if multi_file {
+                let mut seen: std::collections::HashSet<String> =
+                    all_rules_info.iter().map(|r| r.id.clone()).collect();
+                for local_infos in &multi_file_local_rule_infos {
+                    for info in local_infos {
+                        if seen.insert(info.id.clone()) {
+                            all_rules_info.push(info.clone());
                         }
                     }
                 }
+            }
+            let active_rule_ids: Vec<String> = all_rules_info
+                .iter()
+                .filter(|r| !disabled_refs.contains(&r.id.as_str()))
+                .map(|r| r.id.clone())
+                .collect();
+
+            let baseline_comparison: Option<sdkt_audit::BaselineComparison> =
+                if let Some(ref baseline_path) = baseline {
+                    let loaded = sdkt_audit::load_baseline(baseline_path).unwrap_or_else(|e| {
+                        fail_cli(
+                            format!("Failed to load baseline '{}': {}", baseline_path, e),
+                            audit_fmt == AuditFormat::Json,
+                        )
+                    });
+                    let warnings = loaded.check_staleness(sdkt_version_string(), &active_rule_ids);
+                    for w in &warnings {
+                        eprintln!("Warning: {}", w);
+                    }
+                    let mut cmp = loaded.compare(&aggregate);
+                    cmp.warnings = warnings;
+                    Some(cmp)
+                } else {
+                    None
+                };
+
+            if let Some(ref save_path) = save_baseline {
+                if let Err(e) = sdkt_audit::save_baseline(
+                    save_path,
+                    &aggregate,
+                    sdkt_version_string(),
+                    &active_rule_ids,
+                ) {
+                    fail_cli(
+                        format!("Failed to save baseline '{}': {}", save_path, e),
+                        audit_fmt == AuditFormat::Json,
+                    );
+                }
+            }
+
+            if audit_fmt == AuditFormat::Sarif {
+                let rules_info = all_rules_info;
                 if multi_file {
                     let sarif_str = sdkt_audit::sarif::report_to_sarif_string_multi_file(
                         &aggregate,
@@ -6933,12 +9690,37 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
                     .map_err(|e| e.to_string())?;
                     println!("{}", sarif_str);
                 }
-                apply_audit_gate(fail_on_level, &aggregate.summary);
+                if let Some(ref cmp) = baseline_comparison {
+                    if let Some(level) = fail_on_level {
+                        apply_audit_gate(Some(level), &cmp.new_findings_summary());
+                    } else if cmp.has_new_findings() {
+                        process::exit(1);
+                    }
+                } else {
+                    apply_audit_gate(fail_on_level, &aggregate.summary);
+                }
                 return Ok(());
             }
 
             if fmt == OutputFormat::Json {
-                if multi_file {
+                if let Some(ref cmp) = baseline_comparison {
+                    let mut out = serde_json::to_value(cmp)?;
+                    out["findings"] = serde_json::to_value(&aggregate.findings)?;
+                    out["spec_correlated"] = serde_json::Value::Bool(audit_spec.is_some());
+                    if multi_file {
+                        let files: Vec<serde_json::Value> = per_file
+                            .iter()
+                            .map(|(path, report)| {
+                                serde_json::json!({
+                                    "file": path.display().to_string(),
+                                    "report": report,
+                                })
+                            })
+                            .collect();
+                        out["files"] = serde_json::Value::Array(files);
+                    }
+                    println!("{}", serde_json::to_string(&out)?);
+                } else if multi_file {
                     #[derive(serde::Serialize)]
                     struct MultiFileAuditReport {
                         files: Vec<serde_json::Value>,
@@ -6969,20 +9751,68 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
                     report["spec_correlated"] = serde_json::Value::Bool(audit_spec.is_some());
                     println!("{}", serde_json::to_string(&report)?);
                 }
+            } else if let Some(ref cmp) = baseline_comparison {
+                println!("Baseline: {} known findings", cmp.baseline_total);
+                println!("New findings: {}", cmp.new_findings.len());
+                for f in &cmp.new_findings {
+                    let loc = f
+                        .location
+                        .as_ref()
+                        .map(|l| format!(" [{}]", l))
+                        .unwrap_or_default();
+                    println!("  [{}] {}{}: {}", f.severity, f.rule_id, loc, f.message);
+                }
+                println!("Resolved: {}", cmp.resolved_findings.len());
+                for f in &cmp.resolved_findings {
+                    let loc = f
+                        .location
+                        .as_ref()
+                        .map(|l| format!(" [{}]", l))
+                        .unwrap_or_default();
+                    println!("  [{}] {}{}: {}", f.severity, f.rule_id, loc, f.message);
+                }
+                if let Some(ref save_path) = save_baseline {
+                    println!(
+                        "Report saved ({} findings: {} critical, {} warning, {} info) to {}",
+                        aggregate.summary.total,
+                        aggregate.summary.critical,
+                        aggregate.summary.warning,
+                        aggregate.summary.info,
+                        save_path
+                    );
+                }
             } else {
-                for (path, report) in &per_file {
+                for (idx, (path, report)) in per_file.iter().enumerate() {
+                    // Per-file count (0 when the parallel vec has no entry
+                    // for this file); the skipped list stays global because
+                    // a broken plugin is recorded once per plugin id for the
+                    // whole audit.
+                    let file_loaded_plugins =
+                        loaded_plugins_per_file.get(idx).copied().unwrap_or(0);
                     println!("Static Analysis Report: {}", path.display());
 
                     if audit_spec.is_some() {
                         println!("  Spec-correlated analysis: enabled");
                     }
 
-                    if loaded_plugins > 0 {
+                    if file_loaded_plugins > 0 || !skipped_plugins.is_empty() {
                         println!(
                             "Rules loaded: {} built-in, {} plugin{}",
                             builtin_rule_count,
-                            loaded_plugins,
-                            if loaded_plugins == 1 { "" } else { "s" }
+                            file_loaded_plugins,
+                            if file_loaded_plugins == 1 { "" } else { "s" }
+                        );
+                    }
+
+                    if !skipped_plugins.is_empty() {
+                        println!(
+                            "Plugins skipped: {} ({})",
+                            skipped_plugins.len(),
+                            skipped_plugins
+                                .iter()
+                                .map(|(id, err)| format!("{}: {}", id, err))
+                                .collect::<Vec<_>>()
+                                .join("; ")
                         );
                     }
 
@@ -7020,13 +9850,33 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
                         aggregate.summary.total
                     );
                 }
+
+                if let Some(ref save_path) = save_baseline {
+                    println!(
+                        "Report saved ({} findings: {} critical, {} warning, {} info) to {}",
+                        aggregate.summary.total,
+                        aggregate.summary.critical,
+                        aggregate.summary.warning,
+                        aggregate.summary.info,
+                        save_path
+                    );
+                }
             }
 
-            // Opt-in CI gate (issue #298): without --fail-on the command
-            // always exits 0 on findings; file errors still exit 1 below.
-            // The gate runs at every exit path — including the SARIF
-            // early-return above — so no output format can bypass it.
-            apply_audit_gate(fail_on_level, &aggregate.summary);
+            // Opt-in CI gate (issue #298) and baseline ratchet gate:
+            // - With --baseline, exit non-zero when new findings are introduced
+            //   (or when new findings meet --fail-on threshold if also supplied).
+            // - Without --baseline and without --fail-on, the command exits 0
+            //   on findings; file errors still exit 1 below.
+            if let Some(ref cmp) = baseline_comparison {
+                if let Some(level) = fail_on_level {
+                    apply_audit_gate(Some(level), &cmp.new_findings_summary());
+                } else if cmp.has_new_findings() {
+                    process::exit(1);
+                }
+            } else {
+                apply_audit_gate(fail_on_level, &aggregate.summary);
+            }
             if had_file_errors {
                 process::exit(1);
             }
@@ -7069,6 +9919,43 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
                     println!("Size: {} bytes", metadata.size_bytes);
                     println!("SHA-256 Hash: {}", metadata.hash);
                     println!("Version: {}", metadata.version);
+
+                    // Size breakdown (issue #516): per-section file spans,
+                    // in file order. The entries account for every byte
+                    // except the 8-byte module header, which is not a
+                    // section — the total line makes that explicit so the
+                    // numbers reconcile with `Size` above.
+                    println!(
+                        "\nSize Breakdown ({} {}):",
+                        metadata.section_sizes.len(),
+                        if metadata.section_sizes.len() == 1 {
+                            "section"
+                        } else {
+                            "sections"
+                        }
+                    );
+                    if metadata.section_sizes.is_empty() {
+                        println!("  (none)");
+                    }
+                    for section in &metadata.section_sizes {
+                        let pct = if metadata.size_bytes > 0 {
+                            section.size_bytes as f64 / metadata.size_bytes as f64 * 100.0
+                        } else {
+                            0.0
+                        };
+                        println!(
+                            "  - {}: {} bytes ({:.1}%)",
+                            section.name, section.size_bytes, pct
+                        );
+                    }
+                    if !metadata.section_sizes.is_empty() {
+                        let sections_total: usize =
+                            metadata.section_sizes.iter().map(|s| s.size_bytes).sum();
+                        println!(
+                            "  Total in sections: {} bytes + 8 bytes module header = {} bytes",
+                            sections_total, metadata.size_bytes
+                        );
+                    }
 
                     println!("\nCustom Sections ({}):", metadata.custom_sections.len());
                     for section in &metadata.custom_sections {
@@ -7341,6 +10228,71 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
                             }
                         }
                     }
+                    CacheAction::List { network, format } => {
+                        let fmt = parse_format_str(&format);
+                        match cache.list_entries(&network) {
+                            Ok(entries) => {
+                                if fmt == OutputFormat::Json {
+                                    // Serialize through serde_json rather than a
+                                    // hand-rolled format string so hashes,
+                                    // network names, and warning text are
+                                    // escaped correctly. A structured array of
+                                    // entries; `null` sizes mark a half-pair.
+                                    #[derive(serde::Serialize)]
+                                    struct CacheEntryJson<'a> {
+                                        network: &'a str,
+                                        hash: &'a str,
+                                        metadata_size_bytes: Option<u64>,
+                                        wasm_size_bytes: Option<u64>,
+                                        warning: Option<&'a str>,
+                                    }
+
+                                    let payload: Vec<CacheEntryJson> = entries
+                                        .iter()
+                                        .map(|entry| CacheEntryJson {
+                                            network: &entry.network,
+                                            hash: &entry.hash,
+                                            metadata_size_bytes: entry.metadata_size_bytes,
+                                            wasm_size_bytes: entry.wasm_size_bytes,
+                                            warning: entry.warning.as_deref(),
+                                        })
+                                        .collect();
+                                    println!("{}", serde_json::to_string(&payload)?);
+                                } else if entries.is_empty() {
+                                    println!("No cached WASM entries for network '{}'.", network);
+                                } else {
+                                    println!("Cached WASM entries ({}):", entries.len());
+                                    println!("  {:<66} {:<10} META", "HASH", "WASM");
+                                    for entry in &entries {
+                                        let marker =
+                                            if entry.warning.is_some() { "  ⚠" } else { "" };
+                                        println!(
+                                            "  {:<66} {:<10} {}{}",
+                                            entry.hash,
+                                            format_cache_size(entry.wasm_size_bytes),
+                                            format_cache_size(entry.metadata_size_bytes),
+                                            marker
+                                        );
+                                    }
+                                }
+                                // Per-entry diagnostics go to stderr so stdout
+                                // stays parseable, matching the other cache
+                                // warnings.
+                                for entry in &entries {
+                                    if let Some(warning) = &entry.warning {
+                                        eprintln!(
+                                            "Warning: cache entry '{}': {}",
+                                            entry.hash, warning
+                                        );
+                                    }
+                                }
+                            }
+                            Err(e) => {
+                                eprintln!("Error listing cache entries: {}", e);
+                                process::exit(1);
+                            }
+                        }
+                    }
                     CacheAction::Remove { hash, network } => match cache.remove(&network, &hash) {
                         Ok(_) => {
                             println!("Removed {} from {} cache.", hash, network);
@@ -7575,9 +10527,22 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
             arg,
             deny_breaking,
             old_wasm,
+            timeout,
+            interval,
+            no_verify,
             net,
         } => {
             let fmt = parse_format_str(&format);
+
+            // Validate the wait pair before any I/O or transaction submission.
+            if let Err(msg) = validate_poll_pair(timeout, interval) {
+                eprintln!("Error: {msg}");
+                process::exit(2);
+            }
+            let poll_cfg = sdkt_rpc::PollConfig {
+                timeout: Duration::from_secs(timeout),
+                interval: Duration::from_secs(interval),
+            };
 
             // Exactly one code source: --wasm (upload + create) or --wasm-hash
             // (create-only from already-uploaded code). Validate before any I/O.
@@ -7732,6 +10697,7 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
                     network,
                     salt_bytes,
                     parsed_args,
+                    &poll_cfg,
                 )
                 .await
             } else {
@@ -7795,6 +10761,7 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
                     network,
                     prediction_salt,
                     parsed_args,
+                    &poll_cfg,
                 )
                 .await
             };
@@ -7802,10 +10769,76 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
             match outcome_result {
                 Ok(outcome) => match &outcome {
                     sdkt_rpc::DeployOutcome::Success(res) => {
+                        // Post-deploy verification (#89): compare the
+                        // on-chain WASM hash against the artifact bytes
+                        // already in memory (or the --wasm-hash value on the
+                        // create-only path) — no second file read, and no
+                        // new RPC calls beyond what `sdkt verify` makes.
+                        // --no-verify skips it entirely: no extra RPC.
+                        let network_name = verification_network_name(
+                            net.network_profile.as_deref(),
+                            &network_config.passphrase,
+                        );
+                        let verification = if no_verify {
+                            DeployVerification::skipped()
+                        } else if let Some(wasm_bytes) = preloaded_wasm.as_ref() {
+                            verify_deployed_wasm(
+                                &client,
+                                &res.contract_id,
+                                wasm_bytes,
+                                &network_name,
+                            )
+                            .await
+                        } else {
+                            // Create-only path: no local bytes exist; the
+                            // expected hash is the --wasm-hash flag value.
+                            verify_deployed_wasm_hash(
+                                &client,
+                                &res.contract_id,
+                                wasm_hash
+                                    .as_deref()
+                                    .expect("create-only path always carries --wasm-hash"),
+                            )
+                            .await
+                        };
                         if fmt == OutputFormat::Json {
-                            println!("{}", sdkt_rpc::format_json(res));
+                            println!("{}", deploy_json_with_verification(res, &verification));
                         } else {
                             println!("{}", sdkt_rpc::format_pretty(res));
+                            if verification.status == DeployVerificationStatus::Verified {
+                                println!("Verified: on-chain WASM hash matches local artifact ✓");
+                            }
+                        }
+                        // A failed verification is NOT a deploy failure —
+                        // the transactions settled — but it must be loud and
+                        // machine-catchable: warning on stderr (both modes)
+                        // plus the distinct exit code 3.
+                        if verification.status == DeployVerificationStatus::Failed {
+                            // The recheck must actually compare the
+                            // artifact: a bare `sdkt verify --contract <id>`
+                            // only reports the on-chain hash. Point file
+                            // deploys at the artifact on the same network;
+                            // hash-only deploys compare against the flag.
+                            let recheck = match (&wasm, &wasm_hash) {
+                                (Some(path), _) => format!(
+                                    "Re-run `sdkt verify --contract {} --wasm {path}` on the same network ({network_name}) to re-check, or rebuild and redeploy if the code differs.",
+                                    res.contract_id
+                                ),
+                                (None, Some(expected)) => format!(
+                                    "Compare the reported on-chain hash with the original --wasm-hash {expected} (re-run `sdkt verify --contract {}` on the same network ({network_name}) to see the on-chain hash).",
+                                    res.contract_id
+                                ),
+                                (None, None) => format!(
+                                    "Re-run `sdkt verify --contract {}` on the same network ({network_name}) to re-check.",
+                                    res.contract_id
+                                ),
+                            };
+                            print_verification_failure_warning(
+                                &res.contract_id,
+                                &verification,
+                                &recheck,
+                            );
+                            process::exit(EXIT_VERIFICATION_FAILED);
                         }
                     }
                     sdkt_rpc::DeployOutcome::Partial(p) => {
@@ -7833,10 +10866,37 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
                 }
             }
         }
-        Commands::Build { format } => {
+        Commands::Build { format, packages } => {
             let fmt = parse_format_str(&format);
             let config = load_config();
-            match sdkt_core::build::build_workspace(&config) {
+
+            // `--package` resolves to the named aliases plus their transitive
+            // dependencies before anything is built, so pretty mode can print
+            // the selected build set first and an unknown alias fails before
+            // any build starts.
+            let selection = if packages.is_empty() {
+                None
+            } else {
+                match sdkt_core::build::resolve_build_selection(&config, &packages) {
+                    Ok(selected) => {
+                        if fmt == OutputFormat::Pretty {
+                            println!(
+                                "Building selected packages (build order): {}",
+                                selected.join(", ")
+                            );
+                        }
+                        Some(selected)
+                    }
+                    Err(e) => build_error_exit(&e, fmt),
+                }
+            };
+
+            let built = match &selection {
+                Some(selected) => sdkt_core::build::build_workspace_selected(&config, selected),
+                None => sdkt_core::build::build_workspace(&config),
+            };
+
+            match built {
                 Ok(results) => {
                     if fmt == OutputFormat::Json {
                         // Deterministic, additive machine-readable result: the
@@ -7852,13 +10912,14 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
                                 })
                             })
                             .collect();
-                        println!(
-                            "{}",
-                            serde_json::to_string_pretty(&serde_json::json!({
-                                "success": true,
-                                "artifacts": artifacts,
-                            }))?
-                        );
+                        let mut doc = serde_json::json!({
+                            "success": true,
+                            "artifacts": artifacts,
+                        });
+                        if let Some(selected) = &selection {
+                            doc["selected"] = serde_json::json!(selected);
+                        }
+                        println!("{}", serde_json::to_string_pretty(&doc)?);
                     } else {
                         println!("✓ Workspace built successfully");
                         for res in results {
@@ -7866,23 +10927,7 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
                         }
                     }
                 }
-                Err(e) => {
-                    if fmt == OutputFormat::Json {
-                        // Error envelope on stdout with a non-zero exit, so an
-                        // agent can parse the failure deterministically instead
-                        // of reading stderr text. Mirrors `package validate`.
-                        println!(
-                            "{}",
-                            serde_json::to_string_pretty(&serde_json::json!({
-                                "success": false,
-                                "error": e.to_string(),
-                            }))?
-                        );
-                        std::process::exit(1);
-                    }
-                    eprintln!("Error building workspace: {}", e);
-                    std::process::exit(1);
-                }
+                Err(e) => build_error_exit(&e, fmt),
             }
         }
         Commands::Call {
@@ -8038,10 +11083,24 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
             identity,
             format,
             no_wait,
+            timeout,
+            interval,
             build_only,
             net,
         } => {
             let fmt = parse_format_str(&format);
+
+            // Validate the wait pair before any transaction is built or
+            // submitted: `interval` must be non-zero and `timeout` must cover
+            // at least one interval. A zero interval would spin the poll loop
+            // without ever advancing; a timeout below one interval could never
+            // observe a settled transaction.
+            if !no_wait {
+                if let Err(msg) = validate_poll_pair(timeout, interval) {
+                    eprintln!("Error: {msg}");
+                    process::exit(2);
+                }
+            }
 
             // 1. Resolve network (mutating operation → mainnet safety guard).
             let network_config = resolve_network_config(
@@ -8098,7 +11157,10 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
             };
 
             let client = SorobanRpcClient::from_config(&network_config);
-            let poll = sdkt_rpc::PollConfig::default();
+            let poll = sdkt_rpc::PollConfig {
+                timeout: Duration::from_secs(timeout),
+                interval: Duration::from_secs(interval),
+            };
 
             // `--build-only`: stop after the envelope is built and signed. Nothing
             // is submitted, so the prepared envelope can be inspected (or handed to
@@ -8234,7 +11296,11 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
                 let dep_report = sdkt_core::lock::verify_dependencies(base, &config);
                 if fmt != OutputFormat::Json {
                     // --- Contract artifact verification (existing behavior) ---
-                    if report.present {
+                    if let Some(error) = &report.error {
+                        // Present but unparseable is its own condition, never the
+                        // absent case. The wording matches `sdkt lock show`.
+                        println!("⚠ Corrupt sdkt.lock: {}", error);
+                    } else if report.present {
                         if report.consistent {
                             println!("✓ sdkt.lock is consistent with current artifacts");
                         } else {
@@ -8267,6 +11333,9 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
                                 );
                             }
                         }
+                    } else if dep_report.error.is_some() {
+                        // Already reported above by the contract section; a
+                        // corrupt lock is not an "absent" dependency state.
                     } else if !config.dependencies.is_empty() {
                         println!("⚠ No sdkt.lock present; package dependencies unverified");
                         for m in &dep_report.mismatches {
@@ -8284,10 +11353,12 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
                             "consistent": report.consistent,
                             "mismatched": report.mismatched,
                             "missing_in_lock": report.missing_in_lock,
+                            "error": report.error,
                             "dependencies": {
                                 "present": dep_report.present,
                                 "consistent": dep_report.consistent,
                                 "checked": dep_report.checked,
+                                "error": dep_report.error,
                                 "mismatches": dep_report.mismatches.iter().map(|m| serde_json::json!({
                                     "name": m.name,
                                     "kind": format!("{:?}", m.kind),
@@ -8297,6 +11368,11 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
                         }))
                         .unwrap()
                     );
+                }
+                if report.error.is_some() || dep_report.error.is_some() {
+                    // A corrupt lock is a broken build input: a verification
+                    // command must not report it as a clean result (exit 1).
+                    std::process::exit(1);
                 }
             }
             LockCommand::Show { format } => {
@@ -8640,6 +11716,91 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
                     }
                 }
             }
+            PackageCommand::Unpack {
+                artifact,
+                dest,
+                verify,
+                format,
+            } => {
+                let fmt = parse_format_str(&format);
+                let artifact_path = Path::new(&artifact);
+                let tree = match sdkt_core::package::unpack(artifact_path, Path::new(&dest)) {
+                    Ok(tree) => tree,
+                    Err(e) => {
+                        eprintln!("Error unpacking package bundle: {}", e);
+                        std::process::exit(1);
+                    }
+                };
+                let descriptor_path = tree.join("package.json");
+                let bundle = match sdkt_core::package::read_bundle_descriptor(&descriptor_path) {
+                    Ok(bundle) => bundle,
+                    Err(e) => {
+                        eprintln!(
+                            "Error reading bundle descriptor (is this a `sdkt package pack` artifact?): {}",
+                            e
+                        );
+                        std::process::exit(1);
+                    }
+                };
+                let verified = if verify {
+                    match sdkt_core::package::verify_bundle_equivalence(&tree, &bundle) {
+                        Ok(ok) => Some(ok),
+                        Err(e) => {
+                            eprintln!("Error verifying bundle: {}", e);
+                            std::process::exit(1);
+                        }
+                    }
+                } else {
+                    None
+                };
+                print_bundle_result(
+                    fmt,
+                    &bundle,
+                    &tree,
+                    Some(artifact_path),
+                    &descriptor_path,
+                    verified,
+                );
+                if verified == Some(false) {
+                    eprintln!(
+                        "Error: bundle verification failed: the unpacked tree does not reproduce the descriptor's sdkt.lock sha256 / dependency integrity"
+                    );
+                    std::process::exit(1);
+                }
+            }
+            PackageCommand::VerifyBundle {
+                dir,
+                descriptor,
+                format,
+            } => {
+                let fmt = parse_format_str(&format);
+                let tree = Path::new(&dir);
+                let descriptor_path = match &descriptor {
+                    Some(d) => Path::new(d).to_path_buf(),
+                    None => tree.join("package.json"),
+                };
+                let bundle = match sdkt_core::package::read_bundle_descriptor(&descriptor_path) {
+                    Ok(bundle) => bundle,
+                    Err(e) => {
+                        eprintln!("Error reading bundle descriptor: {}", e);
+                        std::process::exit(1);
+                    }
+                };
+                let verified = match sdkt_core::package::verify_bundle_equivalence(tree, &bundle) {
+                    Ok(ok) => ok,
+                    Err(e) => {
+                        eprintln!("Error verifying bundle: {}", e);
+                        std::process::exit(1);
+                    }
+                };
+                print_bundle_result(fmt, &bundle, tree, None, &descriptor_path, Some(verified));
+                if !verified {
+                    eprintln!(
+                        "Error: bundle verification failed: the tree does not reproduce the descriptor's sdkt.lock sha256 / dependency integrity"
+                    );
+                    std::process::exit(1);
+                }
+            }
             PackageCommand::Publish { dry_run, broadcast } => {
                 let base = Path::new(".");
                 let config = load_config();
@@ -8674,6 +11835,97 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
             }
         },
         Commands::Project { action, net } => match action {
+            ProjectCommand::Add {
+                alias,
+                path,
+                depends_on,
+                ctor_arg,
+                format,
+            } => {
+                let fmt = parse_format_str(&format);
+                // Serialize concurrent `project add` runs: without a lock,
+                // two overlapping invocations can both read the same
+                // `.sdkt.toml` and the last rename silently drops the
+                // other's entry. The lock is a sidecar file (never
+                // `.sdkt.toml` itself, which the save replaces by rename),
+                // acquired before the config is loaded and held through
+                // validation and save; it is released when the guard drops
+                // (or the process exits). The critical section is short,
+                // so a contending run just waits briefly.
+                let lock_path = Path::new(".sdkt.toml.lock");
+                let lock_file = match fs::OpenOptions::new()
+                    .create(true)
+                    .truncate(false)
+                    .write(true)
+                    .open(lock_path)
+                {
+                    Ok(f) => f,
+                    Err(e) => {
+                        eprintln!(
+                            "Error: cannot open lock file {}: {}",
+                            lock_path.display(),
+                            e
+                        );
+                        process::exit(1);
+                    }
+                };
+                let mut config_lock = fd_lock::RwLock::new(lock_file);
+                let _config_guard = match config_lock.write() {
+                    Ok(guard) => guard,
+                    Err(e) => {
+                        eprintln!("Error: cannot lock .sdkt.toml for writing: {e}");
+                        process::exit(1);
+                    }
+                };
+                // Missing file is fine (a minimal one is created); a
+                // present-but-unparseable file is an error, never a silent
+                // fallback to an empty config.
+                let config = match DevKitConfig::from_file(".sdkt.toml") {
+                    Ok(c) => c,
+                    Err(e) => {
+                        eprintln!("Error loading .sdkt.toml: {}", e);
+                        process::exit(1);
+                    }
+                };
+                let entry =
+                    match validate_project_add(&alias, &path, &depends_on, &ctor_arg, &config) {
+                        Ok(entry) => entry,
+                        Err(msg) => {
+                            eprintln!("Error: {}", msg);
+                            process::exit(1);
+                        }
+                    };
+                if let Err(e) =
+                    save_project_contract(Path::new(".sdkt.toml"), &config, &alias, &entry)
+                {
+                    eprintln!("Error: {}", e);
+                    process::exit(1);
+                }
+                if fmt == OutputFormat::Json {
+                    println!(
+                        "{}",
+                        serde_json::to_string(&serde_json::json!({
+                            "status": "added",
+                            "alias": alias,
+                            "path": entry.path,
+                            "depends_on": entry.depends_on,
+                            "ctor_args": entry.ctor_args,
+                        }))
+                        .unwrap()
+                    );
+                } else {
+                    println!("✓ Added contract '{alias}' to .sdkt.toml:");
+                    println!("  path: {}", entry.path);
+                    if !entry.depends_on.is_empty() {
+                        println!("  depends_on: {}", entry.depends_on.join(", "));
+                    }
+                    if !entry.ctor_args.is_empty() {
+                        println!("  ctor_args: {}", entry.ctor_args.join(", "));
+                    }
+                    println!();
+                    println!("Next steps: sdkt build, then sdkt project deploy");
+                }
+            }
             ProjectCommand::Status { format } => {
                 let fmt = parse_format_str(&format);
                 let network_config = match resolve_network_config(
@@ -8758,13 +12010,44 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
             ProjectCommand::Deploy {
                 salt,
                 skip_deployed,
+                dry_run,
                 identity,
+                timeout,
+                interval,
+                no_verify,
                 format,
             } => {
                 let fmt = parse_format_str(&format);
+                // Validate the polling pair before any network or identity work
+                // (fail fast): `--interval 0` must be rejected before deployment.
+                if let Err(msg) = validate_poll_pair(timeout, interval) {
+                    eprintln!("Error: {msg}");
+                    process::exit(2);
+                }
                 // Validate the salt before any network or identity work (fail fast).
                 let salt_bytes = salt.as_deref().map(parse_salt_hex).transpose()?;
                 let config = load_config();
+
+                // Dry run branches before any signing key is loaded, before
+                // the mutating RPC client is built, and before any record is
+                // touched: the plan path only reads the identity's public key
+                // and (with --skip-deployed) read-only ledger entries.
+                if dry_run {
+                    if let Err(e) = project_deploy_dry_run(
+                        &config,
+                        salt_bytes,
+                        skip_deployed,
+                        &identity,
+                        &net,
+                        fmt,
+                    )
+                    .await
+                    {
+                        eprintln!("Error: {}", e);
+                        process::exit(1);
+                    }
+                    return Ok(());
+                }
 
                 // 4.1 — advisory lock check. If an `sdkt.lock` exists, warn
                 // (non-fatally) when it has drifted from the current artifacts.
@@ -8876,6 +12159,18 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
 
                         let mut results = std::collections::HashMap::new();
                         let mut failure: Option<String> = None;
+                        // Post-deploy verification outcomes (#89), one entry
+                        // per contract deployed in this run (contracts skipped
+                        // via --skip-deployed are not re-verified and absent).
+                        let mut verifications: std::collections::HashMap<
+                            String,
+                            DeployVerification,
+                        > = std::collections::HashMap::new();
+                        let mut verification_failed = false;
+                        let network_name = verification_network_name(
+                            net.network_profile.as_deref(),
+                            &network_config.passphrase,
+                        );
 
                         for contract in resolved {
                             // --skip-deployed: honor the record only when the
@@ -8945,6 +12240,11 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
                                 }
                             };
 
+                            let poll_cfg = sdkt_rpc::PollConfig {
+                                timeout: std::time::Duration::from_secs(timeout),
+                                interval: std::time::Duration::from_secs(interval),
+                            };
+
                             // Parse and validate constructor arguments before upload (fail fast).
                             // Convert TYPE:VALUE to base64 ScVal (same as single-deploy path).
                             let parsed_args = match parse_typed_args(&contract.ctor_args, false) {
@@ -8977,6 +12277,7 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
                                 network.clone(),
                                 salt_bytes,
                                 parsed_args,
+                                &poll_cfg,
                             )
                             .await
                             {
@@ -8984,15 +12285,18 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
                                     if fmt != OutputFormat::Json {
                                         println!("    ✓ Contract ID: {}", res.contract_id);
                                     }
+                                    // Persist the record BEFORE verification:
+                                    // the contract is already on-chain, so an
+                                    // interrupt during verification must not
+                                    // lose its ID — a later --skip-deployed
+                                    // run needs this record to skip the alias.
+                                    // Exit nonzero if the write fails — the
+                                    // contract is on-chain but the record is
+                                    // not durable.
                                     let timestamp = std::time::SystemTime::now()
                                         .duration_since(std::time::UNIX_EPOCH)
                                         .map(|d| d.as_secs())
                                         .unwrap_or(0);
-                                    // Persist the record immediately so a crash,
-                                    // SIGINT, or early ? return after this point
-                                    // cannot lose this contract's ID. Exit
-                                    // nonzero if the write fails — the contract
-                                    // is on-chain but the record is not durable.
                                     record_file.set_record(
                                         &network_key,
                                         &contract.alias,
@@ -9007,7 +12311,52 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
                                     if !persist_records(&record_file, Some(&res.contract_id)) {
                                         process::exit(1);
                                     }
-                                    results.insert(contract.alias, res.contract_id);
+                                    results.insert(contract.alias.clone(), res.contract_id.clone());
+                                    // Post-deploy verification (#89): the
+                                    // same check as single deploy, reusing
+                                    // the artifact bytes already read for
+                                    // this contract — no second file read.
+                                    // --no-verify records `skipped` and
+                                    // makes no extra RPC call. A failed
+                                    // verification does not stop the remaining
+                                    // contracts: their deploys are unaffected.
+                                    let verification = if no_verify {
+                                        DeployVerification::skipped()
+                                    } else {
+                                        verify_deployed_wasm(
+                                            &client,
+                                            &res.contract_id,
+                                            &wasm_bytes,
+                                            &network_name,
+                                        )
+                                        .await
+                                    };
+                                    if fmt != OutputFormat::Json {
+                                        match verification.status {
+                                            DeployVerificationStatus::Verified => {
+                                                println!(
+                                                    "    Verified: on-chain WASM hash matches local artifact ✓"
+                                                );
+                                            }
+                                            DeployVerificationStatus::Failed => {
+                                                let recheck = format!(
+                                                    "Re-run `sdkt verify --contract {} --wasm {}` on the same network ({network_name}) to re-check, or rebuild and redeploy if the code differs.",
+                                                    res.contract_id,
+                                                    contract.wasm_artifact.display()
+                                                );
+                                                print_verification_failure_warning(
+                                                    &res.contract_id,
+                                                    &verification,
+                                                    &recheck,
+                                                );
+                                            }
+                                            DeployVerificationStatus::Skipped => {}
+                                        }
+                                    }
+                                    if verification.status == DeployVerificationStatus::Failed {
+                                        verification_failed = true;
+                                    }
+                                    verifications.insert(contract.alias, verification);
                                 }
                                 Ok(sdkt_rpc::DeployOutcome::Partial(p)) => {
                                     failure = Some(p.error.clone());
@@ -9045,10 +12394,18 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
                             let json = serde_json::json!({
                                 "status": "success",
                                 "contracts_deployed": results,
+                                "verification": verifications,
                             });
                             println!("{}", serde_json::to_string(&json).unwrap());
                         } else {
                             println!("✓ Project deployment complete.");
+                        }
+                        // Verification failure is not a deploy failure, but
+                        // it must be machine-catchable: exit 3 (see
+                        // EXIT_VERIFICATION_FAILED). Deploy failures above
+                        // already exit 1 and take precedence.
+                        if verification_failed {
+                            process::exit(EXIT_VERIFICATION_FAILED);
                         }
                     }
                     Err(e) => {
@@ -9153,10 +12510,7 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
                 let fmt = parse_format_str(&format);
                 let opts = sdkt_audit::plugin_store::InstallOpts { id, force };
                 let path = std::path::Path::new(&source);
-                let is_bundle = path
-                    .extension()
-                    .and_then(|e| e.to_str())
-                    .is_some_and(|e| e.eq_ignore_ascii_case("sdktplugin"));
+                let is_bundle = is_sdktplugin_bundle(path);
                 if public_key.is_some() && !is_bundle {
                     eprintln!("Error: --public-key only applies to .sdktplugin bundles");
                     process::exit(1);
@@ -9217,9 +12571,28 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
                     println!("Removed plugin '{}' (if it was installed).", id);
                 }
             }
-            PluginAction::Update { id, source, format } => {
+            PluginAction::Update {
+                id,
+                source,
+                public_key,
+                format,
+            } => {
                 let fmt = parse_format_str(&format);
-                match sdkt_audit::plugin_store::update(&id, std::path::Path::new(&source)) {
+                let path = std::path::Path::new(&source);
+                let is_bundle = is_sdktplugin_bundle(path);
+                if public_key.is_some() && !is_bundle {
+                    eprintln!("Error: --public-key only applies to .sdktplugin bundles");
+                    process::exit(1);
+                }
+                // Bundle updates verify (signature/integrity) before anything
+                // is committed, with the same key rules as bundle install.
+                let result = if is_bundle {
+                    let pubkey = public_key.as_deref().map(read_public_key_or_exit);
+                    sdkt_audit::plugin_store::update_with_key(&id, path, pubkey.as_ref())
+                } else {
+                    sdkt_audit::plugin_store::update(&id, path)
+                };
+                match result {
                     Ok(meta) => {
                         if meta.kind == "native" {
                             eprintln!(
@@ -9574,6 +12947,8 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
                 auth,
                 expect_success,
                 expect_error,
+                sequence_length,
+                sequence_every,
                 replay,
                 format,
             } => {
@@ -9586,6 +12961,8 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
                     &auth,
                     expect_success,
                     expect_error,
+                    sequence_length,
+                    sequence_every,
                     replay,
                     &format,
                 ) {
@@ -9610,6 +12987,31 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
                     }
                 }
             }
+            FuzzAction::Compare {
+                baseline,
+                new,
+                format,
+            } => {
+                match commands::fuzz::run_compare(&baseline, &new, &format) {
+                    // New findings exist → exit 1 (CI gate).
+                    Ok(true) => process::exit(1),
+                    Ok(false) => {}
+                    // Usage/input error → exit 2, distinct from findings.
+                    Err(e) => {
+                        eprintln!("Error: {e}");
+                        process::exit(2);
+                    }
+                }
+            }
+        },
+        Commands::Token { action } => match action {
+            TokenAction::Info {
+                contract_id,
+                format,
+                net,
+            } => {
+                run_token_info(&contract_id, &format, &net).await?;
+            }
         },
         Commands::Generate(action) => match action {
             GenerateAction::Client {
@@ -9626,6 +13028,239 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
     }
 
     Ok(())
+}
+
+/// One metadata value from a read-only simulation: either the decoded
+/// value, or `unavailable` with the reason. A failed simulation never
+/// changes a presence verdict or `is_token`.
+#[derive(Debug, Clone, serde::Serialize)]
+struct TokenMetadataValue {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    value: Option<serde_json::Value>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    error: Option<String>,
+}
+
+impl TokenMetadataValue {
+    fn ok(value: serde_json::Value) -> Self {
+        Self {
+            value: Some(value),
+            error: None,
+        }
+    }
+
+    fn unavailable(reason: String) -> Self {
+        Self {
+            value: None,
+            error: Some(reason),
+        }
+    }
+}
+
+/// Execute `sdkt token info`: classify a deployed contract against the
+/// SEP-41 interface from its spec, then read the four metadata values by
+/// read-only simulation.
+///
+/// Presence comes from the spec only. The seven methods that need address
+/// arguments or authorization (`balance`, `allowance`, `transfer`,
+/// `transfer_from`, `approve`, `burn`, `mint`) are never simulated. No
+/// signing, no submission, no state change. Exit 2 when the contract's
+/// WASM cannot be fetched or its spec cannot be parsed.
+async fn run_token_info(
+    contract_id: &str,
+    format: &str,
+    net: &NetworkArgs,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let fmt = parse_format_str(format);
+    let client = resolve_rpc_client(
+        net.rpc_url.clone(),
+        net.network_passphrase.clone(),
+        net.network_profile.clone(),
+    );
+
+    // Reuse the inspect composition (inspect_contract -> get_wasm_bytecode
+    // -> parse_contract_spec). Any failure here means the contract cannot
+    // be classified at all: exit 2, never "not a token".
+    let inspection = match inspect_contract(&client, contract_id).await {
+        Ok(i) => i,
+        Err(e) => {
+            eprintln!("Error: cannot inspect contract '{contract_id}': {e}");
+            process::exit(2);
+        }
+    };
+    let wasm_bytes = match get_wasm_bytecode(&client, &inspection.wasm_hash).await {
+        Ok(b) => b,
+        Err(e) => {
+            eprintln!(
+                "Error: cannot fetch WASM for contract '{contract_id}' (wasm_hash {}): {e}",
+                inspection.wasm_hash
+            );
+            process::exit(2);
+        }
+    };
+    let spec = match parse_contract_spec(&wasm_bytes) {
+        Ok(s) => s,
+        Err(e) => {
+            eprintln!("Error: cannot parse contract spec for '{contract_id}': {e}");
+            process::exit(2);
+        }
+    };
+
+    let methods = sdkt_wasm::classify_all(&spec);
+    let is_token = sdkt_wasm::is_token(&spec);
+
+    // Metadata values: only the four no-arg, no-auth methods, only when
+    // present with a matching signature, each by read-only simulation.
+    let mut metadata: Vec<(String, TokenMetadataValue)> = Vec::new();
+    for name in sdkt_wasm::METADATA_METHODS {
+        let presence = methods
+            .iter()
+            .find(|(m, _)| m.name == *name)
+            .map(|(_, p)| *p)
+            .unwrap_or(sdkt_wasm::MethodPresence::Absent);
+        let value = match presence {
+            sdkt_wasm::MethodPresence::Present => {
+                simulate_metadata_value(&client, contract_id, name).await
+            }
+            sdkt_wasm::MethodPresence::Absent => {
+                TokenMetadataValue::unavailable("method absent from contract spec".to_string())
+            }
+            sdkt_wasm::MethodPresence::SignatureMismatch => TokenMetadataValue::unavailable(
+                "method signature does not match the SEP-41 signature".to_string(),
+            ),
+        };
+        metadata.push((name.to_string(), value));
+    }
+
+    if fmt == OutputFormat::Json {
+        let methods_json: Vec<serde_json::Value> = methods
+            .iter()
+            .map(|(m, p)| serde_json::json!({"name": m.name, "presence": p.as_str()}))
+            .collect();
+        let metadata_json: serde_json::Map<String, serde_json::Value> = metadata
+            .iter()
+            .map(|(name, v)| {
+                (
+                    name.clone(),
+                    serde_json::to_value(v).expect("metadata value serializes"),
+                )
+            })
+            .collect();
+        let json = serde_json::json!({
+            "contract": contract_id,
+            "is_token": is_token,
+            "methods": methods_json,
+            "metadata": metadata_json,
+        });
+        println!("{}", serde_json::to_string(&json)?);
+    } else {
+        println!("Token info for {contract_id}");
+        println!("  is_token: {is_token}");
+        println!();
+        println!("  SEP-41 methods:");
+        for (m, p) in &methods {
+            println!("    {:<14}{}", m.name, p.as_str());
+        }
+        println!();
+        println!("  Metadata:");
+        for (name, v) in &metadata {
+            match (&v.value, &v.error) {
+                (Some(value), _) => println!("    {name:<14}{}", render_metadata_json(value)),
+                (None, Some(err)) => println!("    {name:<14}unavailable ({err})"),
+                (None, None) => println!("    {name:<14}unavailable"),
+            }
+        }
+    }
+
+    Ok(())
+}
+
+/// Render a metadata JSON value the way the pretty printer shows it:
+/// strings quoted, numbers bare.
+fn render_metadata_json(value: &serde_json::Value) -> String {
+    match value {
+        serde_json::Value::String(s) => format!("\"{s}\""),
+        other => other.to_string(),
+    }
+}
+
+/// Simulate one no-arg, no-auth metadata call (`name`, `symbol`,
+/// `decimals`, `total_supply`) read-only, reusing the `sdkt call`
+/// pattern: a zero-fake source account, sequence 0, fee 0, simulation
+/// only — never signed, never submitted. Any failure is reported as
+/// `unavailable` with the reason.
+async fn simulate_metadata_value(
+    client: &SorobanRpcClient,
+    contract_id: &str,
+    function: &str,
+) -> TokenMetadataValue {
+    use sdkt_rpc::simulate_transaction;
+    use sdkt_xdr::scval_from_base64;
+
+    let params = sdkt_xdr::builder::InvokeTransactionParams {
+        source_account: "GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF".into(),
+        sequence: 0,
+        fee: 0,
+        contract_id: contract_id.to_string(),
+        function: function.to_string(),
+        args: vec![],
+        memo: None,
+    };
+    let envelope = match sdkt_xdr::builder::build_invoke_transaction(&params) {
+        Ok(e) => e,
+        Err(e) => {
+            return TokenMetadataValue::unavailable(format!(
+                "failed to build invoke transaction: {e}"
+            ));
+        }
+    };
+    let resp = match simulate_transaction(client, &envelope).await {
+        Ok(r) => r,
+        Err(e) => return TokenMetadataValue::unavailable(format!("simulation failed: {e}")),
+    };
+    if let Some(err) = &resp.error {
+        return TokenMetadataValue::unavailable(format!("simulation error: {err}"));
+    }
+    let raw = match resp.results.first() {
+        Some(r) => r.xdr.clone(),
+        None => {
+            return TokenMetadataValue::unavailable("simulation returned no result".to_string());
+        }
+    };
+    let scval = match scval_from_base64(&raw) {
+        Some(v) => v,
+        None => {
+            return TokenMetadataValue::unavailable(
+                "simulation result is not a decodable ScVal".to_string(),
+            );
+        }
+    };
+    match function {
+        "name" | "symbol" => match scval {
+            stellar_xdr::ScVal::String(s) => {
+                TokenMetadataValue::ok(serde_json::Value::String(s.to_utf8_string_lossy()))
+            }
+            other => TokenMetadataValue::unavailable(format!(
+                "unexpected return type: expected string, got {other:?}"
+            )),
+        },
+        "decimals" => match scval {
+            stellar_xdr::ScVal::U32(n) => TokenMetadataValue::ok(serde_json::Value::from(n)),
+            other => TokenMetadataValue::unavailable(format!(
+                "unexpected return type: expected u32, got {other:?}"
+            )),
+        },
+        "total_supply" => match scval {
+            // i128 as a decimal string: JSON numbers cannot hold it safely.
+            stellar_xdr::ScVal::I128(p) => {
+                TokenMetadataValue::ok(serde_json::Value::String(p.to_string()))
+            }
+            other => TokenMetadataValue::unavailable(format!(
+                "unexpected return type: expected i128, got {other:?}"
+            )),
+        },
+        _ => TokenMetadataValue::unavailable(format!("unknown metadata method '{function}'")),
+    }
 }
 
 /// Execute `sdkt generate client`: parse the ContractSpec from a local WASM
@@ -9925,6 +13560,97 @@ mod m22_tests {
         let json2 = serde_json::to_string(&r2).unwrap();
         assert!(json2.contains("\"match\":null") || !json2.contains("\"match\""));
         assert!(!json2.contains("\"local_wasm_hash\":\"abc123\""));
+    }
+
+    #[test]
+    fn deploy_verification_json_shape() {
+        // Verified: camelCase keys, no reason field.
+        let verified = DeployVerification {
+            status: DeployVerificationStatus::Verified,
+            on_chain_wasm_hash: Some("abc123".to_string()),
+            local_wasm_hash: Some("abc123".to_string()),
+            reason: None,
+        };
+        let json = serde_json::to_string(&verified).unwrap();
+        assert!(json.contains("\"status\":\"verified\""));
+        assert!(json.contains("\"onChainWasmHash\":\"abc123\""));
+        assert!(json.contains("\"localWasmHash\":\"abc123\""));
+        assert!(!json.contains("reason"));
+
+        // Failed: reason present.
+        let failed = DeployVerification {
+            status: DeployVerificationStatus::Failed,
+            on_chain_wasm_hash: Some("abc123".to_string()),
+            local_wasm_hash: Some("def456".to_string()),
+            reason: Some(
+                "on-chain WASM hash abc123 does not match local artifact def456".to_string(),
+            ),
+        };
+        let json = serde_json::to_string(&failed).unwrap();
+        assert!(json.contains("\"status\":\"failed\""));
+        assert!(json.contains(
+            "\"reason\":\"on-chain WASM hash abc123 does not match local artifact def456\""
+        ));
+
+        // Skipped: status only, nothing else.
+        assert_eq!(
+            serde_json::to_string(&DeployVerification::skipped()).unwrap(),
+            "{\"status\":\"skipped\"}"
+        );
+    }
+
+    #[test]
+    fn deploy_json_with_verification_is_additive() {
+        let res = sdkt_rpc::DeployResult {
+            wasm_hash: "aa".to_string(),
+            contract_id: "CABCDEFG".to_string(),
+            upload_hash: "u".to_string(),
+            create_hash: "c".to_string(),
+            status: "SUCCESS".to_string(),
+            salt: "s".to_string(),
+            upload_fee: 100,
+            create_fee: 200,
+            total_fee: 300,
+        };
+        let json = deploy_json_with_verification(&res, &DeployVerification::skipped());
+        let v: serde_json::Value = serde_json::from_str(&json).unwrap();
+        // Existing deploy fields are untouched.
+        assert_eq!(v["contractId"], "CABCDEFG");
+        assert_eq!(v["status"], "SUCCESS");
+        assert_eq!(v["totalFee"], 300);
+        // The verification object is added.
+        assert_eq!(v["verification"]["status"], "skipped");
+    }
+
+    #[test]
+    fn verification_network_name_prefers_profile_then_passphrase() {
+        assert_eq!(
+            verification_network_name(Some("mocknet"), "Test SDF Network ; September 2015"),
+            "mocknet"
+        );
+        assert_eq!(
+            verification_network_name(None, "Test SDF Network ; September 2015"),
+            "testnet"
+        );
+        assert_eq!(
+            verification_network_name(None, "Public Global Stellar Network ; September 2015"),
+            "mainnet"
+        );
+        assert_eq!(
+            verification_network_name(None, "Test SDF Future Network ; October 2022"),
+            "futurenet"
+        );
+        assert_eq!(
+            verification_network_name(None, "Some Other Network ; 2026"),
+            "custom"
+        );
+    }
+
+    #[test]
+    fn verification_failed_exit_code_is_distinct() {
+        // 0 = success, 1 = deploy/IO failure, 2 = usage error: 3 must stay
+        // the distinct "deploy settled, verification failed" signal.
+        assert_eq!(EXIT_VERIFICATION_FAILED, 3);
     }
 }
 
@@ -10423,5 +14149,155 @@ mod project_deploy_salt_tests {
         assert!(parse_salt_hex(&"z".repeat(40))
             .unwrap_err()
             .contains("not a hex digit"));
+    }
+}
+
+#[cfg(test)]
+mod diff_contract_tests {
+    use super::*;
+
+    const OLD_CONTRACT: &str = "CAE3U7JKESRWZHPEQ72DVNGOQ6WPA7HSPQZL5YV46NPCE4TMUPAGYMEC";
+    const NEW_CONTRACT: &str = "CDLZFC3SYJYDZT7K67VZ75HPJVIEUVNIXF47ZG2FB2RMQQVU2HHGCYSC";
+
+    fn parse_diff(args: &[&str]) -> Result<Cli, clap::Error> {
+        Cli::try_parse_from(args)
+    }
+
+    fn diff_command(cli: Cli) -> Commands {
+        cli.command
+    }
+
+    #[test]
+    fn old_contract_conflicts_with_old_wasm() {
+        let err = parse_diff(&[
+            "sdkt",
+            "diff",
+            "--old-contract",
+            OLD_CONTRACT,
+            "--old-wasm",
+            "old.wasm",
+            "--new-wasm",
+            "new.wasm",
+        ])
+        .err()
+        .expect("conflicting flags must fail to parse");
+        let msg = err.to_string();
+        assert!(
+            msg.contains("--old-contract") && msg.contains("--old-wasm"),
+            "conflict must name both flags, got: {msg}"
+        );
+        assert!(
+            msg.contains("cannot be used with"),
+            "clap conflict wording expected, got: {msg}"
+        );
+    }
+
+    #[test]
+    fn new_contract_conflicts_with_new_wasm() {
+        let err = parse_diff(&[
+            "sdkt",
+            "diff",
+            "--old-wasm",
+            "old.wasm",
+            "--new-contract",
+            NEW_CONTRACT,
+            "--new-wasm",
+            "new.wasm",
+        ])
+        .err()
+        .expect("conflicting flags must fail to parse");
+        let msg = err.to_string();
+        assert!(
+            msg.contains("--new-contract") && msg.contains("--new-wasm"),
+            "conflict must name both flags, got: {msg}"
+        );
+    }
+
+    #[test]
+    fn contract_sides_parse_with_network() {
+        let cli = parse_diff(&[
+            "sdkt",
+            "diff",
+            "--old-contract",
+            OLD_CONTRACT,
+            "--new-contract",
+            NEW_CONTRACT,
+            "--network",
+            "testnet",
+        ])
+        .expect("contract-side diff must parse");
+        match diff_command(cli) {
+            Commands::Diff {
+                old_contract,
+                new_contract,
+                network,
+                old_wasm,
+                new_wasm,
+                ..
+            } => {
+                assert_eq!(old_contract.as_deref(), Some(OLD_CONTRACT));
+                assert_eq!(new_contract.as_deref(), Some(NEW_CONTRACT));
+                assert_eq!(network.as_deref(), Some("testnet"));
+                assert!(old_wasm.is_none());
+                assert!(new_wasm.is_none());
+            }
+            _ => panic!("expected `diff`"),
+        }
+    }
+
+    #[test]
+    fn mixed_file_and_contract_sides_parse() {
+        let cli = parse_diff(&[
+            "sdkt",
+            "diff",
+            "--old-wasm",
+            "old.wasm",
+            "--new-contract",
+            NEW_CONTRACT,
+            "--network",
+            "testnet",
+        ])
+        .expect("mixed-side diff must parse");
+        match diff_command(cli) {
+            Commands::Diff {
+                old_wasm,
+                new_contract,
+                ..
+            } => {
+                assert_eq!(old_wasm.as_deref(), Some("old.wasm"));
+                assert_eq!(new_contract.as_deref(), Some(NEW_CONTRACT));
+            }
+            _ => panic!("expected `diff`"),
+        }
+    }
+
+    #[test]
+    fn two_file_diff_still_parses_with_optional_sources() {
+        let cli = parse_diff(&[
+            "sdkt",
+            "diff",
+            "--old-wasm",
+            "old.wasm",
+            "--new-wasm",
+            "new.wasm",
+        ])
+        .expect("two-file diff must parse");
+        match diff_command(cli) {
+            Commands::Diff {
+                old_wasm,
+                new_wasm,
+                old_contract,
+                new_contract,
+                network,
+                ..
+            } => {
+                assert_eq!(old_wasm.as_deref(), Some("old.wasm"));
+                assert_eq!(new_wasm.as_deref(), Some("new.wasm"));
+                assert!(old_contract.is_none());
+                assert!(new_contract.is_none());
+                assert!(network.is_none());
+            }
+            _ => panic!("expected `diff`"),
+        }
     }
 }

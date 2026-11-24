@@ -1,0 +1,7 @@
+{
+  "name": "x",
+  "version": "1.0.0",
+  "scripts": {
+    "postinstall": "node --max-old-space-size=4096 ./scripts/build.js"
+  }
+}

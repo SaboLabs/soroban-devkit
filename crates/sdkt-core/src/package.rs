@@ -837,7 +837,10 @@ pub fn publish_plan(base: &Path, config: &DevKitConfig) -> Result<PublishReadine
 ///
 /// Reuses [`crate::fetch::git_bin`] to read each checkout's tree hash the same
 /// way [`crate::lock::compute_dependency_integrity`] does, so no hash logic is
-/// duplicated.
+/// duplicated. A git checkout must additionally have no modified tracked files:
+/// `HEAD^{tree}` ignores working-tree edits, so without that check a hand-edited
+/// cached `lib.rs` would verify as equivalent while changing what gets rebuilt.
+/// Untracked files are ignored (build leftovers do not change the tree).
 pub fn verify_bundle_equivalence(
     unpacked_base: &Path,
     bundle: &PackageBundle,
@@ -872,8 +875,36 @@ pub fn verify_bundle_equivalence(
             }
             _ => return Ok(false),
         }
+        // The recorded integrity covers the committed tree only, so require a
+        // clean worktree as well (see the function docs).
+        let status = std::process::Command::new(crate::fetch::git_bin())
+            .current_dir(&checkout)
+            .args(["status", "--porcelain", "--untracked-files=no"])
+            .output();
+        match status {
+            Ok(o) if o.status.success() && o.stdout.is_empty() => {}
+            _ => return Ok(false),
+        }
     }
     Ok(true)
+}
+
+/// Read a bundle descriptor (`package.json`) from a bundle directory, an
+/// unpacked tree, or a direct path to the descriptor file.
+///
+/// The descriptor written by [`pack`] is what [`verify_bundle_equivalence`]
+/// checks a reconstructed tree against, so this is the one lookup both the CLI
+/// and tests use.
+pub fn read_bundle_descriptor(dir_or_file: &Path) -> Result<PackageBundle, PackageError> {
+    let path = if dir_or_file.is_file() {
+        dir_or_file.to_path_buf()
+    } else {
+        dir_or_file.join("package.json")
+    };
+    let raw = std::fs::read_to_string(&path)
+        .map_err(|e| PackageError::Other(format!("read {}: {}", path.display(), e)))?;
+    serde_json::from_str(&raw)
+        .map_err(|e| PackageError::Other(format!("parse {}: {}", path.display(), e)))
 }
 
 /// Reconstruct a project from a bundle artifact ( round-trip).
@@ -885,13 +916,33 @@ pub fn verify_bundle_equivalence(
 /// [`verify_bundle_equivalence`]. No new archive/hash logic: it reuses the
 /// same `tar` / `zstd` crates and the `copy_dir_all` helper used by [`pack`].
 pub fn unpack(artifact: &Path, dest: &Path) -> Result<PathBuf, PackageError> {
-    std::fs::create_dir_all(dest)
-        .map_err(|e| PackageError::Other(format!("create {}: {}", dest.display(), e)))?;
+    if !artifact.exists() {
+        return Err(PackageError::Other(format!(
+            "artifact not found: {}",
+            artifact.display()
+        )));
+    }
     let name = artifact
         .file_name()
         .map(|n| n.to_string_lossy().to_string())
         .unwrap_or_default();
     let is_tar = name.ends_with(".tar.zst") || name.ends_with(".tgz");
+    if !is_tar && !artifact.is_dir() {
+        return Err(PackageError::Other(format!(
+            "unsupported artifact '{}': expected a `.tar.zst`/`.tgz` bundle or a directory bundle",
+            artifact.display()
+        )));
+    }
+    // Copying a directory bundle into itself would recurse without bound.
+    if !is_tar && dest.starts_with(artifact) {
+        return Err(PackageError::Other(format!(
+            "destination {} is inside the directory bundle {}",
+            dest.display(),
+            artifact.display()
+        )));
+    }
+    std::fs::create_dir_all(dest)
+        .map_err(|e| PackageError::Other(format!("create {}: {}", dest.display(), e)))?;
     if is_tar {
         let file = std::fs::File::open(artifact)
             .map_err(|e| PackageError::Other(format!("open {}: {}", artifact.display(), e)))?;

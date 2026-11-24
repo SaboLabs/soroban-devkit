@@ -1,0 +1,4 @@
+{
+  "remoteUser": "root",
+  "postCreateCommand": "cargo build"
+}

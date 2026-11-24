@@ -1,0 +1,1 @@
+node ./scripts/../dist/setup.js (traversal) must be detected.

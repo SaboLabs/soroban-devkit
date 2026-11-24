@@ -163,6 +163,12 @@ pub fn replay(artifact: &FindingArtifact, wasm: &[u8]) -> Result<ReplayOutcome, 
     let seed = artifact
         .seed()
         .map_err(|e| ReplayError::InvalidArtifact(e.to_string()))?;
+    // Rebuild the declared expectation up front, with the other input
+    // validation: a malformed expectation field is rejected before any
+    // execution, never silently repaired (see artifact::to_expected).
+    let expected = artifact
+        .expected()
+        .map_err(|e| ReplayError::InvalidArtifact(e.to_string()))?;
 
     // Rebuild the campaign execution context from the artifact alone.
     let mut config = crate::config::FuzzConfig::default();
@@ -224,9 +230,6 @@ pub fn replay(artifact: &FindingArtifact, wasm: &[u8]) -> Result<ReplayOutcome, 
     };
 
     // Re-apply the recorded oracle rules (with the artifact's auth posture).
-    let expected = artifact
-        .try_expected()
-        .map_err(|e| ReplayError::InvalidArtifact(e.to_string()))?;
     let oracle = Oracle::with_auth_mode(expected, auth_mode);
     let actual = oracle.classify(&observation);
     let observation_hash = observation_hash(&observation);

@@ -82,8 +82,8 @@ async fn live_state_matched_read_only_outcome_agrees() {
         .await
         .expect("Testnet RPC reachable (getNetwork)");
     assert_eq!(
-        network.protocol_version, 29,
-        "Testnet must report protocol 29 (the pinned host's protocol)"
+        network.protocol_version, 30,
+        "Testnet must report protocol 30 (the pinned host's protocol)"
     );
     assert_eq!(
         network.passphrase, TESTNET_PASSPHRASE,

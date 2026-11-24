@@ -3,8 +3,9 @@
 `sdkt` ships a reusable **GitHub composite Action** at
 [`sdkt` composite Action](../../.github/actions/sdkt/action.yml) so you can
 gate merges on static security findings (`sdkt audit`), on breaking contract
-upgrades (`sdkt diff --upgrade-safety`), and on a read-only release verdict
-(`sdkt release-assurance`) — entirely in CI, no local install required.
+upgrades (`sdkt diff --upgrade-safety`), on a read-only release verdict
+(`sdkt release-assurance`), and on post-deploy on-chain contract posture
+(`sdkt health`) — entirely in CI, no local install required.
 
 The Action installs a pinned `sdkt` binary, runs the chosen subcommand in JSON
 mode, and fails the step when the check does not pass.
@@ -13,23 +14,33 @@ mode, and fails the step when the check does not pass.
 
 | Input | Required | Default | Meaning |
 |-------|----------|---------|---------|
-| `command` | yes | — | `audit`, `upgrade-safety`, or `release-assurance` |
+| `command` | yes | — | `audit`, `upgrade-safety`, `release-assurance`, or `health` |
 | `sdkt-version` | no | `v2.7.0` | Pinned `sdkt` git tag to install |
+| `install-from-source` | no | `"false"` | Build sdkt from the pinned git tag instead of downloading the prebuilt release asset. Slower (~4-5 min) but resolves: unsupported kernel, missing prebuilt asset for the runner OS/arch, missing release asset for the version, missing checksum, or missing `sha256sum`/`shasum` tool. |
 | `target` | for `audit` | `""` | Path to the `.rs` source to audit |
 | `old-wasm` | for `upgrade-safety` | `""` | Baseline (currently deployed) WASM |
 | `new-wasm` | for `upgrade-safety` | `""` | Candidate (new) WASM |
 | `severity-threshold` | no | `critical` | `critical` \| `warning` \| `info` |
-| `wasm` | for `release-assurance` | `""` | Candidate WASM artifact to assess |
+| `wasm` | for `release-assurance` (optional for `health`) | `""` | Candidate WASM artifact to assess (`release-assurance`), or optional local WASM path to verify against the on-chain code hash (`health`) |
 | `previous-wasm` | no | `""` | Baseline WASM for the offline upgrade diff |
 | `audit` | no | `""` | Rust source path(s)/dir(s) for the static audit (space-separated) |
 | `disable` | no | `""` | Audit rule id(s) to disable (space-separated) |
-| `contract` | no | `""` | Deployed contract ID (C...) for on-chain checks; skipped when empty |
-| `network` | no | `""` | `testnet` \| `mainnet` \| `futurenet` for the on-chain checks |
+| `contract` | for `health` (optional for `release-assurance`) | `""` | Deployed contract ID (C...) for on-chain checks; required for `health`, skipped when empty for `release-assurance` |
+| `network` | for `health` (optional for `release-assurance`) | `""` | `testnet` \| `mainnet` \| `futurenet` for the on-chain checks |
+| `health-threshold` | no | `critical` | `critical` \| `at_risk` (used with `command=health`) |
 | `max-size-bytes` | for `release-assurance` | `""` | Fail the release when the candidate artifact exceeds N bytes (forwards `--max-size-bytes`) |
 | `max-growth-pct` | for `release-assurance` | `""` | Fail the release when the candidate grew more than N percent over `previous-wasm` (forwards `--max-growth-pct`) |
 
 **Threshold semantics:** only findings at or above `severity-threshold` fail
 the build. The default `critical` means `MOVE-001` (Warning) never breaks CI.
+The Action forwards the input as the CLI's own flag —
+`sdkt audit <target> --format json --fail-on "$severity-threshold"` — and gates
+on the exit code, so the CLI is the single source of truth for the mapping:
+exit `1` means a finding at or above the threshold, and the full JSON report is
+still printed first. An unknown level is rejected by the CLI as a usage error
+(exit `2`), which fails the step with a clear message instead of silently
+running as a no-op. No threshold logic is reimplemented in shell, and the audit
+gate does not need `jq`.
 
 **Release-assurance semantics:** the aggregated `release_status` gates the
 step. `FAIL` blocks (step exits 1); `PASS`, `REVIEW`, and `SKIPPED`-only
@@ -47,8 +58,20 @@ passes. `max-growth-pct` requires `previous-wasm`; without it the CLI
 fails rather than silently skipping the check. Omitting both inputs
 leaves the release-assurance result unchanged.
 
-**Read-only:** `release-assurance` never signs, submits, deploys, extends TTL,
-or mutates state, and the Action passes no credentials.
+**Health semantics:** `command=health` runs
+`sdkt health --contract <contract> --network <network> [--wasm <file>] --format json`,
+prints the JSON report, and gates on the parsed fields (`.health` and, when
+`wasm` is supplied, `.verified`). At the default `health-threshold: critical`,
+only `.health == "critical"` fails the step (`at_risk` passes); when
+`health-threshold` is set to `at_risk`, both `at_risk` and `critical` fail.
+When `wasm` is provided, `.verified == false` (on-chain vs. local WASM hash
+mismatch) also fails the step with an explicit mismatch error; when `wasm` is
+omitted, no hash comparison runs. An unknown `health-threshold` value is
+rejected before `sdkt` is invoked, and a nonexistent contract ID fails with the
+CLI's not-found error rather than a `jq` parse failure.
+
+**Read-only:** `release-assurance` and `health` never sign, submit, deploy,
+extend TTL, or mutate state, and the Action passes no credentials.
 
 ## Example 1 — Audit on every PR
 
@@ -139,7 +162,40 @@ add the on-chain verification and health sections (skipped entirely when
 `contract` is empty). Adding `contract` and `network` performs read-only RPC
 reads only.
 
-## Example 4 — Self-validating the Action (this repo)
+## Example 4 — Post-deploy contract health smoke check
+
+Verify that a deployed contract exists on-chain, matches the local `.wasm`
+artifact you built, and has healthy storage TTL posture:
+
+```yaml
+# .github/workflows/sdkt-health.yml
+name: sdkt Post-Deploy Health
+
+on:
+  workflow_dispatch:
+
+jobs:
+  health:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Post-deploy contract health check
+        uses: SaboLabs/soroban-devkit/.github/actions/sdkt@main
+        with:
+          command: health
+          sdkt-version: v2.7.0
+          contract: CCJUD55AG6W5HAI5LRVNKAE5WDP5XGZBUDS5WNTIVDU7O264UZZE7BRD
+          network: testnet
+          wasm: builds/candidate.wasm
+          health-threshold: critical
+```
+
+`contract` and `network` are required. `wasm` is optional (omit it to check
+liveness and storage TTL without a local code-hash comparison), and
+`health-threshold` defaults to `critical` (set `at_risk` to also fail when
+storage entries are expiring soon or empty).
+
+## Example 5 — Self-validating the Action (this repo)
 
 This repository validates the composite Action itself in
 [`.github/workflows/sdkt-action-ci.yml`](../../.github/workflows/sdkt-action-ci.yml):
@@ -147,7 +203,13 @@ a **breaking** diff (committed fixtures `us_old.wasm` → `us_new.wasm`) is
 asserted to **fail**, an **identical** diff is asserted to **pass**, a
 release-assurance run against that same breaking baseline is asserted to
 **fail** (`release_status=FAIL`), and a candidate-only run is asserted to
-**pass** (`release_status=REVIEW`).
+**pass** (`release_status=REVIEW`). The audit gate is asserted both ways too: a
+fixture with a critical finding must fail, a clean fixture must pass, and an
+unknown `severity-threshold` must be rejected. A dedicated `validate-health`
+job exercises `command: health` against live Soroban Testnet contracts (healthy
+pass, `health-threshold` gating for `healthy` and `at_risk` contracts, invalid
+threshold rejection, `--wasm` hash-mismatch failure, and nonexistent contract
+failure).
 
 ## Notes
 
@@ -159,6 +221,9 @@ release-assurance run against that same breaking baseline is asserted to
 - `upgrade-safety` requires the **baseline** WASM to be supplied explicitly
   (`old-wasm`); it does not fetch the on-chain deployed contract. Provide your
   previously-deployed `.wasm` as the baseline artifact.
-- JSON output of `sdkt audit`, `sdkt diff --upgrade-safety`, and
-  `sdkt release-assurance` is the stable contract the Action parses; all are
-  additive and serde-derived.
+- JSON output of `sdkt diff --upgrade-safety`, `sdkt release-assurance`, and
+  `sdkt health` is the stable contract the Action parses (all are additive and
+  serde-derived); those three gates are also why the Action still provisions
+  `jq`; the provisioning step is skipped entirely when `command` is `audit`.
+  `sdkt audit` is gated by the CLI's exit code through `--fail-on`, so the
+  audit path does not run `jq` at all.

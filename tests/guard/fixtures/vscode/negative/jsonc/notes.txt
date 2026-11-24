@@ -1,0 +1,1 @@
+JSONC with comments and trailing commas must parse cleanly

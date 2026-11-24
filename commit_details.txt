@@ -1,0 +1,8 @@
+commit 0c4eb41842c1826ce30b664b1a289ae6a13d7a0a
+Author: Tybravo <twinebravo@gmail.com>
+Date:   Sat Oct 17 08:17:00 2026 +0100
+
+    test(playground): exercise actual timeout with injectable timers
+
+ website/playground/tests/request-timeout.test.mjs | 198 ++++++++++++++++------
+ 1 file changed, 149 insertions(+), 49 deletions(-)

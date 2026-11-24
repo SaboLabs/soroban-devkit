@@ -46,6 +46,29 @@ fn build_example_plugin() -> std::path::PathBuf {
     panic!("example plugin cdylib not found after build");
 }
 
+/// Build a valid cdylib that exports no plugin symbols, so loading it fails
+/// with `missing plugin symbol`. Used to simulate a broken native plugin.
+#[cfg(feature = "plugins")]
+fn build_broken_cdylib(dir: &std::path::Path) -> std::path::PathBuf {
+    let src = dir.join("broken.rs");
+    std::fs::write(
+        &src,
+        "#[no_mangle]\npub extern \"C\" fn not_a_plugin() {}\n",
+    )
+    .unwrap();
+    let out = dir.join("libbroken.so");
+    // rustc lives next to the cargo binary driving the build.
+    let rustc = std::path::PathBuf::from(env!("CARGO")).with_file_name("rustc");
+    let status = Command::new(&rustc)
+        .args(["--crate-type", "cdylib", "-o"])
+        .arg(&out)
+        .arg(&src)
+        .status()
+        .expect("failed to spawn rustc for broken plugin");
+    assert!(status.success(), "broken cdylib build failed");
+    out
+}
+
 #[cfg(feature = "plugins")]
 #[test]
 fn dynamic_plugin_rule_fires() {
@@ -177,24 +200,198 @@ fn dynamic_plugin_coexists_with_builtins() {
 
 #[cfg(feature = "plugins")]
 #[test]
-fn native_plugin_invalid_so_errors() {
-    let mut cmd = Command::cargo_bin("sdkt").unwrap();
-    let tmp = tempfile::Builder::new().suffix(".so").tempfile().unwrap();
-    std::fs::write(tmp.path(), b"not an so file").unwrap();
+fn good_plugin_runs_and_broken_plugin_warns() {
+    let plugin = build_example_plugin();
+    let temp = tempfile::tempdir().unwrap();
+    let store = temp.path().join("store");
+    std::fs::create_dir_all(&store).unwrap();
+    let broken = build_broken_cdylib(temp.path());
 
-    let src = "pub fn foo() {}";
+    let src = "pub fn sdkt_example_trigger_admin() {}\npub fn mint() {}";
     let src_tmp = tempfile::Builder::new().suffix(".rs").tempfile().unwrap();
     std::fs::write(src_tmp.path(), src).unwrap();
 
-    cmd.args([
-        "audit",
-        src_tmp.path().to_str().unwrap(),
-        "--rules",
-        tmp.path().to_str().unwrap(),
-    ])
-    .assert()
-    .failure()
-    .stderr(predicates::str::contains("failed to load plugin"));
+    let mut cmd = Command::cargo_bin("sdkt").unwrap();
+    cmd.env("SDKT_PLUGIN_DIR", &store)
+        .env("SDKT_NETWORK_DIR", temp.path())
+        .args([
+            "audit",
+            src_tmp.path().to_str().unwrap(),
+            "--rules",
+            plugin.to_str().unwrap(),
+            "--rules",
+            broken.to_str().unwrap(),
+        ]);
+
+    cmd.assert()
+        .success()
+        .stderr(predicate::str::contains(format!(
+            "Warning: skipping native plugin '{}': missing plugin symbol",
+            broken.display()
+        )))
+        .stderr(predicate::str::contains("audit continues without it"))
+        .stderr(predicate::str::contains("Error loading native plugin").not())
+        .stdout(predicate::str::contains(
+            "Rules loaded: 7 built-in, 1 plugin",
+        ))
+        .stdout(predicate::str::contains(format!(
+            "Plugins skipped: 1 ({}: missing plugin symbol",
+            broken.display()
+        )))
+        .stdout(predicate::str::contains("EXAMPLE-001"))
+        .stdout(predicate::str::contains("AUTH-001"));
+}
+
+#[cfg(feature = "plugins")]
+#[test]
+fn directory_audit_reports_loaded_plugins_per_file() {
+    // Regression test for the PR #490 review finding: in a directory audit
+    // (multi-file mode) the "Rules loaded" line printed "0 plugins"
+    // because the success branches only incremented the counter in
+    // single-file mode, even though the valid plugin ran for every file
+    // through `local_reg`. Each file's header must count the plugin that
+    // actually ran for it.
+    let plugin = build_example_plugin();
+    let temp = tempfile::tempdir().unwrap();
+    let store = temp.path().join("store");
+    std::fs::create_dir_all(&store).unwrap();
+    let broken = build_broken_cdylib(temp.path());
+
+    let src_dir = temp.path().join("src");
+    std::fs::create_dir_all(&src_dir).unwrap();
+    std::fs::write(
+        src_dir.join("a.rs"),
+        "pub fn sdkt_example_trigger_admin() {}\npub fn mint() {}",
+    )
+    .unwrap();
+    std::fs::write(src_dir.join("b.rs"), "pub fn mint() {}").unwrap();
+
+    let mut cmd = Command::cargo_bin("sdkt").unwrap();
+    cmd.env("SDKT_PLUGIN_DIR", &store)
+        .env("SDKT_NETWORK_DIR", temp.path())
+        .args([
+            "audit",
+            src_dir.to_str().unwrap(),
+            "--rules",
+            plugin.to_str().unwrap(),
+            "--rules",
+            broken.to_str().unwrap(),
+        ]);
+
+    cmd.assert()
+        .success()
+        .stderr(predicate::str::contains(format!(
+            "Warning: skipping native plugin '{}': missing plugin symbol",
+            broken.display()
+        )))
+        .stderr(predicate::str::contains("audit continues without it"))
+        // Each file's header counts the plugin that ran for it; the old
+        // code printed "0 plugins" here.
+        .stdout(predicate::str::contains(
+            "Rules loaded: 7 built-in, 1 plugin",
+        ))
+        .stdout(predicate::str::contains("0 plugins").not())
+        .stdout(predicate::str::contains(format!(
+            "Plugins skipped: 1 ({}: missing plugin symbol",
+            broken.display()
+        )))
+        // The valid plugin still runs in directory mode, and the built-in
+        // rules still fire alongside it.
+        .stdout(predicate::str::contains("EXAMPLE-001"))
+        .stdout(predicate::str::contains("AUTH-001"));
+}
+
+#[cfg(feature = "plugins")]
+#[test]
+fn native_plugin_invalid_so_warns_and_skips() {
+    let temp = tempfile::tempdir().unwrap();
+    let store = temp.path().join("store");
+    std::fs::create_dir_all(&store).unwrap();
+
+    let broken = tempfile::Builder::new().suffix(".so").tempfile().unwrap();
+    std::fs::write(broken.path(), b"not an so file").unwrap();
+
+    let src = "pub fn mint() {}";
+    let src_tmp = tempfile::Builder::new().suffix(".rs").tempfile().unwrap();
+    std::fs::write(src_tmp.path(), src).unwrap();
+
+    let mut cmd = Command::cargo_bin("sdkt").unwrap();
+    cmd.env("SDKT_PLUGIN_DIR", &store)
+        .env("SDKT_NETWORK_DIR", temp.path())
+        .args([
+            "audit",
+            src_tmp.path().to_str().unwrap(),
+            "--rules",
+            broken.path().to_str().unwrap(),
+        ]);
+
+    cmd.assert()
+        .success()
+        .stderr(predicate::str::contains(format!(
+            "Warning: skipping native plugin '{}': failed to load plugin",
+            broken.path().display()
+        )))
+        .stderr(predicate::str::contains("audit continues without it"))
+        .stdout(predicate::str::contains(
+            "Rules loaded: 7 built-in, 0 plugins",
+        ))
+        .stdout(predicate::str::contains(format!(
+            "Plugins skipped: 1 ({}: failed to load plugin",
+            broken.path().display()
+        )))
+        .stdout(predicate::str::contains("AUTH-001"));
+}
+
+#[cfg(feature = "plugins")]
+#[test]
+fn exit_code_follows_findings_not_plugin_failure() {
+    let temp = tempfile::tempdir().unwrap();
+    let store = temp.path().join("store");
+    std::fs::create_dir_all(&store).unwrap();
+    let broken = build_broken_cdylib(temp.path());
+
+    // (a) Only the broken plugin + a clean contract + --fail-on info:
+    // exit 0, because there are no findings to fail on.
+    let clean = "pub fn balance_of(who: Address) -> u32 { require_auth(); 0 }";
+    let clean_tmp = tempfile::Builder::new().suffix(".rs").tempfile().unwrap();
+    std::fs::write(clean_tmp.path(), clean).unwrap();
+
+    let mut cmd = Command::cargo_bin("sdkt").unwrap();
+    cmd.env("SDKT_PLUGIN_DIR", &store)
+        .env("SDKT_NETWORK_DIR", temp.path())
+        .args([
+            "audit",
+            clean_tmp.path().to_str().unwrap(),
+            "--rules",
+            broken.to_str().unwrap(),
+            "--fail-on",
+            "info",
+        ]);
+    cmd.assert()
+        .success()
+        .stdout(predicate::str::contains("No issues found."));
+
+    // (b) Only the broken plugin + a contract with findings + --fail-on info:
+    // exit 1, driven by the findings, not by the load failure.
+    let dirty = "pub fn mint() {}";
+    let dirty_tmp = tempfile::Builder::new().suffix(".rs").tempfile().unwrap();
+    std::fs::write(dirty_tmp.path(), dirty).unwrap();
+
+    let mut cmd = Command::cargo_bin("sdkt").unwrap();
+    cmd.env("SDKT_PLUGIN_DIR", &store)
+        .env("SDKT_NETWORK_DIR", temp.path())
+        .args([
+            "audit",
+            dirty_tmp.path().to_str().unwrap(),
+            "--rules",
+            broken.to_str().unwrap(),
+            "--fail-on",
+            "info",
+        ]);
+    cmd.assert()
+        .failure()
+        .code(1)
+        .stdout(predicate::str::contains("AUTH-001"));
 }
 
 #[cfg(feature = "wasm-plugins")]
@@ -253,6 +450,47 @@ fn wasm_plugin_coexists_with_builtins() {
         .stdout(predicate::str::contains("AUTH-001"))
         .stdout(predicate::str::contains("EXAMPLE-001"))
         .stdout(predicate::str::contains("sdkt_example_trigger_admin"));
+}
+
+#[cfg(feature = "wasm-plugins")]
+#[test]
+fn broken_wasm_plugin_warns_and_skips() {
+    let temp = tempfile::tempdir().unwrap();
+    let store = temp.path().join("store");
+    std::fs::create_dir_all(&store).unwrap();
+
+    let broken = temp.path().join("broken.wasm");
+    std::fs::write(&broken, b"not a wasm module").unwrap();
+
+    let src = "pub fn mint() {}";
+    let src_tmp = tempfile::Builder::new().suffix(".rs").tempfile().unwrap();
+    std::fs::write(src_tmp.path(), src).unwrap();
+
+    let mut cmd = Command::cargo_bin("sdkt").unwrap();
+    cmd.env("SDKT_PLUGIN_DIR", &store)
+        .env("SDKT_NETWORK_DIR", temp.path())
+        .args([
+            "audit",
+            src_tmp.path().to_str().unwrap(),
+            "--rules",
+            broken.to_str().unwrap(),
+        ]);
+
+    cmd.assert()
+        .success()
+        .stderr(predicate::str::contains(format!(
+            "Warning: skipping WASM plugin '{}': wasm runtime error",
+            broken.display()
+        )))
+        .stderr(predicate::str::contains("audit continues without it"))
+        .stdout(predicate::str::contains(
+            "Rules loaded: 7 built-in, 0 plugins",
+        ))
+        .stdout(predicate::str::contains(format!(
+            "Plugins skipped: 1 ({}: wasm runtime error",
+            broken.display()
+        )))
+        .stdout(predicate::str::contains("AUTH-001"));
 }
 
 #[test]

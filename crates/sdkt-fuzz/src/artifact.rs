@@ -415,49 +415,61 @@ impl ExpectedSnapshot {
 
     /// Reconstruct the runtime expectation for replay.
     ///
-    /// Lossy: XDR that fails to decode (including over-depth input) is
-    /// dropped. Replay uses [`Self::try_to_expected`], which rejects it.
-    pub fn to_expected(&self) -> Expected {
-        self.try_to_expected().unwrap_or_default()
-    }
-
-    /// Reconstruct the runtime expectation, rejecting any undecodable or
-    /// over-depth XDR instead of substituting a different value.
-    pub fn try_to_expected(&self) -> Result<Expected, FuzzError> {
+    /// Fails with [`FuzzError::InvalidArtifact`] naming the field when any
+    /// hex/XDR field cannot be decoded. The artifact is user-supplied input:
+    /// a malformed field must be rejected, never silently repaired — a
+    /// substituted value or a dropped entry could turn a real
+    /// `STATE_MISMATCH` / `EVENT_MISMATCH` into a `Pass`.
+    pub fn to_expected(&self) -> Result<Expected, FuzzError> {
+        let behavior = match &self.behavior {
+            BehaviorSnapshot::Success { expect_return } => ExpectedBehavior::Success {
+                expect_return: match expect_return.as_deref() {
+                    Some(hex_str) => Some(unhex_xdr(hex_str).ok_or_else(|| {
+                        FuzzError::InvalidArtifact(
+                            "expected return value did not decode as ScVal XDR".to_string(),
+                        )
+                    })?),
+                    None => None,
+                },
+            },
+            BehaviorSnapshot::Error { error_type, code } => ExpectedBehavior::Error {
+                error_type: error_type.clone(),
+                code: *code,
+            },
+            BehaviorSnapshot::Any => ExpectedBehavior::Any,
+        };
+        let state = match &self.state {
+            Some(entries) => {
+                let mut map = BTreeMap::new();
+                for e in entries {
+                    let key = unhex(&e.key_xdr).ok_or_else(|| {
+                        FuzzError::InvalidArtifact(
+                            "expected state entry key_xdr is not valid hex".to_string(),
+                        )
+                    })?;
+                    let value = unhex(&e.value_xdr).ok_or_else(|| {
+                        FuzzError::InvalidArtifact(
+                            "expected state entry value_xdr is not valid hex".to_string(),
+                        )
+                    })?;
+                    map.insert(key, value);
+                }
+                Some(map)
+            }
+            None => None,
+        };
+        let events = match &self.events {
+            Some(ev) => Some(
+                ev.iter()
+                    .map(restore_event)
+                    .collect::<Result<Vec<_>, FuzzError>>()?,
+            ),
+            None => None,
+        };
         Ok(Expected {
-            behavior: match &self.behavior {
-                BehaviorSnapshot::Success { expect_return } => ExpectedBehavior::Success {
-                    expect_return: match expect_return.as_deref() {
-                        Some(h) => Some(unhex_xdr(h).ok_or_else(|| {
-                            FuzzError::InvalidArtifact(
-                                "expected return value did not decode as ScVal XDR \
-                                 (malformed or nested deeper than the depth limit)"
-                                    .to_string(),
-                            )
-                        })?),
-                        None => None,
-                    },
-                },
-                BehaviorSnapshot::Error { error_type, code } => ExpectedBehavior::Error {
-                    error_type: error_type.clone(),
-                    code: *code,
-                },
-                BehaviorSnapshot::Any => ExpectedBehavior::Any,
-            },
-            state: self.state.as_ref().map(|entries| {
-                entries
-                    .iter()
-                    .filter_map(|e| Some((unhex(&e.key_xdr)?, unhex(&e.value_xdr)?)))
-                    .collect::<BTreeMap<Vec<u8>, Vec<u8>>>()
-            }),
-            events: match self.events.as_ref() {
-                Some(ev) => Some(
-                    ev.iter()
-                        .map(try_restore_event)
-                        .collect::<Result<Vec<_>, FuzzError>>()?,
-                ),
-                None => None,
-            },
+            behavior,
+            state,
+            events,
             auth_required: self.auth_required,
             resource_limit_is_finding: self.resource_limit_is_finding,
         })
@@ -473,23 +485,30 @@ fn snapshot_event(e: &EventRecord) -> EventSnapshot {
     }
 }
 
-fn try_restore_event(e: &EventSnapshot) -> Result<EventRecord, FuzzError> {
-    let bad = || {
-        FuzzError::InvalidArtifact(
-            "expected event XDR did not decode as ScVal \
-             (malformed or nested deeper than the depth limit)"
-                .to_string(),
-        )
+fn restore_event(e: &EventSnapshot) -> Result<EventRecord, FuzzError> {
+    let contract_id = match e.contract_id.as_deref() {
+        Some(hex_str) => Some(unhex_32(hex_str).ok_or_else(|| {
+            FuzzError::InvalidArtifact("event contract_id is not 32 bytes of hex".to_string())
+        })?),
+        None => None,
     };
+    let topics = e
+        .topics_xdr
+        .iter()
+        .map(|t| {
+            unhex_xdr(t).ok_or_else(|| {
+                FuzzError::InvalidArtifact("event topic did not decode as ScVal XDR".to_string())
+            })
+        })
+        .collect::<Result<Vec<_>, FuzzError>>()?;
+    let data = unhex_xdr(&e.data_xdr).ok_or_else(|| {
+        FuzzError::InvalidArtifact("event data_xdr did not decode as ScVal XDR".to_string())
+    })?;
     Ok(EventRecord {
-        contract_id: e.contract_id.as_deref().and_then(unhex_32),
+        contract_id,
         event_type: e.event_type.clone(),
-        topics: e
-            .topics_xdr
-            .iter()
-            .map(|t| unhex_xdr(t).ok_or_else(bad))
-            .collect::<Result<Vec<_>, FuzzError>>()?,
-        data: unhex_xdr(&e.data_xdr).ok_or_else(bad)?,
+        topics,
+        data,
     })
 }
 
@@ -608,15 +627,13 @@ impl FindingArtifact {
         String::from_utf8_lossy(&self.canonical_bytes()).into_owned()
     }
 
-    /// The declared expectation that was violated (lossy; see
-    /// [`ExpectedSnapshot::to_expected`]).
-    pub fn expected(&self) -> Expected {
+    /// The declared expectation that was violated.
+    ///
+    /// Fails when any expectation field cannot be decoded (see
+    /// [`ExpectedSnapshot::to_expected`]); callers surface this as an
+    /// invalid-artifact error, never as a repaired expectation.
+    pub fn expected(&self) -> Result<Expected, FuzzError> {
         self.expected.to_expected()
-    }
-
-    /// The declared expectation, rejecting undecodable or over-depth XDR.
-    pub fn try_expected(&self) -> Result<Expected, FuzzError> {
-        self.expected.try_to_expected()
     }
 
     /// Steps to replay, decoded from base16 XDR.

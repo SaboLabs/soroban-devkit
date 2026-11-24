@@ -1,0 +1,2 @@
+positive (must FAIL): local-script-danger
+references a local script that performs a network fetch at install time

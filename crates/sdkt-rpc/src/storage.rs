@@ -3,13 +3,15 @@ use crate::error::RpcError;
 use base64::Engine;
 use serde::Serialize;
 use std::collections::HashMap;
-use stellar_xdr::{LedgerEntryData, ReadXdr, SorobanTransactionData};
+use stellar_xdr::{LedgerEntryData, ReadXdr, SorobanTransactionData, WriteXdr};
 
 /// Storage TTL info for a contract.
 #[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct TtlInfo {
     pub contract_id: String,
     pub entries: Vec<TtlEntry>,
+    #[serde(skip)]
+    pub latest_ledger: Option<u32>,
 }
 
 /// A single storage entry with human-readable TTL information.
@@ -24,6 +26,32 @@ pub struct TtlEntry {
     /// [`get_ttl_info_for_keys`]); used to surface TTL warnings consistently
     /// across `StorageAnalyzer` and `sdkt storage read`. (Issue #375.)
     pub expiring_soon: bool,
+    /// Base64 XDR `ScVal` extracted from the entry's contract-data payload.
+    /// `None` when the entry is not contract data or the XDR fails to parse.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub value: Option<String>,
+}
+
+/// Decode a base64 `LedgerEntryData` XDR (the shape Soroban RPC returns in
+/// `getLedgerEntries.entries[].xdr`) and extract its contract-data `ScVal`
+/// (base64 XDR). Returns `None` for contract-code entries, entries whose XDR
+/// fails to parse, or entries whose payload is not contract data.
+fn extract_contract_data_value(entry_xdr: &str) -> Option<String> {
+    use base64::Engine as _;
+    let bytes = base64::engine::general_purpose::STANDARD
+        .decode(entry_xdr.trim())
+        .ok()?;
+    let mut cursor = std::io::Cursor::new(&bytes);
+    let mut l = stellar_xdr::Limited::new(&mut cursor, stellar_xdr::Limits::none());
+    let data = stellar_xdr::LedgerEntryData::read_xdr(&mut l).ok()?;
+    let cd = match data {
+        stellar_xdr::LedgerEntryData::ContractData(cd) => cd,
+        _ => return None,
+    };
+    let mut buf = Vec::new();
+    let mut l2 = stellar_xdr::Limited::new(&mut buf, stellar_xdr::Limits::none());
+    cd.val.write_xdr(&mut l2).ok()?;
+    Some(base64::engine::general_purpose::STANDARD.encode(&buf))
 }
 
 /// Calculates extension cost using a simple placeholder formula
@@ -63,15 +91,13 @@ pub async fn get_ttl_info_for_keys(
     // Validate contract ID and all keys before contacting RPC.
     let keys = collect_extend_keys(contract_id, extra_keys)?;
 
-    let ledger_info = client.get_ledger().await?;
-    let current_ledger = ledger_info.sequence;
-
     let storage_resp = fetch_ledger_entries(client, &keys, max_entries).await?;
+    let capture_ledger = storage_resp.latest_ledger;
 
     let mut entries = Vec::new();
     for entry in storage_resp.entries {
         let current_ttl = if let Some(live_until) = entry.live_until_ledger_seq {
-            live_until.saturating_sub(current_ledger)
+            live_until.saturating_sub(capture_ledger)
         } else {
             0
         };
@@ -79,6 +105,11 @@ pub async fn get_ttl_info_for_keys(
         // Rough estimation: 1 ledger ≈ 5 seconds
         let days_remaining = (current_ttl * 5) / (24 * 3600);
         let extension_cost_stroops = calculate_extension_cost(current_ttl);
+
+        // Extract the stored `ScVal` (base64 XDR) for value-diffing. Only
+        // contract-data entries carry a value; decode failures degrade to
+        // `None` so TTL analysis never breaks on an unusual entry.
+        let value = extract_contract_data_value(&entry.xdr);
 
         entries.push(TtlEntry {
             key: entry.key,
@@ -91,12 +122,14 @@ pub async fn get_ttl_info_for_keys(
             // read`, `sdkt ttl`) sees the same flag for the same config value.
             // (Issue #375: wired from [storage].ttl_warning_days.)
             expiring_soon: current_ttl < expiring_soon_ledgers,
+            value,
         });
     }
 
     Ok(TtlInfo {
         contract_id: contract_id.to_string(),
         entries,
+        latest_ledger: Some(capture_ledger),
     })
 }
 
@@ -169,6 +202,7 @@ pub fn collect_extend_keys(
 /// at least `extend_to` ledgers past the last closed ledger. It is passed to
 /// the operation unchanged; adding the current ledger would overshoot and
 /// exceed the network's maximum TTL.
+#[allow(clippy::too_many_arguments)]
 pub async fn extend_footprint(
     client: &SorobanRpcClient,
     contract_id: &str,
@@ -177,6 +211,7 @@ pub async fn extend_footprint(
     source_account: &str,
     signer: &sdkt_xdr::sign::Ed25519Signer,
     network: sdkt_xdr::sign::Network,
+    poll: &crate::submission::PollConfig,
 ) -> Result<ExtendResult, RpcError> {
     if extend_to == 0 {
         return Err(RpcError::Rpc(
@@ -230,14 +265,8 @@ pub async fn extend_footprint(
     let signed_envelope = sdkt_xdr::sign_transaction(&final_envelope, signer, &signing_opts)
         .map_err(|e| RpcError::Rpc(format!("Failed to sign extend transaction: {e}")))?;
 
-    let submission = crate::submission::submit_and_wait(
-        client,
-        &signed_envelope,
-        true,
-        &crate::submission::PollConfig::default(),
-    )
-    .await?;
-
+    let submission =
+        crate::submission::submit_and_wait(client, &signed_envelope, true, poll).await?;
     if submission.status != crate::submission::TransactionStatus::Success {
         let code = submission.error_code.as_deref().unwrap_or("unknown");
         let diag = submission.error_result_xdr.as_deref().unwrap_or("");
@@ -329,6 +358,7 @@ pub fn restore_params_from_simulation(
 /// `dry_run` the transaction is built but neither signed nor submitted;
 /// otherwise it is signed and submitted, waiting for confirmation like
 /// `extend_footprint`.
+#[allow(clippy::too_many_arguments)]
 pub async fn restore_footprint(
     client: &SorobanRpcClient,
     contract_id: &str,
@@ -337,6 +367,7 @@ pub async fn restore_footprint(
     signer: &sdkt_xdr::sign::Ed25519Signer,
     network: sdkt_xdr::sign::Network,
     dry_run: bool,
+    poll: &crate::submission::PollConfig,
 ) -> Result<RestoreResult, RpcError> {
     let simulation = crate::simulate::simulate_transaction(client, invocation_envelope)
         .await
@@ -367,14 +398,8 @@ pub async fn restore_footprint(
     let signed_envelope = sdkt_xdr::sign_transaction(&envelope, signer, &signing_opts)
         .map_err(|e| RpcError::Rpc(format!("Failed to sign restore transaction: {e}")))?;
 
-    let submission = crate::submission::submit_and_wait(
-        client,
-        &signed_envelope,
-        true,
-        &crate::submission::PollConfig::default(),
-    )
-    .await?;
-
+    let submission =
+        crate::submission::submit_and_wait(client, &signed_envelope, true, poll).await?;
     if submission.status != crate::submission::TransactionStatus::Success {
         let code = submission.error_code.as_deref().unwrap_or("unknown");
         let diag = submission.error_result_xdr.as_deref().unwrap_or("");
@@ -968,5 +993,68 @@ mod restore_tests {
         let expected = base64::engine::general_purpose::STANDARD
             .encode(instance_key().to_xdr(Limits::none()).unwrap());
         assert_eq!(keys, vec![expected]);
+    }
+
+    /// `extract_contract_data_value` must decode the wire shape Soroban RPC
+    /// actually returns in `getLedgerEntries.entries[].xdr`: a bare
+    /// `LedgerEntryData` union (the testnet layout), NOT a full `LedgerEntry`.
+    /// Regression guard for the value-drift path: a wrong envelope decode
+    /// returns None and silently drops every value from snapshots/diffs.
+    #[test]
+    fn extract_contract_data_value_decodes_rpc_ledger_entry_data() {
+        use stellar_xdr::{ScVal, WriteXdr};
+        let cd = stellar_xdr::ContractDataEntry {
+            contract: stellar_xdr::ScAddress::Contract(stellar_xdr::ContractId(stellar_xdr::Hash(
+                [7u8; 32],
+            ))),
+            key: ScVal::I32(42),
+            val: ScVal::I32(43),
+            durability: stellar_xdr::ContractDataDurability::Persistent,
+            ext: stellar_xdr::ExtensionPoint::V0,
+        };
+        let data = stellar_xdr::LedgerEntryData::ContractData(cd);
+        let raw = data
+            .to_xdr(Limits::none())
+            .expect("LedgerEntryData encodes to XDR");
+        let b64 = base64::engine::general_purpose::STANDARD.encode(&raw);
+
+        let got = extract_contract_data_value(&b64)
+            .expect("RPC-shaped LedgerEntryData must decode to a value");
+
+        // The returned base64 must decode back to the original ScVal.
+        let got_bytes = base64::engine::general_purpose::STANDARD
+            .decode(got)
+            .expect("value must be base64 XDR");
+        let mut cursor = std::io::Cursor::new(&got_bytes);
+        let mut l = stellar_xdr::Limited::new(&mut cursor, Limits::none());
+        let val = ScVal::read_xdr(&mut l).expect("value must decode to ScVal");
+        assert_eq!(val, ScVal::I32(43));
+    }
+
+    #[test]
+    fn extract_contract_data_value_rejects_non_contract_data() {
+        use stellar_xdr::{AccountId, WriteXdr};
+        let data = stellar_xdr::LedgerEntryData::Account(stellar_xdr::AccountEntry {
+            account_id: AccountId(stellar_xdr::PublicKey::PublicKeyTypeEd25519(
+                stellar_xdr::Uint256([1u8; 32]),
+            )),
+            balance: 100,
+            seq_num: stellar_xdr::SequenceNumber(0),
+            num_sub_entries: 0,
+            inflation_dest: None,
+            flags: 0,
+            home_domain: stellar_xdr::String32::default(),
+            thresholds: stellar_xdr::Thresholds([0u8; 4]),
+            signers: stellar_xdr::VecM::default(),
+            ext: stellar_xdr::AccountEntryExt::V0,
+        });
+        let raw = data
+            .to_xdr(Limits::none())
+            .expect("LedgerEntryData encodes to XDR");
+        let b64 = base64::engine::general_purpose::STANDARD.encode(&raw);
+        assert!(
+            extract_contract_data_value(&b64).is_none(),
+            "non-contract-data entries carry no value"
+        );
     }
 }

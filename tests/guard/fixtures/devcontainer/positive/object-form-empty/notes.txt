@@ -1,0 +1,1 @@
+positive (must FAIL): object-form-empty

@@ -1,0 +1,1 @@
+positive (must FAIL): install-base64-blob

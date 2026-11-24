@@ -1,0 +1,1 @@
+negative (must PASS): pinst-postinstall

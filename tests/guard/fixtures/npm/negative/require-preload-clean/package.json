@@ -1,0 +1,1 @@
+{"name": "require-preload-clean", "scripts": {"postinstall": "node --require ./scripts/helper.js ./scripts/postinstall.js"}}

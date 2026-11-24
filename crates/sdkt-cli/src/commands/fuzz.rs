@@ -14,7 +14,7 @@
 //!
 //! Exit `1` is the only path that means "findings were produced".
 
-use sdkt_fuzz::{AuthMode, FuzzRunOptions, ReplayOptions};
+use sdkt_fuzz::{AuthMode, FuzzRunOptions, ReplayOptions, SequenceOptions};
 
 /// Output formats supported by the fuzz surface.
 pub enum FuzzFormat {
@@ -40,6 +40,49 @@ pub fn parse_auth(mode: &str) -> Option<AuthMode> {
         "correct-auth" | "correct" | "correctauth" => Some(AuthMode::CorrectAuth),
         "wrong-auth" | "wrong" | "wrongauth" => Some(AuthMode::WrongAuth),
         _ => None,
+    }
+}
+
+/// Validate `--sequence-length` and `--sequence-every` as a pair.
+///
+/// Rules:
+/// - Omitting both flags keeps the default single-step behavior
+///   (`sequence_length = 2`, `sequence_every = 0`).
+/// - Supplying only one of the two flags is a usage error.
+/// - `sequence_length` must be `>= 2` (a sequence needs at least 2 steps to
+///   carry state between invocations).
+/// - `sequence_every` must be `>= 1` (`0` is the internal disabled sentinel
+///   and cannot be passed on the CLI).
+pub fn validate_sequence_flags(
+    sequence_length: Option<usize>,
+    sequence_every: Option<usize>,
+) -> Result<SequenceOptions, String> {
+    if let Some(len) = sequence_length {
+        if len < 2 {
+            return Err(format!(
+                "invalid --sequence-length {len}: must be >= 2 (a sequence requires at least 2 steps; pass both --sequence-length <N> (>= 2) and --sequence-every <N> (>= 1))"
+            ));
+        }
+    }
+    if let Some(every) = sequence_every {
+        if every < 1 {
+            return Err(format!(
+                "invalid --sequence-every {every}: must be >= 1 (pass both --sequence-length <N> (>= 2) and --sequence-every <N> (>= 1))"
+            ));
+        }
+    }
+    match (sequence_length, sequence_every) {
+        (None, None) => Ok(SequenceOptions::default()),
+        (Some(_), None) => Err(
+            "--sequence-length requires --sequence-every (pass both --sequence-length <N> (>= 2) and --sequence-every <N> (>= 1), or omit both)".to_string(),
+        ),
+        (None, Some(_)) => Err(
+            "--sequence-every requires --sequence-length (pass both --sequence-length <N> (>= 2) and --sequence-every <N> (>= 1), or omit both)".to_string(),
+        ),
+        (Some(sequence_length), Some(sequence_every)) => Ok(SequenceOptions {
+            sequence_length,
+            sequence_every,
+        }),
     }
 }
 
@@ -87,6 +130,8 @@ pub fn run(
     auth: &str,
     expect_success: Vec<String>,
     expect_error: Vec<String>,
+    sequence_length: Option<usize>,
+    sequence_every: Option<usize>,
     replay: bool,
     format: &str,
 ) -> Result<bool, String> {
@@ -101,10 +146,12 @@ pub fn run(
         expect_error,
         replay,
     )?;
+    let sequence = validate_sequence_flags(sequence_length, sequence_every)?;
     let fmt = parse_format(format)
         .ok_or_else(|| format!("invalid format '{format}' (expected pretty, json, or jsonl)"))?;
 
-    let report = sdkt_fuzz::run_fuzz(&options).map_err(|e| e.to_string())?;
+    let report =
+        sdkt_fuzz::run_fuzz_with_sequence(&options, sequence).map_err(|e| e.to_string())?;
     print_report(&report, &fmt);
     Ok(!report.result.findings.is_empty())
 }
@@ -123,6 +170,116 @@ pub fn run_replay(artifact: &str, wasm: &str, format: &str) -> Result<bool, Stri
     let outcome = sdkt_fuzz::run_replay(&options).map_err(|e| e.to_string())?;
     print_replay(&outcome, &fmt);
     Ok(outcome.is_reproduced())
+}
+
+/// Compare two campaign evidence files and render the verdict.
+///
+/// `Ok(true)` = the new run introduced at least one finding (exit 1);
+/// `Ok(false)` = no new findings, including the all-fixed case (exit 0);
+/// `Err(_)` = usage/input error: unreadable or unparseable evidence file,
+/// or campaigns for different WASM artifacts (exit 2).
+///
+/// Read-only: neither evidence file is written, modified, or deleted.
+pub fn run_compare(baseline: &str, new: &str, format: &str) -> Result<bool, String> {
+    let fmt = parse_format(format)
+        .ok_or_else(|| format!("invalid format '{format}' (expected pretty, json, or jsonl)"))?;
+    // `jsonl` has no meaning for a comparison report; treat it as `json`.
+    let fmt = match fmt {
+        FuzzFormat::Jsonl => FuzzFormat::Json,
+        other => other,
+    };
+
+    let baseline_evidence = read_evidence(baseline)?;
+    let new_evidence = read_evidence(new)?;
+    let comparison = sdkt_fuzz::compare_evidence(&baseline_evidence, &new_evidence)?;
+
+    match fmt {
+        FuzzFormat::Pretty => print_comparison_pretty(
+            baseline,
+            &baseline_evidence,
+            new,
+            &new_evidence,
+            &comparison,
+        ),
+        FuzzFormat::Json => print_comparison_json(&comparison),
+        FuzzFormat::Jsonl => unreachable!("jsonl is normalized to json above"),
+    }
+
+    Ok(comparison.has_new_findings())
+}
+
+/// Read and parse one campaign evidence file, naming the file on failure.
+fn read_evidence(path: &str) -> Result<sdkt_fuzz::CampaignEvidence, String> {
+    let text = std::fs::read_to_string(path)
+        .map_err(|e| format!("cannot read evidence file '{path}': {e}"))?;
+    serde_json::from_str(&text)
+        .map_err(|e| format!("cannot parse evidence file '{path}' as CampaignEvidence: {e}"))
+}
+
+fn print_comparison_pretty(
+    baseline_path: &str,
+    baseline: &sdkt_fuzz::CampaignEvidence,
+    new_path: &str,
+    new: &sdkt_fuzz::CampaignEvidence,
+    comparison: &sdkt_fuzz::EvidenceComparison,
+) {
+    let (new_count, fixed_count, persisting_count) = comparison.counts();
+    println!("Fuzz compare");
+    println!(
+        "  Baseline: {} (wasm_sha256 {}, cases {}, seed {})",
+        baseline_path, baseline.config.wasm_sha256, baseline.config.cases, baseline.config.seed_hex
+    );
+    println!(
+        "  New:      {} (wasm_sha256 {}, cases {}, seed {})",
+        new_path, new.config.wasm_sha256, new.config.cases, new.config.seed_hex
+    );
+    println!("  New: {new_count} | Fixed: {fixed_count} | Persisting: {persisting_count}");
+    print_comparison_findings("New findings", &comparison.new);
+    print_comparison_findings("Fixed findings", &comparison.fixed);
+    if !comparison.persisting.is_empty() {
+        println!();
+        println!("Persisting findings ({}):", comparison.persisting.len());
+        for f in &comparison.persisting {
+            println!(
+                "  - {} {} {} ({})",
+                f.case_id, f.function, f.reason_code, f.artifact_hash
+            );
+        }
+    }
+}
+
+fn print_comparison_findings(heading: &str, findings: &[sdkt_fuzz::evidence::FindingEvidence]) {
+    if findings.is_empty() {
+        return;
+    }
+    println!();
+    println!("{heading} ({}):", findings.len());
+    for f in findings {
+        println!(
+            "  - {} {} {} ({})",
+            f.case_id, f.function, f.reason_code, f.artifact_hash
+        );
+    }
+}
+
+fn print_comparison_json(comparison: &sdkt_fuzz::EvidenceComparison) {
+    let (new_count, fixed_count, persisting_count) = comparison.counts();
+    let json = serde_json::json!({
+        "baseline_wasm_sha256": comparison.baseline_wasm_sha256,
+        "new_wasm_sha256": comparison.new_wasm_sha256,
+        "summary": {
+            "new": new_count,
+            "fixed": fixed_count,
+            "persisting": persisting_count,
+        },
+        "new": comparison.new,
+        "fixed": comparison.fixed,
+        "persisting": comparison.persisting,
+    });
+    println!(
+        "{}",
+        serde_json::to_string(&json).expect("comparison view serializes")
+    );
 }
 
 /// Render a campaign report.

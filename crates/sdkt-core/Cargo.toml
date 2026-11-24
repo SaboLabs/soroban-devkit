@@ -15,8 +15,8 @@ categories = ["development-tools", "network-programming"]
 
 [dependencies]
 serde = { version = "1.0", features = ["derive"] }
-stellar-strkey = "0.0.18"
-stellar-xdr = { version = "28.0.0", features = ["base64"] }
+stellar-strkey = "1.0.0"
+stellar-xdr = { version = "30.0.0", features = ["base64"] }
 thiserror = "2.0.19"
 toml = "1.1"
 sha2 = "0.11"

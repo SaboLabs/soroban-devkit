@@ -441,7 +441,13 @@ mod tests {
     const MAINNET: &str = "Public Global Stellar Network ; September 2015";
 
     fn profile(protocol: u32, complete: bool) -> NetworkProfile {
-        let n = if complete { 86 } else { 23 };
+        // A "complete" profile covers every cost type the pinned host knows;
+        // the count comes from the host, not a hardcoded table length.
+        let n = if complete {
+            crate::environment::host_cost_type_count()
+        } else {
+            23
+        };
         let params = CostParamsSnapshot {
             cpu: (0..n)
                 .map(|i| CostParamEntrySnapshot {

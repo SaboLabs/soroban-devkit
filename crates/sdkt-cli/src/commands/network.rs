@@ -34,6 +34,12 @@ pub(crate) enum NetworkAction {
         /// Optional human-readable description
         #[arg(short, long)]
         description: Option<String>,
+        /// Optional RPC timeout in seconds
+        #[arg(long, value_name = "SECONDS")]
+        timeout_secs: Option<u64>,
+        /// Optional maximum idle connections per host
+        #[arg(long, value_name = "COUNT")]
+        pool_max_idle_per_host: Option<usize>,
         /// Output format (pretty or json)
         #[arg(short, long, default_value = "pretty")]
         format: String,
@@ -93,6 +99,37 @@ pub(crate) enum NetworkAction {
         #[command(flatten)]
         net: NetworkArgs,
     },
+    /// Capture the live network configuration into a fuzz `NetworkProfile`
+    /// file (read-only: never signs, submits, or deploys).
+    ///
+    /// Resolves its target exactly like `diagnose` (explicit `--network`,
+    /// or `--rpc-url` / `--network-profile` / `.sdkt.toml` defaults),
+    /// fetches the live configuration with `capture_network_config`,
+    /// converts it with `profile_from_capture`, validates it, and writes
+    /// the profile as JSON to `--out` (default `network-profile.json`).
+    /// A partial capture is still written with status `INCOMPLETE` and
+    /// exit 0; an unreachable endpoint or RPC error fails with a non-zero
+    /// exit and writes no file.
+    Capture {
+        /// Network to capture (testnet | mainnet | futurenet)
+        #[arg(
+            short,
+            long,
+            value_name = "NETWORK",
+            conflicts_with = "rpc_url",
+            conflicts_with = "network_profile",
+            conflicts_with = "network_passphrase"
+        )]
+        network: Option<String>,
+        /// Output file for the captured profile JSON
+        #[arg(long, value_name = "FILE", default_value = "network-profile.json")]
+        out: String,
+        /// Output format (pretty or json)
+        #[arg(short, long, default_value = "pretty")]
+        format: String,
+        #[command(flatten)]
+        net: NetworkArgs,
+    },
 }
 
 /// Apply resolution precedence onto a base [`NetworkConfig`].
@@ -115,6 +152,12 @@ pub(crate) fn apply_profile_overrides(
     if let Some(p) = profile {
         cfg.rpc_url = p.rpc_url;
         cfg.passphrase = p.network_passphrase;
+        if p.timeout_secs.is_some() {
+            cfg.timeout_secs = p.timeout_secs;
+        }
+        if p.pool_max_idle_per_host.is_some() {
+            cfg.pool_max_idle_per_host = p.pool_max_idle_per_host;
+        }
     }
 
     if let Some(url) = rpc_url {
@@ -482,6 +525,92 @@ fn print_network_identity(outcome: &NetworkCheckOutcome) {
 }
 
 /// Handle `sdkt network <action>`: profile CRUD plus the reachability check.
+/// Convert a transport-level [`CapturedNetworkConfig`] into a fuzz
+/// [`NetworkProfile`] (pure: no I/O, no network).
+///
+/// Every captured value carries its observation ledger, so a parameter the
+/// RPC did not return stays unavailable in the profile — never a silent
+/// zero or default. `source_endpoint` is the RPC URL the capture came
+/// from; `captured_at_unix` is the capture time in Unix seconds.
+pub(crate) fn capture_to_profile(
+    captured: &sdkt_rpc::network_capture::CapturedNetworkConfig,
+    source_endpoint: &str,
+    captured_at_unix: u64,
+) -> sdkt_fuzz::network_profile::NetworkProfile {
+    use sdkt_fuzz::network_profile::CostParamEntrySnapshot;
+    use sdkt_fuzz::profile_bridge::{profile_from_capture, CaptureInput};
+
+    // A captured value is usable only with its observation ledger; fall
+    // back to the capture ledger when the entry carries none.
+    let pair_u64 = |c: &sdkt_rpc::network_capture::Captured<u64>| {
+        c.value
+            .map(|v| (v, c.observed_at_ledger.unwrap_or(captured.ledger_sequence)))
+    };
+    let pair_u32 = |c: &sdkt_rpc::network_capture::Captured<u32>| {
+        c.value
+            .map(|v| (v, c.observed_at_ledger.unwrap_or(captured.ledger_sequence)))
+    };
+    let pair_i64 = |c: &sdkt_rpc::network_capture::Captured<i64>| {
+        c.value
+            .map(|v| (v, c.observed_at_ledger.unwrap_or(captured.ledger_sequence)))
+    };
+
+    let to_snapshot =
+        |params: &[sdkt_rpc::network_capture::CapturedCostParam]| -> Vec<CostParamEntrySnapshot> {
+            params
+                .iter()
+                .map(|p| CostParamEntrySnapshot {
+                    cost_type: p.cost_type.clone(),
+                    index: p.index,
+                    const_term: p.const_term,
+                    linear_term: p.linear_term,
+                })
+                .collect()
+        };
+    let (cpu_cost_params, mem_cost_params, cost_params_observed_at) =
+        match &captured.cost_params.value {
+            Some(tables) => (
+                Some(to_snapshot(&tables.cpu)),
+                Some(to_snapshot(&tables.mem)),
+                captured.cost_params.observed_at_ledger,
+            ),
+            None => (None, None, None),
+        };
+
+    profile_from_capture(CaptureInput {
+        passphrase: captured.passphrase.clone(),
+        protocol_version: captured.protocol_version,
+        ledger_sequence: captured.ledger_sequence,
+        source_endpoint: source_endpoint.to_string(),
+        captured_at_unix,
+        cpu_limit: pair_u64(&captured.cpu_limit),
+        mem_limit: pair_u64(&captured.mem_limit),
+        ledger_max_instructions: pair_u64(&captured.ledger_max_instructions),
+        fee_rate_per_instructions_increment: pair_u64(
+            &captured.fee_rate_per_instructions_increment,
+        ),
+        max_contract_size_bytes: pair_u32(&captured.max_contract_size_bytes),
+        tx_max_size_bytes: pair_u32(&captured.tx_max_size_bytes),
+        tx_max_contract_events_size_bytes: pair_u32(&captured.tx_max_contract_events_size_bytes),
+        fee_contract_events_1kb: pair_i64(&captured.fee_contract_events_1kb),
+        cpu_cost_params,
+        mem_cost_params,
+        cost_params_observed_at,
+    })
+}
+
+/// Write a captured profile as pretty JSON. The caller decides when a
+/// write may happen: only after a successful capture and validation, so
+/// a failed capture never leaves a partial file behind.
+pub(crate) fn write_captured_profile(
+    profile: &sdkt_fuzz::network_profile::NetworkProfile,
+    out: &str,
+) -> Result<(), String> {
+    let json = serde_json::to_string_pretty(profile)
+        .map_err(|e| format!("cannot serialize captured profile: {e}"))?;
+    std::fs::write(out, json).map_err(|e| format!("cannot write profile file '{out}': {e}"))
+}
+
 pub(crate) async fn run_network_action(
     action: crate::NetworkAction,
 ) -> Result<(), Box<dyn std::error::Error>> {
@@ -493,6 +622,8 @@ pub(crate) async fn run_network_action(
             passphrase,
             friendbot,
             description,
+            timeout_secs,
+            pool_max_idle_per_host,
             format,
         } => {
             let fmt = crate::parse_format_str(&format);
@@ -502,6 +633,12 @@ pub(crate) async fn run_network_action(
             }
             if let Some(desc) = description {
                 profile = profile.with_description(desc);
+            }
+            if let Some(timeout) = timeout_secs {
+                profile = profile.with_timeout_secs(timeout);
+            }
+            if let Some(max_idle) = pool_max_idle_per_host {
+                profile = profile.with_pool_max_idle_per_host(max_idle);
             }
             store.add(profile)?;
             if fmt == OutputFormat::Json {
@@ -533,6 +670,12 @@ pub(crate) async fn run_network_action(
                 println!("Network profile: {}", profile.name);
                 println!("  RPC URL:         {}", profile.rpc_url);
                 println!("  Passphrase:      {}", profile.network_passphrase);
+                if let Some(timeout) = profile.timeout_secs {
+                    println!("  Timeout:         {} seconds", timeout);
+                }
+                if let Some(max_idle) = profile.pool_max_idle_per_host {
+                    println!("  Pool max idle:   {}", max_idle);
+                }
                 if let Some(url) = &profile.friendbot_url {
                     println!("  Friendbot URL:   {}", url);
                 }
@@ -620,6 +763,68 @@ pub(crate) async fn run_network_action(
             let fmt = crate::parse_format_str(&format);
             crate::commands::diagnostics::run_network_diagnose(network, &net, &fmt).await?;
         }
+        crate::NetworkAction::Capture {
+            network,
+            out,
+            format,
+            net,
+        } => {
+            let fmt = crate::parse_format_str(&format);
+            let target = match resolve_target_network(network.as_deref(), &net) {
+                Ok(t) => t,
+                Err(e) => {
+                    eprintln!("Error: {e}");
+                    process::exit(1);
+                }
+            };
+            // Read-only capture: fetches live configuration, never signs,
+            // submits, or deploys. Any failure exits non-zero with no file.
+            let captured =
+                match sdkt_rpc::network_capture::capture_network_config(&target.client).await {
+                    Ok(c) => c,
+                    Err(e) => {
+                        eprintln!("Error: {e}");
+                        process::exit(1);
+                    }
+                };
+            let captured_at_unix = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_secs())
+                .unwrap_or(0);
+            let profile = capture_to_profile(&captured, &target.config.rpc_url, captured_at_unix);
+            if let Err(e) = profile.validate(Some(profile.ledger_sequence)) {
+                eprintln!("Error: captured profile failed validation: {e}");
+                process::exit(1);
+            }
+            if let Err(e) = write_captured_profile(&profile, &out) {
+                eprintln!("Error: {e}");
+                process::exit(1);
+            }
+            let status = profile.status();
+            let unavailable = captured.unavailable_params();
+            if fmt == OutputFormat::Json {
+                let json = serde_json::json!({
+                    "out": out,
+                    "network": target.network_name,
+                    "rpc_url": target.config.rpc_url,
+                    "protocol_version": profile.protocol_version,
+                    "ledger_sequence": profile.ledger_sequence,
+                    "status": status.as_str(),
+                    "unavailable_params": unavailable,
+                });
+                println!("{}", serde_json::to_string(&json)?);
+            } else {
+                println!("Network profile captured to '{out}'.");
+                println!("  Network:          {}", target.network_name);
+                println!("  RPC URL:          {}", target.config.rpc_url);
+                println!("  Protocol version: {}", profile.protocol_version);
+                println!("  Ledger sequence:  {}", profile.ledger_sequence);
+                println!("  Status:           {}", status.as_str());
+                if !unavailable.is_empty() {
+                    println!("  Unavailable parameters: {}", unavailable.join(", "));
+                }
+            }
+        }
     }
 
     Ok(())
@@ -655,6 +860,16 @@ mod tests {
         let cfg = apply_profile_overrides(base_testnet(), Some(p), None, None);
         assert_eq!(cfg.rpc_url, "http://127.0.0.1:8000");
         assert_eq!(cfg.passphrase, "Standalone");
+    }
+
+    #[test]
+    fn profile_connection_policy_overrides_base_policy() {
+        let p = profile("slow", "http://127.0.0.1:8000", "Standalone")
+            .with_timeout_secs(60)
+            .with_pool_max_idle_per_host(20);
+        let cfg = apply_profile_overrides(base_testnet(), Some(p), None, None);
+        assert_eq!(cfg.timeout_secs, Some(60));
+        assert_eq!(cfg.pool_max_idle_per_host, Some(20));
     }
 
     #[test]
@@ -813,5 +1028,94 @@ mod tests {
         let target = resolve_target_network(None, &net_custom).unwrap();
         assert_eq!(target.network_name, "custom");
         assert_eq!(target.config.rpc_url, "http://127.0.0.1:8000");
+    }
+
+    // -----------------------------------------------------------------------
+    // Issue #507: `sdkt network capture` — fixture-based conversion tests.
+    // The fixture is a recorded CapturedNetworkConfig JSON; no live network.
+    // -----------------------------------------------------------------------
+
+    fn capture_fixture() -> sdkt_rpc::network_capture::CapturedNetworkConfig {
+        let path = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("tests/fixtures/captured-network-config.json");
+        let text = std::fs::read_to_string(&path).expect("read capture fixture");
+        serde_json::from_str(&text).expect("parse capture fixture")
+    }
+
+    #[test]
+    fn capture_fixture_converts_to_complete_valid_profile() {
+        use sdkt_fuzz::network_profile::ProfileStatus;
+
+        let captured = capture_fixture();
+        assert!(captured.unavailable_params().is_empty());
+        let profile = capture_to_profile(
+            &captured,
+            "https://soroban-testnet.stellar.org",
+            1_791_518_867,
+        );
+        assert_eq!(profile.status(), ProfileStatus::Complete);
+        assert!(profile.has_complete_configuration());
+        profile
+            .validate(Some(profile.ledger_sequence))
+            .expect("complete profile validates");
+        assert_eq!(profile.protocol_version, 30);
+        assert_eq!(profile.ledger_sequence, 12_345_678);
+        assert_eq!(profile.config.cpu_limit.value, Some(400_000_000));
+        assert_eq!(profile.config.mem_limit.value, Some(41_943_040));
+        assert_eq!(
+            profile.source_endpoint,
+            "https://soroban-testnet.stellar.org"
+        );
+        // No parameter was silently substituted: every captured value kept
+        // its observation ledger.
+        assert_eq!(
+            profile.config.cpu_limit.provenance.observed_at_ledger,
+            Some(12_345_600)
+        );
+    }
+
+    #[test]
+    fn capture_fixture_incomplete_is_incomplete_but_validates() {
+        use sdkt_fuzz::network_profile::ProfileStatus;
+        use sdkt_rpc::network_capture::Captured;
+
+        let mut captured = capture_fixture();
+        captured.cpu_limit = Captured::unavailable();
+        captured.cost_params = Captured::unavailable();
+        assert!(!captured.unavailable_params().is_empty());
+
+        let profile = capture_to_profile(
+            &captured,
+            "https://soroban-testnet.stellar.org",
+            1_791_518_867,
+        );
+        assert_eq!(profile.status(), ProfileStatus::Incomplete);
+        assert!(!profile.has_complete_configuration());
+        assert_eq!(profile.config.cpu_limit.value, None);
+        assert_eq!(profile.config.cost_params.value, None);
+        // An incomplete capture still validates (validation is structural,
+        // not completeness); the CLI writes it and exits 0.
+        profile
+            .validate(Some(profile.ledger_sequence))
+            .expect("incomplete profile validates");
+    }
+
+    #[test]
+    fn write_captured_profile_roundtrips() {
+        let captured = capture_fixture();
+        let profile = capture_to_profile(
+            &captured,
+            "https://soroban-testnet.stellar.org",
+            1_791_518_867,
+        );
+        let dir = tempfile::tempdir().unwrap();
+        let out = dir.path().join("network-profile.json");
+        write_captured_profile(&profile, out.to_str().unwrap()).unwrap();
+
+        let text = std::fs::read_to_string(&out).unwrap();
+        let back: sdkt_fuzz::network_profile::NetworkProfile = serde_json::from_str(&text).unwrap();
+        assert_eq!(back, profile);
+        back.validate(Some(back.ledger_sequence))
+            .expect("written file validates");
     }
 }

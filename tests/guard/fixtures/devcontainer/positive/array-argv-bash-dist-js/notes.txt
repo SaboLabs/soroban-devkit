@@ -1,0 +1,1 @@
+positive (must FAIL): array-argv-bash-dist-js

@@ -1,0 +1,6 @@
+{
+  "postCreateCommand": {
+    "command": "cargo build",
+    "setup": "npm ci"
+  }
+}

@@ -6,6 +6,7 @@
 use crate::error::StorageError;
 use directories::ProjectDirs;
 use sdkt_wasm::WasmMetadata;
+use std::collections::BTreeMap;
 use std::fs;
 use std::path::{Component, Path, PathBuf};
 
@@ -16,6 +17,29 @@ pub struct CacheInfo {
     pub entry_count: usize,
     pub total_metadata_size_bytes: u64,
     pub total_wasm_size_bytes: u64,
+}
+
+/// One enumerated entry of the WASM cache for a specific network.
+///
+/// `{hash}.json` and `{hash}.wasm` pair by filename stem; a missing half
+/// reports `None` for its size (rendered "unknown" by the CLI) instead of
+/// failing the enumeration.
+#[derive(Debug, Clone, PartialEq)]
+pub struct CacheEntryInfo {
+    pub network: String,
+    /// Filename stem: the hash/key the entry is addressed by (the same
+    /// value `remove` takes).
+    pub hash: String,
+    /// Size of the cached `{hash}.wasm` file in bytes, `None` when the
+    /// binary half of the pair is absent.
+    pub wasm_size_bytes: Option<u64>,
+    /// Size of the cached `{hash}.json` metadata file in bytes, `None`
+    /// when the metadata half of the pair is absent.
+    pub metadata_size_bytes: Option<u64>,
+    /// Diagnostic for this entry (e.g. malformed metadata). Never fatal:
+    /// the listing still completes, matching how WASM metadata reads treat
+    /// cache errors as warnings.
+    pub warning: Option<String>,
 }
 
 /// A local file-system cache for Soroban WASM metadata and binaries.
@@ -225,6 +249,84 @@ impl WasmCache {
             total_wasm_size_bytes,
         })
     }
+
+    /// Enumerates every cached entry for `network`, sorted by hash.
+    ///
+    /// Pairs `{hash}.json` with `{hash}.wasm` by filename stem and reports
+    /// sizes from the filesystem; a half-pair reports `None` for the
+    /// missing size instead of failing. Like [`Self::cache_info`], a
+    /// missing or unreadable cache directory is an empty result, not an
+    /// error (fresh CI runners). A malformed or unreadable `{hash}.json`
+    /// produces a per-entry `warning` while the listing still completes.
+    pub fn list_entries(&self, network: &str) -> Result<Vec<CacheEntryInfo>, StorageError> {
+        validate_network_name(network)?;
+        let net_dir = self.base_dir.join("wasm").join(network);
+
+        // Collect pair halves keyed by filename stem. Temporary `.tmp`
+        // files from interrupted writes match neither suffix and are
+        // ignored, as are directories and unreadable directory entries.
+        let mut pairs: BTreeMap<String, (Option<u64>, Option<u64>)> = BTreeMap::new();
+
+        // A missing or unreadable directory is an empty cache, not an
+        // error — same contract as `cache_info`.
+        if let Ok(dir) = fs::read_dir(&net_dir) {
+            for entry in dir {
+                let entry = match entry {
+                    Ok(e) => e,
+                    Err(_) => continue,
+                };
+                let meta = match entry.metadata() {
+                    Ok(m) if m.is_file() => m,
+                    _ => continue,
+                };
+                let name = entry.file_name().to_string_lossy().to_string();
+                let (stem, is_json) = if let Some(stem) = name.strip_suffix(".json") {
+                    (stem, true)
+                } else if let Some(stem) = name.strip_suffix(".wasm") {
+                    (stem, false)
+                } else {
+                    continue;
+                };
+                if stem.is_empty() {
+                    continue;
+                }
+                let slot = pairs.entry(stem.to_string()).or_insert((None, None));
+                if is_json {
+                    slot.0 = Some(meta.len());
+                } else {
+                    slot.1 = Some(meta.len());
+                }
+            }
+        }
+
+        // BTreeMap iteration is stem-sorted, so the ordering is
+        // deterministic regardless of directory iteration order.
+        let mut entries = Vec::with_capacity(pairs.len());
+        for (hash, (metadata_size_bytes, wasm_size_bytes)) in pairs {
+            // Validate this entry's metadata; a malformed file is a
+            // warning on that entry only, never a listing failure.
+            let warning = if metadata_size_bytes.is_some() {
+                match fs::read_to_string(net_dir.join(format!("{}.json", hash))) {
+                    Ok(json) => serde_json::from_str::<WasmMetadata>(&json)
+                        .err()
+                        .map(|e| format!("malformed metadata: {}", e)),
+                    Err(e) => Some(format!("unreadable metadata: {}", e)),
+                }
+            } else {
+                None
+            };
+
+            entries.push(CacheEntryInfo {
+                network: network.to_string(),
+                hash,
+                wasm_size_bytes,
+                metadata_size_bytes,
+                warning,
+            });
+        }
+
+        Ok(entries)
+    }
 }
 
 fn validate_network_name(network: &str) -> Result<(), StorageError> {
@@ -272,6 +374,7 @@ mod tests {
             table_count: 0,
             global_count: 0,
             data_segment_count: 0,
+            section_sizes: vec![],
         }
     }
 
@@ -376,6 +479,119 @@ mod tests {
         let (cache, _dir) = get_temp_cache();
         let info = cache.cache_info("nonexistent-network").unwrap();
         assert_eq!(info.entry_count, 0);
+    }
+
+    #[test]
+    fn test_list_entries_lists_every_entry_with_sizes() {
+        let (cache, _dir) = get_temp_cache();
+        cache
+            .put("testnet", &dummy_metadata("551c5a9c"), b"12345")
+            .unwrap();
+        cache
+            .put("testnet", &dummy_metadata("661c5a9c"), b"")
+            .unwrap();
+
+        let entries = cache.list_entries("testnet").unwrap();
+        assert_eq!(entries.len(), 2);
+        let first = &entries[0];
+        assert_eq!(first.hash, "551c5a9c");
+        assert_eq!(first.wasm_size_bytes, Some(5));
+        assert!(first.metadata_size_bytes.unwrap() > 0);
+        assert!(first.warning.is_none());
+
+        let second = &entries[1];
+        assert_eq!(second.hash, "661c5a9c");
+        assert_eq!(second.wasm_size_bytes, Some(0));
+        assert!(second.warning.is_none());
+    }
+
+    #[test]
+    fn test_list_entries_deterministic_order_and_network_isolation() {
+        let (cache, _dir) = get_temp_cache();
+        // Inserted out of lexicographic order across two networks.
+        cache.put("testnet", &dummy_metadata("bbb"), b"").unwrap();
+        cache.put("testnet", &dummy_metadata("aaa"), b"").unwrap();
+        cache.put("mainnet", &dummy_metadata("zzz"), b"").unwrap();
+
+        let entries = cache.list_entries("testnet").unwrap();
+        let hashes: Vec<&str> = entries.iter().map(|e| e.hash.as_str()).collect();
+        assert_eq!(hashes, ["aaa", "bbb"]);
+
+        let mainnet = cache.list_entries("mainnet").unwrap();
+        assert_eq!(mainnet.len(), 1);
+        assert_eq!(mainnet[0].hash, "zzz");
+    }
+
+    #[test]
+    fn test_list_entries_half_pair_reports_unknown_side() {
+        let (cache, dir) = get_temp_cache();
+        let net_dir = cache.network_dir("testnet").unwrap();
+
+        // Binary only: no metadata, so no warning can be produced.
+        std::fs::write(net_dir.join("onlywasm.wasm"), b"wasm-bytes").unwrap();
+        // Metadata only: valid JSON, so the entry is clean.
+        let meta_json = serde_json::to_string(&dummy_metadata("onlymeta")).unwrap();
+        std::fs::write(net_dir.join("onlymeta.json"), meta_json).unwrap();
+
+        let entries = cache.list_entries("testnet").unwrap();
+        assert_eq!(entries.len(), 2);
+
+        let only_wasm = entries.iter().find(|e| e.hash == "onlywasm").unwrap();
+        assert_eq!(only_wasm.wasm_size_bytes, Some(10));
+        assert_eq!(only_wasm.metadata_size_bytes, None);
+        assert!(only_wasm.warning.is_none());
+
+        let only_meta = entries.iter().find(|e| e.hash == "onlymeta").unwrap();
+        assert_eq!(only_meta.wasm_size_bytes, None);
+        assert!(only_meta.metadata_size_bytes.is_some());
+        assert!(only_meta.warning.is_none());
+
+        // The temp dir keeps the network dir alive for the closure-free reads.
+        drop(dir);
+    }
+
+    #[test]
+    fn test_list_entries_malformed_metadata_warns_but_listing_completes() {
+        let (cache, dir) = get_temp_cache();
+        let net_dir = cache.network_dir("testnet").unwrap();
+        std::fs::write(net_dir.join("corrupt.json"), b"{ invalid_json").unwrap();
+        std::fs::write(net_dir.join("corrupt.wasm"), b"abc").unwrap();
+
+        let entries = cache.list_entries("testnet").unwrap();
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].hash, "corrupt");
+        assert_eq!(entries[0].wasm_size_bytes, Some(3));
+        let warning = entries[0].warning.as_deref().expect("warning expected");
+        assert!(warning.contains("malformed metadata"), "got: {warning}");
+        drop(dir);
+    }
+
+    #[test]
+    fn test_list_entries_empty_and_missing_cache_dirs() {
+        let (cache, _dir) = get_temp_cache();
+
+        // Network subdir never created.
+        let entries = cache.list_entries("nonexistent-network").unwrap();
+        assert!(entries.is_empty());
+
+        // Entire base dir absent (fresh runner).
+        let tmp = TempDir::new().unwrap();
+        let fresh = WasmCache::with_dir(tmp.path().join("does-not-exist-yet"));
+        assert!(fresh.list_entries("testnet").unwrap().is_empty());
+    }
+
+    #[test]
+    fn test_list_entries_ignores_temp_files_and_directories() {
+        let (cache, _dir) = get_temp_cache();
+        let net_dir = cache.network_dir("testnet").unwrap();
+        // Leftovers from an interrupted atomic put.
+        std::fs::write(net_dir.join("abc123.json.tmp"), b"{}").unwrap();
+        std::fs::write(net_dir.join("abc123.wasm.tmp"), b"abc").unwrap();
+        // A stray subdirectory must not become an entry.
+        std::fs::create_dir_all(net_dir.join("subdir.json")).unwrap();
+
+        let entries = cache.list_entries("testnet").unwrap();
+        assert!(entries.is_empty(), "got: {entries:?}");
     }
 
     #[test]
