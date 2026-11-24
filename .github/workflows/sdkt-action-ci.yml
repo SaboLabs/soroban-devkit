@@ -1,3 +1,4 @@
+---
 name: sdkt Action CI
 
 # Validates the reusable composite Action (.github/actions/sdkt/action.yml)
@@ -222,6 +223,48 @@ jobs:
           fi
           echo "OK: a CLI error with no JSON report still failed the step."
 
+      # Input-conflict guard: supplying both old-wasm and old-contract must be
+      # rejected before any sdkt invocation runs.
+      - name: Upgrade-safety should FAIL when both old-wasm and old-contract are set
+        id: us_both_baselines
+        continue-on-error: true
+        uses: ./.github/actions/sdkt
+        with:
+          command: upgrade-safety
+          old-wasm: crates/sdkt-cli/tests/fixtures/us_old.wasm
+          old-contract: CCJUD55AG6W5HAI5LRVNKAE5WDP5XGZBUDS5WNTIVDU7O264UZZE7BRD
+          network: testnet
+          new-wasm: crates/sdkt-cli/tests/fixtures/us_old.wasm
+
+      - name: Assert conflicting baseline inputs were rejected
+        shell: bash
+        run: |
+          if [ "${{ steps.us_both_baselines.outcome }}" != "failure" ]; then
+            echo "::error::expected upgrade-safety to FAIL when both old-wasm and old-contract are set, but outcome was '${{ steps.us_both_baselines.outcome }}'"
+            exit 1
+          fi
+          echo "OK: conflicting baseline inputs were rejected before any sdkt invocation."
+
+      # Network-missing guard: old-contract without network must be rejected
+      # before any sdkt invocation runs.
+      - name: Upgrade-safety should FAIL when old-contract is set but network is missing
+        id: us_missing_network
+        continue-on-error: true
+        uses: ./.github/actions/sdkt
+        with:
+          command: upgrade-safety
+          old-contract: CCJUD55AG6W5HAI5LRVNKAE5WDP5XGZBUDS5WNTIVDU7O264UZZE7BRD
+          new-wasm: crates/sdkt-cli/tests/fixtures/us_old.wasm
+
+      - name: Assert missing network was rejected
+        shell: bash
+        run: |
+          if [ "${{ steps.us_missing_network.outcome }}" != "failure" ]; then
+            echo "::error::expected upgrade-safety to FAIL when old-contract is set without network, but outcome was '${{ steps.us_missing_network.outcome }}'"
+            exit 1
+          fi
+          echo "OK: old-contract without network was rejected before any sdkt invocation."
+
   validate-health:
     runs-on: ubuntu-latest
     steps:
@@ -407,3 +450,120 @@ jobs:
             exit 1
           fi
           echo "OK: nonexistent contract ID failed cleanly with CLI not-found diagnostic and no jq parse error."
+
+  # ── Live-baseline upgrade-safety (new job) ─────────────────────────────────
+  # Exercises command=upgrade-safety with old-contract (live deployed baseline)
+  # against testnet. The contract used is:
+  #   CCJUD55AG6W5HAI5LRVNKAE5WDP5XGZBUDS5WNTIVDU7O264UZZE7BRD (testnet)
+  # Candidate WASMs:
+  #   compatible   — us_old.wasm (same interface as deployed → compatible: true)
+  #   breaking     — us_new.wasm (removed function → compatible: false)
+  validate-upgrade-safety-live:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      # ── Guard: old-wasm + old-contract together must be rejected ────────────
+      - name: Upgrade-safety should FAIL when both old-wasm and old-contract are set
+        id: us_live_both
+        continue-on-error: true
+        uses: ./.github/actions/sdkt
+        with:
+          command: upgrade-safety
+          old-wasm: crates/sdkt-cli/tests/fixtures/us_old.wasm
+          old-contract: CCJUD55AG6W5HAI5LRVNKAE5WDP5XGZBUDS5WNTIVDU7O264UZZE7BRD
+          network: testnet
+          new-wasm: crates/sdkt-cli/tests/fixtures/us_old.wasm
+
+      - name: Assert conflicting baseline inputs were rejected before sdkt invocation
+        shell: bash
+        run: |
+          if [ "${{ steps.us_live_both.outcome }}" != "failure" ]; then
+            echo "::error::expected upgrade-safety to FAIL when both old-wasm and old-contract are set, but outcome was '${{ steps.us_live_both.outcome }}'"
+            exit 1
+          fi
+          echo "OK: old-wasm + old-contract conflict was rejected before any sdkt invocation."
+
+      # ── Guard: old-contract without network must be rejected ────────────────
+      - name: Upgrade-safety should FAIL when old-contract is set but network is omitted
+        id: us_live_no_network
+        continue-on-error: true
+        uses: ./.github/actions/sdkt
+        with:
+          command: upgrade-safety
+          old-contract: CCJUD55AG6W5HAI5LRVNKAE5WDP5XGZBUDS5WNTIVDU7O264UZZE7BRD
+          new-wasm: crates/sdkt-cli/tests/fixtures/us_old.wasm
+
+      - name: Assert missing network was rejected before sdkt invocation
+        shell: bash
+        run: |
+          if [ "${{ steps.us_live_no_network.outcome }}" != "failure" ]; then
+            echo "::error::expected upgrade-safety to FAIL when old-contract is given without network, but outcome was '${{ steps.us_live_no_network.outcome }}'"
+            exit 1
+          fi
+          echo "OK: old-contract without network was rejected before any sdkt invocation."
+
+      # ── Happy path: compatible candidate passes against the live baseline ───
+      # us_old.wasm has the same public interface as the deployed contract, so
+      # sdkt verify --upgrade-safety must report compatible: true and the step
+      # must pass.
+      - name: Upgrade-safety should PASS — compatible candidate against live testnet baseline
+        id: us_live_compatible
+        uses: ./.github/actions/sdkt
+        with:
+          command: upgrade-safety
+          old-contract: CCJUD55AG6W5HAI5LRVNKAE5WDP5XGZBUDS5WNTIVDU7O264UZZE7BRD
+          network: testnet
+          new-wasm: crates/sdkt-cli/tests/fixtures/us_old.wasm
+
+      - name: Assert compatible candidate passed the live-baseline gate
+        shell: bash
+        run: |
+          if [ "${{ steps.us_live_compatible.outcome }}" != "success" ]; then
+            echo "::error::expected upgrade-safety to PASS for a compatible candidate against the live baseline, but outcome was '${{ steps.us_live_compatible.outcome }}'"
+            exit 1
+          fi
+          echo "OK: compatible candidate passed the live-baseline upgrade-safety gate."
+
+      # ── Failing path: breaking candidate fails against the live baseline ────
+      # us_new.wasm removes a function present in the deployed contract, so
+      # sdkt verify --upgrade-safety must report compatible: false and the step
+      # must fail.
+      - name: Upgrade-safety should FAIL — breaking candidate against live testnet baseline
+        id: us_live_breaking
+        continue-on-error: true
+        uses: ./.github/actions/sdkt
+        with:
+          command: upgrade-safety
+          old-contract: CCJUD55AG6W5HAI5LRVNKAE5WDP5XGZBUDS5WNTIVDU7O264UZZE7BRD
+          network: testnet
+          new-wasm: crates/sdkt-cli/tests/fixtures/us_new.wasm
+
+      - name: Assert breaking candidate failed the live-baseline gate
+        shell: bash
+        run: |
+          if [ "${{ steps.us_live_breaking.outcome }}" != "failure" ]; then
+            echo "::error::expected upgrade-safety to FAIL for a breaking candidate against the live baseline, but outcome was '${{ steps.us_live_breaking.outcome }}'"
+            exit 1
+          fi
+          echo "OK: breaking candidate correctly failed the live-baseline upgrade-safety gate."
+
+      # ── Unknown contract: sdkt verify fails cleanly, no jq parse error ──────
+      - name: Upgrade-safety should FAIL on a nonexistent old-contract ID
+        id: us_live_unknown_contract
+        continue-on-error: true
+        uses: ./.github/actions/sdkt
+        with:
+          command: upgrade-safety
+          old-contract: CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAD2KM
+          network: testnet
+          new-wasm: crates/sdkt-cli/tests/fixtures/us_old.wasm
+
+      - name: Assert nonexistent old-contract failed with a clear CLI error
+        shell: bash
+        run: |
+          if [ "${{ steps.us_live_unknown_contract.outcome }}" != "failure" ]; then
+            echo "::error::expected upgrade-safety to FAIL on a nonexistent old-contract, but outcome was '${{ steps.us_live_unknown_contract.outcome }}'"
+            exit 1
+          fi
+          echo "OK: nonexistent old-contract failed with a CLI error (not a jq parse error)."
