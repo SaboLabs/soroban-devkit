@@ -1,0 +1,569 @@
+---
+name: sdkt Action CI
+
+# Validates the reusable composite Action (.github/actions/sdkt/action.yml)
+# against the committed WASM fixtures. This is packaging validation only —
+# no Rust is rebuilt; it installs the pinned sdkt binary and runs the Action.
+
+on:
+  push:
+    branches: [ "feat/*" ]
+  pull_request:
+    branches: [ "main" ]
+
+jobs:
+  validate-action:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      # Audit gate - POSITIVE: audit_critical.rs has an unguarded privileged
+      # state write, which AUTH-001 reports as a critical finding. The default
+      # severity-threshold (critical) is forwarded to the CLI as --fail-on, so
+      # this step MUST fail.
+      - name: Audit should FAIL on a critical finding
+        id: audit_critical
+        continue-on-error: true
+        uses: ./.github/actions/sdkt
+        with:
+          command: audit
+          target: crates/sdkt-cli/tests/fixtures/audit_critical.rs
+
+      - name: Assert critical finding failed the audit gate
+        shell: bash
+        run: |
+          if [ "${{ steps.audit_critical.outcome }}" != "failure" ]; then
+            echo "::error::expected audit to FAIL on a critical finding, but outcome was '${{ steps.audit_critical.outcome }}' - the Action may not be forwarding severity-threshold as --fail-on"
+            exit 1
+          fi
+          echo "OK: a critical finding failed the audit gate."
+
+      # Audit gate - NEGATIVE: audit_clean.rs has no findings, so the same
+      # default threshold MUST pass.
+      - name: Audit should PASS on a clean contract
+        id: audit_clean
+        uses: ./.github/actions/sdkt
+        with:
+          command: audit
+          target: crates/sdkt-cli/tests/fixtures/audit_clean.rs
+
+      - name: Assert clean audit passed
+        shell: bash
+        run: |
+          if [ "${{ steps.audit_clean.outcome }}" != "success" ]; then
+            echo "::error::expected audit to PASS on a clean contract, but outcome was '${{ steps.audit_clean.outcome }}'"
+            exit 1
+          fi
+          echo "OK: a clean audit passed the gate."
+
+      # Audit gate - INVALID LEVEL: the CLI rejects an unknown --fail-on level
+      # as a usage error (exit 2) before any analysis runs. The step MUST fail
+      # rather than treat the threshold as a no-op.
+      - name: Audit should FAIL on an invalid severity threshold
+        id: audit_bad_threshold
+        continue-on-error: true
+        uses: ./.github/actions/sdkt
+        with:
+          command: audit
+          target: crates/sdkt-cli/tests/fixtures/audit_clean.rs
+          severity-threshold: bogus
+
+      - name: Assert invalid severity threshold was rejected
+        shell: bash
+        run: |
+          if [ "${{ steps.audit_bad_threshold.outcome }}" != "failure" ]; then
+            echo "::error::expected audit to FAIL on an invalid severity-threshold, but outcome was '${{ steps.audit_bad_threshold.outcome }}'"
+            exit 1
+          fi
+          echo "OK: an invalid severity-threshold was rejected."
+
+      # Breaking upgrade: us_old.wasm -> us_new.wasm is NOT backwards-compatible.
+      # The upgrade-safety mode MUST fail this step.
+      - name: Upgrade-safety should FAIL on breaking change
+        id: breaking
+        continue-on-error: true
+        uses: ./.github/actions/sdkt
+        with:
+          command: upgrade-safety
+          sdkt-version: v2.7.0
+          old-wasm: crates/sdkt-cli/tests/fixtures/us_old.wasm
+          new-wasm: crates/sdkt-cli/tests/fixtures/us_new.wasm
+
+      - name: Assert breaking upgrade was detected (step failed as expected)
+        shell: bash
+        run: |
+          if [ "${{ steps.breaking.outcome }}" != "failure" ]; then
+            echo "::error::expected upgrade-safety to FAIL on a breaking change, but outcome was '${{ steps.breaking.outcome }}'"
+            exit 1
+          fi
+          echo "OK: breaking upgrade correctly failed."
+
+      # Compatible upgrade: us_old.wasm -> us_old.wasm is identical (compatible).
+      # The upgrade-safety mode MUST pass this step.
+      - name: Upgrade-safety should PASS on compatible (identical) upgrade
+        id: compatible
+        uses: ./.github/actions/sdkt
+        with:
+          command: upgrade-safety
+          sdkt-version: v2.7.0
+          old-wasm: crates/sdkt-cli/tests/fixtures/us_old.wasm
+          new-wasm: crates/sdkt-cli/tests/fixtures/us_old.wasm
+
+      - name: Assert compatible upgrade passed
+        shell: bash
+        run: |
+          if [ "${{ steps.compatible.outcome }}" != "success" ]; then
+            echo "::error::expected upgrade-safety to PASS on a compatible upgrade, but outcome was '${{ steps.compatible.outcome }}'"
+            exit 1
+          fi
+          echo "OK: compatible upgrade correctly passed."
+
+      # Release assurance: us_new.wasm against the us_old.wasm baseline is a
+      # breaking upgrade, so release_status MUST be FAIL and the step MUST fail.
+      - name: Release-assurance should FAIL on breaking previous-wasm
+        id: ra_breaking
+        continue-on-error: true
+        uses: ./.github/actions/sdkt
+        with:
+          command: release-assurance
+          wasm: crates/sdkt-cli/tests/fixtures/us_new.wasm
+          previous-wasm: crates/sdkt-cli/tests/fixtures/us_old.wasm
+
+      - name: Assert release-assurance reported FAIL
+        shell: bash
+        run: |
+          if [ "${{ steps.ra_breaking.outcome }}" != "failure" ]; then
+            echo "::error::expected release-assurance to FAIL on a breaking baseline, but outcome was '${{ steps.ra_breaking.outcome }}'"
+            exit 1
+          fi
+          echo "OK: release-assurance correctly failed on a breaking baseline."
+
+      # Release assurance: the candidate alone (no --contract) leaves the
+      # on-chain sections SKIPPED, so the aggregate is REVIEW — which the CLI
+      # treats as exit 0, and the Action MUST NOT fail.
+      - name: Release-assurance should PASS with REVIEW (no on-chain check)
+        id: ra_review
+        uses: ./.github/actions/sdkt
+        with:
+          command: release-assurance
+          wasm: crates/sdkt-cli/tests/fixtures/us_new.wasm
+
+      - name: Assert release-assurance REVIEW passed
+        shell: bash
+        run: |
+          if [ "${{ steps.ra_review.outcome }}" != "success" ]; then
+            echo "::error::expected release-assurance to PASS with REVIEW, but outcome was '${{ steps.ra_review.outcome }}'"
+            exit 1
+          fi
+          echo "OK: release-assurance REVIEW did not fail the build."
+
+      # Size policy forwarding + compliance: us_new.wasm is 530 bytes.
+      # --max-size-bytes 1024 is satisfied, so the release must NOT fail.
+      - name: Release-assurance should PASS with a satisfied size ceiling
+        id: ra_size_ok
+        uses: ./.github/actions/sdkt
+        with:
+          command: release-assurance
+          wasm: crates/sdkt-cli/tests/fixtures/us_new.wasm
+          max-size-bytes: "1024"
+
+      - name: Assert satisfied size ceiling passed
+        shell: bash
+        run: |
+          if [ "${{ steps.ra_size_ok.outcome }}" != "success" ]; then
+            echo "::error::expected release-assurance to PASS under --max-size-bytes 1024, but outcome was '${{ steps.ra_size_ok.outcome }}'"
+            exit 1
+          fi
+          echo "OK: max-size-bytes was accepted and the satisfied ceiling did not fail the release."
+
+      # Size policy ENFORCEMENT — the discriminating check. The same 530-byte
+      # artifact under a 256-byte ceiling goes artifact FAIL -> release_status
+      # FAIL, which the Action turns into a step failure. Without the input
+      # forwarded this run is the plain ra_review case and stays green, so
+      # failure here is positive proof the flag reaches the CLI. Boundaries are
+      # inclusive, hence 256 < 530 rather than 530.
+      - name: Release-assurance should FAIL on exceeded max-size-bytes
+        id: ra_size_violation
+        continue-on-error: true
+        uses: ./.github/actions/sdkt
+        with:
+          command: release-assurance
+          wasm: crates/sdkt-cli/tests/fixtures/us_new.wasm
+          max-size-bytes: "256"
+
+      - name: Assert exceeded size ceiling failed
+        shell: bash
+        run: |
+          if [ "${{ steps.ra_size_violation.outcome }}" != "failure" ]; then
+            echo "::error::expected release-assurance to FAIL under --max-size-bytes 256, but outcome was '${{ steps.ra_size_violation.outcome }}' — the Action may not be forwarding max-size-bytes"
+            exit 1
+          fi
+          echo "OK: max-size-bytes forwarding proven — the ceiling violation failed the release."
+
+      # CLI ERROR propagation: --max-growth-pct without --previous-wasm is
+      # rejected by the CLI before any report is produced, so there is no
+      # .release_status to gate on and the failure must come from the exit code
+      # alone. Without that the step would stay green on a misconfigured
+      # policy that never ran.
+      - name: Release-assurance should FAIL on a CLI error with no report
+        id: ra_cli_error
+        continue-on-error: true
+        uses: ./.github/actions/sdkt
+        with:
+          command: release-assurance
+          wasm: crates/sdkt-cli/tests/fixtures/us_new.wasm
+          max-growth-pct: "10"
+
+      - name: Assert CLI error propagated
+        shell: bash
+        run: |
+          if [ "${{ steps.ra_cli_error.outcome }}" != "failure" ]; then
+            echo "::error::expected release-assurance to FAIL when the CLI rejects the invocation, but outcome was '${{ steps.ra_cli_error.outcome }}' — the Action is not propagating the CLI exit code"
+            exit 1
+          fi
+          echo "OK: a CLI error with no JSON report still failed the step."
+
+      # Input-conflict guard: supplying both old-wasm and old-contract must be
+      # rejected before any sdkt invocation runs.
+      - name: Upgrade-safety should FAIL when both old-wasm and old-contract are set
+        id: us_both_baselines
+        continue-on-error: true
+        uses: ./.github/actions/sdkt
+        with:
+          command: upgrade-safety
+          old-wasm: crates/sdkt-cli/tests/fixtures/us_old.wasm
+          old-contract: CCJUD55AG6W5HAI5LRVNKAE5WDP5XGZBUDS5WNTIVDU7O264UZZE7BRD
+          network: testnet
+          new-wasm: crates/sdkt-cli/tests/fixtures/us_old.wasm
+
+      - name: Assert conflicting baseline inputs were rejected
+        shell: bash
+        run: |
+          if [ "${{ steps.us_both_baselines.outcome }}" != "failure" ]; then
+            echo "::error::expected upgrade-safety to FAIL when both old-wasm and old-contract are set, but outcome was '${{ steps.us_both_baselines.outcome }}'"
+            exit 1
+          fi
+          echo "OK: conflicting baseline inputs were rejected before any sdkt invocation."
+
+      # Network-missing guard: old-contract without network must be rejected
+      # before any sdkt invocation runs.
+      - name: Upgrade-safety should FAIL when old-contract is set but network is missing
+        id: us_missing_network
+        continue-on-error: true
+        uses: ./.github/actions/sdkt
+        with:
+          command: upgrade-safety
+          old-contract: CCJUD55AG6W5HAI5LRVNKAE5WDP5XGZBUDS5WNTIVDU7O264UZZE7BRD
+          new-wasm: crates/sdkt-cli/tests/fixtures/us_old.wasm
+
+      - name: Assert missing network was rejected
+        shell: bash
+        run: |
+          if [ "${{ steps.us_missing_network.outcome }}" != "failure" ]; then
+            echo "::error::expected upgrade-safety to FAIL when old-contract is set without network, but outcome was '${{ steps.us_missing_network.outcome }}'"
+            exit 1
+          fi
+          echo "OK: old-contract without network was rejected before any sdkt invocation."
+
+  validate-health:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      # Health gate - PASS (healthy contract, no --wasm): prints the health
+      # report and passes without performing any WASM hash comparison.
+      - name: Health should PASS on a healthy testnet contract
+        id: health_pass
+        uses: ./.github/actions/sdkt
+        with:
+          command: health
+          contract: CCJUD55AG6W5HAI5LRVNKAE5WDP5XGZBUDS5WNTIVDU7O264UZZE7BRD
+          network: testnet
+
+      - name: Assert healthy testnet contract passed
+        shell: bash
+        run: |
+          if [ "${{ steps.health_pass.outcome }}" != "success" ]; then
+            echo "::error::expected health to PASS on a healthy testnet contract, but outcome was '${{ steps.health_pass.outcome }}'"
+            exit 1
+          fi
+          echo "OK: healthy testnet contract passed the health gate."
+
+      # Health gate - THRESHOLD PASS (healthy posture with health-threshold=at_risk):
+      # Pin ttl_warning_days = 0 in .sdkt.toml so expiring_soon_ledgers = 0
+      # (no u32 TTL can be < 0) and the contract posture is deterministically
+      # `healthy` regardless of the live Testnet contract's changing TTL state.
+      - name: Configure deterministic healthy TTL posture
+        shell: bash
+        run: |
+          printf '[storage]\nttl_warning_days = 0\n' > .sdkt.toml
+
+      - name: Health should PASS on a healthy contract with health-threshold=at_risk
+        id: health_threshold_pass
+        uses: ./.github/actions/sdkt
+        with:
+          command: health
+          contract: CCJUD55AG6W5HAI5LRVNKAE5WDP5XGZBUDS5WNTIVDU7O264UZZE7BRD
+          network: testnet
+          health-threshold: at_risk
+
+      - name: Assert healthy contract passed under health-threshold=at_risk
+        shell: bash
+        run: |
+          if [ "${{ steps.health_threshold_pass.outcome }}" != "success" ]; then
+            echo "::error::expected health to PASS on a healthy contract with health-threshold=at_risk, but outcome was '${{ steps.health_threshold_pass.outcome }}'"
+            exit 1
+          fi
+          echo "OK: healthy contract passed under health-threshold=at_risk."
+
+      # Health gate - THRESHOLD BEHAVIOR (at_risk posture passes at default
+      # health-threshold=critical, fails when health-threshold=at_risk):
+      # Pin ttl_warning_days = 250000 in .sdkt.toml so expiring_soon_ledgers
+      # saturates to u32::MAX (above Soroban's protocol max TTL) and the posture
+      # is deterministically `at_risk` regardless of live Testnet TTL changes.
+      - name: Configure deterministic at_risk TTL posture
+        shell: bash
+        run: |
+          printf '[storage]\nttl_warning_days = 250000\n' > .sdkt.toml
+
+      - name: Health should PASS on an at_risk contract at default threshold (critical)
+        id: health_at_risk_default
+        uses: ./.github/actions/sdkt
+        with:
+          command: health
+          contract: CAE3U7JKESRWZHPEQ72DVNGOQ6WPA7HSPQZL5YV46NPCE4TMUPAGYMEC
+          network: testnet
+
+      - name: Assert at_risk contract passed at default threshold
+        shell: bash
+        run: |
+          if [ "${{ steps.health_at_risk_default.outcome }}" != "success" ]; then
+            echo "::error::expected health to PASS on an at_risk contract at default health-threshold=critical, but outcome was '${{ steps.health_at_risk_default.outcome }}'"
+            exit 1
+          fi
+          echo "OK: at_risk contract passed at default health-threshold=critical."
+
+      - name: Health should FAIL on an at_risk contract with health-threshold=at_risk
+        id: health_at_risk_strict
+        continue-on-error: true
+        uses: ./.github/actions/sdkt
+        with:
+          command: health
+          contract: CAE3U7JKESRWZHPEQ72DVNGOQ6WPA7HSPQZL5YV46NPCE4TMUPAGYMEC
+          network: testnet
+          health-threshold: at_risk
+
+      - name: Assert at_risk contract failed under health-threshold=at_risk
+        shell: bash
+        run: |
+          rm -f .sdkt.toml
+          if [ "${{ steps.health_at_risk_strict.outcome }}" != "failure" ]; then
+            echo "::error::expected health to FAIL on an at_risk contract with health-threshold=at_risk, but outcome was '${{ steps.health_at_risk_strict.outcome }}'"
+            exit 1
+          fi
+          echo "OK: at_risk contract failed under health-threshold=at_risk."
+
+      # Health gate - INVALID THRESHOLD: an unknown health-threshold value is
+      # rejected before any sdkt invocation runs.
+      - name: Health should FAIL on an invalid health-threshold
+        id: health_bad_threshold
+        continue-on-error: true
+        uses: ./.github/actions/sdkt
+        with:
+          command: health
+          contract: CCJUD55AG6W5HAI5LRVNKAE5WDP5XGZBUDS5WNTIVDU7O264UZZE7BRD
+          network: testnet
+          health-threshold: bogus
+
+      - name: Assert invalid health-threshold was rejected
+        shell: bash
+        run: |
+          if [ "${{ steps.health_bad_threshold.outcome }}" != "failure" ]; then
+            echo "::error::expected health to FAIL on an invalid health-threshold, but outcome was '${{ steps.health_bad_threshold.outcome }}'"
+            exit 1
+          fi
+          echo "OK: invalid health-threshold was rejected before any sdkt invocation."
+
+      # Health gate - HASH MISMATCH: supplying a local --wasm whose hash does
+      # not match the deployed contract produces verified=false and health=critical,
+      # which MUST fail the step naming the hash mismatch.
+      - name: Health should FAIL on a WASM hash mismatch
+        id: health_mismatch
+        continue-on-error: true
+        uses: ./.github/actions/sdkt
+        with:
+          command: health
+          contract: CCJUD55AG6W5HAI5LRVNKAE5WDP5XGZBUDS5WNTIVDU7O264UZZE7BRD
+          network: testnet
+          wasm: crates/sdkt-cli/tests/fixtures/us_old.wasm
+
+      - name: Assert WASM hash mismatch failed the health gate
+        shell: bash
+        run: |
+          if [ "${{ steps.health_mismatch.outcome }}" != "failure" ]; then
+            echo "::error::expected health to FAIL on a WASM hash mismatch, but outcome was '${{ steps.health_mismatch.outcome }}'"
+            exit 1
+          fi
+          echo "OK: WASM hash mismatch failed the health gate."
+
+      # Health gate - UNKNOWN CONTRACT: a nonexistent contract ID fails with the
+      # CLI's "not found" error and no jq parse error.
+      - name: Health should FAIL on a nonexistent contract ID
+        id: health_unknown_contract
+        continue-on-error: true
+        uses: ./.github/actions/sdkt
+        with:
+          command: health
+          contract: CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAD2KM
+          network: testnet
+
+      - name: Assert nonexistent contract ID failed the health gate
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ "${{ steps.health_unknown_contract.outcome }}" != "failure" ]; then
+            echo "::error::expected health to FAIL on a nonexistent contract ID, but outcome was '${{ steps.health_unknown_contract.outcome }}'"
+            exit 1
+          fi
+          # Execute the actual `Run sdkt health` script block from action.yml,
+          # capture stderr, require the CLI's not-found diagnostic, and fail if
+          # stderr contains a jq parse error.
+          HEALTH_SCRIPT="$(awk '/- name: Run sdkt health/{flag=1} flag && /run: \|/{run=1; next} run{sub(/^        /, ""); print}' .github/actions/sdkt/action.yml)"
+          STDERR_FILE="$(mktemp)"
+          trap 'rm -f "$STDERR_FILE"' EXIT
+          if SDKT_CONTRACT="CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAD2KM" \
+             SDKT_NETWORK="testnet" \
+             SDKT_WASM="" \
+             SDKT_HEALTH_THRESHOLD="critical" \
+             bash -c "$HEALTH_SCRIPT" 2>"$STDERR_FILE"; then
+            echo "::error::expected Run sdkt health block to fail on a nonexistent contract ID"
+            exit 1
+          fi
+          STDERR_OUT="$(cat "$STDERR_FILE")"
+          echo "$STDERR_OUT" >&2
+          if ! printf '%s\n' "$STDERR_OUT" | grep -qi "not found on testnet"; then
+            echo "::error::expected CLI 'not found on testnet' diagnostic on stderr, got: $STDERR_OUT"
+            exit 1
+          fi
+          if printf '%s\n' "$STDERR_OUT" | grep -Eqi "jq:.*error|parse error"; then
+            echo "::error::unexpected jq parse error on stderr: $STDERR_OUT"
+            exit 1
+          fi
+          echo "OK: nonexistent contract ID failed cleanly with CLI not-found diagnostic and no jq parse error."
+
+  # ── Live-baseline upgrade-safety (new job) ─────────────────────────────────
+  # Exercises command=upgrade-safety with old-contract (live deployed baseline)
+  # against testnet. The contract used is:
+  #   CCJUD55AG6W5HAI5LRVNKAE5WDP5XGZBUDS5WNTIVDU7O264UZZE7BRD (testnet)
+  # Candidate WASMs:
+  #   compatible   — us_old.wasm (same interface as deployed → compatible: true)
+  #   breaking     — us_new.wasm (removed function → compatible: false)
+  validate-upgrade-safety-live:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      # ── Guard: old-wasm + old-contract together must be rejected ────────────
+      - name: Upgrade-safety should FAIL when both old-wasm and old-contract are set
+        id: us_live_both
+        continue-on-error: true
+        uses: ./.github/actions/sdkt
+        with:
+          command: upgrade-safety
+          old-wasm: crates/sdkt-cli/tests/fixtures/us_old.wasm
+          old-contract: CCJUD55AG6W5HAI5LRVNKAE5WDP5XGZBUDS5WNTIVDU7O264UZZE7BRD
+          network: testnet
+          new-wasm: crates/sdkt-cli/tests/fixtures/us_old.wasm
+
+      - name: Assert conflicting baseline inputs were rejected before sdkt invocation
+        shell: bash
+        run: |
+          if [ "${{ steps.us_live_both.outcome }}" != "failure" ]; then
+            echo "::error::expected upgrade-safety to FAIL when both old-wasm and old-contract are set, but outcome was '${{ steps.us_live_both.outcome }}'"
+            exit 1
+          fi
+          echo "OK: old-wasm + old-contract conflict was rejected before any sdkt invocation."
+
+      # ── Guard: old-contract without network must be rejected ────────────────
+      - name: Upgrade-safety should FAIL when old-contract is set but network is omitted
+        id: us_live_no_network
+        continue-on-error: true
+        uses: ./.github/actions/sdkt
+        with:
+          command: upgrade-safety
+          old-contract: CCJUD55AG6W5HAI5LRVNKAE5WDP5XGZBUDS5WNTIVDU7O264UZZE7BRD
+          new-wasm: crates/sdkt-cli/tests/fixtures/us_old.wasm
+
+      - name: Assert missing network was rejected before sdkt invocation
+        shell: bash
+        run: |
+          if [ "${{ steps.us_live_no_network.outcome }}" != "failure" ]; then
+            echo "::error::expected upgrade-safety to FAIL when old-contract is given without network, but outcome was '${{ steps.us_live_no_network.outcome }}'"
+            exit 1
+          fi
+          echo "OK: old-contract without network was rejected before any sdkt invocation."
+
+      # ── Happy path: compatible candidate passes against the live baseline ───
+      # us_old.wasm has the same public interface as the deployed contract, so
+      # sdkt verify --upgrade-safety must report compatible: true and the step
+      # must pass.
+      - name: Upgrade-safety should PASS — compatible candidate against live testnet baseline
+        id: us_live_compatible
+        uses: ./.github/actions/sdkt
+        with:
+          command: upgrade-safety
+          old-contract: CCJUD55AG6W5HAI5LRVNKAE5WDP5XGZBUDS5WNTIVDU7O264UZZE7BRD
+          network: testnet
+          new-wasm: crates/sdkt-cli/tests/fixtures/us_old.wasm
+
+      - name: Assert compatible candidate passed the live-baseline gate
+        shell: bash
+        run: |
+          if [ "${{ steps.us_live_compatible.outcome }}" != "success" ]; then
+            echo "::error::expected upgrade-safety to PASS for a compatible candidate against the live baseline, but outcome was '${{ steps.us_live_compatible.outcome }}'"
+            exit 1
+          fi
+          echo "OK: compatible candidate passed the live-baseline upgrade-safety gate."
+
+      # ── Failing path: breaking candidate fails against the live baseline ────
+      # us_new.wasm removes a function present in the deployed contract, so
+      # sdkt verify --upgrade-safety must report compatible: false and the step
+      # must fail.
+      - name: Upgrade-safety should FAIL — breaking candidate against live testnet baseline
+        id: us_live_breaking
+        continue-on-error: true
+        uses: ./.github/actions/sdkt
+        with:
+          command: upgrade-safety
+          old-contract: CCJUD55AG6W5HAI5LRVNKAE5WDP5XGZBUDS5WNTIVDU7O264UZZE7BRD
+          network: testnet
+          new-wasm: crates/sdkt-cli/tests/fixtures/us_new.wasm
+
+      - name: Assert breaking candidate failed the live-baseline gate
+        shell: bash
+        run: |
+          if [ "${{ steps.us_live_breaking.outcome }}" != "failure" ]; then
+            echo "::error::expected upgrade-safety to FAIL for a breaking candidate against the live baseline, but outcome was '${{ steps.us_live_breaking.outcome }}'"
+            exit 1
+          fi
+          echo "OK: breaking candidate correctly failed the live-baseline upgrade-safety gate."
+
+      # ── Unknown contract: sdkt verify fails cleanly, no jq parse error ──────
+      - name: Upgrade-safety should FAIL on a nonexistent old-contract ID
+        id: us_live_unknown_contract
+        continue-on-error: true
+        uses: ./.github/actions/sdkt
+        with:
+          command: upgrade-safety
+          old-contract: CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAD2KM
+          network: testnet
+          new-wasm: crates/sdkt-cli/tests/fixtures/us_old.wasm
+
+      - name: Assert nonexistent old-contract failed with a clear CLI error
+        shell: bash
+        run: |
+          if [ "${{ steps.us_live_unknown_contract.outcome }}" != "failure" ]; then
+            echo "::error::expected upgrade-safety to FAIL on a nonexistent old-contract, but outcome was '${{ steps.us_live_unknown_contract.outcome }}'"
+            exit 1
+          fi
+          echo "OK: nonexistent old-contract failed with a CLI error (not a jq parse error)."
