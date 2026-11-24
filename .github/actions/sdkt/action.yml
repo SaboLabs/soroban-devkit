@@ -1,10 +1,11 @@
+---
 name: "Soroban DevKit (sdkt) Action"
-description: "Run sdkt capabilities in CI: static security audit (sdkt audit), contract upgrade-safety check (sdkt diff --upgrade-safety), read-only release assurance (sdkt release-assurance), and post-deploy contract health check (sdkt health)."
+description: "Run sdkt capabilities in CI: static security audit (sdkt audit), contract upgrade-safety check against a local file or live deployed contract (sdkt diff --upgrade-safety / sdkt verify --upgrade-safety), read-only release assurance (sdkt release-assurance), and post-deploy contract health check (sdkt health)."
 author: "SaboLabs"
 
 inputs:
   command:
-    description: "Which check to run: 'audit', 'upgrade-safety', 'release-assurance', or 'health'."
+    description: "Which check to run: 'audit', 'upgrade-safety', 'release-assurance', or 'health'. For upgrade-safety, supply either old-wasm (file-vs-file) or old-contract + network (live-baseline mode)."
     required: true
   sdkt-version:
     description: "sdkt release tag to install (e.g. v2.7.0). Must be a published release in SaboLabs/soroban-devkit with a prebuilt asset for the runner platform."
@@ -19,11 +20,19 @@ inputs:
     required: false
     default: ""
   old-wasm:
-    description: "Baseline (currently deployed) WASM (used with command=upgrade-safety)."
+    description: "Baseline (currently deployed) WASM file path (used with command=upgrade-safety, file-vs-file mode). Mutually exclusive with old-contract."
     required: false
     default: ""
   new-wasm:
     description: "Candidate (new) WASM (used with command=upgrade-safety)."
+    required: false
+    default: ""
+  old-contract:
+    description: "Deployed contract ID (C...) to use as the live baseline for upgrade-safety (used with command=upgrade-safety, live-baseline mode). Mutually exclusive with old-wasm. Requires network."
+    required: false
+    default: ""
+  network:
+    description: "Target network (testnet | mainnet | futurenet) for on-chain checks (required for command=health; required when old-contract is set for command=upgrade-safety; optional for command=release-assurance alongside 'contract')."
     required: false
     default: ""
   severity-threshold:
@@ -48,10 +57,6 @@ inputs:
     default: ""
   contract:
     description: "Deployed contract ID (C...) for on-chain checks (required for command=health; optional for command=release-assurance, where on-chain checks are skipped when empty)."
-    required: false
-    default: ""
-  network:
-    description: "Target network (testnet | mainnet | futurenet) for on-chain checks (required for command=health; optional for command=release-assurance alongside 'contract')."
     required: false
     default: ""
   health-threshold:
@@ -239,14 +244,50 @@ runs:
       env:
         SDKT_OLD: ${{ inputs.old-wasm }}
         SDKT_NEW: ${{ inputs.new-wasm }}
+        SDKT_OLD_CONTRACT: ${{ inputs.old-contract }}
+        SDKT_NETWORK: ${{ inputs.network }}
       run: |
         set -euo pipefail
-        if [ -z "$SDKT_OLD" ] || [ -z "$SDKT_NEW" ]; then
-          echo "::error::upgrade-safety command requires both 'old-wasm' and 'new-wasm'"
+
+        # ── Input validation ────────────────────────────────────────────────
+        # Exactly one baseline source must be provided; mixing them is an error.
+        if [ -n "$SDKT_OLD" ] && [ -n "$SDKT_OLD_CONTRACT" ]; then
+          echo "::error::upgrade-safety: 'old-wasm' and 'old-contract' are mutually exclusive — supply exactly one baseline source"
           exit 1
         fi
-        echo "Running: sdkt diff --old-wasm $SDKT_OLD --new-wasm $SDKT_NEW --upgrade-safety --format json"
-        OUT=$(sdkt diff --old-wasm "$SDKT_OLD" --new-wasm "$SDKT_NEW" --upgrade-safety --format json)
+
+        if [ -z "$SDKT_OLD" ] && [ -z "$SDKT_OLD_CONTRACT" ]; then
+          echo "::error::upgrade-safety: provide exactly one baseline source — either 'old-wasm' (file-vs-file) or 'old-contract' (live-baseline)"
+          exit 1
+        fi
+
+        if [ -z "$SDKT_NEW" ]; then
+          echo "::error::upgrade-safety: 'new-wasm' is required (path to the candidate .wasm artifact)"
+          exit 1
+        fi
+
+        # ── File-vs-file path (unchanged behavior) ──────────────────────────
+        if [ -n "$SDKT_OLD" ]; then
+          echo "Running: sdkt diff --old-wasm $SDKT_OLD --new-wasm $SDKT_NEW --upgrade-safety --format json"
+          OUT=$(sdkt diff --old-wasm "$SDKT_OLD" --new-wasm "$SDKT_NEW" --upgrade-safety --format json)
+          echo "$OUT"
+          COMPAT=$(echo "$OUT" | jq '.compatible')
+          echo "Upgrade verdict compatible=$COMPAT"
+          if [ "$COMPAT" != "true" ]; then
+            echo "::error::upgrade is NOT backwards-compatible (breaking changes detected)"
+            exit 1
+          fi
+          echo "sdkt upgrade-safety passed (upgrade is backwards-compatible)."
+          exit 0
+        fi
+
+        # ── Live-baseline path (old-contract + network) ─────────────────────
+        if [ -z "$SDKT_NETWORK" ]; then
+          echo "::error::upgrade-safety: 'network' is required when 'old-contract' is set (testnet | mainnet | futurenet)"
+          exit 1
+        fi
+        echo "Running: sdkt verify --contract $SDKT_OLD_CONTRACT --wasm $SDKT_NEW --upgrade-safety --network $SDKT_NETWORK --format json"
+        OUT=$(sdkt verify --contract "$SDKT_OLD_CONTRACT" --wasm "$SDKT_NEW" --upgrade-safety --network "$SDKT_NETWORK" --format json)
         echo "$OUT"
         COMPAT=$(echo "$OUT" | jq '.compatible')
         echo "Upgrade verdict compatible=$COMPAT"
