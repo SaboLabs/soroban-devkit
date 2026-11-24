@@ -559,7 +559,9 @@ pub fn sequence_case_counts(
     sequence_every: usize,
 ) -> (usize, usize) {
     if sequence_every > 0 && sequence_length > 1 {
-        let sequences = (0..executed).filter(|c| c.is_multiple_of(sequence_every)).count();
+        let sequences = (0..executed)
+            .filter(|c| c.is_multiple_of(sequence_every))
+            .count();
         (sequences, executed.saturating_sub(sequences))
     } else {
         (0, executed)
