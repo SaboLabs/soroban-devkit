@@ -21,7 +21,7 @@ use sdkt_xdr::abi_decode::decode_event_topics;
 use sdkt_xdr::decode_with_config;
 use sdkt_xdr::{
     build_invoke_transaction, sign_transaction, Ed25519Signer, InvokeTransactionParams, Network,
-    SigningError, SigningOptions,
+    PublicKeySigner, Signer, SigningError, SigningOptions,
 };
 use sha2::{Digest, Sha256};
 use std::fs;
@@ -1195,6 +1195,20 @@ enum TxAction {
         /// Base64 XDR transaction envelope or path to a file containing it
         #[arg(short, long)]
         envelope: String,
+        /// Verify each supplied signer's signature cryptographically (offline, no RPC)
+        #[arg(long)]
+        verify_signatures: bool,
+        /// Ed25519 public key (G...) whose signature must verify; repeatable, required with --verify-signatures
+        #[arg(long, value_name = "G...")]
+        signer: Vec<String>,
+        /// Network: testnet | mainnet | futurenet | custom:<passphrase> (mutually exclusive with --network-profile and --network-passphrase; defaults to testnet)
+        #[arg(
+            short,
+            long,
+            conflicts_with = "network_profile",
+            conflicts_with = "network_passphrase"
+        )]
+        network: Option<String>,
         #[arg(short, long, default_value = "pretty")]
         format: String,
     },
@@ -3697,6 +3711,149 @@ fn print_signatures(indent: &str, signatures: &[sdkt_xdr::envelope::SignatureVie
     }
 }
 
+/// Print the structural validation report (pretty or JSON), unchanged.
+fn print_validation_report(
+    report: &sdkt_core::validation::TransactionValidationReport,
+    fmt: OutputFormat,
+) {
+    if fmt == OutputFormat::Json {
+        println!("{}", serde_json::to_string(report).unwrap());
+    } else {
+        println!("Validation Report:");
+        if report.valid {
+            println!("  Status: VALID");
+        } else {
+            println!("  Status: INVALID");
+        }
+        if !report.errors.is_empty() {
+            println!("  Errors:");
+            for err in &report.errors {
+                println!("    - {}", err.message());
+            }
+        }
+        if !report.warnings.is_empty() {
+            println!("  Warnings:");
+            for warn in &report.warnings {
+                println!("    - {:?}", warn);
+            }
+        }
+    }
+}
+
+/// One signer's verification outcome for `tx validate --verify-signatures`.
+#[derive(serde::Serialize)]
+struct SignerVerification {
+    address: String,
+    hint: String,
+    status: String,
+    candidates: usize,
+}
+
+/// An envelope signature matching no supplied signer.
+#[derive(serde::Serialize)]
+struct UnmatchedSignature {
+    index: usize,
+    hint: String,
+}
+
+/// The full signature-verification result for one envelope.
+struct SignatureVerification {
+    signers: Vec<SignerVerification>,
+    unmatched: Vec<UnmatchedSignature>,
+}
+
+/// The outer envelope signatures (a fee-bump envelope contributes only the
+/// outer signatures, matching `verify_signature`).
+fn outer_signatures(
+    envelope: &stellar_xdr::TransactionEnvelope,
+) -> &[stellar_xdr::DecoratedSignature] {
+    match envelope {
+        stellar_xdr::TransactionEnvelope::TxV0(e) => &e.signatures,
+        stellar_xdr::TransactionEnvelope::Tx(e) => &e.signatures,
+        stellar_xdr::TransactionEnvelope::TxFeeBump(e) => &e.signatures,
+    }
+}
+
+/// Human-readable network name for the signature report.
+fn network_display_name(network: &Network) -> String {
+    match network {
+        Network::Testnet => "testnet".to_string(),
+        Network::Mainnet => "mainnet".to_string(),
+        Network::Futurenet => "futurenet".to_string(),
+        Network::Custom(p) => p.clone(),
+    }
+}
+
+/// Verify every supplied signer against one parsed envelope (offline).
+///
+/// Returns the per-signer status and candidate count plus the unmatched
+/// signatures. Fails only when the envelope hash cannot be computed.
+fn verify_signatures_for_envelope(
+    env_b64: &str,
+    signers: &[PublicKeySigner],
+    addresses: &[String],
+    network: &Network,
+) -> Result<SignatureVerification, String> {
+    let envelope = <stellar_xdr::TransactionEnvelope as stellar_xdr::ReadXdr>::from_xdr_base64(
+        env_b64,
+        stellar_xdr::Limits::none(),
+    )
+    .map_err(|e| format!("invalid transaction envelope: {}", e))?;
+    let opts = SigningOptions::with(network.clone());
+    let mut results = Vec::new();
+    let mut signer_hints: Vec<[u8; 4]> = Vec::new();
+    for (address, signer) in addresses.iter().zip(signers.iter()) {
+        let status = sdkt_xdr::verify_signature_status(&envelope, signer, &opts)
+            .map_err(|e| format!("cannot compute envelope hash: {}", e))?;
+        let pubkey = signer.public_key_bytes();
+        let hint = [pubkey[28], pubkey[29], pubkey[30], pubkey[31]];
+        signer_hints.push(hint);
+        let candidates = outer_signatures(&envelope)
+            .iter()
+            .filter(|s| s.hint.0 == hint)
+            .count();
+        results.push(SignerVerification {
+            address: address.clone(),
+            hint: hex::encode(hint),
+            status: status.as_str().to_string(),
+            candidates,
+        });
+    }
+    let mut unmatched = Vec::new();
+    for (index, sig) in outer_signatures(&envelope).iter().enumerate() {
+        if !signer_hints.contains(&sig.hint.0) {
+            unmatched.push(UnmatchedSignature {
+                index,
+                hint: hex::encode(sig.hint.0),
+            });
+        }
+    }
+    Ok(SignatureVerification {
+        signers: results,
+        unmatched,
+    })
+}
+
+/// Print the `Signatures:` section of a validation report.
+fn print_signature_verification(v: &SignatureVerification, network: &Network) {
+    println!("Signatures:");
+    println!("  Network: {}", network_display_name(network));
+    for s in &v.signers {
+        let word = if s.candidates == 1 {
+            "candidate"
+        } else {
+            "candidates"
+        };
+        println!(
+            "  - {} {} hint {} ({} {})",
+            s.status, s.address, s.hint, s.candidates, word
+        );
+    }
+    for u in &v.unmatched {
+        println!("  - UNMATCHED #{} hint {}", u.index, u.hint);
+    }
+}
+
 /// Pretty-print a [`sdkt_storage::SnapshotDiff`] to stdout.
 fn print_diff_pretty(diff: &sdkt_storage::SnapshotDiff) {
     use sdkt_storage::DiffStatus;
@@ -5591,20 +5748,32 @@ fn resolve_sign_network(
     }
 
     if let Some(net_str) = network {
-        return match net_str.trim().to_ascii_lowercase().as_str() {
+        // Match built-in labels case-insensitively, but keep the exact
+        // custom passphrase (case and whitespace) for `Network::Custom`.
+        let trimmed = net_str.trim();
+        return match trimmed.to_ascii_lowercase().as_str() {
             "testnet" => Ok(Network::Testnet),
             "mainnet" => Ok(Network::Mainnet),
             "futurenet" => Ok(Network::Futurenet),
-            other if other.starts_with("custom:") => Ok(Network::parse(other)),
-            _ => Err(format!(
-                "invalid network '{}' (expected testnet|mainnet|futurenet|custom:<passphrase>)",
-                net_str
-            )),
+            _ => {
+                if trimmed.to_ascii_lowercase().starts_with("custom:") {
+                    Ok(Network::parse(net_str))
+                } else {
+                    Err(format!(
+                        "invalid network '{}' (expected testnet|mainnet|futurenet|custom:<passphrase>)",
+                        net_str
+                    ))
+                }
+            }
         };
     }
 
     let profile_passphrase = if let Some(profile_name) = network_profile {
-        let store = NetworkStore::new().map_err(|e| format!("cannot open network store: {}", e))?;
+        // `open` never creates the store directory: verification is a
+        // read-only command, so a missing profile must fail without
+        // changing the filesystem.
+        let store =
+            NetworkStore::open().map_err(|e| format!("cannot open network store: {}", e))?;
         let profile = store
             .get(profile_name)
             .map_err(|e| format!("network profile '{}' not found: {}", profile_name, e))?;
@@ -7657,8 +7826,48 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
                     println!("  Envelope:        {}", result.envelope);
                 }
             }
-            TxAction::Validate { envelope, format } => {
+            TxAction::Validate {
+                envelope,
+                verify_signatures,
+                signer,
+                network,
+                format,
+            } => {
                 let fmt = parse_format_str(&format);
+
+                // Usage errors (exit 2) before any work: verification needs
+                // at least one named signer, and every signer must parse as
+                // a G... public key (an S... secret is rejected). A --signer
+                // without --verify-signatures is also a usage error, so a
+                // script cannot mistake a structural-only exit 0 for a
+                // verified signer.
+                if !verify_signatures && !signer.is_empty() {
+                    eprintln!("Error: --signer requires --verify-signatures");
+                    process::exit(2);
+                }
+                let mut distinct_signers: Vec<String> = Vec::new();
+                if verify_signatures {
+                    if signer.is_empty() {
+                        eprintln!("Error: --verify-signatures requires at least one --signer");
+                        process::exit(2);
+                    }
+                    for value in &signer {
+                        if !distinct_signers.contains(value) {
+                            distinct_signers.push(value.clone());
+                        }
+                    }
+                }
+                let mut signers: Vec<PublicKeySigner> = Vec::new();
+                for value in &distinct_signers {
+                    match PublicKeySigner::from_strkey(value) {
+                        Ok(pk) => signers.push(pk),
+                        Err(_) => {
+                            eprintln!("Error: invalid --signer: expected a G... public key");
+                            process::exit(2);
+                        }
+                    }
+                }
+
                 let env_data = match resolve_tx_input(&envelope) {
                     Ok(s) => s,
                     Err(e) => {
@@ -7670,31 +7879,84 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
                 use sdkt_core::validation::validate_base64;
                 let report = validate_base64(env_data.trim());
 
-                if fmt == OutputFormat::Json {
-                    let json_str = serde_json::to_string(&report)?;
-                    println!("{}", json_str);
-                } else {
-                    println!("Validation Report:");
-                    if report.valid {
-                        println!("  Status: VALID");
+                // Signature verification runs only on a structurally valid
+                // envelope; a failing structural report prints unchanged and
+                // exits 1 with no signature section. The network is resolved
+                // only here, so a stale --network-profile cannot block
+                // structural-only validation.
+                let verification: Option<(SignatureVerification, Network)> =
+                    if verify_signatures && report.valid {
+                        // Resolve the network (passphrase only; no RPC call
+                        // is made). A missing profile still fails a requested
+                        // signature check.
+                        let network = match resolve_sign_network(
+                            network.as_deref(),
+                            net.network_profile.as_deref(),
+                            net.network_passphrase.as_deref(),
+                        ) {
+                            Ok(n) => n,
+                            Err(e) => {
+                                // The structural report is complete at
+                                // this point: print it in the requested
+                                // format (no signature section) so a
+                                // caller in JSON mode still gets output
+                                // to parse, mirroring the verification
+                                // error branch below.
+                                eprintln!("Error: {}", e);
+                                print_validation_report(&report, fmt);
+                                process::exit(1);
+                            }
+                        };
+                        match verify_signatures_for_envelope(
+                            env_data.trim(),
+                            &signers,
+                            &distinct_signers,
+                            &network,
+                        ) {
+                            Ok(v) => Some((v, network)),
+                            Err(e) => {
+                                // The envelope hash could not be computed: a
+                                // structural error, no signature section.
+                                eprintln!("Error: cannot verify signatures: {}", e);
+                                print_validation_report(&report, fmt);
+                                process::exit(1);
+                            }
+                        }
                     } else {
-                        println!("  Status: INVALID");
+                        None
+                    };
+
+                if fmt == OutputFormat::Json {
+                    let mut obj = serde_json::to_value(&report).unwrap();
+                    if let (Some((v, network)), Some(map)) =
+                        (verification.as_ref(), obj.as_object_mut())
+                    {
+                        map.insert(
+                            "signatures".into(),
+                            serde_json::to_value(&v.signers).unwrap(),
+                        );
+                        map.insert(
+                            "unmatched".into(),
+                            serde_json::to_value(&v.unmatched).unwrap(),
+                        );
+                        map.insert(
+                            "network".into(),
+                            serde_json::Value::String(network_display_name(network)),
+                        );
                     }
-                    if !report.errors.is_empty() {
-                        println!("  Errors:");
-                        for err in &report.errors {
-                            println!("    - {}", err.message());
-                        }
-                    }
-                    if !report.warnings.is_empty() {
-                        println!("  Warnings:");
-                        for warn in &report.warnings {
-                            println!("    - {:?}", warn);
-                        }
+                    println!("{}", serde_json::to_string(&obj).unwrap());
+                } else {
+                    print_validation_report(&report, fmt);
+                    if let Some((v, network)) = &verification {
+                        print_signature_verification(v, network);
                     }
                 }
 
-                if !report.valid {
+                let all_valid = verification
+                    .as_ref()
+                    .map(|(v, _)| v.signers.iter().all(|s| s.status == "VALID"))
+                    .unwrap_or(true);
+                if !report.valid || !all_valid {
                     process::exit(1);
                 }
             }
@@ -8525,6 +8787,7 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
                             }
                             SigningError::InvalidKeyLength(_)
                             | SigningError::InvalidSecretKey(_)
+                            | SigningError::InvalidPublicKey(_)
                             | SigningError::Sign(_) => "internal signing error".to_string(),
                         };
                         eprintln!("Error signing transaction: {}", msg);

@@ -42,8 +42,8 @@ pub use builder::{
 pub use envelope::{decode_envelope, render_scval, view_envelope, EnvelopeView};
 pub use fee_bump::{wrap_fee_bump, FeeBumpError, FeeBumpResult, FeeBumpWrapParams};
 pub use sign::{
-    sign_envelope_with, sign_transaction, verify_signature, Ed25519Signer, Network, Signer,
-    SigningError, SigningOptions,
+    sign_envelope_with, sign_transaction, verify_signature, verify_signature_status, Ed25519Signer,
+    Network, PublicKeySigner, SignatureStatus, Signer, SigningError, SigningOptions,
 };
 pub use typed::{
     decode_scvals, decode_scvals_ref, encode_scvals, json_args_to_base64, json_to_scval,
