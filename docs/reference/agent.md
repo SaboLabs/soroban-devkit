@@ -132,6 +132,8 @@ These capabilities exist in the registry and are runnable directly through `sdkt
 * `tx.validate`: offline envelope validation requires exact transaction file/XDR handling.
 * `tx.build`: transaction assembly produces raw transaction envelopes requiring explicit parameters and downstream signing intent.
 * `tx.inspect`: looking up a transaction by hash requires the exact hash and a network/profile choice.
+* `tx.status`: polling a transaction to settlement requires the exact hash, an explicit RPC choice, and a wait policy.
+* `tx.wrap`: fee-bump wrapping produces an unsigned envelope from an exact envelope, fee source and fee.
 * `lock.show`: printing the lockfile is a project-inspection utility driven by project tooling.
 * `identity.list`: listing local keystore identity names and public keys is a local keystore management utility.
 * `identity.show`: inspecting one keystore identity requires the exact identity name.
@@ -139,6 +141,8 @@ These capabilities exist in the registry and are runnable directly through `sdkt
 * `package.validate`: package manifest validation is driven by package authoring tooling.
 * `package.fetch`: dependency fetching mutates the local cache and lockfile from package authoring workflows.
 * `package.pack`: producing offline dependency bundles is a release/packaging step, not prose orchestration.
+* `package.unpack`: reconstructing a packed bundle writes a buildable tree and is driven by packaging tooling.
+* `package.verify_bundle`: bundle/descriptor integrity verification is a CI-time check requiring exact tree paths.
 * `plugin.list`: querying installed plugin artifacts is plugin management rather than contract/network orchestration.
 * `plugin.show`: inspecting one installed plugin requires the exact plugin id.
 * `plugin.init`: scaffolding a plugin rule crate is local project authoring.
@@ -147,7 +151,7 @@ These capabilities exist in the registry and are runnable directly through `sdkt
 * `plugin.update`: replacing an installed plugin artifact mutates the local store and must be deliberate.
 * `plugin.verify_bundle`: bundle digest and signature verification requires bundle file and public key paths.
 * `storage.check`, `storage.estimate`, `storage.read`, `storage.storage_diff`: storage inspection takes exact contract ids, ledger keys, WASM paths, or snapshot files best passed directly via CLI flags.
-* `wasm.cache`: local cache management (`info`/`remove`/`clear`) is tooling maintenance rather than contract orchestration.
+* `wasm.cache`: local cache management (`info`/`list`/`remove`/`clear`) is tooling maintenance rather than contract orchestration.
 * `audit.list_rules`: rule enumeration is reference metadata for rule configuration.
 * `generate.client`: code generation writes client Rust code to disk/stdout.
 * `build`: workspace contract compilation involves local build state and compiler toolchains.

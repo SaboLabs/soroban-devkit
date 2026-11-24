@@ -273,11 +273,11 @@ const CAPABILITIES: [Capability; CAP_COUNT] = [
     Capability {
         id: "wasm.cache",
         command: &["wasm", "cache"],
-        summary: "Local WASM cache management: stats (`info`), per-hash removal (`remove`) and per-network clear (`clear`).",
+        summary: "Local WASM cache management: stats (`info`), entry listing (`list`), per-hash removal (`remove`) and per-network clear (`clear`).",
         formats: PRETTY,
         safety: Safety::LocalWrite,
         evidence: Evidence::Unverified,
-        notes: Some("Subcommand group, not a leaf: `cache --help` lists only its children and no flags, so this entry claims pretty output only. The leaves accept --format json and --network; `remove <hash>` and `clear` delete cached artifacts."),
+        notes: Some("Subcommand group, not a leaf: `cache --help` lists only its children and no flags, so this entry claims pretty output only. The leaves accept --format json and --network; `remove <hash>` and `clear` delete cached artifacts, while `info`/`list` only read."),
         ..Capability::BASE
     },
     // ---- Diff / upgrade safety -------------------------------------------
@@ -756,6 +756,31 @@ const CAPABILITIES: [Capability; CAP_COUNT] = [
         ..Capability::BASE
     },
     Capability {
+        id: "package.unpack",
+        command: &["package", "unpack"],
+        summary: "Reconstruct a packed offline bundle into a buildable tree, optionally verifying it against the bundle descriptor.",
+        required_args: &["<ARTIFACT>"],
+        optional_args: &["--dest", "--verify", "--format"],
+        formats: PRETTY_JSON,
+        exit: ExitSemantics::VERDICT_GATED,
+        safety: Safety::LocalWrite,
+        evidence: Evidence::Unverified,
+        notes: Some("Not executed by this audit; writes the reconstructed tree into --dest. Offline: the artifact is self-contained. With --verify a descriptor mismatch prints the report and then exits 1."),
+        ..Capability::BASE
+    },
+    Capability {
+        id: "package.verify_bundle",
+        command: &["package", "verify-bundle"],
+        summary: "Verify an unpacked bundle tree against its descriptor (lock sha256, per-dependency integrity, clean checkouts); read-only.",
+        required_args: &["<DIR>"],
+        optional_args: &["--descriptor <PACKAGE_JSON>", "--format"],
+        formats: PRETTY_JSON,
+        exit: ExitSemantics::VERDICT_GATED,
+        evidence: Evidence::Unverified,
+        notes: Some("Not executed by this audit; offline read of the tree and descriptor (default <DIR>/package.json). A mismatch prints the report and exits 1; nothing is written or unpacked."),
+        ..Capability::BASE
+    },
+    Capability {
         id: "lock.verify",
         command: &["lock", "verify"],
         summary: "Verify sdkt.lock against on-disk artifacts and resolved dependencies.",
@@ -916,6 +941,30 @@ const CAPABILITIES: [Capability; CAP_COUNT] = [
         network: NetworkRequirement::Both,
         evidence: Evidence::Unverified,
         notes: Some("Not executed by this audit; read-only getTransaction against the configured RPC. An unknown hash or RPC error exits 1."),
+        ..Capability::BASE
+    },
+    Capability {
+        id: "tx.status",
+        command: &["tx", "status"],
+        summary: "Transaction settlement status by hash, optionally polling until it settles; FAILED is reported in the JSON report.",
+        required_args: &["<HASH>"],
+        optional_args: &["--wait", "--timeout", "--interval", "--abi", "--abi-contract", "--rpc-url", "--network-passphrase", "--network-profile", "--format"],
+        formats: PRETTY_JSON,
+        exit: ExitSemantics::VERDICT_GATED,
+        network: NetworkRequirement::Both,
+        evidence: Evidence::Unverified,
+        notes: Some("Not executed by this audit; read-only getTransaction, or bounded polling with --wait. A malformed hash, an unreadable wire status or an RPC error exits 2; a settled FAILED transaction exits 1 after printing the report."),
+        ..Capability::BASE
+    },
+    Capability {
+        id: "tx.wrap",
+        command: &["tx", "wrap"],
+        summary: "Wrap a V1 transaction envelope in a fee-bump envelope offline; produces bytes only.",
+        required_args: &["--envelope <xdr|file>", "--fee-source <ACCOUNT>", "--fee <STROOPS>"],
+        optional_args: &["--format"],
+        formats: PRETTY_JSON,
+        evidence: Evidence::Unverified,
+        notes: Some("Not executed by this audit; fully offline. The output is an unsigned fee-bump envelope, so nothing is signed or submitted and downstream intent matters."),
         ..Capability::BASE
     },
     Capability {
@@ -1107,7 +1156,7 @@ const CAPABILITIES: [Capability; CAP_COUNT] = [
 
 /// Number of described capabilities; kept as a const so the array length is
 /// checked by the compiler against every entry.
-const CAP_COUNT: usize = 69;
+const CAP_COUNT: usize = 73;
 
 #[cfg(test)]
 mod tests {
@@ -1277,8 +1326,12 @@ mod tests {
             "storage.read",
             "storage.storage_diff",
             "tx.inspect",
+            "tx.status",
+            "tx.wrap",
             "lock.show",
             "package.fetch",
+            "package.unpack",
+            "package.verify_bundle",
         ];
         const NO_JSON: &[&str] = &[
             "generate.client",
