@@ -16,6 +16,7 @@ pub mod simulate;
 pub mod storage;
 pub mod submission;
 pub mod transaction;
+pub mod transactions;
 pub mod wasm;
 
 pub use account::{
@@ -62,4 +63,11 @@ pub use submission::{
     TransactionStatusResponse,
 };
 pub use transaction::{inspect_transaction, TransactionInspection};
+pub use transactions::{
+    get_account_transactions, validate_account_transactions_request, AccountTransaction,
+    AccountTransactionsOptions, AccountTransactionsScan, GetTransactionsPagination,
+    GetTransactionsRequest, TRANSACTIONS_DEFAULT_LOOKBACK, TRANSACTIONS_LIMIT_DEFAULT,
+    TRANSACTIONS_LIMIT_MAX, TRANSACTIONS_LIMIT_MIN, TRANSACTIONS_MAX_MATCHES_DEFAULT,
+    TRANSACTIONS_MAX_PAGES_DEFAULT,
+};
 pub use wasm::get_wasm_metadata;

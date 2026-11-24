@@ -166,6 +166,7 @@ sdkt
 │   └── [other network resolution flags]
 │
 ├── account <address>         [--format]
+│   └── transactions <address>  [--start-ledger] [--limit] [--cursor] [--max-matches] [--max-pages] [--format]
 │
 ├── fee
 │   └── estimate              (manual value entry, type-prefixed)
@@ -352,6 +353,59 @@ sdkt events <contract-id> --start-ledger 1000 --end-ledger 2000
 
 Pagination is strictly additive: no change to event decoding, topic
 filtering, or ABI-aware value formatting.
+
+### Account transactions (`sdkt account transactions`)
+
+`sdkt account transactions <ADDRESS>` lists what an account has done
+recently, from Soroban RPC `getTransactions`. The RPC returns every
+transaction in a ledger range with no account filter, so the command
+filters client-side by decoding each transaction's envelope and matching
+its source account (for a fee-bump envelope, the inner transaction's
+source account).
+
+```bash
+sdkt account transactions <ADDRESS> --start-ledger 100000
+# Account transactions for G...:
+#
+#   Ledger: 100001  TxHash: abc...  Status: SUCCESS  Fee: 100
+#   Ledger: 100005  TxHash: def...  Status: FAILED  Fee: 100
+#
+# Scanned: 12  Matched: 2  Pages: 1
+# Retention: oldestLedger 99000 - latestLedger 100100
+```
+
+- `--limit <N>` is the RPC page size: transactions fetched per page
+  (1–200, default 50). It never promises a number of *matching*
+  transactions; a page can hold zero matches while later pages hold many.
+- `--start-ledger <N>` is the first ledger scanned (inclusive). Default:
+  latest ledger minus 100, clamped to a minimum of 1. A start below the
+  endpoint's `oldestLedger` or above its `latestLedger` is an error naming
+  the requested start and the retention bounds; the start is never
+  silently clamped into range.
+- `--cursor <CURSOR>` resumes from a previous run's cursor. A cursor-only
+  request must omit `--start-ledger`; combining them is a usage error.
+- `--max-matches <N>` stops after N matching transactions (default 20). When the cap stops the scan mid-page, the printed `Next cursor` value points at the next page, so resuming from it skips any unexamined matches left on the cut page; re-run from the original start with a higher cap to see them.
+- `--max-pages <N>` stops after N pages fetched (default 10). The scan
+  stops at whichever limit is reached first.
+- The scan also stops on a terminal empty page (zero transactions returned
+  with a cursor at or past the latest ledger, the end of the available
+  range) or an exhausted cursor (empty, or identical to the request
+  cursor). An empty page whose cursor still points below the latest ledger
+  is a sparse gap, not the end, and the scan continues from its cursor. A
+  page with zero matches does not stop the scan.
+- An envelope too deep for the local XDR reader is an error naming the
+  transaction hash, never a silently skipped transaction.
+- Results are printed in the RPC's ascending ledger order (then
+  application order within a ledger), oldest first. The command never
+  claims newest-first.
+- No matches is an empty list with the scanned/matched summary and the
+  retention bounds, and exits 0 — it is a result, not an error.
+- `--format json` adds `nextCursor` (when the scan stops early), `scanned`, `matched`, `pages`,
+  `oldestLedger`, and `latestLedger` alongside the `transactions` array.
+
+This command is read-only and its source is Soroban RPC `getTransactions`.
+It is not Horizon-backed account history (different API, different
+retention, different ordering).
 
 ### Synchronizing dependencies
 

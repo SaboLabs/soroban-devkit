@@ -6,11 +6,12 @@ use sdkt_core::{ContractConfig, DevKitConfig, OutputFormat};
 use sdkt_rpc::inspect::StorageSummary;
 use sdkt_rpc::wasm::get_wasm_bytecode;
 use sdkt_rpc::{
-    estimate_dynamic_fee, extend_footprint, first_topic_filter, get_contract_events_page,
-    get_contract_events_paginated, get_next_sequence, get_ttl_info_for_keys, get_wasm_metadata,
-    inspect_account, inspect_contract, inspect_transaction, read_contract_state, restore_footprint,
-    simulate_transaction, GetEventsPagination, PaginationOptions, SorobanRpcClient, StorageKeyInfo,
-    TtlInfoSummary,
+    estimate_dynamic_fee, extend_footprint, first_topic_filter, get_account_transactions,
+    get_contract_events_page, get_contract_events_paginated, get_next_sequence,
+    get_ttl_info_for_keys, get_wasm_metadata, inspect_account, inspect_contract,
+    inspect_transaction, read_contract_state, restore_footprint, simulate_transaction,
+    AccountTransactionsOptions, GetEventsPagination, PaginationOptions, SorobanRpcClient,
+    StorageKeyInfo, TtlInfoSummary,
 };
 use sdkt_storage::WasmCache;
 use sdkt_storage::{
@@ -378,13 +379,17 @@ enum Commands {
         #[command(flatten)]
         net: NetworkArgs,
     },
-    /// Inspect an account's balances and signers
+    /// Inspect an account's balances and signers, or list its transactions
+    #[command(args_conflicts_with_subcommands = true)]
     Account {
-        /// Stellar account address (G... StrKey format)
+        /// Stellar account address (G... StrKey format). Used when no
+        /// subcommand is given; omit it when using a subcommand.
         #[arg(value_name = "ADDRESS")]
-        address: String,
+        address: Option<String>,
         #[arg(short, long, default_value = "pretty")]
         format: String,
+        #[command(subcommand)]
+        action: Option<AccountAction>,
         #[command(flatten)]
         net: NetworkArgs,
     },
@@ -1386,6 +1391,42 @@ enum TxAction {
         /// Output format
         #[arg(short, long, default_value = "pretty")]
         format: String,
+    },
+}
+
+#[derive(Subcommand)]
+enum AccountAction {
+    /// List an account's transactions from Soroban RPC `getTransactions`
+    Transactions {
+        /// Stellar account address (G... StrKey format)
+        #[arg(value_name = "ADDRESS")]
+        address: String,
+        /// First ledger to scan from (inclusive). Default: latest ledger
+        /// minus 100, clamped to a minimum of 1.
+        #[arg(long, value_name = "N")]
+        start_ledger: Option<u32>,
+        /// RPC page size: transactions fetched per page (1-200, default 50)
+        #[arg(
+            long,
+            value_name = "N",
+            default_value_t = 50,
+            value_parser = clap::value_parser!(u32).range(1..=200)
+        )]
+        limit: u32,
+        /// Resume from a previous run's cursor; cannot combine with
+        /// `--start-ledger`
+        #[arg(long, value_name = "CURSOR")]
+        cursor: Option<String>,
+        /// Stop after N matching transactions (default 20)
+        #[arg(long, value_name = "N", default_value_t = 20)]
+        max_matches: usize,
+        /// Stop after N pages fetched (default 10)
+        #[arg(long, value_name = "N", default_value_t = 10)]
+        max_pages: usize,
+        #[arg(short, long, default_value = "pretty")]
+        format: String,
+        #[command(flatten)]
+        net: NetworkArgs,
     },
 }
 
@@ -3812,6 +3853,102 @@ async fn run_call_batch(
         }
     }
     Ok(())
+}
+
+/// Run `sdkt account transactions <ADDRESS>`: list an account's
+/// transactions from Soroban RPC `getTransactions`.
+///
+/// Read-only: no signing, no submission, no Horizon request. The scan is
+/// bounded (`--max-matches`, `--max-pages`, terminal empty page, exhausted cursor)
+/// and results keep the RPC's ascending ledger order (oldest first).
+#[allow(clippy::too_many_arguments)]
+async fn run_account_transactions(
+    address: String,
+    start_ledger: Option<u32>,
+    limit: u32,
+    cursor: Option<String>,
+    max_matches: usize,
+    max_pages: usize,
+    format: String,
+    net: NetworkArgs,
+) {
+    if sdkt_xdr::decode_account_id(&address).is_err() {
+        eprintln!("Invalid account address '{address}'. Expected a G... StrKey address.");
+        process::exit(2);
+    }
+    if cursor.is_some() && start_ledger.is_some() {
+        eprintln!(
+            "--cursor cannot be combined with --start-ledger: a request carrying --cursor must omit --start-ledger; resume with the cursor alone"
+        );
+        process::exit(2);
+    }
+    if max_matches == 0 {
+        eprintln!("--max-matches must be at least 1");
+        process::exit(2);
+    }
+    if max_pages == 0 {
+        eprintln!("--max-pages must be at least 1");
+        process::exit(2);
+    }
+
+    let fmt = parse_format_str(&format);
+    let client = resolve_rpc_client(
+        net.rpc_url.clone(),
+        net.network_passphrase.clone(),
+        net.network_profile.clone(),
+    );
+    let options = AccountTransactionsOptions {
+        start_ledger,
+        cursor,
+        limit,
+        max_matches,
+        max_pages,
+    };
+    match get_account_transactions(&client, &address, options).await {
+        Ok(scan) => {
+            if fmt == OutputFormat::Json {
+                match serde_json::to_string(&scan) {
+                    Ok(json_str) => println!("{json_str}"),
+                    Err(e) => {
+                        eprintln!("Error serializing account transactions: {e}");
+                        process::exit(1);
+                    }
+                }
+            } else {
+                println!("Account transactions for {address}:");
+                println!();
+                if scan.transactions.is_empty() {
+                    println!("  (no transactions in the scanned range)");
+                } else {
+                    for tx in &scan.transactions {
+                        println!(
+                            "  Ledger: {}  TxHash: {}  Status: {}  Fee: {}",
+                            tx.ledger,
+                            tx.tx_hash,
+                            tx.status,
+                            tx.fee_charged.as_deref().unwrap_or("unknown")
+                        );
+                    }
+                }
+                println!();
+                println!(
+                    "Scanned: {}  Matched: {}  Pages: {}",
+                    scan.scanned, scan.matched, scan.pages
+                );
+                println!(
+                    "Retention: oldestLedger {} - latestLedger {}",
+                    scan.oldest_ledger, scan.latest_ledger
+                );
+                if let Some(cursor) = &scan.next_cursor {
+                    println!("Next cursor: {cursor}");
+                }
+            }
+        }
+        Err(e) => {
+            eprintln!("Error fetching account transactions: {e}");
+            process::exit(1);
+        }
+    }
 }
 
 /// Formats a byte count for the `wasm cache list` table (`530 B`, `1.2 KB`,
@@ -9574,8 +9711,39 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
         Commands::Account {
             address,
             format,
+            action,
             net,
         } => {
+            if let Some(AccountAction::Transactions {
+                address: tx_address,
+                start_ledger,
+                limit,
+                cursor,
+                max_matches,
+                max_pages,
+                format: tx_format,
+                net: tx_net,
+            }) = action
+            {
+                run_account_transactions(
+                    tx_address,
+                    start_ledger,
+                    limit,
+                    cursor,
+                    max_matches,
+                    max_pages,
+                    tx_format,
+                    tx_net,
+                )
+                .await;
+                return Ok(());
+            }
+            let Some(address) = address else {
+                eprintln!(
+                    "Missing account address. Usage: sdkt account <ADDRESS> or sdkt account transactions <ADDRESS>"
+                );
+                process::exit(2);
+            };
             let fmt = parse_format_str(&format);
             let client = resolve_rpc_client(
                 net.rpc_url.clone(),
