@@ -3254,8 +3254,8 @@ struct BatchCall {
 /// duplicate keys are rejected here — before any network call is made —
 /// because the whole file is validated before execution starts.
 fn parse_batch_file(text: &str) -> Result<Vec<BatchCall>, String> {
-    let value: serde_json::Value = serde_json::from_str(text)
-        .map_err(|e| format!("batch file is not valid JSON: {e}"))?;
+    let value: serde_json::Value =
+        serde_json::from_str(text).map_err(|e| format!("batch file is not valid JSON: {e}"))?;
     let entries = value
         .as_array()
         .ok_or("batch file must contain a JSON array of calls")?;
@@ -3263,8 +3263,7 @@ fn parse_batch_file(text: &str) -> Result<Vec<BatchCall>, String> {
         return Err("batch file contains no calls".to_string());
     }
     let mut calls = Vec::with_capacity(entries.len());
-    let mut seen_keys: std::collections::HashMap<String, usize> =
-        std::collections::HashMap::new();
+    let mut seen_keys: std::collections::HashMap<String, usize> = std::collections::HashMap::new();
     for (i, entry) in entries.iter().enumerate() {
         let obj = entry
             .as_object()
@@ -3281,9 +3280,7 @@ fn parse_batch_file(text: &str) -> Result<Vec<BatchCall>, String> {
             Some(v) => v
                 .as_str()
                 .filter(|s| !s.is_empty())
-                .ok_or_else(|| {
-                    format!("batch entry {i}: \"key\" must be a non-empty string")
-                })?
+                .ok_or_else(|| format!("batch entry {i}: \"key\" must be a non-empty string"))?
                 .to_string(),
             None => function.clone(),
         };
@@ -3463,16 +3460,12 @@ async fn run_call_batch(
             args: entry_args[i].clone(),
             memo: None,
         };
-        let envelope = sdkt_xdr::builder::build_invoke_transaction(&params).map_err(|e| {
-            format!("batch entry {i} ({name}): failed to build transaction: {e}")
-        })?;
+        let envelope = sdkt_xdr::builder::build_invoke_transaction(&params)
+            .map_err(|e| format!("batch entry {i} ({name}): failed to build transaction: {e}"))?;
         match simulate_transaction(&client, &envelope).await {
             Ok(resp) => {
                 if let Some(err) = &resp.error {
-                    return Err(format!(
-                        "batch entry {i} ({name}): simulation error: {err}"
-                    )
-                    .into());
+                    return Err(format!("batch entry {i} ({name}): simulation error: {err}").into());
                 }
                 let result_raw = resp
                     .results
@@ -3498,9 +3491,7 @@ async fn run_call_batch(
                             sdkt_xdr::abi_decode::decode_with_abi(spec, &scval, None).label
                         }
                         None => {
-                            eprintln!(
-                                "warning: could not parse result ScVal — showing raw result"
-                            );
+                            eprintln!("warning: could not parse result ScVal — showing raw result");
                             result_raw.clone()
                         }
                     }
@@ -3510,10 +3501,7 @@ async fn run_call_batch(
                 results.push((entry.key.clone(), result_display));
             }
             Err(e) => {
-                return Err(format!(
-                    "batch entry {i} ({name}): RPC simulation failed: {e}"
-                )
-                .into());
+                return Err(format!("batch entry {i} ({name}): RPC simulation failed: {e}").into());
             }
         }
     }
@@ -4613,10 +4601,9 @@ mod encode_tests {
     }
     #[test]
     fn batch_file_parses_entries_with_default_keys() {
-        let calls = parse_batch_file(
-            r#"[{"function": "name"}, {"function": "decimals", "key": "dec"}]"#,
-        )
-        .expect("valid batch file");
+        let calls =
+            parse_batch_file(r#"[{"function": "name"}, {"function": "decimals", "key": "dec"}]"#)
+                .expect("valid batch file");
         assert_eq!(calls.len(), 2);
         assert_eq!(calls[0].function, "name");
         assert_eq!(calls[0].key, "name");
@@ -4639,10 +4626,9 @@ mod encode_tests {
 
     #[test]
     fn batch_file_rejects_duplicate_keys() {
-        let err = parse_batch_file(
-            r#"[{"function": "name"}, {"function": "symbol", "key": "name"}]"#,
-        )
-        .expect_err("duplicate keys must be rejected");
+        let err =
+            parse_batch_file(r#"[{"function": "name"}, {"function": "symbol", "key": "name"}]"#)
+                .expect_err("duplicate keys must be rejected");
         assert!(err.contains("batch entry 1"), "{err}");
         assert!(err.contains("duplicate key"), "{err}");
     }
@@ -4692,8 +4678,7 @@ mod encode_tests {
 
     #[test]
     fn batch_file_rejects_non_object_entry() {
-        let err = parse_batch_file(r#"["name"]"#)
-            .expect_err("non-object entry must be rejected");
+        let err = parse_batch_file(r#"["name"]"#).expect_err("non-object entry must be rejected");
         assert!(err.contains("batch entry 0"), "{err}");
     }
 
