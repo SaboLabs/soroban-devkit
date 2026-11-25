@@ -885,14 +885,33 @@ enum GenerateAction {
     /// Generate a typed Rust client from a compiled contract's ContractSpec
     Client {
         /// Path to the compiled contract WASM file
-        #[arg(value_name = "WASM")]
-        wasm: String,
+        #[arg(
+            value_name = "WASM",
+            required_unless_present = "contract",
+            conflicts_with = "contract"
+        )]
+        wasm: Option<String>,
+        /// Fetch the deployed contract's WASM from the network by contract ID (C...)
+        #[arg(long, value_name = "CONTRACT_ID", conflicts_with = "wasm")]
+        contract: Option<String>,
+        /// Network to query when --contract is used (testnet | mainnet | futurenet)
+        #[arg(
+            short,
+            long,
+            value_name = "NETWORK",
+            conflicts_with = "rpc_url",
+            conflicts_with = "network_profile",
+            conflicts_with = "network_passphrase"
+        )]
+        network: Option<String>,
         /// Output file path (prints to stdout if omitted)
         #[arg(short, long, value_name = "PATH")]
         output: Option<String>,
         /// Skip functions with unsupported types instead of aborting
         #[arg(long)]
         skip_unsupported: bool,
+        #[command(flatten)]
+        net: NetworkArgs,
     },
 }
 
@@ -13016,10 +13035,32 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
         Commands::Generate(action) => match action {
             GenerateAction::Client {
                 wasm,
+                contract,
+                network,
                 output,
                 skip_unsupported,
+                net,
             } => {
-                if let Err(e) = run_generate_client(&wasm, output.as_deref(), skip_unsupported) {
+                let res = match (wasm.as_deref(), contract.as_deref()) {
+                    (Some(wasm_path), None) => {
+                        run_generate_client(wasm_path, output.as_deref(), skip_unsupported)
+                    }
+                    (None, Some(contract_id)) => {
+                        run_generate_client_from_contract(
+                            contract_id,
+                            network.as_deref(),
+                            &net,
+                            output.as_deref(),
+                            skip_unsupported,
+                        )
+                        .await
+                    }
+                    _ => Err(
+                        "specify either a local <WASM> path or --contract <CONTRACT_ID>"
+                            .to_string(),
+                    ),
+                };
+                if let Err(e) = res {
                     eprintln!("Error: {e}");
                     process::exit(1);
                 }
@@ -13271,7 +13312,41 @@ fn run_generate_client(
     skip_unsupported: bool,
 ) -> Result<(), String> {
     let bytes = fs::read(wasm_path).map_err(|e| format!("cannot read WASM '{wasm_path}': {e}"))?;
-    let spec = parse_contract_spec(&bytes).map_err(|e| format!("{wasm_path}: {e}"))?;
+    generate_client_from_wasm_bytes(&bytes, wasm_path, output, skip_unsupported)
+}
+
+/// Execute `sdkt generate client --contract <CONTRACT_ID>`: fetch the deployed
+/// contract's WASM via `inspect_contract` -> `get_wasm_bytecode` (read-only),
+/// then run the exact same spec-parse and client-generation pipeline.
+async fn run_generate_client_from_contract(
+    contract_id: &str,
+    network: Option<&str>,
+    net: &NetworkArgs,
+    output: Option<&str>,
+    skip_unsupported: bool,
+) -> Result<(), String> {
+    let target = resolve_target_network(network, net)?;
+    let inspection = inspect_contract(&target.client, contract_id)
+        .await
+        .map_err(|e| format!("cannot inspect contract '{contract_id}': {e}"))?;
+    let bytes = get_wasm_bytecode(&target.client, &inspection.wasm_hash)
+        .await
+        .map_err(|e| {
+            format!(
+                "cannot fetch WASM for contract '{contract_id}' (wasm_hash {}): {e}",
+                inspection.wasm_hash
+            )
+        })?;
+    generate_client_from_wasm_bytes(&bytes, contract_id, output, skip_unsupported)
+}
+
+fn generate_client_from_wasm_bytes(
+    bytes: &[u8],
+    source_label: &str,
+    output: Option<&str>,
+    skip_unsupported: bool,
+) -> Result<(), String> {
+    let spec = parse_contract_spec(bytes).map_err(|e| format!("{source_label}: {e}"))?;
     let options = sdkt_wasm::GenerateOptions { skip_unsupported };
     let code =
         sdkt_wasm::generate_client_with_options(&spec, &options).map_err(|e| e.to_string())?;
