@@ -68,7 +68,18 @@ every request reports a truthful failure rather than appearing to succeed.
 ```
 sdkt-agent "<request>"            # six-line human summary
 sdkt-agent --format json "<request>"   # versioned JSON result document
+sdkt-agent --list-capabilities --format json # versioned capability registry
 ```
+
+### Listing capabilities
+
+Use `--list-capabilities` to inspect the installed capability registry without
+planning or executing a request. Pretty output prints one line per capability;
+`--format json` prints the registry document directly, including
+`schema_version` (currently `1`), `tool`, and the complete `capabilities` array.
+The positional request is optional and ignored when this flag is present. If
+the flag is absent, `REQUEST` remains required and normal request behavior is
+unchanged.
 
 ***
 
