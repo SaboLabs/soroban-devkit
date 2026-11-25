@@ -212,7 +212,6 @@ impl Default for NetworkConfig {
     }
 }
 
-
 /// A single located configuration validation problem (#565).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ConfigProblem {
@@ -742,7 +741,8 @@ mod tests {
 
     #[test]
     fn test_schema_unknown_contract_key_and_missing_path_reported() {
-        let problems = validate_config_schema("[contracts.token]\npath = \"contracts/token\"\nextra = 1\n");
+        let problems =
+            validate_config_schema("[contracts.token]\npath = \"contracts/token\"\nextra = 1\n");
         assert_eq!(problems.len(), 1);
         assert_eq!(problems[0].section, "contracts.token");
         assert_eq!(problems[0].key, "extra");
@@ -758,7 +758,10 @@ mod tests {
         let problems = validate_config_schema(
             "[package]\nname = \"demo\"\nversion = \"0.1.0\"\nfuture_key = \"allowed\"\n",
         );
-        assert!(problems.is_empty(), "[package] unknown keys must be allowed");
+        assert!(
+            problems.is_empty(),
+            "[package] unknown keys must be allowed"
+        );
     }
 
     #[test]
@@ -768,9 +771,8 @@ mod tests {
         assert_eq!(malformed[0].section, ".sdkt.toml");
         assert_eq!(malformed[0].key, "parse");
 
-        let dup = validate_config_schema(
-            "[contracts.x]\npath = \"a\"\n[contracts.x]\npath = \"b\"\n",
-        );
+        let dup =
+            validate_config_schema("[contracts.x]\npath = \"a\"\n[contracts.x]\npath = \"b\"\n");
         assert_eq!(dup.len(), 1);
         assert_eq!(dup[0].section, ".sdkt.toml");
         assert_eq!(dup[0].key, "parse");
@@ -781,12 +783,16 @@ mod tests {
         let mut cfg = DevKitConfig::default();
         cfg.storage.max_entries = 0;
         let err = cfg.validate(Path::new(".")).unwrap_err();
-        assert!(err.iter().any(|p| p.section == "storage" && p.key == "max_entries"));
+        assert!(err
+            .iter()
+            .any(|p| p.section == "storage" && p.key == "max_entries"));
 
         let mut cfg2 = DevKitConfig::default();
         cfg2.network.timeout_secs = Some(0);
         let err2 = cfg2.validate(Path::new(".")).unwrap_err();
-        assert!(err2.iter().any(|p| p.section == "network" && p.key == "timeout_secs"));
+        assert!(err2
+            .iter()
+            .any(|p| p.section == "network" && p.key == "timeout_secs"));
 
         let mut cfg3 = DevKitConfig::default();
         cfg3.decode.max_depth = 0;
@@ -804,19 +810,17 @@ mod tests {
         std::fs::write(valid_dir.join("Cargo.toml"), "[package]\nname = \"v\"\n").unwrap();
 
         // Missing directory
-        let cfg_missing = DevKitConfig::from_toml(
-            "[contracts.missing]\npath = \"contracts/does_not_exist\"\n",
-        )
-        .unwrap();
+        let cfg_missing =
+            DevKitConfig::from_toml("[contracts.missing]\npath = \"contracts/does_not_exist\"\n")
+                .unwrap();
         let err_missing = cfg_missing.validate(tmp.path()).unwrap_err();
         assert_eq!(err_missing[0].section, "contracts.missing");
         assert_eq!(err_missing[0].key, "path");
 
         // Directory exists without Cargo.toml
-        let cfg_no_cargo = DevKitConfig::from_toml(
-            "[contracts.nocargo]\npath = \"contracts/no_cargo\"\n",
-        )
-        .unwrap();
+        let cfg_no_cargo =
+            DevKitConfig::from_toml("[contracts.nocargo]\npath = \"contracts/no_cargo\"\n")
+                .unwrap();
         let err_no_cargo = cfg_no_cargo.validate(tmp.path()).unwrap_err();
         assert_eq!(err_no_cargo[0].section, "contracts.nocargo");
         assert!(err_no_cargo[0].message.contains("Cargo.toml"));
@@ -845,10 +849,9 @@ mod tests {
         assert!(mixed.validate(tmp.path()).is_err());
 
         // git with no ref and no version -> invalid
-        let no_ref = DevKitConfig::from_toml(
-            "[dependencies.foo]\ngit = \"https://example.com/foo.git\"\n",
-        )
-        .unwrap();
+        let no_ref =
+            DevKitConfig::from_toml("[dependencies.foo]\ngit = \"https://example.com/foo.git\"\n")
+                .unwrap();
         assert!(no_ref.validate(tmp.path()).is_err());
 
         // git with no ref but valid version -> valid
@@ -895,4 +898,3 @@ mod tests {
         assert!(dup_dep.validate(tmp.path()).is_err());
     }
 }
-

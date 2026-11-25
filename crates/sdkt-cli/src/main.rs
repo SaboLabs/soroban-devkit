@@ -4699,7 +4699,6 @@ mod tx_status_tests {
     }
 }
 
-
 /// Execute `sdkt config validate` (#565): offline two-stage validation of `.sdkt.toml`.
 fn run_config_validate(fmt: OutputFormat) {
     let config_path = Path::new(".sdkt.toml");
