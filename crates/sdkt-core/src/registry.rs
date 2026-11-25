@@ -1221,7 +1221,6 @@ mod tests {
         assert!(mutating.iter().all(|c| c.requires_confirmation));
     }
 
-
     #[test]
     fn audit_and_audit_list_rules_are_distinguishable_by_sarif_format() {
         let audit = find("audit").expect("audit entry");
