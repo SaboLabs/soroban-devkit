@@ -1399,6 +1399,13 @@ enum ProjectCommand {
         /// contract (issue #89). See `sdkt deploy --no-verify`.
         #[arg(long, default_value_t = false)]
         no_verify: bool,
+        /// Preflight every deploying contract through release-assurance (Artifact,
+        /// Security, and Upgrade Safety when a prior deployment record exists;
+        /// Fuzz Evidence, Verification, and Contract Health are skipped) before
+        /// any WASM upload begins. Aborts the entire deploy if any contract
+        /// fails or errors.
+        #[arg(long, default_value_t = false)]
+        release_assurance: bool,
         #[arg(short, long, default_value = "pretty")]
         format: String,
     },
@@ -3059,6 +3066,115 @@ async fn run_release_upgrade_safety(
             verdict: None,
         }
     }
+}
+
+/// Guard that deletes a temporary file on drop so fetched previous-WASM bytes
+/// for `sdkt project deploy --release-assurance` are always cleaned up (#545).
+struct TempFileDropGuard(std::path::PathBuf);
+
+impl Drop for TempFileDropGuard {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_file(&self.0);
+    }
+}
+
+/// Preflight every deploying contract through `run_release_assurance` before
+/// any upload begins (#545).
+///
+/// Sections executed: Artifact, Security (against `contract.path`), and Upgrade
+/// Safety (when a prior deployment record exists for the alias, fetching the
+/// deployed bytes via `inspect_contract` -> `get_wasm_bytecode` into a temp
+/// file cleaned up on exit). Fuzz Evidence, Verification, and Contract Health
+/// are skipped by construction (`contract_id: None`, `fuzz_evidence: None`).
+async fn preflight_project_release_assurance(
+    client: &SorobanRpcClient,
+    deploying: &[sdkt_core::project::ResolvedContract],
+    record_file: &sdkt_core::deployment::DeploymentRecordFile,
+    network_key: &str,
+    network_name: &str,
+    fmt: OutputFormat,
+) -> Result<(), String> {
+    for contract in deploying {
+        let wasm_str = contract.wasm_artifact.to_string_lossy().into_owned();
+        if !contract.wasm_artifact.exists() {
+            return Err(format!(
+                "release-assurance preflight failed for '{}': unreadable WASM '{}'",
+                contract.alias, wasm_str
+            ));
+        }
+
+        // If a deployment record exists for this alias, fetch the deployed
+        // WASM bytes via inspect_contract -> get_wasm_bytecode into a temp file.
+        let mut _temp_guard: Option<TempFileDropGuard> = None;
+        let mut prev_wasm_path: Option<String> = None;
+        if let Some(rec) = record_file.record_for(network_key, &contract.alias) {
+            if let Ok(ins) = inspect_contract(client, &rec.contract_id).await {
+                if let Ok(prev_bytes) = get_wasm_bytecode(client, &ins.wasm_hash).await {
+                    let tmp_path = std::env::temp_dir().join(format!(
+                        "sdkt-preflight-prev-{}-{}.wasm",
+                        contract.alias,
+                        std::process::id()
+                    ));
+                    let write_res = std::fs::write(&tmp_path, &prev_bytes);
+                    write_res.map_err(|e| {
+                        format!(
+                            "release-assurance preflight failed for '{}': cannot write temporary previous WASM: {e}",
+                            contract.alias
+                        )
+                    })?;
+                    prev_wasm_path = Some(tmp_path.to_string_lossy().into_owned());
+                    _temp_guard = Some(TempFileDropGuard(tmp_path));
+                }
+            }
+        }
+
+        let audit_paths = vec![contract.path.clone()];
+        let report = run_release_assurance(
+            client,
+            &wasm_str,
+            prev_wasm_path.as_deref(),
+            &audit_paths,
+            &[],
+            None,
+            network_name,
+            None,
+        )
+        .await
+        .map_err(|e| {
+            format!(
+                "release-assurance preflight failed for '{}': {e}",
+                contract.alias
+            )
+        })?;
+
+        if fmt != OutputFormat::Json {
+            println!(
+                "  • Preflight '{}': {} (Artifact: {}, Security: {}, Upgrade Safety: {})",
+                contract.alias,
+                report.release_status,
+                report.artifact.check.status,
+                report.security.check.status,
+                report.upgrade_safety.check.status
+            );
+        }
+
+        if report.release_status == "FAIL"
+            || report.artifact.check.status == RaStatus::Error
+            || report.security.check.status == RaStatus::Error
+            || report.upgrade_safety.check.status == RaStatus::Error
+        {
+            let reasons = if report.reasons.is_empty() {
+                report.release_status.clone()
+            } else {
+                report.reasons.join(", ")
+            };
+            return Err(format!(
+                "release-assurance preflight failed for '{}': {}",
+                contract.alias, reasons
+            ));
+        }
+    }
+    Ok(())
 }
 
 /// Parse a `--salt` value (40 hex chars) into a 20-byte deployment salt.
@@ -12157,6 +12273,7 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
                 timeout,
                 interval,
                 no_verify,
+                release_assurance,
                 format,
             } => {
                 let fmt = parse_format_str(&format);
@@ -12314,11 +12431,11 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
                             &network_config.passphrase,
                         );
 
+                        // Partition contracts after --skip-deployed filtering so
+                        // --release-assurance preflights every deploying contract
+                        // before any upload begins (#545).
+                        let mut deploying = Vec::new();
                         for contract in resolved {
-                            // --skip-deployed: honor the record only when the
-                            // recorded contract still exists on-chain. A record
-                            // file entry alone does not skip — the ledger is the
-                            // source of truth.
                             if skip_deployed {
                                 if let Some(record) =
                                     record_file.record_for(&network_key, &contract.alias)
@@ -12360,6 +12477,29 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
                                         }
                                     }
                                 }
+                            }
+                            deploying.push(contract);
+                        }
+
+                        if failure.is_none() && release_assurance {
+                            if let Err(preflight_err) = preflight_project_release_assurance(
+                                &client,
+                                &deploying,
+                                &record_file,
+                                &network_key,
+                                &network_name,
+                                fmt,
+                            )
+                            .await
+                            {
+                                eprintln!("Error: {preflight_err}");
+                                process::exit(1);
+                            }
+                        }
+
+                        for contract in deploying {
+                            if failure.is_some() {
+                                break;
                             }
 
                             if fmt != OutputFormat::Json {
