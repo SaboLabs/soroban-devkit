@@ -3034,9 +3034,6 @@ async fn run_release_upgrade_safety(
     }
 }
 
-/// Parse a `--salt` value (40 hex chars) into a 20-byte deployment salt.
-/// Shared by `deploy` and `project deploy`; validates strictly.
-
 /// Guard that deletes a temporary file on drop so fetched previous-WASM bytes
 /// for `sdkt project deploy --release-assurance` are always cleaned up (#545).
 struct TempFileDropGuard(std::path::PathBuf);
@@ -3084,7 +3081,8 @@ async fn preflight_project_release_assurance(
                         contract.alias,
                         std::process::id()
                     ));
-                    std::fs::write(&tmp_path, &prev_bytes).map_err(|e| {
+                    let write_res = std::fs::write(&tmp_path, &prev_bytes);
+                    write_res.map_err(|e| {
                         format!(
                             "release-assurance preflight failed for '{}': cannot write temporary previous WASM: {e}",
                             contract.alias
@@ -3145,6 +3143,8 @@ async fn preflight_project_release_assurance(
     Ok(())
 }
 
+/// Parse a `--salt` value (40 hex chars) into a 20-byte deployment salt.
+/// Shared by `deploy` and `project deploy`; validates strictly.
 fn parse_salt_hex(s: &str) -> Result<[u8; 20], String> {
     let sh = s.trim();
     if sh.len() != 40 {

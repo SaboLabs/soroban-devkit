@@ -280,7 +280,7 @@ impl MockDeployServer {
                         }
                     })
                     .to_string(),
-                    _ => r#"{"jsonrpc":"2.0","id":1,"error":{"code":-32601,"message":"method not found"}}"#.to_string(),
+                    _ => serde_json::json!({"jsonrpc": "2.0", "id": 1, "error": {"code": -32601, "message": "method not found"}}).to_string(),
                 };
 
                 let resp = format!(
@@ -421,7 +421,7 @@ fn project_deploy_release_assurance_skips_preflight_for_skip_deployed_contracts(
         },
     );
     rec_file
-        .write(&dir.path().join(DEPLOYMENT_RECORD_FILE))
+        .write(dir.path().join(DEPLOYMENT_RECORD_FILE))
         .unwrap();
 
     sdkt(dir.path())
