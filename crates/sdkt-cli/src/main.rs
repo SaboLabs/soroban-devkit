@@ -375,6 +375,21 @@ enum Commands {
         /// page is fetched and a page-boundary notice is printed instead.
         #[arg(long, value_name = "N", num_args = 0..=1, default_missing_value = "10")]
         all_pages: Option<usize>,
+        /// Poll the RPC continuously for new events and print each one as it
+        /// arrives until stopped. Cannot be combined with `--end-ledger`.
+        /// Note: a burst larger than one RPC response page inside a single
+        /// poll interval can lose events (no at-least-once delivery guarantee).
+        #[arg(long, conflicts_with = "end_ledger")]
+        follow: bool,
+        /// Poll interval in seconds for `--follow` (default: 2, minimum: 1).
+        #[arg(long, value_name = "SECONDS", default_value_t = 2, value_parser = clap::value_parser!(u64).range(1..))]
+        interval: u64,
+        /// Stop `--follow` after printing N events and exit 0.
+        #[arg(long, value_name = "N", value_parser = clap::value_parser!(usize).range(1..))]
+        max_events: Option<usize>,
+        /// Stop `--follow` after N seconds elapsed and exit 0.
+        #[arg(long, value_name = "N", value_parser = clap::value_parser!(u64).range(1..))]
+        max_seconds: Option<u64>,
         #[command(flatten)]
         net: NetworkArgs,
     },
@@ -8544,6 +8559,10 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
             limit,
             cursor,
             all_pages,
+            follow,
+            interval,
+            max_events,
+            max_seconds,
             net,
         } => {
             let fmt = parse_format_str(&format);
@@ -8619,6 +8638,94 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
                 if let Some(warning) = unknown_event_topic_warning(spec, symbol) {
                     eprintln!("{warning}");
                 }
+            }
+
+            if follow {
+                let follow_cfg = commands::events_follow::FollowConfig {
+                    contract_id: contract_id.clone(),
+                    start_ledger,
+                    interval_secs: interval,
+                    max_events,
+                    max_seconds,
+                    topic_filters,
+                    json_output: fmt == OutputFormat::Json,
+                };
+                let res =
+                    commands::events_follow::run_follow_loop(&client, follow_cfg, |idx, ev| {
+                        if fmt == OutputFormat::Json {
+                            let line = if let Some(spec) = contract_spec.as_ref() {
+                                let topic_scvals: Vec<stellar_xdr::ScVal> = ev
+                                    .topics
+                                    .iter()
+                                    .filter_map(|t| sdkt_xdr::scval_from_base64(t))
+                                    .collect();
+                                let data_scvals: Vec<stellar_xdr::ScVal> = ev
+                                    .value
+                                    .as_deref()
+                                    .and_then(sdkt_xdr::scval_from_base64)
+                                    .into_iter()
+                                    .collect();
+                                let decoded =
+                                    decode_event_topics(spec, &topic_scvals, &data_scvals);
+                                let obj = serde_json::json!({
+                                    "contract_id": ev.contract_id,
+                                    "ledger": ev.ledger,
+                                    "topics": ev.topics,
+                                    "value": ev.value,
+                                    "decoded": decoded.iter().map(|d| serde_json::json!({
+                                        "raw": d.raw,
+                                        "label": d.label,
+                                        "matched_type": d.matched_type,
+                                        "fields": d.fields
+                                    })).collect::<Vec<_>>()
+                                });
+                                serde_json::to_string(&obj)
+                                    .map_err(|e| format!("Error serializing event: {e}"))?
+                            } else {
+                                serde_json::to_string(ev)
+                                    .map_err(|e| format!("Error serializing event: {e}"))?
+                            };
+                            println!("{line}");
+                        } else {
+                            println!("\nEvent #{idx}");
+                            println!(
+                                "Ledger: {}",
+                                ev.ledger.map_or("Unknown".to_string(), |v| v.to_string())
+                            );
+                            println!("Topics: {:?}", ev.topics);
+                            println!("Value: {}", ev.value.as_deref().unwrap_or("N/A"));
+                            if let Some(spec) = contract_spec.as_ref() {
+                                let topic_scvals: Vec<stellar_xdr::ScVal> = ev
+                                    .topics
+                                    .iter()
+                                    .filter_map(|t| sdkt_xdr::scval_from_base64(t))
+                                    .collect();
+                                let data_scvals: Vec<stellar_xdr::ScVal> = ev
+                                    .value
+                                    .as_deref()
+                                    .and_then(sdkt_xdr::scval_from_base64)
+                                    .into_iter()
+                                    .collect();
+                                let decoded =
+                                    decode_event_topics(spec, &topic_scvals, &data_scvals);
+                                for d in decoded {
+                                    println!("  Decoded: {}", d.label);
+                                    if let Some(fields) = d.fields {
+                                        for (k, v) in fields {
+                                            println!("    {}: {}", k, v);
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                        Ok(())
+                    })
+                    .await;
+                if let Err(e) = res {
+                    eprintln!("{e}");
+                    process::exit(1);
+                }
+                return Ok(());
             }
 
             // Rebuild the invocation for the resume notices below: the

@@ -353,6 +353,32 @@ sdkt events <contract-id> --start-ledger 1000 --end-ledger 2000
 Pagination is strictly additive: no change to event decoding, topic
 filtering, or ABI-aware value formatting.
 
+### Live event tailing (`sdkt events --follow`)
+
+Pass `--follow` to `sdkt events` to poll the RPC continuously for new events
+and print each one as it arrives, starting from the latest ledger at launch
+(or `--start-ledger` when given). It composes with `--topic`, `--abi`,
+`--abi-contract`, and `--format`.
+
+```bash
+sdkt events <contract-id> --follow --interval 2 --topic transfer --format json
+```
+
+- `--follow` enables continuous polling until stopped (Ctrl-C exits `0` after
+  printing a one-line summary). Cannot be combined with `--end-ledger`.
+- `--interval <SECONDS>` sets the poll interval in seconds (default `2`,
+  minimum `1`).
+- `--max-events <N>` stops after printing `N` events and exits `0`.
+- `--max-seconds <N>` stops after `N` seconds elapsed and exits `0`.
+- With `--format json`, each event is emitted as a single JSON object per line
+  (JSONL) on stdout so the stream is directly consumable by `jq -c`; startup
+  and exit summary lines go to stderr.
+- Transient poll failures print an error line to stderr and retry on the next
+  interval, aborting non-zero after 3 consecutive failures.
+- **Burst caveat**: a burst larger than one RPC response page inside a single
+  poll interval can lose events; `--follow` does not claim at-least-once
+  delivery.
+
 ### Synchronizing dependencies
 
 `sdkt package update` closes the package loop: `validate → fetch → update → verify`.
