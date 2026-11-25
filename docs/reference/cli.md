@@ -1149,6 +1149,12 @@ sdkt fuzz campaign contract.wasm \
 - A function may have only one expectation; declaring it with both flags is a usage error (exit 2).
 - Malformed declarations are usage errors (exit 2).
 
+Campaign `--format json` output and the `campaign-evidence.json` file written
+to `--artifact-dir` include additive top-level provenance fields:
+`schema_version` (`1`), `tool` (`"sdkt"`), and `version` (the build's
+`CARGO_PKG_VERSION`). Older evidence without these fields remains readable;
+its missing provenance is treated as unknown.
+
 **Sequence execution (state carry):**
 
 - By default (when both `--sequence-length` and `--sequence-every` are omitted), every case runs a single invocation against a fresh baseline (`sequence_every = 0`).
@@ -1270,6 +1276,11 @@ For details on fuzz evidence from real Soroban contracts and multi-step executio
 ### Integration with release assurance
 
 `sdkt release-assurance` accepts `--fuzz-evidence <EVIDENCE_JSON>` to attach fuzz evidence to a release report. The release pipeline does not run fuzz campaigns itself; campaigns are run separately (manually or in CI) and the resulting evidence is attached by path.
+
+JSON release-assurance reports append `schema_version` (`1`), `tool`
+(`"sdkt"`), and `version` (the build's `CARGO_PKG_VERSION`) to identify the
+report schema and producing CLI build. These keys are additive; existing
+report fields retain their names, types, and order.
 
 A fuzz evidence file scores `PASS` only when `campaign_completed` is `true`, `case_count > 0`, and `findings` is empty. Evidence with `campaign_completed: false` or `case_count: 0` is never scored as `PASS` — it maps to `ERROR` and fails the release-assurance check.
 
