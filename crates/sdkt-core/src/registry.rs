@@ -129,15 +129,25 @@ pub struct OutputFormats {
     pub pretty: bool,
     /// `--format json` produces a parseable document on stdout alone.
     pub json: bool,
+    /// `--format sarif` produces a SARIF 2.1.0 report on stdout alone.
+    #[serde(default)]
+    pub sarif: bool,
 }
 
 const PRETTY: OutputFormats = OutputFormats {
     pretty: true,
     json: false,
+    sarif: false,
 };
 const PRETTY_JSON: OutputFormats = OutputFormats {
     pretty: true,
     json: true,
+    sarif: false,
+};
+const PRETTY_JSON_SARIF: OutputFormats = OutputFormats {
+    pretty: true,
+    json: true,
+    sarif: true,
 };
 
 /// How well this entry's claims are backed by observed execution.
@@ -308,11 +318,16 @@ const CAPABILITIES: [Capability; CAP_COUNT] = [
             "--rules",
             "--no-plugins",
             "--list-rules",
+            "--abi",
+            "--abi-contract",
             "--fail-on",
             "--save-baseline",
             "--baseline",
+            "--network-profile",
+            "--rpc-url",
+            "--network-passphrase",
         ],
-        formats: PRETTY_JSON,
+        formats: PRETTY_JSON_SARIF,
         evidence: Evidence::VerifiedLocal,
         notes: Some(
             "Findings are advisory signals, never proofs of exploitability; exits 0 by default, or 1 if findings meet or exceed --fail-on.",
@@ -1204,6 +1219,27 @@ mod tests {
             "unexpected mutating surface: {mutating:?}"
         );
         assert!(mutating.iter().all(|c| c.requires_confirmation));
+    }
+
+
+    #[test]
+    fn audit_and_audit_list_rules_are_distinguishable_by_sarif_format() {
+        let audit = find("audit").expect("audit entry");
+        let list_rules = find("audit.list_rules").expect("audit.list_rules entry");
+        assert!(audit.formats.pretty && audit.formats.json && audit.formats.sarif);
+        assert!(list_rules.formats.pretty && list_rules.formats.json && !list_rules.formats.sarif);
+        for flag in [
+            "--abi",
+            "--abi-contract",
+            "--network-profile",
+            "--rpc-url",
+            "--network-passphrase",
+        ] {
+            assert!(
+                audit.optional_args.contains(&flag),
+                "audit entry must list {flag}"
+            );
+        }
     }
 
     #[test]
