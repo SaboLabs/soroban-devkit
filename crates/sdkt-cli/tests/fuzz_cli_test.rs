@@ -1070,13 +1070,14 @@ fn cli_campaign_config_matches_equivalent_flag_run() {
     let cfg_dir = dir.join("cfg-out");
     let flag_dir = dir.join("flag-out");
     let wasm = fixture("us_new.wasm");
+    let wasm_toml = toml::Value::String(wasm.clone()).to_string();
 
     let cfg_path = dir.join("fuzz.toml");
     std::fs::write(
         &cfg_path,
         format!(
             r#"[campaign]
-wasm = "{wasm}"
+wasm = {wasm_toml}
 seed = 7
 cases = 4
 auth = "no-auth"
@@ -1147,12 +1148,13 @@ code = 3
 fn cli_campaign_config_flag_overrides_and_validation_errors() {
     let dir = temp_dir("config-overrides");
     let wasm = fixture("us_new.wasm");
+    let wasm_toml = toml::Value::String(wasm.clone()).to_string();
     let cfg_path = dir.join("fuzz.toml");
     std::fs::write(
         &cfg_path,
         format!(
             r#"[campaign]
-wasm = "{wasm}"
+wasm = {wasm_toml}
 seed = 1
 cases = 50
 "#
@@ -1181,7 +1183,7 @@ cases = 50
         &bad_cfg,
         format!(
             r#"[campaign]
-wasm = "{wasm}"
+wasm = {wasm_toml}
 unknown_field = true
 "#
         ),
