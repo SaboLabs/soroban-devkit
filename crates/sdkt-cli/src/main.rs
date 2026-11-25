@@ -871,7 +871,12 @@ enum FuzzAction {
         #[arg(short, long, default_value = "pretty")]
         format: String,
     },
-    /// Replay a finding artifact against its WASM and verify it reproduces
+    /// Replay a finding artifact against its WASM and verify it reproduces.
+    ///
+    /// Exit codes follow the CLI-wide convention: 0 on reproduced finding,
+    /// 1 on mismatch verdict or runtime/input failure (unreadable file,
+    /// malformed artifact, unsupported schema, unknown reason code, WASM
+    /// mismatch), and 2 on command-line usage error.
     Replay {
         /// Path to the finding artifact (JSON)
         #[arg(value_name = "ARTIFACT")]
@@ -879,6 +884,9 @@ enum FuzzAction {
         /// Path to the campaign WASM the artifact was produced from
         #[arg(long, value_name = "WASM")]
         wasm: String,
+        /// Output format (pretty | json | jsonl)
+        #[arg(short, long, default_value = "pretty")]
+        format: String,
     },
     /// Compare two campaign evidence files and report new, fixed, and
     /// persisting findings (read-only; exits 1 when new findings exist)
@@ -13670,16 +13678,18 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
                     }
                 }
             }
-            FuzzAction::Replay { artifact, wasm } => {
-                match commands::fuzz::run_replay(&artifact, &wasm, "pretty") {
-                    Ok(true) => {}
-                    Ok(false) => process::exit(1),
-                    Err(e) => {
-                        eprintln!("Error: {e}");
-                        process::exit(2);
-                    }
+            FuzzAction::Replay {
+                artifact,
+                wasm,
+                format,
+            } => match commands::fuzz::run_replay(&artifact, &wasm, &format) {
+                Ok(true) => {}
+                Ok(false) => process::exit(1),
+                Err(e) => {
+                    eprintln!("Error: {e}");
+                    process::exit(e.exit_code());
                 }
-            }
+            },
             FuzzAction::Compare {
                 baseline,
                 new,

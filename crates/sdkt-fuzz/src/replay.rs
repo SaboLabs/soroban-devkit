@@ -49,6 +49,14 @@ pub enum ReplayError {
     Execution(String),
 }
 
+impl ReplayError {
+    /// Exit code following the CLI-wide convention (0 success, 1 runtime/verdict failure, 2 usage error).
+    /// All `ReplayError` variants represent runtime, data, or environment failures rather than CLI usage errors.
+    pub fn exit_code(&self) -> i32 {
+        1
+    }
+}
+
 /// Replay verdict for a well-formed artifact against a matching WASM.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum ReplayOutcome {

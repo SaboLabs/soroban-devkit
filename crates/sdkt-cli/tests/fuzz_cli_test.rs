@@ -245,7 +245,7 @@ fn cli_replay_reproduces_and_exits_zero() {
 }
 
 // ---------------------------------------------------------------------------
-// 5. Replay with the wrong WASM: invalid input, exit 2 (never a finding)
+// 5. Replay with the wrong WASM: runtime failure, exit 1 (never a finding)
 // ---------------------------------------------------------------------------
 
 #[test]
@@ -284,12 +284,12 @@ fn cli_replay_wrong_wasm_is_invalid_input() {
     ])
     .assert()
     .failure()
-    .code(2)
+    .code(1)
     .stderr(predicate::str::contains("wasm hash mismatch"));
 }
 
 // ---------------------------------------------------------------------------
-// 6. Replay of a malformed artifact: invalid input, exit 2
+// 6. Replay of a malformed artifact: runtime failure, exit 1
 // ---------------------------------------------------------------------------
 
 #[test]
@@ -306,7 +306,7 @@ fn cli_replay_malformed_artifact_is_invalid_input() {
     ])
     .assert()
     .failure()
-    .code(2)
+    .code(1)
     .stderr(predicate::str::contains("artifact"));
 }
 

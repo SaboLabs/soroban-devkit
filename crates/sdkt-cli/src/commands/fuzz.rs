@@ -7,10 +7,11 @@
 //! Exit-code contract (distinct paths, documented):
 //!
 //! - `0` — campaign completed with no findings (or replay reproduced);
-//! - `1` — actual `Classification::Finding` findings exist (campaign), or
-//!   replay did **not** reproduce the recorded finding;
-//! - `2` — usage / input error: bad flags, unreadable files, invalid
-//!   artifact, or a WASM whose SHA-256 does not match the artifact.
+//! - `1` — actual `Classification::Finding` findings exist (campaign),
+//!   replay did **not** reproduce the recorded finding (mismatch), or
+//!   replay input/runtime failure (unreadable file, malformed artifact,
+//!   unsupported schema version, unknown reason code, WASM hash mismatch);
+//! - `2` — CLI usage error: invalid command-line flags or arguments.
 //!
 //! Exit `1` is the only path that means "findings were produced".
 
@@ -156,18 +157,56 @@ pub fn run(
     Ok(!report.result.findings.is_empty())
 }
 
+/// Errors produced when running the `fuzz replay` CLI command.
+#[derive(Debug)]
+pub enum ReplayCliError {
+    Usage(String),
+    Runtime(sdkt_fuzz::ReplayError),
+}
+
+impl std::fmt::Display for ReplayCliError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Usage(msg) => write!(f, "{msg}"),
+            Self::Runtime(err) => write!(f, "{err}"),
+        }
+    }
+}
+
+impl std::error::Error for ReplayCliError {}
+
+impl From<sdkt_fuzz::ReplayError> for ReplayCliError {
+    fn from(err: sdkt_fuzz::ReplayError) -> Self {
+        Self::Runtime(err)
+    }
+}
+
+impl ReplayCliError {
+    /// Exit code following the CLI-wide convention (0 success, 1 runtime/verdict failure, 2 usage error).
+    pub fn exit_code(&self) -> i32 {
+        match self {
+            Self::Usage(_) => 2,
+            Self::Runtime(err) => err.exit_code(),
+        }
+    }
+}
+
 /// Replay one artifact and render the verdict.
 ///
-/// `Ok(true)` = reproduced; `Ok(false)` = valid inputs but the replay
-/// mismatched; `Err(_)` = invalid artifact/WASM (usage/input error).
-pub fn run_replay(artifact: &str, wasm: &str, format: &str) -> Result<bool, String> {
-    let fmt = parse_format(format)
-        .ok_or_else(|| format!("invalid format '{format}' (expected pretty, json, or jsonl)"))?;
+/// `Ok(true)` = reproduced (exit 0); `Ok(false)` = valid inputs but the replay
+/// mismatched (exit 1); `Err(ReplayCliError::Runtime(_))` = runtime/input failure (exit 1);
+/// `Err(ReplayCliError::Usage(_))` = CLI usage error (exit 2).
+pub fn run_replay(artifact: &str, wasm: &str, format: &str) -> Result<bool, ReplayCliError> {
+    let fmt = parse_format(format).ok_or_else(|| {
+        ReplayCliError::Usage(format!(
+            "invalid format '{format}' (expected pretty, json, or jsonl)"
+        ))
+    })?;
     let options = ReplayOptions {
         artifact: std::path::PathBuf::from(artifact),
         wasm: std::path::PathBuf::from(wasm),
     };
-    let outcome = sdkt_fuzz::run_replay(&options).map_err(|e| e.to_string())?;
+    let outcome = sdkt_fuzz::run_replay(&options)?;
     print_replay(&outcome, &fmt);
     Ok(outcome.is_reproduced())
 }
