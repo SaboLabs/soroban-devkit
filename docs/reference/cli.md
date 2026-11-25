@@ -1335,6 +1335,26 @@ Store root precedence (lowest → highest): `<cwd>/.sdkt/plugins`,
 - `sdkt wasm metadata --contract <id>` reports the same entries for the deployed contract, from the fetched (or cached) WASM bytes: pretty output gains the identical `Contract Metadata` block, and `--format json` gains an additive top-level `contract_meta` array alongside the existing inspection keys, which are unchanged. It is empty when the deployed WASM carries no `contractmetav0`.
 - **Mainnet safety.** Mutating commands (`tx submit`, `invoke`, `deploy`, `project deploy`) refuse to target mainnet unless you explicitly select the network — via `--network-profile`, `--rpc-url`, or `--network-passphrase`. A testnet-default passphrase pointed at a mainnet endpoint is rejected before any request is sent, protecting against signing for the wrong network.
 
+## Deployment Alias References (`@alias`)
+
+After `sdkt project deploy` records contracts in `.sdkt-deployments.json`, the post-deploy commands `call`, `invoke`, `health`, `verify`, and `inspect` accept `@<alias>` in place of a bare `C...` contract ID. The alias is resolved against `.sdkt-deployments.json` for the selected network profile before any RPC call or signing occurs; bare `C...` IDs pass through untouched.
+
+- **Pretty output:** displays `<C...> (alias @<alias>)`.
+- **JSON output:** sets the existing contract field (`contract`, `contractId`, or `contract_id`) to the resolved `C...` ID and adds `"alias": "<alias>"`.
+- **Unknown alias / missing record:** exits non-zero with a one-line error naming both the `@alias` and the network profile.
+
+Examples (one per command):
+
+```bash
+sdkt call @token balance --network-profile testnet
+sdkt invoke @token mint --args address:G... --args i128:100 --identity alice --network-profile testnet
+sdkt health @vault --network testnet
+sdkt verify --contract @vault --wasm target/wasm32v1-none/release/vault.wasm --network testnet
+sdkt inspect @token --network-profile testnet
+```
+
+See the workspace tutorial (issue #546) for an end-to-end multi-contract workflow using `@alias` references.
+
 ## Fuzz expectation declarations
 
 `sdkt fuzz campaign` accepts repeatable `--expect-success <FN>` and
