@@ -146,7 +146,6 @@ fn generate_client_compiles_with_rustc() {
     );
 }
 
-
 // ---------------------------------------------------------------------------
 // Issue #512: `sdkt generate client --contract` tests (hermetic mock RPC)
 // ---------------------------------------------------------------------------
