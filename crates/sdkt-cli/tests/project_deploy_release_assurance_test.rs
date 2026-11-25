@@ -394,8 +394,9 @@ fn project_deploy_release_assurance_passes_and_deploys_when_all_contracts_pass()
         ])
         .assert()
         .success()
-        .stdout(predicate::str::contains("Preflight 'token': PASS"))
-        .stdout(predicate::str::contains("Preflight 'vault': PASS"))
+        .stdout(predicate::str::contains("Preflight 'token':"))
+        .stdout(predicate::str::contains("Preflight 'vault':"))
+        .stdout(predicate::str::contains("(Artifact: PASS, Security: PASS, Upgrade Safety: SKIPPED)"))
         .stdout(predicate::str::contains("Project deployment complete"));
 }
 
@@ -438,6 +439,7 @@ fn project_deploy_release_assurance_skips_preflight_for_skip_deployed_contracts(
         ])
         .assert()
         .success()
-        .stdout(predicate::str::contains("Preflight 'token': PASS"))
+        .stdout(predicate::str::contains("Preflight 'token':"))
+        .stdout(predicate::str::contains("(Artifact: PASS, Security: PASS, Upgrade Safety: SKIPPED)"))
         .stdout(predicate::str::contains("Project deployment complete"));
 }
