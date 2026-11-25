@@ -231,31 +231,54 @@ fn start_mock_contract_rpc(serve_code_entry: bool) -> String {
             let n = sock.read(&mut buf).unwrap_or(0);
             let req = String::from_utf8_lossy(&buf[..n]).to_string();
 
-            let body = if req.contains(""getLedgerEntries"") {
+            let body = if req.contains("getLedgerEntries") {
                 if req.as_str().contains(contract_data_key.as_str()) {
-                    format!(
-                        r#"{{"jsonrpc":"2.0","id":1,"result":{{"entries":[{{"key":"{contract_data_key}","xdr":"{inspect_xdr}","lastModifiedLedgerSeq":1}}],"latestLedger":100}}}}"#
-                    )
+                    serde_json::json!({
+                        "jsonrpc": "2.0",
+                        "id": 1,
+                        "result": {
+                            "entries": [{
+                                "key": contract_data_key,
+                                "xdr": inspect_xdr,
+                                "lastModifiedLedgerSeq": 1
+                            }],
+                            "latestLedger": 100
+                        }
+                    })
+                    .to_string()
                 } else if serve_code_entry && req.as_str().contains(contract_code_key.as_str()) {
-                    format!(
-                        r#"{{"jsonrpc":"2.0","id":1,"result":{{"entries":[{{"key":"{contract_code_key}","xdr":"{code_xdr}","lastModifiedLedgerSeq":1}}],"latestLedger":100}}}}"#
-                    )
+                    serde_json::json!({
+                        "jsonrpc": "2.0",
+                        "id": 1,
+                        "result": {
+                            "entries": [{
+                                "key": contract_code_key,
+                                "xdr": code_xdr,
+                                "lastModifiedLedgerSeq": 1
+                            }],
+                            "latestLedger": 100
+                        }
+                    })
+                    .to_string()
                 } else {
-                    r#"{"jsonrpc":"2.0","id":1,"result":{"entries":[],"latestLedger":100}}"#
-                        .to_string()
+                    serde_json::json!({
+                        "jsonrpc": "2.0",
+                        "id": 1,
+                        "result": { "entries": [], "latestLedger": 100 }
+                    })
+                    .to_string()
                 }
             } else {
-                r#"{"jsonrpc":"2.0","id":1,"error":{"code":-32601,"message":"method not found"}}"#
-                    .to_string()
+                serde_json::json!({
+                    "jsonrpc": "2.0",
+                    "id": 1,
+                    "error": { "code": -32601, "message": "method not found" }
+                })
+                .to_string()
             };
 
             let resp = format!(
-                "HTTP/1.1 200 OK
-Content-Type: application/json
-Content-Length: {}
-Connection: close
-
-{}",
+                "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
                 body.len(),
                 body
             );
@@ -320,13 +343,7 @@ fn generate_client_from_contract_matches_local_wasm_byte_for_byte() {
 #[test]
 fn generate_client_contract_and_positional_wasm_conflict() {
     sdkt()
-        .args([
-            "generate",
-            "client",
-            TEST_WASM,
-            "--contract",
-            CONTRACT_ID,
-        ])
+        .args(["generate", "client", TEST_WASM, "--contract", CONTRACT_ID])
         .assert()
         .failure()
         .code(2);
@@ -376,7 +393,10 @@ fn generate_client_missing_contract_code_fails_cleanly_without_writing_file() {
         .assert()
         .failure()
         .stderr(predicate::str::contains("cannot fetch WASM for contract"));
-    assert!(!out.exists(), "no output file should be written when contract code is missing");
+    assert!(
+        !out.exists(),
+        "no output file should be written when contract code is missing"
+    );
 }
 
 #[test]
@@ -398,5 +418,8 @@ fn generate_client_unreachable_network_fails_cleanly_without_writing_file() {
         .assert()
         .failure()
         .stderr(predicate::str::contains("cannot inspect contract"));
-    assert!(!out.exists(), "no output file should be written when network is unreachable");
+    assert!(
+        !out.exists(),
+        "no output file should be written when network is unreachable"
+    );
 }

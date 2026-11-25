@@ -13055,7 +13055,10 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
                         )
                         .await
                     }
-                    _ => Err("specify either a local <WASM> path or --contract <CONTRACT_ID>".to_string()),
+                    _ => Err(
+                        "specify either a local <WASM> path or --contract <CONTRACT_ID>"
+                            .to_string(),
+                    ),
                 };
                 if let Err(e) = res {
                     eprintln!("Error: {e}");
