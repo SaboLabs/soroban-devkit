@@ -1218,7 +1218,7 @@ functions instead of aborting the entire command:
 
 ### Campaign
 
-`sdkt fuzz campaign <wasm>` runs a deterministic fuzz campaign against a compiled contract.
+`sdkt fuzz campaign [<WASM>]` (or `sdkt fuzz campaign --config <FILE>`) runs a deterministic fuzz campaign against a compiled contract.
 
 **Syntax:**
 
@@ -1235,11 +1235,18 @@ sdkt fuzz campaign contract.wasm \
   --format json
 ```
 
+Or from a checked-in TOML definition file:
+
+```bash
+sdkt fuzz campaign --config fuzz.toml
+```
+
 **Arguments and flags:**
 
 | Flag | Default | Meaning |
 |------|---------|---------|
-| `<WASM>` | *required* | Path to the compiled contract WASM file |
+| `<WASM>` | *required unless `--config` supplies `campaign.wasm`* | Path to the compiled contract WASM file. When both `<WASM>` and `campaign.wasm` are provided, they must match (mismatch exits `2` naming both values) |
+| `--config <FILE>` | none | Path to a TOML campaign definition file. Precedence: explicit CLI flags override config values; config values override defaults |
 | `--seed <N>` | `0` | Deterministic seed (u64). Same seed produces identical test case sequence across runs |
 | `--cases <N>` | `100` | Number of test cases to execute (must be `>= 1`; `--cases 0` is a usage error, exit `2`) |
 | `--function <NAME>` | all | Restrict the campaign to one exported contract function (if no runnable function matches, exits `2` without writing clean evidence) |
@@ -1264,6 +1271,30 @@ to `--artifact-dir` include additive top-level provenance fields:
 `schema_version` (`1`), `tool` (`"sdkt"`), and `version` (the build's
 `CARGO_PKG_VERSION`). Older evidence without these fields remains readable;
 its missing provenance is treated as unknown.
+
+**Campaign config file (`--config <FILE>`):**
+
+`sdkt fuzz campaign --config fuzz.toml` loads campaign settings and expectations from a TOML file with `[campaign]` and `[[expect.success]]` / `[[expect.error]]` tables:
+
+```toml
+[campaign]
+wasm = "target/wasm32v1-none/release/contract.wasm"
+seed = 42
+cases = 100
+function = "increment"
+auth = "correct-auth"
+
+[[expect.success]]
+function = "increment"
+
+[[expect.error]]
+function = "withdraw"
+type = "Auth"
+code = 6
+```
+
+- **Precedence:** explicit CLI flags override config values; config values override built-in defaults (`seed = 0`, `cases = 100`, `auth = "no-auth"`).
+- **Validation:** unknown keys, missing or malformed TOML files, missing `wasm` from both `<WASM>` and `campaign.wasm`, or a mismatch between positional `<WASM>` and `campaign.wasm` are rejected as usage errors (exit `2`) before any case executes.
 
 **Sequence execution (state carry):**
 
