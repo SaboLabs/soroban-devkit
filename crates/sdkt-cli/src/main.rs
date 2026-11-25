@@ -1377,6 +1377,14 @@ enum ProjectCommand {
         #[arg(short, long, default_value = "pretty")]
         format: String,
     },
+    /// Check health for every deployment recorded on the selected network
+    Health {
+        /// Severity threshold that triggers failure: at_risk | critical (default: critical)
+        #[arg(long, default_value = "critical", value_name = "LEVEL")]
+        fail_on: String,
+        #[arg(short, long, default_value = "pretty")]
+        format: String,
+    },
     /// Deploy all contracts defined in the workspace. Every deployed contract
     /// is persisted to `.sdkt-deployments.json` (per network profile) so a
     /// failure mid-graph never loses the contracts that already landed.
@@ -1756,7 +1764,7 @@ struct VerificationReport {
 /// Aggregates the existing read-only surfaces (`inspect_contract` +
 /// `StorageAnalyzer`) plus optional verification into one report.
 /// Serializes to the JSON schema in _PLAN.md §12.
-#[derive(Debug, serde::Serialize)]
+#[derive(Debug, Clone, serde::Serialize)]
 struct ContractHealthReport {
     contract_id: String,
     network: String,
@@ -1778,7 +1786,7 @@ struct ContractHealthReport {
 
 /// Storage subsection of [`ContractHealthReport`] (mirrors `StorageReport`
 /// field names; omits `total_size_bytes`/`entries` per _PLAN.md §12).
-#[derive(Debug, serde::Serialize)]
+#[derive(Debug, Clone, serde::Serialize)]
 struct HealthStorage {
     total_entries: usize,
     instance_entries: usize,
@@ -1788,13 +1796,83 @@ struct HealthStorage {
     ttl: Option<HealthTtl>,
 }
 
-#[derive(Debug, serde::Serialize)]
+#[derive(Debug, Clone, serde::Serialize)]
 struct HealthTtl {
     minimum_ttl: u32,
     maximum_ttl: u32,
     average_ttl: u32,
     expiring_entries_count: usize,
     estimated_rent_cost: Option<u64>,
+}
+
+#[derive(Debug, Clone, serde::Serialize)]
+struct ProjectHealthRow {
+    alias: String,
+    contract_id: String,
+    network: String,
+    health: String,
+    verdict: String,
+    #[serde(rename = "verified", skip_serializing_if = "Option::is_none")]
+    verified: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    minimum_ttl: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    expiring_entries_count: Option<usize>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    on_chain_wasm_hash: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    short_wasm_hash: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    storage: Option<HealthStorage>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    reasons: Vec<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    report: Option<ContractHealthReport>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    error: Option<String>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum HealthFailOn {
+    AtRisk,
+    Critical,
+}
+
+fn health_severity_rank(health: &str) -> u8 {
+    match health {
+        "critical" => 0,
+        "not_found" => 1,
+        "error" => 2,
+        "at_risk" => 3,
+        "healthy" => 4,
+        _ => 5,
+    }
+}
+
+fn sort_project_health_rows(items: &mut [ProjectHealthRow]) {
+    items.sort_by(|a, b| {
+        health_severity_rank(&a.health)
+            .cmp(&health_severity_rank(&b.health))
+            .then_with(|| a.alias.cmp(&b.alias))
+    });
+}
+
+fn evaluate_health_rollup_failure(items: &[ProjectHealthRow], threshold: HealthFailOn) -> bool {
+    items.iter().any(|item| match threshold {
+        HealthFailOn::Critical => {
+            item.health == "critical" || item.health == "not_found" || item.health == "error"
+        }
+        HealthFailOn::AtRisk => {
+            item.health == "critical"
+                || item.health == "not_found"
+                || item.health == "error"
+                || item.health == "at_risk"
+        }
+    })
+}
+
+fn format_short_hash(hash: &str) -> String {
+    hash.chars().take(12).collect()
 }
 
 /// — Pure health-verdict derivation (no I/O, fully testable).
@@ -12348,6 +12426,245 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
                     }
                 }
             }
+            ProjectCommand::Health { fail_on, format } => {
+                let fmt = parse_format_str(&format);
+
+                let threshold = match fail_on.to_lowercase().replace('-', "_").as_str() {
+                    "critical" => HealthFailOn::Critical,
+                    "at_risk" => HealthFailOn::AtRisk,
+                    other => {
+                        eprintln!(
+                            "Error: invalid --fail-on value '{}'. Use 'at_risk' or 'critical'.",
+                            other
+                        );
+                        process::exit(2);
+                    }
+                };
+
+                let network_config = match resolve_network_config(
+                    net.rpc_url.clone(),
+                    net.network_passphrase.clone(),
+                    net.network_profile.clone(),
+                ) {
+                    Ok(config) => config,
+                    Err(e) => {
+                        eprintln!("Error: {}", e);
+                        process::exit(1);
+                    }
+                };
+                let network_key = sdkt_core::deployment::network_key(
+                    if net.network_passphrase.is_some() {
+                        None
+                    } else {
+                        net.network_profile.as_deref()
+                    },
+                    &network_config.passphrase,
+                );
+                let record_path = Path::new(sdkt_core::deployment::DEPLOYMENT_RECORD_FILE);
+                let record_file =
+                    match sdkt_core::deployment::DeploymentRecordFile::read(record_path) {
+                        Ok(file) => file,
+                        Err(e) => {
+                            eprintln!("Error: {}", e);
+                            process::exit(1);
+                        }
+                    };
+                let mut deployments: Vec<_> = record_file
+                    .records_for(&network_key)
+                    .into_iter()
+                    .flat_map(|records| records.iter())
+                    .collect();
+                deployments.sort_by_key(|(alias, _)| *alias);
+
+                if deployments.is_empty() {
+                    if fmt == OutputFormat::Json {
+                        let empty_rollup = serde_json::json!({
+                            "network": network_key,
+                            "summary": {
+                                "healthy": 0,
+                                "at_risk": 0,
+                                "critical": 0,
+                                "not_found": 0,
+                                "error": 0,
+                                "total": 0,
+                            },
+                            "contracts": [],
+                            "deployments": [],
+                            "reports": [],
+                        });
+                        println!("{}", serde_json::to_string(&empty_rollup).unwrap());
+                    } else {
+                        println!("No deployments recorded for network '{}'.", network_key);
+                    }
+                    return Ok(());
+                }
+
+                let client = SorobanRpcClient::from_config(&network_config);
+
+                let mut items = Vec::with_capacity(deployments.len());
+                let mut healthy_count = 0;
+                let mut at_risk_count = 0;
+                let mut critical_count = 0;
+                let mut not_found_count = 0;
+                let mut error_count = 0;
+
+                for (alias, record) in &deployments {
+                    match contract_health(&client, &record.contract_id, None, &network_key).await {
+                        Ok(report) => {
+                            let h = report.health.clone();
+                            match h.as_str() {
+                                "critical" => critical_count += 1,
+                                "at_risk" => at_risk_count += 1,
+                                "healthy" => healthy_count += 1,
+                                _ => {}
+                            }
+                            let min_ttl = report.storage.ttl.as_ref().map(|t| t.minimum_ttl);
+                            let expiring = report
+                                .storage
+                                .ttl
+                                .as_ref()
+                                .map(|t| t.expiring_entries_count);
+                            let short_hash = format_short_hash(&report.on_chain_wasm_hash);
+
+                            items.push(ProjectHealthRow {
+                                alias: (*alias).clone(),
+                                contract_id: record.contract_id.clone(),
+                                network: network_key.clone(),
+                                health: h.clone(),
+                                verdict: h,
+                                verified: report.verified,
+                                minimum_ttl: min_ttl,
+                                expiring_entries_count: expiring,
+                                on_chain_wasm_hash: Some(report.on_chain_wasm_hash.clone()),
+                                short_wasm_hash: Some(short_hash),
+                                storage: Some(report.storage.clone()),
+                                reasons: report.reasons.clone(),
+                                report: Some(report),
+                                error: None,
+                            });
+                        }
+                        Err(e) => {
+                            let is_not_found =
+                                e.contains("not found on") || e.contains("Contract not found");
+                            let verdict = if is_not_found {
+                                not_found_count += 1;
+                                "not_found".to_string()
+                            } else {
+                                error_count += 1;
+                                "error".to_string()
+                            };
+
+                            items.push(ProjectHealthRow {
+                                alias: (*alias).clone(),
+                                contract_id: record.contract_id.clone(),
+                                network: network_key.clone(),
+                                health: verdict.clone(),
+                                verdict,
+                                verified: None,
+                                minimum_ttl: None,
+                                expiring_entries_count: None,
+                                on_chain_wasm_hash: None,
+                                short_wasm_hash: None,
+                                storage: None,
+                                reasons: vec![],
+                                report: None,
+                                error: Some(e),
+                            });
+                        }
+                    }
+                }
+
+                sort_project_health_rows(&mut items);
+
+                if fmt == OutputFormat::Json {
+                    let rollup = serde_json::json!({
+                        "network": network_key,
+                        "summary": {
+                            "healthy": healthy_count,
+                            "at_risk": at_risk_count,
+                            "critical": critical_count,
+                            "not_found": not_found_count,
+                            "error": error_count,
+                            "total": items.len(),
+                        },
+                        "contracts": items,
+                        "deployments": items,
+                        "reports": items,
+                    });
+                    println!("{}", serde_json::to_string(&rollup).unwrap());
+                } else {
+                    println!("Project health rollup (network: {}):", network_key);
+                    let w_alias = items
+                        .iter()
+                        .map(|r| r.alias.len())
+                        .max()
+                        .unwrap_or(5)
+                        .max(5);
+                    let w_contract_id = items
+                        .iter()
+                        .map(|r| r.contract_id.len())
+                        .max()
+                        .unwrap_or(11)
+                        .max(11);
+                    let w_health = items
+                        .iter()
+                        .map(|r| r.health.len())
+                        .max()
+                        .unwrap_or(6)
+                        .max(6);
+                    let w_min_ttl = items
+                        .iter()
+                        .map(|r| r.minimum_ttl.map(|v| v.to_string().len()).unwrap_or(1))
+                        .max()
+                        .unwrap_or(7)
+                        .max(7);
+                    let w_expiring = items
+                        .iter()
+                        .map(|r| {
+                            r.expiring_entries_count
+                                .map(|v| v.to_string().len())
+                                .unwrap_or(1)
+                        })
+                        .max()
+                        .unwrap_or(8)
+                        .max(8);
+                    let w_wasm_hash = items
+                        .iter()
+                        .map(|r| r.short_wasm_hash.as_ref().map(|s| s.len()).unwrap_or(1))
+                        .max()
+                        .unwrap_or(9)
+                        .max(9);
+
+                    println!(
+                        "{:<w_alias$}  {:<w_contract_id$}  {:<w_health$}  {:>w_min_ttl$}  {:>w_expiring$}  {:<w_wasm_hash$}",
+                        "ALIAS", "CONTRACT ID", "HEALTH", "MIN TTL", "EXPIRING", "WASM HASH"
+                    );
+                    for item in &items {
+                        let min_ttl_str = item
+                            .minimum_ttl
+                            .map(|v| v.to_string())
+                            .unwrap_or_else(|| "-".to_string());
+                        let expiring_str = item
+                            .expiring_entries_count
+                            .map(|v| v.to_string())
+                            .unwrap_or_else(|| "-".to_string());
+                        let short_hash_str = item.short_wasm_hash.as_deref().unwrap_or("-");
+                        println!(
+                            "{:<w_alias$}  {:<w_contract_id$}  {:<w_health$}  {:>w_min_ttl$}  {:>w_expiring$}  {:<w_wasm_hash$}",
+                            item.alias,
+                            item.contract_id,
+                            item.health,
+                            min_ttl_str,
+                            expiring_str,
+                            short_hash_str
+                        );
+                    }
+                }
+
+                if evaluate_health_rollup_failure(&items, threshold) {
+                    process::exit(1);
+                }
+            }
             ProjectCommand::Deploy {
                 salt,
                 skip_deployed,
@@ -14720,5 +15037,171 @@ mod diff_contract_tests {
             }
             _ => panic!("expected `diff`"),
         }
+    }
+}
+
+#[cfg(test)]
+mod project_health_tests {
+    use super::*;
+
+    fn dummy_row(alias: &str, health: &str) -> ProjectHealthRow {
+        ProjectHealthRow {
+            alias: alias.to_string(),
+            contract_id: format!("C_{}", alias),
+            network: "testnet".to_string(),
+            health: health.to_string(),
+            verdict: health.to_string(),
+            verified: None,
+            minimum_ttl: Some(100),
+            expiring_entries_count: Some(0),
+            on_chain_wasm_hash: Some("1234567890abcdef1234567890abcdef".to_string()),
+            short_wasm_hash: Some("1234567890ab".to_string()),
+            storage: None,
+            reasons: vec![],
+            report: None,
+            error: None,
+        }
+    }
+
+    #[test]
+    fn project_health_cli_defaults() {
+        let cli = Cli::try_parse_from(["sdkt", "project", "health"]).expect("args parse");
+        match cli.command {
+            Commands::Project {
+                action: ProjectCommand::Health { fail_on, format },
+                ..
+            } => {
+                assert_eq!(fail_on, "critical");
+                assert_eq!(format, "pretty");
+            }
+            _ => panic!("expected `project health`"),
+        }
+    }
+
+    #[test]
+    fn project_health_cli_flags() {
+        let cli = Cli::try_parse_from([
+            "sdkt",
+            "project",
+            "health",
+            "--fail-on",
+            "at_risk",
+            "--format",
+            "json",
+        ])
+        .expect("args parse");
+        match cli.command {
+            Commands::Project {
+                action: ProjectCommand::Health { fail_on, format },
+                ..
+            } => {
+                assert_eq!(fail_on, "at_risk");
+                assert_eq!(format, "json");
+            }
+            _ => panic!("expected `project health`"),
+        }
+    }
+
+    #[test]
+    fn rollup_ordering_critical_before_at_risk_before_healthy() {
+        let mut items = vec![
+            dummy_row("c_healthy", "healthy"),
+            dummy_row("b_at_risk", "at_risk"),
+            dummy_row("e_error", "error"),
+            dummy_row("a_critical", "critical"),
+            dummy_row("d_not_found", "not_found"),
+        ];
+
+        sort_project_health_rows(&mut items);
+
+        let verdicts: Vec<&str> = items.iter().map(|r| r.health.as_str()).collect();
+        assert_eq!(
+            verdicts,
+            vec!["critical", "not_found", "error", "at_risk", "healthy"],
+            "critical and not_found must come first, then at_risk, then healthy"
+        );
+    }
+
+    #[test]
+    fn rollup_ordering_ties_broken_by_alias() {
+        let mut items = vec![
+            dummy_row("zeta", "critical"),
+            dummy_row("alpha", "critical"),
+            dummy_row("beta", "at_risk"),
+        ];
+
+        sort_project_health_rows(&mut items);
+
+        let aliases: Vec<&str> = items.iter().map(|r| r.alias.as_str()).collect();
+        assert_eq!(aliases, vec!["alpha", "zeta", "beta"]);
+    }
+
+    #[test]
+    fn health_failure_gate_critical_threshold() {
+        let healthy = vec![dummy_row("a", "healthy"), dummy_row("b", "healthy")];
+        assert!(!evaluate_health_rollup_failure(
+            &healthy,
+            HealthFailOn::Critical
+        ));
+
+        let at_risk = vec![dummy_row("a", "healthy"), dummy_row("b", "at_risk")];
+        assert!(!evaluate_health_rollup_failure(
+            &at_risk,
+            HealthFailOn::Critical
+        ));
+
+        let critical = vec![dummy_row("a", "critical"), dummy_row("b", "healthy")];
+        assert!(evaluate_health_rollup_failure(
+            &critical,
+            HealthFailOn::Critical
+        ));
+
+        let not_found = vec![dummy_row("a", "not_found"), dummy_row("b", "healthy")];
+        assert!(evaluate_health_rollup_failure(
+            &not_found,
+            HealthFailOn::Critical
+        ));
+
+        let error = vec![dummy_row("a", "error"), dummy_row("b", "healthy")];
+        assert!(evaluate_health_rollup_failure(
+            &error,
+            HealthFailOn::Critical
+        ));
+    }
+
+    #[test]
+    fn health_failure_gate_at_risk_threshold() {
+        let healthy = vec![dummy_row("a", "healthy")];
+        assert!(!evaluate_health_rollup_failure(
+            &healthy,
+            HealthFailOn::AtRisk
+        ));
+
+        let at_risk = vec![dummy_row("a", "at_risk")];
+        assert!(evaluate_health_rollup_failure(
+            &at_risk,
+            HealthFailOn::AtRisk
+        ));
+
+        let critical = vec![dummy_row("a", "critical")];
+        assert!(evaluate_health_rollup_failure(
+            &critical,
+            HealthFailOn::AtRisk
+        ));
+
+        let not_found = vec![dummy_row("a", "not_found")];
+        assert!(evaluate_health_rollup_failure(
+            &not_found,
+            HealthFailOn::AtRisk
+        ));
+    }
+
+    #[test]
+    fn short_hash_formatting() {
+        assert_eq!(
+            format_short_hash("0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"),
+            "0123456789ab"
+        );
+        assert_eq!(format_short_hash("short-hash"), "short-hash");
     }
 }

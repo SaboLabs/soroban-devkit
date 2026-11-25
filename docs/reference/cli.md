@@ -456,6 +456,8 @@ the descriptor summary (`schema`, `name`, `version`, `format`, `lock_sha256`,
 │   │                         Register an existing contract in `.sdkt.toml`
 │   │                         under `[contracts.<alias>]`, validated before writing
 │   ├── status                Show deployments recorded for the selected network profile
+│   ├── health [--fail-on <at_risk|critical>] [--format pretty|json]
+│   │                         Check health for every deployment recorded on the selected network
 │   └── deploy                Deploy all contracts defined in the workspace (.sdkt.toml),
 │                             applying topological dependency sorting
 │
@@ -470,6 +472,20 @@ the descriptor summary (`schema`, `name`, `version`, `format`, `lock_sha256`,
 │
 │     sdkt project add token --path ./contracts/token --ctor-arg u32:100
 │     sdkt project add vault --path ./contracts/vault --depends-on token
+│
+│   `project health` aggregates on-chain contract health checks across every
+│   deployment recorded in `.sdkt-deployments.json` for the selected network.
+│   It displays a rollup table ordered worst-first: critical and not-found
+│   contracts first, then at_risk, then healthy. Per row: alias, contract ID,
+│   health verdict, minimum TTL, expiring-entry count, and short on-chain WASM hash.
+│   `--fail-on at_risk|critical` (default `critical`) exits 1 when any contract is
+│   missing on-chain or its verdict meets or exceeds the threshold (exits 0
+│   otherwise). An RPC error on one record is reported as `error` without
+│   aborting checks, and fails the command. With no recorded deployments, it prints
+│   `No deployments recorded for network '<network>'.` and exits 0. Example:
+│
+│     sdkt project health --fail-on critical
+│     sdkt project health --format json
 │
 │   `--timeout <SECONDS>` (default 60) and `--interval <SECONDS>` (default 1)
 │   control how long each contract deployment waits for settlement and how
