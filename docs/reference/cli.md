@@ -1344,6 +1344,22 @@ names the conflicting function. A single valid declaration keeps its existing
 campaign behavior. Malformed `--expect-error` declarations also remain usage
 errors.
 
+## Configuration validation (`sdkt config validate`)
+
+`sdkt config validate` checks a project's `.sdkt.toml` offline (no RPC calls, no network access) in two stages so CI can gate on configuration problems before building or deploying:
+
+1. **Stage 1 — Schema validation on the raw TOML file (`validate_config_schema`):** Parses `.sdkt.toml` as raw `toml::Value` and flags malformed TOML, duplicate tables, and unknown keys across top-level sections (`network`, `decode`, `storage`, `contracts`, `dependencies`, `package`), reporting both section and key name. `[package]` unknown keys are allowed by design for forward compatibility. If Stage 1 finds any problem (or if value-type deserialization fails), the CLI prints the problems and exits `1` without running Stage 2.
+2. **Stage 2 — Semantic validation on `DevKitConfig` (`DevKitConfig::validate(&self, base_dir)`):**
+   - **Numeric ranges:** `storage.max_entries > 0`, and `network.timeout_secs` / `network.pool_max_idle_per_host` (when set) `> 0`. `decode.max_depth = 0` is valid (unlimited).
+   - **Contract paths:** Every `[contracts.<alias>].path`, resolved relative to the directory containing `.sdkt.toml` (or used as-is if absolute), must exist on disk and contain a `Cargo.toml`.
+   - **Dependency combinations:** Validates `[dependencies]` via `validate_dependencies(base_dir, config)` (mutually exclusive `path`/`git`, required git ref or valid semver `version` requirement, path existence).
+   - **Deploy order graph:** Validates `[contracts]` via `validate_project(config)` when `contracts` is non-empty (cycles, unknown dependencies, self-dependencies, duplicate dependency entries across `deploy_after` and `depends_on`).
+
+**Exit codes & formats:**
+- `0` — Configuration is valid (or no `.sdkt.toml` exists, in which case defaults apply).
+- `1` — One or more schema or semantic problems were found.
+- `--format json` prints `{"valid": bool, "problems": [{"section": "...", "key": "...", "message": "..."}]}`.
+
 ## Error Handling
 
 1. All subcommands return `Result<(), Box<dyn std::error::Error>>`.

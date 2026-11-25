@@ -685,6 +685,11 @@ enum Commands {
         #[command(subcommand)]
         action: LockCommand,
     },
+    /// Validate or inspect project configuration (`.sdkt.toml`)
+    Config {
+        #[command(subcommand)]
+        action: ConfigCommand,
+    },
     /// Validate, bundle, unpack, and inspect local package manifests
     Package {
         #[command(subcommand)]
@@ -1396,6 +1401,16 @@ enum LockCommand {
     },
     /// Print the contents of `sdkt.lock` if present.
     Show {
+        #[arg(short, long, default_value = "pretty")]
+        format: String,
+    },
+}
+
+#[derive(Subcommand)]
+enum ConfigCommand {
+    /// Validate `.sdkt.toml` schema and semantics offline (no network calls)
+    Validate {
+        /// Output format (pretty or json)
         #[arg(short, long, default_value = "pretty")]
         format: String,
     },
@@ -4684,6 +4699,104 @@ mod tx_status_tests {
     }
 }
 
+
+/// Execute `sdkt config validate` (#565): offline two-stage validation of `.sdkt.toml`.
+fn run_config_validate(fmt: OutputFormat) {
+    let config_path = Path::new(".sdkt.toml");
+    if !config_path.exists() {
+        if fmt == OutputFormat::Json {
+            println!(
+                "{}",
+                serde_json::to_string_pretty(&serde_json::json!({
+                    "valid": true,
+                    "problems": []
+                }))
+                .unwrap()
+            );
+        } else {
+            println!("No .sdkt.toml found; default configuration applies.");
+            println!("Configuration is valid");
+        }
+        return;
+    }
+
+    let base_dir = config_path
+        .parent()
+        .filter(|p| !p.as_os_str().is_empty())
+        .unwrap_or_else(|| Path::new("."));
+
+    let content = match fs::read_to_string(config_path) {
+        Ok(c) => c,
+        Err(e) => {
+            let problems = vec![sdkt_core::ConfigProblem {
+                section: ".sdkt.toml".to_string(),
+                key: "io".to_string(),
+                message: format!("cannot read .sdkt.toml: {e}"),
+            }];
+            render_config_problems(&problems, fmt);
+            process::exit(1);
+        }
+    };
+
+    // Stage 1: schema validation on raw TOML text
+    let stage1 = sdkt_core::validate_config_schema(&content);
+    if !stage1.is_empty() {
+        render_config_problems(&stage1, fmt);
+        process::exit(1);
+    }
+
+    // Parse into DevKitConfig (catches type mismatches after clean schema pass)
+    let cfg = match DevKitConfig::from_toml(&content) {
+        Ok(c) => c,
+        Err(e) => {
+            let problems = vec![sdkt_core::ConfigProblem {
+                section: ".sdkt.toml".to_string(),
+                key: "deserialize".to_string(),
+                message: format!("invalid configuration value in .sdkt.toml: {e}"),
+            }];
+            render_config_problems(&problems, fmt);
+            process::exit(1);
+        }
+    };
+
+    // Stage 2: semantic validation on parsed struct
+    if let Err(stage2) = cfg.validate(base_dir) {
+        render_config_problems(&stage2, fmt);
+        process::exit(1);
+    }
+
+    if fmt == OutputFormat::Json {
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&serde_json::json!({
+                "valid": true,
+                "problems": []
+            }))
+            .unwrap()
+        );
+    } else {
+        println!("Configuration is valid");
+    }
+}
+
+fn render_config_problems(problems: &[sdkt_core::ConfigProblem], fmt: OutputFormat) {
+    if fmt == OutputFormat::Json {
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&serde_json::json!({
+                "valid": false,
+                "problems": problems
+            }))
+            .unwrap()
+        );
+    } else {
+        for p in problems {
+            eprintln!("error: {}.{}: {}", p.section, p.key, p.message);
+        }
+        eprintln!("{} problem(s) found", problems.len());
+    }
+}
+
 fn load_config() -> DevKitConfig {
     match DevKitConfig::from_file(".sdkt.toml") {
         Ok(c) => c,
@@ -6010,8 +6123,13 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
 
             let fmt = parse_format_str(&format);
             let cfg = load_config();
-            if let Err(e) = cfg.validate() {
-                fail_cli(e, json_mode);
+            if let Err(problems) = cfg.validate(Path::new(".")) {
+                let msg = problems
+                    .iter()
+                    .map(|p| format!("{}.{}: {}", p.section, p.key, p.message))
+                    .collect::<Vec<_>>()
+                    .join("; ");
+                fail_cli(msg, json_mode);
             }
             let decoded = match decode_payload_with_optional_abi(
                 &input,
@@ -11398,6 +11516,12 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
                         std::process::exit(1);
                     }
                 }
+            }
+        },
+        Commands::Config { action } => match action {
+            ConfigCommand::Validate { format } => {
+                let fmt = parse_format_str(&format);
+                run_config_validate(fmt);
             }
         },
         Commands::Package { action } => match action {
