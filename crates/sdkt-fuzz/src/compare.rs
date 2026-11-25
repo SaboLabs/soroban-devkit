@@ -136,6 +136,9 @@ mod tests {
             artifacts_available: false,
             replay: BTreeMap::new(),
             deterministic: true,
+            schema_version: crate::CAMPAIGN_EVIDENCE_SCHEMA_VERSION,
+            tool: "sdkt".to_string(),
+            version: env!("CARGO_PKG_VERSION").to_string(),
         }
     }
 

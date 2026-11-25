@@ -386,7 +386,7 @@ fn run_campaign_inner(
             mut steps,
             mutations,
         } = build_case(input, &function, case_number)?;
-        let mutation_record: Option<Mutation> = mutations.last().cloned();
+        let mutation_chain: Vec<Mutation> = mutations;
 
         // --- Expectation & oracle --------------------------------------
         let expected = expectations.get(&function).cloned().unwrap_or_default();
@@ -460,10 +460,16 @@ fn run_campaign_inner(
                     case_id: case_id.clone(),
                     wasm_hash: hex(&executor.wasm_hash()),
                     function: function.clone(),
-                    mutation_id: mutation_record.as_ref().map(|m| m.mutation_id.clone()),
-                    operator: mutation_record
-                        .as_ref()
-                        .map(|m| m.operator.name().to_string()),
+                    mutation_id: mutation_chain.last().map(|m| m.mutation_id.clone()),
+                    operator: mutation_chain.last().map(|m| m.operator.name().to_string()),
+                    mutation_ids: mutation_chain
+                        .iter()
+                        .map(|m| m.mutation_id.clone())
+                        .collect(),
+                    operators: mutation_chain
+                        .iter()
+                        .map(|m| m.operator.name().to_string())
+                        .collect(),
                     auth_mode: input.auth_mode.name().to_string(),
                 };
                 let mut minimization = outcome.minimization;
@@ -474,7 +480,8 @@ fn run_campaign_inner(
                     reason_code: reason,
                     identity,
                     case: executor.case(&case_id, steps[0].clone(), Vec::new()),
-                    mutation: mutation_record,
+                    mutation: mutation_chain.last().cloned(),
+                    mutations: mutation_chain,
                     environment: input.environment.clone(),
                     expected,
                     observation: minimized_observation,

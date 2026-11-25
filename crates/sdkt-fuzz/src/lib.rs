@@ -101,7 +101,7 @@ pub use differential::{
 };
 pub use environment::{network_faithful_plan, BudgetCoverage, BudgetPlan, Environment};
 pub use error::{FuzzError, SetupError};
-pub use evidence::{CampaignEvidence, ReplayStatus};
+pub use evidence::{CampaignEvidence, ReplayStatus, CAMPAIGN_EVIDENCE_SCHEMA_VERSION};
 pub use executor::Executor;
 pub use finding::{CaseIdentity, Finding, SkippedFunction};
 pub use generator::{GeneratedCall, GenerationCaps, GeneratorError, UnsupportedContractType};

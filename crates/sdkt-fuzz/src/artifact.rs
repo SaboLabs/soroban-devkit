@@ -549,6 +549,10 @@ pub struct FindingArtifact {
     pub auth_mode: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub mutation: Option<MutationSnapshot>,
+    /// Full mutation chain in application order. `mutation` stays as the
+    /// last entry for old readers; old artifacts deserialize with an empty chain.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub mutations: Vec<MutationSnapshot>,
     pub expected: ExpectedSnapshot,
     pub observation: ObservationSnapshot,
     pub reason_code: String,
@@ -586,6 +590,11 @@ impl FindingArtifact {
                 .mutation
                 .as_ref()
                 .map(MutationSnapshot::from_mutation),
+            mutations: finding
+                .mutations
+                .iter()
+                .map(MutationSnapshot::from_mutation)
+                .collect(),
             expected: ExpectedSnapshot::from_expected(&finding.expected),
             observation: ObservationSnapshot::from_observation(&finding.observation),
             reason_code: finding.reason_code.name().to_string(),

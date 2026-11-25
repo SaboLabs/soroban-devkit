@@ -29,6 +29,10 @@ pub struct CaseIdentity {
     pub mutation_id: Option<String>,
     /// Mutation operator name, when applicable.
     pub operator: Option<String>,
+    /// Every mutation identity applied to the case, in application order.
+    pub mutation_ids: Vec<String>,
+    /// Every mutation operator name applied to the case, in application order.
+    pub operators: Vec<String>,
     /// Auth mode name.
     pub auth_mode: String,
 }
@@ -44,6 +48,8 @@ pub struct Finding {
     pub case: FuzzCase,
     /// The mutation that produced the case, if any.
     pub mutation: Option<Mutation>,
+    /// Full mutation chain, in application order (last entry equals `mutation`).
+    pub mutations: Vec<Mutation>,
     /// Environment the case ran under.
     pub environment: Environment,
     /// Declared expectation that was violated.
@@ -73,6 +79,11 @@ impl Finding {
             function: case.call.function.clone(),
             mutation_id: mutation.as_ref().map(|m| m.mutation_id.clone()),
             operator: mutation.as_ref().map(|m| m.operator.name().to_string()),
+            mutation_ids: mutation.iter().map(|m| m.mutation_id.clone()).collect(),
+            operators: mutation
+                .iter()
+                .map(|m| m.operator.name().to_string())
+                .collect(),
             auth_mode: auth_mode.name().to_string(),
         };
         let minimization = Minimization::not_attempted(&case);
@@ -80,6 +91,7 @@ impl Finding {
             reason_code,
             identity,
             case,
+            mutations: mutation.iter().cloned().collect(),
             mutation,
             environment,
             expected,

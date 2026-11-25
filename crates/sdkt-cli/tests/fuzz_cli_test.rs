@@ -58,7 +58,7 @@ fn temp_dir(label: &str) -> PathBuf {
 #[test]
 fn cli_campaign_finding_exits_one_and_writes_artifacts() {
     let out = temp_dir("finding");
-    fuzz_campaign(&[
+    let output = fuzz_campaign(&[
         &fixture("us_new.wasm"),
         "--cases",
         "4",
@@ -75,7 +75,12 @@ fn cli_campaign_finding_exits_one_and_writes_artifacts() {
     .failure()
     .code(1)
     .stdout(predicate::str::contains("findings"))
-    .stdout(predicate::str::contains("RETURN_MISMATCH"));
+    .stdout(predicate::str::contains("RETURN_MISMATCH"))
+    .get_output()
+    .stdout
+    .clone();
+    let stdout: Value = serde_json::from_slice(&output).expect("campaign JSON evidence");
+    assert_campaign_provenance(&stdout);
 
     // Artifacts: one per finding, named deterministically.
     let mut artifacts = std::fs::read_dir(&out)
@@ -109,9 +114,19 @@ fn cli_campaign_finding_exits_one_and_writes_artifacts() {
     let evidence = out.join("campaign-evidence.json");
     let text = std::fs::read_to_string(&evidence).expect("evidence written");
     let value: Value = serde_json::from_str(&text).expect("evidence is JSON");
+    assert_campaign_provenance(&value);
     assert_eq!(value["campaign_completed"], true);
     assert!(value["findings"].as_array().is_some_and(|f| !f.is_empty()));
     assert_eq!(value["deterministic"], true);
+}
+
+fn assert_campaign_provenance(evidence: &Value) {
+    assert_eq!(
+        evidence["schema_version"],
+        sdkt_fuzz::CAMPAIGN_EVIDENCE_SCHEMA_VERSION
+    );
+    assert_eq!(evidence["tool"], "sdkt");
+    assert_eq!(evidence["version"], env!("CARGO_PKG_VERSION"));
 }
 
 // ---------------------------------------------------------------------------
@@ -543,6 +558,9 @@ fn compare_evidence_file(
         artifacts_available: false,
         replay: BTreeMap::new(),
         deterministic: true,
+        schema_version: sdkt_fuzz::CAMPAIGN_EVIDENCE_SCHEMA_VERSION,
+        tool: "sdkt".to_string(),
+        version: env!("CARGO_PKG_VERSION").to_string(),
     };
     let path = dir.join(name);
     std::fs::write(&path, serde_json::to_string_pretty(&evidence).unwrap()).unwrap();
