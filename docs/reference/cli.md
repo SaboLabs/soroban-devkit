@@ -127,7 +127,7 @@ sdkt
 │
 ├── tx
 │   ├── inspect <hash>        [--format]
-│   ├── validate <xdr>        [--format] (offline parse + structural checks)
+│   ├── validate --envelope <xdr|file>  [--format] [--verify-signatures --signer <G...> ...] (offline parse + structural checks; signature verification)
 │   ├── decode <xdr>          [--format] (offline decode; human-readable transaction envelope)
 │   ├── simulate <xdr>        [--format] [--abi <wasm>] [--abi-contract <id>] (RPC; surfaces restore preambles, costs, state changes; ABI-aware result decoding. `--abi-contract` fetches the deployed contract's on-chain WASM for decoding)
 │   ├── sign                  [--input <xdr|file>] [--output <file>] [--identity <name>] [--network <testnet|mainnet|futurenet|custom:<p>>] [--format] (offline ED25519 signing)
@@ -938,6 +938,53 @@ Exit codes:
 - `1` — at least one check failed (e.g. invalid config, missing WASM target)
 
 Warnings are never fatal. The JSON output contains no secret material.
+
+## tx validate
+
+`sdkt tx validate --envelope <xdr|file>` parses an envelope and runs
+structural checks (fee, sequence, operations) fully offline. With
+`--verify-signatures` it also verifies the envelope's signatures against
+one or more named signers:
+
+```bash
+sdkt tx validate --envelope signed.xdr --verify-signatures \
+  --signer GABC... --signer GDEF...
+```
+
+`--signer` is repeatable and takes a `G...` public key; a public-key-only
+signer is used, so no secret material is ever accepted or read in this
+path. Passing an `S...` secret or an unparseable value as `--signer` is a
+usage error (exit 2) that does not name the value, so `sdkt`'s own diagnostic never contains the secret. That is no promise about anything outside `sdkt`: a shell with tracing enabled can log the full command before `sdkt` runs, so do not put a secret on the command line. `--verify-signatures` without at least one `--signer` is also a usage error (exit 2). Duplicate
+`--signer` values are deduplicated: each distinct key is reported once.
+
+Each named signer is reported as `VALID`, `MISSING`, or `INVALID`. A
+signer is `VALID` when at least one signature whose hint (the last four
+bytes of the public key) matches the signer verifies against the
+envelope hash; `MISSING` when no signature carries the hint; `INVALID`
+when hint-matching signatures exist but none verifies. Signatures are
+never consumed, and two keys that share a hint are evaluated
+independently: with a hint collision, both keys are `VALID` when both
+signatures are present, and the key whose signature is absent is
+`INVALID` (not `MISSING`), because its hint matches a signature that
+does not verify. Signatures whose hint matches no named signer are
+listed as `UNMATCHED` (by envelope index and hex hint) for information
+only; they never affect the exit code. For a fee-bump envelope only the
+outer signatures are considered.
+
+The network is resolved from the usual flags (`--network`,
+`--network-profile`, `--network-passphrase`); only the passphrase
+matters, and no RPC call is made, so verification works fully offline
+and with an unreachable RPC endpoint. The default network is testnet and
+the output names the network used. A signature made for a different
+network does not verify (`INVALID`).
+
+Exit codes: `0` when structural validation passes and every named
+signer is `VALID`; `1` when structural validation fails, any signer is
+`MISSING` or `INVALID`, or the envelope hash cannot be computed. When
+structural validation fails, the structural report is printed unchanged
+and no `Signatures:` section appears. `--format json` adds a
+`signatures` array (`address`, `hint`, `status`, `candidates`) and an
+`unmatched` array (`index`, `hint`) plus the `network`.
 
 ## tx status
 

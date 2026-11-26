@@ -140,6 +140,21 @@ pub struct NetworkStore {
 }
 
 impl NetworkStore {
+    /// Resolve the store directory without creating it.
+    fn resolve_dir() -> Result<PathBuf, StorageError> {
+        if let Ok(dir) = std::env::var("SDKT_NETWORK_DIR") {
+            if !dir.is_empty() {
+                return Ok(PathBuf::from(dir));
+            }
+        }
+
+        let proj_dirs = ProjectDirs::from("com", "SorobanDevKit", "sdkt").ok_or_else(|| {
+            StorageError::ConfigError("Cannot determine config directory: no home dir".into())
+        })?;
+
+        Ok(proj_dirs.config_dir().join("networks"))
+    }
+
     /// Create a new network store.
     ///
     /// If the `SDKT_NETWORK_DIR` environment variable is set to a non-empty value,
@@ -151,17 +166,20 @@ impl NetworkStore {
     /// - macOS: `~/Library/Application Support/sdkt/networks`
     /// - Windows: `%APPDATA%\sdkt\networks`
     pub fn new() -> Result<Self, StorageError> {
-        if let Ok(dir) = std::env::var("SDKT_NETWORK_DIR") {
-            if !dir.is_empty() {
-                return Self::with_dir(dir);
-            }
-        }
+        Self::with_dir(Self::resolve_dir()?)
+    }
 
-        let proj_dirs = ProjectDirs::from("com", "SorobanDevKit", "sdkt").ok_or_else(|| {
-            StorageError::ConfigError("Cannot determine config directory: no home dir".into())
-        })?;
-
-        Self::with_dir(proj_dirs.config_dir().join("networks"))
+    /// Open an existing network store without creating anything.
+    ///
+    /// Unlike [`NetworkStore::new`], this never creates the base directory,
+    /// so read-only callers (for example `tx validate`, which the capability
+    /// registry classifies as `ReadOnly`) cannot change the filesystem by
+    /// looking a profile up. A missing profile still fails at
+    /// [`NetworkStore::get`].
+    pub fn open() -> Result<Self, StorageError> {
+        Ok(Self {
+            base_dir: Self::resolve_dir()?,
+        })
     }
 
     /// Create a network store rooted at an explicit directory.
@@ -428,5 +446,23 @@ mod tests {
 
         let result = store.remove("ghost");
         assert!(matches!(result, Err(StorageError::NotFound(_))));
+    }
+
+    #[test]
+    fn test_network_store_open_does_not_create_dir() {
+        // `open` must not create the store directory: a read-only lookup
+        // of a missing profile fails without touching the filesystem.
+        let temp_dir = tempdir().unwrap();
+        let missing = temp_dir.path().join("no-such-store");
+        let prev = std::env::var("SDKT_NETWORK_DIR").ok();
+        std::env::set_var("SDKT_NETWORK_DIR", &missing);
+        let store = NetworkStore::open().unwrap();
+        let got = store.get("missing");
+        match prev {
+            Some(v) => std::env::set_var("SDKT_NETWORK_DIR", v),
+            None => std::env::remove_var("SDKT_NETWORK_DIR"),
+        }
+        assert!(!missing.exists(), "open() must not create the store dir");
+        assert!(got.is_err(), "a missing profile must still fail");
     }
 }
