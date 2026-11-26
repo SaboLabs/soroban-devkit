@@ -558,6 +558,7 @@ fn compare_evidence_file(
         artifacts_available: false,
         replay: BTreeMap::new(),
         deterministic: true,
+        resource_limit_is_finding: false,
         schema_version: sdkt_fuzz::CAMPAIGN_EVIDENCE_SCHEMA_VERSION,
         tool: "sdkt".to_string(),
         version: env!("CARGO_PKG_VERSION").to_string(),
@@ -927,4 +928,134 @@ fn cli_campaign_default_path_parity_when_sequence_flags_omitted() {
     let ev: Value = serde_json::from_str(&ev_text).unwrap();
     assert_eq!(ev["config"]["sequence_length"], 2);
     assert_eq!(ev["config"]["sequence_every"], 0);
+}
+
+// ---------------------------------------------------------------------------
+// 9. RESOURCE_LIMIT opt-in rule (--resource-limit-is-finding)
+// ---------------------------------------------------------------------------
+//
+// A budget-class host error under a declared Success is UNEXPECTED_ERROR
+// without the rule and RESOURCE_LIMIT with it. The campaign needs a way to
+// hit the budget-exhaustion path deterministically, which is what
+// --budget-capped CPU:MEM exposes (`BudgetPlan::Capped`, the engine's
+// purpose-built deterministic budget-exhaustion path). Known fixture
+// behavior through explicit declarations — no real vulnerability discovery.
+
+/// Without the rule: a Budget error under --expect-success classifies as
+/// UNEXPECTED_ERROR, and the evidence does not record the rule.
+#[test]
+fn cli_campaign_budget_error_without_rule_is_unexpected_error() {
+    let out = temp_dir("rl-off");
+    fuzz_campaign(&[
+        &fixture("us_new.wasm"),
+        "--cases",
+        "1",
+        "--seed",
+        "7",
+        // Pin the exercised function: without this the single case targets
+        // functions[0], which only happens to be `hello` in this fixture.
+        "--function",
+        "hello",
+        "--expect-success",
+        "hello",
+        "--budget-capped",
+        "1:1",
+        "--artifact-dir",
+        out.to_str().unwrap(),
+        "--format",
+        "json",
+    ])
+    .assert()
+    .failure()
+    .code(1)
+    .stdout(predicate::str::contains("UNEXPECTED_ERROR"))
+    .stdout(predicate::str::contains("RESOURCE_LIMIT").not());
+
+    // Default-off evidence must not carry the rule at all (byte-identical
+    // to pre-flag evidence).
+    let evidence = std::fs::read_to_string(out.join("campaign-evidence.json")).unwrap();
+    assert!(
+        !evidence.contains("resource_limit"),
+        "default-off evidence must not record the rule: {evidence}"
+    );
+}
+
+/// With the rule: the same campaign classifies the Budget error as
+/// RESOURCE_LIMIT, and the evidence records that the rule was enabled.
+#[test]
+fn cli_campaign_budget_error_with_rule_is_resource_limit() {
+    let out = temp_dir("rl-on");
+    fuzz_campaign(&[
+        &fixture("us_new.wasm"),
+        "--cases",
+        "1",
+        "--seed",
+        "7",
+        // Pin the exercised function: without this the single case targets
+        // functions[0], which only happens to be `hello` in this fixture.
+        "--function",
+        "hello",
+        "--expect-success",
+        "hello",
+        "--budget-capped",
+        "1:1",
+        "--resource-limit-is-finding",
+        "--artifact-dir",
+        out.to_str().unwrap(),
+        "--format",
+        "json",
+    ])
+    .assert()
+    .failure()
+    .code(1)
+    .stdout(predicate::str::contains("RESOURCE_LIMIT"));
+
+    let evidence = std::fs::read_to_string(out.join("campaign-evidence.json")).unwrap();
+    assert!(
+        evidence.contains(r#""resource_limit_is_finding": true"#),
+        "enabled evidence must record the rule: {evidence}"
+    );
+}
+
+/// Default behavior is byte-identical to today: without --budget-capped the
+/// same campaign has no budget error at all — hello passes, no findings,
+/// no RESOURCE_LIMIT anywhere.
+#[test]
+fn cli_campaign_default_budget_behavior_unchanged() {
+    fuzz_campaign(&[
+        &fixture("us_new.wasm"),
+        "--cases",
+        "1",
+        "--seed",
+        "7",
+        // Pin the exercised function: without this the single case targets
+        // functions[0], which only happens to be `hello` in this fixture.
+        "--function",
+        "hello",
+        "--expect-success",
+        "hello",
+    ])
+    .assert()
+    .success()
+    .code(0)
+    .stdout(predicate::str::contains("findings=0"))
+    .stdout(predicate::str::contains("RESOURCE_LIMIT").not());
+}
+
+/// Malformed --budget-capped is a usage error (exit 2), never a finding.
+#[test]
+fn cli_campaign_budget_capped_malformed_is_usage_error() {
+    fuzz_campaign(&[
+        &fixture("us_new.wasm"),
+        "--cases",
+        "1",
+        "--expect-success",
+        "hello",
+        "--budget-capped",
+        "abc",
+    ])
+    .assert()
+    .failure()
+    .code(2)
+    .stderr(predicate::str::contains("budget-capped"));
 }
