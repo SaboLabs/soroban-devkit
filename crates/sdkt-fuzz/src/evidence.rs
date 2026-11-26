@@ -17,6 +17,17 @@ use crate::artifact::FindingArtifact;
 use crate::campaign::CampaignResult;
 use crate::replay::ReplayOutcome;
 
+/// Current schema version for campaign evidence documents.
+pub const CAMPAIGN_EVIDENCE_SCHEMA_VERSION: u32 = 1;
+
+fn legacy_schema_version() -> u32 {
+    0
+}
+
+fn unknown_producer() -> String {
+    "unknown".to_string()
+}
+
 /// Replay status for one artifact, or the campaign as a whole.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case", tag = "kind")]
@@ -66,6 +77,16 @@ pub struct CampaignEvidence {
     /// from one that did not.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub resource_limit_is_finding: bool,
+    /// Campaign evidence document schema version (0 means a legacy document
+    /// with no schema version field).
+    #[serde(default = "legacy_schema_version")]
+    pub schema_version: u32,
+    /// CLI name that produced the campaign evidence.
+    #[serde(default = "unknown_producer")]
+    pub tool: String,
+    /// Tool package version that produced the campaign evidence.
+    #[serde(default = "unknown_producer")]
+    pub version: String,
 }
 
 /// One finding as evidence: identity + reason + artifact reference.
@@ -132,6 +153,9 @@ impl CampaignEvidence {
             replay: replay.clone(),
             deterministic,
             resource_limit_is_finding,
+            schema_version: CAMPAIGN_EVIDENCE_SCHEMA_VERSION,
+            tool: "sdkt".to_string(),
+            version: env!("CARGO_PKG_VERSION").to_string(),
         }
     }
 
@@ -207,5 +231,31 @@ mod tests {
         assert!(evidence.campaign_completed);
         assert_eq!(evidence.case_count, 2);
         assert_eq!(evidence.passed, 2);
+    }
+
+    #[test]
+    fn legacy_evidence_without_provenance_still_deserializes() {
+        let result = CampaignResult {
+            executed: 1,
+            passed: vec!["case0000".to_string()],
+            ..Default::default()
+        };
+        let evidence = CampaignEvidence::from_result(
+            &result,
+            CampaignConfig::default(),
+            &[],
+            &BTreeMap::new(),
+            true,
+            false,
+        );
+        let mut legacy = serde_json::to_value(evidence).unwrap();
+        legacy.as_object_mut().unwrap().remove("schema_version");
+        legacy.as_object_mut().unwrap().remove("tool");
+        legacy.as_object_mut().unwrap().remove("version");
+
+        let parsed: CampaignEvidence = serde_json::from_value(legacy).unwrap();
+        assert_eq!(parsed.schema_version, 0);
+        assert_eq!(parsed.tool, "unknown");
+        assert_eq!(parsed.version, "unknown");
     }
 }
