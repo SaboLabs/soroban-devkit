@@ -605,6 +605,7 @@
 
   function inspectFile(file, gen) {
     file.arrayBuffer().then((buf) => {
+      if (!isCurrent(gen)) return;
       const bytes = new Uint8Array(buf);
       currentBytes = bytes;
       return post({ type: 'inspect', bytes });
