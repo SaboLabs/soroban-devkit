@@ -186,7 +186,8 @@ pub fn run(options: &FuzzRunOptions) -> Result<FuzzReport, FuzzError> {
 }
 
 /// Plan a campaign (`--dry-run`): the case list a real run would execute,
-/// without creating an executor, writing artifacts, or touching the network.
+/// validating setup offline (config, expectations, WASM parse) without
+/// executing any case, writing artifacts, or touching the network.
 pub fn plan(options: &FuzzRunOptions) -> Result<CampaignPlan, FuzzError> {
     plan_with_sequence(options, SequenceOptions::default())
 }
@@ -196,7 +197,16 @@ pub fn plan_with_sequence(
     options: &FuzzRunOptions,
     sequence: SequenceOptions,
 ) -> Result<CampaignPlan, FuzzError> {
-    let (_wasm, input) = campaign_input(options, sequence)?;
+    let (wasm, input) = campaign_input(options, sequence)?;
+    build_expectations(options)?;
+    // Reject the same setups a real run rejects, before planning:
+    // expectation validation (above) and offline WASM parse.
+    let config = crate::config::FuzzConfig {
+        seed: input.seed,
+        ..crate::config::FuzzConfig::default()
+    };
+    input.environment.validate(&config)?;
+    crate::executor::Executor::validate_offline(&wasm, &config)?;
     plan_campaign(&input)
 }
 

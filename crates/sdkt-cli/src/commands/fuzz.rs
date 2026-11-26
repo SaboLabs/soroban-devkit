@@ -175,6 +175,9 @@ fn print_plan(plan: &sdkt_fuzz::CampaignPlan, fmt: &FuzzFormat) {
             Err(e) => eprintln!("Error: cannot serialize plan: {e}"),
         },
         FuzzFormat::Jsonl => {
+            for s in &plan.skipped_functions {
+                eprintln!("Skipped: {} ({})", s.function, s.reason);
+            }
             for case in &plan.cases {
                 if let Ok(s) = serde_json::to_string(case) {
                     println!("{s}");

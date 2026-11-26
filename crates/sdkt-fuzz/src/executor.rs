@@ -146,6 +146,34 @@ impl Executor {
         })
     }
 
+    /// Offline setup validation, with no execution.
+
+    /// Rejects the same inputs [`Executor::new`] rejects: invalid
+    /// configuration, empty WASM, and WASM the Soroban engine will not
+    /// parse. No case is executed, no artifact is written, and no network
+    /// access occurs. The compiled module cache is discarded.
+    pub fn validate_offline(wasm: &[u8], config: &FuzzConfig) -> Result<(), FuzzError> {
+        config.validate()?;
+        if wasm.is_empty() {
+            return Err(FuzzError::InvalidSetup(SetupError::Wasm(
+                "empty wasm input".to_string(),
+            )));
+        }
+        let ctx = CampaignCompilationContext(Budget::default());
+        let module_cache = ModuleCache::new(&ctx).map_err(|e| {
+            FuzzError::InvalidSetup(SetupError::Wasm(format!("module cache init: {e}")))
+        })?;
+        let ledger_info = config.ledger_info();
+        module_cache
+            .parse_and_cache_module_simple(&ctx, ledger_info.protocol_version, wasm)
+            .map_err(|e| {
+                FuzzError::InvalidSetup(SetupError::Wasm(format!(
+                    "wasm rejected by the Soroban engine: {e}"
+                )))
+            })?;
+        Ok(())
+    }
+
     /// SHA-256 of the campaign WASM — also the module-cache key the host
     /// uses for the ContractCode ledger entry.
     pub fn wasm_hash(&self) -> [u8; 32] {
