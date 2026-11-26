@@ -633,17 +633,34 @@ enum Commands {
         /// Stellar contract ID (C...)
         #[arg(value_name = "CONTRACT_ID")]
         contract_id: String,
-        /// Function name
-        #[arg(value_name = "FUNCTION")]
-        function: String,
+        /// Function name (required unless --batch is given)
+        #[arg(value_name = "FUNCTION", required_unless_present = "batch")]
+        function: Option<String>,
         /// Typed arguments (e.g. u32:100, address:G..., string:hello, bool:true)
         #[arg(short, long, value_name = "TYPE:VALUE")]
         args: Vec<String>,
         /// Composite arguments as a JSON array; appended after --args values.
         #[arg(long, value_name = "JSON")]
         args_json: Vec<String>,
-        #[arg(short, long, default_value = "pretty")]
-        format: String,
+        /// Read a JSON array of read-only calls from FILE and execute them
+        /// sequentially through the single-call simulation path, printing one
+        /// JSON object keyed by function name (or each entry's `key`). Each
+        /// entry is `{ "function": "<NAME>", "args": ["u32:100", ...],
+        /// "args_json": ["[...]"], "key": "<OPTIONAL RESULT KEY>" }`.
+        /// Mutually exclusive with the positional FUNCTION and with --args /
+        /// --args-json. The first failing call stops the batch with a
+        /// non-zero exit; nothing is printed for a failed batch.
+        #[arg(
+            long,
+            value_name = "FILE",
+            conflicts_with = "function",
+            conflicts_with = "args",
+            conflicts_with = "args_json"
+        )]
+        batch: Option<String>,
+        /// Output format (pretty or json). Defaults to json in batch mode.
+        #[arg(short, long)]
+        format: Option<String>,
         /// Path to contract WASM for ABI-aware result decoding
         #[arg(long, value_name = "WASM")]
         abi: Option<String>,
@@ -3493,6 +3510,296 @@ fn parse_format_str(s: &str) -> OutputFormat {
     }
 }
 
+/// One entry of a `--batch` file for `sdkt call`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct BatchCall {
+    /// Function to invoke (must exist in the ABI when one is available).
+    function: String,
+    /// Typed arguments in the existing `TYPE:VALUE` syntax.
+    args: Vec<String>,
+    /// Composite arguments as JSON arrays.
+    args_json: Vec<String>,
+    /// Key the decoded result is filed under in the batch output. Defaults
+    /// to the function name and must be unique across the batch.
+    key: String,
+}
+
+/// Parse and validate a `--batch` file's contents.
+///
+/// The file must contain a JSON array of objects shaped
+/// `{ "function": "<NAME>", "args": [...], "args_json": [...],
+/// "key": "<OPTIONAL>" }`. `args` / `args_json` are optional per entry;
+/// `key` defaults to the function name and must be unique across the batch.
+///
+/// Every failure names the offending entry by its 0-based index, and
+/// duplicate keys are rejected here — before any network call is made —
+/// because the whole file is validated before execution starts.
+fn parse_batch_file(text: &str) -> Result<Vec<BatchCall>, String> {
+    let value: serde_json::Value =
+        serde_json::from_str(text).map_err(|e| format!("batch file is not valid JSON: {e}"))?;
+    let entries = value
+        .as_array()
+        .ok_or("batch file must contain a JSON array of calls")?;
+    if entries.is_empty() {
+        return Err("batch file contains no calls".to_string());
+    }
+    let mut calls = Vec::with_capacity(entries.len());
+    let mut seen_keys: std::collections::HashMap<String, usize> = std::collections::HashMap::new();
+    for (i, entry) in entries.iter().enumerate() {
+        let obj = entry
+            .as_object()
+            .ok_or_else(|| format!("batch entry {i}: must be a JSON object"))?;
+        let function = obj
+            .get("function")
+            .and_then(|v| v.as_str())
+            .filter(|s| !s.is_empty())
+            .ok_or_else(|| format!("batch entry {i}: missing \"function\""))?
+            .to_string();
+        let args = parse_batch_string_array(obj.get("args"), i, "args")?;
+        let args_json = parse_batch_string_array(obj.get("args_json"), i, "args_json")?;
+        let key = match obj.get("key") {
+            Some(v) => v
+                .as_str()
+                .filter(|s| !s.is_empty())
+                .ok_or_else(|| format!("batch entry {i}: \"key\" must be a non-empty string"))?
+                .to_string(),
+            None => function.clone(),
+        };
+        if let Some(prev) = seen_keys.get(&key) {
+            return Err(format!(
+                "batch entry {i}: duplicate key \"{key}\" (first used by batch entry {prev})"
+            ));
+        }
+        seen_keys.insert(key.clone(), i);
+        calls.push(BatchCall {
+            function,
+            args,
+            args_json,
+            key,
+        });
+    }
+    Ok(calls)
+}
+
+/// Read one optional `args` / `args_json` field of a batch entry: absent
+/// means no arguments; present must be an array of strings.
+fn parse_batch_string_array(
+    value: Option<&serde_json::Value>,
+    index: usize,
+    field: &str,
+) -> Result<Vec<String>, String> {
+    match value {
+        None => Ok(Vec::new()),
+        Some(v) => {
+            let arr = v.as_array().ok_or_else(|| {
+                format!("batch entry {index}: \"{field}\" must be a JSON array of strings")
+            })?;
+            let mut out = Vec::with_capacity(arr.len());
+            for item in arr {
+                out.push(
+                    item.as_str()
+                        .ok_or_else(|| {
+                            format!(
+                                "batch entry {index}: \"{field}\" must be a JSON array of strings"
+                            )
+                        })?
+                        .to_string(),
+                );
+            }
+            Ok(out)
+        }
+    }
+}
+
+/// Check every batch entry against the ABI spec: each entry's function must
+/// be declared in the spec. Runs before any entry executes, so an unknown
+/// function is a usage error naming the entry index.
+fn validate_batch_functions(
+    entries: &[BatchCall],
+    spec: &sdkt_wasm::ContractSpec,
+) -> Result<(), String> {
+    for (i, entry) in entries.iter().enumerate() {
+        if !spec.functions.iter().any(|f| f.name == entry.function) {
+            let name = entry.function.as_str();
+            return Err(format!(
+                "batch entry {i}: unknown function \"{name}\" (not found in ABI)"
+            ));
+        }
+    }
+    Ok(())
+}
+
+/// Render batch results as a single JSON object mapping each entry key to
+/// its decoded result, preserving file order. Built by hand (rather than
+/// `serde_json::json!`) because `serde_json::Map` sorts keys unless the
+/// `preserve_order` feature is enabled.
+fn format_batch_json(results: &[(String, String)]) -> Result<String, String> {
+    let mut out = String::from("{");
+    for (i, (key, value)) in results.iter().enumerate() {
+        if i > 0 {
+            out.push(',');
+        }
+        out.push_str(&serde_json::to_string(key).map_err(|e| e.to_string())?);
+        out.push(':');
+        out.push_str(&serde_json::to_string(value).map_err(|e| e.to_string())?);
+    }
+    out.push('}');
+    Ok(out)
+}
+
+/// Execute a `--batch` file: every entry runs sequentially through the
+/// same read-only simulation + ABI-decoding path as a single `sdkt call`
+/// (zero-fake sequence, never signed or submitted), and one result object
+/// is printed at the end.
+///
+/// Validation is deliberately front-loaded: the file is parsed, every
+/// entry's arguments are encoded, and (when an ABI is available) every
+/// function name is checked — all before the first simulation. A usage
+/// problem therefore fails fast with exit code 2 and no network call is
+/// made for a rejected batch. The first entry whose simulation fails stops
+/// the batch with an error naming its index and function, and no result
+/// object is printed.
+async fn run_call_batch(
+    contract_id: &str,
+    batch_path: &str,
+    fmt: OutputFormat,
+    abi: Option<&String>,
+    abi_contract: Option<&String>,
+    net: &NetworkArgs,
+) -> Result<(), Box<dyn std::error::Error>> {
+    use sdkt_rpc::simulate_transaction;
+    use sdkt_xdr::scval_from_base64;
+
+    let text = match std::fs::read_to_string(batch_path) {
+        Ok(t) => t,
+        Err(e) => {
+            eprintln!("Error: cannot read batch file '{batch_path}': {e}");
+            process::exit(2);
+        }
+    };
+    let entries = match parse_batch_file(&text) {
+        Ok(entries) => entries,
+        Err(e) => {
+            eprintln!("Error: {e}");
+            process::exit(2);
+        }
+    };
+
+    // Encode every entry's arguments up front, so a bad argument is a
+    // usage error before any entry runs.
+    let mut entry_args: Vec<Vec<String>> = Vec::with_capacity(entries.len());
+    for (i, entry) in entries.iter().enumerate() {
+        let name = entry.function.as_str();
+        let mut parsed = match parse_typed_args(&entry.args, true) {
+            Ok(p) => p,
+            Err(e) => {
+                eprintln!("Error: batch entry {i} ({name}): {e}");
+                process::exit(2);
+            }
+        };
+        for json in &entry.args_json {
+            match sdkt_xdr::json_args_to_base64(json) {
+                Ok(mut more) => parsed.append(&mut more),
+                Err(e) => {
+                    eprintln!("Error: batch entry {i} ({name}): {e}");
+                    process::exit(2);
+                }
+            }
+        }
+        entry_args.push(parsed);
+    }
+
+    // Resolve network config (no I/O) and the ABI spec once, before
+    // executing any entry.
+    let network_config = resolve_network_config(
+        net.rpc_url.clone(),
+        net.network_passphrase.clone(),
+        net.network_profile.clone(),
+    )?;
+    let client = SorobanRpcClient::from_config(&network_config);
+    let abi_spec = commands::abi::resolve_abi_spec(abi, abi_contract, &client)
+        .await
+        .map_err(Box::<dyn std::error::Error>::from)?;
+    if let Some(spec) = &abi_spec {
+        if let Err(e) = validate_batch_functions(&entries, spec) {
+            eprintln!("Error: {e}");
+            process::exit(2);
+        }
+    }
+
+    let mut results: Vec<(String, String)> = Vec::with_capacity(entries.len());
+    for (i, entry) in entries.iter().enumerate() {
+        let name = entry.function.as_str();
+        // Read-only: zero-fake sequence, exactly as the single-call path.
+        // This transaction is never signed or submitted — only simulated.
+        let params = sdkt_xdr::builder::InvokeTransactionParams {
+            source_account: "GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF".into(),
+            sequence: 0,
+            fee: 0,
+            contract_id: contract_id.to_string(),
+            function: entry.function.clone(),
+            args: entry_args[i].clone(),
+            memo: None,
+        };
+        let envelope = sdkt_xdr::builder::build_invoke_transaction(&params)
+            .map_err(|e| format!("batch entry {i} ({name}): failed to build transaction: {e}"))?;
+        match simulate_transaction(&client, &envelope).await {
+            Ok(resp) => {
+                if let Some(err) = &resp.error {
+                    return Err(format!("batch entry {i} ({name}): simulation error: {err}").into());
+                }
+                let result_raw = resp
+                    .results
+                    .first()
+                    .map(|r| r.xdr.clone())
+                    .unwrap_or_default();
+                // Decode exactly as the single-call path does.
+                let result_display = if result_raw.is_empty() {
+                    "(void)".into()
+                } else if let Some(spec) = &abi_spec {
+                    match scval_from_base64(&result_raw) {
+                        Some(scval) => {
+                            if spec
+                                .functions
+                                .iter()
+                                .find(|f| f.name == entry.function)
+                                .is_none()
+                            {
+                                eprintln!(
+                                    "warning: function '{name}' not found in ABI — showing raw result"
+                                );
+                            }
+                            sdkt_xdr::abi_decode::decode_with_abi(spec, &scval, None).label
+                        }
+                        None => {
+                            eprintln!("warning: could not parse result ScVal — showing raw result");
+                            result_raw.clone()
+                        }
+                    }
+                } else {
+                    result_raw.clone()
+                };
+                results.push((entry.key.clone(), result_display));
+            }
+            Err(e) => {
+                return Err(format!("batch entry {i} ({name}): RPC simulation failed: {e}").into());
+            }
+        }
+    }
+
+    if fmt == OutputFormat::Json {
+        println!("{}", format_batch_json(&results)?);
+    } else {
+        println!("Contract:  {contract_id}");
+        for (entry, (_, display)) in entries.iter().zip(results.iter()) {
+            println!("== {} ==", entry.key);
+            println!("Function:  {}", entry.function);
+            println!("Result:    {display}");
+        }
+    }
+    Ok(())
+}
+
 /// Formats a byte count for the `wasm cache list` table (`530 B`, `1.2 KB`,
 /// `3.4 MB`). `None` renders as `unknown`: the entry is a half-pair whose
 /// other file is missing.
@@ -4377,7 +4684,10 @@ fn run_encode(values: &[String]) -> Result<String, String> {
 
 #[cfg(test)]
 mod encode_tests {
-    use super::{parse_typed_args, run_encode, validate_poll_pair};
+    use super::{
+        format_batch_json, parse_batch_file, parse_typed_args, run_encode,
+        validate_batch_functions, validate_poll_pair,
+    };
 
     #[test]
     fn poll_pair_defaults_are_valid() {
@@ -4569,6 +4879,120 @@ mod encode_tests {
                 assert_eq!(parse_typed_args(&args, strict).unwrap_err(), encode_error);
             }
         }
+    }
+    #[test]
+    fn batch_file_parses_entries_with_default_keys() {
+        let calls =
+            parse_batch_file(r#"[{"function": "name"}, {"function": "decimals", "key": "dec"}]"#)
+                .expect("valid batch file");
+        assert_eq!(calls.len(), 2);
+        assert_eq!(calls[0].function, "name");
+        assert_eq!(calls[0].key, "name");
+        assert!(calls[0].args.is_empty());
+        assert!(calls[0].args_json.is_empty());
+        assert_eq!(calls[1].function, "decimals");
+        assert_eq!(calls[1].key, "dec");
+    }
+
+    #[test]
+    fn batch_file_accepts_args_and_args_json() {
+        let calls = parse_batch_file(
+            r#"[{"function": "balance", "args": ["address:GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF"], "args_json": ["[1, 2]"]}]"#,
+        )
+        .expect("valid batch file");
+        assert_eq!(calls[0].args.len(), 1);
+        assert_eq!(calls[0].args_json.len(), 1);
+        assert_eq!(calls[0].key, "balance");
+    }
+
+    #[test]
+    fn batch_file_rejects_duplicate_keys() {
+        let err =
+            parse_batch_file(r#"[{"function": "name"}, {"function": "symbol", "key": "name"}]"#)
+                .expect_err("duplicate keys must be rejected");
+        assert!(err.contains("batch entry 1"), "{err}");
+        assert!(err.contains("duplicate key"), "{err}");
+    }
+
+    #[test]
+    fn batch_file_rejects_duplicate_function_names_without_keys() {
+        // Two entries for the same function default to the same key.
+        let err = parse_batch_file(r#"[{"function": "name"}, {"function": "name"}]"#)
+            .expect_err("default-key duplicates must be rejected");
+        assert!(err.contains("batch entry 1"), "{err}");
+        assert!(err.contains("duplicate key"), "{err}");
+    }
+
+    #[test]
+    fn batch_file_rejects_missing_function() {
+        let err = parse_batch_file(r#"[{"args": ["u32:1"]}, {"function": "name"}]"#)
+            .expect_err("missing function must be rejected");
+        assert!(err.contains("batch entry 0"), "{err}");
+        assert!(err.contains("missing \"function\""), "{err}");
+    }
+
+    #[test]
+    fn batch_file_rejects_malformed_json() {
+        let err = parse_batch_file("[{").expect_err("malformed JSON must be rejected");
+        assert!(err.contains("not valid JSON"), "{err}");
+    }
+
+    #[test]
+    fn batch_file_rejects_non_array() {
+        let err = parse_batch_file(r#"{"function": "name"}"#)
+            .expect_err("non-array top level must be rejected");
+        assert!(err.contains("JSON array"), "{err}");
+    }
+
+    #[test]
+    fn batch_file_rejects_empty_array() {
+        let err = parse_batch_file("[]").expect_err("empty batch must be rejected");
+        assert!(err.contains("no calls"), "{err}");
+    }
+
+    #[test]
+    fn batch_file_rejects_non_string_args() {
+        let err = parse_batch_file(r#"[{"function": "name", "args": [42]}]"#)
+            .expect_err("non-string args must be rejected");
+        assert!(err.contains("batch entry 0"), "{err}");
+    }
+
+    #[test]
+    fn batch_file_rejects_non_object_entry() {
+        let err = parse_batch_file(r#"["name"]"#).expect_err("non-object entry must be rejected");
+        assert!(err.contains("batch entry 0"), "{err}");
+    }
+
+    #[test]
+    fn batch_json_output_preserves_file_order() {
+        let out = format_batch_json(&[
+            ("name".to_string(), "\"My Token\"".to_string()),
+            ("decimals".to_string(), "u32(7)".to_string()),
+        ])
+        .expect("rendering must succeed");
+        assert_eq!(out, r#"{"name":"\"My Token\"","decimals":"u32(7)"}"#);
+    }
+
+    #[test]
+    fn batch_function_validation_rejects_unknown_function() {
+        let spec = sdkt_wasm::ContractSpec {
+            env_meta: None,
+            functions: vec![sdkt_wasm::ContractFunction {
+                name: "hello".to_string(),
+                doc: String::new(),
+                parameters: vec![],
+                outputs: vec![],
+            }],
+            custom_types: vec![],
+            events: vec![],
+        };
+        let entries = parse_batch_file(r#"[{"function": "hello"}, {"function": "nope"}]"#)
+            .expect("valid batch file");
+        let err = validate_batch_functions(&entries, &spec)
+            .expect_err("unknown function must be rejected");
+        assert!(err.contains("batch entry 1"), "{err}");
+        assert!(err.contains("unknown function"), "{err}");
+        assert!(err.contains("nope"), "{err}");
     }
 }
 
@@ -11370,6 +11794,7 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
             function,
             args,
             args_json,
+            batch,
             format,
             abi,
             abi_contract,
@@ -11387,7 +11812,36 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
                 return Err(e.into());
             }
 
-            let fmt = parse_format_str(&format);
+            // `--format` defaults to json in batch mode and pretty for a
+            // single call; an explicit value wins in both modes.
+            let fmt = match format.as_deref() {
+                Some(f) => parse_format_str(f),
+                None => {
+                    if batch.is_some() {
+                        OutputFormat::Json
+                    } else {
+                        OutputFormat::Pretty
+                    }
+                }
+            };
+
+            // Batch mode: run every entry in FILE through the single-call
+            // simulation path. `--batch` is mutually exclusive with the
+            // positional FUNCTION and with --args / --args-json (enforced by
+            // clap), so `function` is None here.
+            if let Some(batch_path) = batch {
+                return run_call_batch(
+                    &contract_id,
+                    &batch_path,
+                    fmt,
+                    abi.as_ref(),
+                    abi_contract.as_ref(),
+                    &net,
+                )
+                .await;
+            }
+
+            let function = function.expect("FUNCTION is required unless --batch is given");
 
             // Resolve network config
             let network_config = resolve_network_config(

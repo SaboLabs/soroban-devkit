@@ -583,6 +583,10 @@ the descriptor summary (`schema`, `name`, `version`, `format`, `lock_sha256`,
 │   │                            inspection path; no local artifact needed.
 │   │                            Mutually exclusive with --abi.)
 │   ├── --format <json|pretty>
+│   ├── --batch <FILE>        (read a JSON array of read-only calls from
+│   │                            FILE and run them sequentially; see
+│   │                            "Batch calls" below. Mutually exclusive
+│   │                            with <FUNCTION>, --args, and --args-json.)
 │   └── --network-profile <NAME>
 └── deploy
     ├── --wasm <file>          (upload WASM, then create the contract)
@@ -838,6 +842,59 @@ sdkt token info CAAA... --network testnet --format json
 `total_supply` is emitted as a decimal string in JSON because an `i128`
 does not fit a JSON number safely. The command takes a bare contract ID;
 `@alias` resolution is not supported.
+
+## Batch calls
+
+`sdkt call <CONTRACT_ID> --batch <FILE>` runs several read-only calls in
+one command. FILE contains a JSON array of entries:
+
+```json
+[
+  { "function": "name" },
+  { "function": "symbol", "key": "token_symbol" },
+  { "function": "balance", "args": ["address:G..."] },
+  { "function": "allowance", "args_json": ["[\"G...\", \"G...\"]"] }
+]
+```
+
+Each entry names a `function` and optionally `args` (the same `TYPE:VALUE`
+syntax as `--args`) and `args_json` (the same JSON-array syntax as
+`--args-json`). `key` names the result key in the output and defaults to
+the function name; keys must be unique across the batch. Calls run
+sequentially in file order through the same read-only simulation and
+ABI-decoding path as a single `sdkt call` — nothing is signed, submitted,
+or otherwise state-changing.
+
+With `--format json` (the default in batch mode), one JSON object is
+printed once at the end, mapping each key to its decoded result — the same
+decoded display string a single call prints. `--format pretty` prints one
+labeled section per entry instead.
+
+The token-metadata example below reads `name`, `symbol`, `decimals`, and
+`total_supply` from a SEP-41 token in a single command:
+
+```json
+[
+  { "function": "name" },
+  { "function": "symbol" },
+  { "function": "decimals" },
+  { "function": "total_supply" }
+]
+```
+
+```bash
+sdkt call CAAA... --batch token-meta.json --network-profile testnet --abi-contract CAAA...
+# {"name":"\"My Token\"","symbol":"\"MTK\"","decimals":"u32(7)","total_supply":"i128(1000000000 hi=0, lo=1000000000)"}
+```
+
+Validation failures are usage errors (exit code 2) naming the offending
+entry by its 0-based index: malformed JSON, a missing `function`,
+duplicate keys, and an unknown function name (when `--abi` or
+`--abi-contract` is given). Duplicate keys are rejected before any network
+call is made. The first entry whose simulation fails stops the batch with a
+non-zero exit naming its index and function, and no result object is
+printed. `--batch` is mutually exclusive with the positional `FUNCTION`
+and with `--args` / `--args-json`; it is not available on `sdkt invoke`.
 
 ## Shell completions
 
