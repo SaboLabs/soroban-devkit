@@ -669,6 +669,7 @@
     candidateFile = null;
     candidateBytes = null;
     candidateInput.value = '';
+    fileInput.value = '';
     candidateName.textContent = 'No candidate loaded';
     filebar.hidden = true;
     results.classList.add('hidden');

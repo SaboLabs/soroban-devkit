@@ -93,7 +93,9 @@ await tick();
 const worker = workers[0];
 
 // Successful fetch is wrapped as a File and reaches the existing inspect message.
+els.get('fileInput').value = 'C:\\fakepath\\contract.wasm';
 submitUrl('https://example.com/contracts/us_old.wasm');
+assert.equal(els.get('fileInput').value, '', 'starting a URL load clears the local file selection');
 assert.equal(fetches[0].url, 'https://example.com/contracts/us_old.wasm');
 fetches[0].resolve(response([1, 2, 3]));
 await tick();
