@@ -727,8 +727,9 @@ both output modes must agree on it.
 Exit codes:
 - `0` — endpoint is reachable, healthy, and passphrase matches (or `getNetwork`
   was unavailable, so no mismatch could be detected).
-- `1` — endpoint is unreachable, unhealthy, or passphrase mismatches.
-- `2` — usage error (missing profile name, unknown profile).
+- `1` — endpoint is unreachable, unhealthy, passphrase mismatches, or unknown
+  profile.
+- `2` — usage error (missing profile name).
 
 Some RPC providers do not implement `getNetwork`. In that case the command
 still reports reachability, health, latest ledger, and protocol version from
