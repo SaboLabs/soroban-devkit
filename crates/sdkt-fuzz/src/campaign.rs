@@ -184,7 +184,7 @@ pub fn run_campaign_artifacts(
     run_campaign_inner(input, expectations)
 }
 
-fn validate_plan_inputs(
+pub(crate) fn validate_plan_inputs(
     input: &CampaignInput,
 ) -> Result<(Vec<String>, Vec<SkippedFunction>), FuzzError> {
     if input.cases == 0 {

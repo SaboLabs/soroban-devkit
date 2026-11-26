@@ -199,6 +199,9 @@ pub fn plan_with_sequence(
 ) -> Result<CampaignPlan, FuzzError> {
     let (wasm, input) = campaign_input(options, sequence)?;
     build_expectations(options)?;
+    // Same order as a real run: function/cases checks come before any
+    // WASM compilation, so both modes report the same error.
+    crate::campaign::validate_plan_inputs(&input)?;
     // Reject the same setups a real run rejects, before planning:
     // expectation validation (above) and offline WASM parse.
     let config = crate::config::FuzzConfig {
