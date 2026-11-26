@@ -104,7 +104,10 @@ pub use evidence::{CampaignEvidence, ReplayStatus, CAMPAIGN_EVIDENCE_SCHEMA_VERS
 pub use executor::Executor;
 pub use finding::{CaseIdentity, Finding, SkippedFunction};
 pub use generator::{GeneratedCall, GenerationCaps, GeneratorError, UnsupportedContractType};
-pub use minimizer::{minimize_with_oracle, Minimization, MinimizationOutcome, MinimizationTarget};
+pub use minimizer::{
+    minimize_with_oracle, sequence_complexity, Minimization, MinimizationOutcome,
+    MinimizationTarget,
+};
 pub use mutation::{Mutation, MutationError, Operator};
 pub use network_profile::{
     network_id_from_passphrase, network_name_for_passphrase, CostParamEntrySnapshot,
