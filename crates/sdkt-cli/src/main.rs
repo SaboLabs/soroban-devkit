@@ -588,7 +588,17 @@ enum Commands {
         /// Requires --old-wasm (the currently deployed WASM) to be supplied.
         #[arg(long, default_value_t = false)]
         deny_breaking: bool,
-        /// Path to the currently deployed (baseline) WASM, used with --deny-breaking.
+        /// Run release assurance before identity lookup and upload. Verification and
+        /// Contract Health are skipped because the contract is not deployed yet.
+        #[arg(long, requires = "wasm")]
+        release_assurance: bool,
+        /// Audit source file or directory for release preflight (repeatable).
+        #[arg(long, value_name = "PATH", requires = "release_assurance")]
+        preflight_audit: Vec<String>,
+        /// Fuzz evidence JSON for release preflight (repeatable).
+        #[arg(long, value_name = "FILE", requires = "release_assurance")]
+        preflight_fuzz_evidence: Vec<String>,
+        /// Path to the currently deployed (baseline) WASM, used by upgrade checks.
         #[arg(long, value_name = "WASM")]
         old_wasm: Option<String>,
         /// Timeout in seconds while waiting for the upload and create transactions to settle
@@ -684,6 +694,11 @@ enum Commands {
     Lock {
         #[command(subcommand)]
         action: LockCommand,
+    },
+    /// Validate or inspect project configuration (`.sdkt.toml`)
+    Config {
+        #[command(subcommand)]
+        action: ConfigCommand,
     },
     /// Validate, bundle, unpack, and inspect local package manifests
     Package {
@@ -885,14 +900,33 @@ enum GenerateAction {
     /// Generate a typed Rust client from a compiled contract's ContractSpec
     Client {
         /// Path to the compiled contract WASM file
-        #[arg(value_name = "WASM")]
-        wasm: String,
+        #[arg(
+            value_name = "WASM",
+            required_unless_present = "contract",
+            conflicts_with = "contract"
+        )]
+        wasm: Option<String>,
+        /// Fetch the deployed contract's WASM from the network by contract ID (C...)
+        #[arg(long, value_name = "CONTRACT_ID", conflicts_with = "wasm")]
+        contract: Option<String>,
+        /// Network to query when --contract is used (testnet | mainnet | futurenet)
+        #[arg(
+            short,
+            long,
+            value_name = "NETWORK",
+            conflicts_with = "rpc_url",
+            conflicts_with = "network_profile",
+            conflicts_with = "network_passphrase"
+        )]
+        network: Option<String>,
         /// Output file path (prints to stdout if omitted)
         #[arg(short, long, value_name = "PATH")]
         output: Option<String>,
         /// Skip functions with unsupported types instead of aborting
         #[arg(long)]
         skip_unsupported: bool,
+        #[command(flatten)]
+        net: NetworkArgs,
     },
 }
 
@@ -1343,6 +1377,14 @@ enum ProjectCommand {
         #[arg(short, long, default_value = "pretty")]
         format: String,
     },
+    /// Check health for every deployment recorded on the selected network
+    Health {
+        /// Severity threshold that triggers failure: at_risk | critical (default: critical)
+        #[arg(long, default_value = "critical", value_name = "LEVEL")]
+        fail_on: String,
+        #[arg(short, long, default_value = "pretty")]
+        format: String,
+    },
     /// Deploy all contracts defined in the workspace. Every deployed contract
     /// is persisted to `.sdkt-deployments.json` (per network profile) so a
     /// failure mid-graph never loses the contracts that already landed.
@@ -1375,6 +1417,13 @@ enum ProjectCommand {
         /// contract (issue #89). See `sdkt deploy --no-verify`.
         #[arg(long, default_value_t = false)]
         no_verify: bool,
+        /// Preflight every deploying contract through release-assurance (Artifact,
+        /// Security, and Upgrade Safety when a prior deployment record exists;
+        /// Fuzz Evidence, Verification, and Contract Health are skipped) before
+        /// any WASM upload begins. Aborts the entire deploy if any contract
+        /// fails or errors.
+        #[arg(long, default_value_t = false)]
+        release_assurance: bool,
         #[arg(short, long, default_value = "pretty")]
         format: String,
     },
@@ -1396,6 +1445,16 @@ enum LockCommand {
     },
     /// Print the contents of `sdkt.lock` if present.
     Show {
+        #[arg(short, long, default_value = "pretty")]
+        format: String,
+    },
+}
+
+#[derive(Subcommand)]
+enum ConfigCommand {
+    /// Validate `.sdkt.toml` schema and semantics offline (no network calls)
+    Validate {
+        /// Output format (pretty or json)
         #[arg(short, long, default_value = "pretty")]
         format: String,
     },
@@ -1705,7 +1764,7 @@ struct VerificationReport {
 /// Aggregates the existing read-only surfaces (`inspect_contract` +
 /// `StorageAnalyzer`) plus optional verification into one report.
 /// Serializes to the JSON schema in _PLAN.md §12.
-#[derive(Debug, serde::Serialize)]
+#[derive(Debug, Clone, serde::Serialize)]
 struct ContractHealthReport {
     contract_id: String,
     network: String,
@@ -1727,7 +1786,7 @@ struct ContractHealthReport {
 
 /// Storage subsection of [`ContractHealthReport`] (mirrors `StorageReport`
 /// field names; omits `total_size_bytes`/`entries` per _PLAN.md §12).
-#[derive(Debug, serde::Serialize)]
+#[derive(Debug, Clone, serde::Serialize)]
 struct HealthStorage {
     total_entries: usize,
     instance_entries: usize,
@@ -1737,13 +1796,83 @@ struct HealthStorage {
     ttl: Option<HealthTtl>,
 }
 
-#[derive(Debug, serde::Serialize)]
+#[derive(Debug, Clone, serde::Serialize)]
 struct HealthTtl {
     minimum_ttl: u32,
     maximum_ttl: u32,
     average_ttl: u32,
     expiring_entries_count: usize,
     estimated_rent_cost: Option<u64>,
+}
+
+#[derive(Debug, Clone, serde::Serialize)]
+struct ProjectHealthRow {
+    alias: String,
+    contract_id: String,
+    network: String,
+    health: String,
+    verdict: String,
+    #[serde(rename = "verified", skip_serializing_if = "Option::is_none")]
+    verified: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    minimum_ttl: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    expiring_entries_count: Option<usize>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    on_chain_wasm_hash: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    short_wasm_hash: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    storage: Option<HealthStorage>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    reasons: Vec<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    report: Option<ContractHealthReport>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    error: Option<String>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum HealthFailOn {
+    AtRisk,
+    Critical,
+}
+
+fn health_severity_rank(health: &str) -> u8 {
+    match health {
+        "critical" => 0,
+        "not_found" => 1,
+        "error" => 2,
+        "at_risk" => 3,
+        "healthy" => 4,
+        _ => 5,
+    }
+}
+
+fn sort_project_health_rows(items: &mut [ProjectHealthRow]) {
+    items.sort_by(|a, b| {
+        health_severity_rank(&a.health)
+            .cmp(&health_severity_rank(&b.health))
+            .then_with(|| a.alias.cmp(&b.alias))
+    });
+}
+
+fn evaluate_health_rollup_failure(items: &[ProjectHealthRow], threshold: HealthFailOn) -> bool {
+    items.iter().any(|item| match threshold {
+        HealthFailOn::Critical => {
+            item.health == "critical" || item.health == "not_found" || item.health == "error"
+        }
+        HealthFailOn::AtRisk => {
+            item.health == "critical"
+                || item.health == "not_found"
+                || item.health == "error"
+                || item.health == "at_risk"
+        }
+    })
+}
+
+fn format_short_hash(hash: &str) -> String {
+    hash.chars().take(12).collect()
 }
 
 /// — Pure health-verdict derivation (no I/O, fully testable).
@@ -2284,6 +2413,8 @@ struct HealthResult {
     report: Option<ContractHealthReport>,
 }
 
+const RELEASE_ASSURANCE_SCHEMA_VERSION: u32 = 1;
+
 /// Aggregate, machine-readable release-assurance result.
 #[derive(Debug, serde::Serialize)]
 struct ReleaseAssuranceReport {
@@ -2300,6 +2431,12 @@ struct ReleaseAssuranceReport {
     fuzz: Option<FuzzEvidenceResult>,
     release_status: String,
     reasons: Vec<String>,
+    /// Release-assurance report format version.
+    schema_version: u32,
+    /// CLI that produced this report.
+    tool: &'static str,
+    /// Version of the CLI build that produced this report.
+    version: &'static str,
 }
 
 /// Release-assurance section for a recorded fuzz campaign evidence file.
@@ -2544,27 +2681,48 @@ fn apply_size_policy_to_assurance(
     Ok(())
 }
 
-/// Pretty-print the aggregate report to stdout.
-fn print_release_assurance_pretty(r: &ReleaseAssuranceReport) {
-    println!("Soroban Release Assurance");
-    println!("────────────────────────");
-    println!("Artifact        {}", r.artifact.check.status);
-    println!("Security        {}", r.security.check.status);
-    println!("Upgrade Safety  {}", r.upgrade_safety.check.status);
-    println!("Verification    {}", r.verification.check.status);
-    println!("Contract Health {}", r.health.check.status);
+/// Format the aggregate report pretty text.
+fn format_release_assurance_pretty(r: &ReleaseAssuranceReport) -> String {
+    let mut out = String::new();
+    out.push_str("Soroban Release Assurance\n");
+    out.push_str("────────────────────────\n");
+    out.push_str(&format!("Artifact        {}\n", r.artifact.check.status));
+    out.push_str(&format!("Security        {}\n", r.security.check.status));
+    out.push_str(&format!(
+        "Upgrade Safety  {}\n",
+        r.upgrade_safety.check.status
+    ));
+    out.push_str(&format!(
+        "Verification    {}\n",
+        r.verification.check.status
+    ));
+    out.push_str(&format!("Contract Health {}\n", r.health.check.status));
     if let Some(f) = &r.fuzz {
-        println!("Fuzz Evidence   {}", f.check.status);
+        out.push_str(&format!("Fuzz Evidence   {}\n", f.check.status));
     }
-    println!();
-    println!("RELEASE STATUS  {}", r.release_status.to_uppercase());
+    out.push('\n');
+    out.push_str(&format!(
+        "RELEASE STATUS  {}\n",
+        r.release_status.to_uppercase()
+    ));
     if !r.reasons.is_empty() {
-        println!();
-        println!("Reasons:");
+        out.push('\n');
+        out.push_str("Reasons:\n");
         for reason in &r.reasons {
-            println!("  - {}", reason);
+            out.push_str(&format!("  - {}\n", reason));
         }
     }
+    out
+}
+
+/// Pretty-print the aggregate report to stdout.
+fn print_release_assurance_pretty(r: &ReleaseAssuranceReport) {
+    print!("{}", format_release_assurance_pretty(r));
+}
+
+/// Pretty-print the aggregate report to stderr (preserves parseable stdout in JSON mode).
+fn eprint_release_assurance_pretty(r: &ReleaseAssuranceReport) {
+    eprint!("{}", format_release_assurance_pretty(r));
 }
 
 /// Read-only release-assurance composition reusing the existing SDKT engines:
@@ -2764,6 +2922,9 @@ async fn run_release_assurance(
         fuzz: fuzz_evidence,
         release_status,
         reasons,
+        schema_version: RELEASE_ASSURANCE_SCHEMA_VERSION,
+        tool: "sdkt",
+        version: env!("CARGO_PKG_VERSION"),
     })
 }
 
@@ -3025,6 +3186,115 @@ async fn run_release_upgrade_safety(
             verdict: None,
         }
     }
+}
+
+/// Guard that deletes a temporary file on drop so fetched previous-WASM bytes
+/// for `sdkt project deploy --release-assurance` are always cleaned up (#545).
+struct TempFileDropGuard(std::path::PathBuf);
+
+impl Drop for TempFileDropGuard {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_file(&self.0);
+    }
+}
+
+/// Preflight every deploying contract through `run_release_assurance` before
+/// any upload begins (#545).
+///
+/// Sections executed: Artifact, Security (against `contract.path`), and Upgrade
+/// Safety (when a prior deployment record exists for the alias, fetching the
+/// deployed bytes via `inspect_contract` -> `get_wasm_bytecode` into a temp
+/// file cleaned up on exit). Fuzz Evidence, Verification, and Contract Health
+/// are skipped by construction (`contract_id: None`, `fuzz_evidence: None`).
+async fn preflight_project_release_assurance(
+    client: &SorobanRpcClient,
+    deploying: &[sdkt_core::project::ResolvedContract],
+    record_file: &sdkt_core::deployment::DeploymentRecordFile,
+    network_key: &str,
+    network_name: &str,
+    fmt: OutputFormat,
+) -> Result<(), String> {
+    for contract in deploying {
+        let wasm_str = contract.wasm_artifact.to_string_lossy().into_owned();
+        if !contract.wasm_artifact.exists() {
+            return Err(format!(
+                "release-assurance preflight failed for '{}': unreadable WASM '{}'",
+                contract.alias, wasm_str
+            ));
+        }
+
+        // If a deployment record exists for this alias, fetch the deployed
+        // WASM bytes via inspect_contract -> get_wasm_bytecode into a temp file.
+        let mut _temp_guard: Option<TempFileDropGuard> = None;
+        let mut prev_wasm_path: Option<String> = None;
+        if let Some(rec) = record_file.record_for(network_key, &contract.alias) {
+            if let Ok(ins) = inspect_contract(client, &rec.contract_id).await {
+                if let Ok(prev_bytes) = get_wasm_bytecode(client, &ins.wasm_hash).await {
+                    let tmp_path = std::env::temp_dir().join(format!(
+                        "sdkt-preflight-prev-{}-{}.wasm",
+                        contract.alias,
+                        std::process::id()
+                    ));
+                    let write_res = std::fs::write(&tmp_path, &prev_bytes);
+                    write_res.map_err(|e| {
+                        format!(
+                            "release-assurance preflight failed for '{}': cannot write temporary previous WASM: {e}",
+                            contract.alias
+                        )
+                    })?;
+                    prev_wasm_path = Some(tmp_path.to_string_lossy().into_owned());
+                    _temp_guard = Some(TempFileDropGuard(tmp_path));
+                }
+            }
+        }
+
+        let audit_paths = vec![contract.path.clone()];
+        let report = run_release_assurance(
+            client,
+            &wasm_str,
+            prev_wasm_path.as_deref(),
+            &audit_paths,
+            &[],
+            None,
+            network_name,
+            None,
+        )
+        .await
+        .map_err(|e| {
+            format!(
+                "release-assurance preflight failed for '{}': {e}",
+                contract.alias
+            )
+        })?;
+
+        if fmt != OutputFormat::Json {
+            println!(
+                "  • Preflight '{}': {} (Artifact: {}, Security: {}, Upgrade Safety: {})",
+                contract.alias,
+                report.release_status,
+                report.artifact.check.status,
+                report.security.check.status,
+                report.upgrade_safety.check.status
+            );
+        }
+
+        if report.release_status == "FAIL"
+            || report.artifact.check.status == RaStatus::Error
+            || report.security.check.status == RaStatus::Error
+            || report.upgrade_safety.check.status == RaStatus::Error
+        {
+            let reasons = if report.reasons.is_empty() {
+                report.release_status.clone()
+            } else {
+                report.reasons.join(", ")
+            };
+            return Err(format!(
+                "release-assurance preflight failed for '{}': {}",
+                contract.alias, reasons
+            ));
+        }
+    }
+    Ok(())
 }
 
 /// Parse a `--salt` value (40 hex chars) into a 20-byte deployment salt.
@@ -4684,6 +4954,103 @@ mod tx_status_tests {
     }
 }
 
+/// Execute `sdkt config validate` (#565): offline two-stage validation of `.sdkt.toml`.
+fn run_config_validate(fmt: OutputFormat) {
+    let config_path = Path::new(".sdkt.toml");
+    if !config_path.exists() {
+        if fmt == OutputFormat::Json {
+            println!(
+                "{}",
+                serde_json::to_string_pretty(&serde_json::json!({
+                    "valid": true,
+                    "problems": []
+                }))
+                .unwrap()
+            );
+        } else {
+            println!("No .sdkt.toml found; default configuration applies.");
+            println!("Configuration is valid");
+        }
+        return;
+    }
+
+    let base_dir = config_path
+        .parent()
+        .filter(|p| !p.as_os_str().is_empty())
+        .unwrap_or_else(|| Path::new("."));
+
+    let content = match fs::read_to_string(config_path) {
+        Ok(c) => c,
+        Err(e) => {
+            let problems = vec![sdkt_core::ConfigProblem {
+                section: ".sdkt.toml".to_string(),
+                key: "io".to_string(),
+                message: format!("cannot read .sdkt.toml: {e}"),
+            }];
+            render_config_problems(&problems, fmt);
+            process::exit(1);
+        }
+    };
+
+    // Stage 1: schema validation on raw TOML text
+    let stage1 = sdkt_core::validate_config_schema(&content);
+    if !stage1.is_empty() {
+        render_config_problems(&stage1, fmt);
+        process::exit(1);
+    }
+
+    // Parse into DevKitConfig (catches type mismatches after clean schema pass)
+    let cfg = match DevKitConfig::from_toml(&content) {
+        Ok(c) => c,
+        Err(e) => {
+            let problems = vec![sdkt_core::ConfigProblem {
+                section: ".sdkt.toml".to_string(),
+                key: "deserialize".to_string(),
+                message: format!("invalid configuration value in .sdkt.toml: {e}"),
+            }];
+            render_config_problems(&problems, fmt);
+            process::exit(1);
+        }
+    };
+
+    // Stage 2: semantic validation on parsed struct
+    if let Err(stage2) = cfg.validate(base_dir) {
+        render_config_problems(&stage2, fmt);
+        process::exit(1);
+    }
+
+    if fmt == OutputFormat::Json {
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&serde_json::json!({
+                "valid": true,
+                "problems": []
+            }))
+            .unwrap()
+        );
+    } else {
+        println!("Configuration is valid");
+    }
+}
+
+fn render_config_problems(problems: &[sdkt_core::ConfigProblem], fmt: OutputFormat) {
+    if fmt == OutputFormat::Json {
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&serde_json::json!({
+                "valid": false,
+                "problems": problems
+            }))
+            .unwrap()
+        );
+    } else {
+        for p in problems {
+            eprintln!("error: {}.{}: {}", p.section, p.key, p.message);
+        }
+        eprintln!("{} problem(s) found", problems.len());
+    }
+}
+
 fn load_config() -> DevKitConfig {
     match DevKitConfig::from_file(".sdkt.toml") {
         Ok(c) => c,
@@ -6010,8 +6377,13 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
 
             let fmt = parse_format_str(&format);
             let cfg = load_config();
-            if let Err(e) = cfg.validate() {
-                fail_cli(e, json_mode);
+            if let Err(problems) = cfg.validate(Path::new(".")) {
+                let msg = problems
+                    .iter()
+                    .map(|p| format!("{}.{}: {}", p.section, p.key, p.message))
+                    .collect::<Vec<_>>()
+                    .join("; ");
+                fail_cli(msg, json_mode);
             }
             let decoded = match decode_payload_with_optional_abi(
                 &input,
@@ -10526,6 +10898,9 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
             identity,
             arg,
             deny_breaking,
+            release_assurance,
+            preflight_audit,
+            preflight_fuzz_evidence,
             old_wasm,
             timeout,
             interval,
@@ -10625,9 +11000,58 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
             sdkt_xdr::parse_scval_args(&parsed_args)
                 .map_err(|e| format!("Invalid constructor argument: {}", e))?;
 
+            // Run every supplied evidence file through the existing assurance
+            // engine. It accepts one file per report, so each must pass.
+            if release_assurance {
+                let client = SorobanRpcClient::from_config(&network_config);
+                let evidence: Vec<Option<&str>> = if preflight_fuzz_evidence.is_empty() {
+                    vec![None]
+                } else {
+                    preflight_fuzz_evidence
+                        .iter()
+                        .map(|s| Some(s.as_str()))
+                        .collect()
+                };
+                for path in evidence {
+                    let report = match run_release_assurance(
+                        &client,
+                        wasm.as_deref()
+                            .expect("--release-assurance requires --wasm"),
+                        old_wasm.as_deref(),
+                        &preflight_audit,
+                        &[],
+                        None,
+                        "preflight",
+                        path,
+                    )
+                    .await
+                    {
+                        Ok(report) => report,
+                        Err(error) => {
+                            eprintln!("Deployment aborted: release assurance error: {error}");
+                            process::exit(1);
+                        }
+                    };
+                    if fmt == OutputFormat::Json {
+                        eprint_release_assurance_pretty(&report);
+                    } else {
+                        print_release_assurance_pretty(&report);
+                    }
+                    if report.release_status == "FAIL" {
+                        eprintln!("Deployment aborted: release assurance failed.");
+                        process::exit(1);
+                    }
+                }
+            }
+
             // Read the new WASM before looking up the identity. This preserves
             // the fail-fast behavior for a missing or unreadable file on the
             // full-deploy path; create-only recovery does not need a file.
+            //
+            // Note (TOCTOU gap): The candidate WASM is read here for upload
+            // after having been checked by run_release_assurance above. If the file
+            // on disk is modified between assurance and upload, the deployed bytes
+            // may differ from the assessed bytes.
             let preloaded_wasm = wasm
                 .as_ref()
                 .map(|path| {
@@ -11400,6 +11824,12 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
                 }
             }
         },
+        Commands::Config { action } => match action {
+            ConfigCommand::Validate { format } => {
+                let fmt = parse_format_str(&format);
+                run_config_validate(fmt);
+            }
+        },
         Commands::Package { action } => match action {
             PackageCommand::Validate { format } => {
                 let fmt = parse_format_str(&format);
@@ -12007,6 +12437,245 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
                     }
                 }
             }
+            ProjectCommand::Health { fail_on, format } => {
+                let fmt = parse_format_str(&format);
+
+                let threshold = match fail_on.to_lowercase().replace('-', "_").as_str() {
+                    "critical" => HealthFailOn::Critical,
+                    "at_risk" => HealthFailOn::AtRisk,
+                    other => {
+                        eprintln!(
+                            "Error: invalid --fail-on value '{}'. Use 'at_risk' or 'critical'.",
+                            other
+                        );
+                        process::exit(2);
+                    }
+                };
+
+                let network_config = match resolve_network_config(
+                    net.rpc_url.clone(),
+                    net.network_passphrase.clone(),
+                    net.network_profile.clone(),
+                ) {
+                    Ok(config) => config,
+                    Err(e) => {
+                        eprintln!("Error: {}", e);
+                        process::exit(1);
+                    }
+                };
+                let network_key = sdkt_core::deployment::network_key(
+                    if net.network_passphrase.is_some() {
+                        None
+                    } else {
+                        net.network_profile.as_deref()
+                    },
+                    &network_config.passphrase,
+                );
+                let record_path = Path::new(sdkt_core::deployment::DEPLOYMENT_RECORD_FILE);
+                let record_file =
+                    match sdkt_core::deployment::DeploymentRecordFile::read(record_path) {
+                        Ok(file) => file,
+                        Err(e) => {
+                            eprintln!("Error: {}", e);
+                            process::exit(1);
+                        }
+                    };
+                let mut deployments: Vec<_> = record_file
+                    .records_for(&network_key)
+                    .into_iter()
+                    .flat_map(|records| records.iter())
+                    .collect();
+                deployments.sort_by_key(|(alias, _)| *alias);
+
+                if deployments.is_empty() {
+                    if fmt == OutputFormat::Json {
+                        let empty_rollup = serde_json::json!({
+                            "network": network_key,
+                            "summary": {
+                                "healthy": 0,
+                                "at_risk": 0,
+                                "critical": 0,
+                                "not_found": 0,
+                                "error": 0,
+                                "total": 0,
+                            },
+                            "contracts": [],
+                            "deployments": [],
+                            "reports": [],
+                        });
+                        println!("{}", serde_json::to_string(&empty_rollup).unwrap());
+                    } else {
+                        println!("No deployments recorded for network '{}'.", network_key);
+                    }
+                    return Ok(());
+                }
+
+                let client = SorobanRpcClient::from_config(&network_config);
+
+                let mut items = Vec::with_capacity(deployments.len());
+                let mut healthy_count = 0;
+                let mut at_risk_count = 0;
+                let mut critical_count = 0;
+                let mut not_found_count = 0;
+                let mut error_count = 0;
+
+                for (alias, record) in &deployments {
+                    match contract_health(&client, &record.contract_id, None, &network_key).await {
+                        Ok(report) => {
+                            let h = report.health.clone();
+                            match h.as_str() {
+                                "critical" => critical_count += 1,
+                                "at_risk" => at_risk_count += 1,
+                                "healthy" => healthy_count += 1,
+                                _ => {}
+                            }
+                            let min_ttl = report.storage.ttl.as_ref().map(|t| t.minimum_ttl);
+                            let expiring = report
+                                .storage
+                                .ttl
+                                .as_ref()
+                                .map(|t| t.expiring_entries_count);
+                            let short_hash = format_short_hash(&report.on_chain_wasm_hash);
+
+                            items.push(ProjectHealthRow {
+                                alias: (*alias).clone(),
+                                contract_id: record.contract_id.clone(),
+                                network: network_key.clone(),
+                                health: h.clone(),
+                                verdict: h,
+                                verified: report.verified,
+                                minimum_ttl: min_ttl,
+                                expiring_entries_count: expiring,
+                                on_chain_wasm_hash: Some(report.on_chain_wasm_hash.clone()),
+                                short_wasm_hash: Some(short_hash),
+                                storage: Some(report.storage.clone()),
+                                reasons: report.reasons.clone(),
+                                report: Some(report),
+                                error: None,
+                            });
+                        }
+                        Err(e) => {
+                            let is_not_found =
+                                e.contains("not found on") || e.contains("Contract not found");
+                            let verdict = if is_not_found {
+                                not_found_count += 1;
+                                "not_found".to_string()
+                            } else {
+                                error_count += 1;
+                                "error".to_string()
+                            };
+
+                            items.push(ProjectHealthRow {
+                                alias: (*alias).clone(),
+                                contract_id: record.contract_id.clone(),
+                                network: network_key.clone(),
+                                health: verdict.clone(),
+                                verdict,
+                                verified: None,
+                                minimum_ttl: None,
+                                expiring_entries_count: None,
+                                on_chain_wasm_hash: None,
+                                short_wasm_hash: None,
+                                storage: None,
+                                reasons: vec![],
+                                report: None,
+                                error: Some(e),
+                            });
+                        }
+                    }
+                }
+
+                sort_project_health_rows(&mut items);
+
+                if fmt == OutputFormat::Json {
+                    let rollup = serde_json::json!({
+                        "network": network_key,
+                        "summary": {
+                            "healthy": healthy_count,
+                            "at_risk": at_risk_count,
+                            "critical": critical_count,
+                            "not_found": not_found_count,
+                            "error": error_count,
+                            "total": items.len(),
+                        },
+                        "contracts": items,
+                        "deployments": items,
+                        "reports": items,
+                    });
+                    println!("{}", serde_json::to_string(&rollup).unwrap());
+                } else {
+                    println!("Project health rollup (network: {}):", network_key);
+                    let w_alias = items
+                        .iter()
+                        .map(|r| r.alias.len())
+                        .max()
+                        .unwrap_or(5)
+                        .max(5);
+                    let w_contract_id = items
+                        .iter()
+                        .map(|r| r.contract_id.len())
+                        .max()
+                        .unwrap_or(11)
+                        .max(11);
+                    let w_health = items
+                        .iter()
+                        .map(|r| r.health.len())
+                        .max()
+                        .unwrap_or(6)
+                        .max(6);
+                    let w_min_ttl = items
+                        .iter()
+                        .map(|r| r.minimum_ttl.map(|v| v.to_string().len()).unwrap_or(1))
+                        .max()
+                        .unwrap_or(7)
+                        .max(7);
+                    let w_expiring = items
+                        .iter()
+                        .map(|r| {
+                            r.expiring_entries_count
+                                .map(|v| v.to_string().len())
+                                .unwrap_or(1)
+                        })
+                        .max()
+                        .unwrap_or(8)
+                        .max(8);
+                    let w_wasm_hash = items
+                        .iter()
+                        .map(|r| r.short_wasm_hash.as_ref().map(|s| s.len()).unwrap_or(1))
+                        .max()
+                        .unwrap_or(9)
+                        .max(9);
+
+                    println!(
+                        "{:<w_alias$}  {:<w_contract_id$}  {:<w_health$}  {:>w_min_ttl$}  {:>w_expiring$}  {:<w_wasm_hash$}",
+                        "ALIAS", "CONTRACT ID", "HEALTH", "MIN TTL", "EXPIRING", "WASM HASH"
+                    );
+                    for item in &items {
+                        let min_ttl_str = item
+                            .minimum_ttl
+                            .map(|v| v.to_string())
+                            .unwrap_or_else(|| "-".to_string());
+                        let expiring_str = item
+                            .expiring_entries_count
+                            .map(|v| v.to_string())
+                            .unwrap_or_else(|| "-".to_string());
+                        let short_hash_str = item.short_wasm_hash.as_deref().unwrap_or("-");
+                        println!(
+                            "{:<w_alias$}  {:<w_contract_id$}  {:<w_health$}  {:>w_min_ttl$}  {:>w_expiring$}  {:<w_wasm_hash$}",
+                            item.alias,
+                            item.contract_id,
+                            item.health,
+                            min_ttl_str,
+                            expiring_str,
+                            short_hash_str
+                        );
+                    }
+                }
+
+                if evaluate_health_rollup_failure(&items, threshold) {
+                    process::exit(1);
+                }
+            }
             ProjectCommand::Deploy {
                 salt,
                 skip_deployed,
@@ -12015,6 +12684,7 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
                 timeout,
                 interval,
                 no_verify,
+                release_assurance,
                 format,
             } => {
                 let fmt = parse_format_str(&format);
@@ -12172,11 +12842,11 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
                             &network_config.passphrase,
                         );
 
+                        // Partition contracts after --skip-deployed filtering so
+                        // --release-assurance preflights every deploying contract
+                        // before any upload begins (#545).
+                        let mut deploying = Vec::new();
                         for contract in resolved {
-                            // --skip-deployed: honor the record only when the
-                            // recorded contract still exists on-chain. A record
-                            // file entry alone does not skip — the ledger is the
-                            // source of truth.
                             if skip_deployed {
                                 if let Some(record) =
                                     record_file.record_for(&network_key, &contract.alias)
@@ -12218,6 +12888,29 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
                                         }
                                     }
                                 }
+                            }
+                            deploying.push(contract);
+                        }
+
+                        if failure.is_none() && release_assurance {
+                            if let Err(preflight_err) = preflight_project_release_assurance(
+                                &client,
+                                &deploying,
+                                &record_file,
+                                &network_key,
+                                &network_name,
+                                fmt,
+                            )
+                            .await
+                            {
+                                eprintln!("Error: {preflight_err}");
+                                process::exit(1);
+                            }
+                        }
+
+                        for contract in deploying {
+                            if failure.is_some() {
+                                break;
                             }
 
                             if fmt != OutputFormat::Json {
@@ -13016,10 +13709,32 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
         Commands::Generate(action) => match action {
             GenerateAction::Client {
                 wasm,
+                contract,
+                network,
                 output,
                 skip_unsupported,
+                net,
             } => {
-                if let Err(e) = run_generate_client(&wasm, output.as_deref(), skip_unsupported) {
+                let res = match (wasm.as_deref(), contract.as_deref()) {
+                    (Some(wasm_path), None) => {
+                        run_generate_client(wasm_path, output.as_deref(), skip_unsupported)
+                    }
+                    (None, Some(contract_id)) => {
+                        run_generate_client_from_contract(
+                            contract_id,
+                            network.as_deref(),
+                            &net,
+                            output.as_deref(),
+                            skip_unsupported,
+                        )
+                        .await
+                    }
+                    _ => Err(
+                        "specify either a local <WASM> path or --contract <CONTRACT_ID>"
+                            .to_string(),
+                    ),
+                };
+                if let Err(e) = res {
                     eprintln!("Error: {e}");
                     process::exit(1);
                 }
@@ -13271,7 +13986,41 @@ fn run_generate_client(
     skip_unsupported: bool,
 ) -> Result<(), String> {
     let bytes = fs::read(wasm_path).map_err(|e| format!("cannot read WASM '{wasm_path}': {e}"))?;
-    let spec = parse_contract_spec(&bytes).map_err(|e| format!("{wasm_path}: {e}"))?;
+    generate_client_from_wasm_bytes(&bytes, wasm_path, output, skip_unsupported)
+}
+
+/// Execute `sdkt generate client --contract <CONTRACT_ID>`: fetch the deployed
+/// contract's WASM via `inspect_contract` -> `get_wasm_bytecode` (read-only),
+/// then run the exact same spec-parse and client-generation pipeline.
+async fn run_generate_client_from_contract(
+    contract_id: &str,
+    network: Option<&str>,
+    net: &NetworkArgs,
+    output: Option<&str>,
+    skip_unsupported: bool,
+) -> Result<(), String> {
+    let target = resolve_target_network(network, net)?;
+    let inspection = inspect_contract(&target.client, contract_id)
+        .await
+        .map_err(|e| format!("cannot inspect contract '{contract_id}': {e}"))?;
+    let bytes = get_wasm_bytecode(&target.client, &inspection.wasm_hash)
+        .await
+        .map_err(|e| {
+            format!(
+                "cannot fetch WASM for contract '{contract_id}' (wasm_hash {}): {e}",
+                inspection.wasm_hash
+            )
+        })?;
+    generate_client_from_wasm_bytes(&bytes, contract_id, output, skip_unsupported)
+}
+
+fn generate_client_from_wasm_bytes(
+    bytes: &[u8],
+    source_label: &str,
+    output: Option<&str>,
+    skip_unsupported: bool,
+) -> Result<(), String> {
+    let spec = parse_contract_spec(bytes).map_err(|e| format!("{source_label}: {e}"))?;
     let options = sdkt_wasm::GenerateOptions { skip_unsupported };
     let code =
         sdkt_wasm::generate_client_with_options(&spec, &options).map_err(|e| e.to_string())?;
@@ -14299,5 +15048,171 @@ mod diff_contract_tests {
             }
             _ => panic!("expected `diff`"),
         }
+    }
+}
+
+#[cfg(test)]
+mod project_health_tests {
+    use super::*;
+
+    fn dummy_row(alias: &str, health: &str) -> ProjectHealthRow {
+        ProjectHealthRow {
+            alias: alias.to_string(),
+            contract_id: format!("C_{}", alias),
+            network: "testnet".to_string(),
+            health: health.to_string(),
+            verdict: health.to_string(),
+            verified: None,
+            minimum_ttl: Some(100),
+            expiring_entries_count: Some(0),
+            on_chain_wasm_hash: Some("1234567890abcdef1234567890abcdef".to_string()),
+            short_wasm_hash: Some("1234567890ab".to_string()),
+            storage: None,
+            reasons: vec![],
+            report: None,
+            error: None,
+        }
+    }
+
+    #[test]
+    fn project_health_cli_defaults() {
+        let cli = Cli::try_parse_from(["sdkt", "project", "health"]).expect("args parse");
+        match cli.command {
+            Commands::Project {
+                action: ProjectCommand::Health { fail_on, format },
+                ..
+            } => {
+                assert_eq!(fail_on, "critical");
+                assert_eq!(format, "pretty");
+            }
+            _ => panic!("expected `project health`"),
+        }
+    }
+
+    #[test]
+    fn project_health_cli_flags() {
+        let cli = Cli::try_parse_from([
+            "sdkt",
+            "project",
+            "health",
+            "--fail-on",
+            "at_risk",
+            "--format",
+            "json",
+        ])
+        .expect("args parse");
+        match cli.command {
+            Commands::Project {
+                action: ProjectCommand::Health { fail_on, format },
+                ..
+            } => {
+                assert_eq!(fail_on, "at_risk");
+                assert_eq!(format, "json");
+            }
+            _ => panic!("expected `project health`"),
+        }
+    }
+
+    #[test]
+    fn rollup_ordering_critical_before_at_risk_before_healthy() {
+        let mut items = vec![
+            dummy_row("c_healthy", "healthy"),
+            dummy_row("b_at_risk", "at_risk"),
+            dummy_row("e_error", "error"),
+            dummy_row("a_critical", "critical"),
+            dummy_row("d_not_found", "not_found"),
+        ];
+
+        sort_project_health_rows(&mut items);
+
+        let verdicts: Vec<&str> = items.iter().map(|r| r.health.as_str()).collect();
+        assert_eq!(
+            verdicts,
+            vec!["critical", "not_found", "error", "at_risk", "healthy"],
+            "critical and not_found must come first, then at_risk, then healthy"
+        );
+    }
+
+    #[test]
+    fn rollup_ordering_ties_broken_by_alias() {
+        let mut items = vec![
+            dummy_row("zeta", "critical"),
+            dummy_row("alpha", "critical"),
+            dummy_row("beta", "at_risk"),
+        ];
+
+        sort_project_health_rows(&mut items);
+
+        let aliases: Vec<&str> = items.iter().map(|r| r.alias.as_str()).collect();
+        assert_eq!(aliases, vec!["alpha", "zeta", "beta"]);
+    }
+
+    #[test]
+    fn health_failure_gate_critical_threshold() {
+        let healthy = vec![dummy_row("a", "healthy"), dummy_row("b", "healthy")];
+        assert!(!evaluate_health_rollup_failure(
+            &healthy,
+            HealthFailOn::Critical
+        ));
+
+        let at_risk = vec![dummy_row("a", "healthy"), dummy_row("b", "at_risk")];
+        assert!(!evaluate_health_rollup_failure(
+            &at_risk,
+            HealthFailOn::Critical
+        ));
+
+        let critical = vec![dummy_row("a", "critical"), dummy_row("b", "healthy")];
+        assert!(evaluate_health_rollup_failure(
+            &critical,
+            HealthFailOn::Critical
+        ));
+
+        let not_found = vec![dummy_row("a", "not_found"), dummy_row("b", "healthy")];
+        assert!(evaluate_health_rollup_failure(
+            &not_found,
+            HealthFailOn::Critical
+        ));
+
+        let error = vec![dummy_row("a", "error"), dummy_row("b", "healthy")];
+        assert!(evaluate_health_rollup_failure(
+            &error,
+            HealthFailOn::Critical
+        ));
+    }
+
+    #[test]
+    fn health_failure_gate_at_risk_threshold() {
+        let healthy = vec![dummy_row("a", "healthy")];
+        assert!(!evaluate_health_rollup_failure(
+            &healthy,
+            HealthFailOn::AtRisk
+        ));
+
+        let at_risk = vec![dummy_row("a", "at_risk")];
+        assert!(evaluate_health_rollup_failure(
+            &at_risk,
+            HealthFailOn::AtRisk
+        ));
+
+        let critical = vec![dummy_row("a", "critical")];
+        assert!(evaluate_health_rollup_failure(
+            &critical,
+            HealthFailOn::AtRisk
+        ));
+
+        let not_found = vec![dummy_row("a", "not_found")];
+        assert!(evaluate_health_rollup_failure(
+            &not_found,
+            HealthFailOn::AtRisk
+        ));
+    }
+
+    #[test]
+    fn short_hash_formatting() {
+        assert_eq!(
+            format_short_hash("0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"),
+            "0123456789ab"
+        );
+        assert_eq!(format_short_hash("short-hash"), "short-hash");
     }
 }
