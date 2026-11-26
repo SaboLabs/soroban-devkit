@@ -44,7 +44,7 @@ function makeEl() {
 }
 
 const els = new Map();
-const ids = ['dropzone', 'fileInput', 'candidateInput', 'candidateName', 'filebar', 'fname', 'fmeta', 'status',
+const ids = ['dropzone', 'fileInput', 'urlForm', 'urlInput', 'candidateInput', 'candidateName', 'filebar', 'fname', 'fmeta', 'status',
   'errorBox', 'errorMsg', 'results', 'resetBtn', 'modeChip'];
 for (const id of ids) els.set(id, makeEl());
 let resultAppendCount = 0;
@@ -87,7 +87,7 @@ class StubWorker {
       return;
     }
     if (msg.type === 'diff') {
-      this.diffs.push({ id: msg.id, answered: false });
+      this.diffs.push({ id: msg.id, oldBytes: msg.oldBytes, newBytes: msg.newBytes, answered: false });
     }
   }
   answer(i, payload) {
@@ -136,9 +136,22 @@ function payloadFor(extra) {
 
 const tick = async (n = 10) => { for (let i = 0; i < n; i += 1) await new Promise((r) => setTimeout(r, 0)); };
 const clickExample = (key) => handlers.get('btn:' + key)();
-const dropFile = (name) => handlers.get('drop')({
+const dropFile = (name, bytes = [1, 2, 3]) => handlers.get('drop')({
   preventDefault() {},
-  dataTransfer: { files: [{ name, size: 10, type: 'application/wasm', arrayBuffer: async () => new Uint8Array([1, 2, 3]).buffer }] },
+  dataTransfer: { files: [{ name, size: bytes.length, type: 'application/wasm',
+    arrayBuffer: async () => new Uint8Array(bytes).buffer }] },
+});
+const delayedFile = (name, bytes) => {
+  let resolve;
+  const arrayBuffer = new Promise((done) => { resolve = () => done(new Uint8Array(bytes).buffer); });
+  return {
+    file: { name, size: bytes.length, type: 'application/wasm', arrayBuffer: () => arrayBuffer },
+    resolve,
+  };
+};
+const dropFiles = (files) => handlers.get('drop')({
+  preventDefault() {},
+  dataTransfer: { files },
 });
 const reset = () => handlers.get('reset')({});
 const fname = () => els.get('fname').textContent;
@@ -171,18 +184,16 @@ assert.equal(fname(), 'example: us_new.wasm (bundled)', 'late A fetch must not o
 assert.equal(worker.inspects.length, 1, 'late A fetch must not start a new inspection');
 assert.equal(statusText(), 'inspection complete · 1 ms', 'status untouched by stale A');
 
-// 2) Upload/upload race: two drops; the older inspection resolves LAST and is
-//    discarded, keeping the newer file's results.
+// 2) Upload/upload race: two drops; the older file read is discarded before
+//    inspection, keeping the newer file's results.
 dropFile('a.wasm');
 dropFile('b.wasm');
 await tick();
-assert.equal(worker.inspects.length, 3, 'inspections queued: [exB, a, b]');
-worker.answer(2, payloadFor(null));     // b first -> renders b.wasm
+assert.equal(worker.inspects.length, 2, 'only the newer upload reaches inspection');
+worker.answer(1, payloadFor(null));     // b renders first
 await tick();
 const bResultAppendCount = resultAppendCount;
 assert.equal(fname(), 'b.wasm', 'newer upload renders');
-worker.answer(1, payloadFor(null));     // a resolves late -> stale
-await tick();
 assert.equal(fname(), 'b.wasm', 'late a.wasm inspection must not overwrite b.wasm');
 assert.ok(statusText().startsWith('inspection complete'), 'status stays with b.wasm');
 assert.equal(resultAppendCount, bResultAppendCount,
@@ -195,7 +206,7 @@ await tick();
 reset();
 assert.equal(resultsHidden(), true, 'reset hides results');
 assert.equal(statusText(), '', 'reset clears status');
-worker.answer(3, payloadFor(null));     // c.wasm resolves after reset -> stale
+worker.answer(2, payloadFor(null));     // c.wasm resolves after reset -> stale
 await tick();
 assert.equal(resultsHidden(), true, 'stale inspection must not re-render after reset');
 assert.equal(statusText(), '', 'stale inspection must not touch status');
@@ -204,11 +215,23 @@ assert.equal(statusText(), '', 'stale inspection must not touch status');
 //    base-only idle, compatible verdict, and a worker error.
 dropFile('base.wasm');
 await tick();
-assert.equal(worker.inspects.length, 5, 'base upload starts inspection');
-worker.answer(4, payloadFor(null));
+assert.equal(worker.inspects.length, 4, 'base upload starts inspection');
+worker.answer(3, payloadFor(null));
 await tick();
 assert.match(treeText(els.get('results')), /Load a candidate WASM/,
   `base inspection renders the idle upgrade state; status=${statusText()}, children=${els.get('results').children.length}`);
+
+const staleRead = delayedFile('slow.wasm', [9, 9]);
+dropFiles([staleRead.file]);
+dropFile('new-base.wasm', [7, 8]);
+await tick();
+assert.equal(worker.inspects.length, 5, 'new base starts inspection while the old file read is pending');
+worker.answer(4, payloadFor(null));
+await tick();
+staleRead.resolve();
+await tick();
+assert.equal(worker.inspects.length, 5, 'stale file read does not start a worker inspection');
+assert.equal(fname(), 'new-base.wasm', 'stale file read leaves the current selection unchanged');
 
 const candidate = (name) => ({ name, size: 3, type: 'application/wasm',
   arrayBuffer: async () => new Uint8Array([4, 5, 6]).buffer });
@@ -216,6 +239,8 @@ els.get('candidateInput').files = [candidate('candidate.wasm')];
 handlers.get('candidate')();
 await tick();
 assert.equal(worker.diffs.length, 1, 'candidate selection starts a comparison');
+assert.deepEqual(Array.from(worker.diffs[0].oldBytes), [7, 8],
+  'candidate comparison uses bytes from the current base, not a stale file read');
 worker.answerDiff(0, { compatible: false, breaking_changes: [
   { kind: 'removed_function', name: 'old_method', detail: 'function was removed' },
 ], non_breaking_changes: [

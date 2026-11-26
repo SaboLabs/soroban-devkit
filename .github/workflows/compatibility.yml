@@ -28,6 +28,9 @@ jobs:
         with:
           targets: wasm32v1-none
 
+      - name: Install Stellar CLI
+        uses: stellar/stellar-cli@v30.0.1
+
       # Cache sdkt workspace build
       - name: Cache sdkt build
         uses: Swatinem/rust-cache@v2
@@ -56,7 +59,7 @@ jobs:
           set -euo pipefail
           for c in token atomic_swap liquidity_pool timelock single_offer; do
             echo "::group::build $c"
-            (cd "$c" && cargo build --target wasm32v1-none --release)
+            (cd "$c" && stellar contract build)
             echo "::endgroup::"
           done
 
