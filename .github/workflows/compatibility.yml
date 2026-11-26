@@ -38,6 +38,15 @@ jobs:
       - name: Build sdkt (debug, with plugins feature)
         run: cargo build --bin sdkt --features plugins
 
+      # stellar-cli v30 is required to build contracts against soroban-sdk v30:
+      # the SDK build script requires STELLAR_CLI_VERSION >= 30 when targeting
+      # wasm (upstream soroban-examples bumped to SDK v30 in
+      # stellar/soroban-examples#435, which broke this workflow on 2026-11-26).
+      # The official action installs the release binary and verifies it against
+      # its GitHub attestation.
+      - name: Install stellar-cli v30
+        uses: stellar/stellar-cli@v30.0.1
+
       # Clone upstream examples read-only into a temp workspace
       - name: Clone stellar/soroban-examples (shallow)
         run: |
@@ -45,12 +54,23 @@ jobs:
             https://github.com/stellar/soroban-examples \
             "${{ runner.temp }}/soroban-examples"
 
-      # Cache example contract dependency graph (separate workspace)
+      # Cache example contract dependency graphs (separate workspace).
+      # Upstream has no root Cargo.toml (each example is a standalone crate),
+      # so the cache must list the example crates, not the repo root.
       - name: Cache example build
         uses: Swatinem/rust-cache@v2
         with:
-          workspaces: "${{ runner.temp }}/soroban-examples -> target"
+          workspaces: |
+            ${{ runner.temp }}/soroban-examples/token -> target
+            ${{ runner.temp }}/soroban-examples/atomic_swap -> target
+            ${{ runner.temp }}/soroban-examples/liquidity_pool -> target
+            ${{ runner.temp }}/soroban-examples/timelock -> target
+            ${{ runner.temp }}/soroban-examples/single_offer -> target
 
+      # Build with the CLI, not plain cargo: SDK v30 requires the build system
+      # to shake the contract spec, which only `stellar contract build` does
+      # (rs-soroban-sdk build.rs). The CLI sets STELLAR_CLI_VERSION itself and
+      # writes the processed WASM back to target/wasm32v1-none/release/.
       - name: Build example contracts to WASM
         working-directory: ${{ runner.temp }}/soroban-examples
         env:
