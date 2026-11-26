@@ -64,17 +64,19 @@ jobs:
             ${{ runner.temp }}/soroban-examples/timelock -> target
             ${{ runner.temp }}/soroban-examples/single_offer -> target
 
+      # Build with the CLI, not plain cargo: SDK v30 requires the build system
+      # to shake the contract spec, which only `stellar contract build` does
+      # (rs-soroban-sdk build.rs). The CLI sets STELLAR_CLI_VERSION itself and
+      # writes the processed WASM back to target/wasm32v1-none/release/.
       - name: Build example contracts to WASM
         working-directory: ${{ runner.temp }}/soroban-examples
         env:
           SOROBAN_SDK_BUILD_SYSTEM_SUPPORTS_SPEC_SHAKING_V2: 1
-          # Must match the installed stellar-cli version above.
-          STELLAR_CLI_VERSION: 30.0.1
         run: |
           set -euo pipefail
           for c in token atomic_swap liquidity_pool timelock single_offer; do
             echo "::group::build $c"
-            (cd "$c" && cargo build --target wasm32v1-none --release)
+            (cd "$c" && stellar contract build)
             echo "::endgroup::"
           done
 
