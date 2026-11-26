@@ -147,7 +147,7 @@ impl Executor {
     }
 
     /// Offline setup validation, with no execution.
-
+    ///
     /// Rejects the same inputs [`Executor::new`] rejects: invalid
     /// configuration, empty WASM, and WASM the Soroban engine will not
     /// parse. No case is executed, no artifact is written, and no network
