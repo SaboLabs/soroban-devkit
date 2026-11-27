@@ -842,6 +842,7 @@ enum TokenAction {
 }
 
 #[derive(Subcommand)]
+#[allow(clippy::large_enum_variant)]
 enum FuzzAction {
     /// Run a deterministic fuzz campaign against a compiled contract
     Campaign {
