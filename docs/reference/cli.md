@@ -127,7 +127,7 @@ sdkt
 │
 ├── tx
 │   ├── inspect <hash>        [--format]
-│   ├── validate <xdr>        [--format] (offline parse + structural checks)
+│   ├── validate --envelope <xdr|file>  [--format] [--verify-signatures --signer <G...> ...] (offline parse + structural checks; signature verification)
 │   ├── decode <xdr>          [--format] (offline decode; human-readable transaction envelope)
 │   ├── simulate <xdr>        [--format] [--abi <wasm>] [--abi-contract <id>] (RPC; surfaces restore preambles, costs, state changes; ABI-aware result decoding. `--abi-contract` fetches the deployed contract's on-chain WASM for decoding)
 │   ├── sign                  [--input <xdr|file>] [--output <file>] [--identity <name>] [--network <testnet|mainnet|futurenet|custom:<p>>] [--format] (offline ED25519 signing)
@@ -583,6 +583,10 @@ the descriptor summary (`schema`, `name`, `version`, `format`, `lock_sha256`,
 │   │                            inspection path; no local artifact needed.
 │   │                            Mutually exclusive with --abi.)
 │   ├── --format <json|pretty>
+│   ├── --batch <FILE>        (read a JSON array of read-only calls from
+│   │                            FILE and run them sequentially; see
+│   │                            "Batch calls" below. Mutually exclusive
+│   │                            with <FUNCTION>, --args, and --args-json.)
 │   └── --network-profile <NAME>
 └── deploy
     ├── --wasm <file>          (upload WASM, then create the contract)
@@ -663,6 +667,12 @@ verification fails after an otherwise successful deploy.
 │   │   ├── --expect-error <FN:TYPE:CODE> Declare function must fail (repeatable)
 │   │   ├── --sequence-length <N>         Steps per generated sequence (>= 2; requires --sequence-every)
 │   │   ├── --sequence-every <N>          Run every N-th case as a sequence (>= 1; requires --sequence-length)
+│   │   ├── --resource-limit-is-finding  Map budget-class errors to RESOURCE_LIMIT
+│   │   │                                 findings instead of UNEXPECTED_ERROR
+│   │   │                                 (opt-in; default off)
+│   │   ├── --budget-capped <CPU:MEM>  Deterministic per-case budget ceilings so
+│   │   │                                 the budget-exhaustion path is reachable
+│   │   │                                 (e.g. --budget-capped 1:1)
 │   │   ├── --replay                      Replay every written artifact to verify determinism
 │   │   ├── --format <pretty|json|jsonl>  Output format (default: pretty)
 │   │   └── [network flags inherited from network-profile resolution]
@@ -833,6 +843,59 @@ sdkt token info CAAA... --network testnet --format json
 does not fit a JSON number safely. The command takes a bare contract ID;
 `@alias` resolution is not supported.
 
+## Batch calls
+
+`sdkt call <CONTRACT_ID> --batch <FILE>` runs several read-only calls in
+one command. FILE contains a JSON array of entries:
+
+```json
+[
+  { "function": "name" },
+  { "function": "symbol", "key": "token_symbol" },
+  { "function": "balance", "args": ["address:G..."] },
+  { "function": "allowance", "args_json": ["[\"G...\", \"G...\"]"] }
+]
+```
+
+Each entry names a `function` and optionally `args` (the same `TYPE:VALUE`
+syntax as `--args`) and `args_json` (the same JSON-array syntax as
+`--args-json`). `key` names the result key in the output and defaults to
+the function name; keys must be unique across the batch. Calls run
+sequentially in file order through the same read-only simulation and
+ABI-decoding path as a single `sdkt call` — nothing is signed, submitted,
+or otherwise state-changing.
+
+With `--format json` (the default in batch mode), one JSON object is
+printed once at the end, mapping each key to its decoded result — the same
+decoded display string a single call prints. `--format pretty` prints one
+labeled section per entry instead.
+
+The token-metadata example below reads `name`, `symbol`, `decimals`, and
+`total_supply` from a SEP-41 token in a single command:
+
+```json
+[
+  { "function": "name" },
+  { "function": "symbol" },
+  { "function": "decimals" },
+  { "function": "total_supply" }
+]
+```
+
+```bash
+sdkt call CAAA... --batch token-meta.json --network-profile testnet --abi-contract CAAA...
+# {"name":"\"My Token\"","symbol":"\"MTK\"","decimals":"u32(7)","total_supply":"i128(1000000000 hi=0, lo=1000000000)"}
+```
+
+Validation failures are usage errors (exit code 2) naming the offending
+entry by its 0-based index: malformed JSON, a missing `function`,
+duplicate keys, and an unknown function name (when `--abi` or
+`--abi-contract` is given). Duplicate keys are rejected before any network
+call is made. The first entry whose simulation fails stops the batch with a
+non-zero exit naming its index and function, and no result object is
+printed. `--batch` is mutually exclusive with the positional `FUNCTION`
+and with `--args` / `--args-json`; it is not available on `sdkt invoke`.
+
 ## Shell completions
 
 `sdkt` can emit shell completion scripts for the major shells. This is the
@@ -875,6 +938,53 @@ Exit codes:
 - `1` — at least one check failed (e.g. invalid config, missing WASM target)
 
 Warnings are never fatal. The JSON output contains no secret material.
+
+## tx validate
+
+`sdkt tx validate --envelope <xdr|file>` parses an envelope and runs
+structural checks (fee, sequence, operations) fully offline. With
+`--verify-signatures` it also verifies the envelope's signatures against
+one or more named signers:
+
+```bash
+sdkt tx validate --envelope signed.xdr --verify-signatures \
+  --signer GABC... --signer GDEF...
+```
+
+`--signer` is repeatable and takes a `G...` public key; a public-key-only
+signer is used, so no secret material is ever accepted or read in this
+path. Passing an `S...` secret or an unparseable value as `--signer` is a
+usage error (exit 2) that does not name the value, so `sdkt`'s own diagnostic never contains the secret. That is no promise about anything outside `sdkt`: a shell with tracing enabled can log the full command before `sdkt` runs, so do not put a secret on the command line. `--verify-signatures` without at least one `--signer` is also a usage error (exit 2). Duplicate
+`--signer` values are deduplicated: each distinct key is reported once.
+
+Each named signer is reported as `VALID`, `MISSING`, or `INVALID`. A
+signer is `VALID` when at least one signature whose hint (the last four
+bytes of the public key) matches the signer verifies against the
+envelope hash; `MISSING` when no signature carries the hint; `INVALID`
+when hint-matching signatures exist but none verifies. Signatures are
+never consumed, and two keys that share a hint are evaluated
+independently: with a hint collision, both keys are `VALID` when both
+signatures are present, and the key whose signature is absent is
+`INVALID` (not `MISSING`), because its hint matches a signature that
+does not verify. Signatures whose hint matches no named signer are
+listed as `UNMATCHED` (by envelope index and hex hint) for information
+only; they never affect the exit code. For a fee-bump envelope only the
+outer signatures are considered.
+
+The network is resolved from the usual flags (`--network`,
+`--network-profile`, `--network-passphrase`); only the passphrase
+matters, and no RPC call is made, so verification works fully offline
+and with an unreachable RPC endpoint. The default network is testnet and
+the output names the network used. A signature made for a different
+network does not verify (`INVALID`).
+
+Exit codes: `0` when structural validation passes and every named
+signer is `VALID`; `1` when structural validation fails, any signer is
+`MISSING` or `INVALID`, or the envelope hash cannot be computed. When
+structural validation fails, the structural report is printed unchanged
+and no `Signatures:` section appears. `--format json` adds a
+`signatures` array (`address`, `hint`, `status`, `candidates`) and an
+`unmatched` array (`index`, `hint`) plus the `network`.
 
 ## tx status
 
@@ -1372,6 +1482,43 @@ expectation; declaring it with both flags is a usage error that exits 2 and
 names the conflicting function. A single valid declaration keeps its existing
 campaign behavior. Malformed `--expect-error` declarations also remain usage
 errors.
+
+### Resource-limit findings (opt-in)
+
+By default a budget-class host error under `--expect-success` is reported as
+`UNEXPECTED_ERROR` — indistinguishable from a logic error in the finding
+stream. `--resource-limit-is-finding` opts the run into the oracle's
+RESOURCE_LIMIT rule: budget-class failures under a declared `Success`
+classify as `RESOURCE_LIMIT` findings instead. The default is **off** —
+resource exhaustion is an outcome, not a verdict — so campaigns without the
+flag behave exactly as before. The rule is run-level: it applies to every
+expectation declared for the run.
+
+The flag alone cannot produce a budget error, because the default campaign
+budget is generous. `--budget-capped <CPU:MEM>` exposes the engine's
+deterministic capped-budget plan (`BudgetPlan::Capped`, the purpose-built
+budget-exhaustion path — deterministic and reproducible but **not**
+network-faithful), e.g. `--budget-capped 1:1` caps every case at one CPU and
+one memory unit so a declared `Success` hits the host's `Budget` error:
+
+```bash
+# Without the rule: a capped-budget error under --expect-success is
+# UNEXPECTED_ERROR, as before.
+sdkt fuzz campaign contract.wasm --cases 1 --function hello \
+    --expect-success hello --budget-capped 1:1
+# FINDING … UNEXPECTED_ERROR
+
+# With the rule: the same campaign reports RESOURCE_LIMIT instead.
+sdkt fuzz campaign contract.wasm --cases 1 --function hello \
+    --expect-success hello --budget-capped 1:1 --resource-limit-is-finding
+# RESOURCE_LIMIT
+```
+
+The campaign evidence records whether the rule was enabled: a run that used
+it carries `"resource_limit_is_finding": true` in `campaign-evidence.json`,
+while default-off runs omit the field entirely (byte-identical to pre-flag
+evidence). The capped budget itself is already part of the recorded
+campaign configuration (`config.environment.budget`).
 
 ## Configuration validation (`sdkt config validate`)
 

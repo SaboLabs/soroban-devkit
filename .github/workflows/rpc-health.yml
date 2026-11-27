@@ -1,0 +1,52 @@
+# Stellar RPC endpoint health check (miyo-rpc)
+#
+# Downloads the pinned miyo-rpc release binary, verifies its sha256
+# checksum against the published sidecar, and runs the read-only
+# diagnostic checks against the Testnet Soroban RPC endpoint this
+# repo already depends on (the Testnet profile in the README and the
+# Testnet-only smoke workflow both use
+# https://soroban-testnet.stellar.org).
+#
+# Design: scheduled + manual only. This workflow deliberately does NOT
+# run on push or pull_request — an unhealthy public endpoint must never
+# break unrelated PRs. A failing scheduled run goes red so the outage
+# is visible, without blocking any contributor.
+#
+# Read-only: miyo-rpc only issues JSON-RPC read calls (getHealth,
+# getNetwork, ...). It never submits transactions and needs no secrets.
+#
+# To upgrade miyo-rpc, bump MIYO_RPC_VERSION below (the sha256
+# verification follows the new release automatically).
+name: RPC endpoint health
+
+on:
+  schedule:
+    # Daily 03:00 UTC.
+    - cron: "0 3 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  rpc-health:
+    name: Check Testnet Soroban RPC
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      MIYO_RPC_VERSION: "0.4.0"
+      RPC_URL: https://soroban-testnet.stellar.org
+    steps:
+      - name: Download miyo-rpc
+        run: |
+          set -euo pipefail
+          target=x86_64-unknown-linux-gnu
+          base="https://github.com/Miyo-explore/miyo-rpc-labs/releases/download/v${MIYO_RPC_VERSION}"
+          curl -fsSL "${base}/miyo-rpc-v${MIYO_RPC_VERSION}-${target}.tar.gz" -o "miyo-rpc-v${MIYO_RPC_VERSION}-${target}.tar.gz"
+          curl -fsSL "${base}/miyo-rpc-v${MIYO_RPC_VERSION}-${target}.tar.gz.sha256" -o "miyo-rpc-v${MIYO_RPC_VERSION}-${target}.tar.gz.sha256"
+          sha256sum -c "miyo-rpc-v${MIYO_RPC_VERSION}-${target}.tar.gz.sha256"
+          tar -xzf "miyo-rpc-v${MIYO_RPC_VERSION}-${target}.tar.gz"
+          ./miyo-rpc --version
+
+      - name: Check Testnet RPC endpoint
+        run: ./miyo-rpc check --url "${RPC_URL}" --runs 3 --expected-network testnet

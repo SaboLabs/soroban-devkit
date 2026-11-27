@@ -21,7 +21,7 @@ use sdkt_xdr::abi_decode::decode_event_topics;
 use sdkt_xdr::decode_with_config;
 use sdkt_xdr::{
     build_invoke_transaction, sign_transaction, Ed25519Signer, InvokeTransactionParams, Network,
-    SigningError, SigningOptions,
+    PublicKeySigner, Signer, SigningError, SigningOptions,
 };
 use sha2::{Digest, Sha256};
 use std::fs;
@@ -633,17 +633,34 @@ enum Commands {
         /// Stellar contract ID (C...)
         #[arg(value_name = "CONTRACT_ID")]
         contract_id: String,
-        /// Function name
-        #[arg(value_name = "FUNCTION")]
-        function: String,
+        /// Function name (required unless --batch is given)
+        #[arg(value_name = "FUNCTION", required_unless_present = "batch")]
+        function: Option<String>,
         /// Typed arguments (e.g. u32:100, address:G..., string:hello, bool:true)
         #[arg(short, long, value_name = "TYPE:VALUE")]
         args: Vec<String>,
         /// Composite arguments as a JSON array; appended after --args values.
         #[arg(long, value_name = "JSON")]
         args_json: Vec<String>,
-        #[arg(short, long, default_value = "pretty")]
-        format: String,
+        /// Read a JSON array of read-only calls from FILE and execute them
+        /// sequentially through the single-call simulation path, printing one
+        /// JSON object keyed by function name (or each entry's `key`). Each
+        /// entry is `{ "function": "<NAME>", "args": ["u32:100", ...],
+        /// "args_json": ["[...]"], "key": "<OPTIONAL RESULT KEY>" }`.
+        /// Mutually exclusive with the positional FUNCTION and with --args /
+        /// --args-json. The first failing call stops the batch with a
+        /// non-zero exit; nothing is printed for a failed batch.
+        #[arg(
+            long,
+            value_name = "FILE",
+            conflicts_with = "function",
+            conflicts_with = "args",
+            conflicts_with = "args_json"
+        )]
+        batch: Option<String>,
+        /// Output format (pretty or json). Defaults to json in batch mode.
+        #[arg(short, long)]
+        format: Option<String>,
         /// Path to contract WASM for ABI-aware result decoding
         #[arg(long, value_name = "WASM")]
         abi: Option<String>,
@@ -864,6 +881,17 @@ enum FuzzAction {
         /// --sequence-length)
         #[arg(long, value_name = "N")]
         sequence_every: Option<usize>,
+        /// Map budget-class host errors to RESOURCE_LIMIT findings instead
+        /// of UNEXPECTED_ERROR. Opt-in; default off — resource exhaustion
+        /// is an outcome, not a verdict. Run-level: applies to every
+        /// expectation declared for this run.
+        #[arg(long)]
+        resource_limit_is_finding: bool,
+        /// Cap the per-case host budget at CPU:MEM instruction ceilings
+        /// (deterministic, not network-faithful) so the budget-exhaustion
+        /// path can be exercised at a known limit, e.g. --budget-capped 1:1
+        #[arg(long, value_name = "CPU:MEM")]
+        budget_capped: Option<String>,
         /// Replay every written artifact to verify determinism
         #[arg(long)]
         replay: bool,
@@ -1200,6 +1228,20 @@ enum TxAction {
         /// Base64 XDR transaction envelope or path to a file containing it
         #[arg(short, long)]
         envelope: String,
+        /// Verify each supplied signer's signature cryptographically (offline, no RPC)
+        #[arg(long)]
+        verify_signatures: bool,
+        /// Ed25519 public key (G...) whose signature must verify; repeatable, required with --verify-signatures
+        #[arg(long, value_name = "G...")]
+        signer: Vec<String>,
+        /// Network: testnet | mainnet | futurenet | custom:<passphrase> (mutually exclusive with --network-profile and --network-passphrase; defaults to testnet)
+        #[arg(
+            short,
+            long,
+            conflicts_with = "network_profile",
+            conflicts_with = "network_passphrase"
+        )]
+        network: Option<String>,
         #[arg(short, long, default_value = "pretty")]
         format: String,
     },
@@ -3487,6 +3529,296 @@ fn parse_format_str(s: &str) -> OutputFormat {
     }
 }
 
+/// One entry of a `--batch` file for `sdkt call`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct BatchCall {
+    /// Function to invoke (must exist in the ABI when one is available).
+    function: String,
+    /// Typed arguments in the existing `TYPE:VALUE` syntax.
+    args: Vec<String>,
+    /// Composite arguments as JSON arrays.
+    args_json: Vec<String>,
+    /// Key the decoded result is filed under in the batch output. Defaults
+    /// to the function name and must be unique across the batch.
+    key: String,
+}
+
+/// Parse and validate a `--batch` file's contents.
+///
+/// The file must contain a JSON array of objects shaped
+/// `{ "function": "<NAME>", "args": [...], "args_json": [...],
+/// "key": "<OPTIONAL>" }`. `args` / `args_json` are optional per entry;
+/// `key` defaults to the function name and must be unique across the batch.
+///
+/// Every failure names the offending entry by its 0-based index, and
+/// duplicate keys are rejected here — before any network call is made —
+/// because the whole file is validated before execution starts.
+fn parse_batch_file(text: &str) -> Result<Vec<BatchCall>, String> {
+    let value: serde_json::Value =
+        serde_json::from_str(text).map_err(|e| format!("batch file is not valid JSON: {e}"))?;
+    let entries = value
+        .as_array()
+        .ok_or("batch file must contain a JSON array of calls")?;
+    if entries.is_empty() {
+        return Err("batch file contains no calls".to_string());
+    }
+    let mut calls = Vec::with_capacity(entries.len());
+    let mut seen_keys: std::collections::HashMap<String, usize> = std::collections::HashMap::new();
+    for (i, entry) in entries.iter().enumerate() {
+        let obj = entry
+            .as_object()
+            .ok_or_else(|| format!("batch entry {i}: must be a JSON object"))?;
+        let function = obj
+            .get("function")
+            .and_then(|v| v.as_str())
+            .filter(|s| !s.is_empty())
+            .ok_or_else(|| format!("batch entry {i}: missing \"function\""))?
+            .to_string();
+        let args = parse_batch_string_array(obj.get("args"), i, "args")?;
+        let args_json = parse_batch_string_array(obj.get("args_json"), i, "args_json")?;
+        let key = match obj.get("key") {
+            Some(v) => v
+                .as_str()
+                .filter(|s| !s.is_empty())
+                .ok_or_else(|| format!("batch entry {i}: \"key\" must be a non-empty string"))?
+                .to_string(),
+            None => function.clone(),
+        };
+        if let Some(prev) = seen_keys.get(&key) {
+            return Err(format!(
+                "batch entry {i}: duplicate key \"{key}\" (first used by batch entry {prev})"
+            ));
+        }
+        seen_keys.insert(key.clone(), i);
+        calls.push(BatchCall {
+            function,
+            args,
+            args_json,
+            key,
+        });
+    }
+    Ok(calls)
+}
+
+/// Read one optional `args` / `args_json` field of a batch entry: absent
+/// means no arguments; present must be an array of strings.
+fn parse_batch_string_array(
+    value: Option<&serde_json::Value>,
+    index: usize,
+    field: &str,
+) -> Result<Vec<String>, String> {
+    match value {
+        None => Ok(Vec::new()),
+        Some(v) => {
+            let arr = v.as_array().ok_or_else(|| {
+                format!("batch entry {index}: \"{field}\" must be a JSON array of strings")
+            })?;
+            let mut out = Vec::with_capacity(arr.len());
+            for item in arr {
+                out.push(
+                    item.as_str()
+                        .ok_or_else(|| {
+                            format!(
+                                "batch entry {index}: \"{field}\" must be a JSON array of strings"
+                            )
+                        })?
+                        .to_string(),
+                );
+            }
+            Ok(out)
+        }
+    }
+}
+
+/// Check every batch entry against the ABI spec: each entry's function must
+/// be declared in the spec. Runs before any entry executes, so an unknown
+/// function is a usage error naming the entry index.
+fn validate_batch_functions(
+    entries: &[BatchCall],
+    spec: &sdkt_wasm::ContractSpec,
+) -> Result<(), String> {
+    for (i, entry) in entries.iter().enumerate() {
+        if !spec.functions.iter().any(|f| f.name == entry.function) {
+            let name = entry.function.as_str();
+            return Err(format!(
+                "batch entry {i}: unknown function \"{name}\" (not found in ABI)"
+            ));
+        }
+    }
+    Ok(())
+}
+
+/// Render batch results as a single JSON object mapping each entry key to
+/// its decoded result, preserving file order. Built by hand (rather than
+/// `serde_json::json!`) because `serde_json::Map` sorts keys unless the
+/// `preserve_order` feature is enabled.
+fn format_batch_json(results: &[(String, String)]) -> Result<String, String> {
+    let mut out = String::from("{");
+    for (i, (key, value)) in results.iter().enumerate() {
+        if i > 0 {
+            out.push(',');
+        }
+        out.push_str(&serde_json::to_string(key).map_err(|e| e.to_string())?);
+        out.push(':');
+        out.push_str(&serde_json::to_string(value).map_err(|e| e.to_string())?);
+    }
+    out.push('}');
+    Ok(out)
+}
+
+/// Execute a `--batch` file: every entry runs sequentially through the
+/// same read-only simulation + ABI-decoding path as a single `sdkt call`
+/// (zero-fake sequence, never signed or submitted), and one result object
+/// is printed at the end.
+///
+/// Validation is deliberately front-loaded: the file is parsed, every
+/// entry's arguments are encoded, and (when an ABI is available) every
+/// function name is checked — all before the first simulation. A usage
+/// problem therefore fails fast with exit code 2 and no network call is
+/// made for a rejected batch. The first entry whose simulation fails stops
+/// the batch with an error naming its index and function, and no result
+/// object is printed.
+async fn run_call_batch(
+    contract_id: &str,
+    batch_path: &str,
+    fmt: OutputFormat,
+    abi: Option<&String>,
+    abi_contract: Option<&String>,
+    net: &NetworkArgs,
+) -> Result<(), Box<dyn std::error::Error>> {
+    use sdkt_rpc::simulate_transaction;
+    use sdkt_xdr::scval_from_base64;
+
+    let text = match std::fs::read_to_string(batch_path) {
+        Ok(t) => t,
+        Err(e) => {
+            eprintln!("Error: cannot read batch file '{batch_path}': {e}");
+            process::exit(2);
+        }
+    };
+    let entries = match parse_batch_file(&text) {
+        Ok(entries) => entries,
+        Err(e) => {
+            eprintln!("Error: {e}");
+            process::exit(2);
+        }
+    };
+
+    // Encode every entry's arguments up front, so a bad argument is a
+    // usage error before any entry runs.
+    let mut entry_args: Vec<Vec<String>> = Vec::with_capacity(entries.len());
+    for (i, entry) in entries.iter().enumerate() {
+        let name = entry.function.as_str();
+        let mut parsed = match parse_typed_args(&entry.args, true) {
+            Ok(p) => p,
+            Err(e) => {
+                eprintln!("Error: batch entry {i} ({name}): {e}");
+                process::exit(2);
+            }
+        };
+        for json in &entry.args_json {
+            match sdkt_xdr::json_args_to_base64(json) {
+                Ok(mut more) => parsed.append(&mut more),
+                Err(e) => {
+                    eprintln!("Error: batch entry {i} ({name}): {e}");
+                    process::exit(2);
+                }
+            }
+        }
+        entry_args.push(parsed);
+    }
+
+    // Resolve network config (no I/O) and the ABI spec once, before
+    // executing any entry.
+    let network_config = resolve_network_config(
+        net.rpc_url.clone(),
+        net.network_passphrase.clone(),
+        net.network_profile.clone(),
+    )?;
+    let client = SorobanRpcClient::from_config(&network_config);
+    let abi_spec = commands::abi::resolve_abi_spec(abi, abi_contract, &client)
+        .await
+        .map_err(Box::<dyn std::error::Error>::from)?;
+    if let Some(spec) = &abi_spec {
+        if let Err(e) = validate_batch_functions(&entries, spec) {
+            eprintln!("Error: {e}");
+            process::exit(2);
+        }
+    }
+
+    let mut results: Vec<(String, String)> = Vec::with_capacity(entries.len());
+    for (i, entry) in entries.iter().enumerate() {
+        let name = entry.function.as_str();
+        // Read-only: zero-fake sequence, exactly as the single-call path.
+        // This transaction is never signed or submitted — only simulated.
+        let params = sdkt_xdr::builder::InvokeTransactionParams {
+            source_account: "GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF".into(),
+            sequence: 0,
+            fee: 0,
+            contract_id: contract_id.to_string(),
+            function: entry.function.clone(),
+            args: entry_args[i].clone(),
+            memo: None,
+        };
+        let envelope = sdkt_xdr::builder::build_invoke_transaction(&params)
+            .map_err(|e| format!("batch entry {i} ({name}): failed to build transaction: {e}"))?;
+        match simulate_transaction(&client, &envelope).await {
+            Ok(resp) => {
+                if let Some(err) = &resp.error {
+                    return Err(format!("batch entry {i} ({name}): simulation error: {err}").into());
+                }
+                let result_raw = resp
+                    .results
+                    .first()
+                    .map(|r| r.xdr.clone())
+                    .unwrap_or_default();
+                // Decode exactly as the single-call path does.
+                let result_display = if result_raw.is_empty() {
+                    "(void)".into()
+                } else if let Some(spec) = &abi_spec {
+                    match scval_from_base64(&result_raw) {
+                        Some(scval) => {
+                            if spec
+                                .functions
+                                .iter()
+                                .find(|f| f.name == entry.function)
+                                .is_none()
+                            {
+                                eprintln!(
+                                    "warning: function '{name}' not found in ABI — showing raw result"
+                                );
+                            }
+                            sdkt_xdr::abi_decode::decode_with_abi(spec, &scval, None).label
+                        }
+                        None => {
+                            eprintln!("warning: could not parse result ScVal — showing raw result");
+                            result_raw.clone()
+                        }
+                    }
+                } else {
+                    result_raw.clone()
+                };
+                results.push((entry.key.clone(), result_display));
+            }
+            Err(e) => {
+                return Err(format!("batch entry {i} ({name}): RPC simulation failed: {e}").into());
+            }
+        }
+    }
+
+    if fmt == OutputFormat::Json {
+        println!("{}", format_batch_json(&results)?);
+    } else {
+        println!("Contract:  {contract_id}");
+        for (entry, (_, display)) in entries.iter().zip(results.iter()) {
+            println!("== {} ==", entry.key);
+            println!("Function:  {}", entry.function);
+            println!("Result:    {display}");
+        }
+    }
+    Ok(())
+}
+
 /// Formats a byte count for the `wasm cache list` table (`530 B`, `1.2 KB`,
 /// `3.4 MB`). `None` renders as `unknown`: the entry is a half-pair whose
 /// other file is missing.
@@ -3699,6 +4031,149 @@ fn print_signatures(indent: &str, signatures: &[sdkt_xdr::envelope::SignatureVie
             Some(signer) => println!("{}  - ed25519, {}", indent, signer),
             None => println!("{}  - hint {} (signer not in envelope)", indent, sig.hint),
         }
+    }
+}
+
+/// Print the structural validation report (pretty or JSON), unchanged.
+fn print_validation_report(
+    report: &sdkt_core::validation::TransactionValidationReport,
+    fmt: OutputFormat,
+) {
+    if fmt == OutputFormat::Json {
+        println!("{}", serde_json::to_string(report).unwrap());
+    } else {
+        println!("Validation Report:");
+        if report.valid {
+            println!("  Status: VALID");
+        } else {
+            println!("  Status: INVALID");
+        }
+        if !report.errors.is_empty() {
+            println!("  Errors:");
+            for err in &report.errors {
+                println!("    - {}", err.message());
+            }
+        }
+        if !report.warnings.is_empty() {
+            println!("  Warnings:");
+            for warn in &report.warnings {
+                println!("    - {:?}", warn);
+            }
+        }
+    }
+}
+
+/// One signer's verification outcome for `tx validate --verify-signatures`.
+#[derive(serde::Serialize)]
+struct SignerVerification {
+    address: String,
+    hint: String,
+    status: String,
+    candidates: usize,
+}
+
+/// An envelope signature matching no supplied signer.
+#[derive(serde::Serialize)]
+struct UnmatchedSignature {
+    index: usize,
+    hint: String,
+}
+
+/// The full signature-verification result for one envelope.
+struct SignatureVerification {
+    signers: Vec<SignerVerification>,
+    unmatched: Vec<UnmatchedSignature>,
+}
+
+/// The outer envelope signatures (a fee-bump envelope contributes only the
+/// outer signatures, matching `verify_signature`).
+fn outer_signatures(
+    envelope: &stellar_xdr::TransactionEnvelope,
+) -> &[stellar_xdr::DecoratedSignature] {
+    match envelope {
+        stellar_xdr::TransactionEnvelope::TxV0(e) => &e.signatures,
+        stellar_xdr::TransactionEnvelope::Tx(e) => &e.signatures,
+        stellar_xdr::TransactionEnvelope::TxFeeBump(e) => &e.signatures,
+    }
+}
+
+/// Human-readable network name for the signature report.
+fn network_display_name(network: &Network) -> String {
+    match network {
+        Network::Testnet => "testnet".to_string(),
+        Network::Mainnet => "mainnet".to_string(),
+        Network::Futurenet => "futurenet".to_string(),
+        Network::Custom(p) => p.clone(),
+    }
+}
+
+/// Verify every supplied signer against one parsed envelope (offline).
+///
+/// Returns the per-signer status and candidate count plus the unmatched
+/// signatures. Fails only when the envelope hash cannot be computed.
+fn verify_signatures_for_envelope(
+    env_b64: &str,
+    signers: &[PublicKeySigner],
+    addresses: &[String],
+    network: &Network,
+) -> Result<SignatureVerification, String> {
+    let envelope = <stellar_xdr::TransactionEnvelope as stellar_xdr::ReadXdr>::from_xdr_base64(
+        env_b64,
+        stellar_xdr::Limits::none(),
+    )
+    .map_err(|e| format!("invalid transaction envelope: {}", e))?;
+    let opts = SigningOptions::with(network.clone());
+    let mut results = Vec::new();
+    let mut signer_hints: Vec<[u8; 4]> = Vec::new();
+    for (address, signer) in addresses.iter().zip(signers.iter()) {
+        let status = sdkt_xdr::verify_signature_status(&envelope, signer, &opts)
+            .map_err(|e| format!("cannot compute envelope hash: {}", e))?;
+        let pubkey = signer.public_key_bytes();
+        let hint = [pubkey[28], pubkey[29], pubkey[30], pubkey[31]];
+        signer_hints.push(hint);
+        let candidates = outer_signatures(&envelope)
+            .iter()
+            .filter(|s| s.hint.0 == hint)
+            .count();
+        results.push(SignerVerification {
+            address: address.clone(),
+            hint: hex::encode(hint),
+            status: status.as_str().to_string(),
+            candidates,
+        });
+    }
+    let mut unmatched = Vec::new();
+    for (index, sig) in outer_signatures(&envelope).iter().enumerate() {
+        if !signer_hints.contains(&sig.hint.0) {
+            unmatched.push(UnmatchedSignature {
+                index,
+                hint: hex::encode(sig.hint.0),
+            });
+        }
+    }
+    Ok(SignatureVerification {
+        signers: results,
+        unmatched,
+    })
+}
+
+/// Print the `Signatures:` section of a validation report.
+fn print_signature_verification(v: &SignatureVerification, network: &Network) {
+    println!("Signatures:");
+    println!("  Network: {}", network_display_name(network));
+    for s in &v.signers {
+        let word = if s.candidates == 1 {
+            "candidate"
+        } else {
+            "candidates"
+        };
+        println!(
+            "  - {} {} hint {} ({} {})",
+            s.status, s.address, s.hint, s.candidates, word
+        );
+    }
+    for u in &v.unmatched {
+        println!("  - UNMATCHED #{} hint {}", u.index, u.hint);
     }
 }
 
@@ -4371,7 +4846,10 @@ fn run_encode(values: &[String]) -> Result<String, String> {
 
 #[cfg(test)]
 mod encode_tests {
-    use super::{parse_typed_args, run_encode, validate_poll_pair};
+    use super::{
+        format_batch_json, parse_batch_file, parse_typed_args, run_encode,
+        validate_batch_functions, validate_poll_pair,
+    };
 
     #[test]
     fn poll_pair_defaults_are_valid() {
@@ -4563,6 +5041,120 @@ mod encode_tests {
                 assert_eq!(parse_typed_args(&args, strict).unwrap_err(), encode_error);
             }
         }
+    }
+    #[test]
+    fn batch_file_parses_entries_with_default_keys() {
+        let calls =
+            parse_batch_file(r#"[{"function": "name"}, {"function": "decimals", "key": "dec"}]"#)
+                .expect("valid batch file");
+        assert_eq!(calls.len(), 2);
+        assert_eq!(calls[0].function, "name");
+        assert_eq!(calls[0].key, "name");
+        assert!(calls[0].args.is_empty());
+        assert!(calls[0].args_json.is_empty());
+        assert_eq!(calls[1].function, "decimals");
+        assert_eq!(calls[1].key, "dec");
+    }
+
+    #[test]
+    fn batch_file_accepts_args_and_args_json() {
+        let calls = parse_batch_file(
+            r#"[{"function": "balance", "args": ["address:GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF"], "args_json": ["[1, 2]"]}]"#,
+        )
+        .expect("valid batch file");
+        assert_eq!(calls[0].args.len(), 1);
+        assert_eq!(calls[0].args_json.len(), 1);
+        assert_eq!(calls[0].key, "balance");
+    }
+
+    #[test]
+    fn batch_file_rejects_duplicate_keys() {
+        let err =
+            parse_batch_file(r#"[{"function": "name"}, {"function": "symbol", "key": "name"}]"#)
+                .expect_err("duplicate keys must be rejected");
+        assert!(err.contains("batch entry 1"), "{err}");
+        assert!(err.contains("duplicate key"), "{err}");
+    }
+
+    #[test]
+    fn batch_file_rejects_duplicate_function_names_without_keys() {
+        // Two entries for the same function default to the same key.
+        let err = parse_batch_file(r#"[{"function": "name"}, {"function": "name"}]"#)
+            .expect_err("default-key duplicates must be rejected");
+        assert!(err.contains("batch entry 1"), "{err}");
+        assert!(err.contains("duplicate key"), "{err}");
+    }
+
+    #[test]
+    fn batch_file_rejects_missing_function() {
+        let err = parse_batch_file(r#"[{"args": ["u32:1"]}, {"function": "name"}]"#)
+            .expect_err("missing function must be rejected");
+        assert!(err.contains("batch entry 0"), "{err}");
+        assert!(err.contains("missing \"function\""), "{err}");
+    }
+
+    #[test]
+    fn batch_file_rejects_malformed_json() {
+        let err = parse_batch_file("[{").expect_err("malformed JSON must be rejected");
+        assert!(err.contains("not valid JSON"), "{err}");
+    }
+
+    #[test]
+    fn batch_file_rejects_non_array() {
+        let err = parse_batch_file(r#"{"function": "name"}"#)
+            .expect_err("non-array top level must be rejected");
+        assert!(err.contains("JSON array"), "{err}");
+    }
+
+    #[test]
+    fn batch_file_rejects_empty_array() {
+        let err = parse_batch_file("[]").expect_err("empty batch must be rejected");
+        assert!(err.contains("no calls"), "{err}");
+    }
+
+    #[test]
+    fn batch_file_rejects_non_string_args() {
+        let err = parse_batch_file(r#"[{"function": "name", "args": [42]}]"#)
+            .expect_err("non-string args must be rejected");
+        assert!(err.contains("batch entry 0"), "{err}");
+    }
+
+    #[test]
+    fn batch_file_rejects_non_object_entry() {
+        let err = parse_batch_file(r#"["name"]"#).expect_err("non-object entry must be rejected");
+        assert!(err.contains("batch entry 0"), "{err}");
+    }
+
+    #[test]
+    fn batch_json_output_preserves_file_order() {
+        let out = format_batch_json(&[
+            ("name".to_string(), "\"My Token\"".to_string()),
+            ("decimals".to_string(), "u32(7)".to_string()),
+        ])
+        .expect("rendering must succeed");
+        assert_eq!(out, r#"{"name":"\"My Token\"","decimals":"u32(7)"}"#);
+    }
+
+    #[test]
+    fn batch_function_validation_rejects_unknown_function() {
+        let spec = sdkt_wasm::ContractSpec {
+            env_meta: None,
+            functions: vec![sdkt_wasm::ContractFunction {
+                name: "hello".to_string(),
+                doc: String::new(),
+                parameters: vec![],
+                outputs: vec![],
+            }],
+            custom_types: vec![],
+            events: vec![],
+        };
+        let entries = parse_batch_file(r#"[{"function": "hello"}, {"function": "nope"}]"#)
+            .expect("valid batch file");
+        let err = validate_batch_functions(&entries, &spec)
+            .expect_err("unknown function must be rejected");
+        assert!(err.contains("batch entry 1"), "{err}");
+        assert!(err.contains("unknown function"), "{err}");
+        assert!(err.contains("nope"), "{err}");
     }
 }
 
@@ -5596,20 +6188,32 @@ fn resolve_sign_network(
     }
 
     if let Some(net_str) = network {
-        return match net_str.trim().to_ascii_lowercase().as_str() {
+        // Match built-in labels case-insensitively, but keep the exact
+        // custom passphrase (case and whitespace) for `Network::Custom`.
+        let trimmed = net_str.trim();
+        return match trimmed.to_ascii_lowercase().as_str() {
             "testnet" => Ok(Network::Testnet),
             "mainnet" => Ok(Network::Mainnet),
             "futurenet" => Ok(Network::Futurenet),
-            other if other.starts_with("custom:") => Ok(Network::parse(other)),
-            _ => Err(format!(
-                "invalid network '{}' (expected testnet|mainnet|futurenet|custom:<passphrase>)",
-                net_str
-            )),
+            _ => {
+                if trimmed.to_ascii_lowercase().starts_with("custom:") {
+                    Ok(Network::parse(net_str))
+                } else {
+                    Err(format!(
+                        "invalid network '{}' (expected testnet|mainnet|futurenet|custom:<passphrase>)",
+                        net_str
+                    ))
+                }
+            }
         };
     }
 
     let profile_passphrase = if let Some(profile_name) = network_profile {
-        let store = NetworkStore::new().map_err(|e| format!("cannot open network store: {}", e))?;
+        // `open` never creates the store directory: verification is a
+        // read-only command, so a missing profile must fail without
+        // changing the filesystem.
+        let store =
+            NetworkStore::open().map_err(|e| format!("cannot open network store: {}", e))?;
         let profile = store
             .get(profile_name)
             .map_err(|e| format!("network profile '{}' not found: {}", profile_name, e))?;
@@ -7662,8 +8266,48 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
                     println!("  Envelope:        {}", result.envelope);
                 }
             }
-            TxAction::Validate { envelope, format } => {
+            TxAction::Validate {
+                envelope,
+                verify_signatures,
+                signer,
+                network,
+                format,
+            } => {
                 let fmt = parse_format_str(&format);
+
+                // Usage errors (exit 2) before any work: verification needs
+                // at least one named signer, and every signer must parse as
+                // a G... public key (an S... secret is rejected). A --signer
+                // without --verify-signatures is also a usage error, so a
+                // script cannot mistake a structural-only exit 0 for a
+                // verified signer.
+                if !verify_signatures && !signer.is_empty() {
+                    eprintln!("Error: --signer requires --verify-signatures");
+                    process::exit(2);
+                }
+                let mut distinct_signers: Vec<String> = Vec::new();
+                if verify_signatures {
+                    if signer.is_empty() {
+                        eprintln!("Error: --verify-signatures requires at least one --signer");
+                        process::exit(2);
+                    }
+                    for value in &signer {
+                        if !distinct_signers.contains(value) {
+                            distinct_signers.push(value.clone());
+                        }
+                    }
+                }
+                let mut signers: Vec<PublicKeySigner> = Vec::new();
+                for value in &distinct_signers {
+                    match PublicKeySigner::from_strkey(value) {
+                        Ok(pk) => signers.push(pk),
+                        Err(_) => {
+                            eprintln!("Error: invalid --signer: expected a G... public key");
+                            process::exit(2);
+                        }
+                    }
+                }
+
                 let env_data = match resolve_tx_input(&envelope) {
                     Ok(s) => s,
                     Err(e) => {
@@ -7675,31 +8319,84 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
                 use sdkt_core::validation::validate_base64;
                 let report = validate_base64(env_data.trim());
 
-                if fmt == OutputFormat::Json {
-                    let json_str = serde_json::to_string(&report)?;
-                    println!("{}", json_str);
-                } else {
-                    println!("Validation Report:");
-                    if report.valid {
-                        println!("  Status: VALID");
+                // Signature verification runs only on a structurally valid
+                // envelope; a failing structural report prints unchanged and
+                // exits 1 with no signature section. The network is resolved
+                // only here, so a stale --network-profile cannot block
+                // structural-only validation.
+                let verification: Option<(SignatureVerification, Network)> =
+                    if verify_signatures && report.valid {
+                        // Resolve the network (passphrase only; no RPC call
+                        // is made). A missing profile still fails a requested
+                        // signature check.
+                        let network = match resolve_sign_network(
+                            network.as_deref(),
+                            net.network_profile.as_deref(),
+                            net.network_passphrase.as_deref(),
+                        ) {
+                            Ok(n) => n,
+                            Err(e) => {
+                                // The structural report is complete at
+                                // this point: print it in the requested
+                                // format (no signature section) so a
+                                // caller in JSON mode still gets output
+                                // to parse, mirroring the verification
+                                // error branch below.
+                                eprintln!("Error: {}", e);
+                                print_validation_report(&report, fmt);
+                                process::exit(1);
+                            }
+                        };
+                        match verify_signatures_for_envelope(
+                            env_data.trim(),
+                            &signers,
+                            &distinct_signers,
+                            &network,
+                        ) {
+                            Ok(v) => Some((v, network)),
+                            Err(e) => {
+                                // The envelope hash could not be computed: a
+                                // structural error, no signature section.
+                                eprintln!("Error: cannot verify signatures: {}", e);
+                                print_validation_report(&report, fmt);
+                                process::exit(1);
+                            }
+                        }
                     } else {
-                        println!("  Status: INVALID");
+                        None
+                    };
+
+                if fmt == OutputFormat::Json {
+                    let mut obj = serde_json::to_value(&report).unwrap();
+                    if let (Some((v, network)), Some(map)) =
+                        (verification.as_ref(), obj.as_object_mut())
+                    {
+                        map.insert(
+                            "signatures".into(),
+                            serde_json::to_value(&v.signers).unwrap(),
+                        );
+                        map.insert(
+                            "unmatched".into(),
+                            serde_json::to_value(&v.unmatched).unwrap(),
+                        );
+                        map.insert(
+                            "network".into(),
+                            serde_json::Value::String(network_display_name(network)),
+                        );
                     }
-                    if !report.errors.is_empty() {
-                        println!("  Errors:");
-                        for err in &report.errors {
-                            println!("    - {}", err.message());
-                        }
-                    }
-                    if !report.warnings.is_empty() {
-                        println!("  Warnings:");
-                        for warn in &report.warnings {
-                            println!("    - {:?}", warn);
-                        }
+                    println!("{}", serde_json::to_string(&obj).unwrap());
+                } else {
+                    print_validation_report(&report, fmt);
+                    if let Some((v, network)) = &verification {
+                        print_signature_verification(v, network);
                     }
                 }
 
-                if !report.valid {
+                let all_valid = verification
+                    .as_ref()
+                    .map(|(v, _)| v.signers.iter().all(|s| s.status == "VALID"))
+                    .unwrap_or(true);
+                if !report.valid || !all_valid {
                     process::exit(1);
                 }
             }
@@ -8530,6 +9227,7 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
                             }
                             SigningError::InvalidKeyLength(_)
                             | SigningError::InvalidSecretKey(_)
+                            | SigningError::InvalidPublicKey(_)
                             | SigningError::Sign(_) => "internal signing error".to_string(),
                         };
                         eprintln!("Error signing transaction: {}", msg);
@@ -11364,6 +12062,7 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
             function,
             args,
             args_json,
+            batch,
             format,
             abi,
             abi_contract,
@@ -11381,7 +12080,36 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
                 return Err(e.into());
             }
 
-            let fmt = parse_format_str(&format);
+            // `--format` defaults to json in batch mode and pretty for a
+            // single call; an explicit value wins in both modes.
+            let fmt = match format.as_deref() {
+                Some(f) => parse_format_str(f),
+                None => {
+                    if batch.is_some() {
+                        OutputFormat::Json
+                    } else {
+                        OutputFormat::Pretty
+                    }
+                }
+            };
+
+            // Batch mode: run every entry in FILE through the single-call
+            // simulation path. `--batch` is mutually exclusive with the
+            // positional FUNCTION and with --args / --args-json (enforced by
+            // clap), so `function` is None here.
+            if let Some(batch_path) = batch {
+                return run_call_batch(
+                    &contract_id,
+                    &batch_path,
+                    fmt,
+                    abi.as_ref(),
+                    abi_contract.as_ref(),
+                    &net,
+                )
+                .await;
+            }
+
+            let function = function.expect("FUNCTION is required unless --batch is given");
 
             // Resolve network config
             let network_config = resolve_network_config(
@@ -13647,6 +14375,8 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
                 expect_error,
                 sequence_length,
                 sequence_every,
+                resource_limit_is_finding,
+                budget_capped,
                 replay,
                 dry_run,
                 format,
@@ -13662,6 +14392,8 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
                     expect_error,
                     sequence_length,
                     sequence_every,
+                    resource_limit_is_finding,
+                    budget_capped,
                     replay,
                     dry_run,
                     &format,

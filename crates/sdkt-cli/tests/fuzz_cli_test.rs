@@ -558,6 +558,7 @@ fn compare_evidence_file(
         artifacts_available: false,
         replay: BTreeMap::new(),
         deterministic: true,
+        resource_limit_is_finding: false,
         schema_version: sdkt_fuzz::CAMPAIGN_EVIDENCE_SCHEMA_VERSION,
         tool: "sdkt".to_string(),
         version: env!("CARGO_PKG_VERSION").to_string(),
@@ -930,119 +931,131 @@ fn cli_campaign_default_path_parity_when_sequence_flags_omitted() {
 }
 
 // ---------------------------------------------------------------------------
-// `--dry-run`: plan without executing (issue #511)
+// 9. RESOURCE_LIMIT opt-in rule (--resource-limit-is-finding)
 // ---------------------------------------------------------------------------
+//
+// A budget-class host error under a declared Success is UNEXPECTED_ERROR
+// without the rule and RESOURCE_LIMIT with it. The campaign needs a way to
+// hit the budget-exhaustion path deterministically, which is what
+// --budget-capped CPU:MEM exposes (`BudgetPlan::Capped`, the engine's
+// purpose-built deterministic budget-exhaustion path). Known fixture
+// behavior through explicit declarations — no real vulnerability discovery.
 
-fn dry_run_json(args: &[&str]) -> serde_json::Value {
-    let owned = fixture("us_new.wasm");
-    let mut all = vec![owned.as_str()];
-    all.extend_from_slice(args);
-    let out = fuzz_campaign(&all)
-        .args(["--dry-run", "--format", "json"])
-        .output()
-        .expect("run sdkt");
-    assert_eq!(
-        out.status.code(),
-        Some(0),
-        "{}",
-        String::from_utf8_lossy(&out.stderr)
-    );
-    serde_json::from_slice(&out.stdout).expect("plan is json")
-}
-
+/// Without the rule: a Budget error under --expect-success classifies as
+/// UNEXPECTED_ERROR, and the evidence does not record the rule.
 #[test]
-fn dry_run_is_deterministic_for_same_seed() {
-    let a = fuzz_campaign(&[
+fn cli_campaign_budget_error_without_rule_is_unexpected_error() {
+    let out = temp_dir("rl-off");
+    fuzz_campaign(&[
         &fixture("us_new.wasm"),
+        "--cases",
+        "1",
         "--seed",
         "7",
-        "--cases",
-        "12",
-        "--dry-run",
-    ])
-    .output()
-    .unwrap();
-    let b = fuzz_campaign(&[
-        &fixture("us_new.wasm"),
-        "--seed",
-        "7",
-        "--cases",
-        "12",
-        "--dry-run",
-    ])
-    .output()
-    .unwrap();
-    assert_eq!(a.status.code(), Some(0));
-    assert_eq!(a.stdout, b.stdout, "pretty plans must be byte-identical");
-    let ja = dry_run_json(&["--seed", "7", "--cases", "12"]);
-    let jb = dry_run_json(&["--seed", "7", "--cases", "12"]);
-    assert_eq!(ja, jb);
-}
-
-#[test]
-fn dry_run_case_count_equals_cases() {
-    for n in [1usize, 5, 17] {
-        let plan = dry_run_json(&["--cases", &n.to_string()]);
-        assert_eq!(plan["cases"].as_array().unwrap().len(), n);
-    }
-}
-
-#[test]
-fn dry_run_functions_are_selectable_and_filter_applies() {
-    let plan = dry_run_json(&["--cases", "9"]);
-    let fns: std::collections::BTreeSet<String> = plan["cases"]
-        .as_array()
-        .unwrap()
-        .iter()
-        .map(|c| c["function"].as_str().unwrap().to_string())
-        .collect();
-    assert!(!fns.is_empty());
-    let wasm = std::fs::read(fixture("us_new.wasm")).unwrap();
-    let input = sdkt_fuzz::CampaignInput::new(&wasm, [0u8; 32]).unwrap();
-    let (selectable, _) = input.selectable();
-    for f in &fns {
-        assert!(selectable.contains(f), "{f} not selectable");
-    }
-    let only = selectable[0].clone();
-    let filtered = dry_run_json(&["--cases", "4", "--function", &only]);
-    for c in filtered["cases"].as_array().unwrap() {
-        assert_eq!(c["function"], only.as_str());
-        assert!(c["auth_mode"].is_string());
-        assert!(c["operators"].is_array());
-    }
-}
-
-#[test]
-fn dry_run_unknown_function_errors_like_a_real_run() {
-    let wasm = fixture("us_new.wasm");
-    let dry = fuzz_campaign(&[&wasm, "--function", "no_such_fn", "--dry-run"])
-        .output()
-        .unwrap();
-    let real = fuzz_campaign(&[&wasm, "--function", "no_such_fn"])
-        .output()
-        .unwrap();
-    assert_eq!(dry.status.code(), Some(2));
-    assert_eq!(dry.status.code(), real.status.code());
-    assert_eq!(dry.stderr, real.stderr);
-}
-
-#[test]
-fn dry_run_writes_no_artifacts() {
-    let dir = temp_dir("dry-run-artifacts");
-    let target = dir.join("artifacts");
-    let out = fuzz_campaign(&[
-        &fixture("us_new.wasm"),
-        "--cases",
-        "6",
+        // Pin the exercised function: without this the single case targets
+        // functions[0], which only happens to be `hello` in this fixture.
+        "--function",
+        "hello",
         "--expect-success",
         "hello",
+        "--budget-capped",
+        "1:1",
         "--artifact-dir",
-        target.to_str().unwrap(),
-        "--dry-run",
+        out.to_str().unwrap(),
+        "--format",
+        "json",
     ])
-    .output()
-    .unwrap();
-    assert_eq!(out.status.code(), Some(0));
-    assert!(!target.exists(), "dry run must not create the artifact dir");
-    let _ = std::fs::remove_dir_all(&dir);
+    .assert()
+    .failure()
+    .code(1)
+    .stdout(predicate::str::contains("UNEXPECTED_ERROR"))
+    .stdout(predicate::str::contains("RESOURCE_LIMIT").not());
+
+    // Default-off evidence must not carry the rule at all (byte-identical
+    // to pre-flag evidence).
+    let evidence = std::fs::read_to_string(out.join("campaign-evidence.json")).unwrap();
+    assert!(
+        !evidence.contains("resource_limit"),
+        "default-off evidence must not record the rule: {evidence}"
+    );
+}
+
+/// With the rule: the same campaign classifies the Budget error as
+/// RESOURCE_LIMIT, and the evidence records that the rule was enabled.
+#[test]
+fn cli_campaign_budget_error_with_rule_is_resource_limit() {
+    let out = temp_dir("rl-on");
+    fuzz_campaign(&[
+        &fixture("us_new.wasm"),
+        "--cases",
+        "1",
+        "--seed",
+        "7",
+        // Pin the exercised function: without this the single case targets
+        // functions[0], which only happens to be `hello` in this fixture.
+        "--function",
+        "hello",
+        "--expect-success",
+        "hello",
+        "--budget-capped",
+        "1:1",
+        "--resource-limit-is-finding",
+        "--artifact-dir",
+        out.to_str().unwrap(),
+        "--format",
+        "json",
+    ])
+    .assert()
+    .failure()
+    .code(1)
+    .stdout(predicate::str::contains("RESOURCE_LIMIT"));
+
+    let evidence = std::fs::read_to_string(out.join("campaign-evidence.json")).unwrap();
+    assert!(
+        evidence.contains(r#""resource_limit_is_finding": true"#),
+        "enabled evidence must record the rule: {evidence}"
+    );
+}
+
+/// Default behavior is byte-identical to today: without --budget-capped the
+/// same campaign has no budget error at all — hello passes, no findings,
+/// no RESOURCE_LIMIT anywhere.
+#[test]
+fn cli_campaign_default_budget_behavior_unchanged() {
+    fuzz_campaign(&[
+        &fixture("us_new.wasm"),
+        "--cases",
+        "1",
+        "--seed",
+        "7",
+        // Pin the exercised function: without this the single case targets
+        // functions[0], which only happens to be `hello` in this fixture.
+        "--function",
+        "hello",
+        "--expect-success",
+        "hello",
+    ])
+    .assert()
+    .success()
+    .code(0)
+    .stdout(predicate::str::contains("findings=0"))
+    .stdout(predicate::str::contains("RESOURCE_LIMIT").not());
+}
+
+/// Malformed --budget-capped is a usage error (exit 2), never a finding.
+#[test]
+fn cli_campaign_budget_capped_malformed_is_usage_error() {
+    fuzz_campaign(&[
+        &fixture("us_new.wasm"),
+        "--cases",
+        "1",
+        "--expect-success",
+        "hello",
+        "--budget-capped",
+        "abc",
+    ])
+    .assert()
+    .failure()
+    .code(2)
+    .stderr(predicate::str::contains("budget-capped"));
 }

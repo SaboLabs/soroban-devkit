@@ -751,6 +751,10 @@ fn runner_writes_and_replays_multistep_artifacts_when_sequence_enabled() {
         auth_mode: sdkt_fuzz::AuthMode::NoAuth,
         expect_success: vec!["increment".to_string()],
         expect_error: Vec::new(),
+        // Default-off: this test exercises the sequence path, not the
+        // RESOURCE_LIMIT rule or capped budgets.
+        resource_limit_is_finding: false,
+        budget_capped: None,
         replay: true,
         dry_run: false,
     };
@@ -815,6 +819,7 @@ fn chain_campaign() -> (sdkt_fuzz::CampaignResult, Vec<sdkt_fuzz::FindingArtifac
             ..Default::default()
         },
     );
+
     run_campaign_artifacts(&input, &expectations).unwrap()
 }
 
@@ -862,4 +867,230 @@ fn artifact_serializes_full_mutation_chain() {
     let json = serde_json::to_string(a).unwrap();
     let back: sdkt_fuzz::FindingArtifact = serde_json::from_str(&json).unwrap();
     assert_eq!(&back, a);
+}
+
+// ---------------------------------------------------------------------------
+// U. Finding consistency: recorded steps ↔ observation ↔ artifact sequence
+// ---------------------------------------------------------------------------
+
+/// A sequence campaign must record findings whose `steps`, `observation`,
+/// `case` and artifact `sequence` all describe the same execution.
+///
+/// Fixture honesty: `increment` returns 1, 2, 3 … per call (verified
+/// empirically). The declared rule "`increment` returns 1" makes every
+/// 3-step case a RETURN_MISMATCH finding, and minimization can drop
+/// exactly one step: two increments return 2 ≠ 1 and still classify as
+/// RETURN_MISMATCH, while a single increment would return the declared 1
+/// and classify as PASS — rejected. The recorded finding is therefore a
+/// genuinely multi-step sequence. Known fixture behavior through an
+/// explicit declaration — never real-world vulnerability discovery.
+#[test]
+fn sequence_finding_steps_observation_and_artifact_agree() {
+    let mut input = sdkt_fuzz::CampaignInput::new(COUNTER_WASM, [9u8; 32]).unwrap();
+    input.cases = 4;
+    input.mutations_per_case = 0;
+    input.sequence_every = 1; // every case is a sequence
+    input.sequence_length = 3;
+    input.function = Some("increment".to_string());
+
+    let mut expectations = BTreeMap::new();
+    expectations.insert(
+        "increment".to_string(),
+        Expected {
+            behavior: ExpectedBehavior::Success {
+                expect_return: Some(ScVal::U32(1)),
+            },
+            ..Default::default()
+        },
+    );
+
+    let (result, artifacts) = sdkt_fuzz::run_campaign_artifacts(&input, &expectations).unwrap();
+    assert!(
+        !result.findings.is_empty(),
+        "the declared increment expectation must yield findings: {result:?}"
+    );
+
+    let exec = counter();
+    for finding in &result.findings {
+        // The finding survived minimization as a multi-step sequence: the
+        // recorded representation is the executed input, not only its
+        // first step.
+        assert_eq!(
+            finding.steps.len(),
+            2,
+            "minimization must stop at two increments (2 ≠ declared 1): {:?}",
+            finding.steps
+        );
+
+        // `case` is the first step of the recorded sequence.
+        assert_eq!(
+            finding.case.call, finding.steps[0],
+            "case must be steps[0] for {}",
+            finding.identity.case_id
+        );
+
+        // The recorded steps re-execute to EXACTLY the recorded observation:
+        // Finding.observation is the final step of Finding.steps — not the
+        // final step of some longer pre-minimization sequence.
+        let reobserved = sdkt_fuzz::execute_sequence(
+            &exec,
+            &[],
+            &input.environment,
+            &finding.steps,
+            &finding.identity.case_id,
+        )
+        .unwrap()
+        .final_observation;
+        assert_eq!(
+            reobserved, finding.observation,
+            "recorded steps must reproduce the recorded observation for {}",
+            finding.identity.case_id
+        );
+
+        // The artifact's sequence is the same executed input.
+        let artifact = artifacts
+            .iter()
+            .find(|a| a.case_id == finding.identity.case_id)
+            .expect("one artifact per finding");
+        assert_eq!(
+            artifact.steps().unwrap(),
+            finding.steps,
+            "artifact sequence must equal the finding's recorded steps"
+        );
+
+        // The minimization record speaks of the whole sequence.
+        assert!(
+            finding.minimization.attempted
+                && finding.minimization.minimized_complexity
+                    < finding.minimization.original_complexity,
+            "the 3-step → 2-step reduction must be reflected: {:?}",
+            finding.minimization
+        );
+    }
+}
+
+/// An unminimized multi-step finding carries the full executed sequence
+/// and reports complexity over **all** steps — not just `case.call`.
+#[test]
+fn unminimized_multistep_finding_reports_complexity_over_all_steps() {
+    let exec = auth_probe();
+    let env = Environment::default();
+
+    // Two guarded `bump` calls under NoAuth: the sequence fails with the
+    // host's Auth error while SUCCESS is declared ⇒ UNEXPECTED_ERROR.
+    let who = ScVal::Address(sdkt_fuzz::auth::source_address());
+    let steps = vec![
+        FunctionCall::new("bump", vec![who.clone()]),
+        FunctionCall::new("bump", vec![who]),
+    ];
+    let obs = sdkt_fuzz::execute_sequence(&exec, &[], &env, &steps, "cx")
+        .unwrap()
+        .final_observation;
+    let expected = Expected {
+        behavior: ExpectedBehavior::Success {
+            expect_return: None,
+        },
+        ..Default::default()
+    };
+    let reason = match Oracle::new(expected.clone()).classify(&obs) {
+        Classification::Finding(r) => r,
+        other => panic!("expected a finding, got {other:?}"),
+    };
+
+    let case = exec.case("cx", steps[0].clone(), Vec::new());
+    let finding = sdkt_fuzz::Finding::new(
+        reason,
+        case,
+        steps.clone(),
+        None,
+        env.clone(),
+        expected,
+        obs,
+        exec.wasm_hash(),
+        sdkt_fuzz::AuthMode::NoAuth,
+    );
+
+    // The full executed sequence is carried on the finding, and `case` is
+    // its first step.
+    assert_eq!(finding.steps, steps, "the finding records what executed");
+    assert_eq!(finding.case.call, steps[0]);
+
+    // Unminimized complexity covers the whole sequence, not one step.
+    assert_eq!(
+        finding.minimization.original_complexity,
+        sdkt_fuzz::sequence_complexity(&steps),
+    );
+    assert!(
+        finding.minimization.original_complexity
+            > sdkt_fuzz::sequence_complexity(std::slice::from_ref(&steps[0])),
+        "a multi-step unminimized finding must weigh its whole sequence: {:?}",
+        finding.minimization
+    );
+
+    // Single-step findings are unchanged: one step, one-step complexity —
+    // the same values the previous `&FuzzCase`-based signature produced.
+    let single = FunctionCall::new(
+        "bump",
+        vec![ScVal::Address(sdkt_fuzz::auth::source_address())],
+    );
+    let declared = Expected {
+        behavior: ExpectedBehavior::Success {
+            expect_return: None,
+        },
+        ..Default::default()
+    };
+    let obs_single = exec
+        .execute_with(&exec.case("cx1", single.clone(), Vec::new()), &env)
+        .unwrap();
+    let reason_single = match Oracle::new(declared.clone()).classify(&obs_single) {
+        Classification::Finding(r) => r,
+        other => panic!("expected a finding, got {other:?}"),
+    };
+    let finding_single = sdkt_fuzz::Finding::new(
+        reason_single,
+        exec.case("cx1", single.clone(), Vec::new()),
+        vec![single.clone()],
+        None,
+        env,
+        declared,
+        obs_single,
+        exec.wasm_hash(),
+        sdkt_fuzz::AuthMode::NoAuth,
+    );
+    assert_eq!(finding_single.steps, vec![single.clone()]);
+    assert_eq!(
+        finding_single.minimization.original_complexity,
+        sdkt_fuzz::sequence_complexity(std::slice::from_ref(&single)),
+        "single-step complexity values are unchanged"
+    );
+}
+
+/// The `case.call == steps[0]` invariant is enforced, not just documented.
+#[test]
+#[should_panic(expected = "finding steps must be the executed sequence")]
+fn finding_rejects_case_that_is_not_the_first_step() {
+    let exec = auth_probe();
+    let env = Environment::default();
+    let who = ScVal::Address(sdkt_fuzz::auth::source_address());
+    let steps = vec![
+        FunctionCall::new("bump", vec![who.clone()]),
+        FunctionCall::new("bump", vec![who]),
+    ];
+    let obs = sdkt_fuzz::execute_sequence(&exec, &[], &env, &steps, "cx").unwrap();
+    // Mutate the FIRST step of the recorded sequence: the recorded `case`
+    // no longer matches what the observation was produced from.
+    let mut mutated = steps.clone();
+    mutated[0] = FunctionCall::new("bump", vec![ScVal::U32(7)]);
+    let case = exec.case("cx", steps[0].clone(), Vec::new());
+    sdkt_fuzz::Finding::new(
+        ReasonCode::UnexpectedError,
+        case,
+        mutated,
+        None,
+        env,
+        Expected::default(),
+        obs.final_observation,
+        exec.wasm_hash(),
+        sdkt_fuzz::AuthMode::NoAuth,
+    );
 }

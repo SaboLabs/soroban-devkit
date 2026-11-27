@@ -8,7 +8,7 @@
 use sdkt_wasm::ContractSpec;
 
 use crate::auth::AuthMode;
-use crate::case::FuzzCase;
+use crate::case::{FunctionCall, FuzzCase};
 use crate::environment::Environment;
 use crate::minimizer::Minimization;
 use crate::mutation::Mutation;
@@ -44,8 +44,17 @@ pub struct Finding {
     pub reason_code: ReasonCode,
     /// Deterministic case identity.
     pub identity: CaseIdentity,
-    /// The case exactly as executed (post-minimization when minimized).
+    /// The case exactly as executed (post-minimization when minimized):
+    /// the **first** step of [`Finding::steps`] — never a different step
+    /// of the sequence.
     pub case: FuzzCase,
+    /// The full executed step sequence, in order — the executed input the
+    /// `observation` belongs to (`observation` is the **final** step's
+    /// observation of this sequence; for a single step it is that step's
+    /// only observation). Single-step findings hold exactly one step,
+    /// equal to `case.call`. This mirrors the artifact's `sequence`, so a
+    /// finding and its artifact always describe the same execution.
+    pub steps: Vec<FunctionCall>,
     /// The mutation that produced the case, if any.
     pub mutation: Option<Mutation>,
     /// Full mutation chain, in application order (last entry equals `mutation`).
@@ -62,10 +71,16 @@ pub struct Finding {
 
 impl Finding {
     /// Build an (unminimized) finding from a classified observation.
+    ///
+    /// `case` is the first step's case (`case.call == steps[0]`) and
+    /// `steps` is the full executed sequence; `observation` must be the
+    /// final step's observation of that sequence. The unminimized
+    /// complexity record covers **all** of `steps`, not just `case.call`.
     #[allow(clippy::too_many_arguments)]
     pub fn new(
         reason_code: ReasonCode,
         case: FuzzCase,
+        steps: Vec<FunctionCall>,
         mutation: Option<Mutation>,
         environment: Environment,
         expected: Expected,
@@ -73,6 +88,10 @@ impl Finding {
         wasm_hash: [u8; 32],
         auth_mode: AuthMode,
     ) -> Self {
+        assert!(
+            !steps.is_empty() && steps[0] == case.call,
+            "finding steps must be the executed sequence and start with case.call"
+        );
         let identity = CaseIdentity {
             case_id: case.case_id.clone(),
             wasm_hash: hex(&wasm_hash),
@@ -86,11 +105,12 @@ impl Finding {
                 .collect(),
             auth_mode: auth_mode.name().to_string(),
         };
-        let minimization = Minimization::not_attempted(&case);
+        let minimization = Minimization::not_attempted(&steps);
         Self {
             reason_code,
             identity,
             case,
+            steps,
             mutations: mutation.iter().cloned().collect(),
             mutation,
             environment,

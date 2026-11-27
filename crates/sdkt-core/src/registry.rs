@@ -774,12 +774,20 @@ const CAPABILITIES: [Capability; CAP_COUNT] = [
     Capability {
         id: "tx.validate",
         command: &["tx", "validate"],
-        summary: "Validate an envelope offline (structure, missing file, input resolution).",
+        summary: "Validate an envelope offline (structure, missing file, input resolution); --verify-signatures checks each named signer's signature against the outer envelope.",
         required_args: &["--envelope <xdr|file>"],
-        optional_args: &["--format"],
+        optional_args: &[
+            "--format",
+            "--verify-signatures",
+            "--signer",
+            "--network",
+            "--network-profile",
+            "--network-passphrase",
+        ],
         formats: PRETTY_JSON,
-        evidence: Evidence::Unverified,
-        notes: Some("Only the invalid-input path was observed (exit non-zero with a shared error message); a passing validation was not executed."),
+        evidence: Evidence::VerifiedLocal,
+        notes: Some("Signature verification exercised end-to-end via the CLI: both-valid exits 0, missing/invalid/wrong-network exit 1, no-signer and unparseable signer exit 2, duplicate signers deduplicated, unmatched signatures informational, and verification makes no RPC call."),
+        exit: ExitSemantics::VERDICT_GATED,
         ..Capability::BASE
     },
     Capability {

@@ -480,6 +480,11 @@ fn run_campaign_inner(
                     reason_code: reason,
                     identity,
                     case: executor.case(&case_id, steps[0].clone(), Vec::new()),
+                    // The full executed (post-minimization) sequence: the
+                    // same list the artifact's `sequence` is built from,
+                    // and the input `minimized_observation` is the final
+                    // step's observation of.
+                    steps: steps.clone(),
                     mutation: mutation_chain.last().cloned(),
                     mutations: mutation_chain,
                     environment: input.environment.clone(),

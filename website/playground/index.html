@@ -44,12 +44,22 @@
 
     <!-- Upload -->
     <div class="upload-row">
-      <div class="dropzone" id="dropzone" role="button" tabindex="0"
-           aria-label="Drop a .wasm contract file here, or press Enter to choose a file">
-        <p class="dz-title">Drop <code>.wasm</code> here</p>
-        <p class="dz-or">or</p>
-        <label class="dz-btn" for="fileInput">Choose WASM File</label>
-        <input type="file" id="fileInput" accept=".wasm,application/wasm">
+      <div class="upload-source">
+        <div class="dropzone" id="dropzone" role="button" tabindex="0"
+             aria-label="Drop a .wasm contract file here, or press Enter to choose a file">
+          <p class="dz-title">Drop <code>.wasm</code> here</p>
+          <p class="dz-or">or</p>
+          <label class="dz-btn" for="fileInput">Choose WASM File</label>
+          <input type="file" id="fileInput" accept=".wasm,application/wasm">
+        </div>
+        <form class="url-loader" id="urlForm">
+          <label for="urlInput">Load a contract from URL</label>
+          <div class="url-controls">
+            <input id="urlInput" type="url" placeholder="https://example.com/contract.wasm">
+            <button class="dz-btn" type="submit">Load</button>
+          </div>
+          <p class="url-hint">The host must allow cross-origin reads (CORS).</p>
+        </form>
       </div>
 
       <div class="compare-slot" id="compare">
