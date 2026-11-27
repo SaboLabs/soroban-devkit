@@ -253,6 +253,20 @@ fn campaign_input(
         },
         None => Environment::default(),
     };
+    Ok((wasm, input))
+}
+
+/// Run a campaign with explicit multi-step [`SequenceOptions`].
+pub fn run_with_sequence(
+    options: &FuzzRunOptions,
+    sequence: SequenceOptions,
+) -> Result<FuzzReport, FuzzError> {
+    if options.dry_run {
+        return Err(FuzzError::InvalidConfig(
+            "dry_run is set: call plan_with_sequence instead of running the campaign".to_string(),
+        ));
+    }
+    let (wasm, input) = campaign_input(options, sequence)?;
 
     let expectations = build_expectations(options)?;
     let (result, artifacts) = run_campaign_artifacts(&input, &expectations)?;
