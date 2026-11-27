@@ -6937,11 +6937,17 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
             } else {
                 parse_format_str(&format)
             };
-            let network_config = resolve_network_config(
+            let network_config = match resolve_network_config(
                 net.rpc_url.clone(),
                 net.network_passphrase.clone(),
                 net.network_profile.clone(),
-            )?;
+            ) {
+                Ok(cfg) => cfg,
+                Err(e) => {
+                    eprintln!("Error: {}", e);
+                    process::exit(1);
+                }
+            };
             let network_key = deployment_network_key(&net, &network_config.passphrase);
             let resolved_contract = resolve_contract_ref(&contract_id, &network_key)?;
             let client = SorobanRpcClient::from_config(&network_config);
@@ -7101,20 +7107,21 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
             {
                 Ok(report) => {
                     if fmt == OutputFormat::Json {
-                        let mut output = serde_json::to_value(&report).unwrap_or_else(|e| {
+                        let json_str = if let Some(alias) = &resolved_contract.alias {
+                            let mut output = serde_json::to_value(&report).unwrap_or_else(|e| {
+                                eprintln!("Error serializing report: {}", e);
+                                process::exit(1);
+                            });
+                            output["alias"] = serde_json::json!(alias);
+                            serde_json::to_string_pretty(&output)
+                        } else {
+                            serde_json::to_string_pretty(&report)
+                        }
+                        .unwrap_or_else(|e| {
                             eprintln!("Error serializing report: {}", e);
                             process::exit(1);
                         });
-                        if let Some(alias) = &resolved_contract.alias {
-                            output["alias"] = serde_json::json!(alias);
-                        }
-                        println!(
-                            "{}",
-                            serde_json::to_string_pretty(&output).unwrap_or_else(|e| {
-                                eprintln!("Error serializing report: {}", e);
-                                process::exit(1);
-                            })
-                        );
+                        println!("{json_str}");
                     } else {
                         println!("Contract Verification Report");
                         println!("============================");
@@ -7213,20 +7220,21 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
             {
                 Ok(report) => {
                     if fmt == OutputFormat::Json {
-                        let mut output = serde_json::to_value(&report).unwrap_or_else(|e| {
+                        let json_str = if let Some(alias) = &resolved_contract.alias {
+                            let mut output = serde_json::to_value(&report).unwrap_or_else(|e| {
+                                eprintln!("Error serializing report: {}", e);
+                                process::exit(1);
+                            });
+                            output["alias"] = serde_json::json!(alias);
+                            serde_json::to_string_pretty(&output)
+                        } else {
+                            serde_json::to_string_pretty(&report)
+                        }
+                        .unwrap_or_else(|e| {
                             eprintln!("Error serializing report: {}", e);
                             process::exit(1);
                         });
-                        if let Some(alias) = &resolved_contract.alias {
-                            output["alias"] = serde_json::json!(alias);
-                        }
-                        println!(
-                            "{}",
-                            serde_json::to_string_pretty(&output).unwrap_or_else(|e| {
-                                eprintln!("Error serializing report: {}", e);
-                                process::exit(1);
-                            })
-                        );
+                        println!("{json_str}");
                     } else {
                         println!("Contract Health Report");
                         println!("=======================");

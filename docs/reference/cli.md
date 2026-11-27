@@ -1348,7 +1348,7 @@ Examples (one per command):
 ```bash
 sdkt call @token balance --network-profile testnet
 sdkt invoke @token mint --args address:G... --args i128:100 --identity alice --network-profile testnet
-sdkt health @vault --network testnet
+sdkt health --contract @vault --network testnet
 sdkt verify --contract @vault --wasm target/wasm32v1-none/release/vault.wasm --network testnet
 sdkt inspect @token --network-profile testnet
 ```

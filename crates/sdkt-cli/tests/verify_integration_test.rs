@@ -345,8 +345,9 @@ fn verify_rpc_failure_still_exits_nonzero() {
     let url = format!("http://{}", listener.local_addr().unwrap());
     drop(listener);
 
-    let mut cmd = Command::cargo_bin("sdkt").unwrap();
-    cmd.arg("verify")
+    Command::cargo_bin("sdkt")
+        .unwrap()
+        .arg("verify")
         .arg("--contract")
         .arg(test_contract_strkey())
         .arg("--wasm")
@@ -355,4 +356,93 @@ fn verify_rpc_failure_still_exits_nonzero() {
         .arg(url)
         .assert()
         .failure();
+}
+
+#[test]
+fn verify_resolves_deployment_alias_pretty_and_json() {
+    let dir = tempfile::tempdir().unwrap();
+    let contract_id = test_contract_strkey();
+    let deployments = serde_json::json!({
+        "profiles": {
+            "testnet": {
+                "vault": {
+                    "contract_id": contract_id,
+                    "wasm_hash": "11".repeat(32),
+                    "network": "testnet",
+                    "timestamp": 1
+                }
+            }
+        }
+    });
+    std::fs::write(
+        dir.path().join(".sdkt-deployments.json"),
+        serde_json::to_string_pretty(&deployments).unwrap(),
+    )
+    .unwrap();
+
+    let on_chain: [u8; 32] = sha256_raw(MINIMAL_WASM);
+    let url = mock_verify_rpc(on_chain);
+    let file = write_wasm(MINIMAL_WASM);
+
+    let pretty = Command::cargo_bin("sdkt")
+        .unwrap()
+        .current_dir(dir.path())
+        .args([
+            "verify",
+            "--contract",
+            "@vault",
+            "--wasm",
+            file.path().to_str().unwrap(),
+            "--rpc-url",
+            &url,
+        ])
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+    let pretty_str = String::from_utf8_lossy(&pretty);
+    assert!(
+        pretty_str.contains(&format!("Contract ID : {contract_id} (alias @vault)")),
+        "expected resolved ID + alias in pretty output, got: {pretty_str}"
+    );
+
+    let out = Command::cargo_bin("sdkt")
+        .unwrap()
+        .current_dir(dir.path())
+        .args([
+            "verify",
+            "--contract",
+            "@vault",
+            "--wasm",
+            file.path().to_str().unwrap(),
+            "--rpc-url",
+            &url,
+            "--format",
+            "json",
+        ])
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+    let json: serde_json::Value = serde_json::from_slice(&out).unwrap();
+    assert_eq!(json["contract_id"], contract_id);
+    assert_eq!(json["alias"], "vault");
+
+    // Unknown alias fails before any RPC call, naming both alias and profile.
+    Command::cargo_bin("sdkt")
+        .unwrap()
+        .current_dir(dir.path())
+        .args([
+            "verify",
+            "--contract",
+            "@missing-vault",
+            "--rpc-url",
+            "http://127.0.0.1:1",
+        ])
+        .assert()
+        .failure()
+        .stderr(predicates::str::contains("@missing-vault"))
+        .stderr(predicates::str::contains("testnet"));
 }
