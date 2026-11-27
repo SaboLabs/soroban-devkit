@@ -611,3 +611,84 @@ fn call_with_abi_void_return() {
         .assert()
         .success();
 }
+
+#[test]
+fn call_resolves_deployment_alias_pretty_and_json() {
+    let dir = tempdir().unwrap();
+    let rpc_url = mock_http_server("HTTP/1.1 200 OK\r\n", MOCK_SIM_OK);
+    add_mock_profile(dir.path(), &rpc_url);
+
+    // Record `token` -> VALID_CONTRACT under `mocknet` in .sdkt-deployments.json
+    let deployments = serde_json::json!({
+        "profiles": {
+            "mocknet": {
+                "token": {
+                    "contract_id": VALID_CONTRACT,
+                    "wasm_hash": "00".repeat(32),
+                    "network": "mocknet",
+                    "timestamp": 1
+                }
+            }
+        }
+    });
+    std::fs::write(
+        dir.path().join(".sdkt-deployments.json"),
+        serde_json::to_string_pretty(&deployments).unwrap(),
+    )
+    .unwrap();
+
+    // Pretty mode shows both resolved ID and `(alias @token)`.
+    sdkt_isolated(dir.path())
+        .current_dir(dir.path())
+        .args(["call", "@token", "balance", "--network-profile", "mocknet"])
+        .assert()
+        .success()
+        .stdout(predicates::str::contains(format!(
+            "Contract:  {VALID_CONTRACT} (alias @token)"
+        )));
+
+    // JSON mode carries resolved ID in `contract` and `alias` field.
+    let rpc_url2 = mock_http_server("HTTP/1.1 200 OK\r\n", MOCK_SIM_OK);
+    add_mock_profile(dir.path(), &rpc_url2);
+    let out = sdkt_isolated(dir.path())
+        .current_dir(dir.path())
+        .args([
+            "call",
+            "@token",
+            "balance",
+            "--network-profile",
+            "mocknet",
+            "--format",
+            "json",
+        ])
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+    let json: serde_json::Value = serde_json::from_slice(&out).unwrap();
+    assert_eq!(json["contract"], VALID_CONTRACT);
+    assert_eq!(json["alias"], "token");
+}
+
+#[test]
+fn call_unknown_alias_fails_before_rpc_naming_alias_and_profile() {
+    let dir = tempdir().unwrap();
+    // Use an unreachable port — if an RPC call were attempted it would fail with a connection error,
+    // not the alias error.
+    add_mock_profile(dir.path(), "http://127.0.0.1:1");
+
+    sdkt_isolated(dir.path())
+        .current_dir(dir.path())
+        .args([
+            "call",
+            "@missing-alias",
+            "balance",
+            "--network-profile",
+            "mocknet",
+        ])
+        .assert()
+        .failure()
+        .stderr(predicates::str::contains("@missing-alias"))
+        .stderr(predicates::str::contains("mocknet"));
+}

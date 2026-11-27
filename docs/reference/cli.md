@@ -1474,6 +1474,26 @@ Store root precedence (lowest → highest): `<cwd>/.sdkt/plugins`,
 - **Workspace preflight gate (`sdkt project deploy --release-assurance`).** Runs `run_release_assurance` for every contract that will actually deploy (after `--skip-deployed` filtering) **before** the upload loop starts, and aborts the entire workspace deploy (exit `1`, uploading nothing) if any contract's preflight returns `FAIL` or `ERROR`. For each deploying contract, the preflight runs **Artifact** (against the resolved `wasm_artifact`), **Security** (against the contract's source directory `path`), and **Upgrade Safety** (fetching the previously deployed WASM bytes via `inspect_contract` → `get_wasm_bytecode` into a temporary file when a deployment record exists for that alias, or marking Upgrade Safety `SKIPPED` when no prior record exists). **Fuzz Evidence**, **Verification**, and **Contract Health** are `SKIPPED` by construction during preflight because Verification and Contract Health are post-deploy checks and Fuzz Evidence requires per-contract evidence mapping. Without `--release-assurance`, `sdkt project deploy` behavior and output are unchanged.
 - **Mainnet safety.** Mutating commands (`tx submit`, `invoke`, `deploy`, `project deploy`) refuse to target mainnet unless you explicitly select the network — via `--network-profile`, `--rpc-url`, or `--network-passphrase`. A testnet-default passphrase pointed at a mainnet endpoint is rejected before any request is sent, protecting against signing for the wrong network.
 
+## Deployment Alias References (`@alias`)
+
+After `sdkt project deploy` records contracts in `.sdkt-deployments.json`, the post-deploy commands `call`, `invoke`, `health`, `verify`, and `inspect` accept `@<alias>` in place of a bare `C...` contract ID. The alias is resolved against `.sdkt-deployments.json` for the selected network profile before any RPC call or signing occurs; bare `C...` IDs pass through untouched.
+
+- **Pretty output:** displays `<C...> (alias @<alias>)`.
+- **JSON output:** sets the existing contract field (`contract`, `contractId`, or `contract_id`) to the resolved `C...` ID and adds `"alias": "<alias>"`.
+- **Unknown alias / missing record:** exits non-zero with a one-line error naming both the `@alias` and the network profile.
+
+Examples (one per command):
+
+```bash
+sdkt call @token balance --network-profile testnet
+sdkt invoke @token mint --args address:G... --args i128:100 --identity alice --network-profile testnet
+sdkt health --contract @vault --network testnet
+sdkt verify --contract @vault --wasm target/wasm32v1-none/release/vault.wasm --network testnet
+sdkt inspect @token --network-profile testnet
+```
+
+See the workspace tutorial (issue #546) for an end-to-end multi-contract workflow using `@alias` references.
+
 ## Fuzz expectation declarations
 
 `sdkt fuzz campaign` accepts repeatable `--expect-success <FN>` and

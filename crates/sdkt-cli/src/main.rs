@@ -5178,6 +5178,76 @@ struct DryRunContract {
 /// the identity's public key, read from the identity store only), never
 /// submits, and never writes `.sdkt-deployments.json`. Without
 /// `--skip-deployed` it makes no RPC calls at all.
+/// Result of resolving a contract reference (`C...` ID or `@alias`).
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct ResolvedContractRef {
+    contract_id: String,
+    alias: Option<String>,
+}
+
+/// Compute the deployment record network key for a resolved `NetworkArgs` + passphrase.
+fn deployment_network_key(net: &NetworkArgs, passphrase: &str) -> String {
+    sdkt_core::deployment::network_key(
+        if net.network_passphrase.is_some() {
+            None
+        } else {
+            net.network_profile.as_deref()
+        },
+        passphrase,
+    )
+}
+
+/// Resolve a contract reference (`C...` ID or `@alias`) against `record_path`.
+///
+/// Bare contract IDs pass through untouched without reading `record_path`.
+/// `@alias` references are looked up under `network_key`; missing aliases or a
+/// missing record file produce a one-line error naming both the alias and profile.
+fn resolve_contract_ref_from_path(
+    raw: &str,
+    network_key: &str,
+    record_path: &Path,
+) -> Result<ResolvedContractRef, String> {
+    let Some(alias) = raw.strip_prefix('@') else {
+        return Ok(ResolvedContractRef {
+            contract_id: raw.to_string(),
+            alias: None,
+        });
+    };
+    if alias.is_empty() {
+        return Err(format!(
+            "Unknown deployment alias '@' for network profile '{network_key}'"
+        ));
+    }
+    let record_file = sdkt_core::deployment::DeploymentRecordFile::read(record_path)?;
+    match record_file.record_for(network_key, alias) {
+        Some(record) => Ok(ResolvedContractRef {
+            contract_id: record.contract_id.clone(),
+            alias: Some(alias.to_string()),
+        }),
+        None => Err(format!(
+            "Unknown deployment alias '@{alias}' for network profile '{network_key}' (not found in {})",
+            record_path.display()
+        )),
+    }
+}
+
+/// Resolve a contract reference against the default `.sdkt-deployments.json`.
+fn resolve_contract_ref(raw: &str, network_key: &str) -> Result<ResolvedContractRef, String> {
+    resolve_contract_ref_from_path(
+        raw,
+        network_key,
+        Path::new(sdkt_core::deployment::DEPLOYMENT_RECORD_FILE),
+    )
+}
+
+/// Format a contract ID for pretty output, appending `(alias @...)` when resolved from an alias.
+fn format_contract_display(contract_id: &str, alias: Option<&str>) -> String {
+    match alias {
+        Some(a) => format!("{contract_id} (alias @{a})"),
+        None => contract_id.to_string(),
+    }
+}
+
 #[allow(clippy::too_many_arguments)]
 async fn project_deploy_dry_run(
     config: &DevKitConfig,
@@ -5204,14 +5274,7 @@ async fn project_deploy_dry_run(
         "Test SDF Future Network ; October 2022" => sdkt_xdr::sign::Network::Futurenet,
         other => sdkt_xdr::sign::Network::Custom(other.to_string()),
     };
-    let network_key = sdkt_core::deployment::network_key(
-        if net.network_passphrase.is_some() {
-            None
-        } else {
-            net.network_profile.as_deref()
-        },
-        &network_config.passphrase,
-    );
+    let network_key = deployment_network_key(net, &network_config.passphrase);
     let record_path = Path::new(sdkt_core::deployment::DEPLOYMENT_RECORD_FILE);
     let record_file = sdkt_core::deployment::DeploymentRecordFile::read(record_path)?;
 
@@ -7850,11 +7913,20 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
             } else {
                 parse_format_str(&format)
             };
-            let client = resolve_rpc_client(
+            let network_config = match resolve_network_config(
                 net.rpc_url.clone(),
                 net.network_passphrase.clone(),
                 net.network_profile.clone(),
-            );
+            ) {
+                Ok(cfg) => cfg,
+                Err(e) => {
+                    eprintln!("Error: {}", e);
+                    process::exit(1);
+                }
+            };
+            let network_key = deployment_network_key(&net, &network_config.passphrase);
+            let resolved_contract = resolve_contract_ref(&contract_id, &network_key)?;
+            let client = SorobanRpcClient::from_config(&network_config);
 
             // Load ABI spec if provided for storage decoding
             let contract_spec = if let Some(wasm_path) = abi.as_ref() {
@@ -7879,10 +7951,13 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
                 None
             };
 
-            match inspect_contract(&client, &contract_id).await {
+            match inspect_contract(&client, &resolved_contract.contract_id).await {
                 Ok(inspection) => {
                     if fmt == OutputFormat::Json {
                         let mut output = serde_json::to_value(&inspection)?;
+                        if let Some(alias) = &resolved_contract.alias {
+                            output["alias"] = serde_json::json!(alias);
+                        }
                         if let Some(spec) = contract_spec.as_ref() {
                             output["abi_spec"] = serde_json::to_value(spec)?;
                         }
@@ -7899,7 +7974,13 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
                             );
                         }
                         println!("Contract Inspection");
-                        println!("Contract ID: {}", inspection.contract_id);
+                        println!(
+                            "Contract ID: {}",
+                            format_contract_display(
+                                &inspection.contract_id,
+                                resolved_contract.alias.as_deref()
+                            )
+                        );
                         println!("WASM Hash: {}", inspection.wasm_hash);
                         println!("Storage Keys: {}", inspection.storage_keys.len());
 
@@ -7943,6 +8024,8 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
                     process::exit(1);
                 }
             };
+            let network_key = deployment_network_key(&net, &target.config.passphrase);
+            let resolved_contract = resolve_contract_ref(&contract, &network_key)?;
             let client = target.client;
             let network = target.network_name;
 
@@ -7961,7 +8044,7 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
                         });
                         match run_upgrade_safety(
                             &client,
-                            &contract,
+                            &resolved_contract.contract_id,
                             &candidate_bytes,
                             &network,
                             fmt,
@@ -7990,20 +8073,41 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
                 None => None,
             };
 
-            match verify_contract(&client, &contract, local_bytes.as_deref(), &network).await {
+            match verify_contract(
+                &client,
+                &resolved_contract.contract_id,
+                local_bytes.as_deref(),
+                &network,
+            )
+            .await
+            {
                 Ok(report) => {
                     if fmt == OutputFormat::Json {
-                        println!(
-                            "{}",
-                            serde_json::to_string_pretty(&report).unwrap_or_else(|e| {
+                        let json_str = if let Some(alias) = &resolved_contract.alias {
+                            let mut output = serde_json::to_value(&report).unwrap_or_else(|e| {
                                 eprintln!("Error serializing report: {}", e);
                                 process::exit(1);
-                            })
-                        );
+                            });
+                            output["alias"] = serde_json::json!(alias);
+                            serde_json::to_string_pretty(&output)
+                        } else {
+                            serde_json::to_string_pretty(&report)
+                        }
+                        .unwrap_or_else(|e| {
+                            eprintln!("Error serializing report: {}", e);
+                            process::exit(1);
+                        });
+                        println!("{json_str}");
                     } else {
                         println!("Contract Verification Report");
                         println!("============================");
-                        println!("Contract ID : {}", report.contract_id);
+                        println!(
+                            "Contract ID : {}",
+                            format_contract_display(
+                                &report.contract_id,
+                                resolved_contract.alias.as_deref()
+                            )
+                        );
                         println!("Network     : {}", report.network);
                         println!("On-chain WASM: {}", report.on_chain_wasm_hash);
                         if let (Some(lh), Some(sz)) =
@@ -8065,6 +8169,8 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
                     process::exit(1);
                 }
             };
+            let network_key = deployment_network_key(&net, &target.config.passphrase);
+            let resolved_contract = resolve_contract_ref(&contract, &network_key)?;
             let client = target.client;
             let network = target.network_name;
 
@@ -8080,20 +8186,41 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
                 None => None,
             };
 
-            match contract_health(&client, &contract, local_bytes.as_deref(), &network).await {
+            match contract_health(
+                &client,
+                &resolved_contract.contract_id,
+                local_bytes.as_deref(),
+                &network,
+            )
+            .await
+            {
                 Ok(report) => {
                     if fmt == OutputFormat::Json {
-                        println!(
-                            "{}",
-                            serde_json::to_string_pretty(&report).unwrap_or_else(|e| {
+                        let json_str = if let Some(alias) = &resolved_contract.alias {
+                            let mut output = serde_json::to_value(&report).unwrap_or_else(|e| {
                                 eprintln!("Error serializing report: {}", e);
                                 process::exit(1);
-                            })
-                        );
+                            });
+                            output["alias"] = serde_json::json!(alias);
+                            serde_json::to_string_pretty(&output)
+                        } else {
+                            serde_json::to_string_pretty(&report)
+                        }
+                        .unwrap_or_else(|e| {
+                            eprintln!("Error serializing report: {}", e);
+                            process::exit(1);
+                        });
+                        println!("{json_str}");
                     } else {
                         println!("Contract Health Report");
                         println!("=======================");
-                        println!("Contract ID : {}", report.contract_id);
+                        println!(
+                            "Contract ID : {}",
+                            format_contract_display(
+                                &report.contract_id,
+                                resolved_contract.alias.as_deref()
+                            )
+                        );
                         println!("Network     : {}", report.network);
                         println!("Health      : {}", report.health.to_uppercase());
                         if let Some(v) = report.verified {
@@ -12112,6 +12239,8 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
                 net.network_passphrase.clone(),
                 net.network_profile.clone(),
             )?;
+            let network_key = deployment_network_key(&net, &network_config.passphrase);
+            let resolved_contract = resolve_contract_ref(&contract_id, &network_key)?;
 
             // Parse typed args into base64-encoded ScVal (reuse existing parser)
             let mut parsed_args = parse_typed_args(&args, true)?;
@@ -12125,7 +12254,7 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
                 source_account: "GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF".into(),
                 sequence: 0,
                 fee: 0,
-                contract_id: contract_id.clone(),
+                contract_id: resolved_contract.contract_id.clone(),
                 function: function.clone(),
                 args: parsed_args,
                 memo: None,
@@ -12192,11 +12321,14 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
                     if fmt == OutputFormat::Json {
                         // Build JSON: always include raw result
                         let mut json_obj = serde_json::json!({
-                            "contract": contract_id,
+                            "contract": resolved_contract.contract_id,
                             "function": function,
                             "result": result_display,
                             "events": events_json,
                         });
+                        if let Some(alias) = &resolved_contract.alias {
+                            json_obj["alias"] = serde_json::json!(alias);
+                        }
 
                         // If ABI was used and decoding succeeded, include decoded info
                         if let Some(decoded) = &result_decoded {
@@ -12212,7 +12344,13 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
                         println!("{}", serde_json::to_string(&json_obj)?);
                     } else {
                         // Pretty output
-                        println!("Contract:  {}", contract_id);
+                        println!(
+                            "Contract:  {}",
+                            format_contract_display(
+                                &resolved_contract.contract_id,
+                                resolved_contract.alias.as_deref()
+                            )
+                        );
                         println!("Function:  {}", function);
                         println!("Result:    {}", result_display);
 
@@ -12267,6 +12405,8 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
                 eprintln!("Error: {}", e);
                 process::exit(1);
             }
+            let network_key = deployment_network_key(&net, &network_config.passphrase);
+            let resolved_contract = resolve_contract_ref(&contract_id, &network_key)?;
             let network = match network_config.passphrase.as_str() {
                 "Public Global Stellar Network ; September 2015" => Network::Mainnet,
                 "Test SDF Future Network ; October 2022" => Network::Futurenet,
@@ -12302,7 +12442,7 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
                 source_account: identity_obj.public_key.clone(),
                 sequence: 0, // fetched by invoke_contract from the network
                 fee: 0,      // computed from simulation inside invoke_contract
-                contract_id: contract_id.clone(),
+                contract_id: resolved_contract.contract_id.clone(),
                 function: function.clone(),
                 args: parsed_args,
                 memo: None,
@@ -12322,20 +12462,27 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
                 match sdkt_rpc::build_invoke_envelope(&client, &params, &signer, network).await {
                     Ok(res) => {
                         if fmt == OutputFormat::Json {
-                            println!(
-                                "{}",
-                                serde_json::json!({
-                                    "envelopeXdr": res.envelope_xdr,
-                                    "fee": res.fee,
-                                    "sequence": res.sequence,
-                                    "contractId": res.contract_id,
-                                    "function": res.function,
-                                    "submitted": false,
-                                })
-                            );
+                            let mut json_obj = serde_json::json!({
+                                "envelopeXdr": res.envelope_xdr,
+                                "fee": res.fee,
+                                "sequence": res.sequence,
+                                "contractId": res.contract_id,
+                                "function": res.function,
+                                "submitted": false,
+                            });
+                            if let Some(alias) = &resolved_contract.alias {
+                                json_obj["alias"] = serde_json::json!(alias);
+                            }
+                            println!("{}", json_obj);
                         } else {
                             println!("Transaction Envelope (NOT submitted):");
-                            println!("  Contract: {}", res.contract_id);
+                            println!(
+                                "  Contract: {}",
+                                format_contract_display(
+                                    &res.contract_id,
+                                    resolved_contract.alias.as_deref()
+                                )
+                            );
                             println!("  Function: {}", res.function);
                             println!("  Fee:      {} stroops", res.fee);
                             println!("  Sequence: {}", res.sequence);
@@ -12369,10 +12516,19 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
                         if !res.events.is_empty() {
                             json["events"] = serde_json::json!(res.events);
                         }
+                        if let Some(alias) = &resolved_contract.alias {
+                            json["alias"] = serde_json::json!(alias);
+                        }
                         println!("{}", json);
                     } else {
                         println!("Invocation Result:");
-                        println!("  Contract: {}", res.contract_id);
+                        println!(
+                            "  Contract: {}",
+                            format_contract_display(
+                                &res.contract_id,
+                                resolved_contract.alias.as_deref()
+                            )
+                        );
                         println!("  Function: {}", res.function);
                         println!("  Hash:     {}", res.hash);
                         println!("  Status:   {}", res.status);
@@ -15780,6 +15936,64 @@ mod diff_contract_tests {
             }
             _ => panic!("expected `diff`"),
         }
+    }
+
+    #[test]
+    fn resolve_contract_ref_handles_alias_unknown_and_bare_id() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let record_path = dir.path().join(".sdkt-deployments.json");
+
+        // Bare C... ID passes through untouched even when record file does not exist.
+        let bare = resolve_contract_ref_from_path(
+            "CAE3U7JKESRWZHPEQ72DVNGOQ6WPA7HSPQZL5YV46NPCE4TMUPAGYMEC",
+            "testnet",
+            &record_path,
+        )
+        .expect("bare ID should pass through");
+        assert_eq!(
+            bare,
+            ResolvedContractRef {
+                contract_id: "CAE3U7JKESRWZHPEQ72DVNGOQ6WPA7HSPQZL5YV46NPCE4TMUPAGYMEC".to_string(),
+                alias: None,
+            }
+        );
+
+        // Missing record file + @alias produces a one-line error naming alias and profile.
+        let missing_file_err =
+            resolve_contract_ref_from_path("@token", "testnet", &record_path).unwrap_err();
+        assert!(missing_file_err.contains("@token"));
+        assert!(missing_file_err.contains("testnet"));
+
+        // Write a fixture record file and resolve a known alias.
+        let mut file = sdkt_core::deployment::DeploymentRecordFile::default();
+        file.set_record(
+            "testnet",
+            "token",
+            sdkt_core::deployment::DeploymentRecord {
+                contract_id: "CAE3U7JKESRWZHPEQ72DVNGOQ6WPA7HSPQZL5YV46NPCE4TMUPAGYMEC".to_string(),
+                wasm_hash: "00".repeat(32),
+                network: "testnet".to_string(),
+                timestamp: 1,
+                salt: None,
+            },
+        );
+        file.write(&record_path).expect("write record file");
+
+        let resolved = resolve_contract_ref_from_path("@token", "testnet", &record_path)
+            .expect("known alias should resolve");
+        assert_eq!(
+            resolved,
+            ResolvedContractRef {
+                contract_id: "CAE3U7JKESRWZHPEQ72DVNGOQ6WPA7HSPQZL5YV46NPCE4TMUPAGYMEC".to_string(),
+                alias: Some("token".to_string()),
+            }
+        );
+
+        // Unknown alias on the same profile fails naming both alias and profile.
+        let unknown_err =
+            resolve_contract_ref_from_path("@vault", "testnet", &record_path).unwrap_err();
+        assert!(unknown_err.contains("@vault"));
+        assert!(unknown_err.contains("testnet"));
     }
 }
 
