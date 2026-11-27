@@ -18,6 +18,10 @@ import {
   postWithTransfer,
   readFileBytes,
 } from '../playground.js';
+// NOTE: the playground.js implementation (transferable buffers via postMessage
+// transfer list and the MAX_INPUT_BYTES cap) must be landed alongside this test
+// so the imported names resolve to real code. CI runs this file via the
+// playground test step.
 
 async function testTransferDetachesSenderBuffer() {
   const { port1, port2 } = new MessageChannel();
