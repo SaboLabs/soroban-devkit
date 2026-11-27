@@ -37,6 +37,14 @@ pub struct FuzzRunOptions {
     pub expect_success: Vec<String>,
     /// `--expect-error FN:TYPE:CODE` declarations.
     pub expect_error: Vec<String>,
+    /// Opt-in rule: budget-class host errors under a declared `Success`
+    /// classify as RESOURCE_LIMIT findings instead of UNEXPECTED_ERROR.
+    /// Default off — resource exhaustion is an outcome, not a verdict.
+    pub resource_limit_is_finding: bool,
+    /// `--budget-capped CPU:MEM`: deterministic per-case CPU/mem ceilings
+    /// (`BudgetPlan::Capped`) so the budget-exhaustion path can be
+    /// exercised at a known limit. `None` = the default budget.
+    pub budget_capped: Option<(u64, u64)>,
     /// Replay every written artifact (deterministic verification).
     pub replay: bool,
 }
@@ -52,6 +60,8 @@ impl Default for FuzzRunOptions {
             auth_mode: AuthMode::NoAuth,
             expect_success: Vec::new(),
             expect_error: Vec::new(),
+            resource_limit_is_finding: false,
+            budget_capped: None,
             replay: false,
         }
     }
@@ -155,6 +165,8 @@ impl FuzzReport {
                 "reason_code": f.reason_code.name(),
                 "auth_mode": f.identity.auth_mode,
                 "mutation_id": f.identity.mutation_id,
+                "mutation_ids": f.identity.mutation_ids,
+                "operators": f.identity.operators,
                 "minimized": f.minimization.attempted && f.minimization.preserved,
                 "minimization": {
                     "attempted": f.minimization.attempted,
@@ -221,7 +233,15 @@ pub fn run_with_sequence(
     input.auth_mode = options.auth_mode;
     input.sequence_length = sequence.sequence_length;
     input.sequence_every = sequence.sequence_every;
-    input.environment = Environment::default();
+    // A capped budget is opt-in via --budget-capped; the default budget is
+    // unchanged (BudgetPlan::Default).
+    input.environment = match options.budget_capped {
+        Some((cpu, mem)) => Environment {
+            budget: crate::environment::BudgetPlan::Capped { cpu, mem },
+            ..Environment::default()
+        },
+        None => Environment::default(),
+    };
 
     let expectations = build_expectations(options, &input.spec)?;
     let (mut result, artifacts) = run_campaign_artifacts(&input, &expectations)?;
@@ -297,6 +317,7 @@ pub fn run_with_sequence(
         &written_artifacts,
         &replay_map,
         deterministic,
+        options.resource_limit_is_finding,
     );
 
     // Write the evidence file next to the artifacts (release-assurance input).
@@ -440,6 +461,7 @@ fn build_expectations(
                 behavior: ExpectedBehavior::Success {
                     expect_return: None,
                 },
+                resource_limit_is_finding,
                 ..Default::default()
             },
         );
@@ -477,6 +499,7 @@ fn build_expectations(
                     error_type: error_type.to_string(),
                     code,
                 },
+                resource_limit_is_finding,
                 ..Default::default()
             },
         );

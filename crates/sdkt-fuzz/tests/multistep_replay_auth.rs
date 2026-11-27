@@ -73,6 +73,7 @@ fn artifact_for(mode: AuthMode, expected_return: u32) -> FindingArtifact {
     let finding = Finding::new(
         reason,
         case,
+        steps.clone(),
         None,
         env,
         expected,
@@ -175,6 +176,7 @@ fn singlestep_correctauth_behavior_unchanged() {
     let finding = Finding::new(
         reason,
         exec.case("s", call.clone(), Vec::new()),
+        vec![call.clone()],
         None,
         env,
         expected,

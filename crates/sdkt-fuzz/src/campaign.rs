@@ -274,7 +274,7 @@ fn run_campaign_inner(
         };
 
         // --- Mutations (typed, deterministic, non-targets preserved) ---
-        let mut mutation_record: Option<Mutation> = None;
+        let mut mutation_chain: Vec<Mutation> = Vec::new();
         if input.mutations_per_case > 0 && !is_sequence {
             let param_types: Vec<&sdkt_wasm::ContractType> = input
                 .spec
@@ -305,7 +305,7 @@ fn run_campaign_inner(
                 ) {
                     Ok(mutation) => {
                         *args = mutation.args.clone();
-                        mutation_record = Some(mutation);
+                        mutation_chain.push(mutation);
                     }
                     Err(MutationError::NoApplicableMutation)
                     | Err(MutationError::ArgIndexOutOfRange { .. }) => continue,
@@ -389,10 +389,16 @@ fn run_campaign_inner(
                     case_id: case_id.clone(),
                     wasm_hash: hex(&executor.wasm_hash()),
                     function: function.clone(),
-                    mutation_id: mutation_record.as_ref().map(|m| m.mutation_id.clone()),
-                    operator: mutation_record
-                        .as_ref()
-                        .map(|m| m.operator.name().to_string()),
+                    mutation_id: mutation_chain.last().map(|m| m.mutation_id.clone()),
+                    operator: mutation_chain.last().map(|m| m.operator.name().to_string()),
+                    mutation_ids: mutation_chain
+                        .iter()
+                        .map(|m| m.mutation_id.clone())
+                        .collect(),
+                    operators: mutation_chain
+                        .iter()
+                        .map(|m| m.operator.name().to_string())
+                        .collect(),
                     auth_mode: input.auth_mode.name().to_string(),
                 };
                 let mut minimization = outcome.minimization;
@@ -403,7 +409,13 @@ fn run_campaign_inner(
                     reason_code: reason,
                     identity,
                     case: executor.case(&case_id, steps[0].clone(), Vec::new()),
-                    mutation: mutation_record,
+                    // The full executed (post-minimization) sequence: the
+                    // same list the artifact's `sequence` is built from,
+                    // and the input `minimized_observation` is the final
+                    // step's observation of.
+                    steps: steps.clone(),
+                    mutation: mutation_chain.last().cloned(),
+                    mutations: mutation_chain,
                     environment: input.environment.clone(),
                     expected,
                     observation: minimized_observation,

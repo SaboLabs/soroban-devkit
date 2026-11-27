@@ -127,7 +127,7 @@ sdkt
 │
 ├── tx
 │   ├── inspect <hash>        [--format]
-│   ├── validate <xdr>        [--format] (offline parse + structural checks)
+│   ├── validate --envelope <xdr|file>  [--format] [--verify-signatures --signer <G...> ...] (offline parse + structural checks; signature verification)
 │   ├── decode <xdr>          [--format] (offline decode; human-readable transaction envelope)
 │   ├── simulate <xdr>        [--format] [--abi <wasm>] [--abi-contract <id>] (RPC; surfaces restore preambles, costs, state changes; ABI-aware result decoding. `--abi-contract` fetches the deployed contract's on-chain WASM for decoding)
 │   ├── sign                  [--input <xdr|file>] [--output <file>] [--identity <name>] [--network <testnet|mainnet|futurenet|custom:<p>>] [--format] (offline ED25519 signing)
@@ -456,6 +456,8 @@ the descriptor summary (`schema`, `name`, `version`, `format`, `lock_sha256`,
 │   │                         Register an existing contract in `.sdkt.toml`
 │   │                         under `[contracts.<alias>]`, validated before writing
 │   ├── status                Show deployments recorded for the selected network profile
+│   ├── health [--fail-on <at_risk|critical>] [--format pretty|json]
+│   │                         Check health for every deployment recorded on the selected network
 │   └── deploy                Deploy all contracts defined in the workspace (.sdkt.toml),
 │                             applying topological dependency sorting
 │
@@ -470,6 +472,20 @@ the descriptor summary (`schema`, `name`, `version`, `format`, `lock_sha256`,
 │
 │     sdkt project add token --path ./contracts/token --ctor-arg u32:100
 │     sdkt project add vault --path ./contracts/vault --depends-on token
+│
+│   `project health` aggregates on-chain contract health checks across every
+│   deployment recorded in `.sdkt-deployments.json` for the selected network.
+│   It displays a rollup table ordered worst-first: critical and not-found
+│   contracts first, then at_risk, then healthy. Per row: alias, contract ID,
+│   health verdict, minimum TTL, expiring-entry count, and short on-chain WASM hash.
+│   `--fail-on at_risk|critical` (default `critical`) exits 1 when any contract is
+│   missing on-chain or its verdict meets or exceeds the threshold (exits 0
+│   otherwise). An RPC error on one record is reported as `error` without
+│   aborting checks, and fails the command. With no recorded deployments, it prints
+│   `No deployments recorded for network '<network>'.` and exits 0. Example:
+│
+│     sdkt project health --fail-on critical
+│     sdkt project health --format json
 │
 │   `--timeout <SECONDS>` (default 60) and `--interval <SECONDS>` (default 1)
 │   control how long each contract deployment waits for settlement and how
@@ -567,6 +583,10 @@ the descriptor summary (`schema`, `name`, `version`, `format`, `lock_sha256`,
 │   │                            inspection path; no local artifact needed.
 │   │                            Mutually exclusive with --abi.)
 │   ├── --format <json|pretty>
+│   ├── --batch <FILE>        (read a JSON array of read-only calls from
+│   │                            FILE and run them sequentially; see
+│   │                            "Batch calls" below. Mutually exclusive
+│   │                            with <FUNCTION>, --args, and --args-json.)
 │   └── --network-profile <NAME>
 └── deploy
     ├── --wasm <file>          (upload WASM, then create the contract)
@@ -647,6 +667,12 @@ verification fails after an otherwise successful deploy.
 │   │   ├── --expect-error <FN:TYPE:CODE> Declare function must fail (repeatable)
 │   │   ├── --sequence-length <N>         Steps per generated sequence (>= 2; requires --sequence-every)
 │   │   ├── --sequence-every <N>          Run every N-th case as a sequence (>= 1; requires --sequence-length)
+│   │   ├── --resource-limit-is-finding  Map budget-class errors to RESOURCE_LIMIT
+│   │   │                                 findings instead of UNEXPECTED_ERROR
+│   │   │                                 (opt-in; default off)
+│   │   ├── --budget-capped <CPU:MEM>  Deterministic per-case budget ceilings so
+│   │   │                                 the budget-exhaustion path is reachable
+│   │   │                                 (e.g. --budget-capped 1:1)
 │   │   ├── --replay                      Replay every written artifact to verify determinism
 │   │   ├── --format <pretty|json|jsonl>  Output format (default: pretty)
 │   │   └── [network flags inherited from network-profile resolution]
@@ -817,6 +843,59 @@ sdkt token info CAAA... --network testnet --format json
 does not fit a JSON number safely. The command takes a bare contract ID;
 `@alias` resolution is not supported.
 
+## Batch calls
+
+`sdkt call <CONTRACT_ID> --batch <FILE>` runs several read-only calls in
+one command. FILE contains a JSON array of entries:
+
+```json
+[
+  { "function": "name" },
+  { "function": "symbol", "key": "token_symbol" },
+  { "function": "balance", "args": ["address:G..."] },
+  { "function": "allowance", "args_json": ["[\"G...\", \"G...\"]"] }
+]
+```
+
+Each entry names a `function` and optionally `args` (the same `TYPE:VALUE`
+syntax as `--args`) and `args_json` (the same JSON-array syntax as
+`--args-json`). `key` names the result key in the output and defaults to
+the function name; keys must be unique across the batch. Calls run
+sequentially in file order through the same read-only simulation and
+ABI-decoding path as a single `sdkt call` — nothing is signed, submitted,
+or otherwise state-changing.
+
+With `--format json` (the default in batch mode), one JSON object is
+printed once at the end, mapping each key to its decoded result — the same
+decoded display string a single call prints. `--format pretty` prints one
+labeled section per entry instead.
+
+The token-metadata example below reads `name`, `symbol`, `decimals`, and
+`total_supply` from a SEP-41 token in a single command:
+
+```json
+[
+  { "function": "name" },
+  { "function": "symbol" },
+  { "function": "decimals" },
+  { "function": "total_supply" }
+]
+```
+
+```bash
+sdkt call CAAA... --batch token-meta.json --network-profile testnet --abi-contract CAAA...
+# {"name":"\"My Token\"","symbol":"\"MTK\"","decimals":"u32(7)","total_supply":"i128(1000000000 hi=0, lo=1000000000)"}
+```
+
+Validation failures are usage errors (exit code 2) naming the offending
+entry by its 0-based index: malformed JSON, a missing `function`,
+duplicate keys, and an unknown function name (when `--abi` or
+`--abi-contract` is given). Duplicate keys are rejected before any network
+call is made. The first entry whose simulation fails stops the batch with a
+non-zero exit naming its index and function, and no result object is
+printed. `--batch` is mutually exclusive with the positional `FUNCTION`
+and with `--args` / `--args-json`; it is not available on `sdkt invoke`.
+
 ## Shell completions
 
 `sdkt` can emit shell completion scripts for the major shells. This is the
@@ -859,6 +938,53 @@ Exit codes:
 - `1` — at least one check failed (e.g. invalid config, missing WASM target)
 
 Warnings are never fatal. The JSON output contains no secret material.
+
+## tx validate
+
+`sdkt tx validate --envelope <xdr|file>` parses an envelope and runs
+structural checks (fee, sequence, operations) fully offline. With
+`--verify-signatures` it also verifies the envelope's signatures against
+one or more named signers:
+
+```bash
+sdkt tx validate --envelope signed.xdr --verify-signatures \
+  --signer GABC... --signer GDEF...
+```
+
+`--signer` is repeatable and takes a `G...` public key; a public-key-only
+signer is used, so no secret material is ever accepted or read in this
+path. Passing an `S...` secret or an unparseable value as `--signer` is a
+usage error (exit 2) that does not name the value, so `sdkt`'s own diagnostic never contains the secret. That is no promise about anything outside `sdkt`: a shell with tracing enabled can log the full command before `sdkt` runs, so do not put a secret on the command line. `--verify-signatures` without at least one `--signer` is also a usage error (exit 2). Duplicate
+`--signer` values are deduplicated: each distinct key is reported once.
+
+Each named signer is reported as `VALID`, `MISSING`, or `INVALID`. A
+signer is `VALID` when at least one signature whose hint (the last four
+bytes of the public key) matches the signer verifies against the
+envelope hash; `MISSING` when no signature carries the hint; `INVALID`
+when hint-matching signatures exist but none verifies. Signatures are
+never consumed, and two keys that share a hint are evaluated
+independently: with a hint collision, both keys are `VALID` when both
+signatures are present, and the key whose signature is absent is
+`INVALID` (not `MISSING`), because its hint matches a signature that
+does not verify. Signatures whose hint matches no named signer are
+listed as `UNMATCHED` (by envelope index and hex hint) for information
+only; they never affect the exit code. For a fee-bump envelope only the
+outer signatures are considered.
+
+The network is resolved from the usual flags (`--network`,
+`--network-profile`, `--network-passphrase`); only the passphrase
+matters, and no RPC call is made, so verification works fully offline
+and with an unreachable RPC endpoint. The default network is testnet and
+the output names the network used. A signature made for a different
+network does not verify (`INVALID`).
+
+Exit codes: `0` when structural validation passes and every named
+signer is `VALID`; `1` when structural validation fails, any signer is
+`MISSING` or `INVALID`, or the envelope hash cannot be computed. When
+structural validation fails, the structural report is printed unchanged
+and no `Signatures:` section appears. `--format json` adds a
+`signatures` array (`address`, `hint`, `status`, `candidates`) and an
+`unmatched` array (`index`, `hint`) plus the `network`.
 
 ## tx status
 
@@ -1135,6 +1261,12 @@ When minimization accepts reductions, campaign output includes a `REDUCTION` lin
 - A function may have only one expectation; declaring it with both flags is a usage error (exit 2).
 - Malformed declarations are usage errors (exit 2).
 
+Campaign `--format json` output and the `campaign-evidence.json` file written
+to `--artifact-dir` include additive top-level provenance fields:
+`schema_version` (`1`), `tool` (`"sdkt"`), and `version` (the build's
+`CARGO_PKG_VERSION`). Older evidence without these fields remains readable;
+its missing provenance is treated as unknown.
+
 **Sequence execution (state carry):**
 
 - By default (when both `--sequence-length` and `--sequence-every` are omitted), every case runs a single invocation against a fresh baseline (`sequence_every = 0`).
@@ -1257,6 +1389,11 @@ For details on fuzz evidence from real Soroban contracts and multi-step executio
 
 `sdkt release-assurance` accepts `--fuzz-evidence <EVIDENCE_JSON>` to attach fuzz evidence to a release report. The release pipeline does not run fuzz campaigns itself; campaigns are run separately (manually or in CI) and the resulting evidence is attached by path.
 
+JSON release-assurance reports append `schema_version` (`1`), `tool`
+(`"sdkt"`), and `version` (the build's `CARGO_PKG_VERSION`) to identify the
+report schema and producing CLI build. These keys are additive; existing
+report fields retain their names, types, and order.
+
 A fuzz evidence file scores `PASS` only when `campaign_completed` is `true`, `case_count > 0`, and `findings` is empty. Evidence with `campaign_completed: false` or `case_count: 0` is never scored as `PASS` — it maps to `ERROR` and fails the release-assurance check.
 
 ## Plugin management
@@ -1295,6 +1432,7 @@ Store root precedence (lowest → highest): `<cwd>/.sdkt/plugins`,
 
 - `--format json` is supported on all read-style commands, every `plugin` subcommand, and on `diff`, `audit`, `deploy`, `init` for scripting / CI.
 - `diff --upgrade-safety` and `deploy --deny-breaking` implement the Upgrade Safety Guard (see `ROADMAP.md`).
+- **Deploy preflight.** `sdkt deploy --wasm <file> --release-assurance` checks the artifact before identity lookup and upload. Repeat `--preflight-audit <path>` for source audits and `--preflight-fuzz-evidence <file>` for recorded fuzz evidence; `--old-wasm` enables Upgrade Safety. Verification and Contract Health are skipped because the candidate has not yet been deployed on-chain. In JSON mode (`--format json`), the pretty preflight report is routed to stderr so stdout remains parseable JSON. A failure or assurance error aborts the deployment; without the flag the existing flow is unchanged. (Note: assurance inspects the WASM file at the specified path before upload; avoid modifying the candidate file between preflight and upload to prevent TOCTOU discrepancies).
 - **Diffing deployed contracts.** `sdkt diff` accepts `--old-contract <C...>` / `--new-contract <C...>` in place of `--old-wasm` / `--new-wasm`: each contract side fetches its on-chain WASM over RPC (the same `inspect` → `getLedgerEntries` composition `verify --upgrade-safety` uses) and the fetched bytes are diffed by the existing `diff_wasm` path. The two sides are independent — a file side and a contract side can be mixed. Contract-ID sides require a network: `--network testnet` (or `futurenet`) for the built-in public endpoints, `--rpc-url <URL>` together with the mainnet passphrase for mainnet — `--network mainnet` alone is rejected because there is no built-in public mainnet RPC endpoint — or a saved `--network-profile <NAME>` (e.g. a stored mainnet profile created with `sdkt network add mainnet --rpc-url <URL> --passphrase "Public Global Stellar Network ; September 2015"`); `--old-contract` conflicts with `--old-wasm` (same for `--new-*`), and each side needs at least one source. A contract ID that does not exist on the network fails with a clear "contract not found" error. Pretty output is unchanged; `--format json` records each side's origin in the additive `old_source` / `new_source` fields (`{"kind": "file", "path": ...}` or `{"kind": "contract", "contract_id": ...}`), which are absent for the classic two-file diff. `--upgrade-safety`, `--max-growth-pct`, and `--max-size-bytes` work with contract-ID sides exactly as with files.
 
   ```bash
@@ -1335,6 +1473,7 @@ Store root precedence (lowest → highest): `<cwd>/.sdkt/plugins`,
 - **`sdkt build --format json`.** Emits a single JSON document on stdout: `{"success": true, "artifacts": [{"alias", "path", "wasm_artifact"}]}` on success, or `{"success": false, "error": "..."}` with a non-zero exit on failure. The advisory `sdkt.lock` report is written to stderr so stdout stays parseable; the default pretty output is unchanged.
 - **Contract metadata (`contractmetav0`).** `sdkt wasm inspect <file.wasm>` decodes the `contractmetav0` custom section and prints a `Contract Metadata` block of `key = value` entries (for example the `rsver`, `rssdkver`, and `cliver` provenance keys) in section order, with duplicate keys preserved. A WASM without the section prints `Contract Metadata (0):` followed by `(none)`. With `--format json` the entries appear as the additive `metadata.contract_meta` array of `{ "key": ..., "value": ... }` objects — an empty array when the section is absent — alongside the existing `metadata` keys, which are unchanged. A malformed `contractmetav0` payload is reported as a classified error rather than a panic.
 - `sdkt wasm metadata --contract <id>` reports the same entries for the deployed contract, from the fetched (or cached) WASM bytes: pretty output gains the identical `Contract Metadata` block, and `--format json` gains an additive top-level `contract_meta` array alongside the existing inspection keys, which are unchanged. It is empty when the deployed WASM carries no `contractmetav0`.
+- **Workspace preflight gate (`sdkt project deploy --release-assurance`).** Runs `run_release_assurance` for every contract that will actually deploy (after `--skip-deployed` filtering) **before** the upload loop starts, and aborts the entire workspace deploy (exit `1`, uploading nothing) if any contract's preflight returns `FAIL` or `ERROR`. For each deploying contract, the preflight runs **Artifact** (against the resolved `wasm_artifact`), **Security** (against the contract's source directory `path`), and **Upgrade Safety** (fetching the previously deployed WASM bytes via `inspect_contract` → `get_wasm_bytecode` into a temporary file when a deployment record exists for that alias, or marking Upgrade Safety `SKIPPED` when no prior record exists). **Fuzz Evidence**, **Verification**, and **Contract Health** are `SKIPPED` by construction during preflight because Verification and Contract Health are post-deploy checks and Fuzz Evidence requires per-contract evidence mapping. Without `--release-assurance`, `sdkt project deploy` behavior and output are unchanged.
 - **Mainnet safety.** Mutating commands (`tx submit`, `invoke`, `deploy`, `project deploy`) refuse to target mainnet unless you explicitly select the network — via `--network-profile`, `--rpc-url`, or `--network-passphrase`. A testnet-default passphrase pointed at a mainnet endpoint is rejected before any request is sent, protecting against signing for the wrong network.
 
 ## Fuzz expectation declarations
@@ -1352,6 +1491,59 @@ type, is reported by the campaign's existing `SKIPPED` output with the reason.
 A declaration that was executed is reported as `status=evaluated` in pretty
 output. Valid declarations keep their existing campaign semantics and exit
 behavior. Malformed `--expect-error` declarations remain usage errors.
+
+### Resource-limit findings (opt-in)
+
+By default a budget-class host error under `--expect-success` is reported as
+`UNEXPECTED_ERROR` — indistinguishable from a logic error in the finding
+stream. `--resource-limit-is-finding` opts the run into the oracle's
+RESOURCE_LIMIT rule: budget-class failures under a declared `Success`
+classify as `RESOURCE_LIMIT` findings instead. The default is **off** —
+resource exhaustion is an outcome, not a verdict — so campaigns without the
+flag behave exactly as before. The rule is run-level: it applies to every
+expectation declared for the run.
+
+The flag alone cannot produce a budget error, because the default campaign
+budget is generous. `--budget-capped <CPU:MEM>` exposes the engine's
+deterministic capped-budget plan (`BudgetPlan::Capped`, the purpose-built
+budget-exhaustion path — deterministic and reproducible but **not**
+network-faithful), e.g. `--budget-capped 1:1` caps every case at one CPU and
+one memory unit so a declared `Success` hits the host's `Budget` error:
+
+```bash
+# Without the rule: a capped-budget error under --expect-success is
+# UNEXPECTED_ERROR, as before.
+sdkt fuzz campaign contract.wasm --cases 1 --function hello \
+    --expect-success hello --budget-capped 1:1
+# FINDING … UNEXPECTED_ERROR
+
+# With the rule: the same campaign reports RESOURCE_LIMIT instead.
+sdkt fuzz campaign contract.wasm --cases 1 --function hello \
+    --expect-success hello --budget-capped 1:1 --resource-limit-is-finding
+# RESOURCE_LIMIT
+```
+
+The campaign evidence records whether the rule was enabled: a run that used
+it carries `"resource_limit_is_finding": true` in `campaign-evidence.json`,
+while default-off runs omit the field entirely (byte-identical to pre-flag
+evidence). The capped budget itself is already part of the recorded
+campaign configuration (`config.environment.budget`).
+
+## Configuration validation (`sdkt config validate`)
+
+`sdkt config validate` checks a project's `.sdkt.toml` offline (no RPC calls, no network access) in two stages so CI can gate on configuration problems before building or deploying:
+
+1. **Stage 1 — Schema validation on the raw TOML file (`validate_config_schema`):** Parses `.sdkt.toml` as raw `toml::Value` and flags malformed TOML, duplicate tables, and unknown keys across top-level sections (`network`, `decode`, `storage`, `contracts`, `dependencies`, `package`), reporting both section and key name. `[package]` unknown keys are allowed by design for forward compatibility. If Stage 1 finds any problem (or if value-type deserialization fails), the CLI prints the problems and exits `1` without running Stage 2.
+2. **Stage 2 — Semantic validation on `DevKitConfig` (`DevKitConfig::validate(&self, base_dir)`):**
+   - **Numeric ranges:** `storage.max_entries > 0`, and `network.timeout_secs` / `network.pool_max_idle_per_host` (when set) `> 0`. `decode.max_depth = 0` is valid (unlimited).
+   - **Contract paths:** Every `[contracts.<alias>].path`, resolved relative to the directory containing `.sdkt.toml` (or used as-is if absolute), must exist on disk and contain a `Cargo.toml`.
+   - **Dependency combinations:** Validates `[dependencies]` via `validate_dependencies(base_dir, config)` (mutually exclusive `path`/`git`, required git ref or valid semver `version` requirement, path existence).
+   - **Deploy order graph:** Validates `[contracts]` via `validate_project(config)` when `contracts` is non-empty (cycles, unknown dependencies, self-dependencies, duplicate dependency entries across `deploy_after` and `depends_on`).
+
+**Exit codes & formats:**
+- `0` — Configuration is valid (or no `.sdkt.toml` exists, in which case defaults apply).
+- `1` — One or more schema or semantic problems were found.
+- `--format json` prints `{"valid": bool, "problems": [{"section": "...", "key": "...", "message": "..."}]}`.
 
 ## Error Handling
 

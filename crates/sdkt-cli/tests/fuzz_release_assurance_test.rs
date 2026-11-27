@@ -161,6 +161,7 @@ fn release_assurance_does_not_pass_incomplete_or_zero_case_fuzz_evidence() {
         &[],
         &std::collections::BTreeMap::new(),
         true,
+        false,
     );
     assert!(!incomplete_ev.campaign_completed);
     let incomplete_path = dir.join("incomplete-evidence.json");
