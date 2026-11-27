@@ -11,6 +11,7 @@
 
 use clap::Parser;
 use sdkt_agent::{plan, ExecutionResult, Planned, Status};
+use sdkt_core::registry;
 
 /// Read-only natural-language front end for sdkt.
 #[derive(Parser, Debug)]
@@ -23,7 +24,11 @@ use sdkt_agent::{plan, ExecutionResult, Planned, Status};
 struct Cli {
     /// The request, in plain language.
     #[arg(value_name = "REQUEST")]
-    request: String,
+    request: Option<String>,
+
+    /// List the installed capability registry without planning or executing a request.
+    #[arg(long)]
+    list_capabilities: bool,
 
     /// Output format: pretty (default) or json.
     #[arg(short, long, default_value = "pretty")]
@@ -42,16 +47,45 @@ fn main() {
         }
     };
 
-    let mut result = match plan(&cli.request) {
+    if cli.list_capabilities {
+        if json {
+            match registry::to_json() {
+                Ok(document) => println!("{document}"),
+                Err(error) => {
+                    eprintln!("Error serializing capability registry: {error}");
+                    std::process::exit(1);
+                }
+            }
+        } else {
+            for capability in registry::capabilities() {
+                println!(
+                    "{} | {} | {:?} | {:?} | {}",
+                    capability.id,
+                    capability.argv(),
+                    capability.safety,
+                    capability.network,
+                    capability.summary
+                );
+            }
+        }
+        return;
+    }
+
+    let Some(request) = cli.request.as_deref() else {
+        eprintln!("error: the following required argument was not provided: REQUEST");
+        std::process::exit(2);
+    };
+
+    let mut result = match plan(request) {
         Planned::Run(p) => {
             // Only reached for read-only capabilities: `plan` refuses
             // everything else before we get here.
             let raw = sdkt_agent::execute(&p.argv);
             ExecutionResult::from_execution(&p, &raw)
         }
-        Planned::Refuse(e) => ExecutionResult::refused(&cli.request, &e),
+        Planned::Refuse(e) => ExecutionResult::refused(request, &e),
     };
-    result.request = cli.request.clone();
+    result.request = request.to_string();
 
     if json {
         // stdout carries the JSON document alone; anything diagnostic is

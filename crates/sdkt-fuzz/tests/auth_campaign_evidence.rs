@@ -226,8 +226,14 @@ fn evidence_reports_a_completed_campaign() {
     let config = input.artifact_config();
 
     // No replay yet.
-    let ev =
-        CampaignEvidence::from_result(&result, config.clone(), &artifacts, &BTreeMap::new(), true);
+    let ev = CampaignEvidence::from_result(
+        &result,
+        config.clone(),
+        &artifacts,
+        &BTreeMap::new(),
+        true,
+        false,
+    );
     assert!(ev.campaign_completed);
     assert_eq!(ev.case_count, 6);
     assert_eq!(ev.passed + ev.expected_errors + ev.findings.len(), 6);
@@ -279,8 +285,14 @@ fn evidence_with_findings_and_replay() {
         let outcome = sdkt_fuzz::replay(a, AUTH_WASM).unwrap();
         sdkt_fuzz::evidence::record_replay(&mut replay, &a.canonical_hash(), &outcome);
     }
-    let ev =
-        CampaignEvidence::from_result(&result, input.artifact_config(), &artifacts, &replay, true);
+    let ev = CampaignEvidence::from_result(
+        &result,
+        input.artifact_config(),
+        &artifacts,
+        &replay,
+        true,
+        false,
+    );
 
     assert!(
         ev.has_findings(),

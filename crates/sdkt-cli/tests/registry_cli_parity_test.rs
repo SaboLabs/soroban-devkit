@@ -312,3 +312,66 @@ fn registry_exports_a_versioned_manifest() {
         assert!(entry["evidence"].is_string(), "{entry}");
     }
 }
+
+/// Bidirectional parity check (#314): for the `audit` capability, every long
+/// flag documented by `sdkt audit --help` must be listed in the registry entry
+/// (or explicitly excluded here with a documented reason, such as `--help` /
+/// `--version`), and the registry's `formats.sarif` claim must match the CLI's
+/// `--format sarif` support while keeping `audit.list_rules` at
+/// `sarif: false`.
+#[test]
+fn audit_entry_and_help_agree_bidirectionally_on_flags_and_formats() {
+    let audit = sdkt_core::registry::find("audit").expect("audit entry exists");
+    let list_rules =
+        sdkt_core::registry::find("audit.list_rules").expect("audit.list_rules entry exists");
+
+    let help = help_for(audit.command).expect("sdkt audit --help succeeds");
+
+    // 1. Collect all long flags documented by `sdkt audit --help`.
+    let cli_long_flags: std::collections::HashSet<&str> = help
+        .lines()
+        .flat_map(|l| l.split_whitespace())
+        .map(|tok| tok.trim_end_matches(','))
+        .filter(|tok| tok.starts_with("--"))
+        .collect();
+
+    // 2. Collect all long flags listed by the registry's `audit` entry.
+    let registry_flags: std::collections::HashSet<&str> = audit
+        .required_args
+        .iter()
+        .chain(audit.optional_args)
+        .filter_map(|arg| {
+            let tok = arg.split_whitespace().next()?;
+            tok.starts_with("--").then_some(tok)
+        })
+        .collect();
+
+    // Every registry flag must exist in `sdkt audit --help`.
+    for &reg_flag in &registry_flags {
+        assert!(
+            cli_long_flags.contains(reg_flag),
+            "audit registry lists {reg_flag}, which is absent from `sdkt audit --help`"
+        );
+    }
+
+    // Every long flag in `sdkt audit --help` must exist in the registry entry,
+    // except universal clap built-ins (`--help`, `--version`).
+    const BUILTIN_EXCLUSIONS: &[&str] = &[
+        "--help",    // clap built-in help flag, not a domain argument
+        "--version", // clap built-in version flag, not a domain argument
+    ];
+    for &cli_flag in &cli_long_flags {
+        if BUILTIN_EXCLUSIONS.contains(&cli_flag) {
+            continue;
+        }
+        assert!(
+            registry_flags.contains(cli_flag),
+            "`sdkt audit --help` documents {cli_flag}, but the `audit` registry entry omits it"
+        );
+    }
+
+    // 3. Format distinguishability: `audit` supports pretty, json, and sarif;
+    // `audit.list_rules` supports pretty and json only (rejects sarif).
+    assert!(audit.formats.pretty && audit.formats.json && audit.formats.sarif);
+    assert!(list_rules.formats.pretty && list_rules.formats.json && !list_rules.formats.sarif);
+}
