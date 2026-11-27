@@ -29,6 +29,11 @@ verdict, or a byte-identical rerun.
 | External source | `stellar/soroban-examples` @ `03d42aa6`; `SUSU-LABS/susu-contracts` @ `4e3f7455` |
 | Execution model | offline, in-memory Host only — no network, no ledger, no transactions |
 
+New campaign evidence JSON documents carry top-level `schema_version` (`1`),
+`tool` (`"sdkt"`), and `version` fields. `version` is taken from the build's
+`CARGO_PKG_VERSION`, so each campaign records the CLI package version that
+produced it rather than relying on this page's manually maintained table.
+
 > Note on version compatibility: the SUSU group contract is built with
 > `soroban-sdk` 27.0.6 while the engine pins `soroban-env-host` 28.0.2 /
 > protocol 28. The WASM loads and executes correctly in this host; the version

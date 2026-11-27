@@ -15,8 +15,8 @@ pub mod tx_builder;
 pub mod validation;
 
 pub use config::{
-    ContractConfig, DecodeConfig, Dependency, DevKitConfig, GitReference, NetworkConfig,
-    PackageConfig, StorageConfig,
+    validate_config_schema, ConfigProblem, ContractConfig, DecodeConfig, Dependency, DevKitConfig,
+    GitReference, NetworkConfig, PackageConfig, StorageConfig,
 };
 pub use deployment::{network_key, DeploymentRecord, DeploymentRecordFile, DEPLOYMENT_RECORD_FILE};
 pub use fee::{FeeConfig, FeeError, FeeEstimator, LedgerFeeSample, NetworkKind, STROOPS_PER_XLM};
