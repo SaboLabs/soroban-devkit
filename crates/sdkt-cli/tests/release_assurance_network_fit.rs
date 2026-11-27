@@ -26,6 +26,37 @@ fn encode_max_size_entry(limit: u32) -> String {
     base64::engine::general_purpose::STANDARD.encode(buf)
 }
 
+fn read_http_request_body(sock: &mut std::net::TcpStream) -> Vec<u8> {
+    let mut buf = Vec::new();
+    let mut chunk = [0u8; 1024];
+    let header_end = loop {
+        let n = sock.read(&mut chunk).expect("read HTTP request");
+        assert!(n > 0, "unexpected EOF before HTTP header terminator");
+        buf.extend_from_slice(&chunk[..n]);
+        if let Some(pos) = buf.windows(4).position(|w| w == b"\r\n\r\n") {
+            break pos + 4;
+        }
+    };
+    let headers = String::from_utf8_lossy(&buf[..header_end]);
+    let content_length: usize = headers
+        .lines()
+        .find_map(|line| {
+            let (name, val) = line.split_once(':')?;
+            if name.trim().eq_ignore_ascii_case("content-length") {
+                val.trim().parse().ok()
+            } else {
+                None
+            }
+        })
+        .unwrap_or(0);
+    while buf.len() < header_end + content_length {
+        let n = sock.read(&mut chunk).expect("read HTTP body");
+        assert!(n > 0, "unexpected EOF before full HTTP body");
+        buf.extend_from_slice(&chunk[..n]);
+    }
+    buf[header_end..header_end + content_length].to_vec()
+}
+
 /// Spawn a mock Soroban RPC server responding to `getNetwork`, `getLatestLedger`,
 /// and `getLedgerEntries` (returning `ContractMaxSizeBytes(limit)` when `Some(limit)`).
 fn mock_capture_rpc(limit: Option<u32>) -> String {
@@ -39,13 +70,10 @@ fn mock_capture_rpc(limit: Option<u32>) -> String {
             let Ok((mut sock, _)) = listener.accept() else {
                 break;
             };
-            let mut buf = [0u8; 8192];
-            let n = sock.read(&mut buf).unwrap_or(0);
-            let req = String::from_utf8_lossy(&buf[..n]);
-            let body_start = req.find("\r\n\r\n").map(|i| i + 4).unwrap_or(0);
+            let body = read_http_request_body(&mut sock);
             let req_json: serde_json::Value =
-                serde_json::from_str(req[body_start..].trim()).unwrap_or_default();
-            let method = req_json["method"].as_str().unwrap_or("");
+                serde_json::from_slice(&body).expect("valid JSON-RPC request");
+            let method = req_json["method"].as_str().expect("JSON-RPC method");
             let id = req_json["id"].clone();
 
             let result = match method {
@@ -177,7 +205,7 @@ fn network_fit_fails_when_candidate_exceeds_limit_naming_both_counts() {
         .iter()
         .any(|r| r.as_str() == Some("Network Fit: FAIL")));
 
-    // Pretty output also displays Network Fit FAIL.
+    // Pretty output also displays Network Fit FAIL and both byte counts.
     let rpc_pretty = mock_capture_rpc(Some(4));
     Command::cargo_bin("sdkt")
         .unwrap()
@@ -191,7 +219,9 @@ fn network_fit_fails_when_candidate_exceeds_limit_naming_both_counts() {
         .assert()
         .failure()
         .code(1)
-        .stdout(contains("Network Fit     FAIL"));
+        .stdout(contains("Network Fit     FAIL"))
+        .stdout(contains("8 bytes"))
+        .stdout(contains("4 bytes"));
 }
 
 #[test]

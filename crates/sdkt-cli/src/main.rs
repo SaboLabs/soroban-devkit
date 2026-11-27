@@ -2713,6 +2713,9 @@ fn format_release_assurance_pretty(r: &ReleaseAssuranceReport) -> String {
     ));
     out.push_str(&format!("Contract Health {}\n", r.health.check.status));
     out.push_str(&format!("Network Fit     {}\n", r.network_fit.check.status));
+    if r.network_fit.check.status == RaStatus::Fail {
+        out.push_str(&format!("  {}\n", r.network_fit.check.detail));
+    }
     if let Some(f) = &r.fuzz {
         out.push_str(&format!("Fuzz Evidence   {}\n", f.check.status));
     }
