@@ -184,10 +184,9 @@ pub fn run_campaign_artifacts(
     run_campaign_inner(input, expectations)
 }
 
-fn run_campaign_inner(
+pub(crate) fn validate_plan_inputs(
     input: &CampaignInput,
-    expectations: &std::collections::BTreeMap<String, Expected>,
-) -> Result<(CampaignResult, Vec<FindingArtifact>), FuzzError> {
+) -> Result<(Vec<String>, Vec<SkippedFunction>), FuzzError> {
     if input.cases == 0 {
         return Err(FuzzError::InvalidConfig(
             "cases must be greater than 0".to_string(),
@@ -211,6 +210,164 @@ fn run_campaign_inner(
             ))),
         };
     }
+    Ok((functions, skipped))
+}
+
+/// One case after generation and mutation, before any execution.
+struct PlannedCase {
+    case_id: String,
+    is_sequence: bool,
+    steps: Vec<FunctionCall>,
+    /// Mutations actually applied, in order.
+    mutations: Vec<Mutation>,
+}
+
+/// Generate and mutate case `case_number` for `function`. Pure and
+/// deterministic: no executor, no host, no I/O. Shared by the execution path
+/// and [`plan_campaign`] so a dry run plans exactly what a real run executes.
+fn build_case(
+    input: &CampaignInput,
+    function: &str,
+    case_number: usize,
+) -> Result<PlannedCase, FuzzError> {
+    let function = function.to_string();
+    let case_id = format!("case{case_number:04}");
+    let is_sequence = input.sequence_every > 0
+        && input.sequence_length > 1
+        && case_number.is_multiple_of(input.sequence_every);
+
+    // --- Generate the base call (or sequence) ----------------------
+    let base_call = generate_call(
+        &input.spec,
+        &function,
+        &input.seed,
+        &case_id,
+        input.generation,
+    )
+    .map_err(|e| FuzzError::InvalidConfig(format!("generator: {e}")))?;
+    let mut steps: Vec<FunctionCall> = if is_sequence {
+        (0..input.sequence_length)
+            .map(|i| {
+                let seq_case_id = format!("{case_id}/gen{i}");
+                let generated = generate_call(
+                    &input.spec,
+                    &function,
+                    &input.seed,
+                    &seq_case_id,
+                    input.generation,
+                )
+                .map_err(|e| FuzzError::InvalidConfig(format!("generator: {e}")))?;
+                Ok(FunctionCall::new(function.clone(), generated.args))
+            })
+            .collect::<Result<Vec<_>, FuzzError>>()?
+    } else {
+        vec![FunctionCall::new(function.clone(), base_call.args)]
+    };
+
+    // --- Mutations (typed, deterministic, non-targets preserved) ---
+    let mut mutations: Vec<Mutation> = Vec::new();
+    if input.mutations_per_case > 0 && !is_sequence {
+        let param_types: Vec<&sdkt_wasm::ContractType> = input
+            .spec
+            .functions
+            .iter()
+            .find(|f| f.name == function)
+            .map(|f| f.parameters.iter().map(|p| &p.type_).collect())
+            .unwrap_or_default();
+        let args = &mut steps[0].args;
+        for m in 0..input.mutations_per_case {
+            let Some((arg_index, operator)) = plan_mutation(&param_types, &input.seed, &case_id, m)
+            else {
+                break;
+            };
+            if arg_index >= args.len() {
+                continue;
+            }
+            let t = param_types[arg_index];
+            match mutate_arg(
+                t,
+                args,
+                arg_index,
+                operator,
+                &input.seed,
+                &case_id,
+                input.generation,
+            ) {
+                Ok(mutation) => {
+                    *args = mutation.args.clone();
+                    mutations.push(mutation);
+                }
+                Err(MutationError::NoApplicableMutation)
+                | Err(MutationError::ArgIndexOutOfRange { .. }) => continue,
+                Err(e) => return Err(FuzzError::Execution(format!("mutation: {e}"))),
+            }
+        }
+    }
+
+    Ok(PlannedCase {
+        case_id,
+        is_sequence,
+        steps,
+        mutations,
+    })
+}
+
+/// One planned case of a dry run.
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize)]
+pub struct PlannedCaseSummary {
+    pub case_id: String,
+    pub function: String,
+    /// `single` or `sequence`.
+    pub kind: String,
+    /// Names of the mutation operators actually applied, in order.
+    pub operators: Vec<String>,
+    pub auth_mode: String,
+}
+
+/// The case plan for a campaign, produced without executing anything.
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize)]
+pub struct CampaignPlan {
+    pub cases: Vec<PlannedCaseSummary>,
+    pub skipped_functions: Vec<SkippedFunction>,
+}
+
+/// Plan a campaign without creating an executor or running the host.
+/// Validates exactly like [`run_campaign`] (zero cases and an unknown or
+/// unrunnable function filter are the same errors).
+pub fn plan_campaign(input: &CampaignInput) -> Result<CampaignPlan, FuzzError> {
+    let (functions, skipped) = validate_plan_inputs(input)?;
+    let mut cases = Vec::with_capacity(input.cases);
+    for case_number in 0..input.cases {
+        let function = &functions[case_number % functions.len()];
+        let built = build_case(input, function, case_number)?;
+        cases.push(PlannedCaseSummary {
+            case_id: built.case_id,
+            function: function.clone(),
+            kind: if built.is_sequence {
+                "sequence"
+            } else {
+                "single"
+            }
+            .to_string(),
+            operators: built
+                .mutations
+                .iter()
+                .map(|m| m.operator.name().to_string())
+                .collect(),
+            auth_mode: input.auth_mode.name().to_string(),
+        });
+    }
+    Ok(CampaignPlan {
+        cases,
+        skipped_functions: skipped,
+    })
+}
+
+fn run_campaign_inner(
+    input: &CampaignInput,
+    expectations: &std::collections::BTreeMap<String, Expected>,
+) -> Result<(CampaignResult, Vec<FindingArtifact>), FuzzError> {
+    let (functions, skipped) = validate_plan_inputs(input)?;
 
     let executor = Executor::new(&input.wasm, default_config(input)?)?;
     let artifact_config = input.artifact_config();
@@ -223,79 +380,13 @@ fn run_campaign_inner(
 
     for case_number in 0..input.cases {
         let function = functions[case_number % functions.len()].clone();
-        let case_id = format!("case{case_number:04}");
-        let is_sequence = input.sequence_every > 0
-            && input.sequence_length > 1
-            && case_number % input.sequence_every == 0;
-
-        // --- Generate the base call (or sequence) ----------------------
-        let base_call = generate_call(
-            &input.spec,
-            &function,
-            &input.seed,
-            &case_id,
-            input.generation,
-        )
-        .map_err(|e| FuzzError::InvalidConfig(format!("generator: {e}")))?;
-        let mut steps: Vec<FunctionCall> = if is_sequence {
-            (0..input.sequence_length)
-                .map(|i| {
-                    let seq_case_id = format!("{case_id}/gen{i}");
-                    let generated = generate_call(
-                        &input.spec,
-                        &function,
-                        &input.seed,
-                        &seq_case_id,
-                        input.generation,
-                    )
-                    .map_err(|e| FuzzError::InvalidConfig(format!("generator: {e}")))?;
-                    Ok(FunctionCall::new(function.clone(), generated.args))
-                })
-                .collect::<Result<Vec<_>, FuzzError>>()?
-        } else {
-            vec![FunctionCall::new(function.clone(), base_call.args)]
-        };
-
-        // --- Mutations (typed, deterministic, non-targets preserved) ---
-        let mut mutation_chain: Vec<Mutation> = Vec::new();
-        if input.mutations_per_case > 0 && !is_sequence {
-            let param_types: Vec<&sdkt_wasm::ContractType> = input
-                .spec
-                .functions
-                .iter()
-                .find(|f| f.name == function)
-                .map(|f| f.parameters.iter().map(|p| &p.type_).collect())
-                .unwrap_or_default();
-            let args = &mut steps[0].args;
-            for m in 0..input.mutations_per_case {
-                let Some((arg_index, operator)) =
-                    plan_mutation(&param_types, &input.seed, &case_id, m)
-                else {
-                    break;
-                };
-                if arg_index >= args.len() {
-                    continue;
-                }
-                let t = param_types[arg_index];
-                match mutate_arg(
-                    t,
-                    args,
-                    arg_index,
-                    operator,
-                    &input.seed,
-                    &case_id,
-                    input.generation,
-                ) {
-                    Ok(mutation) => {
-                        *args = mutation.args.clone();
-                        mutation_chain.push(mutation);
-                    }
-                    Err(MutationError::NoApplicableMutation)
-                    | Err(MutationError::ArgIndexOutOfRange { .. }) => continue,
-                    Err(e) => return Err(FuzzError::Execution(format!("mutation: {e}"))),
-                }
-            }
-        }
+        let PlannedCase {
+            case_id,
+            is_sequence,
+            mut steps,
+            mutations,
+        } = build_case(input, &function, case_number)?;
+        let mutation_chain: Vec<Mutation> = mutations;
 
         // --- Expectation & oracle --------------------------------------
         let expected = expectations.get(&function).cloned().unwrap_or_default();
@@ -480,7 +571,9 @@ pub fn sequence_case_counts(
     sequence_every: usize,
 ) -> (usize, usize) {
     if sequence_every > 0 && sequence_length > 1 {
-        let sequences = (0..executed).filter(|c| c % sequence_every == 0).count();
+        let sequences = (0..executed)
+            .filter(|c| c.is_multiple_of(sequence_every))
+            .count();
         (sequences, executed.saturating_sub(sequences))
     } else {
         (0, executed)

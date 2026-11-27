@@ -119,6 +119,7 @@ pub fn options_from(
         resource_limit_is_finding,
         budget_capped: budget,
         replay,
+        dry_run: false,
     })
 }
 
@@ -155,9 +156,10 @@ pub fn run(
     resource_limit_is_finding: bool,
     budget_capped: Option<String>,
     replay: bool,
+    dry_run: bool,
     format: &str,
 ) -> Result<bool, String> {
-    let options = options_from(
+    let mut options = options_from(
         wasm,
         seed,
         cases,
@@ -174,10 +176,62 @@ pub fn run(
     let fmt = parse_format(format)
         .ok_or_else(|| format!("invalid format '{format}' (expected pretty, json, or jsonl)"))?;
 
+    if dry_run {
+        // Plan only: no executor, no host, no artifacts. A valid plan is exit 0.
+        options.dry_run = true;
+        let plan =
+            sdkt_fuzz::plan_fuzz_with_sequence(&options, sequence).map_err(|e| e.to_string())?;
+        print_plan(&plan, &fmt);
+        return Ok(false);
+    }
+
     let report =
         sdkt_fuzz::run_fuzz_with_sequence(&options, sequence).map_err(|e| e.to_string())?;
     print_report(&report, &fmt);
     Ok(!report.result.findings.is_empty())
+}
+
+/// Render a dry-run plan. `jsonl` is one case per line.
+fn print_plan(plan: &sdkt_fuzz::CampaignPlan, fmt: &FuzzFormat) {
+    match fmt {
+        FuzzFormat::Json => match serde_json::to_string_pretty(plan) {
+            Ok(s) => println!("{s}"),
+            Err(e) => eprintln!("Error: cannot serialize plan: {e}"),
+        },
+        FuzzFormat::Jsonl => {
+            for s in &plan.skipped_functions {
+                eprintln!("Skipped: {} ({})", s.function, s.reason);
+            }
+            for case in &plan.cases {
+                if let Ok(s) = serde_json::to_string(case) {
+                    println!("{s}");
+                }
+            }
+        }
+        FuzzFormat::Pretty => {
+            println!("Fuzz campaign plan (dry run, nothing executed)");
+            println!("  Cases: {}", plan.cases.len());
+            for s in &plan.skipped_functions {
+                println!("  Skipped: {} ({})", s.function, s.reason);
+            }
+            println!();
+            println!(
+                "{:<10} {:<24} {:<9} {:<32} AUTH",
+                "CASE", "FUNCTION", "KIND", "OPERATORS"
+            );
+            for c in &plan.cases {
+                let ops = if c.operators.is_empty() {
+                    "-".to_string()
+                } else {
+                    c.operators.join(",")
+                };
+                println!(
+                    "{:<10} {:<24} {:<9} {:<32} {}",
+                    c.case_id, c.function, c.kind, ops, c.auth_mode
+                );
+            }
+        }
+    }
 }
 
 /// Replay one artifact and render the verdict.

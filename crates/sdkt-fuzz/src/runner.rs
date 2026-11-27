@@ -14,7 +14,8 @@ use std::path::{Path, PathBuf};
 use crate::artifact::{encode_scval_xdr_hex, FindingArtifact};
 use crate::auth::AuthMode;
 use crate::campaign::{
-    run_campaign_artifacts, sequence_case_counts, summarize, CampaignInput, CampaignResult,
+    plan_campaign, run_campaign_artifacts, sequence_case_counts, summarize, CampaignInput,
+    CampaignPlan, CampaignResult,
 };
 use crate::environment::Environment;
 use crate::error::FuzzError;
@@ -47,6 +48,9 @@ pub struct FuzzRunOptions {
     pub budget_capped: Option<(u64, u64)>,
     /// Replay every written artifact (deterministic verification).
     pub replay: bool,
+    /// Plan the campaign and report the case plan without executing anything
+    /// or writing artifacts (see [`plan`]).
+    pub dry_run: bool,
 }
 
 impl Default for FuzzRunOptions {
@@ -63,6 +67,7 @@ impl Default for FuzzRunOptions {
             resource_limit_is_finding: false,
             budget_capped: None,
             replay: false,
+            dry_run: false,
         }
     }
 }
@@ -190,11 +195,38 @@ pub fn run(options: &FuzzRunOptions) -> Result<FuzzReport, FuzzError> {
     run_with_sequence(options, SequenceOptions::default())
 }
 
-/// Run a campaign with explicit multi-step [`SequenceOptions`].
-pub fn run_with_sequence(
+/// Plan a campaign (`--dry-run`): the case list a real run would execute,
+/// validating setup offline (config, expectations, WASM parse) without
+/// executing any case, writing artifacts, or touching the network.
+pub fn plan(options: &FuzzRunOptions) -> Result<CampaignPlan, FuzzError> {
+    plan_with_sequence(options, SequenceOptions::default())
+}
+
+/// [`plan`] with explicit multi-step [`SequenceOptions`].
+pub fn plan_with_sequence(
     options: &FuzzRunOptions,
     sequence: SequenceOptions,
-) -> Result<FuzzReport, FuzzError> {
+) -> Result<CampaignPlan, FuzzError> {
+    let (wasm, input) = campaign_input(options, sequence)?;
+    build_expectations(options)?;
+    // Same order as a real run: function/cases checks come before any
+    // WASM compilation, so both modes report the same error.
+    crate::campaign::validate_plan_inputs(&input)?;
+    // Reject the same setups a real run rejects, before planning:
+    // expectation validation (above) and offline WASM parse.
+    let config = crate::config::FuzzConfig {
+        seed: input.seed,
+        ..crate::config::FuzzConfig::default()
+    };
+    input.environment.validate(&config)?;
+    crate::executor::Executor::validate_offline(&wasm, &config)?;
+    plan_campaign(&input)
+}
+
+fn campaign_input(
+    options: &FuzzRunOptions,
+    sequence: SequenceOptions,
+) -> Result<(Vec<u8>, CampaignInput), FuzzError> {
     if sequence.sequence_every > 0 && sequence.sequence_length < 2 {
         return Err(FuzzError::InvalidConfig(format!(
             "sequence_length must be >= 2 when sequence_every > 0 (got {})",
@@ -221,6 +253,20 @@ pub fn run_with_sequence(
         },
         None => Environment::default(),
     };
+    Ok((wasm, input))
+}
+
+/// Run a campaign with explicit multi-step [`SequenceOptions`].
+pub fn run_with_sequence(
+    options: &FuzzRunOptions,
+    sequence: SequenceOptions,
+) -> Result<FuzzReport, FuzzError> {
+    if options.dry_run {
+        return Err(FuzzError::InvalidConfig(
+            "dry_run is set: call plan_with_sequence instead of running the campaign".to_string(),
+        ));
+    }
+    let (wasm, input) = campaign_input(options, sequence)?;
 
     let expectations = build_expectations(options)?;
     let (result, artifacts) = run_campaign_artifacts(&input, &expectations)?;

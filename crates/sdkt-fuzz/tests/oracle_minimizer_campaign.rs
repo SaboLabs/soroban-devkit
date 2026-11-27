@@ -756,6 +756,7 @@ fn runner_writes_and_replays_multistep_artifacts_when_sequence_enabled() {
         resource_limit_is_finding: false,
         budget_capped: None,
         replay: true,
+        dry_run: false,
     };
 
     let report = sdkt_fuzz::run_fuzz_with_sequence(
