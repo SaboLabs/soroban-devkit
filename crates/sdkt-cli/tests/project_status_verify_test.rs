@@ -14,8 +14,8 @@ use std::sync::Arc;
 use std::thread;
 use stellar_xdr::{
     ContractDataDurability, ContractDataEntry, ContractExecutable, ContractId, ExtensionPoint,
-    Hash, LedgerEntry, LedgerEntryData, LedgerEntryExt, Limited, Limits, ScAddress,
-    ScContractInstance, ScVal, WriteXdr,
+    Hash, LedgerEntry, LedgerEntryData, LedgerEntryExt, LedgerKey, Limited, Limits, ReadXdr,
+    ScAddress, ScContractInstance, ScVal, WriteXdr,
 };
 use tempfile::TempDir;
 
@@ -98,6 +98,13 @@ fn read_http_request(sock: &mut TcpStream) -> String {
 }
 
 fn spawn_mock_rpc(outcomes: HashMap<String, MockOutcome>) -> String {
+    spawn_mock_rpc_with_recorder(outcomes, None)
+}
+
+fn spawn_mock_rpc_with_recorder(
+    outcomes: HashMap<String, MockOutcome>,
+    recorder: Option<Arc<std::sync::Mutex<Vec<String>>>>,
+) -> String {
     let mut key_map: HashMap<String, (String, MockOutcome)> = HashMap::new();
     for (contract_hex, outcome) in outcomes {
         let key = encode_ledger_key(&LedgerKeyParams::ContractData(contract_hex.clone())).unwrap();
@@ -134,6 +141,10 @@ fn spawn_mock_rpc(outcomes: HashMap<String, MockOutcome>) -> String {
                         .filter_map(Value::as_str)
                         .map(str::to_string)
                         .collect();
+
+                    if let Some(rec) = &recorder {
+                        rec.lock().unwrap().extend(requested.clone());
+                    }
 
                     let mut entries = Vec::new();
                     let mut error_response = None;
@@ -476,4 +487,61 @@ fn status_without_verify_remains_offline_and_unchanged() {
         .stdout(predicates::str::contains(format!(
             "WASM hash:   {HASH_ALPHA}"
         )));
+}
+
+#[test]
+fn status_verify_never_requests_contract_code_entry() {
+    let project = TempDir::new().unwrap();
+    let network_store = TempDir::new().unwrap();
+
+    let cid_a = contract_id_strkey(CONTRACT_A_HEX);
+    write_records(project.path(), &[("testnet", "alpha", &cid_a, HASH_ALPHA)]);
+
+    let recorded_keys = Arc::new(std::sync::Mutex::new(Vec::new()));
+
+    let mut outcomes = HashMap::new();
+    outcomes.insert(
+        CONTRACT_A_HEX.to_string(),
+        MockOutcome::MatchWasm(HASH_ALPHA.to_string()),
+    );
+    let rpc_url = spawn_mock_rpc_with_recorder(outcomes, Some(Arc::clone(&recorded_keys)));
+
+    sdkt(project.path(), network_store.path())
+        .args(["project", "status", "--verify", "--rpc-url", &rpc_url])
+        .assert()
+        .success()
+        .stdout(predicates::str::contains("alpha: MATCH"));
+
+    let keys = recorded_keys.lock().unwrap().clone();
+    assert!(
+        !keys.is_empty(),
+        "expected at least one ledger key requested"
+    );
+
+    let expected_instance_key =
+        encode_ledger_key(&LedgerKeyParams::ContractData(CONTRACT_A_HEX.to_string())).unwrap();
+    let expected_code_key =
+        encode_ledger_key(&LedgerKeyParams::ContractCode(HASH_ALPHA.to_string())).unwrap();
+
+    // Assert that the instance singleton key was requested
+    assert!(
+        keys.contains(&expected_instance_key),
+        "expected instance singleton key to be requested"
+    );
+
+    // Assert that the contract code key was never requested (no bytecode download)
+    assert!(
+        !keys.contains(&expected_code_key),
+        "expected contract code key NOT to be requested (no bytecode download)"
+    );
+
+    // Assert that no requested key is a ContractCode ledger key
+    for key_b64 in &keys {
+        let decoded =
+            LedgerKey::from_xdr_base64(key_b64, Limits::none()).expect("valid ledger key XDR");
+        assert!(
+            !matches!(decoded, LedgerKey::ContractCode(_)),
+            "found ContractCode ledger key request: {key_b64}"
+        );
+    }
 }

@@ -546,7 +546,7 @@ the descriptor summary (`schema`, `name`, `version`, `format`, `lock_sha256`,
 │
 │   `sdkt project status` inspects `.sdkt-deployments.json` for the selected network profile.
 │   With `--verify`, it performs a read-only drift check: for every record on the selected network,
-│   it fetches the live on-chain code hash with `inspect_contract` and compares it hash-to-hash
+│   it fetches the live on-chain code hash with `probe_deployed_executable` and compares it hash-to-hash
 │   against the recorded `wasm_hash` (no bytecode download):
 │   - `MATCH`: recorded hash matches on-chain hash
 │   - `DRIFT`: contract exists on-chain, but its code hash has changed

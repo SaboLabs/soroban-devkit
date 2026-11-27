@@ -13206,25 +13206,55 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
                     let mut verified_entries = Vec::with_capacity(deployments.len());
 
                     for (alias, record) in &deployments {
-                        match inspect_contract(&client, &record.contract_id).await {
-                            Ok(inspection) => {
-                                if inspection.wasm_hash.eq_ignore_ascii_case(&record.wasm_hash) {
-                                    match_count += 1;
+                        match sdkt_rpc::probe_deployed_executable(&client, &record.contract_id)
+                            .await
+                        {
+                            Ok(probe) => {
+                                if !probe.instance_found {
+                                    missing_count += 1;
                                     verified_entries.push(VerifiedStatusEntry {
                                         alias,
                                         record,
-                                        status: "MATCH",
-                                        on_chain_hash: Some(inspection.wasm_hash),
+                                        status: "MISSING",
+                                        on_chain_hash: None,
                                         error: None,
                                     });
+                                } else if let Some(live_hash) = probe.wasm_hash {
+                                    if live_hash.eq_ignore_ascii_case(&record.wasm_hash) {
+                                        match_count += 1;
+                                        verified_entries.push(VerifiedStatusEntry {
+                                            alias,
+                                            record,
+                                            status: "MATCH",
+                                            on_chain_hash: Some(live_hash),
+                                            error: None,
+                                        });
+                                    } else {
+                                        drift_count += 1;
+                                        verified_entries.push(VerifiedStatusEntry {
+                                            alias,
+                                            record,
+                                            status: "DRIFT",
+                                            on_chain_hash: Some(live_hash),
+                                            error: None,
+                                        });
+                                    }
                                 } else {
-                                    drift_count += 1;
+                                    error_count += 1;
+                                    let err_msg = probe
+                                        .resolve_error
+                                        .or(probe.decode_error)
+                                        .or(probe.error)
+                                        .unwrap_or_else(|| {
+                                            "contract instance has no WASM hash (e.g. StellarAsset)"
+                                                .to_string()
+                                        });
                                     verified_entries.push(VerifiedStatusEntry {
                                         alias,
                                         record,
-                                        status: "DRIFT",
-                                        on_chain_hash: Some(inspection.wasm_hash),
-                                        error: None,
+                                        status: "ERROR",
+                                        on_chain_hash: None,
+                                        error: Some(err_msg),
                                     });
                                 }
                             }
