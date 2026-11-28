@@ -427,10 +427,7 @@ fn finding_to_result(f: &Finding, source_file: &str) -> SarifResult {
 }
 
 fn finding_to_result_for_file(f: &Finding) -> SarifResult {
-    let source_file = f
-        .file
-        .as_deref()
-        .filter(|s| !s.is_empty());
+    let source_file = f.file.as_deref().filter(|s| !s.is_empty());
     let resolved_file = source_file.unwrap_or("unknown.rs");
     let message_text = match &f.location {
         Some(loc) => format!("{} ({})", f.message, loc),
@@ -454,7 +451,8 @@ fn finding_to_result_for_file(f: &Finding) -> SarifResult {
         locations: vec![SarifLocation {
             physical_location: SarifPhysicalLocation {
                 artifact_location: SarifArtifactLocation { uri, uri_base_id },
-                region: source_file.and_then(|_| f.line.map(|start_line| SarifRegion { start_line })),
+                region: source_file
+                    .and_then(|_| f.line.map(|start_line| SarifRegion { start_line })),
             },
         }],
     }
