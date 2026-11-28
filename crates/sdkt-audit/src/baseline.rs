@@ -263,6 +263,7 @@ mod tests {
             message: message.to_string(),
             file: None,
             location: Some(location.to_string()),
+            line: None,
         }
     }
 
@@ -429,6 +430,7 @@ mod tests {
             message: "missing auth".to_string(),
             file: Some("contracts/a.rs".to_string()),
             location: Some("mint".to_string()),
+            line: None,
         };
         let f_b = Finding {
             rule_id: "AUTH-001".to_string(),
@@ -436,6 +438,7 @@ mod tests {
             message: "missing auth".to_string(),
             file: Some("contracts/b.rs".to_string()),
             location: Some("mint".to_string()),
+            line: None,
         };
 
         let mut base_report = AuditReport::default();
@@ -492,6 +495,7 @@ mod tests {
             message: "missing auth".to_string(),
             file: Some("contracts/a.rs".to_string()),
             location: Some("mint".to_string()),
+            line: None,
         };
         let f_b = Finding {
             rule_id: "AUTH-001".to_string(),
@@ -499,6 +503,7 @@ mod tests {
             message: "missing auth".to_string(),
             file: Some("contracts/b.rs".to_string()),
             location: Some("mint".to_string()),
+            line: None,
         };
 
         // Baseline has 2 occurrences in a.rs and 1 in b.rs

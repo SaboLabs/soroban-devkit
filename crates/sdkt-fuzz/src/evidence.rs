@@ -63,6 +63,12 @@ pub struct CampaignEvidence {
     pub findings: Vec<FindingEvidence>,
     /// Findings that were minimized under the configured strategy.
     pub minimized_findings: usize,
+    /// Original declarations whose function was executed and evaluated.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub evaluated_declarations: Vec<String>,
+    /// Functions not evaluated, with explicit reasons.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub skipped_functions: Vec<crate::finding::SkippedFunction>,
     /// True when at least one finding artifact is available on disk.
     pub artifacts_available: bool,
     /// Replay status per finding artifact, keyed by canonical hash.
@@ -102,6 +108,9 @@ pub struct FindingEvidence {
     pub artifact_hash: String,
     /// True when minimization preserved the finding.
     pub minimized: bool,
+    /// Minimization snapshot, including the accepted reduction trace.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub minimization: Option<crate::artifact::MinimizationSnapshot>,
 }
 
 impl CampaignEvidence {
@@ -122,9 +131,13 @@ impl CampaignEvidence {
         // The artifact hash is the canonical hash of the serialized finding,
         // not the wasm hash; match artifacts to findings by case id
         // (artifacts are produced in finding order).
-        let mut by_case: BTreeMap<String, String> = BTreeMap::new();
+        let mut by_case: BTreeMap<String, (String, crate::artifact::MinimizationSnapshot)> =
+            BTreeMap::new();
         for a in artifacts {
-            by_case.insert(a.case_id.clone(), a.canonical_hash());
+            by_case.insert(
+                a.case_id.clone(),
+                (a.canonical_hash(), a.minimization.clone()),
+            );
         }
         let findings: Vec<FindingEvidence> = result
             .findings
@@ -135,9 +148,12 @@ impl CampaignEvidence {
                 reason_code: f.reason_code.name().to_string(),
                 artifact_hash: by_case
                     .get(&f.identity.case_id)
-                    .cloned()
+                    .map(|(hash, _)| hash.clone())
                     .unwrap_or_default(),
                 minimized: f.minimization.attempted && f.minimization.preserved,
+                minimization: by_case
+                    .get(&f.identity.case_id)
+                    .map(|(_, minimization)| minimization.clone()),
             })
             .collect();
 
@@ -149,6 +165,8 @@ impl CampaignEvidence {
             expected_errors: result.expected_errors.len(),
             findings,
             minimized_findings: result.minimized_findings().count(),
+            evaluated_declarations: result.evaluated_declarations.clone(),
+            skipped_functions: result.skipped_functions.clone(),
             artifacts_available: !artifacts.is_empty(),
             replay: replay.clone(),
             deterministic,

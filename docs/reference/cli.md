@@ -1338,6 +1338,8 @@ sdkt fuzz campaign --config fuzz.toml
 
 - `--expect-success <FN>` — declare that a function must always return successfully. If a case returns an error or value mismatch, it produces a finding.
 - `--expect-error <FN:TYPE:CODE>` — declare that a function must fail with a specific error. Format: `FunctionName:ErrorType:ErrorCode`. Example: `--expect-error transfer:Auth:6` means the `transfer` function must fail with `ContractError{Auth, 6}`.
+
+When minimization accepts reductions, campaign output includes a `REDUCTION` line with `kind`, `detail`, and `complexity_after`. JSON and JSONL findings include a `minimization.reductions` array using the same fields. Replay output includes the same `minimization` block from the finding artifact. Each reduction is an accepted step; `kind` identifies the reduction family and `complexity_after` is the complexity after that accepted step. A finding without accepted reductions omits the pretty trace lines and reports an empty `reductions` array where a minimization snapshot is available.
 - A function may have only one expectation; declaring it with both flags is a usage error (exit 2).
 - Malformed declarations are usage errors (exit 2).
 
@@ -1587,9 +1589,16 @@ Store root precedence (lowest → highest): `<cwd>/.sdkt/plugins`,
 `sdkt fuzz campaign` accepts repeatable `--expect-success <FN>` and
 `--expect-error <FN:TYPE:CODE>` declarations. A function may have one
 expectation; declaring it with both flags is a usage error that exits 2 and
-names the conflicting function. A single valid declaration keeps its existing
-campaign behavior. Malformed `--expect-error` declarations also remain usage
-errors.
+names the conflicting function. A declaration whose function is absent from the
+contract's `ContractSpec` is also a usage error that exits 2 and names the
+declaration and function.
+
+A declaration for a function present in the spec but not evaluated, for example
+because `--function` excludes it or the function has an unsupported parameter
+type, is reported by the campaign's existing `SKIPPED` output with the reason.
+A declaration that was executed is reported as `status=evaluated` in pretty
+output. Valid declarations keep their existing campaign semantics and exit
+behavior. Malformed `--expect-error` declarations remain usage errors.
 
 ### Resource-limit findings (opt-in)
 

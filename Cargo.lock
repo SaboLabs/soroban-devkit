@@ -3510,6 +3510,7 @@ dependencies = [
  "ed25519-dalek 3.0.0",
  "extism",
  "libloading",
+ "proc-macro2",
  "sdkt-wasm",
  "serde",
  "serde_json",

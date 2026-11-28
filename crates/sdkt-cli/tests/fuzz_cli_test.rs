@@ -182,6 +182,43 @@ fn cli_campaign_rejects_conflicting_expectations_for_same_function() {
 }
 
 #[test]
+fn cli_campaign_rejects_expectation_for_unknown_contract_function() {
+    fuzz_campaign(&[
+        &fixture("us_new.wasm"),
+        "--cases",
+        "4",
+        "--expect-error",
+        "does_not_exist:Auth:6",
+    ])
+    .assert()
+    .failure()
+    .code(2)
+    .stderr(predicate::str::contains(
+        "--expect-error `does_not_exist:Auth:6` names function `does_not_exist` absent from ContractSpec",
+    ));
+}
+
+#[test]
+fn cli_campaign_reports_declaration_skipped_by_function_filter() {
+    fuzz_campaign(&[
+        &fixture("us_new.wasm"),
+        "--cases",
+        "2",
+        "--function",
+        "hello",
+        "--expect-success",
+        "increment",
+    ])
+    .assert()
+    .success()
+    .code(0)
+    .stdout(predicate::str::contains("SKIPPED function=increment"))
+    .stdout(predicate::str::contains(
+        "reason=declaration not selected by --function",
+    ));
+}
+
+#[test]
 fn cli_campaign_accepts_single_success_expectation() {
     fuzz_campaign(&[
         &fixture("us_new.wasm"),
@@ -354,7 +391,7 @@ fn cli_campaign_zero_cases_is_usage_error() {
     .assert()
     .failure()
     .code(2)
-    .stderr(predicate::str::contains("cases must be greater than 0"));
+    .stderr(predicate::str::contains("campaign executed 0 cases"));
 
     assert!(
         !out.join("campaign-evidence.json").exists(),
@@ -542,6 +579,8 @@ fn compare_evidence_file(
         case_count: findings.len(),
         passed: 0,
         expected_errors: 0,
+        evaluated_declarations: Vec::new(),
+        skipped_functions: Vec::new(),
         findings: findings
             .into_iter()
             .map(
@@ -551,6 +590,7 @@ fn compare_evidence_file(
                     reason_code: reason_code.to_string(),
                     artifact_hash: artifact_hash.to_string(),
                     minimized: false,
+                    minimization: None,
                 },
             )
             .collect(),

@@ -131,7 +131,7 @@ fn hex(bytes: &[u8]) -> String {
 }
 
 /// A campaign's function-level skip record: explicit, never silent.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct SkippedFunction {
     pub function: String,
     pub reason: String,

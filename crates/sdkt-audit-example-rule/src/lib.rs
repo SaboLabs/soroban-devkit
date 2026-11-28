@@ -41,6 +41,7 @@ impl AuditRule for ExampleRule {
                     severity: self.severity(),
                     message: format!("Example rule matched trigger function `{}`", s.fn_name),
                     location: Some(s.fn_name.clone()),
+                    line: None,
                 });
             }
         }
@@ -70,6 +71,7 @@ mod tests {
     fn example_rule_fires_on_trigger_function() {
         let scans = vec![FnScan {
             fn_name: "sdkt_example_trigger_admin".to_string(),
+            line: None,
             require_auth: 0,
             invoke_contract: 0,
             bound: Default::default(),
@@ -91,6 +93,7 @@ mod tests {
     fn example_rule_silent_on_normal_function() {
         let scans = vec![FnScan {
             fn_name: "balance_of".to_string(),
+            line: None,
             require_auth: 0,
             invoke_contract: 0,
             bound: Default::default(),

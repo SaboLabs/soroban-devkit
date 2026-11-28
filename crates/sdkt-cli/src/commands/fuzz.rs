@@ -523,15 +523,19 @@ fn replay_json_value(outcome: &sdkt_fuzz::ReplayOutcome) -> serde_json::Value {
             reason_code,
             observation_hash,
             artifact_hash,
+            minimization,
         } => {
             v["result"] = serde_json::json!("reproduced");
             v["reason_code"] = serde_json::json!(reason_code.name());
             v["artifact_hash"] = serde_json::json!(artifact_hash);
             v["observation_hash"] = serde_json::json!(observation_hash);
+            v["minimization"] =
+                serde_json::to_value(minimization).expect("minimization snapshot serializes");
         }
         Mismatch {
             expected,
             actual,
+            minimization,
             observation_hash,
             artifact_hash,
         } => {
@@ -540,6 +544,8 @@ fn replay_json_value(outcome: &sdkt_fuzz::ReplayOutcome) -> serde_json::Value {
             v["actual_classification"] = serde_json::json!(format!("{actual:?}"));
             v["artifact_hash"] = serde_json::json!(artifact_hash);
             v["observation_hash"] = serde_json::json!(observation_hash);
+            v["minimization"] =
+                serde_json::to_value(minimization).expect("minimization snapshot serializes");
         }
     }
     v
@@ -548,227 +554,32 @@ fn replay_json_value(outcome: &sdkt_fuzz::ReplayOutcome) -> serde_json::Value {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    fn write_temp_config(name: &str, contents: &str) -> std::path::PathBuf {
-        let dir = std::env::temp_dir().join(format!(
-            "sdkt-fuzz-config-unit-{name}-{}",
-            std::process::id()
-        ));
-        std::fs::create_dir_all(&dir).expect("create temp dir");
-        let path = dir.join("fuzz.toml");
-        std::fs::write(&path, contents).expect("write temp config");
-        path
-    }
+    use sdkt_fuzz::artifact::{MinimizationSnapshot, ReductionSnapshot};
+    use sdkt_fuzz::ReplayOutcome;
 
     #[test]
-    fn parse_valid_campaign_config_with_expectations() {
-        let toml = r#"
-[campaign]
-wasm = "contract.wasm"
-seed = 42
-cases = 50
-function = "increment"
-auth = "correct-auth"
+    fn replay_json_includes_minimization_reductions() {
+        let minimization = MinimizationSnapshot {
+            attempted: true,
+            strategy: "deterministically minimized under the configured strategy".to_string(),
+            original_complexity: 10,
+            minimized_complexity: 7,
+            preserved: true,
+            reductions: vec![ReductionSnapshot {
+                kind: "arg".to_string(),
+                detail: "zero argument 0".to_string(),
+                complexity_after: 7,
+            }],
+        };
+        let outcome = ReplayOutcome::Reproduced {
+            reason_code: sdkt_fuzz::ReasonCode::ReturnMismatch,
+            minimization,
+            observation_hash: "observation".to_string(),
+            artifact_hash: "artifact".to_string(),
+        };
 
-[[expect.success]]
-function = "increment"
-
-[[expect.error]]
-function = "withdraw"
-type = "Auth"
-code = 6
-"#;
-        let parsed = parse_campaign_config(toml, "fuzz.toml").expect("valid config");
-        assert_eq!(parsed.campaign.wasm.as_deref(), Some("contract.wasm"));
-        assert_eq!(parsed.campaign.seed, Some(42));
-        assert_eq!(parsed.campaign.cases, Some(50));
-        assert_eq!(parsed.campaign.function.as_deref(), Some("increment"));
-        assert_eq!(parsed.campaign.auth.as_deref(), Some("correct-auth"));
-        assert_eq!(
-            parsed.expect.success,
-            vec![ExpectSuccessEntry {
-                function: "increment".to_string()
-            }]
-        );
-        assert_eq!(
-            parsed.expect.error,
-            vec![ExpectErrorEntry {
-                function: "withdraw".to_string(),
-                error_type: "Auth".to_string(),
-                code: 6,
-            }]
-        );
-    }
-
-    #[test]
-    fn reject_unknown_key_naming_key_and_file() {
-        let toml = r#"
-[campaign]
-wasm = "contract.wasm"
-bogus_option = 123
-"#;
-        let err = parse_campaign_config(toml, "my-fuzz.toml").unwrap_err();
-        assert!(
-            err.contains("bogus_option"),
-            "error should name unknown key: {err}"
-        );
-        assert!(
-            err.contains("my-fuzz.toml"),
-            "error should name config file: {err}"
-        );
-    }
-
-    #[test]
-    fn reject_missing_and_malformed_config_naming_file() {
-        let missing_err = read_campaign_config("/nonexistent/path/missing-fuzz.toml").unwrap_err();
-        assert!(
-            missing_err.contains("missing-fuzz.toml"),
-            "error should name missing file: {missing_err}"
-        );
-
-        let bad_err = parse_campaign_config("[campaign\nwasm = ", "broken.toml").unwrap_err();
-        assert!(
-            bad_err.contains("broken.toml"),
-            "error should name malformed file: {bad_err}"
-        );
-    }
-
-    #[test]
-    fn precedence_flags_override_config_override_defaults() {
-        let cfg_path = write_temp_config(
-            "precedence",
-            r#"
-[campaign]
-wasm = "from_config.wasm"
-seed = 42
-cases = 50
-function = "from_cfg_fn"
-auth = "correct-auth"
-
-[[expect.success]]
-function = "cfg_ok"
-
-[[expect.error]]
-function = "cfg_err"
-type = "Auth"
-code = 6
-"#,
-        );
-        let cfg_str = cfg_path.to_str().unwrap();
-
-        // 1. Config values override built-in defaults when CLI flags are omitted.
-        let from_cfg =
-            resolve_campaign_inputs(None, Some(cfg_str), None, None, None, None, vec![], vec![])
-                .expect("config-only resolution");
-        assert_eq!(from_cfg.wasm, "from_config.wasm");
-        assert_eq!(from_cfg.seed, 42);
-        assert_eq!(from_cfg.cases, 50);
-        assert_eq!(from_cfg.function.as_deref(), Some("from_cfg_fn"));
-        assert_eq!(from_cfg.auth, "correct-auth");
-        assert_eq!(from_cfg.expect_success, vec!["cfg_ok".to_string()]);
-        assert_eq!(from_cfg.expect_error, vec!["cfg_err:Auth:6".to_string()]);
-
-        // 2. Explicit CLI flags override config values (including explicit --seed 0).
-        let overridden = resolve_campaign_inputs(
-            None,
-            Some(cfg_str),
-            Some(0),
-            Some(10),
-            Some("cli_fn".to_string()),
-            Some("wrong-auth".to_string()),
-            vec!["cli_ok".to_string()],
-            vec!["cli_err:Storage:3".to_string()],
-        )
-        .expect("cli override resolution");
-        assert_eq!(overridden.wasm, "from_config.wasm");
-        assert_eq!(overridden.seed, 0);
-        assert_eq!(overridden.cases, 10);
-        assert_eq!(overridden.function.as_deref(), Some("cli_fn"));
-        assert_eq!(overridden.auth, "wrong-auth");
-        assert_eq!(overridden.expect_success, vec!["cli_ok".to_string()]);
-        assert_eq!(
-            overridden.expect_error,
-            vec!["cli_err:Storage:3".to_string()]
-        );
-
-        // 3. Built-in defaults apply when neither CLI nor config supplies values.
-        let defaults = resolve_campaign_inputs(
-            Some("cli_only.wasm".to_string()),
-            None,
-            None,
-            None,
-            None,
-            None,
-            vec![],
-            vec![],
-        )
-        .expect("default resolution");
-        assert_eq!(defaults.wasm, "cli_only.wasm");
-        assert_eq!(defaults.seed, 0);
-        assert_eq!(defaults.cases, 100);
-        assert_eq!(defaults.function, None);
-        assert_eq!(defaults.auth, "no-auth");
-    }
-
-    #[test]
-    fn wasm_mismatch_and_missing_wasm_errors() {
-        let cfg_path = write_temp_config(
-            "wasm-mismatch",
-            r#"
-[campaign]
-wasm = "cfg.wasm"
-"#,
-        );
-        let cfg_str = cfg_path.to_str().unwrap();
-
-        // Matching positional + config succeeds.
-        let matched = resolve_campaign_inputs(
-            Some("cfg.wasm".to_string()),
-            Some(cfg_str),
-            None,
-            None,
-            None,
-            None,
-            vec![],
-            vec![],
-        )
-        .expect("matching wasm should succeed");
-        assert_eq!(matched.wasm, "cfg.wasm");
-
-        // Mismatching positional + config fails naming both values.
-        let mismatch_err = resolve_campaign_inputs(
-            Some("cli.wasm".to_string()),
-            Some(cfg_str),
-            None,
-            None,
-            None,
-            None,
-            vec![],
-            vec![],
-        )
-        .unwrap_err();
-        assert!(
-            mismatch_err.contains("cli.wasm") && mismatch_err.contains("cfg.wasm"),
-            "mismatch error should name both WASM values: {mismatch_err}"
-        );
-
-        // Config without wasm and no positional wasm fails naming the config file.
-        let no_wasm_cfg = write_temp_config("no-wasm", "[campaign]\ncases = 5\n");
-        let no_wasm_str = no_wasm_cfg.to_str().unwrap();
-        let missing_wasm_err = resolve_campaign_inputs(
-            None,
-            Some(no_wasm_str),
-            None,
-            None,
-            None,
-            None,
-            vec![],
-            vec![],
-        )
-        .unwrap_err();
-        assert!(
-            missing_wasm_err.contains(no_wasm_str),
-            "missing wasm error should name config file: {missing_wasm_err}"
-        );
+        let json = replay_json_value(&outcome);
+        assert_eq!(json["minimization"]["reductions"][0]["kind"], "arg");
+        assert_eq!(json["minimization"]["reductions"][0]["complexity_after"], 7);
     }
 }

@@ -112,6 +112,12 @@ impl FuzzReport {
     pub fn to_pretty(&self) -> String {
         let mut out = String::new();
         out.push_str(&format!("Campaign summary: {}\n", self.summary));
+        for skipped in &self.result.skipped_functions {
+            out.push_str(&format!(
+                "SKIPPED function={} reason={}\n",
+                skipped.function, skipped.reason
+            ));
+        }
         for f in &self.result.findings {
             out.push_str(&format!(
                 "FINDING {} {} {} (minimized_complexity={})\n",
@@ -119,6 +125,10 @@ impl FuzzReport {
                 f.identity.function,
                 f.reason_code.name(),
                 f.minimization.minimized_complexity
+            ));
+            out.push_str(&reduction_trace_lines(
+                &f.identity.case_id,
+                &f.minimization.reductions,
             ));
         }
         for (name, hash) in &self.artifacts {
@@ -158,6 +168,17 @@ impl FuzzReport {
                 "mutation_ids": f.identity.mutation_ids,
                 "operators": f.identity.operators,
                 "minimized": f.minimization.attempted && f.minimization.preserved,
+                "minimization": {
+                    "attempted": f.minimization.attempted,
+                    "original_complexity": f.minimization.original_complexity,
+                    "minimized_complexity": f.minimization.minimized_complexity,
+                    "preserved": f.minimization.preserved,
+                    "reductions": f.minimization.reductions.iter().map(|r| serde_json::json!({
+                        "kind": r.kind,
+                        "detail": r.detail,
+                        "complexity_after": r.complexity_after,
+                    })).collect::<Vec<_>>(),
+                },
             });
             out.push_str(
                 &serde_json::to_string(&projection)
@@ -207,6 +228,11 @@ pub fn run_with_sequence(
     })?;
 
     let mut input = CampaignInput::new(&wasm, expand_seed(options.seed))?;
+    if options.cases == 0 {
+        return Err(FuzzError::InvalidConfig(
+            "cases must be greater than 0".to_string(),
+        ));
+    }
     input.cases = options.cases;
     input.function = options.function.clone();
     input.auth_mode = options.auth_mode;
@@ -222,8 +248,28 @@ pub fn run_with_sequence(
         None => Environment::default(),
     };
 
-    let expectations = build_expectations(options)?;
-    let (result, artifacts) = run_campaign_artifacts(&input, &expectations)?;
+    let expectations = build_expectations(options, &input.spec)?;
+    let (mut result, artifacts) = run_campaign_artifacts(&input, &expectations)?;
+    for declaration in &options.expect_success {
+        if result
+            .evaluated_functions
+            .iter()
+            .any(|function| function == declaration)
+        {
+            result.evaluated_declarations.push(declaration.clone());
+        }
+    }
+    for declaration in &options.expect_error {
+        if let Some(function) = declaration.split(':').next() {
+            if result
+                .evaluated_functions
+                .iter()
+                .any(|evaluated| evaluated == function)
+            {
+                result.evaluated_declarations.push(declaration.clone());
+            }
+        }
+    }
 
     // Artifacts: write only actual Classification::Finding findings.
     let dir = match &options.artifact_dir {
@@ -308,6 +354,18 @@ pub fn run_with_sequence(
     })
 }
 
+fn reduction_trace_lines(case_id: &str, reductions: &[crate::minimizer::Reduction]) -> String {
+    reductions
+        .iter()
+        .map(|reduction| {
+            format!(
+                "REDUCTION case={case_id} kind={} detail={} complexity_after={}\n",
+                reduction.kind, reduction.detail, reduction.complexity_after
+            )
+        })
+        .collect()
+}
+
 /// Replay one artifact against a WASM file.
 pub fn run_replay(options: &ReplayOptions) -> Result<ReplayOutcome, ReplayError> {
     let json = std::fs::read(&options.artifact).map_err(|e| {
@@ -329,20 +387,40 @@ pub fn replay_line(outcome: &ReplayOutcome) -> String {
             reason_code,
             observation_hash,
             artifact_hash,
-        } => format!(
+            minimization,
+        } => {
+            let mut line = format!(
             "REPRODUCED reason={} artifact_hash={artifact_hash} observation_hash={observation_hash} canonical={}",
             reason_code.name(),
             outcome.canonical_hash()
-        ),
+            );
+            for reduction in &minimization.reductions {
+                line.push_str(&format!(
+                    "\nREDUCTION kind={} detail={} complexity_after={}",
+                    reduction.kind, reduction.detail, reduction.complexity_after
+                ));
+            }
+            line
+        }
         ReplayOutcome::Mismatch {
             expected,
             actual,
             artifact_hash,
             observation_hash,
-        } => format!(
+            minimization,
+        } => {
+            let mut line = format!(
             "MISMATCH expected={expected:?} actual={actual:?} artifact_hash={artifact_hash} observation_hash={observation_hash} canonical={}",
             outcome.canonical_hash()
-        ),
+            );
+            for reduction in &minimization.reductions {
+                line.push_str(&format!(
+                    "\nREDUCTION kind={} detail={} complexity_after={}",
+                    reduction.kind, reduction.detail, reduction.complexity_after
+                ));
+            }
+            line
+        }
     }
 }
 
@@ -367,19 +445,28 @@ pub fn expand_seed(seed: u64) -> [u8; 32] {
 /// Parse `--expect-success` / `--expect-error FN:TYPE:CODE` into the
 /// expectations map. Malformed declarations are configuration errors, not
 /// findings.
-fn build_expectations(options: &FuzzRunOptions) -> Result<BTreeMap<String, Expected>, FuzzError> {
-    // Run-level opt-in: the RESOURCE_LIMIT rule applies to every
-    // expectation built for this run (no per-function granularity).
-    let resource_limit_is_finding = options.resource_limit_is_finding;
+fn build_expectations(
+    options: &FuzzRunOptions,
+    spec: &sdkt_wasm::ContractSpec,
+) -> Result<BTreeMap<String, Expected>, FuzzError> {
     let mut map = BTreeMap::new();
     for f in &options.expect_success {
+        if !spec
+            .functions
+            .iter()
+            .any(|contract_fn| contract_fn.name == *f)
+        {
+            return Err(FuzzError::InvalidConfig(format!(
+                "--expect-success `{f}` names function `{f}` absent from ContractSpec"
+            )));
+        }
         map.insert(
             f.clone(),
             Expected {
                 behavior: ExpectedBehavior::Success {
                     expect_return: None,
                 },
-                resource_limit_is_finding,
+                resource_limit_is_finding: options.resource_limit_is_finding,
                 ..Default::default()
             },
         );
@@ -396,6 +483,15 @@ fn build_expectations(options: &FuzzRunOptions) -> Result<BTreeMap<String, Expec
         let code: u32 = code.parse().map_err(|e| {
             FuzzError::InvalidConfig(format!("--expect-error `{decl}`: bad code: {e}"))
         })?;
+        if !spec
+            .functions
+            .iter()
+            .any(|contract_fn| contract_fn.name == function)
+        {
+            return Err(FuzzError::InvalidConfig(format!(
+                "--expect-error `{decl}` names function `{function}` absent from ContractSpec"
+            )));
+        }
         if options.expect_success.iter().any(|name| name == function) {
             return Err(FuzzError::InvalidConfig(format!(
                 "conflicting expectations for function '{function}': declared by both --expect-success and --expect-error"
@@ -408,7 +504,7 @@ fn build_expectations(options: &FuzzRunOptions) -> Result<BTreeMap<String, Expec
                     error_type: error_type.to_string(),
                     code,
                 },
-                resource_limit_is_finding,
+                resource_limit_is_finding: options.resource_limit_is_finding,
                 ..Default::default()
             },
         );
@@ -455,4 +551,26 @@ pub fn load_artifact(path: &Path) -> Result<FindingArtifact, ReplayError> {
 /// declarations need the canonical encoding once).
 pub fn u32_scval_hex(n: u32) -> String {
     encode_scval_xdr_hex(&ScVal::U32(n))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::minimizer::Reduction;
+
+    #[test]
+    fn reduction_trace_is_rendered_only_when_non_empty() {
+        assert_eq!(reduction_trace_lines("case0001", &[]), "");
+
+        let trace = reduction_trace_lines(
+            "case0001",
+            &[Reduction {
+                kind: "arg".to_string(),
+                detail: "zero argument 0".to_string(),
+                complexity_after: 7,
+            }],
+        );
+        assert!(trace.contains("REDUCTION case=case0001 kind=arg"));
+        assert!(trace.contains("complexity_after=7"));
+    }
 }
