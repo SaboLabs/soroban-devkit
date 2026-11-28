@@ -228,6 +228,11 @@ pub fn run_with_sequence(
     })?;
 
     let mut input = CampaignInput::new(&wasm, expand_seed(options.seed))?;
+    if options.cases == 0 {
+        return Err(FuzzError::InvalidConfig(
+            "cases must be greater than 0".to_string(),
+        ));
+    }
     input.cases = options.cases;
     input.function = options.function.clone();
     input.auth_mode = options.auth_mode;
@@ -461,7 +466,7 @@ fn build_expectations(
                 behavior: ExpectedBehavior::Success {
                     expect_return: None,
                 },
-                resource_limit_is_finding,
+                resource_limit_is_finding: options.resource_limit_is_finding,
                 ..Default::default()
             },
         );
@@ -499,7 +504,7 @@ fn build_expectations(
                     error_type: error_type.to_string(),
                     code,
                 },
-                resource_limit_is_finding,
+                resource_limit_is_finding: options.resource_limit_is_finding,
                 ..Default::default()
             },
         );

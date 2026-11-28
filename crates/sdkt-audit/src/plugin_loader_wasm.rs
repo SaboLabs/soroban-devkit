@@ -238,6 +238,7 @@ impl AuditRule for WasmPluginRule {
                     severity: Severity::Warning,
                     message: format!("internal: failed to serialise check input: {e}"),
                     location: None,
+                    line: None,
                 });
                 return;
             }
@@ -254,6 +255,7 @@ impl AuditRule for WasmPluginRule {
                         severity: Severity::Warning,
                         message: "internal: wasm plugin mutex poisoned".into(),
                         location: None,
+                        line: None,
                     });
                     return;
                 }
@@ -267,6 +269,7 @@ impl AuditRule for WasmPluginRule {
                         severity: Severity::Warning,
                         message: format!("wasm plugin trap during check: {e}"),
                         location: None,
+                        line: None,
                     });
                     return;
                 }
@@ -283,6 +286,7 @@ impl AuditRule for WasmPluginRule {
                     severity: Severity::Warning,
                     message: format!("wasm plugin returned malformed JSON: {e}"),
                     location: None,
+                    line: None,
                 });
                 return;
             }
