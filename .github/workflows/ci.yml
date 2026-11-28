@@ -208,6 +208,14 @@ jobs:
         grep -q "$TARGET" install.sh \
           || { echo "FAIL: install.sh does not reference $TARGET"; exit 1; }
         echo "OK: release.yml and install.sh both cover $TARGET"
+    - name: Release matrix and installer agree on Windows target
+      run: |
+        TARGET="x86_64-pc-windows-msvc"
+        grep -q "target: $TARGET" .github/workflows/release.yml \
+          || { echo "FAIL: release.yml matrix has no $TARGET target"; exit 1; }
+        grep -q "$TARGET" install.sh \
+          || { echo "FAIL: install.sh does not reference $TARGET"; exit 1; }
+        echo "OK: release.yml and install.sh both cover $TARGET"
 
   msrv:
     runs-on: ubuntu-latest
