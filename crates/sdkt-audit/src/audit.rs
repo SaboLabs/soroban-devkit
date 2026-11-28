@@ -26,6 +26,14 @@ pub trait AuditRule {
     fn severity(&self) -> Severity;
     /// Human-readable description of what the rule checks.
     fn description(&self) -> &'static str;
+    /// Minimal vulnerable code illustrating the pattern this rule flags.
+    fn example_vulnerable(&self) -> &'static str {
+        "Not documented."
+    }
+    /// Minimal fixed code illustrating the recommended remediation.
+    fn example_fixed(&self) -> &'static str {
+        "Not documented."
+    }
     /// Run the rule over the scanned functions and record findings.
     fn check(&self, scans: &[FnScan], ctx: &AuditContext, report: &mut AuditReport);
 }

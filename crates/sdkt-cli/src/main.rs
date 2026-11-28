@@ -461,13 +461,16 @@ enum Commands {
     /// Static security analysis of a Soroban contract source file (Gap C)
     Audit {
         /// Rust source file(s) or directory path(s) to analyze
-        #[arg(required_unless_present = "list_rules", num_args = 1..)]
+        #[arg(required_unless_present_any = ["list_rules", "explain"], num_args = 1..)]
         paths: Vec<String>,
         #[arg(short, long, default_value = "pretty")]
         format: String,
         /// List available audit rules and exit
         #[arg(long, default_value_t = false)]
         list_rules: bool,
+        /// Explain one built-in audit rule and show vulnerable/fixed examples
+        #[arg(long, value_name = "RULE_ID", conflicts_with = "list_rules")]
+        explain: Option<String>,
         /// Disable a rule by id (repeatable), e.g. --disable MOVE-001
         #[arg(long, value_name = "RULE_ID", action = clap::ArgAction::Append)]
         disable: Vec<String>,
@@ -10261,6 +10264,7 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
             paths,
             format,
             list_rules,
+            explain,
             disable,
             rules,
             no_plugins,
@@ -10317,6 +10321,56 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
                 AuditFormat::Json => OutputFormat::Json,
                 _ => OutputFormat::Pretty,
             };
+
+            if let Some(rule_id) = explain {
+                if !paths.is_empty() || !disable.is_empty() {
+                    eprintln!(
+                        "Error: --explain cannot be combined with source paths or --disable."
+                    );
+                    process::exit(1);
+                }
+                if audit_fmt == AuditFormat::Sarif {
+                    eprintln!(
+                        "Error: --format sarif is not supported with --explain. Use --format json or --format pretty."
+                    );
+                    process::exit(1);
+                }
+                let rules = sdkt_audit::all_rules();
+                let Some(rule) = rules
+                    .iter()
+                    .find(|rule| rule.id().eq_ignore_ascii_case(&rule_id))
+                else {
+                    let valid = rules
+                        .iter()
+                        .map(|rule| rule.id())
+                        .collect::<Vec<_>>()
+                        .join(", ");
+                    eprintln!(
+                        "Unknown audit rule '{}'. Valid rule IDs: {}",
+                        rule_id, valid
+                    );
+                    process::exit(1);
+                };
+                if audit_fmt == AuditFormat::Json {
+                    println!(
+                        "{}",
+                        serde_json::json!({
+                            "id": rule.id(),
+                            "severity": rule.severity().to_string(),
+                            "description": rule.description(),
+                            "example_vulnerable": rule.example_vulnerable(),
+                            "example_fixed": rule.example_fixed(),
+                        })
+                    );
+                } else {
+                    println!("Rule: {}", rule.id());
+                    println!("Severity: {}", rule.severity());
+                    println!("Description: {}", rule.description());
+                    println!("Example (vulnerable):\n{}", rule.example_vulnerable());
+                    println!("Example (fixed):\n{}", rule.example_fixed());
+                }
+                return Ok(());
+            }
 
             if list_rules {
                 // SARIF is not meaningful for listing rules — reject early so

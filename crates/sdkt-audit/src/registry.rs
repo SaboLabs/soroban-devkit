@@ -256,6 +256,15 @@ mod tests {
         }
     }
 
+    #[test]
+    fn every_builtin_rule_has_distinct_examples() {
+        for rule in crate::audit::all_rules() {
+            assert!(!rule.example_vulnerable().trim().is_empty());
+            assert!(!rule.example_fixed().trim().is_empty());
+            assert_ne!(rule.example_vulnerable(), rule.example_fixed());
+        }
+    }
+
     /// Every rule `all_rules()` describes must actually run: executing a scan
     /// that each rule can fire on must reach the registry, not just the listing.
     #[test]
