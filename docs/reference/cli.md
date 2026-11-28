@@ -166,6 +166,7 @@ sdkt
 │   └── [other network resolution flags]
 │
 ├── account <address>         [--format]
+│   └── transactions <address>  [--start-ledger] [--limit] [--cursor] [--max-matches] [--max-pages] [--format]
 │
 ├── fee
 │   └── estimate              (manual value entry, type-prefixed)
@@ -353,6 +354,59 @@ sdkt events <contract-id> --start-ledger 1000 --end-ledger 2000
 Pagination is strictly additive: no change to event decoding, topic
 filtering, or ABI-aware value formatting.
 
+### Account transactions (`sdkt account transactions`)
+
+`sdkt account transactions <ADDRESS>` lists what an account has done
+recently, from Soroban RPC `getTransactions`. The RPC returns every
+transaction in a ledger range with no account filter, so the command
+filters client-side by decoding each transaction's envelope and matching
+its source account (for a fee-bump envelope, the inner transaction's
+source account).
+
+```bash
+sdkt account transactions <ADDRESS> --start-ledger 100000
+# Account transactions for G...:
+#
+#   Ledger: 100001  TxHash: abc...  Status: SUCCESS  Fee: 100
+#   Ledger: 100005  TxHash: def...  Status: FAILED  Fee: 100
+#
+# Scanned: 12  Matched: 2  Pages: 1
+# Retention: oldestLedger 99000 - latestLedger 100100
+```
+
+- `--limit <N>` is the RPC page size: transactions fetched per page
+  (1–200, default 50). It never promises a number of *matching*
+  transactions; a page can hold zero matches while later pages hold many.
+- `--start-ledger <N>` is the first ledger scanned (inclusive). Default:
+  latest ledger minus 100, clamped to a minimum of 1. A start below the
+  endpoint's `oldestLedger` or above its `latestLedger` is an error naming
+  the requested start and the retention bounds; the start is never
+  silently clamped into range.
+- `--cursor <CURSOR>` resumes from a previous run's cursor. A cursor-only
+  request must omit `--start-ledger`; combining them is a usage error.
+- `--max-matches <N>` stops after N matching transactions (default 20). When the cap stops the scan mid-page, the printed `Next cursor` value points at the next page, so resuming from it skips any unexamined matches left on the cut page; re-run from the original start with a higher cap to see them.
+- `--max-pages <N>` stops after N pages fetched (default 10). The scan
+  stops at whichever limit is reached first.
+- The scan also stops on a terminal empty page (zero transactions returned
+  with a cursor at or past the latest ledger, the end of the available
+  range) or an exhausted cursor (empty, or identical to the request
+  cursor). An empty page whose cursor still points below the latest ledger
+  is a sparse gap, not the end, and the scan continues from its cursor. A
+  page with zero matches does not stop the scan.
+- An envelope too deep for the local XDR reader is an error naming the
+  transaction hash, never a silently skipped transaction.
+- Results are printed in the RPC's ascending ledger order (then
+  application order within a ledger), oldest first. The command never
+  claims newest-first.
+- No matches is an empty list with the scanned/matched summary and the
+  retention bounds, and exits 0 — it is a result, not an error.
+- `--format json` adds `nextCursor` (when the scan stops early), `scanned`, `matched`, `pages`,
+  `oldestLedger`, and `latestLedger` alongside the `transactions` array.
+
+This command is read-only and its source is Soroban RPC `getTransactions`.
+It is not Horizon-backed account history (different API, different
+retention, different ordering).
+
 ### Synchronizing dependencies
 
 `sdkt package update` closes the package loop: `validate → fetch → update → verify`.
@@ -455,7 +509,9 @@ the descriptor summary (`schema`, `name`, `version`, `format`, `lock_sha256`,
 │   ├── add <ALIAS> --path <DIR> [--depends-on <ALIAS>]... [--ctor-arg <TYPE:VALUE>]...
 │   │                         Register an existing contract in `.sdkt.toml`
 │   │                         under `[contracts.<alias>]`, validated before writing
-│   ├── status                Show deployments recorded for the selected network profile
+│   ├── status [--verify] [--format <pretty|json>]
+│   │                         Show deployments recorded for the selected network profile;
+│   │                         --verify checks live on-chain code hash against recorded hash
 │   ├── health [--fail-on <at_risk|critical>] [--format pretty|json]
 │   │                         Check health for every deployment recorded on the selected network
 │   └── deploy                Deploy all contracts defined in the workspace (.sdkt.toml),
@@ -541,6 +597,25 @@ the descriptor summary (`schema`, `name`, `version`, `format`, `lock_sha256`,
 │   mid-graph the contracts that already landed are never lost; the alias →
 │   contract ID mapping is retained for the retry. On success the record is written
 │   too (additive; the stdout JSON/pretty output is unchanged).
+│
+│   `sdkt project status` inspects `.sdkt-deployments.json` for the selected network profile.
+│   With `--verify`, it performs a read-only drift check: for every record on the selected network,
+│   it fetches the live on-chain code hash with `probe_deployed_executable` and compares it hash-to-hash
+│   against the recorded `wasm_hash` (no bytecode download):
+│   - `MATCH`: recorded hash matches on-chain hash
+│   - `DRIFT`: contract exists on-chain, but its code hash has changed
+│   - `MISSING`: contract not found on-chain
+│   - `ERROR`: check failed (e.g. RPC transport error, reported per record without aborting the run)
+│
+│   Pretty mode prints one line per record (e.g. `<alias>: MATCH`, `<alias>: DRIFT (recorded: <rec>, on-chain: <live>)`).
+│   `--format json` emits each record with `status` and `on_chain_wasm_hash` plus a top-level `summary`
+│   object (`{"match": N, "drift": N, "missing": N, "error": N}`).
+│   Exits 0 when every record is MATCH (or when no deployments are recorded); exits 1 when any record is DRIFT, MISSING, or ERROR.
+│   Example:
+│
+│     sdkt project status --verify
+│     # token: MATCH
+│     # vault: DRIFT (recorded: 551c5a9c..., on-chain: 60cddae6...)
 │
 │   `--skip-deployed` resumes an interrupted deploy: aliases whose recorded
 │   contract ID is verified to still exist on-chain (via `getLedgerEntries`) are
@@ -1218,7 +1293,7 @@ functions instead of aborting the entire command:
 
 ### Campaign
 
-`sdkt fuzz campaign <wasm>` runs a deterministic fuzz campaign against a compiled contract.
+`sdkt fuzz campaign [<WASM>]` (or `sdkt fuzz campaign --config <FILE>`) runs a deterministic fuzz campaign against a compiled contract.
 
 **Syntax:**
 
@@ -1235,11 +1310,18 @@ sdkt fuzz campaign contract.wasm \
   --format json
 ```
 
+Or from a checked-in TOML definition file:
+
+```bash
+sdkt fuzz campaign --config fuzz.toml
+```
+
 **Arguments and flags:**
 
 | Flag | Default | Meaning |
 |------|---------|---------|
-| `<WASM>` | *required* | Path to the compiled contract WASM file |
+| `<WASM>` | *required unless `--config` supplies `campaign.wasm`* | Path to the compiled contract WASM file. When both `<WASM>` and `campaign.wasm` are provided, they must match (mismatch exits `2` naming both values) |
+| `--config <FILE>` | none | Path to a TOML campaign definition file. Precedence: explicit CLI flags override config values; config values override defaults |
 | `--seed <N>` | `0` | Deterministic seed (u64). Same seed produces identical test case sequence across runs |
 | `--cases <N>` | `100` | Number of test cases to execute (must be `>= 1`; `--cases 0` is a usage error, exit `2`) |
 | `--function <NAME>` | all | Restrict the campaign to one exported contract function (if no runnable function matches, exits `2` without writing clean evidence) |
@@ -1266,6 +1348,30 @@ to `--artifact-dir` include additive top-level provenance fields:
 `schema_version` (`1`), `tool` (`"sdkt"`), and `version` (the build's
 `CARGO_PKG_VERSION`). Older evidence without these fields remains readable;
 its missing provenance is treated as unknown.
+
+**Campaign config file (`--config <FILE>`):**
+
+`sdkt fuzz campaign --config fuzz.toml` loads campaign settings and expectations from a TOML file with `[campaign]` and `[[expect.success]]` / `[[expect.error]]` tables:
+
+```toml
+[campaign]
+wasm = "target/wasm32v1-none/release/contract.wasm"
+seed = 42
+cases = 100
+function = "increment"
+auth = "correct-auth"
+
+[[expect.success]]
+function = "increment"
+
+[[expect.error]]
+function = "withdraw"
+type = "Auth"
+code = 6
+```
+
+- **Precedence:** explicit CLI flags override config values; config values override built-in defaults (`seed = 0`, `cases = 100`, `auth = "no-auth"`).
+- **Validation:** unknown keys, missing or malformed TOML files, missing `wasm` from both `<WASM>` and `campaign.wasm`, or a mismatch between positional `<WASM>` and `campaign.wasm` are rejected as usage errors (exit `2`) before any case executes.
 
 **Sequence execution (state carry):**
 
@@ -1432,6 +1538,8 @@ Store root precedence (lowest → highest): `<cwd>/.sdkt/plugins`,
 
 - `--format json` is supported on all read-style commands, every `plugin` subcommand, and on `diff`, `audit`, `deploy`, `init` for scripting / CI.
 - `diff --upgrade-safety` and `deploy --deny-breaking` implement the Upgrade Safety Guard (see `ROADMAP.md`).
+- **Network Fit.** `sdkt release-assurance` includes a `Network Fit` section (`network_fit` in JSON) that fetches the live network's `ContractMaxSizeBytes` setting via `capture_network_config` and compares it with the candidate artifact's byte size (`PASS` when `size <= limit`, `FAIL` naming both byte counts when `size > limit`, or `SKIPPED` without affecting `release_status` when the network is unreachable or the setting is unavailable).
+
 - **Deploy preflight.** `sdkt deploy --wasm <file> --release-assurance` checks the artifact before identity lookup and upload. Repeat `--preflight-audit <path>` for source audits and `--preflight-fuzz-evidence <file>` for recorded fuzz evidence; `--old-wasm` enables Upgrade Safety. Verification and Contract Health are skipped because the candidate has not yet been deployed on-chain. In JSON mode (`--format json`), the pretty preflight report is routed to stderr so stdout remains parseable JSON. A failure or assurance error aborts the deployment; without the flag the existing flow is unchanged. (Note: assurance inspects the WASM file at the specified path before upload; avoid modifying the candidate file between preflight and upload to prevent TOCTOU discrepancies).
 - **Diffing deployed contracts.** `sdkt diff` accepts `--old-contract <C...>` / `--new-contract <C...>` in place of `--old-wasm` / `--new-wasm`: each contract side fetches its on-chain WASM over RPC (the same `inspect` → `getLedgerEntries` composition `verify --upgrade-safety` uses) and the fetched bytes are diffed by the existing `diff_wasm` path. The two sides are independent — a file side and a contract side can be mixed. Contract-ID sides require a network: `--network testnet` (or `futurenet`) for the built-in public endpoints, `--rpc-url <URL>` together with the mainnet passphrase for mainnet — `--network mainnet` alone is rejected because there is no built-in public mainnet RPC endpoint — or a saved `--network-profile <NAME>` (e.g. a stored mainnet profile created with `sdkt network add mainnet --rpc-url <URL> --passphrase "Public Global Stellar Network ; September 2015"`); `--old-contract` conflicts with `--old-wasm` (same for `--new-*`), and each side needs at least one source. A contract ID that does not exist on the network fails with a clear "contract not found" error. Pretty output is unchanged; `--format json` records each side's origin in the additive `old_source` / `new_source` fields (`{"kind": "file", "path": ...}` or `{"kind": "contract", "contract_id": ...}`), which are absent for the classic two-file diff. `--upgrade-safety`, `--max-growth-pct`, and `--max-size-bytes` work with contract-ID sides exactly as with files.
 

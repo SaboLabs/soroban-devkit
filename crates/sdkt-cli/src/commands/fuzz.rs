@@ -86,6 +86,166 @@ pub fn validate_sequence_flags(
     }
 }
 
+/// Parsed TOML campaign definition (`sdkt fuzz campaign --config <FILE>`).
+#[derive(Debug, Default, PartialEq, Eq, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct FuzzCampaignConfigFile {
+    #[serde(default)]
+    pub campaign: CampaignSection,
+    #[serde(default)]
+    pub expect: ExpectSection,
+}
+
+/// `[campaign]` table in a campaign TOML config.
+#[derive(Debug, Default, PartialEq, Eq, serde::Deserialize)]
+#[serde(deny_unknown_fields, default)]
+pub struct CampaignSection {
+    pub wasm: Option<String>,
+    pub seed: Option<u64>,
+    pub cases: Option<usize>,
+    pub function: Option<String>,
+    pub auth: Option<String>,
+}
+
+/// `[expect]` container for `[[expect.success]]` and `[[expect.error]]`.
+#[derive(Debug, Default, PartialEq, Eq, serde::Deserialize)]
+#[serde(deny_unknown_fields, default)]
+pub struct ExpectSection {
+    #[serde(default)]
+    pub success: Vec<ExpectSuccessEntry>,
+    #[serde(default)]
+    pub error: Vec<ExpectErrorEntry>,
+}
+
+/// One `[[expect.success]]` entry (`function = "..."`).
+#[derive(Debug, PartialEq, Eq, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ExpectSuccessEntry {
+    pub function: String,
+}
+
+/// One `[[expect.error]]` entry (`function = "..."`, `type = "..."`, `code = N`).
+#[derive(Debug, PartialEq, Eq, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ExpectErrorEntry {
+    pub function: String,
+    #[serde(rename = "type")]
+    pub error_type: String,
+    pub code: u32,
+}
+
+/// Resolved campaign parameters after merging CLI flags > config > defaults.
+#[derive(Debug, PartialEq, Eq)]
+pub struct ResolvedCampaignInputs {
+    pub wasm: String,
+    pub seed: u64,
+    pub cases: usize,
+    pub function: Option<String>,
+    pub auth: String,
+    pub expect_success: Vec<String>,
+    pub expect_error: Vec<String>,
+}
+
+/// Parse a TOML campaign config string, naming `path` on any error.
+pub fn parse_campaign_config(text: &str, path: &str) -> Result<FuzzCampaignConfigFile, String> {
+    toml::from_str(text).map_err(|e| format!("cannot parse campaign config '{path}': {e}"))
+}
+
+/// Read and parse a TOML campaign config file, naming `path` on any error.
+pub fn read_campaign_config(path: &str) -> Result<FuzzCampaignConfigFile, String> {
+    let text = std::fs::read_to_string(path)
+        .map_err(|e| format!("cannot read campaign config '{path}': {e}"))?;
+    parse_campaign_config(&text, path)
+}
+
+/// Merge CLI flags, optional config file, and built-in defaults.
+///
+/// Precedence: explicit CLI flags > config values > defaults.
+/// Positional `wasm` and `campaign.wasm` must agree when both are supplied.
+#[allow(clippy::too_many_arguments)]
+pub fn resolve_campaign_inputs(
+    cli_wasm: Option<String>,
+    config_path: Option<&str>,
+    cli_seed: Option<u64>,
+    cli_cases: Option<usize>,
+    cli_function: Option<String>,
+    cli_auth: Option<String>,
+    cli_expect_success: Vec<String>,
+    cli_expect_error: Vec<String>,
+) -> Result<ResolvedCampaignInputs, String> {
+    let cfg = match config_path {
+        Some(path) => Some((path, read_campaign_config(path)?)),
+        None => None,
+    };
+
+    let wasm = match (
+        cli_wasm,
+        cfg.as_ref().and_then(|(_, c)| c.campaign.wasm.as_ref()),
+    ) {
+        (Some(pos), Some(cfg_wasm)) => {
+            if pos != *cfg_wasm {
+                let path = cfg.as_ref().map(|(p, _)| *p).unwrap_or("");
+                return Err(format!(
+                    "conflicting WASM paths: positional argument '{pos}' does not match config '{cfg_wasm}' in '{path}'"
+                ));
+            }
+            pos
+        }
+        (Some(pos), None) => pos,
+        (None, Some(cfg_wasm)) => cfg_wasm.clone(),
+        (None, None) => {
+            return match config_path {
+                Some(path) => Err(format!(
+                    "missing WASM path: neither positional <WASM> nor 'campaign.wasm' in '{path}' was provided"
+                )),
+                None => Err(
+                    "missing required <WASM> argument (pass <WASM> or --config <FILE>)".to_string(),
+                ),
+            };
+        }
+    };
+
+    let cfg_file = cfg.map(|(_, c)| c).unwrap_or_default();
+    let seed = cli_seed.or(cfg_file.campaign.seed).unwrap_or(0);
+    let cases = cli_cases.or(cfg_file.campaign.cases).unwrap_or(100);
+    let function = cli_function.or(cfg_file.campaign.function);
+    let auth = cli_auth
+        .or(cfg_file.campaign.auth)
+        .unwrap_or_else(|| "no-auth".to_string());
+
+    let expect_success = if !cli_expect_success.is_empty() {
+        cli_expect_success
+    } else {
+        cfg_file
+            .expect
+            .success
+            .into_iter()
+            .map(|e| e.function)
+            .collect()
+    };
+
+    let expect_error = if !cli_expect_error.is_empty() {
+        cli_expect_error
+    } else {
+        cfg_file
+            .expect
+            .error
+            .into_iter()
+            .map(|e| format!("{}:{}:{}", e.function, e.error_type, e.code))
+            .collect()
+    };
+
+    Ok(ResolvedCampaignInputs {
+        wasm,
+        seed,
+        cases,
+        function,
+        auth,
+        expect_success,
+        expect_error,
+    })
+}
+
 /// Build campaign options from the CLI flags.
 #[allow(clippy::too_many_arguments)]
 pub fn options_from(
@@ -138,16 +298,18 @@ pub fn parse_budget_capped(spec: Option<&str>) -> Option<Option<(u64, u64)>> {
 /// Run one campaign and render it. `Ok(true)` = findings produced, `Ok(false)`
 /// = clean run; `Err(_)` = usage/input error.
 //
-/// The argument list mirrors clap's campaign flag surface one-to-one; the
-/// engine already bundles these into `FuzzRunOptions` via `options_from`.
+/// Resolves `--config` (if supplied) with CLI flags overriding config values
+/// and config values overriding built-in defaults, then delegates to the
+/// existing campaign runner unchanged.
 #[allow(clippy::too_many_arguments)]
 pub fn run(
-    wasm: &str,
-    seed: u64,
-    cases: usize,
+    wasm: Option<String>,
+    config: Option<String>,
+    seed: Option<u64>,
+    cases: Option<usize>,
     function: Option<String>,
     artifact_dir: Option<String>,
-    auth: &str,
+    auth: Option<String>,
     expect_success: Vec<String>,
     expect_error: Vec<String>,
     sequence_length: Option<usize>,
@@ -157,15 +319,25 @@ pub fn run(
     replay: bool,
     format: &str,
 ) -> Result<bool, String> {
-    let options = options_from(
+    let resolved = resolve_campaign_inputs(
         wasm,
+        config.as_deref(),
         seed,
         cases,
         function,
-        artifact_dir,
         auth,
         expect_success,
         expect_error,
+    )?;
+    let options = options_from(
+        &resolved.wasm,
+        resolved.seed,
+        resolved.cases,
+        resolved.function,
+        artifact_dir,
+        &resolved.auth,
+        resolved.expect_success,
+        resolved.expect_error,
         resource_limit_is_finding,
         budget_capped,
         replay,

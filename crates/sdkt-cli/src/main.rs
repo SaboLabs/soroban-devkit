@@ -6,11 +6,12 @@ use sdkt_core::{ContractConfig, DevKitConfig, OutputFormat};
 use sdkt_rpc::inspect::StorageSummary;
 use sdkt_rpc::wasm::get_wasm_bytecode;
 use sdkt_rpc::{
-    estimate_dynamic_fee, extend_footprint, first_topic_filter, get_contract_events_page,
-    get_contract_events_paginated, get_next_sequence, get_ttl_info_for_keys, get_wasm_metadata,
-    inspect_account, inspect_contract, inspect_transaction, read_contract_state, restore_footprint,
-    simulate_transaction, GetEventsPagination, PaginationOptions, SorobanRpcClient, StorageKeyInfo,
-    TtlInfoSummary,
+    estimate_dynamic_fee, extend_footprint, first_topic_filter, get_account_transactions,
+    get_contract_events_page, get_contract_events_paginated, get_next_sequence,
+    get_ttl_info_for_keys, get_wasm_metadata, inspect_account, inspect_contract,
+    inspect_transaction, read_contract_state, restore_footprint, simulate_transaction,
+    AccountTransactionsOptions, GetEventsPagination, PaginationOptions, SorobanRpcClient,
+    StorageKeyInfo, TtlInfoSummary,
 };
 use sdkt_storage::WasmCache;
 use sdkt_storage::{
@@ -378,13 +379,17 @@ enum Commands {
         #[command(flatten)]
         net: NetworkArgs,
     },
-    /// Inspect an account's balances and signers
+    /// Inspect an account's balances and signers, or list its transactions
+    #[command(args_conflicts_with_subcommands = true)]
     Account {
-        /// Stellar account address (G... StrKey format)
+        /// Stellar account address (G... StrKey format). Used when no
+        /// subcommand is given; omit it when using a subcommand.
         #[arg(value_name = "ADDRESS")]
-        address: String,
+        address: Option<String>,
         #[arg(short, long, default_value = "pretty")]
         format: String,
+        #[command(subcommand)]
+        action: Option<AccountAction>,
         #[command(flatten)]
         net: NetworkArgs,
     },
@@ -550,6 +555,9 @@ enum Commands {
         /// Overwrite existing directory
         #[arg(long, default_value_t = false)]
         force: bool,
+        /// Template to generate (hello or token)
+        #[arg(long, value_parser = ["hello", "token"], default_value = "hello")]
+        template: String,
         /// Output format (pretty or json)
         #[arg(short, long, default_value = "pretty")]
         format: String,
@@ -842,18 +850,23 @@ enum TokenAction {
 }
 
 #[derive(Subcommand)]
+#[allow(clippy::large_enum_variant)]
 enum FuzzAction {
     /// Run a deterministic fuzz campaign against a compiled contract
     Campaign {
-        /// Path to the compiled contract WASM file
+        /// Path to the compiled contract WASM file (optional when --config supplies campaign.wasm)
         #[arg(value_name = "WASM")]
-        wasm: String,
-        /// Deterministic seed (u64)
-        #[arg(long, value_name = "N", default_value_t = 0)]
-        seed: u64,
-        /// Number of cases to execute
-        #[arg(long, value_name = "N", default_value_t = 100)]
-        cases: usize,
+        wasm: Option<String>,
+        /// Path to a TOML campaign definition file. Precedence: explicit CLI flags
+        /// override config values; config values override built-in defaults.
+        #[arg(long, value_name = "FILE")]
+        config: Option<String>,
+        /// Deterministic seed (u64; default: 0)
+        #[arg(long, value_name = "N")]
+        seed: Option<u64>,
+        /// Number of cases to execute (default: 100)
+        #[arg(long, value_name = "N")]
+        cases: Option<usize>,
         /// Restrict the campaign to one exported function
         #[arg(long, value_name = "NAME")]
         function: Option<String>,
@@ -861,9 +874,9 @@ enum FuzzAction {
         #[arg(long, value_name = "DIR")]
         artifact_dir: Option<String>,
         /// Authorization mode for every case: no-auth | correct-auth |
-        /// wrong-auth (see the sdkt-fuzz docs for exact semantics)
-        #[arg(long, value_name = "MODE", default_value = "no-auth")]
-        auth: String,
+        /// wrong-auth (default: no-auth; see the sdkt-fuzz docs for exact semantics)
+        #[arg(long, value_name = "MODE")]
+        auth: Option<String>,
         /// Declare that a function must succeed: --expect-success NAME
         /// (repeatable). Violations become RETURN_MISMATCH or
         /// UNEXPECTED_ERROR findings.
@@ -1390,6 +1403,42 @@ enum TxAction {
 }
 
 #[derive(Subcommand)]
+enum AccountAction {
+    /// List an account's transactions from Soroban RPC `getTransactions`
+    Transactions {
+        /// Stellar account address (G... StrKey format)
+        #[arg(value_name = "ADDRESS")]
+        address: String,
+        /// First ledger to scan from (inclusive). Default: latest ledger
+        /// minus 100, clamped to a minimum of 1.
+        #[arg(long, value_name = "N")]
+        start_ledger: Option<u32>,
+        /// RPC page size: transactions fetched per page (1-200, default 50)
+        #[arg(
+            long,
+            value_name = "N",
+            default_value_t = 50,
+            value_parser = clap::value_parser!(u32).range(1..=200)
+        )]
+        limit: u32,
+        /// Resume from a previous run's cursor; cannot combine with
+        /// `--start-ledger`
+        #[arg(long, value_name = "CURSOR")]
+        cursor: Option<String>,
+        /// Stop after N matching transactions (default 20)
+        #[arg(long, value_name = "N", default_value_t = 20)]
+        max_matches: usize,
+        /// Stop after N pages fetched (default 10)
+        #[arg(long, value_name = "N", default_value_t = 10)]
+        max_pages: usize,
+        #[arg(short, long, default_value = "pretty")]
+        format: String,
+        #[command(flatten)]
+        net: NetworkArgs,
+    },
+}
+
+#[derive(Subcommand)]
 enum ProjectCommand {
     /// Register an existing contract in `.sdkt.toml` under
     /// `[contracts.<alias>]`. The entry is validated before anything is
@@ -1418,6 +1467,9 @@ enum ProjectCommand {
     Status {
         #[arg(short, long, default_value = "pretty")]
         format: String,
+        /// Verify every recorded deployment still matches its recorded code on-chain.
+        #[arg(long)]
+        verify: bool,
     },
     /// Check health for every deployment recorded on the selected network
     Health {
@@ -2455,6 +2507,17 @@ struct HealthResult {
     report: Option<ContractHealthReport>,
 }
 
+/// Network fit section (compares candidate size against live `ContractMaxSizeBytes`).
+#[derive(Debug, serde::Serialize)]
+struct NetworkFitResult {
+    #[serde(flatten)]
+    check: RaCheck,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    candidate_size_bytes: Option<usize>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    max_contract_size_bytes: Option<u32>,
+}
+
 const RELEASE_ASSURANCE_SCHEMA_VERSION: u32 = 1;
 
 /// Aggregate, machine-readable release-assurance result.
@@ -2467,6 +2530,7 @@ struct ReleaseAssuranceReport {
     upgrade_safety: UpgradeResult,
     verification: VerifyResult,
     health: HealthResult,
+    network_fit: NetworkFitResult,
     /// Fuzz evidence attached from a completed campaign
     /// (`--fuzz-evidence`); absent (and JSON-skipped) unless supplied.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -2704,7 +2768,7 @@ fn apply_size_policy_to_assurance(
     }
     report.artifact.check.status = RaStatus::Fail;
     // Re-aggregate with the existing model so status/reasons/exit stay coherent.
-    let statuses = [
+    let mut statuses = vec![
         report.artifact.check.status,
         report.security.check.status,
         report.upgrade_safety.check.status,
@@ -2717,6 +2781,9 @@ fn apply_size_policy_to_assurance(
             .map(|f| f.check.status)
             .unwrap_or(RaStatus::Pass),
     ];
+    if report.network_fit.check.status != RaStatus::Skipped {
+        statuses.push(report.network_fit.check.status);
+    }
     report.release_status = aggregate_release_status(&statuses);
     report.reasons.retain(|r| r != "Artifact: FAIL");
     report.reasons.insert(0, "Artifact: FAIL".to_string());
@@ -2739,6 +2806,10 @@ fn format_release_assurance_pretty(r: &ReleaseAssuranceReport) -> String {
         r.verification.check.status
     ));
     out.push_str(&format!("Contract Health {}\n", r.health.check.status));
+    out.push_str(&format!("Network Fit     {}\n", r.network_fit.check.status));
+    if r.network_fit.check.status == RaStatus::Fail {
+        out.push_str(&format!("  {}\n", r.network_fit.check.detail));
+    }
     if let Some(f) = &r.fuzz {
         out.push_str(&format!("Fuzz Evidence   {}\n", f.check.status));
     }
@@ -2910,7 +2981,22 @@ async fn run_release_assurance(
         },
     };
 
-    // ---- 6. FUZZ EVIDENCE (recorded, never executed here) ----
+    // ---- 6. NETWORK FIT (live ContractMaxSizeBytes vs candidate size) ----
+    let candidate_size_bytes = artifact.metadata.as_ref().map(|m| m.size_bytes);
+    let network_fit = if artifact.check.status != RaStatus::Pass {
+        evaluate_network_fit(None, None, None)
+    } else {
+        match sdkt_rpc::network_capture::capture_network_config(client).await {
+            Ok(cfg) => evaluate_network_fit(
+                candidate_size_bytes,
+                cfg.max_contract_size_bytes.value,
+                None,
+            ),
+            Err(e) => evaluate_network_fit(candidate_size_bytes, None, Some(&e.to_string())),
+        }
+    };
+
+    // ---- 7. FUZZ EVIDENCE (recorded, never executed here) ----
     //
     // `--fuzz-evidence` attaches the evidence JSON written by an already
     // completed `sdkt fuzz` campaign. Release assurance does not run
@@ -2918,22 +3004,21 @@ async fn run_release_assurance(
     // `Classification::Finding` entries count as security evidence.
     let (fuzz_evidence, fuzz_status) = read_fuzz_evidence(fuzz_evidence)?;
 
-    let statuses = [
+    let mut statuses = vec![
         artifact.check.status,
         security.check.status,
         upgrade.check.status,
         verification_result.check.status,
         health_result.check.status,
     ];
-    let release_status = match fuzz_status {
+    if network_fit.check.status != RaStatus::Skipped {
+        statuses.push(network_fit.check.status);
+    }
+    if let Some(fuzz) = fuzz_status {
         // Fold the recorded evidence status in as one more section.
-        Some(fuzz) => {
-            let mut all = statuses.to_vec();
-            all.push(fuzz);
-            aggregate_release_status(&all)
-        }
-        None => aggregate_release_status(&statuses),
-    };
+        statuses.push(fuzz);
+    }
+    let release_status = aggregate_release_status(&statuses);
 
     let mut reasons = Vec::new();
     for (label, s) in [
@@ -2942,6 +3027,7 @@ async fn run_release_assurance(
         ("Upgrade Safety", upgrade.check.status),
         ("Verification", verification_result.check.status),
         ("Contract Health", health_result.check.status),
+        ("Network Fit", network_fit.check.status),
     ] {
         if matches!(s, RaStatus::Fail | RaStatus::Error | RaStatus::Review) {
             reasons.push(format!("{}: {}", label, s));
@@ -2961,6 +3047,7 @@ async fn run_release_assurance(
         upgrade_safety: upgrade,
         verification: verification_result,
         health: health_result,
+        network_fit,
         fuzz: fuzz_evidence,
         release_status,
         reasons,
@@ -2968,6 +3055,61 @@ async fn run_release_assurance(
         tool: "sdkt",
         version: env!("CARGO_PKG_VERSION"),
     })
+}
+
+/// Compare candidate artifact size against a captured `ContractMaxSizeBytes` limit.
+///
+/// - `Pass` when `candidate_size_bytes <= max_contract_size_bytes` (inclusive).
+/// - `Fail` when `candidate_size_bytes > max_contract_size_bytes`, naming both byte counts.
+/// - `Skipped` when either the candidate size or the network limit is unavailable.
+fn evaluate_network_fit(
+    candidate_size_bytes: Option<usize>,
+    max_contract_size_bytes: Option<u32>,
+    unavailable_reason: Option<&str>,
+) -> NetworkFitResult {
+    let Some(size) = candidate_size_bytes else {
+        return NetworkFitResult {
+            check: RaCheck {
+                status: RaStatus::Skipped,
+                detail: "candidate WASM artifact is invalid; network fit skipped".to_string(),
+            },
+            candidate_size_bytes: None,
+            max_contract_size_bytes,
+        };
+    };
+    let Some(limit) = max_contract_size_bytes else {
+        let reason =
+            unavailable_reason.unwrap_or("ContractMaxSizeBytes unavailable from network capture");
+        return NetworkFitResult {
+            check: RaCheck {
+                status: RaStatus::Skipped,
+                detail: format!("network limit unavailable ({reason}); network fit skipped"),
+            },
+            candidate_size_bytes: Some(size),
+            max_contract_size_bytes: None,
+        };
+    };
+    if size <= limit as usize {
+        NetworkFitResult {
+            check: RaCheck {
+                status: RaStatus::Pass,
+                detail: format!(
+                    "candidate size {size} bytes fits within network limit {limit} bytes"
+                ),
+            },
+            candidate_size_bytes: Some(size),
+            max_contract_size_bytes: Some(limit),
+        }
+    } else {
+        NetworkFitResult {
+            check: RaCheck {
+                status: RaStatus::Fail,
+                detail: format!("candidate size {size} bytes exceeds network limit {limit} bytes"),
+            },
+            candidate_size_bytes: Some(size),
+            max_contract_size_bytes: Some(limit),
+        }
+    }
 }
 
 /// Read a fuzz evidence JSON file produced by a completed `sdkt fuzz`
@@ -3814,6 +3956,102 @@ async fn run_call_batch(
         }
     }
     Ok(())
+}
+
+/// Run `sdkt account transactions <ADDRESS>`: list an account's
+/// transactions from Soroban RPC `getTransactions`.
+///
+/// Read-only: no signing, no submission, no Horizon request. The scan is
+/// bounded (`--max-matches`, `--max-pages`, terminal empty page, exhausted cursor)
+/// and results keep the RPC's ascending ledger order (oldest first).
+#[allow(clippy::too_many_arguments)]
+async fn run_account_transactions(
+    address: String,
+    start_ledger: Option<u32>,
+    limit: u32,
+    cursor: Option<String>,
+    max_matches: usize,
+    max_pages: usize,
+    format: String,
+    net: NetworkArgs,
+) {
+    if sdkt_xdr::decode_account_id(&address).is_err() {
+        eprintln!("Invalid account address '{address}'. Expected a G... StrKey address.");
+        process::exit(2);
+    }
+    if cursor.is_some() && start_ledger.is_some() {
+        eprintln!(
+            "--cursor cannot be combined with --start-ledger: a request carrying --cursor must omit --start-ledger; resume with the cursor alone"
+        );
+        process::exit(2);
+    }
+    if max_matches == 0 {
+        eprintln!("--max-matches must be at least 1");
+        process::exit(2);
+    }
+    if max_pages == 0 {
+        eprintln!("--max-pages must be at least 1");
+        process::exit(2);
+    }
+
+    let fmt = parse_format_str(&format);
+    let client = resolve_rpc_client(
+        net.rpc_url.clone(),
+        net.network_passphrase.clone(),
+        net.network_profile.clone(),
+    );
+    let options = AccountTransactionsOptions {
+        start_ledger,
+        cursor,
+        limit,
+        max_matches,
+        max_pages,
+    };
+    match get_account_transactions(&client, &address, options).await {
+        Ok(scan) => {
+            if fmt == OutputFormat::Json {
+                match serde_json::to_string(&scan) {
+                    Ok(json_str) => println!("{json_str}"),
+                    Err(e) => {
+                        eprintln!("Error serializing account transactions: {e}");
+                        process::exit(1);
+                    }
+                }
+            } else {
+                println!("Account transactions for {address}:");
+                println!();
+                if scan.transactions.is_empty() {
+                    println!("  (no transactions in the scanned range)");
+                } else {
+                    for tx in &scan.transactions {
+                        println!(
+                            "  Ledger: {}  TxHash: {}  Status: {}  Fee: {}",
+                            tx.ledger,
+                            tx.tx_hash,
+                            tx.status,
+                            tx.fee_charged.as_deref().unwrap_or("unknown")
+                        );
+                    }
+                }
+                println!();
+                println!(
+                    "Scanned: {}  Matched: {}  Pages: {}",
+                    scan.scanned, scan.matched, scan.pages
+                );
+                println!(
+                    "Retention: oldestLedger {} - latestLedger {}",
+                    scan.oldest_ledger, scan.latest_ledger
+                );
+                if let Some(cursor) = &scan.next_cursor {
+                    println!("Next cursor: {cursor}");
+                }
+            }
+        }
+        Err(e) => {
+            eprintln!("Error fetching account transactions: {e}");
+            process::exit(1);
+        }
+    }
 }
 
 /// Formats a byte count for the `wasm cache list` table (`530 B`, `1.2 KB`,
@@ -9576,8 +9814,39 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
         Commands::Account {
             address,
             format,
+            action,
             net,
         } => {
+            if let Some(AccountAction::Transactions {
+                address: tx_address,
+                start_ledger,
+                limit,
+                cursor,
+                max_matches,
+                max_pages,
+                format: tx_format,
+                net: tx_net,
+            }) = action
+            {
+                run_account_transactions(
+                    tx_address,
+                    start_ledger,
+                    limit,
+                    cursor,
+                    max_matches,
+                    max_pages,
+                    tx_format,
+                    tx_net,
+                )
+                .await;
+                return Ok(());
+            }
+            let Some(address) = address else {
+                eprintln!(
+                    "Missing account address. Usage: sdkt account <ADDRESS> or sdkt account transactions <ADDRESS>"
+                );
+                process::exit(2);
+            };
             let fmt = parse_format_str(&format);
             let client = resolve_rpc_client(
                 net.rpc_url.clone(),
@@ -11548,6 +11817,7 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
             name,
             minimal,
             force,
+            template,
             format,
         } => {
             use sdkt_core::scaffold::{generate_project, ScaffoldConfig};
@@ -11557,6 +11827,7 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
                 name: name.clone(),
                 minimal,
                 force,
+                template,
             };
 
             match generate_project(&scaffold_cfg) {
@@ -13088,7 +13359,7 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
                     println!("Next steps: sdkt build, then sdkt project deploy");
                 }
             }
-            ProjectCommand::Status { format } => {
+            ProjectCommand::Status { format, verify } => {
                 let fmt = parse_format_str(&format);
                 let network_config = match resolve_network_config(
                     net.rpc_url.clone(),
@@ -13125,47 +13396,230 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
                     .collect();
                 deployments.sort_by_key(|(alias, _)| *alias);
 
-                if fmt == OutputFormat::Json {
-                    let deployments: Vec<_> = deployments
-                        .into_iter()
-                        .map(|(alias, record)| {
-                            serde_json::json!({
-                                "alias": alias,
-                                "contract_id": record.contract_id,
-                                "wasm_hash": record.wasm_hash,
-                                "network": record.network,
-                                "timestamp": record.timestamp,
-                                "salt": record.salt,
+                if !verify {
+                    if fmt == OutputFormat::Json {
+                        let deployments: Vec<_> = deployments
+                            .into_iter()
+                            .map(|(alias, record)| {
+                                serde_json::json!({
+                                    "alias": alias,
+                                    "contract_id": record.contract_id,
+                                    "wasm_hash": record.wasm_hash,
+                                    "network": record.network,
+                                    "timestamp": record.timestamp,
+                                    "salt": record.salt,
+                                })
                             })
-                        })
-                        .collect();
-                    let status = if deployments.is_empty() {
-                        "no_deployments"
+                            .collect();
+                        let status = if deployments.is_empty() {
+                            "no_deployments"
+                        } else {
+                            "deployed"
+                        };
+                        println!(
+                            "{}",
+                            serde_json::to_string(&serde_json::json!({
+                                "status": status,
+                                "network": network_key,
+                                "deployments": deployments,
+                            }))
+                            .unwrap()
+                        );
+                    } else if deployments.is_empty() {
+                        println!("No deployments recorded for network '{}'.", network_key);
                     } else {
-                        "deployed"
-                    };
-                    println!(
-                        "{}",
-                        serde_json::to_string(&serde_json::json!({
-                            "status": status,
-                            "network": network_key,
-                            "deployments": deployments,
-                        }))
-                        .unwrap()
-                    );
-                } else if deployments.is_empty() {
-                    println!("No deployments recorded for network '{}'.", network_key);
-                } else {
-                    println!("Project deployment status (network: {}):", network_key);
-                    for (alias, record) in deployments {
-                        println!("  {}", alias);
-                        println!("    Contract ID: {}", record.contract_id);
-                        println!("    WASM hash:   {}", record.wasm_hash);
-                        println!("    Recorded network: {}", record.network);
-                        println!("    Timestamp:  {}", record.timestamp);
-                        if let Some(salt) = &record.salt {
-                            println!("    Salt:       {}", salt);
+                        println!("Project deployment status (network: {}):", network_key);
+                        for (alias, record) in deployments {
+                            println!("  {}", alias);
+                            println!("    Contract ID: {}", record.contract_id);
+                            println!("    WASM hash:   {}", record.wasm_hash);
+                            println!("    Recorded network: {}", record.network);
+                            println!("    Timestamp:  {}", record.timestamp);
+                            if let Some(salt) = &record.salt {
+                                println!("    Salt:       {}", salt);
+                            }
                         }
+                    }
+                } else if deployments.is_empty() {
+                    if fmt == OutputFormat::Json {
+                        println!(
+                            "{}",
+                            serde_json::to_string(&serde_json::json!({
+                                "status": "no_deployments",
+                                "network": network_key,
+                                "deployments": [],
+                                "summary": {
+                                    "match": 0,
+                                    "drift": 0,
+                                    "missing": 0,
+                                    "error": 0,
+                                }
+                            }))
+                            .unwrap()
+                        );
+                    } else {
+                        println!("No deployments recorded for network '{}'.", network_key);
+                    }
+                } else {
+                    let client = SorobanRpcClient::from_config(&network_config);
+                    let mut match_count = 0usize;
+                    let mut drift_count = 0usize;
+                    let mut missing_count = 0usize;
+                    let mut error_count = 0usize;
+
+                    struct VerifiedStatusEntry<'a> {
+                        alias: &'a str,
+                        record: &'a sdkt_core::deployment::DeploymentRecord,
+                        status: &'static str,
+                        on_chain_hash: Option<String>,
+                        error: Option<String>,
+                    }
+
+                    let mut verified_entries = Vec::with_capacity(deployments.len());
+
+                    for (alias, record) in &deployments {
+                        match sdkt_rpc::probe_deployed_executable(&client, &record.contract_id)
+                            .await
+                        {
+                            Ok(probe) => {
+                                if !probe.instance_found {
+                                    missing_count += 1;
+                                    verified_entries.push(VerifiedStatusEntry {
+                                        alias,
+                                        record,
+                                        status: "MISSING",
+                                        on_chain_hash: None,
+                                        error: None,
+                                    });
+                                } else if let Some(live_hash) = probe.wasm_hash {
+                                    if live_hash.eq_ignore_ascii_case(&record.wasm_hash) {
+                                        match_count += 1;
+                                        verified_entries.push(VerifiedStatusEntry {
+                                            alias,
+                                            record,
+                                            status: "MATCH",
+                                            on_chain_hash: Some(live_hash),
+                                            error: None,
+                                        });
+                                    } else {
+                                        drift_count += 1;
+                                        verified_entries.push(VerifiedStatusEntry {
+                                            alias,
+                                            record,
+                                            status: "DRIFT",
+                                            on_chain_hash: Some(live_hash),
+                                            error: None,
+                                        });
+                                    }
+                                } else {
+                                    error_count += 1;
+                                    let err_msg = probe
+                                        .resolve_error
+                                        .or(probe.decode_error)
+                                        .or(probe.error)
+                                        .unwrap_or_else(|| {
+                                            "contract instance has no WASM hash (e.g. StellarAsset)"
+                                                .to_string()
+                                        });
+                                    verified_entries.push(VerifiedStatusEntry {
+                                        alias,
+                                        record,
+                                        status: "ERROR",
+                                        on_chain_hash: None,
+                                        error: Some(err_msg),
+                                    });
+                                }
+                            }
+                            Err(sdkt_rpc::RpcError::ContractNotFound) => {
+                                missing_count += 1;
+                                verified_entries.push(VerifiedStatusEntry {
+                                    alias,
+                                    record,
+                                    status: "MISSING",
+                                    on_chain_hash: None,
+                                    error: None,
+                                });
+                            }
+                            Err(e) => {
+                                error_count += 1;
+                                verified_entries.push(VerifiedStatusEntry {
+                                    alias,
+                                    record,
+                                    status: "ERROR",
+                                    on_chain_hash: None,
+                                    error: Some(e.to_string()),
+                                });
+                            }
+                        }
+                    }
+
+                    if fmt == OutputFormat::Json {
+                        let json_deployments: Vec<_> = verified_entries
+                            .iter()
+                            .map(|entry| {
+                                let mut obj = serde_json::json!({
+                                    "alias": entry.alias,
+                                    "contract_id": entry.record.contract_id,
+                                    "wasm_hash": entry.record.wasm_hash,
+                                    "network": entry.record.network,
+                                    "timestamp": entry.record.timestamp,
+                                    "salt": entry.record.salt,
+                                    "status": entry.status,
+                                    "on_chain_wasm_hash": entry.on_chain_hash,
+                                });
+                                if let Some(err) = &entry.error {
+                                    obj["error"] = serde_json::json!(err);
+                                }
+                                obj
+                            })
+                            .collect();
+
+                        println!(
+                            "{}",
+                            serde_json::to_string(&serde_json::json!({
+                                "status": "deployed",
+                                "network": network_key,
+                                "deployments": json_deployments,
+                                "summary": {
+                                    "match": match_count,
+                                    "drift": drift_count,
+                                    "missing": missing_count,
+                                    "error": error_count,
+                                }
+                            }))
+                            .unwrap()
+                        );
+                    } else {
+                        for entry in &verified_entries {
+                            match entry.status {
+                                "MATCH" => {
+                                    println!("{}: MATCH", entry.alias);
+                                }
+                                "DRIFT" => {
+                                    let on_chain = entry.on_chain_hash.as_deref().unwrap_or("");
+                                    println!(
+                                        "{}: DRIFT (recorded: {}, on-chain: {})",
+                                        entry.alias, entry.record.wasm_hash, on_chain
+                                    );
+                                }
+                                "MISSING" => {
+                                    println!("{}: MISSING", entry.alias);
+                                }
+                                "ERROR" => {
+                                    if let Some(err) = &entry.error {
+                                        let clean_err = err.replace('\n', " ");
+                                        println!("{}: ERROR ({})", entry.alias, clean_err);
+                                    } else {
+                                        println!("{}: ERROR", entry.alias);
+                                    }
+                                }
+                                _ => unreachable!(),
+                            }
+                        }
+                    }
+
+                    if drift_count > 0 || missing_count > 0 || error_count > 0 {
+                        process::exit(1);
                     }
                 }
             }
@@ -14365,6 +14819,7 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
         Commands::Fuzz(action) => match action {
             FuzzAction::Campaign {
                 wasm,
+                config,
                 seed,
                 cases,
                 function,
@@ -14380,12 +14835,13 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
                 format,
             } => {
                 match commands::fuzz::run(
-                    &wasm,
+                    wasm,
+                    config,
                     seed,
                     cases,
                     function,
                     artifact_dir,
-                    &auth,
+                    auth,
                     expect_success,
                     expect_error,
                     sequence_length,
@@ -15784,6 +16240,31 @@ mod diff_contract_tests {
             }
             _ => panic!("expected `diff`"),
         }
+    }
+
+    #[test]
+    fn evaluate_network_fit_covers_fits_exact_exceeds_and_unavailable() {
+        // Fits within limit -> Pass
+        let fits = evaluate_network_fit(Some(1024), Some(65536), None);
+        assert_eq!(fits.check.status, RaStatus::Pass);
+        assert_eq!(fits.candidate_size_bytes, Some(1024));
+        assert_eq!(fits.max_contract_size_bytes, Some(65536));
+
+        // Exactly at limit -> Pass (inclusive)
+        let exact = evaluate_network_fit(Some(65536), Some(65536), None);
+        assert_eq!(exact.check.status, RaStatus::Pass);
+
+        // Exceeds limit -> Fail naming both byte counts
+        let exceeds = evaluate_network_fit(Some(70000), Some(65536), None);
+        assert_eq!(exceeds.check.status, RaStatus::Fail);
+        assert!(exceeds.check.detail.contains("70000"));
+        assert!(exceeds.check.detail.contains("65536"));
+
+        // Unavailable limit -> Skipped (never assumed 0 or Pass)
+        let unavailable = evaluate_network_fit(Some(1024), None, Some("connection refused"));
+        assert_eq!(unavailable.check.status, RaStatus::Skipped);
+        assert!(unavailable.check.detail.contains("connection refused"));
+        assert_eq!(unavailable.max_contract_size_bytes, None);
     }
 }
 

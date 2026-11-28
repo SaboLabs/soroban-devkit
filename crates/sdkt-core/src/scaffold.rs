@@ -27,6 +27,8 @@ pub struct ScaffoldConfig {
     pub minimal: bool,
     /// If true, overwrite existing directory.
     pub force: bool,
+    /// Template to generate: `hello` (the default) or `token`.
+    pub template: String,
 }
 
 /// Result of a successful scaffold operation.
@@ -67,6 +69,16 @@ pub fn generate_project(config: &ScaffoldConfig) -> io::Result<ScaffoldResult> {
     // --- Always generated ---
 
     let crate_name = package_name.replace('-', "_");
+    let token_template = match config.template.as_str() {
+        "hello" => false,
+        "token" => true,
+        other => {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                format!("unknown template '{other}' (expected hello or token)"),
+            ))
+        }
+    };
 
     // Pinned exactly (#111): a floating requirement let the resolver pick a
     // `soroban-env-host` whose open `ed25519-dalek` range breaks `testutils`.
@@ -103,7 +115,69 @@ lto = true
     );
     write_template(root, "Cargo.toml", &cargo_toml, &mut created)?;
 
-    let lib_rs = r#"#![no_std]
+    let lib_rs = if token_template {
+        r#"#![no_std]
+use soroban_sdk::{contract, contractimpl, contracttype, Address, Env, String};
+
+#[derive(Clone)]
+#[contracttype]
+enum DataKey {
+    Admin,
+    Balance(Address),
+    Name,
+    Symbol,
+    Decimals,
+}
+
+#[contract]
+pub struct Token;
+
+#[contractimpl]
+impl Token {
+    /// Initialize the starter token's administrator and metadata once.
+    pub fn initialize(env: Env, admin: Address, name: String, symbol: String, decimals: u32) {
+        assert!(!env.storage().instance().has(&DataKey::Admin), "already initialized");
+        admin.require_auth();
+        env.storage().instance().set(&DataKey::Admin, &admin);
+        env.storage().instance().set(&DataKey::Name, &name);
+        env.storage().instance().set(&DataKey::Symbol, &symbol);
+        env.storage().instance().set(&DataKey::Decimals, &decimals);
+    }
+
+    /// Mint tokens. The configured administrator must authorize the call.
+    pub fn mint(env: Env, to: Address, amount: i128) {
+        assert!(amount >= 0, "amount must not be negative");
+        let admin: Address = env.storage().instance().get(&DataKey::Admin).unwrap();
+        admin.require_auth();
+        let balance = Self::balance_of(env.clone(), to.clone());
+        env.storage().persistent().set(&DataKey::Balance(to), &(balance + amount));
+    }
+
+    /// Transfer tokens from the caller to another address.
+    pub fn transfer(env: Env, from: Address, to: Address, amount: i128) {
+        assert!(amount >= 0, "amount must not be negative");
+        from.require_auth();
+        let from_balance = Self::balance_of(env.clone(), from.clone());
+        assert!(from_balance >= amount, "insufficient balance");
+        if from == to {
+            return;
+        }
+        let to_balance = Self::balance_of(env.clone(), to.clone());
+        env.storage().persistent().set(&DataKey::Balance(from), &(from_balance - amount));
+        env.storage().persistent().set(&DataKey::Balance(to), &(to_balance + amount));
+    }
+
+    pub fn balance_of(env: Env, who: Address) -> i128 {
+        env.storage().persistent().get(&DataKey::Balance(who)).unwrap_or(0)
+    }
+
+    pub fn name(env: Env) -> String { env.storage().instance().get(&DataKey::Name).unwrap() }
+    pub fn symbol(env: Env) -> String { env.storage().instance().get(&DataKey::Symbol).unwrap() }
+    pub fn decimals(env: Env) -> u32 { env.storage().instance().get(&DataKey::Decimals).unwrap() }
+}
+"#
+    } else {
+        r#"#![no_std]
 use soroban_sdk::{contract, contractimpl, Env};
 
 #[contract]
@@ -116,7 +190,8 @@ impl Contract {
         42
     }
 }
-"#;
+"#
+    };
     write_template(root, "src/lib.rs", lib_rs, &mut created)?;
 
     let sdkt_toml = r#"[network]
@@ -133,19 +208,84 @@ path = "."
     // --- Full mode only ---
 
     if !config.minimal {
-        let readme = format!(
+        let readme = if token_template {
+            format!(
+                "# {name}\n\nA minimal fungible-token starter for Soroban. This is a starting point, not a production or audited token, and it does not claim SEP-41 compliance.\n\n## Build\n\n```\nsdkt build\n```\n\n## Test\n\n```\ncargo test\n```\n\nCall `initialize` once to set the administrator and metadata. The administrator can then call `mint`; token holders authorize `transfer`. The starter exposes `balance_of`, `name`, `symbol`, and `decimals`.\n",
+                name = package_name,
+            )
+        } else {
+            format!(
             "# {name}\n\nA Soroban smart contract project.\n\n## Build\n\n```\nsdkt build\n```\n\n## Test\n\n```\ncargo test\n```\n\n## Deploy to Testnet\n\nCreate and fund a test identity, then deploy the compiled contract:\n\n```\nsdkt identity generate my-dev\nsdkt network add testnet --rpc-url https://soroban-testnet.stellar.org --passphrase \"Test SDF Network ; September 2015\" --friendbot https://friendbot.stellar.org\nsdkt identity fund my-dev --network-profile testnet\nsdkt deploy --wasm target/wasm32v1-none/release/{crate_name}.wasm --identity my-dev --network-profile testnet\n```\n\n### Constructor Arguments\n\nIf your contract requires initialization parameters, pass them with `--arg`:\n\n```\nsdkt deploy --wasm target/wasm32v1-none/release/{crate_name}.wasm --identity my-dev --network-profile testnet --arg address:G... --arg u32:100\n```\n\nFor multi-contract projects, declare constructor arguments in `.sdkt.toml`:\n\n```toml\n[contracts.main]\npath = \".\"\nctor_args = [\"address:G...\", \"u32:100\"]\n```\n\n## Invoke\n\nReplace `<CONTRACT_ID>` with the deployed contract address:\n\n```\nsdkt call <CONTRACT_ID> hello --network-profile testnet\nsdkt invoke <CONTRACT_ID> hello --identity my-dev --network-profile testnet\n```\n",
             name = package_name,
             crate_name = crate_name,
-        );
+            )
+        };
         write_template(root, "README.md", &readme, &mut created)?;
 
         write_template(root, ".gitignore", "/target\n", &mut created)?;
 
         fs::create_dir_all(root.join("tests"))?;
 
-        let basic_test = format!(
-            r#"#![cfg(test)]
+        let stale_test = if token_template {
+            "basic.rs"
+        } else {
+            "token.rs"
+        };
+        match fs::remove_file(root.join("tests").join(stale_test)) {
+            Ok(()) => {}
+            Err(error) if error.kind() == io::ErrorKind::NotFound => {}
+            Err(error) => return Err(error),
+        }
+
+        let basic_test = if token_template {
+            format!(
+                r#"#![cfg(test)]
+
+use {crate_name}::{{Token, TokenClient}};
+use soroban_sdk::{{testutils::Address as _, Address, Env, String}};
+
+#[test]
+fn token_mint_transfer_and_over_balance_failure() {{
+    let env = Env::default();
+    let admin = Address::generate(&env);
+    let alice = Address::generate(&env);
+    let bob = Address::generate(&env);
+    let contract_id = env.register(Token, ());
+    let client = TokenClient::new(&env, &contract_id);
+    env.mock_all_auths();
+    client.initialize(&admin, &String::from_str(&env, "Starter Token"), &String::from_str(&env, "STRT"), &7);
+
+    client.mint(&alice, &100);
+    assert_eq!(client.balance_of(&alice), 100);
+    client.transfer(&alice, &alice, &40);
+    assert_eq!(client.balance_of(&alice), 100);
+    client.transfer(&alice, &bob, &40);
+    assert_eq!(client.balance_of(&alice), 60);
+    assert_eq!(client.balance_of(&bob), 40);
+    let _ = client.try_transfer(&alice, &bob, &61).unwrap_err();
+}}
+
+#[test]
+fn initialize_requires_admin_authorization() {{
+    let env = Env::default();
+    let admin = Address::generate(&env);
+    let contract_id = env.register(Token, ());
+    let client = TokenClient::new(&env, &contract_id);
+
+    let result = client.try_initialize(
+        &admin,
+        &String::from_str(&env, "Starter Token"),
+        &String::from_str(&env, "STRT"),
+        &7,
+    );
+    assert!(result.is_err());
+}}
+"#,
+                crate_name = crate_name,
+            )
+        } else {
+            format!(
+                r#"#![cfg(test)]
 
 use {crate_name}::{{Contract, ContractClient}};
 use soroban_sdk::Env;
@@ -158,9 +298,19 @@ fn test_hello() {{
     assert_eq!(client.hello(), 42);
 }}
 "#,
-            crate_name = crate_name,
-        );
-        write_template(root, "tests/basic.rs", &basic_test, &mut created)?;
+                crate_name = crate_name,
+            )
+        };
+        write_template(
+            root,
+            if token_template {
+                "tests/token.rs"
+            } else {
+                "tests/basic.rs"
+            },
+            &basic_test,
+            &mut created,
+        )?;
     }
 
     Ok(ScaffoldResult {
@@ -959,6 +1109,7 @@ mod tests {
             name: path.to_string_lossy().to_string(),
             minimal,
             force,
+            template: "hello".to_string(),
         }
     }
 
@@ -992,6 +1143,74 @@ mod tests {
             config.contracts.get("main").map(|c| c.path.as_str()),
             Some(".")
         );
+        let _ = fs::remove_dir_all(&p);
+    }
+
+    #[test]
+    fn token_scaffold_creates_token_files_and_functions() {
+        let p = tmp_dir("token");
+        let res = generate_project(&ScaffoldConfig {
+            name: p.to_string_lossy().to_string(),
+            minimal: false,
+            force: false,
+            template: "token".to_string(),
+        })
+        .unwrap();
+
+        assert!(p.join("tests/token.rs").exists());
+        assert!(!p.join("tests/basic.rs").exists());
+        assert_eq!(res.files_created.len(), 6);
+        let lib = fs::read_to_string(p.join("src/lib.rs")).unwrap();
+        for function in [
+            "mint",
+            "transfer",
+            "balance_of",
+            "name",
+            "symbol",
+            "decimals",
+        ] {
+            assert!(
+                lib.contains(&format!("fn {function}")),
+                "missing {function}"
+            );
+        }
+        let readme = fs::read_to_string(p.join("README.md")).unwrap();
+        assert!(readme.contains("not a production or audited token"));
+        assert!(!readme.contains("SEP-41 compliant"));
+        let _ = fs::remove_dir_all(&p);
+    }
+
+    #[test]
+    fn force_regeneration_from_hello_to_token_removes_only_stale_test() {
+        let p = tmp_dir("force-hello-to-token");
+        generate_project(&cfg(&p, false, false)).unwrap();
+        generate_project(&ScaffoldConfig {
+            name: p.to_string_lossy().to_string(),
+            minimal: false,
+            force: true,
+            template: "token".to_string(),
+        })
+        .unwrap();
+
+        assert!(!p.join("tests/basic.rs").exists());
+        assert!(p.join("tests/token.rs").exists());
+        let _ = fs::remove_dir_all(&p);
+    }
+
+    #[test]
+    fn force_regeneration_from_token_to_hello_removes_only_stale_test() {
+        let p = tmp_dir("force-token-to-hello");
+        generate_project(&ScaffoldConfig {
+            name: p.to_string_lossy().to_string(),
+            minimal: false,
+            force: false,
+            template: "token".to_string(),
+        })
+        .unwrap();
+        generate_project(&cfg(&p, false, true)).unwrap();
+
+        assert!(p.join("tests/basic.rs").exists());
+        assert!(!p.join("tests/token.rs").exists());
         let _ = fs::remove_dir_all(&p);
     }
 

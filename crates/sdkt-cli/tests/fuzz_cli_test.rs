@@ -1099,3 +1099,148 @@ fn cli_campaign_budget_capped_malformed_is_usage_error() {
     .code(2)
     .stderr(predicate::str::contains("budget-capped"));
 }
+
+// ---------------------------------------------------------------------------
+// --config FILE: TOML campaign definitions and precedence
+// ---------------------------------------------------------------------------
+
+#[test]
+fn cli_campaign_config_matches_equivalent_flag_run() {
+    let dir = temp_dir("config-parity");
+    let cfg_dir = dir.join("cfg-out");
+    let flag_dir = dir.join("flag-out");
+    let wasm = fixture("us_new.wasm");
+    let wasm_toml = toml::Value::String(wasm.clone()).to_string();
+
+    let cfg_path = dir.join("fuzz.toml");
+    std::fs::write(
+        &cfg_path,
+        format!(
+            r#"[campaign]
+wasm = {wasm_toml}
+seed = 7
+cases = 4
+auth = "no-auth"
+
+[[expect.error]]
+function = "hello"
+type = "Storage"
+code = 3
+"#
+        ),
+    )
+    .expect("write fuzz.toml");
+
+    let cfg_out = fuzz_campaign(&[
+        "--config",
+        cfg_path.to_str().unwrap(),
+        "--artifact-dir",
+        cfg_dir.to_str().unwrap(),
+        "--format",
+        "json",
+    ])
+    .assert()
+    .failure()
+    .code(1)
+    .get_output()
+    .stdout
+    .clone();
+
+    let flag_out = fuzz_campaign(&[
+        &wasm,
+        "--seed",
+        "7",
+        "--cases",
+        "4",
+        "--auth",
+        "no-auth",
+        "--expect-error",
+        "hello:Storage:3",
+        "--artifact-dir",
+        flag_dir.to_str().unwrap(),
+        "--format",
+        "json",
+    ])
+    .assert()
+    .failure()
+    .code(1)
+    .get_output()
+    .stdout
+    .clone();
+
+    let cfg_json: Value = serde_json::from_slice(&cfg_out).expect("cfg json");
+    let flag_json: Value = serde_json::from_slice(&flag_out).expect("flag json");
+    assert_eq!(cfg_json["findings"], flag_json["findings"]);
+
+    let cfg_ev: Value = serde_json::from_str(
+        &std::fs::read_to_string(cfg_dir.join("campaign-evidence.json")).unwrap(),
+    )
+    .unwrap();
+    let flag_ev: Value = serde_json::from_str(
+        &std::fs::read_to_string(flag_dir.join("campaign-evidence.json")).unwrap(),
+    )
+    .unwrap();
+    assert_eq!(cfg_ev["config"], flag_ev["config"]);
+    assert_eq!(cfg_ev["findings"], flag_ev["findings"]);
+}
+
+#[test]
+fn cli_campaign_config_flag_overrides_and_validation_errors() {
+    let dir = temp_dir("config-overrides");
+    let wasm = fixture("us_new.wasm");
+    let wasm_toml = toml::Value::String(wasm.clone()).to_string();
+    let cfg_path = dir.join("fuzz.toml");
+    std::fs::write(
+        &cfg_path,
+        format!(
+            r#"[campaign]
+wasm = {wasm_toml}
+seed = 1
+cases = 50
+"#
+        ),
+    )
+    .expect("write fuzz.toml");
+
+    // --cases 10 overrides cases = 50 in the config file.
+    let out_override = dir.join("override-out");
+    fuzz_campaign(&[
+        "--config",
+        cfg_path.to_str().unwrap(),
+        "--cases",
+        "10",
+        "--artifact-dir",
+        out_override.to_str().unwrap(),
+    ])
+    .assert()
+    .success()
+    .code(0)
+    .stdout(predicate::str::contains("executed=10"));
+
+    // Unknown key rejects before running any case, naming both key and file.
+    let bad_cfg = dir.join("unknown-key.toml");
+    std::fs::write(
+        &bad_cfg,
+        format!(
+            r#"[campaign]
+wasm = {wasm_toml}
+unknown_field = true
+"#
+        ),
+    )
+    .unwrap();
+    fuzz_campaign(&["--config", bad_cfg.to_str().unwrap()])
+        .assert()
+        .failure()
+        .code(2)
+        .stderr(predicate::str::contains("unknown_field"))
+        .stderr(predicate::str::contains("unknown-key.toml"));
+
+    // Positional WASM mismatching campaign.wasm exits 2 naming both values.
+    fuzz_campaign(&["other.wasm", "--config", cfg_path.to_str().unwrap()])
+        .assert()
+        .failure()
+        .code(2)
+        .stderr(predicate::str::contains("other.wasm"))
+        .stderr(predicate::str::contains(&wasm));
+}

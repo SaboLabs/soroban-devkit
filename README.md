@@ -146,7 +146,11 @@ curl -fsSL https://raw.githubusercontent.com/SaboLabs/soroban-devkit/main/instal
 ```
 
 The script detects your OS/arch, downloads the matching release binary,
-verifies its SHA-256 checksum, and installs `sdkt` to `~/.local/bin/sdkt`.
+verifies its SHA-256 checksum, and installs `sdkt` (`sdkt.exe` on Windows)
+to `~/.local/bin`. On Windows (Git Bash / MSYS / Cygwin) it downloads the
+`.zip` release asset and extracts it with PowerShell, since `tar` is not
+guaranteed on Windows. `~/.local/bin` (or `SDKT_INSTALL_DIR`) must be on
+your `PATH`.
 
 ##### Environment variables
 
@@ -199,8 +203,17 @@ combined.
    sudo mv sdkt /usr/local/bin/
    ```
 
-   **Windows:** use `sdkt-x86_64-pc-windows-msvc.zip` from the
-   GitHub Release. Alternatively, install from crates.io or source:
+   **Windows:** download `sdkt-x86_64-pc-windows-msvc.zip` from the
+   GitHub Release, then extract and run (PowerShell):
+
+   ```powershell
+   Expand-Archive -Path sdkt-x86_64-pc-windows-msvc.zip -DestinationPath .
+   .\sdkt.exe --version
+   ```
+
+   Add the folder containing `sdkt.exe` to your `PATH` (System Properties →
+   Environment Variables) so `sdkt.exe` is available from any shell.
+   Alternatively, install from crates.io or source:
 
    ```powershell
    cargo install sdkt-cli
