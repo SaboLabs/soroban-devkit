@@ -495,14 +495,18 @@ const CAPABILITIES: [Capability; CAP_COUNT] = [
     Capability {
         id: "network.check",
         command: &["network", "check"],
-        summary: "Profile reachability + node health + protocol version; unreachable endpoint exits non-zero.",
+        summary: "Profile reachability + node health + protocol version; unreachable endpoint or passphrase mismatch exits non-zero.",
         required_args: &["<name>"],
         optional_args: &["--format"],
         formats: PRETTY_JSON,
+        exit: ExitSemantics::VERDICT_GATED,
         network: NetworkRequirement::Both,
         evidence: Evidence::VerifiedLocal,
         notes: Some(
-            "Resolves a SAVED profile by name and has no --rpc-url; verified against a saved profile on a reachable host.",
+            "Resolves a SAVED profile by name and has no --rpc-url; verified against a saved profile on a reachable host. \
+             Exit 0 only when the endpoint is reachable, healthy, and its reported passphrase matches the profile. \
+             A passphrase mismatch exits 1 with `passphrase_mismatch: true` in JSON output, consistent with \
+             `network diagnose` identity-mismatch behavior (registry.rs precedent: network.diagnose verdict gate).",
         ),
         ..Capability::BASE
     },
@@ -1148,6 +1152,7 @@ mod tests {
             "diff",
             "deployment.verify",
             "network.diagnose",
+            "network.check",
         ] {
             let c = find(id).expect("pinned verdict command");
             assert!(
