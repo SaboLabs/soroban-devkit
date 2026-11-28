@@ -63,6 +63,12 @@ pub struct CampaignEvidence {
     pub findings: Vec<FindingEvidence>,
     /// Findings that were minimized under the configured strategy.
     pub minimized_findings: usize,
+    /// Original declarations whose function was executed and evaluated.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub evaluated_declarations: Vec<String>,
+    /// Functions not evaluated, with explicit reasons.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub skipped_functions: Vec<crate::finding::SkippedFunction>,
     /// True when at least one finding artifact is available on disk.
     pub artifacts_available: bool,
     /// Replay status per finding artifact, keyed by canonical hash.
@@ -149,6 +155,8 @@ impl CampaignEvidence {
             expected_errors: result.expected_errors.len(),
             findings,
             minimized_findings: result.minimized_findings().count(),
+            evaluated_declarations: result.evaluated_declarations.clone(),
+            skipped_functions: result.skipped_functions.clone(),
             artifacts_available: !artifacts.is_empty(),
             replay: replay.clone(),
             deterministic,
