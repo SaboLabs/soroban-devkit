@@ -1423,6 +1423,9 @@ enum ProjectCommand {
     Status {
         #[arg(short, long, default_value = "pretty")]
         format: String,
+        /// Verify every recorded deployment still matches its recorded code on-chain.
+        #[arg(long)]
+        verify: bool,
     },
     /// Check health for every deployment recorded on the selected network
     Health {
@@ -13179,7 +13182,7 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
                     println!("Next steps: sdkt build, then sdkt project deploy");
                 }
             }
-            ProjectCommand::Status { format } => {
+            ProjectCommand::Status { format, verify } => {
                 let fmt = parse_format_str(&format);
                 let network_config = match resolve_network_config(
                     net.rpc_url.clone(),
@@ -13216,47 +13219,230 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
                     .collect();
                 deployments.sort_by_key(|(alias, _)| *alias);
 
-                if fmt == OutputFormat::Json {
-                    let deployments: Vec<_> = deployments
-                        .into_iter()
-                        .map(|(alias, record)| {
-                            serde_json::json!({
-                                "alias": alias,
-                                "contract_id": record.contract_id,
-                                "wasm_hash": record.wasm_hash,
-                                "network": record.network,
-                                "timestamp": record.timestamp,
-                                "salt": record.salt,
+                if !verify {
+                    if fmt == OutputFormat::Json {
+                        let deployments: Vec<_> = deployments
+                            .into_iter()
+                            .map(|(alias, record)| {
+                                serde_json::json!({
+                                    "alias": alias,
+                                    "contract_id": record.contract_id,
+                                    "wasm_hash": record.wasm_hash,
+                                    "network": record.network,
+                                    "timestamp": record.timestamp,
+                                    "salt": record.salt,
+                                })
                             })
-                        })
-                        .collect();
-                    let status = if deployments.is_empty() {
-                        "no_deployments"
+                            .collect();
+                        let status = if deployments.is_empty() {
+                            "no_deployments"
+                        } else {
+                            "deployed"
+                        };
+                        println!(
+                            "{}",
+                            serde_json::to_string(&serde_json::json!({
+                                "status": status,
+                                "network": network_key,
+                                "deployments": deployments,
+                            }))
+                            .unwrap()
+                        );
+                    } else if deployments.is_empty() {
+                        println!("No deployments recorded for network '{}'.", network_key);
                     } else {
-                        "deployed"
-                    };
-                    println!(
-                        "{}",
-                        serde_json::to_string(&serde_json::json!({
-                            "status": status,
-                            "network": network_key,
-                            "deployments": deployments,
-                        }))
-                        .unwrap()
-                    );
-                } else if deployments.is_empty() {
-                    println!("No deployments recorded for network '{}'.", network_key);
-                } else {
-                    println!("Project deployment status (network: {}):", network_key);
-                    for (alias, record) in deployments {
-                        println!("  {}", alias);
-                        println!("    Contract ID: {}", record.contract_id);
-                        println!("    WASM hash:   {}", record.wasm_hash);
-                        println!("    Recorded network: {}", record.network);
-                        println!("    Timestamp:  {}", record.timestamp);
-                        if let Some(salt) = &record.salt {
-                            println!("    Salt:       {}", salt);
+                        println!("Project deployment status (network: {}):", network_key);
+                        for (alias, record) in deployments {
+                            println!("  {}", alias);
+                            println!("    Contract ID: {}", record.contract_id);
+                            println!("    WASM hash:   {}", record.wasm_hash);
+                            println!("    Recorded network: {}", record.network);
+                            println!("    Timestamp:  {}", record.timestamp);
+                            if let Some(salt) = &record.salt {
+                                println!("    Salt:       {}", salt);
+                            }
                         }
+                    }
+                } else if deployments.is_empty() {
+                    if fmt == OutputFormat::Json {
+                        println!(
+                            "{}",
+                            serde_json::to_string(&serde_json::json!({
+                                "status": "no_deployments",
+                                "network": network_key,
+                                "deployments": [],
+                                "summary": {
+                                    "match": 0,
+                                    "drift": 0,
+                                    "missing": 0,
+                                    "error": 0,
+                                }
+                            }))
+                            .unwrap()
+                        );
+                    } else {
+                        println!("No deployments recorded for network '{}'.", network_key);
+                    }
+                } else {
+                    let client = SorobanRpcClient::from_config(&network_config);
+                    let mut match_count = 0usize;
+                    let mut drift_count = 0usize;
+                    let mut missing_count = 0usize;
+                    let mut error_count = 0usize;
+
+                    struct VerifiedStatusEntry<'a> {
+                        alias: &'a str,
+                        record: &'a sdkt_core::deployment::DeploymentRecord,
+                        status: &'static str,
+                        on_chain_hash: Option<String>,
+                        error: Option<String>,
+                    }
+
+                    let mut verified_entries = Vec::with_capacity(deployments.len());
+
+                    for (alias, record) in &deployments {
+                        match sdkt_rpc::probe_deployed_executable(&client, &record.contract_id)
+                            .await
+                        {
+                            Ok(probe) => {
+                                if !probe.instance_found {
+                                    missing_count += 1;
+                                    verified_entries.push(VerifiedStatusEntry {
+                                        alias,
+                                        record,
+                                        status: "MISSING",
+                                        on_chain_hash: None,
+                                        error: None,
+                                    });
+                                } else if let Some(live_hash) = probe.wasm_hash {
+                                    if live_hash.eq_ignore_ascii_case(&record.wasm_hash) {
+                                        match_count += 1;
+                                        verified_entries.push(VerifiedStatusEntry {
+                                            alias,
+                                            record,
+                                            status: "MATCH",
+                                            on_chain_hash: Some(live_hash),
+                                            error: None,
+                                        });
+                                    } else {
+                                        drift_count += 1;
+                                        verified_entries.push(VerifiedStatusEntry {
+                                            alias,
+                                            record,
+                                            status: "DRIFT",
+                                            on_chain_hash: Some(live_hash),
+                                            error: None,
+                                        });
+                                    }
+                                } else {
+                                    error_count += 1;
+                                    let err_msg = probe
+                                        .resolve_error
+                                        .or(probe.decode_error)
+                                        .or(probe.error)
+                                        .unwrap_or_else(|| {
+                                            "contract instance has no WASM hash (e.g. StellarAsset)"
+                                                .to_string()
+                                        });
+                                    verified_entries.push(VerifiedStatusEntry {
+                                        alias,
+                                        record,
+                                        status: "ERROR",
+                                        on_chain_hash: None,
+                                        error: Some(err_msg),
+                                    });
+                                }
+                            }
+                            Err(sdkt_rpc::RpcError::ContractNotFound) => {
+                                missing_count += 1;
+                                verified_entries.push(VerifiedStatusEntry {
+                                    alias,
+                                    record,
+                                    status: "MISSING",
+                                    on_chain_hash: None,
+                                    error: None,
+                                });
+                            }
+                            Err(e) => {
+                                error_count += 1;
+                                verified_entries.push(VerifiedStatusEntry {
+                                    alias,
+                                    record,
+                                    status: "ERROR",
+                                    on_chain_hash: None,
+                                    error: Some(e.to_string()),
+                                });
+                            }
+                        }
+                    }
+
+                    if fmt == OutputFormat::Json {
+                        let json_deployments: Vec<_> = verified_entries
+                            .iter()
+                            .map(|entry| {
+                                let mut obj = serde_json::json!({
+                                    "alias": entry.alias,
+                                    "contract_id": entry.record.contract_id,
+                                    "wasm_hash": entry.record.wasm_hash,
+                                    "network": entry.record.network,
+                                    "timestamp": entry.record.timestamp,
+                                    "salt": entry.record.salt,
+                                    "status": entry.status,
+                                    "on_chain_wasm_hash": entry.on_chain_hash,
+                                });
+                                if let Some(err) = &entry.error {
+                                    obj["error"] = serde_json::json!(err);
+                                }
+                                obj
+                            })
+                            .collect();
+
+                        println!(
+                            "{}",
+                            serde_json::to_string(&serde_json::json!({
+                                "status": "deployed",
+                                "network": network_key,
+                                "deployments": json_deployments,
+                                "summary": {
+                                    "match": match_count,
+                                    "drift": drift_count,
+                                    "missing": missing_count,
+                                    "error": error_count,
+                                }
+                            }))
+                            .unwrap()
+                        );
+                    } else {
+                        for entry in &verified_entries {
+                            match entry.status {
+                                "MATCH" => {
+                                    println!("{}: MATCH", entry.alias);
+                                }
+                                "DRIFT" => {
+                                    let on_chain = entry.on_chain_hash.as_deref().unwrap_or("");
+                                    println!(
+                                        "{}: DRIFT (recorded: {}, on-chain: {})",
+                                        entry.alias, entry.record.wasm_hash, on_chain
+                                    );
+                                }
+                                "MISSING" => {
+                                    println!("{}: MISSING", entry.alias);
+                                }
+                                "ERROR" => {
+                                    if let Some(err) = &entry.error {
+                                        let clean_err = err.replace('\n', " ");
+                                        println!("{}: ERROR ({})", entry.alias, clean_err);
+                                    } else {
+                                        println!("{}: ERROR", entry.alias);
+                                    }
+                                }
+                                _ => unreachable!(),
+                            }
+                        }
+                    }
+
+                    if drift_count > 0 || missing_count > 0 || error_count > 0 {
+                        process::exit(1);
                     }
                 }
             }

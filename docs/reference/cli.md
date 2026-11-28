@@ -455,7 +455,9 @@ the descriptor summary (`schema`, `name`, `version`, `format`, `lock_sha256`,
 │   ├── add <ALIAS> --path <DIR> [--depends-on <ALIAS>]... [--ctor-arg <TYPE:VALUE>]...
 │   │                         Register an existing contract in `.sdkt.toml`
 │   │                         under `[contracts.<alias>]`, validated before writing
-│   ├── status                Show deployments recorded for the selected network profile
+│   ├── status [--verify] [--format <pretty|json>]
+│   │                         Show deployments recorded for the selected network profile;
+│   │                         --verify checks live on-chain code hash against recorded hash
 │   ├── health [--fail-on <at_risk|critical>] [--format pretty|json]
 │   │                         Check health for every deployment recorded on the selected network
 │   └── deploy                Deploy all contracts defined in the workspace (.sdkt.toml),
@@ -541,6 +543,25 @@ the descriptor summary (`schema`, `name`, `version`, `format`, `lock_sha256`,
 │   mid-graph the contracts that already landed are never lost; the alias →
 │   contract ID mapping is retained for the retry. On success the record is written
 │   too (additive; the stdout JSON/pretty output is unchanged).
+│
+│   `sdkt project status` inspects `.sdkt-deployments.json` for the selected network profile.
+│   With `--verify`, it performs a read-only drift check: for every record on the selected network,
+│   it fetches the live on-chain code hash with `probe_deployed_executable` and compares it hash-to-hash
+│   against the recorded `wasm_hash` (no bytecode download):
+│   - `MATCH`: recorded hash matches on-chain hash
+│   - `DRIFT`: contract exists on-chain, but its code hash has changed
+│   - `MISSING`: contract not found on-chain
+│   - `ERROR`: check failed (e.g. RPC transport error, reported per record without aborting the run)
+│
+│   Pretty mode prints one line per record (e.g. `<alias>: MATCH`, `<alias>: DRIFT (recorded: <rec>, on-chain: <live>)`).
+│   `--format json` emits each record with `status` and `on_chain_wasm_hash` plus a top-level `summary`
+│   object (`{"match": N, "drift": N, "missing": N, "error": N}`).
+│   Exits 0 when every record is MATCH (or when no deployments are recorded); exits 1 when any record is DRIFT, MISSING, or ERROR.
+│   Example:
+│
+│     sdkt project status --verify
+│     # token: MATCH
+│     # vault: DRIFT (recorded: 551c5a9c..., on-chain: 60cddae6...)
 │
 │   `--skip-deployed` resumes an interrupted deploy: aliases whose recorded
 │   contract ID is verified to still exist on-chain (via `getLedgerEntries`) are
