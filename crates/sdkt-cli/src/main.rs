@@ -2455,6 +2455,17 @@ struct HealthResult {
     report: Option<ContractHealthReport>,
 }
 
+/// Network fit section (compares candidate size against live `ContractMaxSizeBytes`).
+#[derive(Debug, serde::Serialize)]
+struct NetworkFitResult {
+    #[serde(flatten)]
+    check: RaCheck,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    candidate_size_bytes: Option<usize>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    max_contract_size_bytes: Option<u32>,
+}
+
 const RELEASE_ASSURANCE_SCHEMA_VERSION: u32 = 1;
 
 /// Aggregate, machine-readable release-assurance result.
@@ -2467,6 +2478,7 @@ struct ReleaseAssuranceReport {
     upgrade_safety: UpgradeResult,
     verification: VerifyResult,
     health: HealthResult,
+    network_fit: NetworkFitResult,
     /// Fuzz evidence attached from a completed campaign
     /// (`--fuzz-evidence`); absent (and JSON-skipped) unless supplied.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -2704,7 +2716,7 @@ fn apply_size_policy_to_assurance(
     }
     report.artifact.check.status = RaStatus::Fail;
     // Re-aggregate with the existing model so status/reasons/exit stay coherent.
-    let statuses = [
+    let mut statuses = vec![
         report.artifact.check.status,
         report.security.check.status,
         report.upgrade_safety.check.status,
@@ -2717,6 +2729,9 @@ fn apply_size_policy_to_assurance(
             .map(|f| f.check.status)
             .unwrap_or(RaStatus::Pass),
     ];
+    if report.network_fit.check.status != RaStatus::Skipped {
+        statuses.push(report.network_fit.check.status);
+    }
     report.release_status = aggregate_release_status(&statuses);
     report.reasons.retain(|r| r != "Artifact: FAIL");
     report.reasons.insert(0, "Artifact: FAIL".to_string());
@@ -2739,6 +2754,10 @@ fn format_release_assurance_pretty(r: &ReleaseAssuranceReport) -> String {
         r.verification.check.status
     ));
     out.push_str(&format!("Contract Health {}\n", r.health.check.status));
+    out.push_str(&format!("Network Fit     {}\n", r.network_fit.check.status));
+    if r.network_fit.check.status == RaStatus::Fail {
+        out.push_str(&format!("  {}\n", r.network_fit.check.detail));
+    }
     if let Some(f) = &r.fuzz {
         out.push_str(&format!("Fuzz Evidence   {}\n", f.check.status));
     }
@@ -2910,7 +2929,22 @@ async fn run_release_assurance(
         },
     };
 
-    // ---- 6. FUZZ EVIDENCE (recorded, never executed here) ----
+    // ---- 6. NETWORK FIT (live ContractMaxSizeBytes vs candidate size) ----
+    let candidate_size_bytes = artifact.metadata.as_ref().map(|m| m.size_bytes);
+    let network_fit = if artifact.check.status != RaStatus::Pass {
+        evaluate_network_fit(None, None, None)
+    } else {
+        match sdkt_rpc::network_capture::capture_network_config(client).await {
+            Ok(cfg) => evaluate_network_fit(
+                candidate_size_bytes,
+                cfg.max_contract_size_bytes.value,
+                None,
+            ),
+            Err(e) => evaluate_network_fit(candidate_size_bytes, None, Some(&e.to_string())),
+        }
+    };
+
+    // ---- 7. FUZZ EVIDENCE (recorded, never executed here) ----
     //
     // `--fuzz-evidence` attaches the evidence JSON written by an already
     // completed `sdkt fuzz` campaign. Release assurance does not run
@@ -2918,22 +2952,21 @@ async fn run_release_assurance(
     // `Classification::Finding` entries count as security evidence.
     let (fuzz_evidence, fuzz_status) = read_fuzz_evidence(fuzz_evidence)?;
 
-    let statuses = [
+    let mut statuses = vec![
         artifact.check.status,
         security.check.status,
         upgrade.check.status,
         verification_result.check.status,
         health_result.check.status,
     ];
-    let release_status = match fuzz_status {
+    if network_fit.check.status != RaStatus::Skipped {
+        statuses.push(network_fit.check.status);
+    }
+    if let Some(fuzz) = fuzz_status {
         // Fold the recorded evidence status in as one more section.
-        Some(fuzz) => {
-            let mut all = statuses.to_vec();
-            all.push(fuzz);
-            aggregate_release_status(&all)
-        }
-        None => aggregate_release_status(&statuses),
-    };
+        statuses.push(fuzz);
+    }
+    let release_status = aggregate_release_status(&statuses);
 
     let mut reasons = Vec::new();
     for (label, s) in [
@@ -2942,6 +2975,7 @@ async fn run_release_assurance(
         ("Upgrade Safety", upgrade.check.status),
         ("Verification", verification_result.check.status),
         ("Contract Health", health_result.check.status),
+        ("Network Fit", network_fit.check.status),
     ] {
         if matches!(s, RaStatus::Fail | RaStatus::Error | RaStatus::Review) {
             reasons.push(format!("{}: {}", label, s));
@@ -2961,6 +2995,7 @@ async fn run_release_assurance(
         upgrade_safety: upgrade,
         verification: verification_result,
         health: health_result,
+        network_fit,
         fuzz: fuzz_evidence,
         release_status,
         reasons,
@@ -2968,6 +3003,61 @@ async fn run_release_assurance(
         tool: "sdkt",
         version: env!("CARGO_PKG_VERSION"),
     })
+}
+
+/// Compare candidate artifact size against a captured `ContractMaxSizeBytes` limit.
+///
+/// - `Pass` when `candidate_size_bytes <= max_contract_size_bytes` (inclusive).
+/// - `Fail` when `candidate_size_bytes > max_contract_size_bytes`, naming both byte counts.
+/// - `Skipped` when either the candidate size or the network limit is unavailable.
+fn evaluate_network_fit(
+    candidate_size_bytes: Option<usize>,
+    max_contract_size_bytes: Option<u32>,
+    unavailable_reason: Option<&str>,
+) -> NetworkFitResult {
+    let Some(size) = candidate_size_bytes else {
+        return NetworkFitResult {
+            check: RaCheck {
+                status: RaStatus::Skipped,
+                detail: "candidate WASM artifact is invalid; network fit skipped".to_string(),
+            },
+            candidate_size_bytes: None,
+            max_contract_size_bytes,
+        };
+    };
+    let Some(limit) = max_contract_size_bytes else {
+        let reason =
+            unavailable_reason.unwrap_or("ContractMaxSizeBytes unavailable from network capture");
+        return NetworkFitResult {
+            check: RaCheck {
+                status: RaStatus::Skipped,
+                detail: format!("network limit unavailable ({reason}); network fit skipped"),
+            },
+            candidate_size_bytes: Some(size),
+            max_contract_size_bytes: None,
+        };
+    };
+    if size <= limit as usize {
+        NetworkFitResult {
+            check: RaCheck {
+                status: RaStatus::Pass,
+                detail: format!(
+                    "candidate size {size} bytes fits within network limit {limit} bytes"
+                ),
+            },
+            candidate_size_bytes: Some(size),
+            max_contract_size_bytes: Some(limit),
+        }
+    } else {
+        NetworkFitResult {
+            check: RaCheck {
+                status: RaStatus::Fail,
+                detail: format!("candidate size {size} bytes exceeds network limit {limit} bytes"),
+            },
+            candidate_size_bytes: Some(size),
+            max_contract_size_bytes: Some(limit),
+        }
+    }
 }
 
 /// Read a fuzz evidence JSON file produced by a completed `sdkt fuzz`
@@ -15780,6 +15870,31 @@ mod diff_contract_tests {
             }
             _ => panic!("expected `diff`"),
         }
+    }
+
+    #[test]
+    fn evaluate_network_fit_covers_fits_exact_exceeds_and_unavailable() {
+        // Fits within limit -> Pass
+        let fits = evaluate_network_fit(Some(1024), Some(65536), None);
+        assert_eq!(fits.check.status, RaStatus::Pass);
+        assert_eq!(fits.candidate_size_bytes, Some(1024));
+        assert_eq!(fits.max_contract_size_bytes, Some(65536));
+
+        // Exactly at limit -> Pass (inclusive)
+        let exact = evaluate_network_fit(Some(65536), Some(65536), None);
+        assert_eq!(exact.check.status, RaStatus::Pass);
+
+        // Exceeds limit -> Fail naming both byte counts
+        let exceeds = evaluate_network_fit(Some(70000), Some(65536), None);
+        assert_eq!(exceeds.check.status, RaStatus::Fail);
+        assert!(exceeds.check.detail.contains("70000"));
+        assert!(exceeds.check.detail.contains("65536"));
+
+        // Unavailable limit -> Skipped (never assumed 0 or Pass)
+        let unavailable = evaluate_network_fit(Some(1024), None, Some("connection refused"));
+        assert_eq!(unavailable.check.status, RaStatus::Skipped);
+        assert!(unavailable.check.detail.contains("connection refused"));
+        assert_eq!(unavailable.max_contract_size_bytes, None);
     }
 }
 
