@@ -49,6 +49,8 @@ enum OrderEvent {
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct FnScan {
     pub fn_name: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub line: Option<usize>,
     pub require_auth: usize,
     pub invoke_contract: usize,
     /// Local bindings (let-bindings + parameters) eligible for move tracking.
@@ -92,6 +94,7 @@ impl FnScan {
     fn new(fn_name: String) -> Self {
         Self {
             fn_name,
+            line: None,
             require_auth: 0,
             invoke_contract: 0,
             bound: HashSet::new(),
@@ -115,15 +118,15 @@ impl FnScan {
     /// Severity for a name-based privileged-match finding (AUTH-001/AUTH-004).
     ///
     /// Mapping (documented in `docs/reference/cli.md`):
-    /// - not an entrypoint (plain `fn` / non-`#[contractimpl]` method) → `info`:
+    /// - not an entrypoint (plain `fn` / non-`#[contractimpl]` method) â†’ `info`:
     ///   external callers cannot reach it; its caller entrypoint holds the auth
     ///   responsibility. The finding stays visible; nothing is deleted.
     /// - entrypoint with a recognized side effect (state write or external
-    ///   call) → `critical` (current behavior, e.g. unguarded `mint`,
+    ///   call) â†’ `critical` (current behavior, e.g. unguarded `mint`,
     ///   `set_admin`, `pause`).
-    /// - entrypoint returning a value with no recognized side effect → `info`:
+    /// - entrypoint returning a value with no recognized side effect â†’ `info`:
     ///   positive evidence of a read-only getter (`get_paused`, `admin_balance`).
-    /// - entrypoint returning nothing with no *recognized* side effect →
+    /// - entrypoint returning nothing with no *recognized* side effect â†’
     ///   `critical`: a setter may write through an unrecognized helper; staying
     ///   loud is the conservative choice.
     pub(crate) fn privileged_match_severity(&self) -> Severity {
@@ -427,7 +430,7 @@ impl<'a> FnVisitor<'a> {
 /// Scan every function in the AST into a `FnScan` per function.
 ///
 /// Covers top-level `fn` items, methods inside `impl` blocks (Soroban
-/// contract entrypoints are `impl` methods), and — recursively — every `fn`
+/// contract entrypoints are `impl` methods), and â€” recursively â€” every `fn`
 /// and `impl` method inside `mod` blocks declared inline in the scanned
 /// file. Functions inside a module keep their qualified path in
 /// [`FnScan::fn_name`] (e.g. `inner::initialize`, `a::b::Vault::mint`), so
@@ -534,6 +537,7 @@ fn signature_returns_value(sig: &syn::Signature) -> bool {
 /// Build a `FnScan` for one function signature + body.
 fn fn_scan(sig: &syn::Signature, block: &syn::Block) -> FnScan {
     let mut scan = FnScan::new(sig.ident.to_string());
+    scan.line = Some(sig.ident.span().start().line);
     scan.returns_value = signature_returns_value(sig);
     for input in &sig.inputs {
         if let FnArg::Typed(pt) = input {
@@ -552,7 +556,7 @@ fn fn_scan(sig: &syn::Signature, block: &syn::Block) -> FnScan {
     visitor.visit_block(block);
 
     // Check if any external call precedes any later state write (CEI hazard).
-    // Detect the pattern: external_call → ... → state_write
+    // Detect the pattern: external_call â†’ ... â†’ state_write
     let mut found_external_call = false;
     for event in order_events {
         match event {
@@ -688,6 +692,7 @@ mod tests {
                     severity: Severity::Info,
                     message: "stub fired".into(),
                     location: None,
+                    line: None,
                 });
             }
         }
@@ -697,6 +702,17 @@ mod tests {
         reg.register_rule(Box::new(Stub { id: "REG-TEST" }) as crate::registry::BoxedRule);
         let rep = audit_source_with_registry("pub fn mint() { }", &reg, &["AUTH-001"]).unwrap();
         assert!(rep.findings.iter().any(|f| f.rule_id == "REG-TEST"));
+    }
+
+    #[test]
+    fn scanner_records_function_signature_start_line() {
+        let src = "pub fn first() {}\n\npub fn mint_token(to: Address) { require_auth(); }";
+        let scans = scan_all_functions_str(src).unwrap();
+        let mint = scans
+            .iter()
+            .find(|scan| scan.fn_name == "mint_token")
+            .unwrap();
+        assert_eq!(mint.line, Some(3));
     }
 
     #[test]
@@ -888,7 +904,7 @@ mod tests {
 
     #[test]
     fn cei001_detects_nested_invoke_in_set_argument() {
-        // set(..., invoke_contract(...)) — the invoke is nested inside set args
+        // set(..., invoke_contract(...)) â€” the invoke is nested inside set args
         // Arguments are evaluated before the outer call, so invoke happens before set's effect
         let src = r#"
             pub fn swap(env: Env) {
@@ -905,7 +921,7 @@ mod tests {
 
     #[test]
     fn cei001_detects_invoke_wrapping_set_argument() {
-        // invoke_contract(..., storage().set(...)) — set is nested inside invoke args
+        // invoke_contract(..., storage().set(...)) â€” set is nested inside invoke args
         // Arguments are evaluated before the outer call, so set happens before invoke's effect
         let src = r#"
             pub fn swap(env: Env) {
@@ -923,7 +939,7 @@ mod tests {
 
     #[test]
     fn cei001_detects_write_call_write_pattern() {
-        // write → invoke → write: has both patterns, should flag on the second write
+        // write â†’ invoke â†’ write: has both patterns, should flag on the second write
         let src = r#"
             pub fn swap(env: Env) {
                 env.storage().set(key1, value1);
@@ -937,13 +953,13 @@ mod tests {
         // The second set should flag because found_external_call is true.
         assert!(
             has(&rep, "CEI-001"),
-            "write → call → write should flag on second write"
+            "write â†’ call â†’ write should flag on second write"
         );
     }
 
     #[test]
     fn cei001_still_emits_one_finding_per_function() {
-        // Multiple write → call → write patterns should still emit only one finding.
+        // Multiple write â†’ call â†’ write patterns should still emit only one finding.
         let src = r#"
             pub fn swap(env: Env) {
                 env.storage().set(key1, value1);

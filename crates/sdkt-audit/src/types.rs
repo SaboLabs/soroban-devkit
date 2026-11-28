@@ -49,6 +49,9 @@ pub struct Finding {
     pub file: Option<String>,
     /// Optional human-readable location (function name, or `fn:binding`).
     pub location: Option<String>,
+    /// Source line of the originating function, when known.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub line: Option<usize>,
 }
 
 /// Aggregate counts by severity.

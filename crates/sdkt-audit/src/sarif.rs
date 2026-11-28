@@ -99,6 +99,14 @@ pub struct SarifLocation {
 #[serde(rename_all = "camelCase")]
 pub struct SarifPhysicalLocation {
     pub artifact_location: SarifArtifactLocation,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub region: Option<SarifRegion>,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SarifRegion {
+    pub start_line: usize,
 }
 
 #[derive(Debug, Serialize)]
@@ -412,28 +420,26 @@ fn finding_to_result(f: &Finding, source_file: &str) -> SarifResult {
         locations: vec![SarifLocation {
             physical_location: SarifPhysicalLocation {
                 artifact_location: SarifArtifactLocation { uri, uri_base_id },
+                region: f.line.map(|start_line| SarifRegion { start_line }),
             },
         }],
     }
 }
 
 fn finding_to_result_for_file(f: &Finding) -> SarifResult {
-    let source_file = f
-        .file
-        .as_deref()
-        .filter(|s| !s.is_empty())
-        .unwrap_or("unknown.rs");
+    let source_file = f.file.as_deref().filter(|s| !s.is_empty());
+    let resolved_file = source_file.unwrap_or("unknown.rs");
     let message_text = match &f.location {
         Some(loc) => format!("{} ({})", f.message, loc),
         None => f.message.clone(),
     };
 
-    let is_absolute = is_absolute_source_path(source_file);
+    let is_absolute = is_absolute_source_path(resolved_file);
     let (uri, uri_base_id) = if is_absolute {
-        (file_uri_from_path(source_file), None)
+        (file_uri_from_path(resolved_file), None)
     } else {
         (
-            relative_uri_from_path(source_file),
+            relative_uri_from_path(resolved_file),
             Some("%SRCROOT%".to_string()),
         )
     };
@@ -445,6 +451,8 @@ fn finding_to_result_for_file(f: &Finding) -> SarifResult {
         locations: vec![SarifLocation {
             physical_location: SarifPhysicalLocation {
                 artifact_location: SarifArtifactLocation { uri, uri_base_id },
+                region: source_file
+                    .and_then(|_| f.line.map(|start_line| SarifRegion { start_line })),
             },
         }],
     }
@@ -478,6 +486,7 @@ mod tests {
             message: msg.to_string(),
             file: None,
             location: loc.map(str::to_string),
+            line: None,
         }
     }
 
@@ -650,6 +659,27 @@ mod tests {
             loc.physical_location.artifact_location.uri_base_id,
             Some("%SRCROOT%".to_string())
         );
+        assert!(loc.physical_location.region.is_none());
+    }
+
+    #[test]
+    fn single_file_result_emits_start_line_for_line_finding() {
+        let mut report = AuditReport::default();
+        let mut finding = finding("AUTH-001", Severity::Critical, "msg", Some("mint"));
+        finding.line = Some(27);
+        report.add(finding);
+
+        let log = to_sarif(
+            &report,
+            "contracts/token/src/lib.rs",
+            "2.5.0",
+            &make_rules(),
+        );
+        let loc = &log.runs[0].results[0].locations[0];
+        assert_eq!(
+            loc.physical_location.region.as_ref().unwrap().start_line,
+            27
+        );
     }
 
     #[test]
@@ -661,6 +691,7 @@ mod tests {
             message: "msg a".to_string(),
             file: Some("a.rs".to_string()),
             location: None,
+            line: Some(12),
         });
         report.add(Finding {
             rule_id: "AUTH-003".to_string(),
@@ -668,6 +699,7 @@ mod tests {
             message: "msg b".to_string(),
             file: Some("b.rs".to_string()),
             location: None,
+            line: None,
         });
 
         let log = to_sarif_multi_file(&report, "2.5.0", &make_rules());
@@ -685,6 +717,15 @@ mod tests {
 
         assert!(uris.iter().any(|uri| uri.contains("a.rs")));
         assert!(uris.iter().any(|uri| uri.contains("b.rs")));
+        assert_eq!(
+            log.runs[0].results[0].locations[0]
+                .physical_location
+                .region
+                .as_ref()
+                .unwrap()
+                .start_line,
+            12
+        );
     }
 
     #[test]

@@ -1587,9 +1587,16 @@ Store root precedence (lowest → highest): `<cwd>/.sdkt/plugins`,
 `sdkt fuzz campaign` accepts repeatable `--expect-success <FN>` and
 `--expect-error <FN:TYPE:CODE>` declarations. A function may have one
 expectation; declaring it with both flags is a usage error that exits 2 and
-names the conflicting function. A single valid declaration keeps its existing
-campaign behavior. Malformed `--expect-error` declarations also remain usage
-errors.
+names the conflicting function. A declaration whose function is absent from the
+contract's `ContractSpec` is also a usage error that exits 2 and names the
+declaration and function.
+
+A declaration for a function present in the spec but not evaluated, for example
+because `--function` excludes it or the function has an unsupported parameter
+type, is reported by the campaign's existing `SKIPPED` output with the reason.
+A declaration that was executed is reported as `status=evaluated` in pretty
+output. Valid declarations keep their existing campaign semantics and exit
+behavior. Malformed `--expect-error` declarations remain usage errors.
 
 ### Resource-limit findings (opt-in)
 

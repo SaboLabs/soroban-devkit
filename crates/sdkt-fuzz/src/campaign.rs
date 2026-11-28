@@ -157,6 +157,10 @@ pub struct CampaignResult {
     pub findings: Vec<Finding>,
     /// Functions skipped, with reasons (never silent).
     pub skipped_functions: Vec<SkippedFunction>,
+    /// Contract functions whose declared expectation was evaluated.
+    pub evaluated_functions: Vec<String>,
+    /// Original declaration strings whose rules were evaluated.
+    pub evaluated_declarations: Vec<String>,
     /// Cases actually executed.
     pub executed: usize,
 }
@@ -188,12 +192,27 @@ fn run_campaign_inner(
     input: &CampaignInput,
     expectations: &std::collections::BTreeMap<String, Expected>,
 ) -> Result<(CampaignResult, Vec<FindingArtifact>), FuzzError> {
-    if input.cases == 0 {
-        return Err(FuzzError::InvalidConfig(
-            "cases must be greater than 0".to_string(),
-        ));
+    let executor = Executor::new(&input.wasm, default_config(input)?)?;
+    let artifact_config = input.artifact_config();
+    let (functions, mut skipped) = input.selectable();
+    let (_, all_skipped) = crate::finding::selectable(&input.spec);
+    for function in expectations.keys() {
+        if !functions.contains(function) && !skipped.iter().any(|skip| &skip.function == function) {
+            if let Some(skip) = all_skipped.iter().find(|skip| &skip.function == function) {
+                skipped.push(skip.clone());
+            } else if input
+                .function
+                .as_ref()
+                .map(|selected| selected != function)
+                .unwrap_or(false)
+            {
+                skipped.push(SkippedFunction {
+                    function: function.clone(),
+                    reason: "declaration not selected by --function".to_string(),
+                });
+            }
+        }
     }
-    let (functions, skipped) = input.selectable();
     if functions.is_empty() {
         return match &input.function {
             Some(want) => {
@@ -211,9 +230,6 @@ fn run_campaign_inner(
             ))),
         };
     }
-
-    let executor = Executor::new(&input.wasm, default_config(input)?)?;
-    let artifact_config = input.artifact_config();
 
     let mut result = CampaignResult {
         skipped_functions: skipped,
@@ -326,6 +342,9 @@ fn run_campaign_inner(
         // --- Classify ---------------------------------------------------
         let classification = oracle.classify(&observation);
         result.executed += 1;
+        if expectations.contains_key(&function) && !result.evaluated_functions.contains(&function) {
+            result.evaluated_functions.push(function.clone());
+        }
         match classification {
             Classification::Pass => result.passed.push(case_id),
             Classification::ExpectedError => result.expected_errors.push(case_id),

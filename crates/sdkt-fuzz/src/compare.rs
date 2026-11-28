@@ -133,6 +133,8 @@ mod tests {
             expected_errors: 0,
             findings,
             minimized_findings: 0,
+            evaluated_declarations: Vec::new(),
+            skipped_functions: Vec::new(),
             artifacts_available: false,
             replay: BTreeMap::new(),
             deterministic: true,

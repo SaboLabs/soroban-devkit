@@ -112,6 +112,12 @@ impl FuzzReport {
     pub fn to_pretty(&self) -> String {
         let mut out = String::new();
         out.push_str(&format!("Campaign summary: {}\n", self.summary));
+        for skipped in &self.result.skipped_functions {
+            out.push_str(&format!(
+                "SKIPPED function={} reason={}\n",
+                skipped.function, skipped.reason
+            ));
+        }
         for f in &self.result.findings {
             out.push_str(&format!(
                 "FINDING {} {} {} (minimized_complexity={})\n",
@@ -207,6 +213,11 @@ pub fn run_with_sequence(
     })?;
 
     let mut input = CampaignInput::new(&wasm, expand_seed(options.seed))?;
+    if options.cases == 0 {
+        return Err(FuzzError::InvalidConfig(
+            "cases must be greater than 0".to_string(),
+        ));
+    }
     input.cases = options.cases;
     input.function = options.function.clone();
     input.auth_mode = options.auth_mode;
@@ -222,8 +233,28 @@ pub fn run_with_sequence(
         None => Environment::default(),
     };
 
-    let expectations = build_expectations(options)?;
-    let (result, artifacts) = run_campaign_artifacts(&input, &expectations)?;
+    let expectations = build_expectations(options, &input.spec)?;
+    let (mut result, artifacts) = run_campaign_artifacts(&input, &expectations)?;
+    for declaration in &options.expect_success {
+        if result
+            .evaluated_functions
+            .iter()
+            .any(|function| function == declaration)
+        {
+            result.evaluated_declarations.push(declaration.clone());
+        }
+    }
+    for declaration in &options.expect_error {
+        if let Some(function) = declaration.split(':').next() {
+            if result
+                .evaluated_functions
+                .iter()
+                .any(|evaluated| evaluated == function)
+            {
+                result.evaluated_declarations.push(declaration.clone());
+            }
+        }
+    }
 
     // Artifacts: write only actual Classification::Finding findings.
     let dir = match &options.artifact_dir {
@@ -367,19 +398,28 @@ pub fn expand_seed(seed: u64) -> [u8; 32] {
 /// Parse `--expect-success` / `--expect-error FN:TYPE:CODE` into the
 /// expectations map. Malformed declarations are configuration errors, not
 /// findings.
-fn build_expectations(options: &FuzzRunOptions) -> Result<BTreeMap<String, Expected>, FuzzError> {
-    // Run-level opt-in: the RESOURCE_LIMIT rule applies to every
-    // expectation built for this run (no per-function granularity).
-    let resource_limit_is_finding = options.resource_limit_is_finding;
+fn build_expectations(
+    options: &FuzzRunOptions,
+    spec: &sdkt_wasm::ContractSpec,
+) -> Result<BTreeMap<String, Expected>, FuzzError> {
     let mut map = BTreeMap::new();
     for f in &options.expect_success {
+        if !spec
+            .functions
+            .iter()
+            .any(|contract_fn| contract_fn.name == *f)
+        {
+            return Err(FuzzError::InvalidConfig(format!(
+                "--expect-success `{f}` names function `{f}` absent from ContractSpec"
+            )));
+        }
         map.insert(
             f.clone(),
             Expected {
                 behavior: ExpectedBehavior::Success {
                     expect_return: None,
                 },
-                resource_limit_is_finding,
+                resource_limit_is_finding: options.resource_limit_is_finding,
                 ..Default::default()
             },
         );
@@ -396,6 +436,15 @@ fn build_expectations(options: &FuzzRunOptions) -> Result<BTreeMap<String, Expec
         let code: u32 = code.parse().map_err(|e| {
             FuzzError::InvalidConfig(format!("--expect-error `{decl}`: bad code: {e}"))
         })?;
+        if !spec
+            .functions
+            .iter()
+            .any(|contract_fn| contract_fn.name == function)
+        {
+            return Err(FuzzError::InvalidConfig(format!(
+                "--expect-error `{decl}` names function `{function}` absent from ContractSpec"
+            )));
+        }
         if options.expect_success.iter().any(|name| name == function) {
             return Err(FuzzError::InvalidConfig(format!(
                 "conflicting expectations for function '{function}': declared by both --expect-success and --expect-error"
@@ -408,7 +457,7 @@ fn build_expectations(options: &FuzzRunOptions) -> Result<BTreeMap<String, Expec
                     error_type: error_type.to_string(),
                     code,
                 },
-                resource_limit_is_finding,
+                resource_limit_is_finding: options.resource_limit_is_finding,
                 ..Default::default()
             },
         );
