@@ -231,9 +231,6 @@ fn run_campaign_inner(
         };
     }
 
-    let executor = Executor::new(&input.wasm, default_config(input)?)?;
-    let artifact_config = input.artifact_config();
-
     let mut result = CampaignResult {
         skipped_functions: skipped,
         ..Default::default()
