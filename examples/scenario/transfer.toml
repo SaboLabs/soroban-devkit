@@ -1,0 +1,44 @@
+# Two-step token scenario for `sdkt run` (#549).
+#
+# Prerequisites:
+#   1. Deploy the token with `sdkt project deploy` and record it under the
+#      alias `token` in `.sdkt-deployments.json` for the target network
+#      profile (see `sdkt project add`).
+#   2. Export the addresses you want to move funds between.
+#
+# Then run:
+#   sdkt run examples/scenario/transfer.toml --network-profile testnet
+#
+# `--dry-run` validates the file and simulates both steps without signing or
+# submitting anything:
+#   sdkt run examples/scenario/transfer.toml --network-profile testnet --dry-run
+
+[[steps]]
+id = "balance"
+kind = "call"
+contract = "token"
+function = "balance"
+args = ["address:GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF"]
+
+# The call must return exactly the amount we are about to transfer.
+[[steps.assert]]
+path = "/result"
+equals = 1000
+
+[[steps]]
+id = "transfer"
+kind = "invoke"
+contract = "token"
+function = "transfer"
+identity = "default"
+# The third argument is the decoded result of the `balance` step above.
+args = [
+  "address:GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF",
+  "address:GBXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX",
+  "i128:${steps.balance.result}",
+]
+
+# The invoke must produce a transaction hash.
+[[steps.assert]]
+path = "/tx_hash"
+exists = true
