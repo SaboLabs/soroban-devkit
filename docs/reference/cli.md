@@ -1425,14 +1425,15 @@ sdkt fuzz replay ./sdkt-fuzz-artifacts/contract-increment-case0042.json \
 |------|---------|
 | `<ARTIFACT>` | Path to the finding artifact (JSON) produced by a campaign |
 | `--wasm <WASM>` | *required* — Path to the campaign WASM the artifact was produced from |
+| `--format <FORMAT>` | Output format (`pretty` \| `json` \| `jsonl`; default: `pretty`) |
 
 **Replay verdict:**
 
 | Exit code | Verdict | Meaning |
 |-----------|---------|---------|
 | `0` | `REPRODUCED` | The artifact reproduced: same input, same result, finding verified |
-| `1` | `MISMATCH` | The artifact did not reproduce: result differs from expected |
-| `2` | Usage error | Invalid artifact or WASM path |
+| `1` | `MISMATCH` or runtime failure | The artifact did not reproduce, or runtime/input failure (unreadable file, malformed artifact, unsupported schema version, unknown reason code, WASM hash mismatch) |
+| `2` | Usage error | Command-line usage error (e.g. unknown flag, missing required arguments, invalid format) |
 
 **Determinism:**
 
