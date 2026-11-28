@@ -842,18 +842,23 @@ enum TokenAction {
 }
 
 #[derive(Subcommand)]
+#[allow(clippy::large_enum_variant)]
 enum FuzzAction {
     /// Run a deterministic fuzz campaign against a compiled contract
     Campaign {
-        /// Path to the compiled contract WASM file
+        /// Path to the compiled contract WASM file (optional when --config supplies campaign.wasm)
         #[arg(value_name = "WASM")]
-        wasm: String,
-        /// Deterministic seed (u64)
-        #[arg(long, value_name = "N", default_value_t = 0)]
-        seed: u64,
-        /// Number of cases to execute
-        #[arg(long, value_name = "N", default_value_t = 100)]
-        cases: usize,
+        wasm: Option<String>,
+        /// Path to a TOML campaign definition file. Precedence: explicit CLI flags
+        /// override config values; config values override built-in defaults.
+        #[arg(long, value_name = "FILE")]
+        config: Option<String>,
+        /// Deterministic seed (u64; default: 0)
+        #[arg(long, value_name = "N")]
+        seed: Option<u64>,
+        /// Number of cases to execute (default: 100)
+        #[arg(long, value_name = "N")]
+        cases: Option<usize>,
         /// Restrict the campaign to one exported function
         #[arg(long, value_name = "NAME")]
         function: Option<String>,
@@ -861,9 +866,9 @@ enum FuzzAction {
         #[arg(long, value_name = "DIR")]
         artifact_dir: Option<String>,
         /// Authorization mode for every case: no-auth | correct-auth |
-        /// wrong-auth (see the sdkt-fuzz docs for exact semantics)
-        #[arg(long, value_name = "MODE", default_value = "no-auth")]
-        auth: String,
+        /// wrong-auth (default: no-auth; see the sdkt-fuzz docs for exact semantics)
+        #[arg(long, value_name = "MODE")]
+        auth: Option<String>,
         /// Declare that a function must succeed: --expect-success NAME
         /// (repeatable). Violations become RETURN_MISMATCH or
         /// UNEXPECTED_ERROR findings.
@@ -14451,6 +14456,7 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
         Commands::Fuzz(action) => match action {
             FuzzAction::Campaign {
                 wasm,
+                config,
                 seed,
                 cases,
                 function,
@@ -14466,12 +14472,13 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
                 format,
             } => {
                 match commands::fuzz::run(
-                    &wasm,
+                    wasm,
+                    config,
                     seed,
                     cases,
                     function,
                     artifact_dir,
-                    &auth,
+                    auth,
                     expect_success,
                     expect_error,
                     sequence_length,
