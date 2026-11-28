@@ -5,5 +5,6 @@
 * [getting-started](getting-started.md)
 * [Installation](installation.md)
 * [Quick Start — first-time user walkthrough](quick-start.md)
+* [Web Playground user guide — inspect and compare a contract WASM in the browser](playground-guide.md)
 * [Testnet walkthrough — identity → fund → deploy → invoke → events](testnet-walkthrough.md)
 * [Public Testnet Contract Walkthrough — inspect → health → storage → events](public-contract-walkthrough.md)
